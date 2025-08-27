@@ -13,3 +13,4 @@ D:\git\Keva\src\Keva.Telemetry\obj\Debug\net8.0\Keva.Telemetry.dll
 D:\git\Keva\src\Keva.Telemetry\obj\Debug\net8.0\refint\Keva.Telemetry.dll
 D:\git\Keva\src\Keva.Telemetry\obj\Debug\net8.0\Keva.Telemetry.pdb
 D:\git\Keva\src\Keva.Telemetry\obj\Debug\net8.0\ref\Keva.Telemetry.dll
+D:\git\Keva\src\Keva.Telemetry\obj\Debug\net8.0\Keva.Telemetry.sourcelink.json

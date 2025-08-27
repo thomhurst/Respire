@@ -1,9 +1,11 @@
 {
   "version": 2,
-  "dgSpecHash": "3pLrDEca9Ho=",
+  "dgSpecHash": "qSCqkl49ICk=",
   "success": true,
   "projectFilePath": "D:\\git\\Keva\\src\\Keva.Resilience\\Keva.Resilience.csproj",
   "expectedPackageFiles": [
+    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.dependencyinjection.abstractions\\8.0.0\\microsoft.extensions.dependencyinjection.abstractions.8.0.0.nupkg.sha512",
+    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.logging.abstractions\\8.0.0\\microsoft.extensions.logging.abstractions.8.0.0.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\polly\\8.2.0\\polly.8.2.0.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\polly.core\\8.2.0\\polly.core.8.2.0.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\system.io.pipelines\\8.0.0\\system.io.pipelines.8.0.0.nupkg.sha512",

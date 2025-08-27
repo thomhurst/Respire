@@ -9,6 +9,29 @@ namespace Keva.Core.Protocol;
 /// </summary>
 public static class RespCommands
 {
+    // Pre-allocated digit strings for small numbers (major performance optimization)
+    private static readonly string[] SmallNumbers = new string[1000]; // 0-999 for most common cases
+    
+    // Common interned response strings
+    public static readonly string PongResponse = "PONG";
+    public static readonly string OkResponse = "OK";
+    
+    static RespCommands()
+    {
+        for (int i = 0; i < SmallNumbers.Length; i++)
+        {
+            SmallNumbers[i] = i.ToString();
+        }
+    }
+    
+    /// <summary>
+    /// Gets a cached string representation of a number (0-999) to avoid allocations
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static string GetCachedNumber(int value)
+    {
+        return (value >= 0 && value < SmallNumbers.Length) ? SmallNumbers[value] : value.ToString();
+    }
     // Zero-argument commands (complete RESP protocol ready)
     public static readonly byte[] Ping = "*1\r\n$4\r\nPING\r\n"u8.ToArray();
     public static readonly byte[] Quit = "*1\r\n$4\r\nQUIT\r\n"u8.ToArray();
@@ -368,7 +391,7 @@ public static class RespCommands
         WriteArrayHeader(buffer, ref offset, 4);
         WriteCommandBytes(buffer, ref offset, ZAdd);
         WriteBulkString(buffer, ref offset, key);
-        WriteBulkString(buffer, ref offset, score.ToString());
+        WriteDoubleAsBulkString(buffer, ref offset, score);
         WriteBulkString(buffer, ref offset, member);
         return offset;
     }
@@ -384,5 +407,162 @@ public static class RespCommands
             WriteBulkString(buffer, ref offset, arg);
         }
         return offset;
+    }
+    
+    /// <summary>
+    /// Builds EXPIRE command with zero allocations
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int BuildExpireCommand(Span<byte> buffer, string key, int seconds)
+    {
+        var offset = 0;
+        WriteArrayHeader(buffer, ref offset, 3);
+        WriteCommandBytes(buffer, ref offset, "EXPIRE"u8);
+        WriteBulkString(buffer, ref offset, key);
+        WriteIntegerAsBulkString(buffer, ref offset, seconds);
+        return offset;
+    }
+    
+    /// <summary>
+    /// Builds TTL command with zero allocations
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int BuildTtlCommand(Span<byte> buffer, string key)
+    {
+        var offset = 0;
+        WriteArrayHeader(buffer, ref offset, 2);
+        WriteCommandBytes(buffer, ref offset, "TTL"u8);
+        WriteBulkString(buffer, ref offset, key);
+        return offset;
+    }
+    
+    /// <summary>
+    /// Builds SADD command with zero allocations
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int BuildSAddCommand(Span<byte> buffer, string key, string member)
+    {
+        var offset = 0;
+        WriteArrayHeader(buffer, ref offset, 3);
+        WriteCommandBytes(buffer, ref offset, "SADD"u8);
+        WriteBulkString(buffer, ref offset, key);
+        WriteBulkString(buffer, ref offset, member);
+        return offset;
+    }
+    
+    /// <summary>
+    /// Builds SREM command with zero allocations
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int BuildSRemCommand(Span<byte> buffer, string key, string member)
+    {
+        var offset = 0;
+        WriteArrayHeader(buffer, ref offset, 3);
+        WriteCommandBytes(buffer, ref offset, "SREM"u8);
+        WriteBulkString(buffer, ref offset, key);
+        WriteBulkString(buffer, ref offset, member);
+        return offset;
+    }
+    
+    /// <summary>
+    /// Builds RPOP command with zero allocations
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int BuildRPopCommand(Span<byte> buffer, string key)
+    {
+        var offset = 0;
+        WriteArrayHeader(buffer, ref offset, 2);
+        WriteCommandBytes(buffer, ref offset, "RPOP"u8);
+        WriteBulkString(buffer, ref offset, key);
+        return offset;
+    }
+    
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void WriteDoubleAsBulkString(Span<byte> buffer, ref int offset, double value)
+    {
+        // Use stack allocation for the double string representation
+        Span<char> temp = stackalloc char[32]; // Sufficient for most double values
+        if (value.TryFormat(temp, out int charsWritten, "G17", System.Globalization.CultureInfo.InvariantCulture))
+        {
+            // Write $<length>\r\n
+            buffer[offset++] = (byte)'$';
+            WriteIntegerDirectly(buffer, ref offset, charsWritten);
+            buffer[offset++] = (byte)'\r';
+            buffer[offset++] = (byte)'\n';
+            
+            // Write the double value as ASCII bytes
+            for (int i = 0; i < charsWritten; i++)
+            {
+                buffer[offset++] = (byte)temp[i];
+            }
+            buffer[offset++] = (byte)'\r';
+            buffer[offset++] = (byte)'\n';
+        }
+        else
+        {
+            // Fallback to ToString() for edge cases
+            WriteBulkString(buffer, ref offset, value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+    }
+    
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void WriteIntegerAsBulkString(Span<byte> buffer, ref int offset, int value)
+    {
+        // Calculate digits needed for the integer
+        var digitCount = value == 0 ? 1 : (value < 0 ? 1 : 0) + (int)Math.Log10(Math.Abs(value)) + 1;
+        
+        // Write $<length>\r\n
+        buffer[offset++] = (byte)'$';
+        WriteIntegerDirectly(buffer, ref offset, digitCount);
+        buffer[offset++] = (byte)'\r';
+        buffer[offset++] = (byte)'\n';
+        
+        // Write the integer value directly
+        WriteIntegerDirectly(buffer, ref offset, value);
+        buffer[offset++] = (byte)'\r';
+        buffer[offset++] = (byte)'\n';
+    }
+    
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void WriteIntegerDirectly(Span<byte> buffer, ref int offset, int value)
+    {
+        // Use cached string for small numbers for maximum performance
+        if (value >= 0 && value < SmallNumbers.Length)
+        {
+            var cachedStr = SmallNumbers[value];
+            for (int i = 0; i < cachedStr.Length; i++)
+            {
+                buffer[offset++] = (byte)cachedStr[i];
+            }
+            return;
+        }
+        
+        if (value == 0)
+        {
+            buffer[offset++] = (byte)'0';
+            return;
+        }
+        
+        if (value < 0)
+        {
+            buffer[offset++] = (byte)'-';
+            value = -value;
+        }
+        
+        // Use stack allocation for temporary storage
+        Span<byte> temp = stackalloc byte[11]; // Max digits for int32
+        var tempIndex = 0;
+        
+        while (value > 0)
+        {
+            temp[tempIndex++] = (byte)('0' + (value % 10));
+            value /= 10;
+        }
+        
+        // Write digits in reverse order
+        while (tempIndex > 0)
+        {
+            buffer[offset++] = temp[--tempIndex];
+        }
     }
 }

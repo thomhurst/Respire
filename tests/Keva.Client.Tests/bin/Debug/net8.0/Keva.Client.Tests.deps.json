@@ -568,6 +568,7 @@
       },
       "Keva.Core/1.0.0": {
         "dependencies": {
+          "Microsoft.Extensions.Logging.Abstractions": "8.0.0",
           "System.IO.Pipelines": "8.0.0"
         },
         "runtime": {

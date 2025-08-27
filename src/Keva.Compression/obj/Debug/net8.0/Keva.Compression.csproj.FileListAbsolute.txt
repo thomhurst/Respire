@@ -13,3 +13,4 @@ D:\git\Keva\src\Keva.Compression\obj\Debug\net8.0\Keva.Compression.dll
 D:\git\Keva\src\Keva.Compression\obj\Debug\net8.0\refint\Keva.Compression.dll
 D:\git\Keva\src\Keva.Compression\obj\Debug\net8.0\Keva.Compression.pdb
 D:\git\Keva\src\Keva.Compression\obj\Debug\net8.0\ref\Keva.Compression.dll
+D:\git\Keva\src\Keva.Compression\obj\Debug\net8.0\Keva.Compression.sourcelink.json

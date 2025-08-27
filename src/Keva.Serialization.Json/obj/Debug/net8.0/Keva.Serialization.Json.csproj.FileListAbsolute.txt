@@ -13,3 +13,4 @@ D:\git\Keva\src\Keva.Serialization.Json\obj\Debug\net8.0\Keva.Serialization.Json
 D:\git\Keva\src\Keva.Serialization.Json\obj\Debug\net8.0\refint\Keva.Serialization.Json.dll
 D:\git\Keva\src\Keva.Serialization.Json\obj\Debug\net8.0\Keva.Serialization.Json.pdb
 D:\git\Keva\src\Keva.Serialization.Json\obj\Debug\net8.0\ref\Keva.Serialization.Json.dll
+D:\git\Keva\src\Keva.Serialization.Json\obj\Debug\net8.0\Keva.Serialization.Json.sourcelink.json

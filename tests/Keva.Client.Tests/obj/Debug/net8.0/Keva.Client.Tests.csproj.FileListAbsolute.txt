@@ -142,3 +142,4 @@ D:\git\Keva\tests\Keva.Client.Tests\obj\Debug\net8.0\refint\Keva.Client.Tests.dl
 D:\git\Keva\tests\Keva.Client.Tests\obj\Debug\net8.0\Keva.Client.Tests.pdb
 D:\git\Keva\tests\Keva.Client.Tests\obj\Debug\net8.0\Keva.Client.Tests.genruntimeconfig.cache
 D:\git\Keva\tests\Keva.Client.Tests\obj\Debug\net8.0\ref\Keva.Client.Tests.dll
+D:\git\Keva\tests\Keva.Client.Tests\obj\Debug\net8.0\Keva.Client.Tests.sourcelink.json

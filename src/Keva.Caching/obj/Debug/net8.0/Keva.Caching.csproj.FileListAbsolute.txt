@@ -13,3 +13,4 @@ D:\git\Keva\src\Keva.Caching\obj\Debug\net8.0\Keva.Caching.dll
 D:\git\Keva\src\Keva.Caching\obj\Debug\net8.0\refint\Keva.Caching.dll
 D:\git\Keva\src\Keva.Caching\obj\Debug\net8.0\Keva.Caching.pdb
 D:\git\Keva\src\Keva.Caching\obj\Debug\net8.0\ref\Keva.Caching.dll
+D:\git\Keva\src\Keva.Caching\obj\Debug\net8.0\Keva.Caching.sourcelink.json

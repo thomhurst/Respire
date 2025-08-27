@@ -133,3 +133,4 @@ D:\git\Keva\tests\Keva.Core.Tests\obj\Debug\net8.0\refint\Keva.Core.Tests.dll
 D:\git\Keva\tests\Keva.Core.Tests\obj\Debug\net8.0\Keva.Core.Tests.pdb
 D:\git\Keva\tests\Keva.Core.Tests\obj\Debug\net8.0\Keva.Core.Tests.genruntimeconfig.cache
 D:\git\Keva\tests\Keva.Core.Tests\obj\Debug\net8.0\ref\Keva.Core.Tests.dll
+D:\git\Keva\tests\Keva.Core.Tests\obj\Debug\net8.0\Keva.Core.Tests.sourcelink.json

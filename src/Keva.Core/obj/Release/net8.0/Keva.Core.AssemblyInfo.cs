@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Keva.Core")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f0cd90f74b2c5a32c9b9dfd2bad83ebba9895dc5")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+c39977d25029893b8db13b5dd7a52e161bee172c")]
 [assembly: System.Reflection.AssemblyProductAttribute("Keva.Core")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Keva.Core")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

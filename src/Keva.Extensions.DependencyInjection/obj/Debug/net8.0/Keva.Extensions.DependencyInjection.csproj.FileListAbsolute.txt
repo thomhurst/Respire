@@ -15,3 +15,4 @@ D:\git\Keva\src\Keva.Extensions.DependencyInjection\bin\Debug\net8.0\Keva.Core.p
 D:\git\Keva\src\Keva.Extensions.DependencyInjection\bin\Debug\net8.0\Keva.Client.pdb
 D:\git\Keva\src\Keva.Extensions.DependencyInjection\obj\Debug\net8.0\Keva.Extensions.DependencyInjection.csproj.AssemblyReference.cache
 D:\git\Keva\src\Keva.Extensions.DependencyInjection\obj\Debug\net8.0\Keva.Ext.2C8BF16E.Up2Date
+D:\git\Keva\src\Keva.Extensions.DependencyInjection\obj\Debug\net8.0\Keva.Extensions.DependencyInjection.sourcelink.json

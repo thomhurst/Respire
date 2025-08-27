@@ -2,7 +2,7 @@
 <html lang='en'>
 <head>
 <meta charset='utf-8' />
-<title>Keva.Benchmarks.RedisContainerBenchmarks-20250827-213638</title>
+<title>Keva.Benchmarks.RedisContainerBenchmarks-20250827-222125</title>
 
 <style type="text/css">
 	table { border-collapse: collapse; display: block; width: 100%; overflow: auto; }
@@ -23,28 +23,26 @@ Unknown processor
 </code></pre>
 
 <table>
-<thead><tr><th>Method                 </th><th>Mean</th><th>Error</th><th>StdDev</th><th>Min </th><th>Max </th><th>Median</th><th>P95 </th><th>Ratio</th><th>RatioSD</th><th>Gen0</th><th>Gen1</th><th>Allocated</th><th>Alloc Ratio</th>
+<thead><tr><th>Method                 </th><th>Mean</th><th>Error</th><th>StdDev</th><th>Min</th><th>Max</th><th>Median</th><th>P95</th><th>Ratio</th><th>RatioSD</th><th>Allocated</th><th>Alloc Ratio</th>
 </tr>
-</thead><tbody><tr><td>Keva_Ping</td><td>1,008.1 &mu;s</td><td>4,098.83 &mu;s</td><td>224.67 &mu;s</td><td>832.9 &mu;s</td><td>1,261.4 &mu;s</td><td>930.0 &mu;s</td><td>1,228.2 &mu;s</td><td>1.03</td><td>0.27</td><td>-</td><td>-</td><td>10176 B</td><td>1.00</td>
-</tr><tr><td>StackExchange_Ping</td><td>226.2 &mu;s</td><td>267.66 &mu;s</td><td>14.67 &mu;s</td><td>212.6 &mu;s</td><td>241.8 &mu;s</td><td>224.2 &mu;s</td><td>240.0 &mu;s</td><td>0.23</td><td>0.04</td><td>-</td><td>-</td><td>444 B</td><td>0.04</td>
-</tr><tr><td>Keva_Set_Small</td><td>1,091.3 &mu;s</td><td>5,320.05 &mu;s</td><td>291.61 &mu;s</td><td>754.8 &mu;s</td><td>1,268.9 &mu;s</td><td>1,250.3 &mu;s</td><td>1,267.1 &mu;s</td><td>1.12</td><td>0.33</td><td>-</td><td>-</td><td>10411 B</td><td>1.02</td>
-</tr><tr><td>StackExchange_Set_Small</td><td>294.7 &mu;s</td><td>55.62 &mu;s</td><td>3.05 &mu;s</td><td>291.4 &mu;s</td><td>297.5 &mu;s</td><td>295.0 &mu;s</td><td>297.2 &mu;s</td><td>0.30</td><td>0.05</td><td>-</td><td>-</td><td>472 B</td><td>0.05</td>
-</tr><tr><td>Keva_Set_Medium</td><td>1,008.9 &mu;s</td><td>2,846.74 &mu;s</td><td>156.04 &mu;s</td><td>831.0 &mu;s</td><td>1,122.4 &mu;s</td><td>1,073.3 &mu;s</td><td>1,117.5 &mu;s</td><td>1.03</td><td>0.23</td><td>0.9766</td><td>-</td><td>15051 B</td><td>1.48</td>
-</tr><tr><td>StackExchange_Set_Medium</td><td>295.0 &mu;s</td><td>355.34 &mu;s</td><td>19.48 &mu;s</td><td>274.1 &mu;s</td><td>312.7 &mu;s</td><td>298.3 &mu;s</td><td>311.2 &mu;s</td><td>0.30</td><td>0.06</td><td>-</td><td>-</td><td>472 B</td><td>0.05</td>
-</tr><tr><td>Keva_Set_Large</td><td>1,098.7 &mu;s</td><td>1,839.73 &mu;s</td><td>100.84 &mu;s</td><td>1,038.8 &mu;s</td><td>1,215.1 &mu;s</td><td>1,042.1 &mu;s</td><td>1,197.8 &mu;s</td><td>1.12</td><td>0.22</td><td>3.9063</td><td>1.9531</td><td>53035 B</td><td>5.21</td>
-</tr><tr><td>StackExchange_Set_Large</td><td>291.9 &mu;s</td><td>808.79 &mu;s</td><td>44.33 &mu;s</td><td>244.6 &mu;s</td><td>332.5 &mu;s</td><td>298.5 &mu;s</td><td>329.1 &mu;s</td><td>0.30</td><td>0.07</td><td>-</td><td>-</td><td>472 B</td><td>0.05</td>
-</tr><tr><td>Keva_Get</td><td>824.2 &mu;s</td><td>3,131.20 &mu;s</td><td>171.63 &mu;s</td><td>723.1 &mu;s</td><td>1,022.4 &mu;s</td><td>727.1 &mu;s</td><td>992.8 &mu;s</td><td>0.84</td><td>0.21</td><td>-</td><td>-</td><td>10355 B</td><td>1.02</td>
-</tr><tr><td>StackExchange_Get</td><td>272.3 &mu;s</td><td>456.36 &mu;s</td><td>25.01 &mu;s</td><td>248.6 &mu;s</td><td>298.5 &mu;s</td><td>269.9 &mu;s</td><td>295.6 &mu;s</td><td>0.28</td><td>0.05</td><td>-</td><td>-</td><td>524 B</td><td>0.05</td>
-</tr><tr><td>Keva_MGet</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>?</td><td>?</td><td>NA</td><td>NA</td><td>NA</td><td>?</td>
-</tr><tr><td>StackExchange_MGet</td><td>223.7 &mu;s</td><td>116.65 &mu;s</td><td>6.39 &mu;s</td><td>217.5 &mu;s</td><td>230.3 &mu;s</td><td>223.2 &mu;s</td><td>229.6 &mu;s</td><td>0.23</td><td>0.04</td><td>-</td><td>-</td><td>936 B</td><td>0.09</td>
-</tr><tr><td>Keva_Pipeline_5_Sets</td><td>1,878.2 &mu;s</td><td>1,217.60 &mu;s</td><td>66.74 &mu;s</td><td>1,806.9 &mu;s</td><td>1,939.2 &mu;s</td><td>1,888.6 &mu;s</td><td>1,934.1 &mu;s</td><td>1.92</td><td>0.35</td><td>3.9063</td><td>1.9531</td><td>52211 B</td><td>5.13</td>
-</tr><tr><td>StackExchange_Pipeline_5_Sets</td><td>249.8 &mu;s</td><td>186.66 &mu;s</td><td>10.23 &mu;s</td><td>242.4 &mu;s</td><td>261.5 &mu;s</td><td>245.6 &mu;s</td><td>259.9 &mu;s</td><td>0.26</td><td>0.05</td><td>-</td><td>-</td><td>3008 B</td><td>0.30</td>
-</tr><tr><td>Keva_Exists</td><td>1,192.1 &mu;s</td><td>3,106.32 &mu;s</td><td>170.27 &mu;s</td><td>1,001.3 &mu;s</td><td>1,328.7 &mu;s</td><td>1,246.2 &mu;s</td><td>1,320.5 &mu;s</td><td>1.22</td><td>0.26</td><td>-</td><td>-</td><td>10339 B</td><td>1.02</td>
-</tr><tr><td>StackExchange_Exists</td><td>236.0 &mu;s</td><td>222.04 &mu;s</td><td>12.17 &mu;s</td><td>222.5 &mu;s</td><td>246.2 &mu;s</td><td>239.3 &mu;s</td><td>245.5 &mu;s</td><td>0.24</td><td>0.04</td><td>-</td><td>-</td><td>440 B</td><td>0.04</td>
-</tr><tr><td>Keva_Del</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>?</td><td>?</td><td>NA</td><td>NA</td><td>NA</td><td>?</td>
-</tr><tr><td>StackExchange_Del</td><td>496.0 &mu;s</td><td>1,026.91 &mu;s</td><td>56.29 &mu;s</td><td>434.7 &mu;s</td><td>545.3 &mu;s</td><td>508.0 &mu;s</td><td>541.6 &mu;s</td><td>0.51</td><td>0.10</td><td>-</td><td>-</td><td>744 B</td><td>0.07</td>
-</tr><tr><td>Keva_Incr</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>?</td><td>?</td><td>NA</td><td>NA</td><td>NA</td><td>?</td>
-</tr><tr><td>StackExchange_Incr</td><td>236.3 &mu;s</td><td>465.73 &mu;s</td><td>25.53 &mu;s</td><td>218.7 &mu;s</td><td>265.6 &mu;s</td><td>224.6 &mu;s</td><td>261.5 &mu;s</td><td>0.24</td><td>0.05</td><td>-</td><td>-</td><td>440 B</td><td>0.04</td>
+</thead><tbody><tr><td>UltraKeva_Ping</td><td>216.8 &mu;s</td><td>66.84 &mu;s</td><td>3.66 &mu;s</td><td>212.8 &mu;s</td><td>220.1 &mu;s</td><td>217.5 &mu;s</td><td>219.8 &mu;s</td><td>1.00</td><td>0.02</td><td>-</td><td>NA</td>
+</tr><tr><td>StackExchange_Ping</td><td>319.9 &mu;s</td><td>185.72 &mu;s</td><td>10.18 &mu;s</td><td>310.0 &mu;s</td><td>330.4 &mu;s</td><td>319.3 &mu;s</td><td>329.3 &mu;s</td><td>1.48</td><td>0.05</td><td>424 B</td><td>NA</td>
+</tr><tr><td>UltraKeva_Set_Small</td><td>215.0 &mu;s</td><td>396.72 &mu;s</td><td>21.75 &mu;s</td><td>189.9 &mu;s</td><td>228.5 &mu;s</td><td>226.6 &mu;s</td><td>228.3 &mu;s</td><td>0.99</td><td>0.09</td><td>-</td><td>NA</td>
+</tr><tr><td>StackExchange_Set_Small</td><td>324.5 &mu;s</td><td>78.79 &mu;s</td><td>4.32 &mu;s</td><td>321.3 &mu;s</td><td>329.4 &mu;s</td><td>322.7 &mu;s</td><td>328.7 &mu;s</td><td>1.50</td><td>0.03</td><td>432 B</td><td>NA</td>
+</tr><tr><td>UltraKeva_Set_Medium</td><td>215.5 &mu;s</td><td>327.70 &mu;s</td><td>17.96 &mu;s</td><td>201.7 &mu;s</td><td>235.8 &mu;s</td><td>208.9 &mu;s</td><td>233.1 &mu;s</td><td>0.99</td><td>0.07</td><td>-</td><td>NA</td>
+</tr><tr><td>StackExchange_Set_Medium</td><td>270.5 &mu;s</td><td>535.99 &mu;s</td><td>29.38 &mu;s</td><td>248.5 &mu;s</td><td>303.9 &mu;s</td><td>259.1 &mu;s</td><td>299.4 &mu;s</td><td>1.25</td><td>0.12</td><td>432 B</td><td>NA</td>
+</tr><tr><td>UltraKeva_Set_Large</td><td>219.4 &mu;s</td><td>389.20 &mu;s</td><td>21.33 &mu;s</td><td>198.4 &mu;s</td><td>241.0 &mu;s</td><td>218.8 &mu;s</td><td>238.8 &mu;s</td><td>1.01</td><td>0.09</td><td>-</td><td>NA</td>
+</tr><tr><td>StackExchange_Set_Large</td><td>295.9 &mu;s</td><td>445.65 &mu;s</td><td>24.43 &mu;s</td><td>269.6 &mu;s</td><td>317.9 &mu;s</td><td>300.3 &mu;s</td><td>316.1 &mu;s</td><td>1.37</td><td>0.10</td><td>432 B</td><td>NA</td>
+</tr><tr><td>UltraKeva_Get</td><td>180.7 &mu;s</td><td>367.00 &mu;s</td><td>20.12 &mu;s</td><td>159.1 &mu;s</td><td>198.9 &mu;s</td><td>184.1 &mu;s</td><td>197.4 &mu;s</td><td>0.83</td><td>0.08</td><td>40 B</td><td>NA</td>
+</tr><tr><td>StackExchange_Get</td><td>259.5 &mu;s</td><td>490.29 &mu;s</td><td>26.87 &mu;s</td><td>231.1 &mu;s</td><td>284.5 &mu;s</td><td>262.8 &mu;s</td><td>282.3 &mu;s</td><td>1.20</td><td>0.11</td><td>504 B</td><td>NA</td>
+</tr><tr><td>StackExchange_MGet</td><td>342.1 &mu;s</td><td>270.83 &mu;s</td><td>14.85 &mu;s</td><td>325.1 &mu;s</td><td>352.3 &mu;s</td><td>349.0 &mu;s</td><td>352.0 &mu;s</td><td>1.58</td><td>0.06</td><td>896 B</td><td>NA</td>
+</tr><tr><td>StackExchange_Pipeline_5_Sets</td><td>283.1 &mu;s</td><td>270.41 &mu;s</td><td>14.82 &mu;s</td><td>266.8 &mu;s</td><td>295.7 &mu;s</td><td>286.9 &mu;s</td><td>294.8 &mu;s</td><td>1.31</td><td>0.06</td><td>2968 B</td><td>NA</td>
+</tr><tr><td>UltraKeva_Exists</td><td>219.6 &mu;s</td><td>250.13 &mu;s</td><td>13.71 &mu;s</td><td>204.0 &mu;s</td><td>229.8 &mu;s</td><td>224.9 &mu;s</td><td>229.3 &mu;s</td><td>1.01</td><td>0.06</td><td>-</td><td>NA</td>
+</tr><tr><td>StackExchange_Exists</td><td>289.4 &mu;s</td><td>426.01 &mu;s</td><td>23.35 &mu;s</td><td>262.8 &mu;s</td><td>306.6 &mu;s</td><td>298.6 &mu;s</td><td>305.8 &mu;s</td><td>1.33</td><td>0.10</td><td>400 B</td><td>NA</td>
+</tr><tr><td>UltraKeva_Del</td><td>347.4 &mu;s</td><td>35.69 &mu;s</td><td>1.96 &mu;s</td><td>345.2 &mu;s</td><td>348.9 &mu;s</td><td>348.1 &mu;s</td><td>348.8 &mu;s</td><td>1.60</td><td>0.02</td><td>-</td><td>NA</td>
+</tr><tr><td>StackExchange_Del</td><td>553.1 &mu;s</td><td>387.50 &mu;s</td><td>21.24 &mu;s</td><td>537.0 &mu;s</td><td>577.2 &mu;s</td><td>545.1 &mu;s</td><td>574.0 &mu;s</td><td>2.55</td><td>0.09</td><td>664 B</td><td>NA</td>
+</tr><tr><td>UltraKeva_Incr</td><td>191.3 &mu;s</td><td>473.55 &mu;s</td><td>25.96 &mu;s</td><td>166.6 &mu;s</td><td>218.4 &mu;s</td><td>189.0 &mu;s</td><td>215.4 &mu;s</td><td>0.88</td><td>0.10</td><td>-</td><td>NA</td>
+</tr><tr><td>StackExchange_Incr</td><td>241.1 &mu;s</td><td>470.68 &mu;s</td><td>25.80 &mu;s</td><td>214.9 &mu;s</td><td>266.5 &mu;s</td><td>242.0 &mu;s</td><td>264.0 &mu;s</td><td>1.11</td><td>0.10</td><td>400 B</td><td>NA</td>
 </tr></tbody></table>
 </body>
 </html>

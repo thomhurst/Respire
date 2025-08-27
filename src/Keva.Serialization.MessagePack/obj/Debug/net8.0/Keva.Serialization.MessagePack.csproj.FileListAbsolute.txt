@@ -13,3 +13,4 @@ D:\git\Keva\src\Keva.Serialization.MessagePack\obj\Debug\net8.0\Keva.Serializati
 D:\git\Keva\src\Keva.Serialization.MessagePack\obj\Debug\net8.0\refint\Keva.Serialization.MessagePack.dll
 D:\git\Keva\src\Keva.Serialization.MessagePack\obj\Debug\net8.0\Keva.Serialization.MessagePack.pdb
 D:\git\Keva\src\Keva.Serialization.MessagePack\obj\Debug\net8.0\ref\Keva.Serialization.MessagePack.dll
+D:\git\Keva\src\Keva.Serialization.MessagePack\obj\Debug\net8.0\Keva.Serialization.MessagePack.sourcelink.json

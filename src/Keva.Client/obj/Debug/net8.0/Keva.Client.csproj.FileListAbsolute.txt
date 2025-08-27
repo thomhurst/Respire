@@ -13,3 +13,4 @@ D:\git\Keva\src\Keva.Client\obj\Debug\net8.0\Keva.Client.dll
 D:\git\Keva\src\Keva.Client\obj\Debug\net8.0\refint\Keva.Client.dll
 D:\git\Keva\src\Keva.Client\obj\Debug\net8.0\Keva.Client.pdb
 D:\git\Keva\src\Keva.Client\obj\Debug\net8.0\ref\Keva.Client.dll
+D:\git\Keva\src\Keva.Client\obj\Debug\net8.0\Keva.Client.sourcelink.json

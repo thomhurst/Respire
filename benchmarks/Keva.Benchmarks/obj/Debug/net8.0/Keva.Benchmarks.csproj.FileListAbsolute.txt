@@ -100,3 +100,4 @@ D:\git\Keva\benchmarks\Keva.Benchmarks\obj\Debug\net8.0\refint\Keva.Benchmarks.d
 D:\git\Keva\benchmarks\Keva.Benchmarks\obj\Debug\net8.0\Keva.Benchmarks.pdb
 D:\git\Keva\benchmarks\Keva.Benchmarks\obj\Debug\net8.0\Keva.Benchmarks.genruntimeconfig.cache
 D:\git\Keva\benchmarks\Keva.Benchmarks\obj\Debug\net8.0\ref\Keva.Benchmarks.dll
+D:\git\Keva\benchmarks\Keva.Benchmarks\obj\Debug\net8.0\Keva.Benchmarks.sourcelink.json

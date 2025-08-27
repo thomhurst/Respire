@@ -13,3 +13,4 @@ D:\git\Keva\src\Keva.Resilience\obj\Debug\net8.0\Keva.Resilience.dll
 D:\git\Keva\src\Keva.Resilience\obj\Debug\net8.0\refint\Keva.Resilience.dll
 D:\git\Keva\src\Keva.Resilience\obj\Debug\net8.0\Keva.Resilience.pdb
 D:\git\Keva\src\Keva.Resilience\obj\Debug\net8.0\ref\Keva.Resilience.dll
+D:\git\Keva\src\Keva.Resilience\obj\Debug\net8.0\Keva.Resilience.sourcelink.json

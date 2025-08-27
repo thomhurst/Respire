@@ -9,7 +9,14 @@
       "Bash(dotnet build)",
       "Bash(dotnet build:*)",
       "Bash(dotnet test:*)",
-      "WebFetch(domain:benchmarkdotnet.org)"
+      "WebFetch(domain:benchmarkdotnet.org)",
+      "WebSearch",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__get-library-docs",
+      "Bash(git add:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "mcp__sequential-thinking__sequentialthinking"
     ],
     "deny": [],
     "ask": []
