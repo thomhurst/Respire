@@ -111,199 +111,55 @@ public sealed class FastRespClient : IDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void WritePing()
     {
-        var span = _sendBuffer.AsSpan();
-        var written = 0;
-        
-        // *1\r\n$4\r\nPING\r\n
-        span[written++] = (byte)'*';
-        span[written++] = (byte)'1';
-        span[written++] = (byte)'\r';
-        span[written++] = (byte)'\n';
-        span[written++] = (byte)'$';
-        span[written++] = (byte)'4';
-        span[written++] = (byte)'\r';
-        span[written++] = (byte)'\n';
-        span[written++] = (byte)'P';
-        span[written++] = (byte)'I';
-        span[written++] = (byte)'N';
-        span[written++] = (byte)'G';
-        span[written++] = (byte)'\r';
-        span[written++] = (byte)'\n';
-        
-        _socket.Send(_sendBuffer, 0, written, SocketFlags.None);
+        _socket.Send(RespCommands.Ping);
     }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void WriteSet(string key, string value)
     {
         var span = _sendBuffer.AsSpan();
-        var written = 0;
-        
-        // *3\r\n$3\r\nSET\r\n$<key_len>\r\n<key>\r\n$<val_len>\r\n<val>\r\n
-        span[written++] = (byte)'*';
-        span[written++] = (byte)'3';
-        span[written++] = (byte)'\r';
-        span[written++] = (byte)'\n';
-        span[written++] = (byte)'$';
-        span[written++] = (byte)'3';
-        span[written++] = (byte)'\r';
-        span[written++] = (byte)'\n';
-        span[written++] = (byte)'S';
-        span[written++] = (byte)'E';
-        span[written++] = (byte)'T';
-        span[written++] = (byte)'\r';
-        span[written++] = (byte)'\n';
-        
-        // Write key
-        written += WriteBulkString(span[written..], key);
-        
-        // Write value
-        written += WriteBulkString(span[written..], value);
-        
-        _socket.Send(_sendBuffer, 0, written, SocketFlags.None);
+        var length = RespCommands.BuildSetCommand(span, key, value);
+        _socket.Send(_sendBuffer, 0, length, SocketFlags.None);
     }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void WriteGet(string key)
     {
         var span = _sendBuffer.AsSpan();
-        var written = 0;
-        
-        // *2\r\n$3\r\nGET\r\n$<key_len>\r\n<key>\r\n
-        span[written++] = (byte)'*';
-        span[written++] = (byte)'2';
-        span[written++] = (byte)'\r';
-        span[written++] = (byte)'\n';
-        span[written++] = (byte)'$';
-        span[written++] = (byte)'3';
-        span[written++] = (byte)'\r';
-        span[written++] = (byte)'\n';
-        span[written++] = (byte)'G';
-        span[written++] = (byte)'E';
-        span[written++] = (byte)'T';
-        span[written++] = (byte)'\r';
-        span[written++] = (byte)'\n';
-        
-        // Write key
-        written += WriteBulkString(span[written..], key);
-        
-        _socket.Send(_sendBuffer, 0, written, SocketFlags.None);
+        var length = RespCommands.BuildGetCommand(span, key);
+        _socket.Send(_sendBuffer, 0, length, SocketFlags.None);
     }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void WriteExists(string key)
     {
         var span = _sendBuffer.AsSpan();
-        var written = 0;
-        
-        // *2\r\n$6\r\nEXISTS\r\n$<key_len>\r\n<key>\r\n
-        span[written++] = (byte)'*';
-        span[written++] = (byte)'2';
-        span[written++] = (byte)'\r';
-        span[written++] = (byte)'\n';
-        span[written++] = (byte)'$';
-        span[written++] = (byte)'6';
-        span[written++] = (byte)'\r';
-        span[written++] = (byte)'\n';
-        span[written++] = (byte)'E';
-        span[written++] = (byte)'X';
-        span[written++] = (byte)'I';
-        span[written++] = (byte)'S';
-        span[written++] = (byte)'T';
-        span[written++] = (byte)'S';
-        span[written++] = (byte)'\r';
-        span[written++] = (byte)'\n';
-        
-        // Write key
-        written += WriteBulkString(span[written..], key);
-        
-        _socket.Send(_sendBuffer, 0, written, SocketFlags.None);
+        var length = RespCommands.BuildExistsCommand(span, key);
+        _socket.Send(_sendBuffer, 0, length, SocketFlags.None);
     }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void WriteDel(string key)
     {
         var span = _sendBuffer.AsSpan();
-        var written = 0;
-        
-        // *2\r\n$3\r\nDEL\r\n$<key_len>\r\n<key>\r\n
-        span[written++] = (byte)'*';
-        span[written++] = (byte)'2';
-        span[written++] = (byte)'\r';
-        span[written++] = (byte)'\n';
-        span[written++] = (byte)'$';
-        span[written++] = (byte)'3';
-        span[written++] = (byte)'\r';
-        span[written++] = (byte)'\n';
-        span[written++] = (byte)'D';
-        span[written++] = (byte)'E';
-        span[written++] = (byte)'L';
-        span[written++] = (byte)'\r';
-        span[written++] = (byte)'\n';
-        
-        // Write key
-        written += WriteBulkString(span[written..], key);
-        
-        _socket.Send(_sendBuffer, 0, written, SocketFlags.None);
+        var length = RespCommands.BuildDelCommand(span, key);
+        _socket.Send(_sendBuffer, 0, length, SocketFlags.None);
     }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void WriteIncr(string key)
     {
         var span = _sendBuffer.AsSpan();
-        var written = 0;
-        
-        // *2\r\n$4\r\nINCR\r\n$<key_len>\r\n<key>\r\n
-        span[written++] = (byte)'*';
-        span[written++] = (byte)'2';
-        span[written++] = (byte)'\r';
-        span[written++] = (byte)'\n';
-        span[written++] = (byte)'$';
-        span[written++] = (byte)'4';
-        span[written++] = (byte)'\r';
-        span[written++] = (byte)'\n';
-        span[written++] = (byte)'I';
-        span[written++] = (byte)'N';
-        span[written++] = (byte)'C';
-        span[written++] = (byte)'R';
-        span[written++] = (byte)'\r';
-        span[written++] = (byte)'\n';
-        
-        // Write key
-        written += WriteBulkString(span[written..], key);
-        
-        _socket.Send(_sendBuffer, 0, written, SocketFlags.None);
+        var length = RespCommands.BuildIncrCommand(span, key);
+        _socket.Send(_sendBuffer, 0, length, SocketFlags.None);
     }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void WriteMGet(string[] keys)
     {
         var span = _sendBuffer.AsSpan();
-        var written = 0;
-        
-        // *<1+keys>\r\n$4\r\nMGET\r\n
-        span[written++] = (byte)'*';
-        written += WriteIntegerAsBytes(span[written..], keys.Length + 1);
-        span[written++] = (byte)'\r';
-        span[written++] = (byte)'\n';
-        span[written++] = (byte)'$';
-        span[written++] = (byte)'4';
-        span[written++] = (byte)'\r';
-        span[written++] = (byte)'\n';
-        span[written++] = (byte)'M';
-        span[written++] = (byte)'G';
-        span[written++] = (byte)'E';
-        span[written++] = (byte)'T';
-        span[written++] = (byte)'\r';
-        span[written++] = (byte)'\n';
-        
-        // Write keys
-        foreach (var key in keys)
-        {
-            written += WriteBulkString(span[written..], key);
-        }
-        
-        _socket.Send(_sendBuffer, 0, written, SocketFlags.None);
+        var length = RespCommands.BuildMGetCommand(span, keys);
+        _socket.Send(_sendBuffer, 0, length, SocketFlags.None);
     }
     
     internal int WriteCommand(Span<byte> span, string command, string[] args)
