@@ -1,0 +1,15 @@
+D:\git\Keva\src\Keva.Client\bin\Debug\net8.0\Keva.Client.deps.json
+D:\git\Keva\src\Keva.Client\bin\Debug\net8.0\Keva.Client.dll
+D:\git\Keva\src\Keva.Client\bin\Debug\net8.0\Keva.Client.pdb
+D:\git\Keva\src\Keva.Client\bin\Debug\net8.0\Keva.Core.dll
+D:\git\Keva\src\Keva.Client\bin\Debug\net8.0\Keva.Core.pdb
+D:\git\Keva\src\Keva.Client\obj\Debug\net8.0\Keva.Client.csproj.AssemblyReference.cache
+D:\git\Keva\src\Keva.Client\obj\Debug\net8.0\Keva.Client.GeneratedMSBuildEditorConfig.editorconfig
+D:\git\Keva\src\Keva.Client\obj\Debug\net8.0\Keva.Client.AssemblyInfoInputs.cache
+D:\git\Keva\src\Keva.Client\obj\Debug\net8.0\Keva.Client.AssemblyInfo.cs
+D:\git\Keva\src\Keva.Client\obj\Debug\net8.0\Keva.Client.csproj.CoreCompileInputs.cache
+D:\git\Keva\src\Keva.Client\obj\Debug\net8.0\Keva.Cli.88C9F11A.Up2Date
+D:\git\Keva\src\Keva.Client\obj\Debug\net8.0\Keva.Client.dll
+D:\git\Keva\src\Keva.Client\obj\Debug\net8.0\refint\Keva.Client.dll
+D:\git\Keva\src\Keva.Client\obj\Debug\net8.0\Keva.Client.pdb
+D:\git\Keva\src\Keva.Client\obj\Debug\net8.0\ref\Keva.Client.dll

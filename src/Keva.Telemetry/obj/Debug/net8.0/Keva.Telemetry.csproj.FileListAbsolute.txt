@@ -1,0 +1,15 @@
+D:\git\Keva\src\Keva.Telemetry\bin\Debug\net8.0\Keva.Telemetry.deps.json
+D:\git\Keva\src\Keva.Telemetry\bin\Debug\net8.0\Keva.Telemetry.dll
+D:\git\Keva\src\Keva.Telemetry\bin\Debug\net8.0\Keva.Telemetry.pdb
+D:\git\Keva\src\Keva.Telemetry\bin\Debug\net8.0\Keva.Core.dll
+D:\git\Keva\src\Keva.Telemetry\bin\Debug\net8.0\Keva.Core.pdb
+D:\git\Keva\src\Keva.Telemetry\obj\Debug\net8.0\Keva.Telemetry.csproj.AssemblyReference.cache
+D:\git\Keva\src\Keva.Telemetry\obj\Debug\net8.0\Keva.Telemetry.GeneratedMSBuildEditorConfig.editorconfig
+D:\git\Keva\src\Keva.Telemetry\obj\Debug\net8.0\Keva.Telemetry.AssemblyInfoInputs.cache
+D:\git\Keva\src\Keva.Telemetry\obj\Debug\net8.0\Keva.Telemetry.AssemblyInfo.cs
+D:\git\Keva\src\Keva.Telemetry\obj\Debug\net8.0\Keva.Telemetry.csproj.CoreCompileInputs.cache
+D:\git\Keva\src\Keva.Telemetry\obj\Debug\net8.0\Keva.Tel.F9C492FF.Up2Date
+D:\git\Keva\src\Keva.Telemetry\obj\Debug\net8.0\Keva.Telemetry.dll
+D:\git\Keva\src\Keva.Telemetry\obj\Debug\net8.0\refint\Keva.Telemetry.dll
+D:\git\Keva\src\Keva.Telemetry\obj\Debug\net8.0\Keva.Telemetry.pdb
+D:\git\Keva\src\Keva.Telemetry\obj\Debug\net8.0\ref\Keva.Telemetry.dll

@@ -1,0 +1,12 @@
+D:\git\Keva\src\Keva.Core\bin\Release\net8.0\Keva.Core.deps.json
+D:\git\Keva\src\Keva.Core\bin\Release\net8.0\Keva.Core.dll
+D:\git\Keva\src\Keva.Core\bin\Release\net8.0\Keva.Core.pdb
+D:\git\Keva\src\Keva.Core\obj\Release\net8.0\Keva.Core.csproj.AssemblyReference.cache
+D:\git\Keva\src\Keva.Core\obj\Release\net8.0\Keva.Core.GeneratedMSBuildEditorConfig.editorconfig
+D:\git\Keva\src\Keva.Core\obj\Release\net8.0\Keva.Core.AssemblyInfoInputs.cache
+D:\git\Keva\src\Keva.Core\obj\Release\net8.0\Keva.Core.AssemblyInfo.cs
+D:\git\Keva\src\Keva.Core\obj\Release\net8.0\Keva.Core.csproj.CoreCompileInputs.cache
+D:\git\Keva\src\Keva.Core\obj\Release\net8.0\Keva.Core.dll
+D:\git\Keva\src\Keva.Core\obj\Release\net8.0\refint\Keva.Core.dll
+D:\git\Keva\src\Keva.Core\obj\Release\net8.0\Keva.Core.pdb
+D:\git\Keva\src\Keva.Core\obj\Release\net8.0\ref\Keva.Core.dll

@@ -1,0 +1,2211 @@
+// Validating benchmarks:
+// ***** BenchmarkRunner: Start   *****
+// ***** Found 20 benchmark(s) in total *****
+// ***** Building 1 exe(s) in Parallel: Start   *****
+// start dotnet  restore /p:UseSharedCompilation=false /p:BuildInParallel=false /m:1 /p:Deterministic=true /p:Optimize=true /p:ArtifactsPath="D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1/" /p:OutDir="D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0/" /p:OutputPath="D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0/" /p:PublishDir="D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\publish/" in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1
+// command took 1.93 sec and exited with 0
+// start dotnet  build -c Release --no-restore /p:UseSharedCompilation=false /p:BuildInParallel=false /m:1 /p:Deterministic=true /p:Optimize=true /p:ArtifactsPath="D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1/" /p:OutDir="D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0/" /p:OutputPath="D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0/" /p:PublishDir="D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\publish/" --output "D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0/" in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1
+// command took 12.18 sec and exited with 0
+// ***** Done, took 00:00:14 (14.18 sec)   *****
+// Found 20 benchmarks:
+//   RedisContainerBenchmarks.Keva_Ping: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+//   RedisContainerBenchmarks.StackExchange_Ping: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+//   RedisContainerBenchmarks.Keva_Set_Small: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+//   RedisContainerBenchmarks.StackExchange_Set_Small: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+//   RedisContainerBenchmarks.Keva_Set_Medium: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+//   RedisContainerBenchmarks.StackExchange_Set_Medium: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+//   RedisContainerBenchmarks.Keva_Set_Large: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+//   RedisContainerBenchmarks.StackExchange_Set_Large: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+//   RedisContainerBenchmarks.Keva_Get: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+//   RedisContainerBenchmarks.StackExchange_Get: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+//   RedisContainerBenchmarks.Keva_MGet: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+//   RedisContainerBenchmarks.StackExchange_MGet: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+//   RedisContainerBenchmarks.Keva_Pipeline_5_Sets: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+//   RedisContainerBenchmarks.StackExchange_Pipeline_5_Sets: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+//   RedisContainerBenchmarks.Keva_Exists: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+//   RedisContainerBenchmarks.StackExchange_Exists: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+//   RedisContainerBenchmarks.Keva_Del: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+//   RedisContainerBenchmarks.StackExchange_Del: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+//   RedisContainerBenchmarks.Keva_Incr: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+//   RedisContainerBenchmarks.StackExchange_Incr: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.Keva_Ping: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet Keva.Benchmarks-Job-YBPNYS-1.dll --anonymousPipes 1708 1712 --benchmarkName Keva.Benchmarks.RedisContainerBenchmarks.Keva_Ping --job "Runtime=.NET 8.0, IterationCount=3, WarmupCount=1" --benchmarkId 0 in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.2
+// Runtime=.NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT,AvxVnni,SERIALIZE VectorSize=256
+// Job: Job-WWFMMQ(IterationCount=3, WarmupCount=1)
+
+[testcontainers.org 00:00:00.22] Connected to Docker:
+  Host: npipe://./pipe/docker_engine
+  Server Version: 5.6.0
+  Kernel Version: 6.6.87.2-microsoft-standard-WSL2
+  API Version: 1.41
+  Operating System: fedora
+  Total Memory: 23.47 GB
+[testcontainers.org 00:00:00.38] Docker container 470de39174a4 created
+[testcontainers.org 00:00:00.41] Start Docker container 470de39174a4
+[testcontainers.org 00:00:00.60] Wait for Docker container 470de39174a4 to complete readiness checks
+[testcontainers.org 00:00:00.65] Docker container 470de39174a4 ready
+[testcontainers.org 00:00:01.22] Docker container 1664f2a5342d created
+[testcontainers.org 00:00:01.31] Start Docker container 1664f2a5342d
+[testcontainers.org 00:00:01.55] Wait for Docker container 1664f2a5342d to complete readiness checks
+[testcontainers.org 00:00:01.73] Execute "redis-cli ping" at Docker container 1664f2a5342d
+[testcontainers.org 00:00:01.87] Docker container 1664f2a5342d ready
+OverheadJitting  1: 1 op, 158500.00 ns, 158.5000 us/op
+WorkloadJitting  1: 1 op, 2256700.00 ns, 2.2567 ms/op
+
+OverheadJitting  2: 16 op, 347400.00 ns, 21.7125 us/op
+WorkloadJitting  2: 16 op, 21283000.00 ns, 1.3302 ms/op
+
+WorkloadPilot    1: 16 op, 17648600.00 ns, 1.1030 ms/op
+WorkloadPilot    2: 32 op, 34039100.00 ns, 1.0637 ms/op
+WorkloadPilot    3: 64 op, 73894500.00 ns, 1.1546 ms/op
+WorkloadPilot    4: 128 op, 130793800.00 ns, 1.0218 ms/op
+WorkloadPilot    5: 256 op, 265583600.00 ns, 1.0374 ms/op
+WorkloadPilot    6: 512 op, 354899300.00 ns, 693.1627 us/op
+WorkloadPilot    7: 1024 op, 686724600.00 ns, 670.6295 us/op
+
+OverheadWarmup   1: 1024 op, 5900.00 ns, 5.7617 ns/op
+OverheadWarmup   2: 1024 op, 4300.00 ns, 4.1992 ns/op
+OverheadWarmup   3: 1024 op, 6300.00 ns, 6.1523 ns/op
+OverheadWarmup   4: 1024 op, 3500.00 ns, 3.4180 ns/op
+OverheadWarmup   5: 1024 op, 3800.00 ns, 3.7109 ns/op
+OverheadWarmup   6: 1024 op, 3000.00 ns, 2.9297 ns/op
+
+OverheadActual   1: 1024 op, 3100.00 ns, 3.0273 ns/op
+OverheadActual   2: 1024 op, 3600.00 ns, 3.5156 ns/op
+OverheadActual   3: 1024 op, 3400.00 ns, 3.3203 ns/op
+OverheadActual   4: 1024 op, 4100.00 ns, 4.0039 ns/op
+OverheadActual   5: 1024 op, 3000.00 ns, 2.9297 ns/op
+OverheadActual   6: 1024 op, 3200.00 ns, 3.1250 ns/op
+OverheadActual   7: 1024 op, 3200.00 ns, 3.1250 ns/op
+OverheadActual   8: 1024 op, 3200.00 ns, 3.1250 ns/op
+OverheadActual   9: 1024 op, 3000.00 ns, 2.9297 ns/op
+OverheadActual  10: 1024 op, 2900.00 ns, 2.8320 ns/op
+OverheadActual  11: 1024 op, 3300.00 ns, 3.2227 ns/op
+OverheadActual  12: 1024 op, 3800.00 ns, 3.7109 ns/op
+OverheadActual  13: 1024 op, 3900.00 ns, 3.8086 ns/op
+OverheadActual  14: 1024 op, 3800.00 ns, 3.7109 ns/op
+OverheadActual  15: 1024 op, 3800.00 ns, 3.7109 ns/op
+OverheadActual  16: 1024 op, 3500.00 ns, 3.4180 ns/op
+OverheadActual  17: 1024 op, 4300.00 ns, 4.1992 ns/op
+OverheadActual  18: 1024 op, 2800.00 ns, 2.7344 ns/op
+OverheadActual  19: 1024 op, 4200.00 ns, 4.1016 ns/op
+OverheadActual  20: 1024 op, 4900.00 ns, 4.7852 ns/op
+
+WorkloadWarmup   1: 1024 op, 814359600.00 ns, 795.2730 us/op
+
+// BeforeActualRun
+WorkloadActual   1: 1024 op, 1281647100.00 ns, 1.2516 ms/op
+WorkloadActual   2: 1024 op, 1292588700.00 ns, 1.2623 ms/op
+WorkloadActual   3: 1024 op, 693064900.00 ns, 676.8212 us/op
+
+// AfterActualRun
+WorkloadResult   1: 1024 op, 1281643650.00 ns, 1.2516 ms/op
+WorkloadResult   2: 1024 op, 1292585250.00 ns, 1.2623 ms/op
+WorkloadResult   3: 1024 op, 693061450.00 ns, 676.8178 us/op
+// GC:  0 0 0 11929120 1024
+// Threading:  6117 1 1024
+// Exceptions:  1.9150390625
+
+[testcontainers.org 00:00:11.21] Stop Docker container 1664f2a5342d
+[testcontainers.org 00:00:11.90] Delete Docker container 1664f2a5342d
+// AfterAll
+// Benchmark Process 4248 has exited with code 0.
+
+Mean = 1.064 ms, StdErr = 0.193 ms (18.18%), N = 3, StdDev = 0.335 ms
+Min = 0.677 ms, Q1 = 0.964 ms, Median = 1.252 ms, Q3 = 1.257 ms, Max = 1.262 ms
+IQR = 0.293 ms, LowerFence = 0.525 ms, UpperFence = 1.696 ms
+ConfidenceInterval = [-5.048 ms; 7.175 ms] (CI 99.9%), Margin = 6.111 ms (574.60% of Mean)
+Skewness = -0.38, Kurtosis = 0.67, MValue = 2
+
+// ** Remained 19 (95.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:14 (0h 3m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.StackExchange_Ping: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet Keva.Benchmarks-Job-YBPNYS-1.dll --anonymousPipes 1712 624 --benchmarkName Keva.Benchmarks.RedisContainerBenchmarks.StackExchange_Ping --job "Runtime=.NET 8.0, IterationCount=3, WarmupCount=1" --benchmarkId 1 in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.2
+// Runtime=.NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT,AvxVnni,SERIALIZE VectorSize=256
+// Job: Job-WWFMMQ(IterationCount=3, WarmupCount=1)
+
+[testcontainers.org 00:00:00.18] Connected to Docker:
+  Host: npipe://./pipe/docker_engine
+  Server Version: 5.6.0
+  Kernel Version: 6.6.87.2-microsoft-standard-WSL2
+  API Version: 1.41
+  Operating System: fedora
+  Total Memory: 23.47 GB
+[testcontainers.org 00:00:00.39] Docker container 699c88545a9c created
+[testcontainers.org 00:00:00.54] Start Docker container 699c88545a9c
+[testcontainers.org 00:00:00.74] Wait for Docker container 699c88545a9c to complete readiness checks
+[testcontainers.org 00:00:00.83] Docker container 699c88545a9c ready
+[testcontainers.org 00:00:00.90] Docker container ecabdf19ecfb created
+[testcontainers.org 00:00:00.96] Start Docker container ecabdf19ecfb
+[testcontainers.org 00:00:01.21] Wait for Docker container ecabdf19ecfb to complete readiness checks
+[testcontainers.org 00:00:01.35] Execute "redis-cli ping" at Docker container ecabdf19ecfb
+[testcontainers.org 00:00:01.50] Docker container ecabdf19ecfb ready
+OverheadJitting  1: 1 op, 156000.00 ns, 156.0000 us/op
+WorkloadJitting  1: 1 op, 1801400.00 ns, 1.8014 ms/op
+
+OverheadJitting  2: 16 op, 276300.00 ns, 17.2688 us/op
+WorkloadJitting  2: 16 op, 6342300.00 ns, 396.3938 us/op
+
+WorkloadPilot    1: 16 op, 5278400.00 ns, 329.9000 us/op
+WorkloadPilot    2: 32 op, 8489500.00 ns, 265.2969 us/op
+WorkloadPilot    3: 64 op, 18204900.00 ns, 284.4516 us/op
+WorkloadPilot    4: 128 op, 33604500.00 ns, 262.5352 us/op
+WorkloadPilot    5: 256 op, 64005400.00 ns, 250.0211 us/op
+WorkloadPilot    6: 512 op, 135793100.00 ns, 265.2209 us/op
+WorkloadPilot    7: 1024 op, 252108600.00 ns, 246.1998 us/op
+WorkloadPilot    8: 2048 op, 494927700.00 ns, 241.6639 us/op
+WorkloadPilot    9: 4096 op, 885642800.00 ns, 216.2214 us/op
+
+OverheadWarmup   1: 4096 op, 13700.00 ns, 3.3447 ns/op
+OverheadWarmup   2: 4096 op, 9300.00 ns, 2.2705 ns/op
+OverheadWarmup   3: 4096 op, 11500.00 ns, 2.8076 ns/op
+OverheadWarmup   4: 4096 op, 11400.00 ns, 2.7832 ns/op
+OverheadWarmup   5: 4096 op, 11700.00 ns, 2.8564 ns/op
+OverheadWarmup   6: 4096 op, 10600.00 ns, 2.5879 ns/op
+
+OverheadActual   1: 4096 op, 9800.00 ns, 2.3926 ns/op
+OverheadActual   2: 4096 op, 10800.00 ns, 2.6367 ns/op
+OverheadActual   3: 4096 op, 13900.00 ns, 3.3936 ns/op
+OverheadActual   4: 4096 op, 14000.00 ns, 3.4180 ns/op
+OverheadActual   5: 4096 op, 14400.00 ns, 3.5156 ns/op
+OverheadActual   6: 4096 op, 14400.00 ns, 3.5156 ns/op
+OverheadActual   7: 4096 op, 14600.00 ns, 3.5645 ns/op
+OverheadActual   8: 4096 op, 12900.00 ns, 3.1494 ns/op
+OverheadActual   9: 4096 op, 12700.00 ns, 3.1006 ns/op
+OverheadActual  10: 4096 op, 14300.00 ns, 3.4912 ns/op
+OverheadActual  11: 4096 op, 17700.00 ns, 4.3213 ns/op
+OverheadActual  12: 4096 op, 12900.00 ns, 3.1494 ns/op
+OverheadActual  13: 4096 op, 12100.00 ns, 2.9541 ns/op
+OverheadActual  14: 4096 op, 8500.00 ns, 2.0752 ns/op
+OverheadActual  15: 4096 op, 8800.00 ns, 2.1484 ns/op
+OverheadActual  16: 4096 op, 9600.00 ns, 2.3438 ns/op
+OverheadActual  17: 4096 op, 16400.00 ns, 4.0039 ns/op
+OverheadActual  18: 4096 op, 46600.00 ns, 11.3770 ns/op
+OverheadActual  19: 4096 op, 13000.00 ns, 3.1738 ns/op
+OverheadActual  20: 4096 op, 11100.00 ns, 2.7100 ns/op
+
+WorkloadWarmup   1: 4096 op, 1183207800.00 ns, 288.8691 us/op
+
+// BeforeActualRun
+WorkloadActual   1: 4096 op, 1074610200.00 ns, 262.3560 us/op
+WorkloadActual   2: 4096 op, 941002100.00 ns, 229.7368 us/op
+WorkloadActual   3: 4096 op, 954024600.00 ns, 232.9162 us/op
+
+// AfterActualRun
+WorkloadResult   1: 4096 op, 1074597250.00 ns, 262.3528 us/op
+WorkloadResult   2: 4096 op, 940989150.00 ns, 229.7337 us/op
+WorkloadResult   3: 4096 op, 954011650.00 ns, 232.9130 us/op
+// GC:  0 0 0 1818864 4096
+// Threading:  8193 50 4096
+
+[testcontainers.org 00:00:11.22] Stop Docker container ecabdf19ecfb
+[testcontainers.org 00:00:11.66] Delete Docker container ecabdf19ecfb
+// AfterAll
+// Benchmark Process 44048 has exited with code 0.
+
+Mean = 241.667 μs, StdErr = 10.384 μs (4.30%), N = 3, StdDev = 17.985 μs
+Min = 229.734 μs, Q1 = 231.323 μs, Median = 232.913 μs, Q3 = 247.633 μs, Max = 262.353 μs
+IQR = 16.310 μs, LowerFence = 206.859 μs, UpperFence = 272.097 μs
+ConfidenceInterval = [-86.452 μs; 569.785 μs] (CI 99.9%), Margin = 328.119 μs (135.77% of Mean)
+Skewness = 0.37, Kurtosis = 0.67, MValue = 2
+
+// ** Remained 18 (90.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:14 (0h 3m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.Keva_Set_Small: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet Keva.Benchmarks-Job-YBPNYS-1.dll --anonymousPipes 1692 1644 --benchmarkName Keva.Benchmarks.RedisContainerBenchmarks.Keva_Set_Small --job "Runtime=.NET 8.0, IterationCount=3, WarmupCount=1" --benchmarkId 2 in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.2
+// Runtime=.NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT,AvxVnni,SERIALIZE VectorSize=256
+// Job: Job-WWFMMQ(IterationCount=3, WarmupCount=1)
+
+[testcontainers.org 00:00:00.20] Connected to Docker:
+  Host: npipe://./pipe/docker_engine
+  Server Version: 5.6.0
+  Kernel Version: 6.6.87.2-microsoft-standard-WSL2
+  API Version: 1.41
+  Operating System: fedora
+  Total Memory: 23.47 GB
+[testcontainers.org 00:00:00.37] Docker container 1b5a2657960b created
+[testcontainers.org 00:00:00.40] Start Docker container 1b5a2657960b
+[testcontainers.org 00:00:00.58] Wait for Docker container 1b5a2657960b to complete readiness checks
+[testcontainers.org 00:00:00.67] Docker container 1b5a2657960b ready
+[testcontainers.org 00:00:00.74] Docker container e42a2f899fe1 created
+[testcontainers.org 00:00:00.84] Start Docker container e42a2f899fe1
+[testcontainers.org 00:00:01.10] Wait for Docker container e42a2f899fe1 to complete readiness checks
+[testcontainers.org 00:00:01.24] Execute "redis-cli ping" at Docker container e42a2f899fe1
+[testcontainers.org 00:00:01.39] Docker container e42a2f899fe1 ready
+OverheadJitting  1: 1 op, 165900.00 ns, 165.9000 us/op
+WorkloadJitting  1: 1 op, 2758800.00 ns, 2.7588 ms/op
+
+OverheadJitting  2: 16 op, 346100.00 ns, 21.6313 us/op
+WorkloadJitting  2: 16 op, 18789900.00 ns, 1.1744 ms/op
+
+WorkloadPilot    1: 16 op, 20198400.00 ns, 1.2624 ms/op
+WorkloadPilot    2: 32 op, 37010900.00 ns, 1.1566 ms/op
+WorkloadPilot    3: 64 op, 70060500.00 ns, 1.0947 ms/op
+WorkloadPilot    4: 128 op, 142231600.00 ns, 1.1112 ms/op
+WorkloadPilot    5: 256 op, 262527400.00 ns, 1.0255 ms/op
+WorkloadPilot    6: 512 op, 377819000.00 ns, 737.9277 us/op
+WorkloadPilot    7: 1024 op, 676661500.00 ns, 660.8022 us/op
+
+OverheadWarmup   1: 1024 op, 6800.00 ns, 6.6406 ns/op
+OverheadWarmup   2: 1024 op, 3800.00 ns, 3.7109 ns/op
+OverheadWarmup   3: 1024 op, 4000.00 ns, 3.9063 ns/op
+OverheadWarmup   4: 1024 op, 3600.00 ns, 3.5156 ns/op
+OverheadWarmup   5: 1024 op, 3000.00 ns, 2.9297 ns/op
+OverheadWarmup   6: 1024 op, 3500.00 ns, 3.4180 ns/op
+OverheadWarmup   7: 1024 op, 3400.00 ns, 3.3203 ns/op
+
+OverheadActual   1: 1024 op, 3600.00 ns, 3.5156 ns/op
+OverheadActual   2: 1024 op, 3000.00 ns, 2.9297 ns/op
+OverheadActual   3: 1024 op, 2900.00 ns, 2.8320 ns/op
+OverheadActual   4: 1024 op, 3200.00 ns, 3.1250 ns/op
+OverheadActual   5: 1024 op, 3200.00 ns, 3.1250 ns/op
+OverheadActual   6: 1024 op, 3700.00 ns, 3.6133 ns/op
+OverheadActual   7: 1024 op, 3500.00 ns, 3.4180 ns/op
+OverheadActual   8: 1024 op, 4100.00 ns, 4.0039 ns/op
+OverheadActual   9: 1024 op, 3900.00 ns, 3.8086 ns/op
+OverheadActual  10: 1024 op, 3900.00 ns, 3.8086 ns/op
+OverheadActual  11: 1024 op, 3800.00 ns, 3.7109 ns/op
+OverheadActual  12: 1024 op, 3600.00 ns, 3.5156 ns/op
+OverheadActual  13: 1024 op, 3700.00 ns, 3.6133 ns/op
+OverheadActual  14: 1024 op, 4000.00 ns, 3.9063 ns/op
+OverheadActual  15: 1024 op, 4000.00 ns, 3.9063 ns/op
+OverheadActual  16: 1024 op, 4100.00 ns, 4.0039 ns/op
+OverheadActual  17: 1024 op, 3300.00 ns, 3.2227 ns/op
+OverheadActual  18: 1024 op, 4100.00 ns, 4.0039 ns/op
+OverheadActual  19: 1024 op, 3700.00 ns, 3.6133 ns/op
+OverheadActual  20: 1024 op, 4200.00 ns, 4.1016 ns/op
+
+WorkloadWarmup   1: 1024 op, 1039654100.00 ns, 1.0153 ms/op
+
+// BeforeActualRun
+WorkloadActual   1: 1024 op, 1131089200.00 ns, 1.1046 ms/op
+WorkloadActual   2: 1024 op, 845009200.00 ns, 825.2043 us/op
+WorkloadActual   3: 1024 op, 1242060600.00 ns, 1.2129 ms/op
+
+// AfterActualRun
+WorkloadResult   1: 1024 op, 1131085500.00 ns, 1.1046 ms/op
+WorkloadResult   2: 1024 op, 845005500.00 ns, 825.2007 us/op
+WorkloadResult   3: 1024 op, 1242056900.00 ns, 1.2129 ms/op
+// GC:  0 0 0 11720160 1024
+// Threading:  6149 4 1024
+// Exceptions:  1.8330078125
+
+[testcontainers.org 00:00:11.36] Stop Docker container e42a2f899fe1
+[testcontainers.org 00:00:12.00] Delete Docker container e42a2f899fe1
+// AfterAll
+// Benchmark Process 54968 has exited with code 0.
+
+Mean = 1.048 ms, StdErr = 0.116 ms (11.03%), N = 3, StdDev = 0.200 ms
+Min = 0.825 ms, Q1 = 0.965 ms, Median = 1.105 ms, Q3 = 1.159 ms, Max = 1.213 ms
+IQR = 0.194 ms, LowerFence = 0.674 ms, UpperFence = 1.450 ms
+ConfidenceInterval = [-2.602 ms; 4.697 ms] (CI 99.9%), Margin = 3.650 ms (348.41% of Mean)
+Skewness = -0.26, Kurtosis = 0.67, MValue = 2
+
+// ** Remained 17 (85.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:14 (0h 3m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.StackExchange_Set_Small: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet Keva.Benchmarks-Job-YBPNYS-1.dll --anonymousPipes 1704 1532 --benchmarkName Keva.Benchmarks.RedisContainerBenchmarks.StackExchange_Set_Small --job "Runtime=.NET 8.0, IterationCount=3, WarmupCount=1" --benchmarkId 3 in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.2
+// Runtime=.NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT,AvxVnni,SERIALIZE VectorSize=256
+// Job: Job-WWFMMQ(IterationCount=3, WarmupCount=1)
+
+[testcontainers.org 00:00:00.20] Connected to Docker:
+  Host: npipe://./pipe/docker_engine
+  Server Version: 5.6.0
+  Kernel Version: 6.6.87.2-microsoft-standard-WSL2
+  API Version: 1.41
+  Operating System: fedora
+  Total Memory: 23.47 GB
+[testcontainers.org 00:00:00.39] Docker container f6664a54d637 created
+[testcontainers.org 00:00:00.47] Start Docker container f6664a54d637
+[testcontainers.org 00:00:00.71] Wait for Docker container f6664a54d637 to complete readiness checks
+[testcontainers.org 00:00:00.75] Docker container f6664a54d637 ready
+[testcontainers.org 00:00:01.86] Docker container f7ffa76c1e0f created
+[testcontainers.org 00:00:02.00] Start Docker container f7ffa76c1e0f
+[testcontainers.org 00:00:02.29] Wait for Docker container f7ffa76c1e0f to complete readiness checks
+[testcontainers.org 00:00:02.43] Execute "redis-cli ping" at Docker container f7ffa76c1e0f
+[testcontainers.org 00:00:02.59] Docker container f7ffa76c1e0f ready
+OverheadJitting  1: 1 op, 130700.00 ns, 130.7000 us/op
+WorkloadJitting  1: 1 op, 3241300.00 ns, 3.2413 ms/op
+
+OverheadJitting  2: 16 op, 301200.00 ns, 18.8250 us/op
+WorkloadJitting  2: 16 op, 5098300.00 ns, 318.6438 us/op
+
+WorkloadPilot    1: 16 op, 4712600.00 ns, 294.5375 us/op
+WorkloadPilot    2: 32 op, 8138100.00 ns, 254.3156 us/op
+WorkloadPilot    3: 64 op, 23672200.00 ns, 369.8781 us/op
+WorkloadPilot    4: 128 op, 35991500.00 ns, 281.1836 us/op
+WorkloadPilot    5: 256 op, 68546600.00 ns, 267.7602 us/op
+WorkloadPilot    6: 512 op, 143439900.00 ns, 280.1561 us/op
+WorkloadPilot    7: 1024 op, 246523700.00 ns, 240.7458 us/op
+WorkloadPilot    8: 2048 op, 582999400.00 ns, 284.6677 us/op
+
+OverheadWarmup   1: 2048 op, 14900.00 ns, 7.2754 ns/op
+OverheadWarmup   2: 2048 op, 6900.00 ns, 3.3691 ns/op
+OverheadWarmup   3: 2048 op, 6300.00 ns, 3.0762 ns/op
+OverheadWarmup   4: 2048 op, 6700.00 ns, 3.2715 ns/op
+OverheadWarmup   5: 2048 op, 6900.00 ns, 3.3691 ns/op
+OverheadWarmup   6: 2048 op, 7000.00 ns, 3.4180 ns/op
+OverheadWarmup   7: 2048 op, 7300.00 ns, 3.5645 ns/op
+OverheadWarmup   8: 2048 op, 7000.00 ns, 3.4180 ns/op
+OverheadWarmup   9: 2048 op, 6900.00 ns, 3.3691 ns/op
+OverheadWarmup  10: 2048 op, 6800.00 ns, 3.3203 ns/op
+
+OverheadActual   1: 2048 op, 5900.00 ns, 2.8809 ns/op
+OverheadActual   2: 2048 op, 6500.00 ns, 3.1738 ns/op
+OverheadActual   3: 2048 op, 6400.00 ns, 3.1250 ns/op
+OverheadActual   4: 2048 op, 6700.00 ns, 3.2715 ns/op
+OverheadActual   5: 2048 op, 7100.00 ns, 3.4668 ns/op
+OverheadActual   6: 2048 op, 6100.00 ns, 2.9785 ns/op
+OverheadActual   7: 2048 op, 5900.00 ns, 2.8809 ns/op
+OverheadActual   8: 2048 op, 6800.00 ns, 3.3203 ns/op
+OverheadActual   9: 2048 op, 6700.00 ns, 3.2715 ns/op
+OverheadActual  10: 2048 op, 5900.00 ns, 2.8809 ns/op
+OverheadActual  11: 2048 op, 6900.00 ns, 3.3691 ns/op
+OverheadActual  12: 2048 op, 5600.00 ns, 2.7344 ns/op
+OverheadActual  13: 2048 op, 5300.00 ns, 2.5879 ns/op
+OverheadActual  14: 2048 op, 5600.00 ns, 2.7344 ns/op
+OverheadActual  15: 2048 op, 5900.00 ns, 2.8809 ns/op
+OverheadActual  16: 2048 op, 5700.00 ns, 2.7832 ns/op
+OverheadActual  17: 2048 op, 6300.00 ns, 3.0762 ns/op
+OverheadActual  18: 2048 op, 6500.00 ns, 3.1738 ns/op
+OverheadActual  19: 2048 op, 5900.00 ns, 2.8809 ns/op
+OverheadActual  20: 2048 op, 6500.00 ns, 3.1738 ns/op
+
+WorkloadWarmup   1: 2048 op, 641728300.00 ns, 313.3439 us/op
+
+// BeforeActualRun
+WorkloadActual   1: 2048 op, 615474600.00 ns, 300.5247 us/op
+WorkloadActual   2: 2048 op, 525760700.00 ns, 256.7191 us/op
+WorkloadActual   3: 2048 op, 497925100.00 ns, 243.1275 us/op
+
+// AfterActualRun
+WorkloadResult   1: 2048 op, 615468400.00 ns, 300.5217 us/op
+WorkloadResult   2: 2048 op, 525754500.00 ns, 256.7161 us/op
+WorkloadResult   3: 2048 op, 497918900.00 ns, 243.1245 us/op
+// GC:  0 0 0 966896 2048
+// Threading:  4097 27 2048
+
+[testcontainers.org 00:00:09.20] Stop Docker container f7ffa76c1e0f
+[testcontainers.org 00:00:09.70] Delete Docker container f7ffa76c1e0f
+// AfterAll
+// Benchmark Process 44532 has exited with code 0.
+
+Mean = 266.787 μs, StdErr = 17.317 μs (6.49%), N = 3, StdDev = 29.995 μs
+Min = 243.124 μs, Q1 = 249.920 μs, Median = 256.716 μs, Q3 = 278.619 μs, Max = 300.522 μs
+IQR = 28.699 μs, LowerFence = 206.872 μs, UpperFence = 321.667 μs
+ConfidenceInterval = [-280.428 μs; 814.003 μs] (CI 99.9%), Margin = 547.216 μs (205.11% of Mean)
+Skewness = 0.3, Kurtosis = 0.67, MValue = 2
+
+// ** Remained 16 (80.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:14 (0h 3m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.Keva_Set_Medium: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet Keva.Benchmarks-Job-YBPNYS-1.dll --anonymousPipes 1764 1760 --benchmarkName Keva.Benchmarks.RedisContainerBenchmarks.Keva_Set_Medium --job "Runtime=.NET 8.0, IterationCount=3, WarmupCount=1" --benchmarkId 4 in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.2
+// Runtime=.NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT,AvxVnni,SERIALIZE VectorSize=256
+// Job: Job-WWFMMQ(IterationCount=3, WarmupCount=1)
+
+[testcontainers.org 00:00:00.21] Connected to Docker:
+  Host: npipe://./pipe/docker_engine
+  Server Version: 5.6.0
+  Kernel Version: 6.6.87.2-microsoft-standard-WSL2
+  API Version: 1.41
+  Operating System: fedora
+  Total Memory: 23.47 GB
+[testcontainers.org 00:00:00.38] Docker container 799bc975c95c created
+[testcontainers.org 00:00:00.42] Start Docker container 799bc975c95c
+[testcontainers.org 00:00:00.63] Wait for Docker container 799bc975c95c to complete readiness checks
+[testcontainers.org 00:00:00.71] Docker container 799bc975c95c ready
+[testcontainers.org 00:00:01.79] Docker container 462e64fe8e10 created
+[testcontainers.org 00:00:01.92] Start Docker container 462e64fe8e10
+[testcontainers.org 00:00:02.15] Wait for Docker container 462e64fe8e10 to complete readiness checks
+[testcontainers.org 00:00:02.29] Execute "redis-cli ping" at Docker container 462e64fe8e10
+[testcontainers.org 00:00:02.45] Docker container 462e64fe8e10 ready
+OverheadJitting  1: 1 op, 137800.00 ns, 137.8000 us/op
+WorkloadJitting  1: 1 op, 2999900.00 ns, 2.9999 ms/op
+
+OverheadJitting  2: 16 op, 387100.00 ns, 24.1938 us/op
+WorkloadJitting  2: 16 op, 22668200.00 ns, 1.4168 ms/op
+
+WorkloadPilot    1: 16 op, 19818300.00 ns, 1.2386 ms/op
+WorkloadPilot    2: 32 op, 36458900.00 ns, 1.1393 ms/op
+WorkloadPilot    3: 64 op, 73815100.00 ns, 1.1534 ms/op
+WorkloadPilot    4: 128 op, 143741900.00 ns, 1.1230 ms/op
+WorkloadPilot    5: 256 op, 255254800.00 ns, 997.0891 us/op
+WorkloadPilot    6: 512 op, 399071500.00 ns, 779.4365 us/op
+WorkloadPilot    7: 1024 op, 694134100.00 ns, 677.8653 us/op
+
+OverheadWarmup   1: 1024 op, 7900.00 ns, 7.7148 ns/op
+OverheadWarmup   2: 1024 op, 3600.00 ns, 3.5156 ns/op
+OverheadWarmup   3: 1024 op, 3500.00 ns, 3.4180 ns/op
+OverheadWarmup   4: 1024 op, 3500.00 ns, 3.4180 ns/op
+OverheadWarmup   5: 1024 op, 3600.00 ns, 3.5156 ns/op
+OverheadWarmup   6: 1024 op, 2800.00 ns, 2.7344 ns/op
+OverheadWarmup   7: 1024 op, 3600.00 ns, 3.5156 ns/op
+
+OverheadActual   1: 1024 op, 3700.00 ns, 3.6133 ns/op
+OverheadActual   2: 1024 op, 3200.00 ns, 3.1250 ns/op
+OverheadActual   3: 1024 op, 3300.00 ns, 3.2227 ns/op
+OverheadActual   4: 1024 op, 4700.00 ns, 4.5898 ns/op
+OverheadActual   5: 1024 op, 3100.00 ns, 3.0273 ns/op
+OverheadActual   6: 1024 op, 3300.00 ns, 3.2227 ns/op
+OverheadActual   7: 1024 op, 2800.00 ns, 2.7344 ns/op
+OverheadActual   8: 1024 op, 3300.00 ns, 3.2227 ns/op
+OverheadActual   9: 1024 op, 4700.00 ns, 4.5898 ns/op
+OverheadActual  10: 1024 op, 3800.00 ns, 3.7109 ns/op
+OverheadActual  11: 1024 op, 3500.00 ns, 3.4180 ns/op
+OverheadActual  12: 1024 op, 3800.00 ns, 3.7109 ns/op
+OverheadActual  13: 1024 op, 4100.00 ns, 4.0039 ns/op
+OverheadActual  14: 1024 op, 3500.00 ns, 3.4180 ns/op
+OverheadActual  15: 1024 op, 3300.00 ns, 3.2227 ns/op
+OverheadActual  16: 1024 op, 3700.00 ns, 3.6133 ns/op
+OverheadActual  17: 1024 op, 2800.00 ns, 2.7344 ns/op
+OverheadActual  18: 1024 op, 3200.00 ns, 3.1250 ns/op
+OverheadActual  19: 1024 op, 3400.00 ns, 3.3203 ns/op
+OverheadActual  20: 1024 op, 3500.00 ns, 3.4180 ns/op
+
+WorkloadWarmup   1: 1024 op, 930523100.00 ns, 908.7140 us/op
+
+// BeforeActualRun
+WorkloadActual   1: 1024 op, 1049572100.00 ns, 1.0250 ms/op
+WorkloadActual   2: 1024 op, 1148119000.00 ns, 1.1212 ms/op
+WorkloadActual   3: 1024 op, 1167878300.00 ns, 1.1405 ms/op
+
+// AfterActualRun
+WorkloadResult   1: 1024 op, 1049568650.00 ns, 1.0250 ms/op
+WorkloadResult   2: 1024 op, 1148115550.00 ns, 1.1212 ms/op
+WorkloadResult   3: 1024 op, 1167874850.00 ns, 1.1405 ms/op
+// GC:  1 0 0 14800632 1024
+// Threading:  6024 6 1024
+// Exceptions:  1.7529296875
+
+[testcontainers.org 00:00:12.43] Stop Docker container 462e64fe8e10
+[testcontainers.org 00:00:12.93] Delete Docker container 462e64fe8e10
+// AfterAll
+// Benchmark Process 41388 has exited with code 0.
+
+Mean = 1.096 ms, StdErr = 0.036 ms (3.26%), N = 3, StdDev = 0.062 ms
+Min = 1.025 ms, Q1 = 1.073 ms, Median = 1.121 ms, Q3 = 1.131 ms, Max = 1.141 ms
+IQR = 0.058 ms, LowerFence = 0.986 ms, UpperFence = 1.218 ms
+ConfidenceInterval = [-0.034 ms; 2.225 ms] (CI 99.9%), Margin = 1.129 ms (103.06% of Mean)
+Skewness = -0.34, Kurtosis = 0.67, MValue = 2
+
+// ** Remained 15 (75.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:14 (0h 3m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.StackExchange_Set_Medium: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet Keva.Benchmarks-Job-YBPNYS-1.dll --anonymousPipes 1648 1796 --benchmarkName Keva.Benchmarks.RedisContainerBenchmarks.StackExchange_Set_Medium --job "Runtime=.NET 8.0, IterationCount=3, WarmupCount=1" --benchmarkId 5 in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.2
+// Runtime=.NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT,AvxVnni,SERIALIZE VectorSize=256
+// Job: Job-WWFMMQ(IterationCount=3, WarmupCount=1)
+
+[testcontainers.org 00:00:00.20] Connected to Docker:
+  Host: npipe://./pipe/docker_engine
+  Server Version: 5.6.0
+  Kernel Version: 6.6.87.2-microsoft-standard-WSL2
+  API Version: 1.41
+  Operating System: fedora
+  Total Memory: 23.47 GB
+[testcontainers.org 00:00:00.40] Docker container 2d864b07493d created
+[testcontainers.org 00:00:00.55] Start Docker container 2d864b07493d
+[testcontainers.org 00:00:00.79] Wait for Docker container 2d864b07493d to complete readiness checks
+[testcontainers.org 00:00:00.88] Docker container 2d864b07493d ready
+[testcontainers.org 00:00:01.49] Docker container 47b847bd1a77 created
+[testcontainers.org 00:00:01.66] Start Docker container 47b847bd1a77
+[testcontainers.org 00:00:01.94] Wait for Docker container 47b847bd1a77 to complete readiness checks
+[testcontainers.org 00:00:02.08] Execute "redis-cli ping" at Docker container 47b847bd1a77
+[testcontainers.org 00:00:02.22] Docker container 47b847bd1a77 ready
+OverheadJitting  1: 1 op, 146400.00 ns, 146.4000 us/op
+WorkloadJitting  1: 1 op, 3148300.00 ns, 3.1483 ms/op
+
+OverheadJitting  2: 16 op, 301000.00 ns, 18.8125 us/op
+WorkloadJitting  2: 16 op, 5778200.00 ns, 361.1375 us/op
+
+WorkloadPilot    1: 16 op, 5438000.00 ns, 339.8750 us/op
+WorkloadPilot    2: 32 op, 9882700.00 ns, 308.8344 us/op
+WorkloadPilot    3: 64 op, 20670100.00 ns, 322.9703 us/op
+WorkloadPilot    4: 128 op, 43199600.00 ns, 337.4969 us/op
+WorkloadPilot    5: 256 op, 70548400.00 ns, 275.5797 us/op
+WorkloadPilot    6: 512 op, 134769600.00 ns, 263.2219 us/op
+WorkloadPilot    7: 1024 op, 270438100.00 ns, 264.0997 us/op
+WorkloadPilot    8: 2048 op, 509402300.00 ns, 248.7316 us/op
+
+OverheadWarmup   1: 2048 op, 8100.00 ns, 3.9551 ns/op
+OverheadWarmup   2: 2048 op, 6200.00 ns, 3.0273 ns/op
+OverheadWarmup   3: 2048 op, 5200.00 ns, 2.5391 ns/op
+OverheadWarmup   4: 2048 op, 6600.00 ns, 3.2227 ns/op
+OverheadWarmup   5: 2048 op, 6900.00 ns, 3.3691 ns/op
+OverheadWarmup   6: 2048 op, 7100.00 ns, 3.4668 ns/op
+OverheadWarmup   7: 2048 op, 6800.00 ns, 3.3203 ns/op
+OverheadWarmup   8: 2048 op, 7300.00 ns, 3.5645 ns/op
+OverheadWarmup   9: 2048 op, 6900.00 ns, 3.3691 ns/op
+
+OverheadActual   1: 2048 op, 5700.00 ns, 2.7832 ns/op
+OverheadActual   2: 2048 op, 6300.00 ns, 3.0762 ns/op
+OverheadActual   3: 2048 op, 7300.00 ns, 3.5645 ns/op
+OverheadActual   4: 2048 op, 7600.00 ns, 3.7109 ns/op
+OverheadActual   5: 2048 op, 6400.00 ns, 3.1250 ns/op
+OverheadActual   6: 2048 op, 6000.00 ns, 2.9297 ns/op
+OverheadActual   7: 2048 op, 5800.00 ns, 2.8320 ns/op
+OverheadActual   8: 2048 op, 6600.00 ns, 3.2227 ns/op
+OverheadActual   9: 2048 op, 7100.00 ns, 3.4668 ns/op
+OverheadActual  10: 2048 op, 5700.00 ns, 2.7832 ns/op
+OverheadActual  11: 2048 op, 5500.00 ns, 2.6855 ns/op
+OverheadActual  12: 2048 op, 6500.00 ns, 3.1738 ns/op
+OverheadActual  13: 2048 op, 6300.00 ns, 3.0762 ns/op
+OverheadActual  14: 2048 op, 5000.00 ns, 2.4414 ns/op
+OverheadActual  15: 2048 op, 6000.00 ns, 2.9297 ns/op
+OverheadActual  16: 2048 op, 6300.00 ns, 3.0762 ns/op
+OverheadActual  17: 2048 op, 5500.00 ns, 2.6855 ns/op
+OverheadActual  18: 2048 op, 5900.00 ns, 2.8809 ns/op
+OverheadActual  19: 2048 op, 6100.00 ns, 2.9785 ns/op
+OverheadActual  20: 2048 op, 5600.00 ns, 2.7344 ns/op
+
+WorkloadWarmup   1: 2048 op, 611339400.00 ns, 298.5056 us/op
+
+// BeforeActualRun
+WorkloadActual   1: 2048 op, 631197700.00 ns, 308.2020 us/op
+WorkloadActual   2: 2048 op, 636289200.00 ns, 310.6881 us/op
+WorkloadActual   3: 2048 op, 497403400.00 ns, 242.8728 us/op
+
+// AfterActualRun
+WorkloadResult   1: 2048 op, 631191650.00 ns, 308.1990 us/op
+WorkloadResult   2: 2048 op, 636283150.00 ns, 310.6851 us/op
+WorkloadResult   3: 2048 op, 497397350.00 ns, 242.8698 us/op
+// GC:  0 0 0 966896 2048
+// Threading:  4097 12 2048
+
+[testcontainers.org 00:00:08.92] Stop Docker container 47b847bd1a77
+[testcontainers.org 00:00:09.47] Delete Docker container 47b847bd1a77
+// AfterAll
+// Benchmark Process 4840 has exited with code 0.
+
+Mean = 287.251 μs, StdErr = 22.202 μs (7.73%), N = 3, StdDev = 38.456 μs
+Min = 242.870 μs, Q1 = 275.534 μs, Median = 308.199 μs, Q3 = 309.442 μs, Max = 310.685 μs
+IQR = 33.908 μs, LowerFence = 224.673 μs, UpperFence = 360.304 μs
+ConfidenceInterval = [-414.322 μs; 988.825 μs] (CI 99.9%), Margin = 701.574 μs (244.24% of Mean)
+Skewness = -0.38, Kurtosis = 0.67, MValue = 2
+
+// ** Remained 14 (70.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:14 (0h 2m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.Keva_Set_Large: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet Keva.Benchmarks-Job-YBPNYS-1.dll --anonymousPipes 1616 1468 --benchmarkName Keva.Benchmarks.RedisContainerBenchmarks.Keva_Set_Large --job "Runtime=.NET 8.0, IterationCount=3, WarmupCount=1" --benchmarkId 6 in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.2
+// Runtime=.NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT,AvxVnni,SERIALIZE VectorSize=256
+// Job: Job-WWFMMQ(IterationCount=3, WarmupCount=1)
+
+[testcontainers.org 00:00:00.26] Connected to Docker:
+  Host: npipe://./pipe/docker_engine
+  Server Version: 5.6.0
+  Kernel Version: 6.6.87.2-microsoft-standard-WSL2
+  API Version: 1.41
+  Operating System: fedora
+  Total Memory: 23.47 GB
+[testcontainers.org 00:00:00.45] Docker container 82e8f463f41d created
+[testcontainers.org 00:00:00.56] Start Docker container 82e8f463f41d
+[testcontainers.org 00:00:00.78] Wait for Docker container 82e8f463f41d to complete readiness checks
+[testcontainers.org 00:00:00.87] Docker container 82e8f463f41d ready
+[testcontainers.org 00:00:01.96] Docker container 6a7c50dd5486 created
+[testcontainers.org 00:00:02.09] Start Docker container 6a7c50dd5486
+[testcontainers.org 00:00:02.33] Wait for Docker container 6a7c50dd5486 to complete readiness checks
+[testcontainers.org 00:00:02.51] Execute "redis-cli ping" at Docker container 6a7c50dd5486
+[testcontainers.org 00:00:02.67] Docker container 6a7c50dd5486 ready
+OverheadJitting  1: 1 op, 130500.00 ns, 130.5000 us/op
+WorkloadJitting  1: 1 op, 2688500.00 ns, 2.6885 ms/op
+
+OverheadJitting  2: 16 op, 432100.00 ns, 27.0063 us/op
+WorkloadJitting  2: 16 op, 18686100.00 ns, 1.1679 ms/op
+
+WorkloadPilot    1: 16 op, 19875300.00 ns, 1.2422 ms/op
+WorkloadPilot    2: 32 op, 40238900.00 ns, 1.2575 ms/op
+WorkloadPilot    3: 64 op, 68820200.00 ns, 1.0753 ms/op
+WorkloadPilot    4: 128 op, 131613400.00 ns, 1.0282 ms/op
+WorkloadPilot    5: 256 op, 289663500.00 ns, 1.1315 ms/op
+WorkloadPilot    6: 512 op, 372942300.00 ns, 728.4029 us/op
+WorkloadPilot    7: 1024 op, 724037000.00 ns, 707.0674 us/op
+
+OverheadWarmup   1: 1024 op, 6000.00 ns, 5.8594 ns/op
+OverheadWarmup   2: 1024 op, 4000.00 ns, 3.9063 ns/op
+OverheadWarmup   3: 1024 op, 4400.00 ns, 4.2969 ns/op
+OverheadWarmup   4: 1024 op, 3100.00 ns, 3.0273 ns/op
+OverheadWarmup   5: 1024 op, 4700.00 ns, 4.5898 ns/op
+OverheadWarmup   6: 1024 op, 4200.00 ns, 4.1016 ns/op
+
+OverheadActual   1: 1024 op, 3600.00 ns, 3.5156 ns/op
+OverheadActual   2: 1024 op, 3400.00 ns, 3.3203 ns/op
+OverheadActual   3: 1024 op, 3800.00 ns, 3.7109 ns/op
+OverheadActual   4: 1024 op, 3800.00 ns, 3.7109 ns/op
+OverheadActual   5: 1024 op, 3100.00 ns, 3.0273 ns/op
+OverheadActual   6: 1024 op, 4400.00 ns, 4.2969 ns/op
+OverheadActual   7: 1024 op, 3500.00 ns, 3.4180 ns/op
+OverheadActual   8: 1024 op, 3500.00 ns, 3.4180 ns/op
+OverheadActual   9: 1024 op, 3900.00 ns, 3.8086 ns/op
+OverheadActual  10: 1024 op, 4000.00 ns, 3.9063 ns/op
+OverheadActual  11: 1024 op, 3600.00 ns, 3.5156 ns/op
+OverheadActual  12: 1024 op, 3500.00 ns, 3.4180 ns/op
+OverheadActual  13: 1024 op, 3700.00 ns, 3.6133 ns/op
+OverheadActual  14: 1024 op, 3600.00 ns, 3.5156 ns/op
+OverheadActual  15: 1024 op, 3900.00 ns, 3.8086 ns/op
+OverheadActual  16: 1024 op, 3700.00 ns, 3.6133 ns/op
+OverheadActual  17: 1024 op, 4700.00 ns, 4.5898 ns/op
+OverheadActual  18: 1024 op, 4300.00 ns, 4.1992 ns/op
+OverheadActual  19: 1024 op, 3900.00 ns, 3.8086 ns/op
+OverheadActual  20: 1024 op, 3400.00 ns, 3.3203 ns/op
+
+WorkloadWarmup   1: 1024 op, 956267700.00 ns, 933.8552 us/op
+
+// BeforeActualRun
+WorkloadActual   1: 1024 op, 1091141400.00 ns, 1.0656 ms/op
+WorkloadActual   2: 1024 op, 1150307000.00 ns, 1.1233 ms/op
+WorkloadActual   3: 1024 op, 1284728200.00 ns, 1.2546 ms/op
+
+// AfterActualRun
+WorkloadResult   1: 1024 op, 1091137700.00 ns, 1.0656 ms/op
+WorkloadResult   2: 1024 op, 1150303300.00 ns, 1.1233 ms/op
+WorkloadResult   3: 1024 op, 1284724500.00 ns, 1.2546 ms/op
+// GC:  4 2 0 53780344 1024
+// Threading:  6177 12 1024
+// Exceptions:  1.8583984375
+
+[testcontainers.org 00:00:12.73] Stop Docker container 6a7c50dd5486
+[testcontainers.org 00:00:13.42] Delete Docker container 6a7c50dd5486
+// AfterAll
+// Benchmark Process 43124 has exited with code 0.
+
+Mean = 1.148 ms, StdErr = 0.056 ms (4.87%), N = 3, StdDev = 0.097 ms
+Min = 1.066 ms, Q1 = 1.094 ms, Median = 1.123 ms, Q3 = 1.189 ms, Max = 1.255 ms
+IQR = 0.095 ms, LowerFence = 0.953 ms, UpperFence = 1.331 ms
+ConfidenceInterval = [-0.620 ms; 2.915 ms] (CI 99.9%), Margin = 1.767 ms (153.97% of Mean)
+Skewness = 0.24, Kurtosis = 0.67, MValue = 2
+
+// ** Remained 13 (65.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:14 (0h 2m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.StackExchange_Set_Large: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet Keva.Benchmarks-Job-YBPNYS-1.dll --anonymousPipes 1636 888 --benchmarkName Keva.Benchmarks.RedisContainerBenchmarks.StackExchange_Set_Large --job "Runtime=.NET 8.0, IterationCount=3, WarmupCount=1" --benchmarkId 7 in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.2
+// Runtime=.NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT,AvxVnni,SERIALIZE VectorSize=256
+// Job: Job-WWFMMQ(IterationCount=3, WarmupCount=1)
+
+[testcontainers.org 00:00:00.23] Connected to Docker:
+  Host: npipe://./pipe/docker_engine
+  Server Version: 5.6.0
+  Kernel Version: 6.6.87.2-microsoft-standard-WSL2
+  API Version: 1.41
+  Operating System: fedora
+  Total Memory: 23.47 GB
+[testcontainers.org 00:00:00.40] Docker container 8d8bed2e098f created
+[testcontainers.org 00:00:00.48] Start Docker container 8d8bed2e098f
+[testcontainers.org 00:00:00.80] Wait for Docker container 8d8bed2e098f to complete readiness checks
+[testcontainers.org 00:00:00.84] Docker container 8d8bed2e098f ready
+[testcontainers.org 00:00:01.42] Docker container f64b46eccfc3 created
+[testcontainers.org 00:00:01.51] Start Docker container f64b46eccfc3
+[testcontainers.org 00:00:01.79] Wait for Docker container f64b46eccfc3 to complete readiness checks
+[testcontainers.org 00:00:01.89] Execute "redis-cli ping" at Docker container f64b46eccfc3
+[testcontainers.org 00:00:02.06] Docker container f64b46eccfc3 ready
+OverheadJitting  1: 1 op, 192300.00 ns, 192.3000 us/op
+WorkloadJitting  1: 1 op, 5100100.00 ns, 5.1001 ms/op
+
+OverheadJitting  2: 16 op, 414000.00 ns, 25.8750 us/op
+WorkloadJitting  2: 16 op, 9141500.00 ns, 571.3438 us/op
+
+WorkloadPilot    1: 16 op, 7912500.00 ns, 494.5313 us/op
+WorkloadPilot    2: 32 op, 14336400.00 ns, 448.0125 us/op
+WorkloadPilot    3: 64 op, 26656100.00 ns, 416.5016 us/op
+WorkloadPilot    4: 128 op, 52760300.00 ns, 412.1898 us/op
+WorkloadPilot    5: 256 op, 92335800.00 ns, 360.6867 us/op
+WorkloadPilot    6: 512 op, 163099300.00 ns, 318.5533 us/op
+WorkloadPilot    7: 1024 op, 310732800.00 ns, 303.4500 us/op
+WorkloadPilot    8: 2048 op, 622495900.00 ns, 303.9531 us/op
+
+OverheadWarmup   1: 2048 op, 8900.00 ns, 4.3457 ns/op
+OverheadWarmup   2: 2048 op, 6000.00 ns, 2.9297 ns/op
+OverheadWarmup   3: 2048 op, 5800.00 ns, 2.8320 ns/op
+OverheadWarmup   4: 2048 op, 5400.00 ns, 2.6367 ns/op
+OverheadWarmup   5: 2048 op, 5300.00 ns, 2.5879 ns/op
+OverheadWarmup   6: 2048 op, 5900.00 ns, 2.8809 ns/op
+OverheadWarmup   7: 2048 op, 5700.00 ns, 2.7832 ns/op
+OverheadWarmup   8: 2048 op, 6700.00 ns, 3.2715 ns/op
+OverheadWarmup   9: 2048 op, 7300.00 ns, 3.5645 ns/op
+OverheadWarmup  10: 2048 op, 7400.00 ns, 3.6133 ns/op
+
+OverheadActual   1: 2048 op, 7300.00 ns, 3.5645 ns/op
+OverheadActual   2: 2048 op, 5700.00 ns, 2.7832 ns/op
+OverheadActual   3: 2048 op, 5800.00 ns, 2.8320 ns/op
+OverheadActual   4: 2048 op, 6200.00 ns, 3.0273 ns/op
+OverheadActual   5: 2048 op, 7200.00 ns, 3.5156 ns/op
+OverheadActual   6: 2048 op, 5800.00 ns, 2.8320 ns/op
+OverheadActual   7: 2048 op, 5800.00 ns, 2.8320 ns/op
+OverheadActual   8: 2048 op, 6100.00 ns, 2.9785 ns/op
+OverheadActual   9: 2048 op, 6400.00 ns, 3.1250 ns/op
+OverheadActual  10: 2048 op, 7300.00 ns, 3.5645 ns/op
+OverheadActual  11: 2048 op, 8000.00 ns, 3.9063 ns/op
+OverheadActual  12: 2048 op, 7400.00 ns, 3.6133 ns/op
+OverheadActual  13: 2048 op, 7600.00 ns, 3.7109 ns/op
+OverheadActual  14: 2048 op, 5600.00 ns, 2.7344 ns/op
+OverheadActual  15: 2048 op, 7100.00 ns, 3.4668 ns/op
+OverheadActual  16: 2048 op, 5400.00 ns, 2.6367 ns/op
+OverheadActual  17: 2048 op, 5500.00 ns, 2.6855 ns/op
+OverheadActual  18: 2048 op, 6000.00 ns, 2.9297 ns/op
+OverheadActual  19: 2048 op, 5400.00 ns, 2.6367 ns/op
+OverheadActual  20: 2048 op, 6000.00 ns, 2.9297 ns/op
+
+WorkloadWarmup   1: 2048 op, 643641600.00 ns, 314.2781 us/op
+
+// BeforeActualRun
+WorkloadActual   1: 2048 op, 539640800.00 ns, 263.4965 us/op
+WorkloadActual   2: 2048 op, 559734600.00 ns, 273.3079 us/op
+WorkloadActual   3: 2048 op, 549484700.00 ns, 268.3031 us/op
+
+// AfterActualRun
+WorkloadResult   1: 2048 op, 539634750.00 ns, 263.4935 us/op
+WorkloadResult   2: 2048 op, 559728550.00 ns, 273.3050 us/op
+WorkloadResult   3: 2048 op, 549478650.00 ns, 268.3001 us/op
+// GC:  0 0 0 966896 2048
+// Threading:  4096 26 2048
+
+[testcontainers.org 00:00:08.96] Stop Docker container f64b46eccfc3
+[testcontainers.org 00:00:09.49] Delete Docker container f64b46eccfc3
+// AfterAll
+// Benchmark Process 58232 has exited with code 0.
+
+Mean = 268.366 μs, StdErr = 2.833 μs (1.06%), N = 3, StdDev = 4.906 μs
+Min = 263.494 μs, Q1 = 265.897 μs, Median = 268.300 μs, Q3 = 270.803 μs, Max = 273.305 μs
+IQR = 4.906 μs, LowerFence = 258.538 μs, UpperFence = 278.161 μs
+ConfidenceInterval = [178.862 μs; 357.871 μs] (CI 99.9%), Margin = 89.505 μs (33.35% of Mean)
+Skewness = 0.01, Kurtosis = 0.67, MValue = 2
+
+// ** Remained 12 (60.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:14 (0h 2m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.Keva_Get: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet Keva.Benchmarks-Job-YBPNYS-1.dll --anonymousPipes 1604 1612 --benchmarkName Keva.Benchmarks.RedisContainerBenchmarks.Keva_Get --job "Runtime=.NET 8.0, IterationCount=3, WarmupCount=1" --benchmarkId 8 in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.2
+// Runtime=.NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT,AvxVnni,SERIALIZE VectorSize=256
+// Job: Job-WWFMMQ(IterationCount=3, WarmupCount=1)
+
+[testcontainers.org 00:00:00.27] Connected to Docker:
+  Host: npipe://./pipe/docker_engine
+  Server Version: 5.6.0
+  Kernel Version: 6.6.87.2-microsoft-standard-WSL2
+  API Version: 1.41
+  Operating System: fedora
+  Total Memory: 23.47 GB
+[testcontainers.org 00:00:00.48] Docker container afe39503b1a8 created
+[testcontainers.org 00:00:00.56] Start Docker container afe39503b1a8
+[testcontainers.org 00:00:00.80] Wait for Docker container afe39503b1a8 to complete readiness checks
+[testcontainers.org 00:00:00.88] Docker container afe39503b1a8 ready
+[testcontainers.org 00:00:01.47] Docker container 63d4b5aed527 created
+[testcontainers.org 00:00:01.61] Start Docker container 63d4b5aed527
+[testcontainers.org 00:00:01.90] Wait for Docker container 63d4b5aed527 to complete readiness checks
+[testcontainers.org 00:00:02.04] Execute "redis-cli ping" at Docker container 63d4b5aed527
+[testcontainers.org 00:00:02.24] Docker container 63d4b5aed527 ready
+OverheadJitting  1: 1 op, 146300.00 ns, 146.3000 us/op
+WorkloadJitting  1: 1 op, 3139100.00 ns, 3.1391 ms/op
+
+OverheadJitting  2: 16 op, 425400.00 ns, 26.5875 us/op
+WorkloadJitting  2: 16 op, 19319700.00 ns, 1.2075 ms/op
+
+WorkloadPilot    1: 16 op, 16120600.00 ns, 1.0075 ms/op
+WorkloadPilot    2: 32 op, 31946300.00 ns, 998.3219 us/op
+WorkloadPilot    3: 64 op, 66135800.00 ns, 1.0334 ms/op
+WorkloadPilot    4: 128 op, 134674200.00 ns, 1.0521 ms/op
+WorkloadPilot    5: 256 op, 244117600.00 ns, 953.5844 us/op
+WorkloadPilot    6: 512 op, 354174700.00 ns, 691.7475 us/op
+WorkloadPilot    7: 1024 op, 675638500.00 ns, 659.8032 us/op
+
+OverheadWarmup   1: 1024 op, 7200.00 ns, 7.0313 ns/op
+OverheadWarmup   2: 1024 op, 5000.00 ns, 4.8828 ns/op
+OverheadWarmup   3: 1024 op, 4700.00 ns, 4.5898 ns/op
+OverheadWarmup   4: 1024 op, 4500.00 ns, 4.3945 ns/op
+OverheadWarmup   5: 1024 op, 5800.00 ns, 5.6641 ns/op
+OverheadWarmup   6: 1024 op, 5000.00 ns, 4.8828 ns/op
+OverheadWarmup   7: 1024 op, 6000.00 ns, 5.8594 ns/op
+OverheadWarmup   8: 1024 op, 6400.00 ns, 6.2500 ns/op
+OverheadWarmup   9: 1024 op, 5700.00 ns, 5.5664 ns/op
+
+OverheadActual   1: 1024 op, 5700.00 ns, 5.5664 ns/op
+OverheadActual   2: 1024 op, 5100.00 ns, 4.9805 ns/op
+OverheadActual   3: 1024 op, 4900.00 ns, 4.7852 ns/op
+OverheadActual   4: 1024 op, 5600.00 ns, 5.4688 ns/op
+OverheadActual   5: 1024 op, 6500.00 ns, 6.3477 ns/op
+OverheadActual   6: 1024 op, 7400.00 ns, 7.2266 ns/op
+OverheadActual   7: 1024 op, 6800.00 ns, 6.6406 ns/op
+OverheadActual   8: 1024 op, 4900.00 ns, 4.7852 ns/op
+OverheadActual   9: 1024 op, 5000.00 ns, 4.8828 ns/op
+OverheadActual  10: 1024 op, 5900.00 ns, 5.7617 ns/op
+OverheadActual  11: 1024 op, 5400.00 ns, 5.2734 ns/op
+OverheadActual  12: 1024 op, 4600.00 ns, 4.4922 ns/op
+OverheadActual  13: 1024 op, 5200.00 ns, 5.0781 ns/op
+OverheadActual  14: 1024 op, 6500.00 ns, 6.3477 ns/op
+OverheadActual  15: 1024 op, 7100.00 ns, 6.9336 ns/op
+OverheadActual  16: 1024 op, 4900.00 ns, 4.7852 ns/op
+OverheadActual  17: 1024 op, 5300.00 ns, 5.1758 ns/op
+OverheadActual  18: 1024 op, 5200.00 ns, 5.0781 ns/op
+OverheadActual  19: 1024 op, 5200.00 ns, 5.0781 ns/op
+OverheadActual  20: 1024 op, 5700.00 ns, 5.5664 ns/op
+
+WorkloadWarmup   1: 1024 op, 1129891100.00 ns, 1.1034 ms/op
+
+// BeforeActualRun
+WorkloadActual   1: 1024 op, 1163749100.00 ns, 1.1365 ms/op
+WorkloadActual   2: 1024 op, 1258392400.00 ns, 1.2289 ms/op
+WorkloadActual   3: 1024 op, 832196100.00 ns, 812.6915 us/op
+
+// AfterActualRun
+WorkloadResult   1: 1024 op, 1163743750.00 ns, 1.1365 ms/op
+WorkloadResult   2: 1024 op, 1258387050.00 ns, 1.2289 ms/op
+WorkloadResult   3: 1024 op, 832190750.00 ns, 812.6863 us/op
+// GC:  0 0 0 11663784 1024
+// Threading:  6087 0 1024
+// Exceptions:  1.861328125
+
+[testcontainers.org 00:00:11.88] Stop Docker container 63d4b5aed527
+[testcontainers.org 00:00:12.53] Delete Docker container 63d4b5aed527
+// AfterAll
+// Benchmark Process 58440 has exited with code 0.
+
+Mean = 1.059 ms, StdErr = 0.126 ms (11.91%), N = 3, StdDev = 0.219 ms
+Min = 0.813 ms, Q1 = 0.975 ms, Median = 1.136 ms, Q3 = 1.183 ms, Max = 1.229 ms
+IQR = 0.208 ms, LowerFence = 0.662 ms, UpperFence = 1.495 ms
+ConfidenceInterval = [-2.928 ms; 5.047 ms] (CI 99.9%), Margin = 3.987 ms (376.39% of Mean)
+Skewness = -0.31, Kurtosis = 0.67, MValue = 2
+
+// ** Remained 11 (55.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:14 (0h 2m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.StackExchange_Get: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet Keva.Benchmarks-Job-YBPNYS-1.dll --anonymousPipes 1496 1532 --benchmarkName Keva.Benchmarks.RedisContainerBenchmarks.StackExchange_Get --job "Runtime=.NET 8.0, IterationCount=3, WarmupCount=1" --benchmarkId 9 in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.2
+// Runtime=.NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT,AvxVnni,SERIALIZE VectorSize=256
+// Job: Job-WWFMMQ(IterationCount=3, WarmupCount=1)
+
+[testcontainers.org 00:00:00.23] Connected to Docker:
+  Host: npipe://./pipe/docker_engine
+  Server Version: 5.6.0
+  Kernel Version: 6.6.87.2-microsoft-standard-WSL2
+  API Version: 1.41
+  Operating System: fedora
+  Total Memory: 23.47 GB
+[testcontainers.org 00:00:00.40] Docker container b8be3ed02b2c created
+[testcontainers.org 00:00:00.43] Start Docker container b8be3ed02b2c
+[testcontainers.org 00:00:00.64] Wait for Docker container b8be3ed02b2c to complete readiness checks
+[testcontainers.org 00:00:00.73] Docker container b8be3ed02b2c ready
+[testcontainers.org 00:00:01.30] Docker container b5d739cb246c created
+[testcontainers.org 00:00:01.47] Start Docker container b5d739cb246c
+[testcontainers.org 00:00:01.72] Wait for Docker container b5d739cb246c to complete readiness checks
+[testcontainers.org 00:00:01.86] Execute "redis-cli ping" at Docker container b5d739cb246c
+[testcontainers.org 00:00:02.00] Docker container b5d739cb246c ready
+OverheadJitting  1: 1 op, 173200.00 ns, 173.2000 us/op
+WorkloadJitting  1: 1 op, 4357600.00 ns, 4.3576 ms/op
+
+OverheadJitting  2: 16 op, 286900.00 ns, 17.9313 us/op
+WorkloadJitting  2: 16 op, 6656900.00 ns, 416.0563 us/op
+
+WorkloadPilot    1: 16 op, 7160400.00 ns, 447.5250 us/op
+WorkloadPilot    2: 32 op, 9357500.00 ns, 292.4219 us/op
+WorkloadPilot    3: 64 op, 17391100.00 ns, 271.7359 us/op
+WorkloadPilot    4: 128 op, 46088200.00 ns, 360.0641 us/op
+WorkloadPilot    5: 256 op, 73875700.00 ns, 288.5770 us/op
+WorkloadPilot    6: 512 op, 128200200.00 ns, 250.3910 us/op
+WorkloadPilot    7: 1024 op, 243550800.00 ns, 237.8426 us/op
+WorkloadPilot    8: 2048 op, 506015200.00 ns, 247.0777 us/op
+
+OverheadWarmup   1: 2048 op, 7900.00 ns, 3.8574 ns/op
+OverheadWarmup   2: 2048 op, 6200.00 ns, 3.0273 ns/op
+OverheadWarmup   3: 2048 op, 6700.00 ns, 3.2715 ns/op
+OverheadWarmup   4: 2048 op, 6100.00 ns, 2.9785 ns/op
+OverheadWarmup   5: 2048 op, 6700.00 ns, 3.2715 ns/op
+OverheadWarmup   6: 2048 op, 7000.00 ns, 3.4180 ns/op
+OverheadWarmup   7: 2048 op, 6300.00 ns, 3.0762 ns/op
+
+OverheadActual   1: 2048 op, 6200.00 ns, 3.0273 ns/op
+OverheadActual   2: 2048 op, 5900.00 ns, 2.8809 ns/op
+OverheadActual   3: 2048 op, 5900.00 ns, 2.8809 ns/op
+OverheadActual   4: 2048 op, 6000.00 ns, 2.9297 ns/op
+OverheadActual   5: 2048 op, 6000.00 ns, 2.9297 ns/op
+OverheadActual   6: 2048 op, 5900.00 ns, 2.8809 ns/op
+OverheadActual   7: 2048 op, 5800.00 ns, 2.8320 ns/op
+OverheadActual   8: 2048 op, 6000.00 ns, 2.9297 ns/op
+OverheadActual   9: 2048 op, 4700.00 ns, 2.2949 ns/op
+OverheadActual  10: 2048 op, 5400.00 ns, 2.6367 ns/op
+OverheadActual  11: 2048 op, 5500.00 ns, 2.6855 ns/op
+OverheadActual  12: 2048 op, 6400.00 ns, 3.1250 ns/op
+OverheadActual  13: 2048 op, 6100.00 ns, 2.9785 ns/op
+OverheadActual  14: 2048 op, 5600.00 ns, 2.7344 ns/op
+OverheadActual  15: 2048 op, 6200.00 ns, 3.0273 ns/op
+OverheadActual  16: 2048 op, 5500.00 ns, 2.6855 ns/op
+OverheadActual  17: 2048 op, 6900.00 ns, 3.3691 ns/op
+OverheadActual  18: 2048 op, 7600.00 ns, 3.7109 ns/op
+OverheadActual  19: 2048 op, 8500.00 ns, 4.1504 ns/op
+OverheadActual  20: 2048 op, 8000.00 ns, 3.9063 ns/op
+
+WorkloadWarmup   1: 2048 op, 582685400.00 ns, 284.5144 us/op
+
+// BeforeActualRun
+WorkloadActual   1: 2048 op, 596774600.00 ns, 291.3938 us/op
+WorkloadActual   2: 2048 op, 578031500.00 ns, 282.2419 us/op
+WorkloadActual   3: 2048 op, 545545100.00 ns, 266.3794 us/op
+
+// AfterActualRun
+WorkloadResult   1: 2048 op, 596768600.00 ns, 291.3909 us/op
+WorkloadResult   2: 2048 op, 578025500.00 ns, 282.2390 us/op
+WorkloadResult   3: 2048 op, 545539100.00 ns, 266.3765 us/op
+// GC:  0 0 0 1114352 2048
+// Threading:  4097 17 2048
+
+[testcontainers.org 00:00:08.50] Stop Docker container b5d739cb246c
+[testcontainers.org 00:00:08.94] Delete Docker container b5d739cb246c
+// AfterAll
+// Benchmark Process 58768 has exited with code 0.
+
+Mean = 280.002 μs, StdErr = 7.307 μs (2.61%), N = 3, StdDev = 12.656 μs
+Min = 266.377 μs, Q1 = 274.308 μs, Median = 282.239 μs, Q3 = 286.815 μs, Max = 291.391 μs
+IQR = 12.507 μs, LowerFence = 255.547 μs, UpperFence = 305.576 μs
+ConfidenceInterval = [49.104 μs; 510.901 μs] (CI 99.9%), Margin = 230.899 μs (82.46% of Mean)
+Skewness = -0.17, Kurtosis = 0.67, MValue = 2
+
+// ** Remained 10 (50.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:14 (0h 1m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.Keva_MGet: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet Keva.Benchmarks-Job-YBPNYS-1.dll --anonymousPipes 1596 1804 --benchmarkName Keva.Benchmarks.RedisContainerBenchmarks.Keva_MGet --job "Runtime=.NET 8.0, IterationCount=3, WarmupCount=1" --benchmarkId 10 in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.2
+// Runtime=.NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT,AvxVnni,SERIALIZE VectorSize=256
+// Job: Job-WWFMMQ(IterationCount=3, WarmupCount=1)
+
+[testcontainers.org 00:00:00.22] Connected to Docker:
+  Host: npipe://./pipe/docker_engine
+  Server Version: 5.6.0
+  Kernel Version: 6.6.87.2-microsoft-standard-WSL2
+  API Version: 1.41
+  Operating System: fedora
+  Total Memory: 23.47 GB
+[testcontainers.org 00:00:00.40] Docker container 6af8da9126fe created
+[testcontainers.org 00:00:00.56] Start Docker container 6af8da9126fe
+[testcontainers.org 00:00:00.74] Wait for Docker container 6af8da9126fe to complete readiness checks
+[testcontainers.org 00:00:00.78] Docker container 6af8da9126fe ready
+[testcontainers.org 00:00:00.87] Docker container 9108f5d98a34 created
+[testcontainers.org 00:00:01.05] Start Docker container 9108f5d98a34
+[testcontainers.org 00:00:01.34] Wait for Docker container 9108f5d98a34 to complete readiness checks
+[testcontainers.org 00:00:01.40] Execute "redis-cli ping" at Docker container 9108f5d98a34
+[testcontainers.org 00:00:01.59] Docker container 9108f5d98a34 ready
+OverheadJitting  1: 1 op, 212800.00 ns, 212.8000 us/op
+
+System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+ ---> System.InvalidOperationException: Expected array response, got SimpleString
+   at Keva.Client.KevaClient.MGetAsync(String[] keys) in D:\git\Keva\src\Keva.Client\KevaClient.cs:line 151
+   at Keva.Benchmarks.RedisContainerBenchmarks.Keva_MGet() in D:\git\Keva\benchmarks\Keva.Benchmarks\RedisContainerBenchmarks.cs:line 158
+   at BenchmarkDotNet.Helpers.AwaitHelper.GetResult[T](Task`1 task)
+   at BenchmarkDotNet.Autogenerated.Runnable_10.<.ctor>b__3_4() in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\Keva.Benchmarks-Job-YBPNYS-1.notcs:line 2200
+   at BenchmarkDotNet.Autogenerated.Runnable_10.WorkloadActionNoUnroll(Int64 invokeCount) in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\Keva.Benchmarks-Job-YBPNYS-1.notcs:line 2316
+   at BenchmarkDotNet.Engines.Engine.Measure(Action`1 action, Int64 invokeCount)
+   at BenchmarkDotNet.Engines.Engine.RunIteration(IterationData data)
+   at BenchmarkDotNet.Engines.EngineFactory.Jit(Engine engine, Int32 jitIndex, Int32 invokeCount, Int32 unrollFactor)
+   at BenchmarkDotNet.Engines.EngineFactory.CreateReadyToRun(EngineParameters engineParameters)
+   at BenchmarkDotNet.Autogenerated.Runnable_10.Run(IHost host, String benchmarkName) in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\Keva.Benchmarks-Job-YBPNYS-1.notcs:line 2179
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at BenchmarkDotNet.Autogenerated.UniqueProgramName.AfterAssemblyLoadingAttached(String[] args) in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\Keva.Benchmarks-Job-YBPNYS-1.notcs:line 57
+// AfterAll
+No Workload Results were obtained from the run.
+// Benchmark Process 39108 has exited with code -1.
+
+// ** Remained 9 (45.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:13 (0h 1m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.StackExchange_MGet: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet Keva.Benchmarks-Job-YBPNYS-1.dll --anonymousPipes 1860 1836 --benchmarkName Keva.Benchmarks.RedisContainerBenchmarks.StackExchange_MGet --job "Runtime=.NET 8.0, IterationCount=3, WarmupCount=1" --benchmarkId 11 in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.2
+// Runtime=.NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT,AvxVnni,SERIALIZE VectorSize=256
+// Job: Job-WWFMMQ(IterationCount=3, WarmupCount=1)
+
+[testcontainers.org 00:00:00.18] Connected to Docker:
+  Host: npipe://./pipe/docker_engine
+  Server Version: 5.6.0
+  Kernel Version: 6.6.87.2-microsoft-standard-WSL2
+  API Version: 1.41
+  Operating System: fedora
+  Total Memory: 23.47 GB
+[testcontainers.org 00:00:00.37] Docker container e4824759476e created
+[testcontainers.org 00:00:00.41] Start Docker container e4824759476e
+[testcontainers.org 00:00:00.61] Wait for Docker container e4824759476e to complete readiness checks
+[testcontainers.org 00:00:00.70] Docker container e4824759476e ready
+[testcontainers.org 00:00:00.79] Docker container 6128b1b5f655 created
+[testcontainers.org 00:00:00.89] Start Docker container 6128b1b5f655
+[testcontainers.org 00:00:01.13] Wait for Docker container 6128b1b5f655 to complete readiness checks
+[testcontainers.org 00:00:01.18] Execute "redis-cli ping" at Docker container 6128b1b5f655
+[testcontainers.org 00:00:01.32] Docker container 6128b1b5f655 ready
+OverheadJitting  1: 1 op, 167000.00 ns, 167.0000 us/op
+WorkloadJitting  1: 1 op, 5507000.00 ns, 5.5070 ms/op
+
+OverheadJitting  2: 16 op, 437500.00 ns, 27.3438 us/op
+WorkloadJitting  2: 16 op, 5975400.00 ns, 373.4625 us/op
+
+WorkloadPilot    1: 16 op, 4567500.00 ns, 285.4688 us/op
+WorkloadPilot    2: 32 op, 9668200.00 ns, 302.1313 us/op
+WorkloadPilot    3: 64 op, 20199700.00 ns, 315.6203 us/op
+WorkloadPilot    4: 128 op, 39499900.00 ns, 308.5930 us/op
+WorkloadPilot    5: 256 op, 65883100.00 ns, 257.3559 us/op
+WorkloadPilot    6: 512 op, 137682800.00 ns, 268.9117 us/op
+WorkloadPilot    7: 1024 op, 230976000.00 ns, 225.5625 us/op
+WorkloadPilot    8: 2048 op, 473595300.00 ns, 231.2477 us/op
+WorkloadPilot    9: 4096 op, 970284700.00 ns, 236.8859 us/op
+
+OverheadWarmup   1: 4096 op, 16800.00 ns, 4.1016 ns/op
+OverheadWarmup   2: 4096 op, 16800.00 ns, 4.1016 ns/op
+OverheadWarmup   3: 4096 op, 17400.00 ns, 4.2480 ns/op
+OverheadWarmup   4: 4096 op, 14000.00 ns, 3.4180 ns/op
+OverheadWarmup   5: 4096 op, 15000.00 ns, 3.6621 ns/op
+
+OverheadActual   1: 4096 op, 15300.00 ns, 3.7354 ns/op
+OverheadActual   2: 4096 op, 15000.00 ns, 3.6621 ns/op
+OverheadActual   3: 4096 op, 14500.00 ns, 3.5400 ns/op
+OverheadActual   4: 4096 op, 13500.00 ns, 3.2959 ns/op
+OverheadActual   5: 4096 op, 14600.00 ns, 3.5645 ns/op
+OverheadActual   6: 4096 op, 13600.00 ns, 3.3203 ns/op
+OverheadActual   7: 4096 op, 14900.00 ns, 3.6377 ns/op
+OverheadActual   8: 4096 op, 14900.00 ns, 3.6377 ns/op
+OverheadActual   9: 4096 op, 14600.00 ns, 3.5645 ns/op
+OverheadActual  10: 4096 op, 14500.00 ns, 3.5400 ns/op
+OverheadActual  11: 4096 op, 15500.00 ns, 3.7842 ns/op
+OverheadActual  12: 4096 op, 16600.00 ns, 4.0527 ns/op
+OverheadActual  13: 4096 op, 13800.00 ns, 3.3691 ns/op
+OverheadActual  14: 4096 op, 14600.00 ns, 3.5645 ns/op
+OverheadActual  15: 4096 op, 15300.00 ns, 3.7354 ns/op
+
+WorkloadWarmup   1: 4096 op, 995178400.00 ns, 242.9635 us/op
+
+// BeforeActualRun
+WorkloadActual   1: 4096 op, 1068797100.00 ns, 260.9368 us/op
+WorkloadActual   2: 4096 op, 1121002000.00 ns, 273.6821 us/op
+WorkloadActual   3: 4096 op, 967291900.00 ns, 236.1552 us/op
+
+// AfterActualRun
+WorkloadResult   1: 4096 op, 1068782500.00 ns, 260.9332 us/op
+WorkloadResult   2: 4096 op, 1120987400.00 ns, 273.6786 us/op
+WorkloadResult   3: 4096 op, 967277300.00 ns, 236.1517 us/op
+// GC:  0 0 0 3752176 4096
+// Threading:  8193 25 4096
+
+[testcontainers.org 00:00:11.12] Stop Docker container 6128b1b5f655
+[testcontainers.org 00:00:11.74] Delete Docker container 6128b1b5f655
+// AfterAll
+// Benchmark Process 60096 has exited with code 0.
+
+Mean = 256.921 μs, StdErr = 11.017 μs (4.29%), N = 3, StdDev = 19.082 μs
+Min = 236.152 μs, Q1 = 248.542 μs, Median = 260.933 μs, Q3 = 267.306 μs, Max = 273.679 μs
+IQR = 18.763 μs, LowerFence = 220.397 μs, UpperFence = 295.451 μs
+ConfidenceInterval = [-91.213 μs; 605.056 μs] (CI 99.9%), Margin = 348.135 μs (135.50% of Mean)
+Skewness = -0.2, Kurtosis = 0.67, MValue = 2
+
+// ** Remained 8 (40.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:13 (0h 1m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.Keva_Pipeline_5_Sets: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet Keva.Benchmarks-Job-YBPNYS-1.dll --anonymousPipes 1860 1836 --benchmarkName Keva.Benchmarks.RedisContainerBenchmarks.Keva_Pipeline_5_Sets --job "Runtime=.NET 8.0, IterationCount=3, WarmupCount=1" --benchmarkId 12 in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.2
+// Runtime=.NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT,AvxVnni,SERIALIZE VectorSize=256
+// Job: Job-WWFMMQ(IterationCount=3, WarmupCount=1)
+
+[testcontainers.org 00:00:00.20] Connected to Docker:
+  Host: npipe://./pipe/docker_engine
+  Server Version: 5.6.0
+  Kernel Version: 6.6.87.2-microsoft-standard-WSL2
+  API Version: 1.41
+  Operating System: fedora
+  Total Memory: 23.47 GB
+[testcontainers.org 00:00:00.36] Docker container 1571a0e4ee7f created
+[testcontainers.org 00:00:00.39] Start Docker container 1571a0e4ee7f
+[testcontainers.org 00:00:00.64] Wait for Docker container 1571a0e4ee7f to complete readiness checks
+[testcontainers.org 00:00:00.72] Docker container 1571a0e4ee7f ready
+[testcontainers.org 00:00:00.81] Docker container 579b5eebb0af created
+[testcontainers.org 00:00:00.99] Start Docker container 579b5eebb0af
+[testcontainers.org 00:00:01.28] Wait for Docker container 579b5eebb0af to complete readiness checks
+[testcontainers.org 00:00:01.46] Execute "redis-cli ping" at Docker container 579b5eebb0af
+[testcontainers.org 00:00:01.61] Docker container 579b5eebb0af ready
+OverheadJitting  1: 1 op, 111800.00 ns, 111.8000 us/op
+WorkloadJitting  1: 1 op, 3069400.00 ns, 3.0694 ms/op
+
+OverheadJitting  2: 16 op, 196600.00 ns, 12.2875 us/op
+WorkloadJitting  2: 16 op, 29228900.00 ns, 1.8268 ms/op
+
+WorkloadPilot    1: 16 op, 35026000.00 ns, 2.1891 ms/op
+WorkloadPilot    2: 32 op, 64458100.00 ns, 2.0143 ms/op
+WorkloadPilot    3: 64 op, 129236700.00 ns, 2.0193 ms/op
+WorkloadPilot    4: 128 op, 237924600.00 ns, 1.8588 ms/op
+WorkloadPilot    5: 256 op, 494474300.00 ns, 1.9315 ms/op
+WorkloadPilot    6: 512 op, 905682900.00 ns, 1.7689 ms/op
+
+OverheadWarmup   1: 512 op, 6000.00 ns, 11.7188 ns/op
+OverheadWarmup   2: 512 op, 3700.00 ns, 7.2266 ns/op
+OverheadWarmup   3: 512 op, 4500.00 ns, 8.7891 ns/op
+OverheadWarmup   4: 512 op, 3100.00 ns, 6.0547 ns/op
+OverheadWarmup   5: 512 op, 3300.00 ns, 6.4453 ns/op
+OverheadWarmup   6: 512 op, 3900.00 ns, 7.6172 ns/op
+OverheadWarmup   7: 512 op, 3100.00 ns, 6.0547 ns/op
+
+OverheadActual   1: 512 op, 3000.00 ns, 5.8594 ns/op
+OverheadActual   2: 512 op, 3300.00 ns, 6.4453 ns/op
+OverheadActual   3: 512 op, 3800.00 ns, 7.4219 ns/op
+OverheadActual   4: 512 op, 3600.00 ns, 7.0313 ns/op
+OverheadActual   5: 512 op, 4000.00 ns, 7.8125 ns/op
+OverheadActual   6: 512 op, 3200.00 ns, 6.2500 ns/op
+OverheadActual   7: 512 op, 3100.00 ns, 6.0547 ns/op
+OverheadActual   8: 512 op, 2900.00 ns, 5.6641 ns/op
+OverheadActual   9: 512 op, 3300.00 ns, 6.4453 ns/op
+OverheadActual  10: 512 op, 2800.00 ns, 5.4688 ns/op
+OverheadActual  11: 512 op, 2900.00 ns, 5.6641 ns/op
+OverheadActual  12: 512 op, 3800.00 ns, 7.4219 ns/op
+OverheadActual  13: 512 op, 3300.00 ns, 6.4453 ns/op
+OverheadActual  14: 512 op, 2900.00 ns, 5.6641 ns/op
+OverheadActual  15: 512 op, 2800.00 ns, 5.4688 ns/op
+OverheadActual  16: 512 op, 3100.00 ns, 6.0547 ns/op
+OverheadActual  17: 512 op, 3100.00 ns, 6.0547 ns/op
+OverheadActual  18: 512 op, 3300.00 ns, 6.4453 ns/op
+OverheadActual  19: 512 op, 4100.00 ns, 8.0078 ns/op
+OverheadActual  20: 512 op, 2700.00 ns, 5.2734 ns/op
+
+WorkloadWarmup   1: 512 op, 858004800.00 ns, 1.6758 ms/op
+
+// BeforeActualRun
+WorkloadActual   1: 512 op, 873532500.00 ns, 1.7061 ms/op
+WorkloadActual   2: 512 op, 891657700.00 ns, 1.7415 ms/op
+WorkloadActual   3: 512 op, 975994500.00 ns, 1.9062 ms/op
+
+// AfterActualRun
+WorkloadResult   1: 512 op, 873529350.00 ns, 1.7061 ms/op
+WorkloadResult   2: 512 op, 891654550.00 ns, 1.7415 ms/op
+WorkloadResult   3: 512 op, 975991350.00 ns, 1.9062 ms/op
+// GC:  2 1 0 29379960 512
+// Threading:  15183 2 512
+// Exceptions:  9.3359375
+
+[testcontainers.org 00:00:10.97] Stop Docker container 579b5eebb0af
+[testcontainers.org 00:00:11.56] Delete Docker container 579b5eebb0af
+// AfterAll
+// Benchmark Process 54616 has exited with code 0.
+
+Mean = 1.785 ms, StdErr = 0.062 ms (3.46%), N = 3, StdDev = 0.107 ms
+Min = 1.706 ms, Q1 = 1.724 ms, Median = 1.742 ms, Q3 = 1.824 ms, Max = 1.906 ms
+IQR = 0.100 ms, LowerFence = 1.574 ms, UpperFence = 1.974 ms
+ConfidenceInterval = [-0.164 ms; 3.733 ms] (CI 99.9%), Margin = 1.948 ms (109.18% of Mean)
+Skewness = 0.34, Kurtosis = 0.67, MValue = 2
+
+// ** Remained 7 (35.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:13 (0h 1m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.StackExchange_Pipeline_5_Sets: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet Keva.Benchmarks-Job-YBPNYS-1.dll --anonymousPipes 1424 1604 --benchmarkName Keva.Benchmarks.RedisContainerBenchmarks.StackExchange_Pipeline_5_Sets --job "Runtime=.NET 8.0, IterationCount=3, WarmupCount=1" --benchmarkId 13 in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.2
+// Runtime=.NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT,AvxVnni,SERIALIZE VectorSize=256
+// Job: Job-WWFMMQ(IterationCount=3, WarmupCount=1)
+
+[testcontainers.org 00:00:00.20] Connected to Docker:
+  Host: npipe://./pipe/docker_engine
+  Server Version: 5.6.0
+  Kernel Version: 6.6.87.2-microsoft-standard-WSL2
+  API Version: 1.41
+  Operating System: fedora
+  Total Memory: 23.47 GB
+[testcontainers.org 00:00:00.37] Docker container 45d15666c04c created
+[testcontainers.org 00:00:00.45] Start Docker container 45d15666c04c
+[testcontainers.org 00:00:00.69] Wait for Docker container 45d15666c04c to complete readiness checks
+[testcontainers.org 00:00:00.75] Docker container 45d15666c04c ready
+[testcontainers.org 00:00:00.86] Docker container 4ec056a1fda9 created
+[testcontainers.org 00:00:00.88] Start Docker container 4ec056a1fda9
+[testcontainers.org 00:00:01.12] Wait for Docker container 4ec056a1fda9 to complete readiness checks
+[testcontainers.org 00:00:01.25] Execute "redis-cli ping" at Docker container 4ec056a1fda9
+[testcontainers.org 00:00:01.40] Docker container 4ec056a1fda9 ready
+OverheadJitting  1: 1 op, 120700.00 ns, 120.7000 us/op
+WorkloadJitting  1: 1 op, 4101700.00 ns, 4.1017 ms/op
+
+OverheadJitting  2: 16 op, 232400.00 ns, 14.5250 us/op
+WorkloadJitting  2: 16 op, 10414800.00 ns, 650.9250 us/op
+
+WorkloadPilot    1: 16 op, 7322300.00 ns, 457.6438 us/op
+WorkloadPilot    2: 32 op, 11498500.00 ns, 359.3281 us/op
+WorkloadPilot    3: 64 op, 23676000.00 ns, 369.9375 us/op
+WorkloadPilot    4: 128 op, 48939100.00 ns, 382.3367 us/op
+WorkloadPilot    5: 256 op, 85576900.00 ns, 334.2848 us/op
+WorkloadPilot    6: 512 op, 175634100.00 ns, 343.0354 us/op
+WorkloadPilot    7: 1024 op, 323572400.00 ns, 315.9887 us/op
+WorkloadPilot    8: 2048 op, 572150000.00 ns, 279.3701 us/op
+
+OverheadWarmup   1: 2048 op, 9700.00 ns, 4.7363 ns/op
+OverheadWarmup   2: 2048 op, 6000.00 ns, 2.9297 ns/op
+OverheadWarmup   3: 2048 op, 6500.00 ns, 3.1738 ns/op
+OverheadWarmup   4: 2048 op, 6200.00 ns, 3.0273 ns/op
+OverheadWarmup   5: 2048 op, 6500.00 ns, 3.1738 ns/op
+OverheadWarmup   6: 2048 op, 6400.00 ns, 3.1250 ns/op
+
+OverheadActual   1: 2048 op, 6600.00 ns, 3.2227 ns/op
+OverheadActual   2: 2048 op, 5400.00 ns, 2.6367 ns/op
+OverheadActual   3: 2048 op, 4900.00 ns, 2.3926 ns/op
+OverheadActual   4: 2048 op, 5600.00 ns, 2.7344 ns/op
+OverheadActual   5: 2048 op, 5400.00 ns, 2.6367 ns/op
+OverheadActual   6: 2048 op, 5600.00 ns, 2.7344 ns/op
+OverheadActual   7: 2048 op, 5700.00 ns, 2.7832 ns/op
+OverheadActual   8: 2048 op, 5500.00 ns, 2.6855 ns/op
+OverheadActual   9: 2048 op, 5900.00 ns, 2.8809 ns/op
+OverheadActual  10: 2048 op, 5100.00 ns, 2.4902 ns/op
+OverheadActual  11: 2048 op, 6500.00 ns, 3.1738 ns/op
+OverheadActual  12: 2048 op, 5000.00 ns, 2.4414 ns/op
+OverheadActual  13: 2048 op, 5500.00 ns, 2.6855 ns/op
+OverheadActual  14: 2048 op, 4800.00 ns, 2.3438 ns/op
+OverheadActual  15: 2048 op, 5500.00 ns, 2.6855 ns/op
+OverheadActual  16: 2048 op, 5200.00 ns, 2.5391 ns/op
+OverheadActual  17: 2048 op, 5500.00 ns, 2.6855 ns/op
+OverheadActual  18: 2048 op, 5700.00 ns, 2.7832 ns/op
+OverheadActual  19: 2048 op, 5800.00 ns, 2.8320 ns/op
+OverheadActual  20: 2048 op, 8600.00 ns, 4.1992 ns/op
+
+WorkloadWarmup   1: 2048 op, 591471200.00 ns, 288.8043 us/op
+
+// BeforeActualRun
+WorkloadActual   1: 2048 op, 650275500.00 ns, 317.5173 us/op
+WorkloadActual   2: 2048 op, 620688900.00 ns, 303.0708 us/op
+WorkloadActual   3: 2048 op, 643116200.00 ns, 314.0216 us/op
+
+// AfterActualRun
+WorkloadResult   1: 2048 op, 650270000.00 ns, 317.5146 us/op
+WorkloadResult   2: 2048 op, 620683400.00 ns, 303.0681 us/op
+WorkloadResult   3: 2048 op, 643110700.00 ns, 314.0189 us/op
+// GC:  0 0 0 6161160 2048
+// Threading:  12288 12 2048
+
+[testcontainers.org 00:00:08.47] Stop Docker container 4ec056a1fda9
+[testcontainers.org 00:00:09.12] Delete Docker container 4ec056a1fda9
+// AfterAll
+// Benchmark Process 46488 has exited with code 0.
+
+Mean = 311.534 μs, StdErr = 4.352 μs (1.40%), N = 3, StdDev = 7.537 μs
+Min = 303.068 μs, Q1 = 308.543 μs, Median = 314.019 μs, Q3 = 315.767 μs, Max = 317.515 μs
+IQR = 7.223 μs, LowerFence = 297.709 μs, UpperFence = 326.602 μs
+ConfidenceInterval = [174.030 μs; 449.038 μs] (CI 99.9%), Margin = 137.504 μs (44.14% of Mean)
+Skewness = -0.29, Kurtosis = 0.67, MValue = 2
+
+// ** Remained 6 (30.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:13 (0h 1m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.Keva_Exists: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet Keva.Benchmarks-Job-YBPNYS-1.dll --anonymousPipes 1588 1840 --benchmarkName Keva.Benchmarks.RedisContainerBenchmarks.Keva_Exists --job "Runtime=.NET 8.0, IterationCount=3, WarmupCount=1" --benchmarkId 14 in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.2
+// Runtime=.NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT,AvxVnni,SERIALIZE VectorSize=256
+// Job: Job-WWFMMQ(IterationCount=3, WarmupCount=1)
+
+[testcontainers.org 00:00:00.46] Connected to Docker:
+  Host: npipe://./pipe/docker_engine
+  Server Version: 5.6.0
+  Kernel Version: 6.6.87.2-microsoft-standard-WSL2
+  API Version: 1.41
+  Operating System: fedora
+  Total Memory: 23.47 GB
+[testcontainers.org 00:00:00.63] Docker container 677a361bb842 created
+[testcontainers.org 00:00:00.71] Start Docker container 677a361bb842
+[testcontainers.org 00:00:00.88] Wait for Docker container 677a361bb842 to complete readiness checks
+[testcontainers.org 00:00:00.93] Docker container 677a361bb842 ready
+[testcontainers.org 00:00:01.54] Docker container 10ec5c745d44 created
+[testcontainers.org 00:00:01.68] Start Docker container 10ec5c745d44
+[testcontainers.org 00:00:01.89] Wait for Docker container 10ec5c745d44 to complete readiness checks
+[testcontainers.org 00:00:02.07] Execute "redis-cli ping" at Docker container 10ec5c745d44
+[testcontainers.org 00:00:02.22] Docker container 10ec5c745d44 ready
+OverheadJitting  1: 1 op, 150700.00 ns, 150.7000 us/op
+WorkloadJitting  1: 1 op, 3030600.00 ns, 3.0306 ms/op
+
+OverheadJitting  2: 16 op, 406200.00 ns, 25.3875 us/op
+WorkloadJitting  2: 16 op, 23226000.00 ns, 1.4516 ms/op
+
+WorkloadPilot    1: 16 op, 22428600.00 ns, 1.4018 ms/op
+WorkloadPilot    2: 32 op, 42936200.00 ns, 1.3418 ms/op
+WorkloadPilot    3: 64 op, 85245100.00 ns, 1.3320 ms/op
+WorkloadPilot    4: 128 op, 168055500.00 ns, 1.3129 ms/op
+WorkloadPilot    5: 256 op, 285503100.00 ns, 1.1152 ms/op
+WorkloadPilot    6: 512 op, 435562700.00 ns, 850.7084 us/op
+WorkloadPilot    7: 1024 op, 658468300.00 ns, 643.0354 us/op
+
+OverheadWarmup   1: 1024 op, 5800.00 ns, 5.6641 ns/op
+OverheadWarmup   2: 1024 op, 3400.00 ns, 3.3203 ns/op
+OverheadWarmup   3: 1024 op, 3100.00 ns, 3.0273 ns/op
+OverheadWarmup   4: 1024 op, 3600.00 ns, 3.5156 ns/op
+OverheadWarmup   5: 1024 op, 3200.00 ns, 3.1250 ns/op
+OverheadWarmup   6: 1024 op, 4800.00 ns, 4.6875 ns/op
+OverheadWarmup   7: 1024 op, 4700.00 ns, 4.5898 ns/op
+
+OverheadActual   1: 1024 op, 4600.00 ns, 4.4922 ns/op
+OverheadActual   2: 1024 op, 4000.00 ns, 3.9063 ns/op
+OverheadActual   3: 1024 op, 3800.00 ns, 3.7109 ns/op
+OverheadActual   4: 1024 op, 4200.00 ns, 4.1016 ns/op
+OverheadActual   5: 1024 op, 4300.00 ns, 4.1992 ns/op
+OverheadActual   6: 1024 op, 3800.00 ns, 3.7109 ns/op
+OverheadActual   7: 1024 op, 4000.00 ns, 3.9063 ns/op
+OverheadActual   8: 1024 op, 3600.00 ns, 3.5156 ns/op
+OverheadActual   9: 1024 op, 3900.00 ns, 3.8086 ns/op
+OverheadActual  10: 1024 op, 3800.00 ns, 3.7109 ns/op
+OverheadActual  11: 1024 op, 3900.00 ns, 3.8086 ns/op
+OverheadActual  12: 1024 op, 3800.00 ns, 3.7109 ns/op
+OverheadActual  13: 1024 op, 3300.00 ns, 3.2227 ns/op
+OverheadActual  14: 1024 op, 3200.00 ns, 3.1250 ns/op
+OverheadActual  15: 1024 op, 3100.00 ns, 3.0273 ns/op
+OverheadActual  16: 1024 op, 3100.00 ns, 3.0273 ns/op
+OverheadActual  17: 1024 op, 4700.00 ns, 4.5898 ns/op
+OverheadActual  18: 1024 op, 3100.00 ns, 3.0273 ns/op
+OverheadActual  19: 1024 op, 3000.00 ns, 2.9297 ns/op
+OverheadActual  20: 1024 op, 3100.00 ns, 3.0273 ns/op
+
+WorkloadWarmup   1: 1024 op, 1068587500.00 ns, 1.0435 ms/op
+
+// BeforeActualRun
+WorkloadActual   1: 1024 op, 1038869300.00 ns, 1.0145 ms/op
+WorkloadActual   2: 1024 op, 1086342600.00 ns, 1.0609 ms/op
+WorkloadActual   3: 1024 op, 725476800.00 ns, 708.4734 us/op
+
+// AfterActualRun
+WorkloadResult   1: 1024 op, 1038865500.00 ns, 1.0145 ms/op
+WorkloadResult   2: 1024 op, 1086338800.00 ns, 1.0609 ms/op
+WorkloadResult   3: 1024 op, 725473000.00 ns, 708.4697 us/op
+// GC:  0 0 0 11637328 1024
+// Threading:  6140 3 1024
+// Exceptions:  1.84765625
+
+[testcontainers.org 00:00:11.90] Stop Docker container 10ec5c745d44
+[testcontainers.org 00:00:12.68] Delete Docker container 10ec5c745d44
+// AfterAll
+// Benchmark Process 12772 has exited with code 0.
+
+Mean = 927.955 μs, StdErr = 110.556 μs (11.91%), N = 3, StdDev = 191.488 μs
+Min = 708.470 μs, Q1 = 861.493 μs, Median = 1,014.517 μs, Q3 = 1,037.697 μs, Max = 1,060.878 μs
+IQR = 176.204 μs, LowerFence = 597.187 μs, UpperFence = 1,302.003 μs
+ConfidenceInterval = [-2,565.497 μs; 4,421.407 μs] (CI 99.9%), Margin = 3,493.452 μs (376.47% of Mean)
+Skewness = -0.36, Kurtosis = 0.67, MValue = 2
+
+// ** Remained 5 (25.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:13 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.StackExchange_Exists: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet Keva.Benchmarks-Job-YBPNYS-1.dll --anonymousPipes 1932 1840 --benchmarkName Keva.Benchmarks.RedisContainerBenchmarks.StackExchange_Exists --job "Runtime=.NET 8.0, IterationCount=3, WarmupCount=1" --benchmarkId 15 in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.2
+// Runtime=.NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT,AvxVnni,SERIALIZE VectorSize=256
+// Job: Job-WWFMMQ(IterationCount=3, WarmupCount=1)
+
+[testcontainers.org 00:00:00.21] Connected to Docker:
+  Host: npipe://./pipe/docker_engine
+  Server Version: 5.6.0
+  Kernel Version: 6.6.87.2-microsoft-standard-WSL2
+  API Version: 1.41
+  Operating System: fedora
+  Total Memory: 23.47 GB
+[testcontainers.org 00:00:00.37] Docker container d37a31838198 created
+[testcontainers.org 00:00:00.40] Start Docker container d37a31838198
+[testcontainers.org 00:00:00.60] Wait for Docker container d37a31838198 to complete readiness checks
+[testcontainers.org 00:00:00.65] Docker container d37a31838198 ready
+[testcontainers.org 00:00:01.72] Docker container 6b17c3152e0a created
+[testcontainers.org 00:00:01.82] Start Docker container 6b17c3152e0a
+[testcontainers.org 00:00:02.10] Wait for Docker container 6b17c3152e0a to complete readiness checks
+[testcontainers.org 00:00:02.24] Execute "redis-cli ping" at Docker container 6b17c3152e0a
+[testcontainers.org 00:00:02.40] Docker container 6b17c3152e0a ready
+OverheadJitting  1: 1 op, 157900.00 ns, 157.9000 us/op
+WorkloadJitting  1: 1 op, 2754200.00 ns, 2.7542 ms/op
+
+OverheadJitting  2: 16 op, 387000.00 ns, 24.1875 us/op
+WorkloadJitting  2: 16 op, 9220300.00 ns, 576.2688 us/op
+
+WorkloadPilot    1: 16 op, 6986900.00 ns, 436.6813 us/op
+WorkloadPilot    2: 32 op, 12379800.00 ns, 386.8688 us/op
+WorkloadPilot    3: 64 op, 22258600.00 ns, 347.7906 us/op
+WorkloadPilot    4: 128 op, 45449100.00 ns, 355.0711 us/op
+WorkloadPilot    5: 256 op, 97790200.00 ns, 381.9930 us/op
+WorkloadPilot    6: 512 op, 158060900.00 ns, 308.7127 us/op
+WorkloadPilot    7: 1024 op, 278498600.00 ns, 271.9713 us/op
+WorkloadPilot    8: 2048 op, 598048600.00 ns, 292.0159 us/op
+
+OverheadWarmup   1: 2048 op, 8000.00 ns, 3.9063 ns/op
+OverheadWarmup   2: 2048 op, 5400.00 ns, 2.6367 ns/op
+OverheadWarmup   3: 2048 op, 5500.00 ns, 2.6855 ns/op
+OverheadWarmup   4: 2048 op, 5200.00 ns, 2.5391 ns/op
+OverheadWarmup   5: 2048 op, 5700.00 ns, 2.7832 ns/op
+OverheadWarmup   6: 2048 op, 5200.00 ns, 2.5391 ns/op
+
+OverheadActual   1: 2048 op, 6100.00 ns, 2.9785 ns/op
+OverheadActual   2: 2048 op, 5600.00 ns, 2.7344 ns/op
+OverheadActual   3: 2048 op, 7300.00 ns, 3.5645 ns/op
+OverheadActual   4: 2048 op, 5400.00 ns, 2.6367 ns/op
+OverheadActual   5: 2048 op, 5900.00 ns, 2.8809 ns/op
+OverheadActual   6: 2048 op, 6000.00 ns, 2.9297 ns/op
+OverheadActual   7: 2048 op, 5600.00 ns, 2.7344 ns/op
+OverheadActual   8: 2048 op, 5300.00 ns, 2.5879 ns/op
+OverheadActual   9: 2048 op, 5700.00 ns, 2.7832 ns/op
+OverheadActual  10: 2048 op, 5600.00 ns, 2.7344 ns/op
+OverheadActual  11: 2048 op, 5500.00 ns, 2.6855 ns/op
+OverheadActual  12: 2048 op, 5700.00 ns, 2.7832 ns/op
+OverheadActual  13: 2048 op, 5400.00 ns, 2.6367 ns/op
+OverheadActual  14: 2048 op, 5400.00 ns, 2.6367 ns/op
+OverheadActual  15: 2048 op, 5700.00 ns, 2.7832 ns/op
+
+WorkloadWarmup   1: 2048 op, 572599700.00 ns, 279.5897 us/op
+
+// BeforeActualRun
+WorkloadActual   1: 2048 op, 520750400.00 ns, 254.2727 us/op
+WorkloadActual   2: 2048 op, 485660400.00 ns, 237.1389 us/op
+WorkloadActual   3: 2048 op, 495004400.00 ns, 241.7014 us/op
+
+// AfterActualRun
+WorkloadResult   1: 2048 op, 520744800.00 ns, 254.2699 us/op
+WorkloadResult   2: 2048 op, 485654800.00 ns, 237.1361 us/op
+WorkloadResult   3: 2048 op, 494998800.00 ns, 241.6986 us/op
+// GC:  0 0 0 901360 2048
+// Threading:  4097 10 2048
+
+[testcontainers.org 00:00:08.85] Stop Docker container 6b17c3152e0a
+[testcontainers.org 00:00:09.45] Delete Docker container 6b17c3152e0a
+// AfterAll
+// Benchmark Process 37740 has exited with code 0.
+
+Mean = 244.368 μs, StdErr = 5.123 μs (2.10%), N = 3, StdDev = 8.873 μs
+Min = 237.136 μs, Q1 = 239.417 μs, Median = 241.699 μs, Q3 = 247.984 μs, Max = 254.270 μs
+IQR = 8.567 μs, LowerFence = 226.567 μs, UpperFence = 260.835 μs
+ConfidenceInterval = [82.485 μs; 406.252 μs] (CI 99.9%), Margin = 161.883 μs (66.25% of Mean)
+Skewness = 0.27, Kurtosis = 0.67, MValue = 2
+
+// ** Remained 4 (20.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:13 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.Keva_Del: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet Keva.Benchmarks-Job-YBPNYS-1.dll --anonymousPipes 1420 1936 --benchmarkName Keva.Benchmarks.RedisContainerBenchmarks.Keva_Del --job "Runtime=.NET 8.0, IterationCount=3, WarmupCount=1" --benchmarkId 16 in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.2
+// Runtime=.NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT,AvxVnni,SERIALIZE VectorSize=256
+// Job: Job-WWFMMQ(IterationCount=3, WarmupCount=1)
+
+[testcontainers.org 00:00:00.33] Connected to Docker:
+  Host: npipe://./pipe/docker_engine
+  Server Version: 5.6.0
+  Kernel Version: 6.6.87.2-microsoft-standard-WSL2
+  API Version: 1.41
+  Operating System: fedora
+  Total Memory: 23.47 GB
+[testcontainers.org 00:00:00.51] Docker container dc236538d53a created
+[testcontainers.org 00:00:00.62] Start Docker container dc236538d53a
+[testcontainers.org 00:00:00.78] Wait for Docker container dc236538d53a to complete readiness checks
+[testcontainers.org 00:00:00.82] Docker container dc236538d53a ready
+[testcontainers.org 00:00:01.90] Docker container d5ba061b27ba created
+[testcontainers.org 00:00:02.00] Start Docker container d5ba061b27ba
+[testcontainers.org 00:00:02.20] Wait for Docker container d5ba061b27ba to complete readiness checks
+[testcontainers.org 00:00:02.34] Execute "redis-cli ping" at Docker container d5ba061b27ba
+[testcontainers.org 00:00:02.52] Docker container d5ba061b27ba ready
+OverheadJitting  1: 1 op, 146900.00 ns, 146.9000 us/op
+
+System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+ ---> System.InvalidOperationException: Cannot convert SimpleString to integer
+   at Keva.Core.Protocol.RespValue.AsInteger() in D:\git\Keva\src\Keva.Core\Protocol\RespValue.cs:line 112
+   at Keva.Client.KevaClient.DelAsync(String key, CancellationToken cancellationToken) in D:\git\Keva\src\Keva.Client\KevaClient.cs:line 177
+   at Keva.Benchmarks.RedisContainerBenchmarks.Keva_Del() in D:\git\Keva\benchmarks\Keva.Benchmarks\RedisContainerBenchmarks.cs:line 215
+   at BenchmarkDotNet.Helpers.AwaitHelper.GetResult[T](Task`1 task)
+   at BenchmarkDotNet.Autogenerated.Runnable_16.<.ctor>b__3_4() in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\Keva.Benchmarks-Job-YBPNYS-1.notcs:line 3378
+   at BenchmarkDotNet.Autogenerated.Runnable_16.WorkloadActionNoUnroll(Int64 invokeCount) in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\Keva.Benchmarks-Job-YBPNYS-1.notcs:line 3494
+   at BenchmarkDotNet.Engines.Engine.Measure(Action`1 action, Int64 invokeCount)
+   at BenchmarkDotNet.Engines.Engine.RunIteration(IterationData data)
+   at BenchmarkDotNet.Engines.EngineFactory.Jit(Engine engine, Int32 jitIndex, Int32 invokeCount, Int32 unrollFactor)
+   at BenchmarkDotNet.Engines.EngineFactory.CreateReadyToRun(EngineParameters engineParameters)
+   at BenchmarkDotNet.Autogenerated.Runnable_16.Run(IHost host, String benchmarkName) in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\Keva.Benchmarks-Job-YBPNYS-1.notcs:line 3357
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at BenchmarkDotNet.Autogenerated.UniqueProgramName.AfterAssemblyLoadingAttached(String[] args) in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\Keva.Benchmarks-Job-YBPNYS-1.notcs:line 57
+// AfterAll
+No Workload Results were obtained from the run.
+// Benchmark Process 55368 has exited with code -1.
+
+// ** Remained 3 (15.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:13 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.StackExchange_Del: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet Keva.Benchmarks-Job-YBPNYS-1.dll --anonymousPipes 1796 1956 --benchmarkName Keva.Benchmarks.RedisContainerBenchmarks.StackExchange_Del --job "Runtime=.NET 8.0, IterationCount=3, WarmupCount=1" --benchmarkId 17 in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.2
+// Runtime=.NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT,AvxVnni,SERIALIZE VectorSize=256
+// Job: Job-WWFMMQ(IterationCount=3, WarmupCount=1)
+
+[testcontainers.org 00:00:00.22] Connected to Docker:
+  Host: npipe://./pipe/docker_engine
+  Server Version: 5.6.0
+  Kernel Version: 6.6.87.2-microsoft-standard-WSL2
+  API Version: 1.41
+  Operating System: fedora
+  Total Memory: 23.47 GB
+[testcontainers.org 00:00:00.38] Docker container 4824e964aaeb created
+[testcontainers.org 00:00:00.45] Start Docker container 4824e964aaeb
+[testcontainers.org 00:00:00.64] Wait for Docker container 4824e964aaeb to complete readiness checks
+[testcontainers.org 00:00:00.69] Docker container 4824e964aaeb ready
+[testcontainers.org 00:00:01.75] Docker container 720a8631af21 created
+[testcontainers.org 00:00:01.93] Start Docker container 720a8631af21
+[testcontainers.org 00:00:02.17] Wait for Docker container 720a8631af21 to complete readiness checks
+[testcontainers.org 00:00:02.27] Execute "redis-cli ping" at Docker container 720a8631af21
+[testcontainers.org 00:00:02.42] Docker container 720a8631af21 ready
+OverheadJitting  1: 1 op, 129400.00 ns, 129.4000 us/op
+WorkloadJitting  1: 1 op, 4745100.00 ns, 4.7451 ms/op
+
+OverheadJitting  2: 16 op, 334100.00 ns, 20.8813 us/op
+WorkloadJitting  2: 16 op, 13796600.00 ns, 862.2875 us/op
+
+WorkloadPilot    1: 16 op, 15575600.00 ns, 973.4750 us/op
+WorkloadPilot    2: 32 op, 26314900.00 ns, 822.3406 us/op
+WorkloadPilot    3: 64 op, 45786700.00 ns, 715.4172 us/op
+WorkloadPilot    4: 128 op, 89331900.00 ns, 697.9055 us/op
+WorkloadPilot    5: 256 op, 158931800.00 ns, 620.8273 us/op
+WorkloadPilot    6: 512 op, 287441200.00 ns, 561.4086 us/op
+WorkloadPilot    7: 1024 op, 553217200.00 ns, 540.2512 us/op
+
+OverheadWarmup   1: 1024 op, 6400.00 ns, 6.2500 ns/op
+OverheadWarmup   2: 1024 op, 3200.00 ns, 3.1250 ns/op
+OverheadWarmup   3: 1024 op, 3200.00 ns, 3.1250 ns/op
+OverheadWarmup   4: 1024 op, 3300.00 ns, 3.2227 ns/op
+OverheadWarmup   5: 1024 op, 3000.00 ns, 2.9297 ns/op
+OverheadWarmup   6: 1024 op, 2900.00 ns, 2.8320 ns/op
+OverheadWarmup   7: 1024 op, 3300.00 ns, 3.2227 ns/op
+
+OverheadActual   1: 1024 op, 3300.00 ns, 3.2227 ns/op
+OverheadActual   2: 1024 op, 3000.00 ns, 2.9297 ns/op
+OverheadActual   3: 1024 op, 3300.00 ns, 3.2227 ns/op
+OverheadActual   4: 1024 op, 3200.00 ns, 3.1250 ns/op
+OverheadActual   5: 1024 op, 3700.00 ns, 3.6133 ns/op
+OverheadActual   6: 1024 op, 3800.00 ns, 3.7109 ns/op
+OverheadActual   7: 1024 op, 3500.00 ns, 3.4180 ns/op
+OverheadActual   8: 1024 op, 3500.00 ns, 3.4180 ns/op
+OverheadActual   9: 1024 op, 3800.00 ns, 3.7109 ns/op
+OverheadActual  10: 1024 op, 3600.00 ns, 3.5156 ns/op
+OverheadActual  11: 1024 op, 3400.00 ns, 3.3203 ns/op
+OverheadActual  12: 1024 op, 3800.00 ns, 3.7109 ns/op
+OverheadActual  13: 1024 op, 3600.00 ns, 3.5156 ns/op
+OverheadActual  14: 1024 op, 3500.00 ns, 3.4180 ns/op
+OverheadActual  15: 1024 op, 4100.00 ns, 4.0039 ns/op
+OverheadActual  16: 1024 op, 4400.00 ns, 4.2969 ns/op
+OverheadActual  17: 1024 op, 4300.00 ns, 4.1992 ns/op
+OverheadActual  18: 1024 op, 3300.00 ns, 3.2227 ns/op
+OverheadActual  19: 1024 op, 3100.00 ns, 3.0273 ns/op
+OverheadActual  20: 1024 op, 2500.00 ns, 2.4414 ns/op
+
+WorkloadWarmup   1: 1024 op, 445933700.00 ns, 435.4821 us/op
+
+// BeforeActualRun
+WorkloadActual   1: 1024 op, 478343300.00 ns, 467.1321 us/op
+WorkloadActual   2: 1024 op, 450977700.00 ns, 440.4079 us/op
+WorkloadActual   3: 1024 op, 446896900.00 ns, 436.4228 us/op
+
+// AfterActualRun
+WorkloadResult   1: 1024 op, 478339800.00 ns, 467.1287 us/op
+WorkloadResult   2: 1024 op, 450974200.00 ns, 440.4045 us/op
+WorkloadResult   3: 1024 op, 446893400.00 ns, 436.4193 us/op
+// GC:  0 0 0 762096 1024
+// Threading:  4097 21 1024
+
+[testcontainers.org 00:00:08.66] Stop Docker container 720a8631af21
+[testcontainers.org 00:00:09.29] Delete Docker container 720a8631af21
+// AfterAll
+// Benchmark Process 24956 has exited with code 0.
+
+Mean = 447.984 μs, StdErr = 9.641 μs (2.15%), N = 3, StdDev = 16.699 μs
+Min = 436.419 μs, Q1 = 438.412 μs, Median = 440.404 μs, Q3 = 453.767 μs, Max = 467.129 μs
+IQR = 15.355 μs, LowerFence = 415.380 μs, UpperFence = 476.799 μs
+ConfidenceInterval = [143.333 μs; 752.635 μs] (CI 99.9%), Margin = 304.651 μs (68.00% of Mean)
+Skewness = 0.36, Kurtosis = 0.67, MValue = 2
+
+// ** Remained 2 (10.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:13 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.Keva_Incr: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet Keva.Benchmarks-Job-YBPNYS-1.dll --anonymousPipes 1704 1648 --benchmarkName Keva.Benchmarks.RedisContainerBenchmarks.Keva_Incr --job "Runtime=.NET 8.0, IterationCount=3, WarmupCount=1" --benchmarkId 18 in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.2
+// Runtime=.NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT,AvxVnni,SERIALIZE VectorSize=256
+// Job: Job-WWFMMQ(IterationCount=3, WarmupCount=1)
+
+[testcontainers.org 00:00:00.51] Connected to Docker:
+  Host: npipe://./pipe/docker_engine
+  Server Version: 5.6.0
+  Kernel Version: 6.6.87.2-microsoft-standard-WSL2
+  API Version: 1.41
+  Operating System: fedora
+  Total Memory: 23.47 GB
+[testcontainers.org 00:00:00.88] Docker container c9fc3a162003 created
+[testcontainers.org 00:00:00.99] Start Docker container c9fc3a162003
+[testcontainers.org 00:00:01.16] Wait for Docker container c9fc3a162003 to complete readiness checks
+[testcontainers.org 00:00:01.21] Docker container c9fc3a162003 ready
+[testcontainers.org 00:00:02.29] Docker container b1c08021d165 created
+[testcontainers.org 00:00:02.42] Start Docker container b1c08021d165
+[testcontainers.org 00:00:02.69] Wait for Docker container b1c08021d165 to complete readiness checks
+[testcontainers.org 00:00:02.74] Execute "redis-cli ping" at Docker container b1c08021d165
+[testcontainers.org 00:00:02.93] Docker container b1c08021d165 ready
+OverheadJitting  1: 1 op, 133800.00 ns, 133.8000 us/op
+
+System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+ ---> System.InvalidOperationException: Cannot convert SimpleString to integer
+   at Keva.Core.Protocol.RespValue.AsInteger() in D:\git\Keva\src\Keva.Core\Protocol\RespValue.cs:line 112
+   at Keva.Client.KevaClient.IncrementAsync(String key, Int64 by, CancellationToken cancellationToken) in D:\git\Keva\src\Keva.Client\KevaClient.cs:line 116
+   at Keva.Client.KevaClient.IncrAsync(String key, CancellationToken cancellationToken) in D:\git\Keva\src\Keva.Client\KevaClient.cs:line 140
+   at Keva.Benchmarks.RedisContainerBenchmarks.Keva_Incr() in D:\git\Keva\benchmarks\Keva.Benchmarks\RedisContainerBenchmarks.cs:line 229
+   at BenchmarkDotNet.Helpers.AwaitHelper.GetResult[T](Task`1 task)
+   at BenchmarkDotNet.Autogenerated.Runnable_18.<.ctor>b__3_4() in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\Keva.Benchmarks-Job-YBPNYS-1.notcs:line 3774
+   at BenchmarkDotNet.Autogenerated.Runnable_18.WorkloadActionNoUnroll(Int64 invokeCount) in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\Keva.Benchmarks-Job-YBPNYS-1.notcs:line 3890
+   at BenchmarkDotNet.Engines.Engine.Measure(Action`1 action, Int64 invokeCount)
+   at BenchmarkDotNet.Engines.Engine.RunIteration(IterationData data)
+   at BenchmarkDotNet.Engines.EngineFactory.Jit(Engine engine, Int32 jitIndex, Int32 invokeCount, Int32 unrollFactor)
+   at BenchmarkDotNet.Engines.EngineFactory.CreateReadyToRun(EngineParameters engineParameters)
+   at BenchmarkDotNet.Autogenerated.Runnable_18.Run(IHost host, String benchmarkName) in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\Keva.Benchmarks-Job-YBPNYS-1.notcs:line 3753
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at BenchmarkDotNet.Autogenerated.UniqueProgramName.AfterAssemblyLoadingAttached(String[] args) in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\Keva.Benchmarks-Job-YBPNYS-1.notcs:line 57
+// AfterAll
+No Workload Results were obtained from the run.
+// Benchmark Process 32520 has exited with code -1.
+
+// ** Remained 1 (5.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:13 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.StackExchange_Incr: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet Keva.Benchmarks-Job-YBPNYS-1.dll --anonymousPipes 1964 1948 --benchmarkName Keva.Benchmarks.RedisContainerBenchmarks.StackExchange_Incr --job "Runtime=.NET 8.0, IterationCount=3, WarmupCount=1" --benchmarkId 19 in D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Benchmarks-Job-YBPNYS-1\bin\Release\net8.0
+// BeforeAnythingElse
+
+// Benchmark Process Environment Information:
+// BenchmarkDotNet v0.15.2
+// Runtime=.NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+// GC=Concurrent Workstation
+// HardwareIntrinsics=AVX2,AES,BMI1,BMI2,FMA,LZCNT,PCLMUL,POPCNT,AvxVnni,SERIALIZE VectorSize=256
+// Job: Job-WWFMMQ(IterationCount=3, WarmupCount=1)
+
+[testcontainers.org 00:00:00.21] Connected to Docker:
+  Host: npipe://./pipe/docker_engine
+  Server Version: 5.6.0
+  Kernel Version: 6.6.87.2-microsoft-standard-WSL2
+  API Version: 1.41
+  Operating System: fedora
+  Total Memory: 23.47 GB
+[testcontainers.org 00:00:00.36] Docker container 737c2828ac2e created
+[testcontainers.org 00:00:00.48] Start Docker container 737c2828ac2e
+[testcontainers.org 00:00:00.68] Wait for Docker container 737c2828ac2e to complete readiness checks
+[testcontainers.org 00:00:00.76] Docker container 737c2828ac2e ready
+[testcontainers.org 00:00:01.89] Docker container 6964f8cb094c created
+[testcontainers.org 00:00:01.99] Start Docker container 6964f8cb094c
+[testcontainers.org 00:00:02.19] Wait for Docker container 6964f8cb094c to complete readiness checks
+[testcontainers.org 00:00:02.37] Execute "redis-cli ping" at Docker container 6964f8cb094c
+[testcontainers.org 00:00:02.56] Docker container 6964f8cb094c ready
+OverheadJitting  1: 1 op, 164100.00 ns, 164.1000 us/op
+WorkloadJitting  1: 1 op, 2906100.00 ns, 2.9061 ms/op
+
+OverheadJitting  2: 16 op, 293800.00 ns, 18.3625 us/op
+WorkloadJitting  2: 16 op, 5277300.00 ns, 329.8313 us/op
+
+WorkloadPilot    1: 16 op, 6617700.00 ns, 413.6063 us/op
+WorkloadPilot    2: 32 op, 9198500.00 ns, 287.4531 us/op
+WorkloadPilot    3: 64 op, 28221400.00 ns, 440.9594 us/op
+WorkloadPilot    4: 128 op, 42832200.00 ns, 334.6266 us/op
+WorkloadPilot    5: 256 op, 83618300.00 ns, 326.6340 us/op
+WorkloadPilot    6: 512 op, 162469400.00 ns, 317.3230 us/op
+WorkloadPilot    7: 1024 op, 264761400.00 ns, 258.5561 us/op
+WorkloadPilot    8: 2048 op, 400742200.00 ns, 195.6749 us/op
+WorkloadPilot    9: 4096 op, 928488700.00 ns, 226.6818 us/op
+
+OverheadWarmup   1: 4096 op, 11300.00 ns, 2.7588 ns/op
+OverheadWarmup   2: 4096 op, 9400.00 ns, 2.2949 ns/op
+OverheadWarmup   3: 4096 op, 10700.00 ns, 2.6123 ns/op
+OverheadWarmup   4: 4096 op, 11100.00 ns, 2.7100 ns/op
+OverheadWarmup   5: 4096 op, 9800.00 ns, 2.3926 ns/op
+OverheadWarmup   6: 4096 op, 10600.00 ns, 2.5879 ns/op
+OverheadWarmup   7: 4096 op, 11400.00 ns, 2.7832 ns/op
+OverheadWarmup   8: 4096 op, 7300.00 ns, 1.7822 ns/op
+
+OverheadActual   1: 4096 op, 11400.00 ns, 2.7832 ns/op
+OverheadActual   2: 4096 op, 10500.00 ns, 2.5635 ns/op
+OverheadActual   3: 4096 op, 10000.00 ns, 2.4414 ns/op
+OverheadActual   4: 4096 op, 10400.00 ns, 2.5391 ns/op
+OverheadActual   5: 4096 op, 11600.00 ns, 2.8320 ns/op
+OverheadActual   6: 4096 op, 10300.00 ns, 2.5146 ns/op
+OverheadActual   7: 4096 op, 9800.00 ns, 2.3926 ns/op
+OverheadActual   8: 4096 op, 10100.00 ns, 2.4658 ns/op
+OverheadActual   9: 4096 op, 10400.00 ns, 2.5391 ns/op
+OverheadActual  10: 4096 op, 9700.00 ns, 2.3682 ns/op
+OverheadActual  11: 4096 op, 8200.00 ns, 2.0020 ns/op
+OverheadActual  12: 4096 op, 8600.00 ns, 2.0996 ns/op
+OverheadActual  13: 4096 op, 9200.00 ns, 2.2461 ns/op
+OverheadActual  14: 4096 op, 9400.00 ns, 2.2949 ns/op
+OverheadActual  15: 4096 op, 8600.00 ns, 2.0996 ns/op
+OverheadActual  16: 4096 op, 8800.00 ns, 2.1484 ns/op
+OverheadActual  17: 4096 op, 9300.00 ns, 2.2705 ns/op
+OverheadActual  18: 4096 op, 11000.00 ns, 2.6855 ns/op
+OverheadActual  19: 4096 op, 11400.00 ns, 2.7832 ns/op
+OverheadActual  20: 4096 op, 11500.00 ns, 2.8076 ns/op
+
+WorkloadWarmup   1: 4096 op, 894486900.00 ns, 218.3806 us/op
+
+// BeforeActualRun
+WorkloadActual   1: 4096 op, 860551700.00 ns, 210.0956 us/op
+WorkloadActual   2: 4096 op, 942139900.00 ns, 230.0146 us/op
+WorkloadActual   3: 4096 op, 1126923500.00 ns, 275.1278 us/op
+
+// AfterActualRun
+WorkloadResult   1: 4096 op, 860541650.00 ns, 210.0932 us/op
+WorkloadResult   2: 4096 op, 942129850.00 ns, 230.0122 us/op
+WorkloadResult   3: 4096 op, 1126913450.00 ns, 275.1254 us/op
+// GC:  0 0 0 1720560 4096
+// Threading:  8193 60 4096
+
+[testcontainers.org 00:00:12.13] Stop Docker container 6964f8cb094c
+[testcontainers.org 00:00:12.75] Delete Docker container 6964f8cb094c
+// AfterAll
+// Benchmark Process 20848 has exited with code 0.
+
+Mean = 238.410 μs, StdErr = 19.237 μs (8.07%), N = 3, StdDev = 33.320 μs
+Min = 210.093 μs, Q1 = 220.053 μs, Median = 230.012 μs, Q3 = 252.569 μs, Max = 275.125 μs
+IQR = 32.516 μs, LowerFence = 171.279 μs, UpperFence = 301.343 μs
+ConfidenceInterval = [-369.462 μs; 846.283 μs] (CI 99.9%), Margin = 607.872 μs (254.97% of Mean)
+Skewness = 0.24, Kurtosis = 0.67, MValue = 2
+
+// ** Remained 0 (0.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:13 (0h 0m from now) **
+Successfully reverted power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// ***** BenchmarkRunner: Finish  *****
+
+// * Export *
+  BenchmarkDotNet.Artifacts\results\Keva.Benchmarks.RedisContainerBenchmarks-report.csv
+  BenchmarkDotNet.Artifacts\results\Keva.Benchmarks.RedisContainerBenchmarks-report-github.md
+  BenchmarkDotNet.Artifacts\results\Keva.Benchmarks.RedisContainerBenchmarks-report.html
+
+// * Detailed results *
+RedisContainerBenchmarks.Keva_Ping: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+Runtime = .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 1.064 ms, StdErr = 0.193 ms (18.18%), N = 3, StdDev = 0.335 ms
+Min = 0.677 ms, Q1 = 0.964 ms, Median = 1.252 ms, Q3 = 1.257 ms, Max = 1.262 ms
+IQR = 0.293 ms, LowerFence = 0.525 ms, UpperFence = 1.696 ms
+ConfidenceInterval = [-5.048 ms; 7.175 ms] (CI 99.9%), Margin = 6.111 ms (574.60% of Mean)
+Skewness = -0.38, Kurtosis = 0.67, MValue = 2
+-------------------- Histogram --------------------
+[0.665 ms ; 1.274 ms) | @@@
+---------------------------------------------------
+
+RedisContainerBenchmarks.StackExchange_Ping: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+Runtime = .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 241.667 μs, StdErr = 10.384 μs (4.30%), N = 3, StdDev = 17.985 μs
+Min = 229.734 μs, Q1 = 231.323 μs, Median = 232.913 μs, Q3 = 247.633 μs, Max = 262.353 μs
+IQR = 16.310 μs, LowerFence = 206.859 μs, UpperFence = 272.097 μs
+ConfidenceInterval = [-86.452 μs; 569.785 μs] (CI 99.9%), Margin = 328.119 μs (135.77% of Mean)
+Skewness = 0.37, Kurtosis = 0.67, MValue = 2
+-------------------- Histogram --------------------
+[229.676 μs ; 262.411 μs) | @@@
+---------------------------------------------------
+
+RedisContainerBenchmarks.Keva_Set_Small: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+Runtime = .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 1.048 ms, StdErr = 0.116 ms (11.03%), N = 3, StdDev = 0.200 ms
+Min = 0.825 ms, Q1 = 0.965 ms, Median = 1.105 ms, Q3 = 1.159 ms, Max = 1.213 ms
+IQR = 0.194 ms, LowerFence = 0.674 ms, UpperFence = 1.450 ms
+ConfidenceInterval = [-2.602 ms; 4.697 ms] (CI 99.9%), Margin = 3.650 ms (348.41% of Mean)
+Skewness = -0.26, Kurtosis = 0.67, MValue = 2
+-------------------- Histogram --------------------
+[0.643 ms ; 0.977 ms) | @
+[0.977 ms ; 1.395 ms) | @@
+---------------------------------------------------
+
+RedisContainerBenchmarks.StackExchange_Set_Small: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+Runtime = .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 266.787 μs, StdErr = 17.317 μs (6.49%), N = 3, StdDev = 29.995 μs
+Min = 243.124 μs, Q1 = 249.920 μs, Median = 256.716 μs, Q3 = 278.619 μs, Max = 300.522 μs
+IQR = 28.699 μs, LowerFence = 206.872 μs, UpperFence = 321.667 μs
+ConfidenceInterval = [-280.428 μs; 814.003 μs] (CI 99.9%), Margin = 547.216 μs (205.11% of Mean)
+Skewness = 0.3, Kurtosis = 0.67, MValue = 2
+-------------------- Histogram --------------------
+[222.624 μs ; 277.217 μs) | @@
+[277.217 μs ; 327.818 μs) | @
+---------------------------------------------------
+
+RedisContainerBenchmarks.Keva_Set_Medium: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+Runtime = .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 1.096 ms, StdErr = 0.036 ms (3.26%), N = 3, StdDev = 0.062 ms
+Min = 1.025 ms, Q1 = 1.073 ms, Median = 1.121 ms, Q3 = 1.131 ms, Max = 1.141 ms
+IQR = 0.058 ms, LowerFence = 0.986 ms, UpperFence = 1.218 ms
+ConfidenceInterval = [-0.034 ms; 2.225 ms] (CI 99.9%), Margin = 1.129 ms (103.06% of Mean)
+Skewness = -0.34, Kurtosis = 0.67, MValue = 2
+-------------------- Histogram --------------------
+[0.969 ms ; 1.075 ms) | @
+[1.075 ms ; 1.197 ms) | @@
+---------------------------------------------------
+
+RedisContainerBenchmarks.StackExchange_Set_Medium: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+Runtime = .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 287.251 μs, StdErr = 22.202 μs (7.73%), N = 3, StdDev = 38.456 μs
+Min = 242.870 μs, Q1 = 275.534 μs, Median = 308.199 μs, Q3 = 309.442 μs, Max = 310.685 μs
+IQR = 33.908 μs, LowerFence = 224.673 μs, UpperFence = 360.304 μs
+ConfidenceInterval = [-414.322 μs; 988.825 μs] (CI 99.9%), Margin = 701.574 μs (244.24% of Mean)
+Skewness = -0.38, Kurtosis = 0.67, MValue = 2
+-------------------- Histogram --------------------
+[241.781 μs ; 311.773 μs) | @@@
+---------------------------------------------------
+
+RedisContainerBenchmarks.Keva_Set_Large: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+Runtime = .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 1.148 ms, StdErr = 0.056 ms (4.87%), N = 3, StdDev = 0.097 ms
+Min = 1.066 ms, Q1 = 1.094 ms, Median = 1.123 ms, Q3 = 1.189 ms, Max = 1.255 ms
+IQR = 0.095 ms, LowerFence = 0.953 ms, UpperFence = 1.331 ms
+ConfidenceInterval = [-0.620 ms; 2.915 ms] (CI 99.9%), Margin = 1.767 ms (153.97% of Mean)
+Skewness = 0.24, Kurtosis = 0.67, MValue = 2
+-------------------- Histogram --------------------
+[1.006 ms ; 1.183 ms) | @@
+[1.183 ms ; 1.343 ms) | @
+---------------------------------------------------
+
+RedisContainerBenchmarks.StackExchange_Set_Large: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+Runtime = .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 268.366 μs, StdErr = 2.833 μs (1.06%), N = 3, StdDev = 4.906 μs
+Min = 263.494 μs, Q1 = 265.897 μs, Median = 268.300 μs, Q3 = 270.803 μs, Max = 273.305 μs
+IQR = 4.906 μs, LowerFence = 258.538 μs, UpperFence = 278.161 μs
+ConfidenceInterval = [178.862 μs; 357.871 μs] (CI 99.9%), Margin = 89.505 μs (33.35% of Mean)
+Skewness = 0.01, Kurtosis = 0.67, MValue = 2
+-------------------- Histogram --------------------
+[261.432 μs ; 270.362 μs) | @@
+[270.362 μs ; 277.770 μs) | @
+---------------------------------------------------
+
+RedisContainerBenchmarks.Keva_Get: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+Runtime = .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 1.059 ms, StdErr = 0.126 ms (11.91%), N = 3, StdDev = 0.219 ms
+Min = 0.813 ms, Q1 = 0.975 ms, Median = 1.136 ms, Q3 = 1.183 ms, Max = 1.229 ms
+IQR = 0.208 ms, LowerFence = 0.662 ms, UpperFence = 1.495 ms
+ConfidenceInterval = [-2.928 ms; 5.047 ms] (CI 99.9%), Margin = 3.987 ms (376.39% of Mean)
+Skewness = -0.31, Kurtosis = 0.67, MValue = 2
+-------------------- Histogram --------------------
+[0.614 ms ; 0.984 ms) | @
+[0.984 ms ; 1.428 ms) | @@
+---------------------------------------------------
+
+RedisContainerBenchmarks.StackExchange_Get: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+Runtime = .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 280.002 μs, StdErr = 7.307 μs (2.61%), N = 3, StdDev = 12.656 μs
+Min = 266.377 μs, Q1 = 274.308 μs, Median = 282.239 μs, Q3 = 286.815 μs, Max = 291.391 μs
+IQR = 12.507 μs, LowerFence = 255.547 μs, UpperFence = 305.576 μs
+ConfidenceInterval = [49.104 μs; 510.901 μs] (CI 99.9%), Margin = 230.899 μs (82.46% of Mean)
+Skewness = -0.17, Kurtosis = 0.67, MValue = 2
+-------------------- Histogram --------------------
+[254.859 μs ; 275.297 μs) | @
+[275.297 μs ; 302.909 μs) | @@
+---------------------------------------------------
+
+RedisContainerBenchmarks.Keva_MGet: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+Runtime = .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2; GC = Concurrent Workstation
+There are not any results runs
+
+RedisContainerBenchmarks.StackExchange_MGet: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+Runtime = .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 256.921 μs, StdErr = 11.017 μs (4.29%), N = 3, StdDev = 19.082 μs
+Min = 236.152 μs, Q1 = 248.542 μs, Median = 260.933 μs, Q3 = 267.306 μs, Max = 273.679 μs
+IQR = 18.763 μs, LowerFence = 220.397 μs, UpperFence = 295.451 μs
+ConfidenceInterval = [-91.213 μs; 605.056 μs] (CI 99.9%), Margin = 348.135 μs (135.50% of Mean)
+Skewness = -0.2, Kurtosis = 0.67, MValue = 2
+-------------------- Histogram --------------------
+[218.786 μs ; 249.940 μs) | @
+[249.940 μs ; 291.044 μs) | @@
+---------------------------------------------------
+
+RedisContainerBenchmarks.Keva_Pipeline_5_Sets: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+Runtime = .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 1.785 ms, StdErr = 0.062 ms (3.46%), N = 3, StdDev = 0.107 ms
+Min = 1.706 ms, Q1 = 1.724 ms, Median = 1.742 ms, Q3 = 1.824 ms, Max = 1.906 ms
+IQR = 0.100 ms, LowerFence = 1.574 ms, UpperFence = 1.974 ms
+ConfidenceInterval = [-0.164 ms; 3.733 ms] (CI 99.9%), Margin = 1.948 ms (109.18% of Mean)
+Skewness = 0.34, Kurtosis = 0.67, MValue = 2
+-------------------- Histogram --------------------
+[1.609 ms ; 1.821 ms) | @@
+[1.821 ms ; 2.003 ms) | @
+---------------------------------------------------
+
+RedisContainerBenchmarks.StackExchange_Pipeline_5_Sets: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+Runtime = .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 311.534 μs, StdErr = 4.352 μs (1.40%), N = 3, StdDev = 7.537 μs
+Min = 303.068 μs, Q1 = 308.543 μs, Median = 314.019 μs, Q3 = 315.767 μs, Max = 317.515 μs
+IQR = 7.223 μs, LowerFence = 297.709 μs, UpperFence = 326.602 μs
+ConfidenceInterval = [174.030 μs; 449.038 μs] (CI 99.9%), Margin = 137.504 μs (44.14% of Mean)
+Skewness = -0.29, Kurtosis = 0.67, MValue = 2
+-------------------- Histogram --------------------
+[296.209 μs ; 308.908 μs) | @
+[308.908 μs ; 324.374 μs) | @@
+---------------------------------------------------
+
+RedisContainerBenchmarks.Keva_Exists: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+Runtime = .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 927.955 μs, StdErr = 110.556 μs (11.91%), N = 3, StdDev = 191.488 μs
+Min = 708.470 μs, Q1 = 861.493 μs, Median = 1,014.517 μs, Q3 = 1,037.697 μs, Max = 1,060.878 μs
+IQR = 176.204 μs, LowerFence = 597.187 μs, UpperFence = 1,302.003 μs
+ConfidenceInterval = [-2,565.497 μs; 4,421.407 μs] (CI 99.9%), Margin = 3,493.452 μs (376.47% of Mean)
+Skewness = -0.36, Kurtosis = 0.67, MValue = 2
+-------------------- Histogram --------------------
+[534.209 μs ;   863.436 μs) | @
+[863.436 μs ; 1,235.139 μs) | @@
+---------------------------------------------------
+
+RedisContainerBenchmarks.StackExchange_Exists: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+Runtime = .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 244.368 μs, StdErr = 5.123 μs (2.10%), N = 3, StdDev = 8.873 μs
+Min = 237.136 μs, Q1 = 239.417 μs, Median = 241.699 μs, Q3 = 247.984 μs, Max = 254.270 μs
+IQR = 8.567 μs, LowerFence = 226.567 μs, UpperFence = 260.835 μs
+ConfidenceInterval = [82.485 μs; 406.252 μs] (CI 99.9%), Margin = 161.883 μs (66.25% of Mean)
+Skewness = 0.27, Kurtosis = 0.67, MValue = 2
+-------------------- Histogram --------------------
+[231.342 μs ; 247.492 μs) | @@
+[247.492 μs ; 262.345 μs) | @
+---------------------------------------------------
+
+RedisContainerBenchmarks.Keva_Del: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+Runtime = .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2; GC = Concurrent Workstation
+There are not any results runs
+
+RedisContainerBenchmarks.StackExchange_Del: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+Runtime = .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 447.984 μs, StdErr = 9.641 μs (2.15%), N = 3, StdDev = 16.699 μs
+Min = 436.419 μs, Q1 = 438.412 μs, Median = 440.404 μs, Q3 = 453.767 μs, Max = 467.129 μs
+IQR = 15.355 μs, LowerFence = 415.380 μs, UpperFence = 476.799 μs
+ConfidenceInterval = [143.333 μs; 752.635 μs] (CI 99.9%), Margin = 304.651 μs (68.00% of Mean)
+Skewness = 0.36, Kurtosis = 0.67, MValue = 2
+-------------------- Histogram --------------------
+[421.223 μs ; 453.609 μs) | @@
+[453.609 μs ; 482.325 μs) | @
+---------------------------------------------------
+
+RedisContainerBenchmarks.Keva_Incr: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+Runtime = .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2; GC = Concurrent Workstation
+There are not any results runs
+
+RedisContainerBenchmarks.StackExchange_Incr: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+Runtime = .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2; GC = Concurrent Workstation
+Mean = 238.410 μs, StdErr = 19.237 μs (8.07%), N = 3, StdDev = 33.320 μs
+Min = 210.093 μs, Q1 = 220.053 μs, Median = 230.012 μs, Q3 = 252.569 μs, Max = 275.125 μs
+IQR = 32.516 μs, LowerFence = 171.279 μs, UpperFence = 301.343 μs
+ConfidenceInterval = [-369.462 μs; 846.283 μs] (CI 99.9%), Margin = 607.872 μs (254.97% of Mean)
+Skewness = 0.24, Kurtosis = 0.67, MValue = 2
+-------------------- Histogram --------------------
+[189.731 μs ; 250.375 μs) | @@
+[250.375 μs ; 305.447 μs) | @
+---------------------------------------------------
+
+// * Summary *
+
+BenchmarkDotNet v0.15.2, Windows 11 (10.0.26100.4946/24H2/2024Update/HudsonValley)
+Unknown processor
+.NET SDK 10.0.100-preview.4.25204.4
+  [Host]     : .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+  Job-YBPNYS : .NET 8.0.19 (8.0.1925.36514), X64 RyuJIT AVX2
+
+Runtime=.NET 8.0  IterationCount=3  WarmupCount=1  
+
+| Method                        | Mean       | Error       | StdDev    | Min        | Max        | Median     | P95        | Ratio | RatioSD | Gen0   | Gen1   | Allocated | Alloc Ratio |
+|------------------------------ |-----------:|------------:|----------:|-----------:|-----------:|-----------:|-----------:|------:|--------:|-------:|-------:|----------:|------------:|
+| Keva_Ping                     | 1,063.6 μs | 6,111.30 μs | 334.98 μs |   676.8 μs | 1,262.3 μs | 1,251.6 μs | 1,261.2 μs |  1.09 |    0.48 |      - |      - |   11650 B |        1.00 |
+| StackExchange_Ping            |   241.7 μs |   328.12 μs |  17.99 μs |   229.7 μs |   262.4 μs |   232.9 μs |   259.4 μs |  0.25 |    0.08 |      - |      - |     444 B |        0.04 |
+| Keva_Set_Small                | 1,047.6 μs | 3,649.82 μs | 200.06 μs |   825.2 μs | 1,212.9 μs | 1,104.6 μs | 1,202.1 μs |  1.07 |    0.40 |      - |      - |   11445 B |        0.98 |
+| StackExchange_Set_Small       |   266.8 μs |   547.22 μs |  29.99 μs |   243.1 μs |   300.5 μs |   256.7 μs |   296.1 μs |  0.27 |    0.10 |      - |      - |     472 B |        0.04 |
+| Keva_Set_Medium               | 1,095.6 μs | 1,129.10 μs |  61.89 μs | 1,025.0 μs | 1,140.5 μs | 1,121.2 μs | 1,138.6 μs |  1.12 |    0.38 | 0.9766 |      - |   14454 B |        1.24 |
+| StackExchange_Set_Medium      |   287.3 μs |   701.57 μs |  38.46 μs |   242.9 μs |   310.7 μs |   308.2 μs |   310.4 μs |  0.29 |    0.10 |      - |      - |     472 B |        0.04 |
+| Keva_Set_Large                | 1,147.8 μs | 1,767.39 μs |  96.88 μs | 1,065.6 μs | 1,254.6 μs | 1,123.3 μs | 1,241.5 μs |  1.17 |    0.40 | 3.9063 | 1.9531 |   52520 B |        4.51 |
+| StackExchange_Set_Large       |   268.4 μs |    89.50 μs |   4.91 μs |   263.5 μs |   273.3 μs |   268.3 μs |   272.8 μs |  0.27 |    0.09 |      - |      - |     472 B |        0.04 |
+| Keva_Get                      | 1,059.3 μs | 3,987.31 μs | 218.56 μs |   812.7 μs | 1,228.9 μs | 1,136.5 μs | 1,219.7 μs |  1.08 |    0.41 |      - |      - |   11390 B |        0.98 |
+| StackExchange_Get             |   280.0 μs |   230.90 μs |  12.66 μs |   266.4 μs |   291.4 μs |   282.2 μs |   290.5 μs |  0.29 |    0.10 |      - |      - |     544 B |        0.05 |
+| Keva_MGet                     |         NA |          NA |        NA |         NA |         NA |         NA |         NA |     ? |       ? |     NA |     NA |        NA |           ? |
+| StackExchange_MGet            |   256.9 μs |   348.13 μs |  19.08 μs |   236.2 μs |   273.7 μs |   260.9 μs |   272.4 μs |  0.26 |    0.09 |      - |      - |     916 B |        0.08 |
+| Keva_Pipeline_5_Sets          | 1,784.6 μs | 1,948.39 μs | 106.80 μs | 1,706.1 μs | 1,906.2 μs | 1,741.5 μs | 1,889.8 μs |  1.83 |    0.62 | 3.9063 | 1.9531 |   57383 B |        4.93 |
+| StackExchange_Pipeline_5_Sets |   311.5 μs |   137.50 μs |   7.54 μs |   303.1 μs |   317.5 μs |   314.0 μs |   317.2 μs |  0.32 |    0.11 |      - |      - |    3008 B |        0.26 |
+| Keva_Exists                   |   928.0 μs | 3,493.45 μs | 191.49 μs |   708.5 μs | 1,060.9 μs | 1,014.5 μs | 1,056.2 μs |  0.95 |    0.36 |      - |      - |   11365 B |        0.98 |
+| StackExchange_Exists          |   244.4 μs |   161.88 μs |   8.87 μs |   237.1 μs |   254.3 μs |   241.7 μs |   253.0 μs |  0.25 |    0.08 |      - |      - |     440 B |        0.04 |
+| Keva_Del                      |         NA |          NA |        NA |         NA |         NA |         NA |         NA |     ? |       ? |     NA |     NA |        NA |           ? |
+| StackExchange_Del             |   448.0 μs |   304.65 μs |  16.70 μs |   436.4 μs |   467.1 μs |   440.4 μs |   464.5 μs |  0.46 |    0.15 |      - |      - |     744 B |        0.06 |
+| Keva_Incr                     |         NA |          NA |        NA |         NA |         NA |         NA |         NA |     ? |       ? |     NA |     NA |        NA |           ? |
+| StackExchange_Incr            |   238.4 μs |   607.87 μs |  33.32 μs |   210.1 μs |   275.1 μs |   230.0 μs |   270.6 μs |  0.24 |    0.09 |      - |      - |     420 B |        0.04 |
+
+Benchmarks with issues:
+  RedisContainerBenchmarks.Keva_MGet: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+  RedisContainerBenchmarks.Keva_Del: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+  RedisContainerBenchmarks.Keva_Incr: Job-YBPNYS(Runtime=.NET 8.0, IterationCount=3, WarmupCount=1)
+
+// * Warnings *
+BaselineCustomAnalyzer
+  Summary -> A question mark '?' symbol indicates that it was not possible to compute the (Ratio, RatioSD, Alloc Ratio) column(s) because the baseline or benchmark could not be found, or the baseline value is too close to zero.
+Environment
+  Summary -> Detected error exit code from one of the benchmarks. It might be caused by following antivirus software:
+        - Windows Defender (windowsdefender://)
+Use InProcessEmitToolchain or InProcessNoEmitToolchain to avoid new process creation.
+
+
+// * Legends *
+  Mean        : Arithmetic mean of all measurements
+  Error       : Half of 99.9% confidence interval
+  StdDev      : Standard deviation of all measurements
+  Min         : Minimum
+  Max         : Maximum
+  Median      : Value separating the higher half of all measurements (50th percentile)
+  P95         : Percentile 95
+  Ratio       : Mean of the ratio distribution ([Current]/[Baseline])
+  RatioSD     : Standard deviation of the ratio distribution ([Current]/[Baseline])
+  Gen0        : GC Generation 0 collects per 1000 operations
+  Gen1        : GC Generation 1 collects per 1000 operations
+  Allocated   : Allocated memory per single operation (managed only, inclusive, 1KB = 1024B)
+  Alloc Ratio : Allocated memory ratio distribution ([Current]/[Baseline])
+  1 μs        : 1 Microsecond (0.000001 sec)
+
+// * Diagnostic Output - MemoryDiagnoser *
+
+
+// ***** BenchmarkRunner: End *****
+Run time: 00:03:32 (212.13 sec), executed benchmarks: 20
+
+Global total time: 00:03:46 (226.64 sec), executed benchmarks: 20
+// * Artifacts cleanup *
+Artifacts cleanup is finished

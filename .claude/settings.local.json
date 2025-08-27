@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:valkey.io)",
+      "Bash(dotnet new:*)",
+      "WebFetch(domain:tunit.dev)",
+      "Bash(dotnet sln add:*)",
+      "Bash(find:*)",
+      "Bash(dotnet build)",
+      "Bash(dotnet build:*)",
+      "Bash(dotnet test:*)",
+      "WebFetch(domain:benchmarkdotnet.org)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

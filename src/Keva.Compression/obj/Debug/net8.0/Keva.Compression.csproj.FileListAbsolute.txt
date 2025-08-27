@@ -1,0 +1,15 @@
+D:\git\Keva\src\Keva.Compression\bin\Debug\net8.0\Keva.Compression.deps.json
+D:\git\Keva\src\Keva.Compression\bin\Debug\net8.0\Keva.Compression.dll
+D:\git\Keva\src\Keva.Compression\bin\Debug\net8.0\Keva.Compression.pdb
+D:\git\Keva\src\Keva.Compression\bin\Debug\net8.0\Keva.Core.dll
+D:\git\Keva\src\Keva.Compression\bin\Debug\net8.0\Keva.Core.pdb
+D:\git\Keva\src\Keva.Compression\obj\Debug\net8.0\Keva.Compression.csproj.AssemblyReference.cache
+D:\git\Keva\src\Keva.Compression\obj\Debug\net8.0\Keva.Compression.GeneratedMSBuildEditorConfig.editorconfig
+D:\git\Keva\src\Keva.Compression\obj\Debug\net8.0\Keva.Compression.AssemblyInfoInputs.cache
+D:\git\Keva\src\Keva.Compression\obj\Debug\net8.0\Keva.Compression.AssemblyInfo.cs
+D:\git\Keva\src\Keva.Compression\obj\Debug\net8.0\Keva.Compression.csproj.CoreCompileInputs.cache
+D:\git\Keva\src\Keva.Compression\obj\Debug\net8.0\Keva.Com.053FCE62.Up2Date
+D:\git\Keva\src\Keva.Compression\obj\Debug\net8.0\Keva.Compression.dll
+D:\git\Keva\src\Keva.Compression\obj\Debug\net8.0\refint\Keva.Compression.dll
+D:\git\Keva\src\Keva.Compression\obj\Debug\net8.0\Keva.Compression.pdb
+D:\git\Keva\src\Keva.Compression\obj\Debug\net8.0\ref\Keva.Compression.dll

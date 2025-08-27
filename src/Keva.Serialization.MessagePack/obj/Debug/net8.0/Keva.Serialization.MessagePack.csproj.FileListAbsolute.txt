@@ -1,0 +1,15 @@
+D:\git\Keva\src\Keva.Serialization.MessagePack\bin\Debug\net8.0\Keva.Serialization.MessagePack.deps.json
+D:\git\Keva\src\Keva.Serialization.MessagePack\bin\Debug\net8.0\Keva.Serialization.MessagePack.dll
+D:\git\Keva\src\Keva.Serialization.MessagePack\bin\Debug\net8.0\Keva.Serialization.MessagePack.pdb
+D:\git\Keva\src\Keva.Serialization.MessagePack\bin\Debug\net8.0\Keva.Core.dll
+D:\git\Keva\src\Keva.Serialization.MessagePack\bin\Debug\net8.0\Keva.Core.pdb
+D:\git\Keva\src\Keva.Serialization.MessagePack\obj\Debug\net8.0\Keva.Serialization.MessagePack.csproj.AssemblyReference.cache
+D:\git\Keva\src\Keva.Serialization.MessagePack\obj\Debug\net8.0\Keva.Serialization.MessagePack.GeneratedMSBuildEditorConfig.editorconfig
+D:\git\Keva\src\Keva.Serialization.MessagePack\obj\Debug\net8.0\Keva.Serialization.MessagePack.AssemblyInfoInputs.cache
+D:\git\Keva\src\Keva.Serialization.MessagePack\obj\Debug\net8.0\Keva.Serialization.MessagePack.AssemblyInfo.cs
+D:\git\Keva\src\Keva.Serialization.MessagePack\obj\Debug\net8.0\Keva.Serialization.MessagePack.csproj.CoreCompileInputs.cache
+D:\git\Keva\src\Keva.Serialization.MessagePack\obj\Debug\net8.0\Keva.Ser.4D447699.Up2Date
+D:\git\Keva\src\Keva.Serialization.MessagePack\obj\Debug\net8.0\Keva.Serialization.MessagePack.dll
+D:\git\Keva\src\Keva.Serialization.MessagePack\obj\Debug\net8.0\refint\Keva.Serialization.MessagePack.dll
+D:\git\Keva\src\Keva.Serialization.MessagePack\obj\Debug\net8.0\Keva.Serialization.MessagePack.pdb
+D:\git\Keva\src\Keva.Serialization.MessagePack\obj\Debug\net8.0\ref\Keva.Serialization.MessagePack.dll

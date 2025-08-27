@@ -1,0 +1,15 @@
+D:\git\Keva\src\Keva.Resilience\bin\Debug\net8.0\Keva.Resilience.deps.json
+D:\git\Keva\src\Keva.Resilience\bin\Debug\net8.0\Keva.Resilience.dll
+D:\git\Keva\src\Keva.Resilience\bin\Debug\net8.0\Keva.Resilience.pdb
+D:\git\Keva\src\Keva.Resilience\bin\Debug\net8.0\Keva.Core.dll
+D:\git\Keva\src\Keva.Resilience\bin\Debug\net8.0\Keva.Core.pdb
+D:\git\Keva\src\Keva.Resilience\obj\Debug\net8.0\Keva.Resilience.csproj.AssemblyReference.cache
+D:\git\Keva\src\Keva.Resilience\obj\Debug\net8.0\Keva.Resilience.GeneratedMSBuildEditorConfig.editorconfig
+D:\git\Keva\src\Keva.Resilience\obj\Debug\net8.0\Keva.Resilience.AssemblyInfoInputs.cache
+D:\git\Keva\src\Keva.Resilience\obj\Debug\net8.0\Keva.Resilience.AssemblyInfo.cs
+D:\git\Keva\src\Keva.Resilience\obj\Debug\net8.0\Keva.Resilience.csproj.CoreCompileInputs.cache
+D:\git\Keva\src\Keva.Resilience\obj\Debug\net8.0\Keva.Res.BAEB80D3.Up2Date
+D:\git\Keva\src\Keva.Resilience\obj\Debug\net8.0\Keva.Resilience.dll
+D:\git\Keva\src\Keva.Resilience\obj\Debug\net8.0\refint\Keva.Resilience.dll
+D:\git\Keva\src\Keva.Resilience\obj\Debug\net8.0\Keva.Resilience.pdb
+D:\git\Keva\src\Keva.Resilience\obj\Debug\net8.0\ref\Keva.Resilience.dll
