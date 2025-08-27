@@ -100,3 +100,4 @@ D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Microsoft.Extensions.D
 D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\System.Collections.Immutable.dll
 D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\System.Reflection.Metadata.dll
 D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\runtimes\win\lib\net8.0\System.Management.dll
+D:\git\Keva\benchmarks\Keva.Benchmarks\obj\Release\net8.0\Keva.Benchmarks.sourcelink.json
