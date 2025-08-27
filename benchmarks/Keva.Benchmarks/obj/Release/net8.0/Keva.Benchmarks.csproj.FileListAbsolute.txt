@@ -86,8 +86,8 @@ D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\runtimes\win-arm64\nat
 D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\runtimes\win-x64\native\capstone.dll
 D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\runtimes\win-x86\native\capstone.dll
 D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Client.dll
-D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Core.dll
-D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Core.pdb
+D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.dll
+D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.pdb
 D:\git\Keva\benchmarks\Keva.Benchmarks\bin\Release\net8.0\Keva.Client.pdb
 D:\git\Keva\benchmarks\Keva.Benchmarks\obj\Release\net8.0\Keva.Ben.4AB721E1.Up2Date
 D:\git\Keva\benchmarks\Keva.Benchmarks\obj\Release\net8.0\Keva.Benchmarks.dll

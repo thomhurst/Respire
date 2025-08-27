@@ -1,12 +1,10 @@
-using System.Text;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Columns;
 using BenchmarkDotNet.Configs;
 using BenchmarkDotNet.Jobs;
-using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
-using Keva.Client;
-using Keva.Core.FastClient;
+using Keva.FastClient;
+using Keva.Protocol;
 using StackExchange.Redis;
 using Testcontainers.Redis;
 
@@ -18,10 +16,9 @@ namespace Keva.Benchmarks;
 public class RedisContainerBenchmarks
 {
     private readonly IContainer _redisContainer = new RedisBuilder().Build();
-    private IKevaClient _kevaClient = null!;
-    private UltraFastRespClient _ultraFastKevaClient = null!;
-    private ConnectionMultiplexer _stackExchangeRedis = null!;
-    private IDatabase _stackExchangeDb = null!;
+    private KevaClient _kevaClient = null!;
+    private ConnectionMultiplexer? _stackExchangeRedis;
+    private IDatabase? _stackExchangeDb;
     
     private readonly string _smallValue = "Hello, World!";
     private readonly string _mediumValue = new string('X', 1024); // 1KB
@@ -49,14 +46,7 @@ public class RedisContainerBenchmarks
         var port = _redisContainer.GetMappedPublicPort(6379);
         
         // Setup Keva client
-        _kevaClient = KevaClientBuilder.Create()
-            .UseEndpoint("localhost", port)
-            .EnableAutoReconnect()
-            .SetPoolSize(min: 5, max: 10)
-            .Build();
-        
-        // Setup Ultra Fast Keva client
-        _ultraFastKevaClient = new UltraFastRespClient("localhost", port);
+        _kevaClient = await KevaClient.CreateAsync("localhost", port);
         
         // Setup StackExchange.Redis
         _stackExchangeRedis = await ConnectionMultiplexer.ConnectAsync($"localhost:{port}");
@@ -77,7 +67,7 @@ public class RedisContainerBenchmarks
         // Warm up connections
         for (int i = 0; i < 10; i++)
         {
-            _ultraFastKevaClient.Ping();
+            _kevaClient.Ping();
             await _stackExchangeDb.PingAsync();
         }
     }
@@ -85,7 +75,7 @@ public class RedisContainerBenchmarks
     [GlobalCleanup]
     public async Task Cleanup()
     {
-        _ultraFastKevaClient?.Dispose();
+        _kevaClient?.Dispose();
         await _kevaClient.DisposeAsync();
         _stackExchangeRedis?.Dispose();
         await _redisContainer.StopAsync();
@@ -94,9 +84,9 @@ public class RedisContainerBenchmarks
     
     // PING benchmarks
     [Benchmark(Baseline = true)]
-    public bool UltraKeva_Ping()
+    public async Task<KevaValue> UltraKeva_Ping()
     {
-        return _ultraFastKevaClient.Ping();
+        return await _kevaClient.Ping();
     }
     
     [Benchmark]
@@ -107,9 +97,9 @@ public class RedisContainerBenchmarks
     
     // SET benchmarks - Small value
     [Benchmark]
-    public bool UltraKeva_Set_Small()
+    public async Task UltraKeva_Set_Small()
     {
-        return _ultraFastKevaClient.Set("benchmark_key", _smallValue);
+        await _kevaClient.Set("benchmark_key", _smallValue);
     }
     
     [Benchmark]
@@ -120,9 +110,9 @@ public class RedisContainerBenchmarks
     
     // SET benchmarks - Medium value (1KB)
     [Benchmark]
-    public bool UltraKeva_Set_Medium()
+    public async Task UltraKeva_Set_Medium()
     {
-        return _ultraFastKevaClient.Set("benchmark_key_medium", _mediumValue);
+        await _kevaClient.Set("benchmark_key_medium", _mediumValue);
     }
     
     [Benchmark]
@@ -133,9 +123,9 @@ public class RedisContainerBenchmarks
     
     // SET benchmarks - Large value (10KB)
     [Benchmark]
-    public bool UltraKeva_Set_Large()
+    public async Task UltraKeva_Set_Large()
     {
-        return _ultraFastKevaClient.Set("benchmark_key_large", _largeValue);
+        await _kevaClient.Set("benchmark_key_large", _largeValue);
     }
     
     [Benchmark]
@@ -146,9 +136,9 @@ public class RedisContainerBenchmarks
     
     // GET benchmarks
     [Benchmark]
-    public string? UltraKeva_Get()
+    public async Task<KevaValue> UltraKeva_Get()
     {
-        return _ultraFastKevaClient.Get("key0");
+        return await _kevaClient.Get("key0");
     }
     
     [Benchmark]
@@ -161,7 +151,7 @@ public class RedisContainerBenchmarks
     // [Benchmark]
     // public string?[] UltraKeva_MGet()
     // {
-    //     return _ultraFastKevaClient.MGet(_multiGetKeys);
+    //     return _kevaClient.MGet(_multiGetKeys);
     // }
     
     [Benchmark]
@@ -175,7 +165,7 @@ public class RedisContainerBenchmarks
     // [Benchmark]
     // public void UltraKeva_Pipeline_5_Sets()
     // {
-    //     _ultraFastKevaClient.Pipeline(p =>
+    //     _kevaClient.Pipeline(p =>
     //     {
     //         for (int i = 0; i < 5; i++)
     //         {
@@ -201,9 +191,9 @@ public class RedisContainerBenchmarks
     
     // EXISTS benchmarks
     [Benchmark]
-    public bool UltraKeva_Exists()
+    public async Task<KevaValue> UltraKeva_Exists()
     {
-        return _ultraFastKevaClient.Exists("key0");
+        return await _kevaClient.Exists("key0");
     }
     
     [Benchmark]
@@ -214,10 +204,10 @@ public class RedisContainerBenchmarks
     
     // DEL benchmarks
     [Benchmark]
-    public bool UltraKeva_Del()
+    public async Task UltraKeva_Del()
     {
-        _ultraFastKevaClient.Set("temp_key", "temp_value");
-        return _ultraFastKevaClient.Del("temp_key");
+        await _kevaClient.Set("temp_key", "temp_value");
+        await _kevaClient.Del("temp_key");
     }
     
     [Benchmark]
@@ -229,9 +219,9 @@ public class RedisContainerBenchmarks
     
     // INCR benchmarks
     [Benchmark]
-    public long UltraKeva_Incr()
+    public async Task<KevaValue> UltraKeva_Incr()
     {
-        return _ultraFastKevaClient.Incr("counter");
+        return await _kevaClient.Incr("counter");
     }
     
     [Benchmark]

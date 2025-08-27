@@ -15,7 +15,7 @@ Keva is a lightning-fast, zero-allocation C# .NET client for interacting with ke
 
 ### Core Components
 
-- **Keva.Core**: Core protocol implementation with zero dependencies beyond .NET BCL
+- **Keva**: Core protocol implementation with zero dependencies beyond .NET BCL
   - RESP protocol reader/writer with zero allocations
   - Pipeline architecture for interceptors
   - Connection abstractions

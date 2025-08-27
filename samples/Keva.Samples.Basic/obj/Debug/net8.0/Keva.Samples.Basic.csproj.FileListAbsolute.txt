@@ -13,10 +13,10 @@ D:\git\Keva\samples\Keva.Samples.Basic\obj\Debug\net8.0\Keva.Samples.Basic.pdb
 D:\git\Keva\samples\Keva.Samples.Basic\obj\Debug\net8.0\Keva.Samples.Basic.genruntimeconfig.cache
 D:\git\Keva\samples\Keva.Samples.Basic\obj\Debug\net8.0\ref\Keva.Samples.Basic.dll
 D:\git\Keva\samples\Keva.Samples.Basic\bin\Debug\net8.0\System.IO.Pipelines.dll
-D:\git\Keva\samples\Keva.Samples.Basic\bin\Debug\net8.0\Keva.Core.dll
-D:\git\Keva\samples\Keva.Samples.Basic\bin\Debug\net8.0\Keva.Core.pdb
-D:\git\Keva\samples\Keva.Samples.Basic\obj\Debug\net8.0\Keva.Samples.Basic.csproj.AssemblyReference.cache
-D:\git\Keva\samples\Keva.Samples.Basic\obj\Debug\net8.0\Keva.Sam.002D1B3D.Up2Date
 D:\git\Keva\samples\Keva.Samples.Basic\bin\Debug\net8.0\Microsoft.Extensions.DependencyInjection.Abstractions.dll
 D:\git\Keva\samples\Keva.Samples.Basic\bin\Debug\net8.0\Microsoft.Extensions.Logging.Abstractions.dll
 D:\git\Keva\samples\Keva.Samples.Basic\obj\Debug\net8.0\Keva.Samples.Basic.sourcelink.json
+D:\git\Keva\samples\Keva.Samples.Basic\bin\Debug\net8.0\Keva.dll
+D:\git\Keva\samples\Keva.Samples.Basic\bin\Debug\net8.0\Keva.pdb
+D:\git\Keva\samples\Keva.Samples.Basic\obj\Debug\net8.0\Keva.Samples.Basic.csproj.AssemblyReference.cache
+D:\git\Keva\samples\Keva.Samples.Basic\obj\Debug\net8.0\Keva.Sam.002D1B3D.Up2Date

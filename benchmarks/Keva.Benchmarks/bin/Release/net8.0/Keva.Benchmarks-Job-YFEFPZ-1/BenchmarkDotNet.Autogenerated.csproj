@@ -4,7 +4,6 @@
     <ImportDirectoryBuildProps>false</ImportDirectoryBuildProps>
     <ImportDirectoryBuildTargets>false</ImportDirectoryBuildTargets>
     <AssemblyTitle>Keva.Benchmarks-Job-YFEFPZ-1</AssemblyTitle>
-    <TargetFramework>net8.0</TargetFramework>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <PlatformTarget>x64</PlatformTarget>
     <AssemblyName>Keva.Benchmarks-Job-YFEFPZ-1</AssemblyName>

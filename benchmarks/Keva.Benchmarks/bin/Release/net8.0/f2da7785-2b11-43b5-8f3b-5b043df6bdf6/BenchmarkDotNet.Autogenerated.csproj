@@ -4,7 +4,6 @@
     <ImportDirectoryBuildProps>false</ImportDirectoryBuildProps>
     <ImportDirectoryBuildTargets>false</ImportDirectoryBuildTargets>
     <AssemblyTitle>f2da7785-2b11-43b5-8f3b-5b043df6bdf6</AssemblyTitle>
-    <TargetFramework>net8.0</TargetFramework>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <PlatformTarget>x64</PlatformTarget>
     <AssemblyName>f2da7785-2b11-43b5-8f3b-5b043df6bdf6</AssemblyName>

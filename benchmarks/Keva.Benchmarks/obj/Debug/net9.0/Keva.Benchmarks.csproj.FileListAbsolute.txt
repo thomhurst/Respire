@@ -1,0 +1,6 @@
+D:\git\Keva\benchmarks\Keva.Benchmarks\obj\Debug\net9.0\Keva.Benchmarks.csproj.AssemblyReference.cache
+D:\git\Keva\benchmarks\Keva.Benchmarks\obj\Debug\net9.0\Keva.Benchmarks.GeneratedMSBuildEditorConfig.editorconfig
+D:\git\Keva\benchmarks\Keva.Benchmarks\obj\Debug\net9.0\Keva.Benchmarks.AssemblyInfoInputs.cache
+D:\git\Keva\benchmarks\Keva.Benchmarks\obj\Debug\net9.0\Keva.Benchmarks.AssemblyInfo.cs
+D:\git\Keva\benchmarks\Keva.Benchmarks\obj\Debug\net9.0\Keva.Benchmarks.csproj.CoreCompileInputs.cache
+D:\git\Keva\benchmarks\Keva.Benchmarks\obj\Debug\net9.0\Keva.Benchmarks.sourcelink.json

@@ -1648,7 +1648,7 @@ OverheadJitting  1: 1 op, 167300.00 ns, 167.3000 us/op
 
 System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
  ---> System.InvalidOperationException: Cannot convert SimpleString to integer
-   at Keva.Core.Protocol.RespValue.AsInteger() in D:\git\Keva\src\Keva.Core\Protocol\RespValue.cs:line 112
+   at Keva.Protocol.RespValue.AsInteger() in D:\git\Keva\src\Keva\Protocol\RespValue.cs:line 112
    at Keva.Client.KevaClient.DelAsync(String key, CancellationToken cancellationToken) in D:\git\Keva\src\Keva.Client\KevaClient.cs:line 176
    at Keva.Benchmarks.RedisContainerBenchmarks.Keva_Del() in D:\git\Keva\benchmarks\Keva.Benchmarks\RedisContainerBenchmarks.cs:line 215
    at BenchmarkDotNet.Helpers.AwaitHelper.GetResult[T](Task`1 task)
@@ -1806,7 +1806,7 @@ OverheadJitting  1: 1 op, 151600.00 ns, 151.6000 us/op
 
 System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
  ---> System.InvalidOperationException: Cannot convert SimpleString to integer
-   at Keva.Core.Protocol.RespValue.AsInteger() in D:\git\Keva\src\Keva.Core\Protocol\RespValue.cs:line 112
+   at Keva.Protocol.RespValue.AsInteger() in D:\git\Keva\src\Keva\Protocol\RespValue.cs:line 112
    at Keva.Client.KevaClient.IncrementAsync(String key, Int64 by, CancellationToken cancellationToken) in D:\git\Keva\src\Keva.Client\KevaClient.cs:line 115
    at Keva.Client.KevaClient.IncrAsync(String key, CancellationToken cancellationToken) in D:\git\Keva\src\Keva.Client\KevaClient.cs:line 139
    at Keva.Benchmarks.RedisContainerBenchmarks.Keva_Incr() in D:\git\Keva\benchmarks\Keva.Benchmarks\RedisContainerBenchmarks.cs:line 229

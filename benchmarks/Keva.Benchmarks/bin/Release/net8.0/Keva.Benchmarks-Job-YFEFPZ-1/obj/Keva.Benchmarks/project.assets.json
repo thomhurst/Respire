@@ -748,7 +748,7 @@
         "type": "project",
         "framework": ".NETCoreApp,Version=v8.0",
         "dependencies": {
-          "Keva.Core": "1.0.0",
+          "Keva": "1.0.0",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "8.0.0",
           "Microsoft.Extensions.Hosting.Abstractions": "8.0.0"
         },
@@ -759,17 +759,17 @@
           "bin/placeholder/Keva.Client.dll": {}
         }
       },
-      "Keva.Core/1.0.0": {
+      "Keva/1.0.0": {
         "type": "project",
         "framework": ".NETCoreApp,Version=v8.0",
         "dependencies": {
           "System.IO.Pipelines": "8.0.0"
         },
         "compile": {
-          "bin/placeholder/Keva.Core.dll": {}
+          "bin/placeholder/Keva.dll": {}
         },
         "runtime": {
-          "bin/placeholder/Keva.Core.dll": {}
+          "bin/placeholder/Keva.dll": {}
         }
       }
     }
@@ -2480,17 +2480,17 @@
       "path": "../../src/Keva.Client/Keva.Client.csproj",
       "msbuildProject": "../../src/Keva.Client/Keva.Client.csproj"
     },
-    "Keva.Core/1.0.0": {
+    "Keva/1.0.0": {
       "type": "project",
-      "path": "../../src/Keva.Core/Keva.Core.csproj",
-      "msbuildProject": "../../src/Keva.Core/Keva.Core.csproj"
+      "path": "../../src/Keva/Keva.csproj",
+      "msbuildProject": "../../src/Keva/Keva.csproj"
     }
   },
   "projectFileDependencyGroups": {
     "net8.0": [
       "BenchmarkDotNet >= 0.15.2",
       "Keva.Client >= 1.0.0",
-      "Keva.Core >= 1.0.0",
+      "Keva >= 1.0.0",
       "StackExchange.Redis >= 2.7.10",
       "Testcontainers.Redis >= 4.6.0"
     ]
@@ -2531,8 +2531,8 @@
             "D:\\git\\Keva\\src\\Keva.Client\\Keva.Client.csproj": {
               "projectPath": "D:\\git\\Keva\\src\\Keva.Client\\Keva.Client.csproj"
             },
-            "D:\\git\\Keva\\src\\Keva.Core\\Keva.Core.csproj": {
-              "projectPath": "D:\\git\\Keva\\src\\Keva.Core\\Keva.Core.csproj"
+            "D:\\git\\Keva\\src\\Keva\\Keva.csproj": {
+              "projectPath": "D:\\git\\Keva\\src\\Keva\\Keva.csproj"
             }
           }
         }

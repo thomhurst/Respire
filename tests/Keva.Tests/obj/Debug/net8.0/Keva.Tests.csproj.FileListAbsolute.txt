@@ -1,0 +1,10 @@
+D:\git\Keva\tests\Keva.Tests\obj\Debug\net8.0\Keva.Tests.csproj.AssemblyReference.cache
+D:\git\Keva\tests\Keva.Tests\obj\Debug\net8.0\Keva.Tests.GeneratedMSBuildEditorConfig.editorconfig
+D:\git\Keva\tests\Keva.Tests\obj\Debug\net8.0\Keva.Tests.AssemblyInfoInputs.cache
+D:\git\Keva\tests\Keva.Tests\obj\Debug\net8.0\Keva.Tests.AssemblyInfo.cs
+D:\git\Keva\tests\Keva.Tests\obj\Debug\net8.0\Keva.Tests.csproj.CoreCompileInputs.cache
+D:\git\Keva\tests\Keva.Tests\obj\Debug\net8.0\Keva.Tests.gentestingplatformentrypointinputcache.cache
+D:\git\Keva\tests\Keva.Tests\obj\Debug\net8.0\Keva.Tests.genautoregisteredextensionsinputcache.cache
+D:\git\Keva\tests\Keva.Tests\obj\Debug\net8.0\AutoRegisteredExtensions.cs
+D:\git\Keva\tests\Keva.Tests\obj\Debug\net8.0\TestPlatformEntryPoint.cs
+D:\git\Keva\tests\Keva.Tests\obj\Debug\net8.0\Keva.Tests.sourcelink.json

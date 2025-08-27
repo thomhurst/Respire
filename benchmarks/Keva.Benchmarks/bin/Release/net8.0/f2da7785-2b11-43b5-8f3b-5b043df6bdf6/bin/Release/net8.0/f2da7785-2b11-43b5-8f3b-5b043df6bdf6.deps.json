@@ -553,7 +553,7 @@
         "dependencies": {
           "BenchmarkDotNet": "0.13.12",
           "Keva.Client": "1.0.0",
-          "Keva.Core": "1.0.0",
+          "Keva": "1.0.0",
           "StackExchange.Redis": "2.7.10",
           "Testcontainers.Redis": "4.6.0"
         },
@@ -566,7 +566,7 @@
       },
       "Keva.Client/1.0.0": {
         "dependencies": {
-          "Keva.Core": "1.0.0",
+          "Keva": "1.0.0",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "8.0.2",
           "Microsoft.Extensions.Hosting.Abstractions": "8.0.0"
         },
@@ -577,12 +577,12 @@
           }
         }
       },
-      "Keva.Core/1.0.0": {
+      "Keva/1.0.0": {
         "dependencies": {
           "System.IO.Pipelines": "8.0.0"
         },
         "runtime": {
-          "Keva.Core.dll": {
+          "Keva.dll": {
             "assemblyVersion": "1.0.0.0",
             "fileVersion": "1.0.0.0"
           }
@@ -872,7 +872,7 @@
       "serviceable": false,
       "sha512": ""
     },
-    "Keva.Core/1.0.0": {
+    "Keva/1.0.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

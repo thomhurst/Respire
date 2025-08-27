@@ -5,7 +5,7 @@ using BenchmarkDotNet.Jobs;
 using BenchmarkDotNet.Reports;
 using BenchmarkDotNet.Running;
 using DotNet.Testcontainers.Containers;
-using Keva.Client;
+using Keva.FastClient;
 using StackExchange.Redis;
 using Testcontainers.Redis;
 
@@ -17,7 +17,7 @@ namespace Keva.Benchmarks;
 public class RedisThroughputBenchmarks
 {
     private readonly IContainer _redisContainer = new RedisBuilder().Build();
-    private IKevaClient _kevaClient = null!;
+    private KevaClient _kevaClient = null!;
     private ConnectionMultiplexer _stackExchangeRedis = null!;
     private IDatabase _stackExchangeDb = null!;
     
@@ -84,11 +84,7 @@ public class RedisThroughputBenchmarks
         var port = _redisContainer.GetMappedPublicPort(6379);
         
         // Setup Keva client with larger pool for concurrent operations
-        _kevaClient = KevaClientBuilder.Create()
-            .UseEndpoint("localhost", port)
-            .EnableAutoReconnect()
-            .SetPoolSize(min: 10, max: 100)
-            .Build();
+        _kevaClient = await KevaClient.CreateAsync("localhost", port, connectionCount: 10);
         
         // Setup StackExchange.Redis with similar configuration
         var options = ConfigurationOptions.Parse($"localhost:{port}");

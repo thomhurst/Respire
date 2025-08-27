@@ -36,8 +36,8 @@
               "D:\\git\\Keva\\src\\Keva.Client\\Keva.Client.csproj": {
                 "projectPath": "D:\\git\\Keva\\src\\Keva.Client\\Keva.Client.csproj"
               },
-              "D:\\git\\Keva\\src\\Keva.Core\\Keva.Core.csproj": {
-                "projectPath": "D:\\git\\Keva\\src\\Keva.Core\\Keva.Core.csproj"
+              "D:\\git\\Keva\\src\\Keva\\Keva.csproj": {
+                "projectPath": "D:\\git\\Keva\\src\\Keva\\Keva.csproj"
               }
             }
           }
@@ -425,8 +425,8 @@
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "D:\\git\\Keva\\src\\Keva.Core\\Keva.Core.csproj": {
-                "projectPath": "D:\\git\\Keva\\src\\Keva.Core\\Keva.Core.csproj"
+              "D:\\git\\Keva\\src\\Keva\\Keva.csproj": {
+                "projectPath": "D:\\git\\Keva\\src\\Keva\\Keva.csproj"
               }
             }
           }
@@ -777,14 +777,14 @@
         }
       }
     },
-    "D:\\git\\Keva\\src\\Keva.Core\\Keva.Core.csproj": {
+    "D:\\git\\Keva\\src\\Keva\\Keva.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "D:\\git\\Keva\\src\\Keva.Core\\Keva.Core.csproj",
-        "projectName": "Keva.Core",
-        "projectPath": "D:\\git\\Keva\\src\\Keva.Core\\Keva.Core.csproj",
+        "projectUniqueName": "D:\\git\\Keva\\src\\Keva\\Keva.csproj",
+        "projectName": "Keva",
+        "projectPath": "D:\\git\\Keva\\src\\Keva\\Keva.csproj",
         "packagesPath": "C:\\Users\\thomh\\.nuget\\packages\\",
-        "outputPath": "D:\\git\\Keva\\benchmarks\\Keva.Benchmarks\\bin\\Release\\net8.0\\Keva.Benchmarks-Job-YFEFPZ-1/\\obj\\Keva.Core\\",
+        "outputPath": "D:\\git\\Keva\\benchmarks\\Keva.Benchmarks\\bin\\Release\\net8.0\\Keva.Benchmarks-Job-YFEFPZ-1/\\obj\\Keva\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "D:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"

@@ -2,7 +2,7 @@
   "version": 2,
   "dgSpecHash": "rdL0jRw/NhM=",
   "success": true,
-  "projectFilePath": "D:\\git\\Keva\\src\\Keva.Core\\Keva.Core.csproj",
+  "projectFilePath": "D:\\git\\Keva\\src\\Keva\\Keva.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\thomh\\.nuget\\packages\\system.io.pipelines\\8.0.0\\system.io.pipelines.8.0.0.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\system.threading.channels\\8.0.0\\system.threading.channels.8.0.0.nupkg.sha512",
@@ -15,9 +15,9 @@
       "code": "NU1510",
       "level": "Warning",
       "message": "PackageReference System.Threading.Channels will not be pruned. Consider removing this package from your dependencies, as it is likely unnecessary.",
-      "projectPath": "D:\\git\\Keva\\src\\Keva.Core\\Keva.Core.csproj",
+      "projectPath": "D:\\git\\Keva\\src\\Keva\\Keva.csproj",
       "warningLevel": 1,
-      "filePath": "D:\\git\\Keva\\src\\Keva.Core\\Keva.Core.csproj",
+      "filePath": "D:\\git\\Keva\\src\\Keva\\Keva.csproj",
       "targetGraphs": []
     }
   ]

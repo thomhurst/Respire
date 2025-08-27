@@ -8,7 +8,7 @@
     ".NETCoreApp,Version=v8.0": {
       "Keva.Samples.Basic/1.0.0": {
         "dependencies": {
-          "Keva.Core": "1.0.0"
+          "Keva": "1.0.0"
         },
         "runtime": {
           "Keva.Samples.Basic.dll": {}
@@ -41,13 +41,13 @@
           }
         }
       },
-      "Keva.Core/1.0.0": {
+      "Keva/1.0.0": {
         "dependencies": {
           "Microsoft.Extensions.Logging.Abstractions": "8.0.0",
           "System.IO.Pipelines": "8.0.0"
         },
         "runtime": {
-          "Keva.Core.dll": {
+          "Keva.dll": {
             "assemblyVersion": "1.0.0.0",
             "fileVersion": "1.0.0.0"
           }
@@ -82,7 +82,7 @@
       "path": "system.io.pipelines/8.0.0",
       "hashPath": "system.io.pipelines.8.0.0.nupkg.sha512"
     },
-    "Keva.Core/1.0.0": {
+    "Keva/1.0.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

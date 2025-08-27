@@ -1,14 +1,13 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Keva.Core\Keva.Core.csproj" />
-    <ProjectReference Include="..\Keva.Client\Keva.Client.csproj" />
+    <ProjectReference Include="..\Keva\Keva.csproj" />
   </ItemGroup>
 
   <ItemGroup>

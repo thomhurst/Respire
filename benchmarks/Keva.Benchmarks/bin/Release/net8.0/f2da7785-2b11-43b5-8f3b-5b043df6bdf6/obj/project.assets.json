@@ -737,7 +737,7 @@
         "dependencies": {
           "BenchmarkDotNet": "0.13.12",
           "Keva.Client": "1.0.0",
-          "Keva.Core": "1.0.0",
+          "Keva": "1.0.0",
           "StackExchange.Redis": "2.7.10",
           "Testcontainers.Redis": "4.6.0"
         },
@@ -752,7 +752,7 @@
         "type": "project",
         "framework": ".NETCoreApp,Version=v8.0",
         "dependencies": {
-          "Keva.Core": "1.0.0",
+          "Keva": "1.0.0",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "8.0.0",
           "Microsoft.Extensions.Hosting.Abstractions": "8.0.0"
         },
@@ -763,17 +763,17 @@
           "bin/placeholder/Keva.Client.dll": {}
         }
       },
-      "Keva.Core/1.0.0": {
+      "Keva/1.0.0": {
         "type": "project",
         "framework": ".NETCoreApp,Version=v8.0",
         "dependencies": {
           "System.IO.Pipelines": "8.0.0"
         },
         "compile": {
-          "bin/placeholder/Keva.Core.dll": {}
+          "bin/placeholder/Keva.dll": {}
         },
         "runtime": {
-          "bin/placeholder/Keva.Core.dll": {}
+          "bin/placeholder/Keva.dll": {}
         }
       }
     }
@@ -2002,10 +2002,10 @@
       "path": "../../../../../../src/Keva.Client/Keva.Client.csproj",
       "msbuildProject": "../../../../../../src/Keva.Client/Keva.Client.csproj"
     },
-    "Keva.Core/1.0.0": {
+    "Keva/1.0.0": {
       "type": "project",
-      "path": "../../../../../../src/Keva.Core/Keva.Core.csproj",
-      "msbuildProject": "../../../../../../src/Keva.Core/Keva.Core.csproj"
+      "path": "../../../../../../src/Keva/Keva.csproj",
+      "msbuildProject": "../../../../../../src/Keva/Keva.csproj"
     }
   },
   "projectFileDependencyGroups": {

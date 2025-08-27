@@ -1,0 +1,103 @@
+name: Redis Container Benchmarks
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'benchmarks/**'
+      - '.github/workflows/benchmark-redis-container.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'benchmarks/**'
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
+jobs:
+  redis-container-benchmarks:
+    name: Run Redis Container Benchmarks
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        framework: [net8.0, net9.0]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup .NET 8.0
+        if: matrix.framework == 'net8.0'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      
+      - name: Setup .NET 9.0
+        if: matrix.framework == 'net9.0'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      
+      - name: Restore dependencies
+        run: dotnet restore
+      
+      - name: Build
+        run: dotnet build -c Release --no-restore
+      
+      - name: Run Redis Container Benchmarks
+        run: |
+          cd benchmarks/Keva.Benchmarks
+          dotnet run -c Release -f ${{ matrix.framework }} -- \
+            --filter "*RedisContainerBenchmarks*" \
+            --exporters json markdown \
+            --artifacts ./BenchmarkDotNet.Artifacts
+      
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: redis-container-benchmarks-${{ matrix.framework }}
+          path: benchmarks/Keva.Benchmarks/BenchmarkDotNet.Artifacts/
+          retention-days: 30
+      
+      - name: Comment PR with results (if PR)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            
+            const artifactsDir = 'benchmarks/Keva.Benchmarks/BenchmarkDotNet.Artifacts/results';
+            const files = fs.readdirSync(artifactsDir);
+            const markdownFile = files.find(f => f.endsWith('.md'));
+            
+            if (markdownFile) {
+              const content = fs.readFileSync(path.join(artifactsDir, markdownFile), 'utf8');
+              
+              const comment = `## Redis Container Benchmark Results (${{ matrix.framework }})
+              
+              ${content}
+              
+              <details>
+              <summary>View raw benchmark output</summary>
+              
+              \`\`\`
+              ${content}
+              \`\`\`
+              </details>`;
+              
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            }

@@ -1,0 +1,161 @@
+name: Redis Throughput Benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      concurrent-clients:
+        description: 'Number of concurrent clients (comma-separated)'
+        required: false
+        default: '1,10,50'
+      operations-per-client:
+        description: 'Operations per client'
+        required: false
+        default: '100'
+  schedule:
+    # Run weekly on Sunday at 2 AM UTC
+    - cron: '0 2 * * 0'
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'benchmarks/**'
+      - '.github/workflows/benchmark-redis-throughput.yml'
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
+jobs:
+  redis-throughput-benchmarks:
+    name: Run Redis Throughput Benchmarks
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        framework: [net8.0, net9.0]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup .NET 8.0
+        if: matrix.framework == 'net8.0'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      
+      - name: Setup .NET 9.0
+        if: matrix.framework == 'net9.0'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      
+      - name: Restore dependencies
+        run: dotnet restore
+      
+      - name: Build
+        run: dotnet build -c Release --no-restore
+      
+      - name: Set benchmark parameters
+        id: params
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "concurrent_clients=${{ github.event.inputs.concurrent-clients }}" >> $GITHUB_OUTPUT
+            echo "operations=${{ github.event.inputs.operations-per-client }}" >> $GITHUB_OUTPUT
+          else
+            echo "concurrent_clients=1,10,50" >> $GITHUB_OUTPUT
+            echo "operations=100" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Run Redis Throughput Benchmarks
+        run: |
+          cd benchmarks/Keva.Benchmarks
+          
+          # Parse concurrent clients parameter
+          IFS=',' read -ra CLIENTS <<< "${{ steps.params.outputs.concurrent_clients }}"
+          for client_count in "${CLIENTS[@]}"; do
+            echo "Running with $client_count concurrent clients..."
+            dotnet run -c Release -f ${{ matrix.framework }} -- \
+              --filter "*RedisThroughputBenchmarks*" \
+              --exporters json markdown html \
+              --artifacts ./BenchmarkDotNet.Artifacts/$client_count \
+              --iterationCount 5 \
+              --warmupCount 3 \
+              -- --ConcurrentClients=$client_count --OperationsPerClient=${{ steps.params.outputs.operations }}
+          done
+      
+      - name: Generate throughput report
+        run: |
+          cat > benchmarks/Keva.Benchmarks/throughput-report.md << 'EOF'
+          # Redis Throughput Benchmark Report
+          
+          ## Configuration
+          - Framework: ${{ matrix.framework }}
+          - Concurrent Clients: ${{ steps.params.outputs.concurrent_clients }}
+          - Operations per Client: ${{ steps.params.outputs.operations }}
+          - Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          
+          ## Results Summary
+          EOF
+          
+          # Append individual results
+          for dir in benchmarks/Keva.Benchmarks/BenchmarkDotNet.Artifacts/*/results; do
+            if [ -d "$dir" ]; then
+              echo "### $(basename $(dirname $dir)) Concurrent Clients" >> benchmarks/Keva.Benchmarks/throughput-report.md
+              find "$dir" -name "*.md" -exec cat {} \; >> benchmarks/Keva.Benchmarks/throughput-report.md
+              echo "" >> benchmarks/Keva.Benchmarks/throughput-report.md
+            fi
+          done
+      
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: redis-throughput-benchmarks-${{ matrix.framework }}
+          path: |
+            benchmarks/Keva.Benchmarks/BenchmarkDotNet.Artifacts/
+            benchmarks/Keva.Benchmarks/throughput-report.md
+          retention-days: 30
+      
+      - name: Upload throughput report as release asset (if tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: benchmarks/Keva.Benchmarks/throughput-report.md
+          name: Throughput Benchmark Report - ${{ matrix.framework }}
+      
+      - name: Create benchmark comparison (if main branch)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          # Store results for comparison with future runs
+          mkdir -p .benchmark-history
+          cp benchmarks/Keva.Benchmarks/throughput-report.md \
+             .benchmark-history/throughput-${{ matrix.framework }}-$(date +%Y%m%d-%H%M%S).md
+      
+      - name: Comment PR with throughput results (if PR)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('benchmarks/Keva.Benchmarks/throughput-report.md', 'utf8');
+            
+            const comment = `## 📊 Redis Throughput Benchmark Results
+            
+            ${report}
+            
+            ---
+            
+            💡 **Tips for reading results:**
+            - Higher Ops/sec is better
+            - Lower mean time is better
+            - Check P95 for consistency
+            - Compare Keva vs StackExchange.Redis performance`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });

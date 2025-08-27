@@ -1,9 +1,9 @@
+using System.Buffers;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Jobs;
-using Microsoft.Extensions.Logging.Abstractions;
-using Keva.Core.FastClient;
-using Keva.Core.Infrastructure;
-using Keva.Core.Protocol;
+using Keva.FastClient;
+using Keva.Infrastructure;
+using Keva.Protocol;
 
 namespace Keva.Benchmarks;
 
@@ -16,9 +16,7 @@ namespace Keva.Benchmarks;
 [ThreadingDiagnoser]
 public class PipelineBenchmarks
 {
-    private PreCompiledPipelineClient _pipelineClient = null!;
-    private PreCompiledRespClient _preCompiledClient = null!;
-    private FastRespClient _fastClient = null!;
+    private KevaClient _kevaClient = null!;
     private KevaMemoryPool _memoryPool = null!;
     private const string TestKey = "benchmark_key";
     private const string TestValue = "benchmark_value_with_some_length_to_it";
@@ -30,11 +28,8 @@ public class PipelineBenchmarks
         {
             _memoryPool = KevaMemoryPool.Shared;
             
-            // Create clients (will fail if Redis is not available, but benchmark structure will be valid)
-            _pipelineClient = await PreCompiledPipelineClient.CreateLowLatencyAsync(
-                "localhost", 6379, connectionCount: 2, NullLogger.Instance);
-            _preCompiledClient = await PreCompiledRespClient.ConnectAsync("localhost", 6379, NullLogger.Instance);
-            _fastClient = await FastRespClient.ConnectAsync("localhost", 6379);
+            // Create unified client (will fail if Redis is not available, but benchmark structure will be valid)
+            _kevaClient = await KevaClient.CreateAsync("localhost", 6379);
         }
         catch (Exception ex)
         {
@@ -44,11 +39,9 @@ public class PipelineBenchmarks
     }
     
     [GlobalCleanup]
-    public async Task Cleanup()
+    public void Cleanup()
     {
-        if (_pipelineClient != null) await _pipelineClient.DisposeAsync();
-        if (_preCompiledClient != null) await _preCompiledClient.DisposeAsync();
-        if (_fastClient != null) await _fastClient.DisposeAsync();
+        _kevaClient?.Dispose();
     }
     
     // Memory pooling benchmarks
@@ -146,7 +139,7 @@ public class PipelineBenchmarks
     {
         try
         {
-            using var client = await PreCompiledPipelineClient.CreateAsync("localhost", 6379, 1);
+            await using var client = await KevaClient.CreateAsync("localhost", 6379);
         }
         catch
         {
@@ -159,7 +152,7 @@ public class PipelineBenchmarks
     {
         try
         {
-            using var client = await PreCompiledRespClient.ConnectAsync("localhost", 6379);
+            await using var client = await KevaClient.CreateAsync("localhost", 6379);
         }
         catch
         {
@@ -172,7 +165,7 @@ public class PipelineBenchmarks
     {
         try
         {
-            using var client = await FastRespClient.ConnectAsync("localhost", 6379);
+            await using var client = await KevaClient.CreateAsync("localhost", 6379);
         }
         catch
         {
@@ -183,74 +176,29 @@ public class PipelineBenchmarks
     // Live Redis operation benchmarks (conditional on Redis availability)
     
     [Benchmark]
-    public async Task PipelineClient_SetOperation()
+    public async Task KevaClient_SetOperation()
     {
-        if (_pipelineClient?.IsConnected == true)
+        if (_kevaClient != null)
         {
-            await _pipelineClient.SetAsync($"{TestKey}_pipeline", TestValue);
+            await _kevaClient.SetAsync($"{TestKey}_keva", TestValue);
         }
     }
     
     [Benchmark]
-    public async Task PreCompiledClient_SetOperation()
+    public async Task KevaClient_GetOperation()
     {
-        if (_preCompiledClient?.IsConnected == true)
+        if (_kevaClient != null)
         {
-            await _preCompiledClient.SetAsync($"{TestKey}_precompiled", TestValue);
+            await _kevaClient.GetAsync(TestKey);
         }
     }
     
     [Benchmark]
-    public async Task FastClient_SetOperation()
+    public async Task KevaClient_PingOperation()
     {
-        if (_fastClient?.IsConnected == true)
+        if (_kevaClient != null)
         {
-            await _fastClient.SetAsync($"{TestKey}_fast", TestValue);
-        }
-    }
-    
-    [Benchmark]
-    public async Task PipelineClient_GetOperation()
-    {
-        if (_pipelineClient?.IsConnected == true)
-        {
-            await _pipelineClient.GetAsync(TestKey);
-        }
-    }
-    
-    [Benchmark]
-    public async Task PreCompiledClient_GetOperation()
-    {
-        if (_preCompiledClient?.IsConnected == true)
-        {
-            await _preCompiledClient.GetAsync(TestKey);
-        }
-    }
-    
-    [Benchmark]
-    public async Task FastClient_GetOperation()
-    {
-        if (_fastClient?.IsConnected == true)
-        {
-            await _fastClient.GetAsync(TestKey);
-        }
-    }
-    
-    [Benchmark]
-    public async Task PipelineClient_PingOperation()
-    {
-        if (_pipelineClient?.IsConnected == true)
-        {
-            await _pipelineClient.PingDirectAsync();
-        }
-    }
-    
-    [Benchmark]
-    public async Task PreCompiledClient_PingOperation()
-    {
-        if (_preCompiledClient?.IsConnected == true)
-        {
-            await _preCompiledClient.PingAsync();
+            await _kevaClient.PingAsync();
         }
     }
     
@@ -260,14 +208,15 @@ public class PipelineBenchmarks
     [Arguments(10)]
     [Arguments(100)]
     [Arguments(1000)]
-    public async Task PipelineClient_BatchSetOperations(int batchSize)
+    public async Task KevaClient_BatchSetOperations(int batchSize)
     {
-        if (_pipelineClient?.IsConnected == true)
+        if (_kevaClient != null)
         {
-            var keyValues = Enumerable.Range(0, batchSize)
-                .Select(i => ($"{TestKey}_batch_{i}", $"{TestValue}_{i}"));
+            var tasks = Enumerable.Range(0, batchSize)
+                .Select(i => _kevaClient.SetAsync($"{TestKey}_batch_{i}", $"{TestValue}_{i}").AsTask())
+                .ToArray();
             
-            await _pipelineClient.SetBatchAsync(keyValues);
+            await Task.WhenAll(tasks);
         }
     }
     
@@ -311,8 +260,7 @@ public class PipelineBenchmarks
 [MemoryDiagnoser]
 public class PipelineThroughputBenchmarks
 {
-    private PreCompiledPipelineClient _pipelineClient = null!;
-    private PreCompiledRespClient _preCompiledClient = null!;
+    private KevaClient _kevaClient = null!;
     private const string TestKey = "throughput_test";
     private const string TestValue = "throughput_value";
     
@@ -324,9 +272,7 @@ public class PipelineThroughputBenchmarks
     {
         try
         {
-            _pipelineClient = await PreCompiledPipelineClient.CreateHighThroughputAsync(
-                "localhost", 6379, connectionCount: 4, NullLogger.Instance);
-            _preCompiledClient = await PreCompiledRespClient.ConnectAsync("localhost", 6379, NullLogger.Instance);
+            _kevaClient = await KevaClient.CreateAsync("localhost", 6379);
         }
         catch (Exception ex)
         {
@@ -335,19 +281,18 @@ public class PipelineThroughputBenchmarks
     }
     
     [GlobalCleanup]
-    public async Task Cleanup()
+    public void Cleanup()
     {
-        if (_pipelineClient != null) await _pipelineClient.DisposeAsync();
-        if (_preCompiledClient != null) await _preCompiledClient.DisposeAsync();
+        _kevaClient?.Dispose();
     }
     
     [Benchmark]
-    public async Task PipelineClient_ConcurrentSets()
+    public async Task KevaClient_ConcurrentSets()
     {
-        if (_pipelineClient?.IsConnected == true)
+        if (_kevaClient != null)
         {
             var tasks = Enumerable.Range(0, OperationCount)
-                .Select(i => _pipelineClient.SetAsync($"{TestKey}_{i}", $"{TestValue}_{i}"))
+                .Select(i => _kevaClient.SetAsync($"{TestKey}_{i}", $"{TestValue}_{i}").AsTask())
                 .ToArray();
             
             await Task.WhenAll(tasks);
@@ -355,39 +300,15 @@ public class PipelineThroughputBenchmarks
     }
     
     [Benchmark]
-    public async Task PreCompiledClient_SequentialSets()
+    public async Task KevaClient_ConcurrentGets()
     {
-        if (_preCompiledClient?.IsConnected == true)
-        {
-            for (int i = 0; i < OperationCount; i++)
-            {
-                await _preCompiledClient.SetAsync($"{TestKey}_{i}", $"{TestValue}_{i}");
-            }
-        }
-    }
-    
-    [Benchmark]
-    public async Task PipelineClient_ConcurrentGets()
-    {
-        if (_pipelineClient?.IsConnected == true)
+        if (_kevaClient != null)
         {
             var tasks = Enumerable.Range(0, OperationCount)
-                .Select(i => _pipelineClient.GetAsync($"{TestKey}_{i}"))
+                .Select(i => _kevaClient.GetAsync($"{TestKey}_{i}").AsTask())
                 .ToArray();
             
             await Task.WhenAll(tasks);
-        }
-    }
-    
-    [Benchmark]
-    public async Task PreCompiledClient_SequentialGets()
-    {
-        if (_preCompiledClient?.IsConnected == true)
-        {
-            for (int i = 0; i < OperationCount; i++)
-            {
-                await _preCompiledClient.GetAsync($"{TestKey}_{i}");
-            }
         }
     }
 }

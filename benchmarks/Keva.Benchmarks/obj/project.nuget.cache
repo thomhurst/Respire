@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "dgSpecHash": "dkoTXnyZKpc=",
+  "dgSpecHash": "sEfjl8VU2D0=",
   "success": true,
   "projectFilePath": "D:\\git\\Keva\\benchmarks\\Keva.Benchmarks\\Keva.Benchmarks.csproj",
   "expectedPackageFiles": [
@@ -19,16 +19,12 @@
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.diagnostics.runtime\\3.1.512801\\microsoft.diagnostics.runtime.3.1.512801.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.diagnostics.tracing.traceevent\\3.1.21\\microsoft.diagnostics.tracing.traceevent.3.1.21.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.dotnet.platformabstractions\\3.1.6\\microsoft.dotnet.platformabstractions.3.1.6.nupkg.sha512",
-    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.configuration.abstractions\\8.0.0\\microsoft.extensions.configuration.abstractions.8.0.0.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.dependencyinjection\\6.0.0\\microsoft.extensions.dependencyinjection.6.0.0.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.dependencyinjection.abstractions\\8.0.2\\microsoft.extensions.dependencyinjection.abstractions.8.0.2.nupkg.sha512",
-    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.diagnostics.abstractions\\8.0.0\\microsoft.extensions.diagnostics.abstractions.8.0.0.nupkg.sha512",
-    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.fileproviders.abstractions\\8.0.0\\microsoft.extensions.fileproviders.abstractions.8.0.0.nupkg.sha512",
-    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.hosting.abstractions\\8.0.0\\microsoft.extensions.hosting.abstractions.8.0.0.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.logging\\6.0.0\\microsoft.extensions.logging.6.0.0.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.logging.abstractions\\8.0.3\\microsoft.extensions.logging.abstractions.8.0.3.nupkg.sha512",
-    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.options\\8.0.0\\microsoft.extensions.options.8.0.0.nupkg.sha512",
-    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.primitives\\8.0.0\\microsoft.extensions.primitives.8.0.0.nupkg.sha512",
+    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.options\\6.0.0\\microsoft.extensions.options.6.0.0.nupkg.sha512",
+    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.primitives\\6.0.0\\microsoft.extensions.primitives.6.0.0.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\perfolizer\\0.5.3\\perfolizer.0.5.3.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\pipelines.sockets.unofficial\\2.2.8\\pipelines.sockets.unofficial.2.2.8.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\sharpziplib\\1.4.2\\sharpziplib.1.4.2.nupkg.sha512",
@@ -44,7 +40,11 @@
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.netcore.app.ref\\8.0.14\\microsoft.netcore.app.ref.8.0.14.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.windowsdesktop.app.ref\\8.0.14\\microsoft.windowsdesktop.app.ref.8.0.14.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.aspnetcore.app.ref\\8.0.14\\microsoft.aspnetcore.app.ref.8.0.14.nupkg.sha512",
-    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.netcore.app.host.win-x64\\8.0.14\\microsoft.netcore.app.host.win-x64.8.0.14.nupkg.sha512"
+    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.netcore.app.host.win-x64\\8.0.14\\microsoft.netcore.app.host.win-x64.8.0.14.nupkg.sha512",
+    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.netcore.app.ref\\9.0.3\\microsoft.netcore.app.ref.9.0.3.nupkg.sha512",
+    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.windowsdesktop.app.ref\\9.0.3\\microsoft.windowsdesktop.app.ref.9.0.3.nupkg.sha512",
+    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.aspnetcore.app.ref\\9.0.3\\microsoft.aspnetcore.app.ref.9.0.3.nupkg.sha512",
+    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.netcore.app.host.win-x64\\9.0.3\\microsoft.netcore.app.host.win-x64.9.0.3.nupkg.sha512"
   ],
   "logs": []
 }
