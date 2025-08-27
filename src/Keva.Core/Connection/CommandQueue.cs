@@ -50,11 +50,15 @@ public sealed class CommandQueue : ICommandQueue, IDisposable
     public async ValueTask<bool> EnqueueAsync(QueuedCommand command, CancellationToken cancellationToken = default)
     {
         if (!_isQueueingEnabled)
+        {
             return false;
-            
+        }
+
         if (_queuedCount >= _maxQueueSize)
+        {
             return false;
-        
+        }
+
         command.EnqueuedAt = DateTime.UtcNow;
         command.TimeoutAt = DateTime.UtcNow.Add(command.Timeout ?? _defaultTimeout);
         
@@ -111,8 +115,10 @@ public sealed class CommandQueue : ICommandQueue, IDisposable
     public void CompleteCommand(QueuedCommand command, RespValue response)
     {
         if (command.IsCompleted)
+        {
             return;
-            
+        }
+
         command.IsCompleted = true;
         command.CompletedAt = DateTime.UtcNow;
         
@@ -127,8 +133,10 @@ public sealed class CommandQueue : ICommandQueue, IDisposable
     public void FailCommand(QueuedCommand command, Exception exception)
     {
         if (command.IsCompleted)
+        {
             return;
-            
+        }
+
         command.IsCompleted = true;
         command.CompletedAt = DateTime.UtcNow;
         

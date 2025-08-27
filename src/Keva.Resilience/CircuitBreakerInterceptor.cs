@@ -150,7 +150,9 @@ public class CircuitBreakerInterceptor : IKevaInterceptor
     private bool ShouldCountAsFailure(RespValue error)
     {
         if (!error.IsError)
+        {
             return false;
+        }
 
         var errorMessage = error.GetErrorMessage();
         
@@ -160,7 +162,9 @@ public class CircuitBreakerInterceptor : IKevaInterceptor
             foreach (var pattern in _options.FailurePatterns)
             {
                 if (errorMessage.Contains(pattern, StringComparison.OrdinalIgnoreCase))
+                {
                     return true;
+                }
             }
         }
 

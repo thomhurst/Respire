@@ -36,8 +36,10 @@ public class KevaClientBuilder
     public KevaClientBuilder AddInterceptor(IKevaInterceptor interceptor)
     {
         if (interceptor == null)
+        {
             throw new ArgumentNullException(nameof(interceptor));
-            
+        }
+
         _interceptors.Add(interceptor);
         return this;
     }
@@ -51,8 +53,10 @@ public class KevaClientBuilder
     public KevaClientBuilder AddInterceptor<T>(Func<IServiceProvider, T> factory) where T : IKevaInterceptor
     {
         if (_serviceProvider == null)
+        {
             throw new InvalidOperationException("Service provider is not configured. Use WithServiceProvider first.");
-            
+        }
+
         var interceptor = factory(_serviceProvider);
         _interceptors.Add(interceptor);
         return this;

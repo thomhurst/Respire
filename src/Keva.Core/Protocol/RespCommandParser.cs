@@ -22,8 +22,10 @@ public static class RespCommandParser
         // We need to extract "SET" from this
         
         if (command.Length == 0)
+        {
             return string.Empty;
-        
+        }
+
         // Check if it's an array (starts with *)
         if (command[0] != (byte)'*')
         {
@@ -34,31 +36,41 @@ public static class RespCommandParser
         // Skip array header (*N\r\n)
         var index = command.IndexOf(CRLF);
         if (index == -1)
+        {
             return string.Empty;
-        
+        }
+
         index += 2; // Skip \r\n
         
         // Now we should be at the first bulk string ($N\r\n)
         if (index >= command.Length || command[index] != (byte)'$')
+        {
             return string.Empty;
-        
+        }
+
         // Find the length
         var lengthStart = index + 1;
         var lengthEnd = command.Slice(lengthStart).IndexOf(CRLF);
         if (lengthEnd == -1)
+        {
             return string.Empty;
-        
+        }
+
         // Parse the length
         var lengthSpan = command.Slice(lengthStart, lengthEnd);
         if (!TryParseInt(lengthSpan, out var length) || length <= 0)
+        {
             return string.Empty;
-        
+        }
+
         // Skip to the actual command string
         index = lengthStart + lengthEnd + 2; // Skip length and \r\n
         
         if (index + length > command.Length)
+        {
             return string.Empty;
-        
+        }
+
         // Extract the command name
         var commandName = command.Slice(index, length);
         return Encoding.UTF8.GetString(commandName);
@@ -90,21 +102,29 @@ public static class RespCommandParser
         arguments = Array.Empty<string>();
         
         if (command.Length == 0)
+        {
             return false;
-        
+        }
+
         // Check if it's an array (starts with *)
         if (command[0] != (byte)'*')
+        {
             return false;
-        
+        }
+
         // Parse array count
         var index = 1;
         var countEnd = command.Slice(index).IndexOf(CRLF);
         if (countEnd == -1)
+        {
             return false;
-        
+        }
+
         if (!TryParseInt(command.Slice(index, countEnd), out var count) || count <= 0)
+        {
             return false;
-        
+        }
+
         index += countEnd + 2; // Skip count and \r\n
         
         var parts = new string[count];
@@ -112,21 +132,29 @@ public static class RespCommandParser
         for (int i = 0; i < count; i++)
         {
             if (index >= command.Length)
+            {
                 return false;
-            
+            }
+
             // Each part should be a bulk string
             if (command[index] != (byte)'$')
+            {
                 return false;
-            
+            }
+
             // Parse length
             var lengthStart = index + 1;
             var lengthEnd = command.Slice(lengthStart).IndexOf(CRLF);
             if (lengthEnd == -1)
+            {
                 return false;
-            
+            }
+
             if (!TryParseInt(command.Slice(lengthStart, lengthEnd), out var length))
+            {
                 return false;
-            
+            }
+
             index = lengthStart + lengthEnd + 2; // Skip length and \r\n
             
             if (length == -1)
@@ -137,8 +165,10 @@ public static class RespCommandParser
             else
             {
                 if (index + length > command.Length)
+                {
                     return false;
-                
+                }
+
                 parts[i] = Encoding.UTF8.GetString(command.Slice(index, length));
                 index += length + 2; // Skip string and \r\n
             }
@@ -215,8 +245,10 @@ public static class RespCommandParser
     {
         value = 0;
         if (bytes.Length == 0)
+        {
             return false;
-        
+        }
+
         var negative = false;
         var start = 0;
         
@@ -230,14 +262,18 @@ public static class RespCommandParser
         {
             var b = bytes[i];
             if (b < (byte)'0' || b > (byte)'9')
+            {
                 return false;
-            
+            }
+
             value = value * 10 + (b - (byte)'0');
         }
         
         if (negative)
+        {
             value = -value;
-        
+        }
+
         return true;
     }
 }

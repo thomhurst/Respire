@@ -48,21 +48,27 @@ public class KevaClient : IKevaClient
     public async ValueTask<string?> GetAsync(string key, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(key))
+        {
             throw new ArgumentNullException(nameof(key));
-        
+        }
+
         var response = await ExecuteAsync("GET", key);
         
         if (response.IsNull)
+        {
             return null;
-            
+        }
+
         return response.AsString();
     }
     
     public async ValueTask<bool> SetAsync(string key, string value, TimeSpan? expiry = null, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(key))
+        {
             throw new ArgumentNullException(nameof(key));
-        
+        }
+
         RespValue response;
         
         if (expiry.HasValue)
@@ -81,8 +87,10 @@ public class KevaClient : IKevaClient
     public async ValueTask<bool> DeleteAsync(string key, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(key))
+        {
             throw new ArgumentNullException(nameof(key));
-        
+        }
+
         var response = await ExecuteAsync("DEL", key);
         return response.Type == RespDataType.Integer && response.AsInteger() > 0;
     }
@@ -90,8 +98,10 @@ public class KevaClient : IKevaClient
     public async ValueTask<bool> ExistsAsync(string key, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(key))
+        {
             throw new ArgumentNullException(nameof(key));
-        
+        }
+
         var response = await ExecuteAsync("EXISTS", key);
         return response.Type == RespDataType.Integer && response.AsInteger() > 0;
     }
@@ -99,8 +109,10 @@ public class KevaClient : IKevaClient
     public async ValueTask<long> IncrementAsync(string key, long by = 1, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(key))
+        {
             throw new ArgumentNullException(nameof(key));
-        
+        }
+
         RespValue response;
         
         if (by == 1)
@@ -118,8 +130,10 @@ public class KevaClient : IKevaClient
     public async ValueTask<long> DecrementAsync(string key, long by = 1, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(key))
+        {
             throw new ArgumentNullException(nameof(key));
-        
+        }
+
         RespValue response;
         
         if (by == 1)
@@ -142,13 +156,17 @@ public class KevaClient : IKevaClient
     public async ValueTask<string?[]> MGetAsync(params string[] keys)
     {
         if (keys == null || keys.Length == 0)
+        {
             throw new ArgumentException("At least one key must be provided", nameof(keys));
-        
+        }
+
         var response = await ExecuteAsync("MGET", keys);
         
         if (response.Type != RespDataType.Array)
+        {
             throw new InvalidOperationException($"Expected array response, got {response.Type}");
-        
+        }
+
         var array = response.AsArray();
         var results = new string?[array.Length];
         
@@ -170,8 +188,10 @@ public class KevaClient : IKevaClient
     public async ValueTask<bool> DelAsync(string key, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(key))
+        {
             throw new ArgumentNullException(nameof(key));
-        
+        }
+
         var response = await ExecuteAsync("DEL", key);
         return response.AsInteger() > 0;
     }
@@ -213,8 +233,10 @@ public class KevaClient : IKevaClient
     public async ValueTask DisposeAsync()
     {
         if (_disposed)
+        {
             return;
-            
+        }
+
         _disposed = true;
         
         await _connectionPool.DisposeAsync();
@@ -223,7 +245,9 @@ public class KevaClient : IKevaClient
     private void ThrowIfDisposed()
     {
         if (_disposed)
+        {
             throw new ObjectDisposedException(nameof(KevaClient));
+        }
     }
 }
 

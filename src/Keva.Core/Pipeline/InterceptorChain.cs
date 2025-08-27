@@ -55,7 +55,10 @@ public sealed class InterceptorChainBuilder
     
     public InterceptorChainBuilder Add(IKevaInterceptor interceptor)
     {
-        if (interceptor == null) throw new ArgumentNullException(nameof(interceptor));
+        if (interceptor == null)
+        {
+            throw new ArgumentNullException(nameof(interceptor));
+        }
         _interceptors.Add(interceptor);
         return this;
     }

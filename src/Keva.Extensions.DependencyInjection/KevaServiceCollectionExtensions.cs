@@ -21,8 +21,10 @@ public static class KevaServiceCollectionExtensions
         Action<KevaClientBuilder, IServiceProvider> configure)
     {
         if (configure == null)
+        {
             throw new ArgumentNullException(nameof(configure));
-        
+        }
+
         // Register the client factory
         services.TryAddSingleton<IKevaClientFactory>(sp =>
         {

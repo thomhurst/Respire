@@ -276,12 +276,16 @@ public sealed class UltraFastRespClient : IDisposable
         EnsureData();
         
         if (_receiveBuffer[_receiveOffset++] != '$')
+        {
             throw new InvalidOperationException("Expected bulk string");
-        
+        }
+
         var length = ReadIntegerUntilCrlf();
         if (length == -1)
+        {
             return null;
-            
+        }
+
         // For small strings, use StringBuilder to avoid allocation
         if (length <= 256)
         {
@@ -321,8 +325,10 @@ public sealed class UltraFastRespClient : IDisposable
         EnsureData();
         
         if (_receiveBuffer[_receiveOffset++] != ':')
+        {
             throw new InvalidOperationException("Expected integer");
-        
+        }
+
         return ReadIntegerUntilCrlf();
     }
     

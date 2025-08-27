@@ -115,8 +115,10 @@ public class ConnectionPool : IConnectionPool
     public async ValueTask ReleaseAsync(IKevaConnection connection)
     {
         if (connection == null)
+        {
             throw new ArgumentNullException(nameof(connection));
-            
+        }
+
         ThrowIfDisposed();
         
         Interlocked.Decrement(ref _activeConnections);
@@ -142,8 +144,10 @@ public class ConnectionPool : IConnectionPool
     public async ValueTask<bool> ValidateConnectionAsync(IKevaConnection connection, CancellationToken cancellationToken = default)
     {
         if (connection == null || !connection.IsConnected)
+        {
             return false;
-            
+        }
+
         try
         {
             return await connection.IsHealthyAsync(cancellationToken);
@@ -157,8 +161,10 @@ public class ConnectionPool : IConnectionPool
     public async ValueTask DisposeAsync()
     {
         if (_disposed)
+        {
             return;
-            
+        }
+
         _disposed = true;
         
         _availableConnections.Writer.TryComplete();
@@ -231,7 +237,9 @@ public class ConnectionPool : IConnectionPool
     private void ThrowIfDisposed()
     {
         if (_disposed)
+        {
             throw new ObjectDisposedException(nameof(ConnectionPool));
+        }
     }
 }
 

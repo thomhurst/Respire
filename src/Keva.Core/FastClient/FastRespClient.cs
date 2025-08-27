@@ -398,8 +398,10 @@ public sealed class FastRespClient : IDisposable
         EnsureData();
         
         if (_receiveBuffer[_receiveOffset++] != '+')
+        {
             throw new InvalidOperationException("Expected simple string");
-        
+        }
+
         var start = _receiveOffset;
         while (true)
         {
@@ -420,12 +422,16 @@ public sealed class FastRespClient : IDisposable
         EnsureData();
         
         if (_receiveBuffer[_receiveOffset++] != '$')
+        {
             throw new InvalidOperationException("Expected bulk string");
-        
+        }
+
         var length = ReadIntegerUntilCrlf();
         if (length == -1)
+        {
             return null;
-        
+        }
+
         var bytes = new byte[(int)length];
         var bytesRead = 0;
         
@@ -450,8 +456,10 @@ public sealed class FastRespClient : IDisposable
         EnsureData();
         
         if (_receiveBuffer[_receiveOffset++] != ':')
+        {
             throw new InvalidOperationException("Expected integer");
-        
+        }
+
         return ReadIntegerUntilCrlf();
     }
     
@@ -488,12 +496,16 @@ public sealed class FastRespClient : IDisposable
         EnsureData();
         
         if (_receiveBuffer[_receiveOffset++] != '*')
+        {
             throw new InvalidOperationException("Expected array");
-        
+        }
+
         var count = (int)ReadIntegerUntilCrlf();
         if (count == -1)
+        {
             return Array.Empty<string>();
-        
+        }
+
         var result = new string?[count];
         for (int i = 0; i < count; i++)
         {

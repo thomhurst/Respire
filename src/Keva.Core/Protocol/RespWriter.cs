@@ -74,8 +74,10 @@ public ref struct RespWriter
         var count = 1 + args.Length;
         
         if (!Utf8Formatter.TryFormat(count, span.Slice(1), out int written))
+        {
             throw new InvalidOperationException("Failed to format array count");
-            
+        }
+
         _writer.Advance(1 + written);
         
         WriteCrlf();
@@ -96,8 +98,11 @@ public ref struct RespWriter
     
     private ReadOnlyMemory<byte>[] ConvertArgs(string[] args)
     {
-        if (args.Length == 0) return Array.Empty<ReadOnlyMemory<byte>>();
-        
+        if (args.Length == 0)
+        {
+            return Array.Empty<ReadOnlyMemory<byte>>();
+        }
+
         var result = new ReadOnlyMemory<byte>[args.Length];
         
         for (int i = 0; i < args.Length; i++)
@@ -137,8 +142,10 @@ public ref struct RespWriter
         span[0] = (byte)RespDataType.Integer;
         
         if (!Utf8Formatter.TryFormat(value, span.Slice(1), out int written))
+        {
             throw new InvalidOperationException("Failed to format integer");
-            
+        }
+
         _writer.Advance(1 + written);
         WriteCrlf();
     }
@@ -157,8 +164,10 @@ public ref struct RespWriter
         span[0] = (byte)RespDataType.BulkString;
         
         if (!Utf8Formatter.TryFormat(data.Length, span.Slice(1), out int written))
+        {
             throw new InvalidOperationException("Failed to format bulk string length");
-            
+        }
+
         _writer.Advance(1 + written);
         WriteCrlf();
         
@@ -176,8 +185,10 @@ public ref struct RespWriter
         span[0] = (byte)RespDataType.BulkString;
         
         if (!Utf8Formatter.TryFormat(value.Length, span.Slice(1), out int written))
+        {
             throw new InvalidOperationException("Failed to format bulk string length");
-            
+        }
+
         _writer.Advance(1 + written);
         WriteCrlf();
         
@@ -194,8 +205,10 @@ public ref struct RespWriter
         span[0] = (byte)RespDataType.Array;
         
         if (!Utf8Formatter.TryFormat(values.Length, span.Slice(1), out int written))
+        {
             throw new InvalidOperationException("Failed to format array count");
-            
+        }
+
         _writer.Advance(1 + written);
         WriteCrlf();
         
@@ -233,8 +246,10 @@ public ref struct RespWriter
         span[0] = (byte)RespDataType.Double;
         
         if (!Utf8Formatter.TryFormat(value, span.Slice(1), out int written))
+        {
             throw new InvalidOperationException("Failed to format double");
-            
+        }
+
         _writer.Advance(1 + written);
         WriteCrlf();
     }
@@ -246,8 +261,10 @@ public ref struct RespWriter
         
         var count = values.Length / 2; // Map stores key-value pairs
         if (!Utf8Formatter.TryFormat(count, span.Slice(1), out int written))
+        {
             throw new InvalidOperationException("Failed to format map count");
-            
+        }
+
         _writer.Advance(1 + written);
         WriteCrlf();
         
@@ -263,8 +280,10 @@ public ref struct RespWriter
         span[0] = (byte)RespDataType.Set;
         
         if (!Utf8Formatter.TryFormat(values.Length, span.Slice(1), out int written))
+        {
             throw new InvalidOperationException("Failed to format set count");
-            
+        }
+
         _writer.Advance(1 + written);
         WriteCrlf();
         

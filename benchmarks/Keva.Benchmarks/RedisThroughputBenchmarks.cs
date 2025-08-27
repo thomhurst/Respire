@@ -54,11 +54,17 @@ public class RedisThroughputBenchmarks
         public string GetValue(Summary summary, BenchmarkCase benchmarkCase)
         {
             var report = summary[benchmarkCase];
-            if (report == null || !report.Success) return "N/A";
-            
+            if (report == null || !report.Success)
+            {
+                return "N/A";
+            }
+
             var meanNs = report.ResultStatistics?.Mean ?? 0;
-            if (meanNs == 0) return "N/A";
-            
+            if (meanNs == 0)
+            {
+                return "N/A";
+            }
+
             var opsPerSec = 1_000_000_000.0 / meanNs;
             return $"{opsPerSec:N0}";
         }

@@ -67,7 +67,9 @@ public class CompressionInterceptor : IKevaInterceptor
     {
         // Check if already compressed
         if (context.Items.ContainsKey("Compressed"))
+        {
             return false;
+        }
 
         // Check if command type should be compressed
         if (_options.ExcludedCommands != null && _options.ExcludedCommands.Count > 0)
@@ -75,7 +77,9 @@ public class CompressionInterceptor : IKevaInterceptor
             // Parse command name from the RESP command
             var commandName = context.Command.GetCommandName();
             if (!string.IsNullOrEmpty(commandName) && _options.ExcludedCommands.Contains(commandName))
+            {
                 return false;
+            }
         }
 
         return _options.Enabled;

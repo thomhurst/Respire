@@ -50,7 +50,10 @@ public readonly struct RespValue : IEquatable<RespValue>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static RespValue BulkString(string? value)
     {
-        if (value == null) return Null;
+        if (value == null)
+        {
+            return Null;
+        }
         return new(RespDataType.BulkString, Encoding.UTF8.GetBytes(value));
     }
     
@@ -147,20 +150,24 @@ public readonly struct RespValue : IEquatable<RespValue>
     
     public string GetErrorMessage()
     {
-        if (!IsError) throw new InvalidOperationException("Not an error value");
+        if (!IsError)
+        {
+            throw new InvalidOperationException("Not an error value");
+        }
         return AsString();
     }
     
     public bool Equals(RespValue other)
     {
-        if (_type != other._type) return false;
-        
+        if (_type != other._type)
+        {
+            return false;
+        }
+
         return _type switch
         {
             RespDataType.Null => true,
-            RespDataType.Boolean => Equals(_value, other._value),
-            RespDataType.Integer => Equals(_value, other._value),
-            RespDataType.Double => Equals(_value, other._value),
+            RespDataType.Boolean or RespDataType.Integer or RespDataType.Double => Equals(_value, other._value),
             RespDataType.SimpleString or RespDataType.Error or RespDataType.BulkString => 
                 AsBytes().Span.SequenceEqual(other.AsBytes().Span),
             RespDataType.Array or RespDataType.Set or RespDataType.Map => 

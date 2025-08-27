@@ -128,7 +128,9 @@ public class RetryInterceptor : IKevaInterceptor
         {
             var currentRetries = (int)context.Items["RetryCount"];
             if (currentRetries >= _options.MaxRetries)
+            {
                 return false;
+            }
         }
 
         // Check if command is idempotent (safe to retry)
@@ -136,7 +138,9 @@ public class RetryInterceptor : IKevaInterceptor
         {
             var commandName = context.Command.GetCommandName();
             if (!RespCommandParser.IsIdempotentCommand(commandName))
+            {
                 return false;
+            }
         }
 
         return _options.Enabled;
@@ -145,7 +149,9 @@ public class RetryInterceptor : IKevaInterceptor
     private bool ShouldRetryOnError(RespValue error)
     {
         if (!error.IsError)
+        {
             return false;
+        }
 
         var errorMessage = error.GetErrorMessage();
         
@@ -155,7 +161,9 @@ public class RetryInterceptor : IKevaInterceptor
             foreach (var pattern in _options.RetryableErrorPatterns)
             {
                 if (errorMessage.Contains(pattern, StringComparison.OrdinalIgnoreCase))
+                {
                     return true;
+                }
             }
         }
 

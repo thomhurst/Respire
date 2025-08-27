@@ -30,8 +30,10 @@ public ref struct RespReader
         value = default;
         
         if (!_reader.TryRead(out byte typeMarker))
+        {
             return false;
-            
+        }
+
         var type = (RespDataType)typeMarker;
         
         return type switch
@@ -113,7 +115,10 @@ public ref struct RespReader
         if (length == 0)
         {
             value = RespValue.EmptyBulkString;
-            if (!SkipCrlf()) return false;
+            if (!SkipCrlf())
+            {
+                return false;
+            }
             return true;
         }
         

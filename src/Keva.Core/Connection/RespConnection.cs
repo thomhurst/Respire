@@ -53,11 +53,15 @@ public sealed class RespConnection : IKevaConnection
     public async ValueTask<bool> ConnectAsync(CancellationToken cancellationToken = default)
     {
         if (_state == ConnectionState.Connected)
+        {
             return true;
-            
+        }
+
         if (_state == ConnectionState.Connecting)
+        {
             return await WaitForConnectionAsync(cancellationToken);
-        
+        }
+
         try
         {
             await ChangeStateAsync(ConnectionState.Connecting);
@@ -132,8 +136,10 @@ public sealed class RespConnection : IKevaConnection
     public async ValueTask DisconnectAsync(CancellationToken cancellationToken = default)
     {
         if (_state == ConnectionState.Disconnected || _state == ConnectionState.Closed)
+        {
             return;
-            
+        }
+
         await ChangeStateAsync(ConnectionState.Disconnected);
         
         try
@@ -157,8 +163,10 @@ public sealed class RespConnection : IKevaConnection
     public async ValueTask<bool> IsHealthyAsync(CancellationToken cancellationToken = default)
     {
         if (!IsConnected)
+        {
             return false;
-            
+        }
+
         try
         {
             var pong = await ExecuteAsync("PING"u8.ToArray(), cancellationToken);
@@ -191,8 +199,10 @@ public sealed class RespConnection : IKevaConnection
             await _writeLock.WaitAsync(cancellationToken);
             
             if (_writer == null)
+            {
                 throw new InvalidOperationException("Connection is not established");
-            
+            }
+
             // Write command directly without using ref struct in async
             // Note: For now, we're just writing the raw command bytes
             // In a real implementation, we'd parse and properly format the command
@@ -235,8 +245,10 @@ public sealed class RespConnection : IKevaConnection
     public async ValueTask DisposeAsync()
     {
         if (_state == ConnectionState.Closed)
+        {
             return;
-            
+        }
+
         await ChangeStateAsync(ConnectionState.Closed);
         
         _disposeCts.Cancel();
@@ -318,8 +330,10 @@ public sealed class RespConnection : IKevaConnection
     private async Task ReconnectAsync()
     {
         if (_state == ConnectionState.Reconnecting)
+        {
             return;
-            
+        }
+
         _disconnectedAt ??= DateTime.UtcNow;
         await ChangeStateAsync(ConnectionState.Reconnecting);
         
@@ -411,8 +425,10 @@ public sealed class RespConnection : IKevaConnection
     {
         var oldState = _state;
         if (oldState == newState)
+        {
             return;
-            
+        }
+
         _state = newState;
         StateChanged?.Invoke(this, new ConnectionStateChangedEventArgs(oldState, newState));
         await Task.CompletedTask;
