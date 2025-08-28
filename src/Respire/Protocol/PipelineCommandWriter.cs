@@ -95,6 +95,7 @@ public sealed class PipelineCommandWriter : IDisposable
     
     /// <summary>
     /// Writes GET command using pre-compiled command builder with memory pooling
+    /// Now optimized with C# 13 to use ref structs directly
     /// </summary>
     /// <param name="key">Redis key to retrieve</param>
     /// <param name="cancellationToken">Cancellation token</param>
@@ -102,17 +103,19 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        await _connection.WriteWithPooledBufferAsync(writer =>
-        {
-            var estimatedLength = 32 + key.Length; // Conservative estimate for GET command
-            var buffer = writer.GetSpan(estimatedLength);
-            var length = RespCommands.BuildGetCommand(buffer, key);
-            writer.Advance(length);
-        }, cancellationToken).ConfigureAwait(false);
+        // With C# 13, we can use ref structs directly in async methods!
+        using var writer = _memoryPool.CreateBufferWriter();
+        var estimatedLength = 32 + key.Length; 
+        var buffer = writer.GetSpan(estimatedLength);
+        var length = RespCommands.BuildGetCommand(buffer, key);
+        writer.Advance(length);
+        
+        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
     /// Writes SET command using pre-compiled command builder with memory pooling
+    /// Now optimized with C# 13 to use ref structs directly
     /// </summary>
     /// <param name="key">Redis key to set</param>
     /// <param name="value">Value to set</param>
@@ -121,17 +124,18 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        await _connection.WriteWithPooledBufferAsync(writer =>
-        {
-            var estimatedLength = 64 + key.Length + value.Length; // Conservative estimate
-            var buffer = writer.GetSpan(estimatedLength);
-            var length = RespCommands.BuildSetCommand(buffer, key, value);
-            writer.Advance(length);
-        }, cancellationToken).ConfigureAwait(false);
+        using var writer = _memoryPool.CreateBufferWriter();
+        var estimatedLength = 64 + key.Length + value.Length;
+        var buffer = writer.GetSpan(estimatedLength);
+        var length = RespCommands.BuildSetCommand(buffer, key, value);
+        writer.Advance(length);
+        
+        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
     /// Writes DEL command using pre-compiled command builder with memory pooling
+    /// Now optimized with C# 13 to use ref structs directly
     /// </summary>
     /// <param name="key">Redis key to delete</param>
     /// <param name="cancellationToken">Cancellation token</param>
@@ -139,17 +143,18 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        await _connection.WriteWithPooledBufferAsync(writer =>
-        {
-            var estimatedLength = 32 + key.Length; // Conservative estimate
-            var buffer = writer.GetSpan(estimatedLength);
-            var length = RespCommands.BuildDelCommand(buffer, key);
-            writer.Advance(length);
-        }, cancellationToken).ConfigureAwait(false);
+        using var writer = _memoryPool.CreateBufferWriter();
+        var estimatedLength = 32 + key.Length;
+        var buffer = writer.GetSpan(estimatedLength);
+        var length = RespCommands.BuildDelCommand(buffer, key);
+        writer.Advance(length);
+        
+        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
     /// Writes EXISTS command using pre-compiled command builder with memory pooling
+    /// Now optimized with C# 13 to use ref structs directly
     /// </summary>
     /// <param name="key">Redis key to check</param>
     /// <param name="cancellationToken">Cancellation token</param>
@@ -157,17 +162,18 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        await _connection.WriteWithPooledBufferAsync(writer =>
-        {
-            var estimatedLength = 32 + key.Length; // Conservative estimate
-            var buffer = writer.GetSpan(estimatedLength);
-            var length = RespCommands.BuildExistsCommand(buffer, key);
-            writer.Advance(length);
-        }, cancellationToken).ConfigureAwait(false);
+        using var writer = _memoryPool.CreateBufferWriter();
+        var estimatedLength = 32 + key.Length;
+        var buffer = writer.GetSpan(estimatedLength);
+        var length = RespCommands.BuildExistsCommand(buffer, key);
+        writer.Advance(length);
+        
+        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
     /// Writes HGET command using pre-compiled command builder with memory pooling
+    /// Now optimized with C# 13 to use ref structs directly
     /// </summary>
     /// <param name="key">Hash key</param>
     /// <param name="field">Hash field</param>
@@ -176,17 +182,18 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        await _connection.WriteWithPooledBufferAsync(writer =>
-        {
-            var estimatedLength = 64 + key.Length + field.Length; // Conservative estimate
-            var buffer = writer.GetSpan(estimatedLength);
-            var length = RespCommands.BuildHGetCommand(buffer, key, field);
-            writer.Advance(length);
-        }, cancellationToken).ConfigureAwait(false);
+        using var writer = _memoryPool.CreateBufferWriter();
+        var estimatedLength = 64 + key.Length + field.Length;
+        var buffer = writer.GetSpan(estimatedLength);
+        var length = RespCommands.BuildHGetCommand(buffer, key, field);
+        writer.Advance(length);
+        
+        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
     /// Writes HSET command using pre-compiled command builder with memory pooling
+    /// Now optimized with C# 13 to use ref structs directly
     /// </summary>
     /// <param name="key">Hash key</param>
     /// <param name="field">Hash field</param>
@@ -196,13 +203,13 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        await _connection.WriteWithPooledBufferAsync(writer =>
-        {
-            var estimatedLength = 96 + key.Length + field.Length + value.Length; // Conservative estimate
-            var buffer = writer.GetSpan(estimatedLength);
-            var length = RespCommands.BuildHSetCommand(buffer, key, field, value);
-            writer.Advance(length);
-        }, cancellationToken).ConfigureAwait(false);
+        using var writer = _memoryPool.CreateBufferWriter();
+        var estimatedLength = 96 + key.Length + field.Length + value.Length;
+        var buffer = writer.GetSpan(estimatedLength);
+        var length = RespCommands.BuildHSetCommand(buffer, key, field, value);
+        writer.Advance(length);
+        
+        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -215,13 +222,13 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        await _connection.WriteWithPooledBufferAsync(writer =>
-        {
-            var estimatedLength = 64 + key.Length + value.Length; // Conservative estimate
-            var buffer = writer.GetSpan(estimatedLength);
-            var length = RespCommands.BuildLPushCommand(buffer, key, value);
-            writer.Advance(length);
-        }, cancellationToken).ConfigureAwait(false);
+        using var writer = _memoryPool.CreateBufferWriter();
+        var estimatedLength = 64 + key.Length + value.Length;
+        var buffer = writer.GetSpan(estimatedLength);
+        var length = RespCommands.BuildLPushCommand(buffer, key, value);
+        writer.Advance(length);
+        
+        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -233,13 +240,13 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        await _connection.WriteWithPooledBufferAsync(writer =>
-        {
-            var estimatedLength = 32 + key.Length; // Conservative estimate
-            var buffer = writer.GetSpan(estimatedLength);
-            var length = RespCommands.BuildIncrCommand(buffer, key);
-            writer.Advance(length);
-        }, cancellationToken).ConfigureAwait(false);
+        using var writer = _memoryPool.CreateBufferWriter();
+        var estimatedLength = 32 + key.Length;
+        var buffer = writer.GetSpan(estimatedLength);
+        var length = RespCommands.BuildIncrCommand(buffer, key);
+        writer.Advance(length);
+        
+        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -252,13 +259,13 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        await _connection.WriteWithPooledBufferAsync(writer =>
-        {
-            var estimatedLength = 64 + key.Length; // Conservative estimate
-            var buffer = writer.GetSpan(estimatedLength);
-            var length = RespCommands.BuildExpireCommand(buffer, key, seconds);
-            writer.Advance(length);
-        }, cancellationToken).ConfigureAwait(false);
+        using var writer = _memoryPool.CreateBufferWriter();
+        var estimatedLength = 64 + key.Length;
+        var buffer = writer.GetSpan(estimatedLength);
+        var length = RespCommands.BuildExpireCommand(buffer, key, seconds);
+        writer.Advance(length);
+        
+        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -270,13 +277,13 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        await _connection.WriteWithPooledBufferAsync(writer =>
-        {
-            var estimatedLength = 32 + key.Length; // Conservative estimate
-            var buffer = writer.GetSpan(estimatedLength);
-            var length = RespCommands.BuildTtlCommand(buffer, key);
-            writer.Advance(length);
-        }, cancellationToken).ConfigureAwait(false);
+        using var writer = _memoryPool.CreateBufferWriter();
+        var estimatedLength = 32 + key.Length;
+        var buffer = writer.GetSpan(estimatedLength);
+        var length = RespCommands.BuildTtlCommand(buffer, key);
+        writer.Advance(length);
+        
+        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -289,13 +296,13 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        await _connection.WriteWithPooledBufferAsync(writer =>
-        {
-            var estimatedLength = 64 + key.Length + member.Length; // Conservative estimate
-            var buffer = writer.GetSpan(estimatedLength);
-            var length = RespCommands.BuildSAddCommand(buffer, key, member);
-            writer.Advance(length);
-        }, cancellationToken).ConfigureAwait(false);
+        using var writer = _memoryPool.CreateBufferWriter();
+        var estimatedLength = 64 + key.Length + member.Length;
+        var buffer = writer.GetSpan(estimatedLength);
+        var length = RespCommands.BuildSAddCommand(buffer, key, member);
+        writer.Advance(length);
+        
+        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -308,13 +315,13 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        await _connection.WriteWithPooledBufferAsync(writer =>
-        {
-            var estimatedLength = 64 + key.Length + member.Length; // Conservative estimate
-            var buffer = writer.GetSpan(estimatedLength);
-            var length = RespCommands.BuildSRemCommand(buffer, key, member);
-            writer.Advance(length);
-        }, cancellationToken).ConfigureAwait(false);
+        using var writer = _memoryPool.CreateBufferWriter();
+        var estimatedLength = 64 + key.Length + member.Length;
+        var buffer = writer.GetSpan(estimatedLength);
+        var length = RespCommands.BuildSRemCommand(buffer, key, member);
+        writer.Advance(length);
+        
+        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -326,13 +333,13 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        await _connection.WriteWithPooledBufferAsync(writer =>
-        {
-            var estimatedLength = 32 + key.Length; // Conservative estimate
-            var buffer = writer.GetSpan(estimatedLength);
-            var length = RespCommands.BuildRPopCommand(buffer, key);
-            writer.Advance(length);
-        }, cancellationToken).ConfigureAwait(false);
+        using var writer = _memoryPool.CreateBufferWriter();
+        var estimatedLength = 32 + key.Length;
+        var buffer = writer.GetSpan(estimatedLength);
+        var length = RespCommands.BuildRPopCommand(buffer, key);
+        writer.Advance(length);
+        
+        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
