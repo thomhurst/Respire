@@ -1,25 +1,23 @@
 using Testcontainers.Redis;
-using Xunit;
+using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-public class RedisTestFixture : IAsyncLifetime
+public class RedisTestFixture
 {
-    private readonly RedisContainer _redisContainer;
+    private static RedisContainer? _redisContainer;
     
-    public string ConnectionString => _redisContainer.GetConnectionString();
-    public string Host { get; private set; } = "localhost";
-    public int Port { get; private set; }
+    public string ConnectionString => _redisContainer?.GetConnectionString() ?? throw new InvalidOperationException("Redis container not initialized");
+    public static string Host { get; private set; } = "localhost";
+    public static int Port { get; private set; }
     
-    public RedisTestFixture()
+    [Before(HookType.Class)]
+    public static async Task InitializeAsync()
     {
         _redisContainer = new RedisBuilder()
             .WithImage("redis:7-alpine")
             .Build();
-    }
-    
-    public async Task InitializeAsync()
-    {
+            
         await _redisContainer.StartAsync();
         
         // Parse the connection string to get host and port
@@ -29,16 +27,14 @@ public class RedisTestFixture : IAsyncLifetime
         Port = int.Parse(parts[1]);
     }
     
-    public async Task DisposeAsync()
+    [After(HookType.Class)]
+    public static async Task DisposeAsync()
     {
-        await _redisContainer.DisposeAsync();
+        if (_redisContainer != null)
+        {
+            await _redisContainer.DisposeAsync();
+            _redisContainer = null;
+        }
     }
 }
 
-[CollectionDefinition("Redis")]
-public class RedisCollection : ICollectionFixture<RedisTestFixture>
-{
-    // This class has no code, and is never created. Its purpose is simply
-    // to be the place to apply [CollectionDefinition] and all the
-    // ICollectionFixture<> interfaces.
-}

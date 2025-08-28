@@ -1,12 +1,13 @@
 using FluentAssertions;
 using Respire.FastClient;
 using StackExchange.Redis;
-using Xunit;
+using TUnit.Core;
+using TUnit.Assertions;
 
 namespace Respire.IntegrationTests;
 
-[Collection("Redis")]
-public class EdgeCaseTests : IAsyncLifetime
+[ClassDataSource<RedisTestFixture>(Shared = SharedType.Keyed)]
+public class EdgeCaseTests
 {
     private readonly RedisTestFixture _fixture;
     private RespireClient _respireClient = null!;
@@ -18,21 +19,23 @@ public class EdgeCaseTests : IAsyncLifetime
         _fixture = fixture;
     }
     
+    [Before(HookType.Test)]
     public async Task InitializeAsync()
     {
-        _respireClient = await RespireClient.CreateAsync(_fixture.Host, _fixture.Port);
+        _respireClient = await RespireClient.CreateAsync(RedisTestFixture.Host, RedisTestFixture.Port);
         _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.ConnectionString);
         _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase();
         await _stackExchangeDb.ExecuteAsync("FLUSHDB");
     }
     
+    [After(HookType.Test)]
     public async Task DisposeAsync()
     {
         await _respireClient.DisposeAsync();
         await _stackExchangeMultiplexer.DisposeAsync();
     }
     
-    [Fact]
+    [Test]
     public async Task VeryLargeValues_HandledCorrectly()
     {
         const string largeKey = "test:large";
@@ -50,7 +53,7 @@ public class EdgeCaseTests : IAsyncLifetime
         retrieved.ToString().Should().EndWith("xxxx");
     }
     
-    [Fact]
+    [Test]
     public async Task EmptyStringValues_HandledCorrectly()
     {
         const string emptyKey1 = "test:empty1";
@@ -73,7 +76,7 @@ public class EdgeCaseTests : IAsyncLifetime
         empty2.ToString().Should().Be("");
     }
     
-    [Fact]
+    [Test]
     public async Task NonExistentKeys_ReturnNull()
     {
         const string nonExistentKey = "test:nonexistent";
@@ -99,7 +102,7 @@ public class EdgeCaseTests : IAsyncLifetime
         seDeleted.Should().BeFalse();
     }
     
-    [Fact]
+    [Test]
     public async Task SpecialCharacters_InKeysAndValues()
     {
         // Test various special characters
@@ -145,7 +148,7 @@ public class EdgeCaseTests : IAsyncLifetime
         }
     }
     
-    [Fact]
+    [Test]
     public async Task UnicodeAndEmoji_HandledCorrectly()
     {
         var unicodeCases = new[]
@@ -178,7 +181,7 @@ public class EdgeCaseTests : IAsyncLifetime
         }
     }
     
-    [Fact]
+    [Test]
     public async Task ConcurrentModifications_MaintainConsistency()
     {
         const string sharedKey = "test:concurrent";
@@ -212,7 +215,7 @@ public class EdgeCaseTests : IAsyncLifetime
         finalR.ToString().Should().Be(iterations.ToString());
     }
     
-    [Fact]
+    [Test]
     public async Task TypeMismatch_HandledGracefully()
     {
         const string key = "test:typemismatch";
@@ -236,7 +239,7 @@ public class EdgeCaseTests : IAsyncLifetime
         incrResult.IsError.Should().BeTrue();
     }
     
-    [Fact]
+    [Test]
     public async Task RapidKeyCreationAndDeletion()
     {
         const int cycles = 50;

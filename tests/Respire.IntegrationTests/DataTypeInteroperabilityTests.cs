@@ -2,12 +2,13 @@ using FluentAssertions;
 using Respire.FastClient;
 using StackExchange.Redis;
 using System.Text;
-using Xunit;
+using TUnit.Core;
+using TUnit.Assertions;
 
 namespace Respire.IntegrationTests;
 
-[Collection("Redis")]
-public class DataTypeInteroperabilityTests : IAsyncLifetime
+[ClassDataSource<RedisTestFixture>(Shared = SharedType.Keyed)]
+public class DataTypeInteroperabilityTests
 {
     private readonly RedisTestFixture _fixture;
     private RespireClient _respireClient = null!;
@@ -19,21 +20,23 @@ public class DataTypeInteroperabilityTests : IAsyncLifetime
         _fixture = fixture;
     }
     
+    [Before(HookType.Test)]
     public async Task InitializeAsync()
     {
-        _respireClient = await RespireClient.CreateAsync(_fixture.Host, _fixture.Port);
+        _respireClient = await RespireClient.CreateAsync(RedisTestFixture.Host, RedisTestFixture.Port);
         _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.ConnectionString);
         _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase();
         await _stackExchangeDb.ExecuteAsync("FLUSHDB");
     }
     
+    [After(HookType.Test)]
     public async Task DisposeAsync()
     {
         await _respireClient.DisposeAsync();
         await _stackExchangeMultiplexer.DisposeAsync();
     }
     
-    [Fact]
+    [Test]
     public async Task HashOperations_CrossClientCompatibility()
     {
         const string hashKey = "test:hash";
@@ -62,7 +65,7 @@ public class DataTypeInteroperabilityTests : IAsyncLifetime
         allFields.Should().HaveCount(4);
     }
     
-    [Fact]
+    [Test]
     public async Task ListOperations_CrossClientCompatibility()
     {
         const string listKey = "test:list";
@@ -90,7 +93,7 @@ public class DataTypeInteroperabilityTests : IAsyncLifetime
         length.Should().Be(3);
     }
     
-    [Fact]
+    [Test]
     public async Task SetOperations_CrossClientCompatibility()
     {
         const string setKey = "test:set";
@@ -118,7 +121,7 @@ public class DataTypeInteroperabilityTests : IAsyncLifetime
         newCount.Should().Be(3);
     }
     
-    [Fact]
+    [Test]
     public async Task NumericValues_HandledConsistently()
     {
         // Test various numeric formats
@@ -149,7 +152,7 @@ public class DataTypeInteroperabilityTests : IAsyncLifetime
         respireIncr.AsInteger().Should().Be(44);
     }
     
-    [Fact]
+    [Test]
     public async Task BinaryData_HandledConsistently()
     {
         const string binaryKey = "test:binary";
@@ -173,7 +176,7 @@ public class DataTypeInteroperabilityTests : IAsyncLifetime
         exists.Should().BeTrue();
     }
     
-    [Fact]
+    [Test]
     public async Task ExpireOperations_WorkAcrossClients()
     {
         const string expKey1 = "test:expire1";
@@ -195,7 +198,7 @@ public class DataTypeInteroperabilityTests : IAsyncLifetime
         ttl2.AsInteger().Should().BeInRange(10, 15);
     }
     
-    [Fact]
+    [Test]
     public async Task TransactionLike_Operations()
     {
         // Test that operations from both clients maintain consistency
@@ -234,7 +237,7 @@ public class DataTypeInteroperabilityTests : IAsyncLifetime
         finalFlag.ToString().Should().Be("true");
     }
     
-    [Fact]
+    [Test]
     public async Task KeyPatternOperations()
     {
         // Set up keys with both clients

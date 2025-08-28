@@ -1,12 +1,13 @@
 using FluentAssertions;
 using Respire.FastClient;
 using StackExchange.Redis;
-using Xunit;
+using TUnit.Core;
+using TUnit.Assertions;
 
 namespace Respire.IntegrationTests;
 
-[Collection("Redis")]
-public class ClientComparisonTests : IAsyncLifetime
+[ClassDataSource<RedisTestFixture>(Shared = SharedType.Keyed)]
+public class ClientComparisonTests
 {
     private readonly RedisTestFixture _fixture;
     private RespireClient _respireClient = null!;
@@ -18,10 +19,11 @@ public class ClientComparisonTests : IAsyncLifetime
         _fixture = fixture;
     }
     
+    [Before(HookType.Test)]
     public async Task InitializeAsync()
     {
         // Initialize Respire client
-        _respireClient = await RespireClient.CreateAsync(_fixture.Host, _fixture.Port);
+        _respireClient = await RespireClient.CreateAsync(RedisTestFixture.Host, RedisTestFixture.Port);
         
         // Initialize StackExchange.Redis client
         _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.ConnectionString);
@@ -31,13 +33,14 @@ public class ClientComparisonTests : IAsyncLifetime
         await _stackExchangeDb.ExecuteAsync("FLUSHDB");
     }
     
+    [After(HookType.Test)]
     public async Task DisposeAsync()
     {
         await _respireClient.DisposeAsync();
         await _stackExchangeMultiplexer.DisposeAsync();
     }
     
-    [Fact]
+    [Test]
     public async Task StringOperations_ShouldProduceSameResults()
     {
         // Arrange
@@ -61,7 +64,7 @@ public class ClientComparisonTests : IAsyncLifetime
         stackExchangeGet.ToString().Should().Be(value2);
     }
     
-    [Fact]
+    [Test]
     public async Task IncrementOperations_ShouldProduceSameResults()
     {
         // Arrange
@@ -87,7 +90,7 @@ public class ClientComparisonTests : IAsyncLifetime
         finalValueR.ToString().Should().Be("4");
     }
     
-    [Fact]
+    [Test]
     public async Task ExistsOperation_ShouldProduceSameResults()
     {
         // Arrange
@@ -111,7 +114,7 @@ public class ClientComparisonTests : IAsyncLifetime
         notExistsR.AsInteger().Should().Be(0);
     }
     
-    [Fact]
+    [Test]
     public async Task DeleteOperation_ShouldProduceSameResults()
     {
         // Arrange
@@ -137,7 +140,7 @@ public class ClientComparisonTests : IAsyncLifetime
         existsAfterR.AsInteger().Should().Be(0);
     }
     
-    [Fact]
+    [Test]
     public async Task PingOperation_ShouldWork()
     {
         // Act
@@ -150,7 +153,7 @@ public class ClientComparisonTests : IAsyncLifetime
         stackExchangeResult.TotalMilliseconds.Should().BeGreaterThan(0);
     }
     
-    [Fact]
+    [Test]
     public async Task MixedOperations_ShouldMaintainConsistency()
     {
         // This test mixes operations between both clients to ensure they can work together
@@ -193,7 +196,7 @@ public class ClientComparisonTests : IAsyncLifetime
         allDeleted.Should().BeFalse();
     }
     
-    [Fact]
+    [Test]
     public async Task ExpireAndTTL_Operations_ShouldWork()
     {
         // Arrange
@@ -219,7 +222,7 @@ public class ClientComparisonTests : IAsyncLifetime
         ttlSE!.Value.TotalSeconds.Should().BeInRange(5, expireSeconds);
     }
     
-    [Fact] 
+    [Test] 
     public async Task BulkOperations_ShouldBeConsistent()
     {
         // Test that both clients can handle bulk operations and remain consistent
@@ -263,14 +266,14 @@ public class ClientComparisonTests : IAsyncLifetime
         }
     }
     
-    [Theory]
-    [InlineData("simple")]
-    [InlineData("with spaces")]
-    [InlineData("with-dashes-and_underscores")]
-    [InlineData("with:colons:and|pipes")]
-    [InlineData("üñíçödé")]
-    [InlineData("😀🎉🚀")]
-    [InlineData("very_long_key_name_that_exceeds_typical_lengths_to_test_buffer_handling_in_both_clients_1234567890")]
+    [Test]
+    [Arguments("simple")]
+    [Arguments("with spaces")]
+    [Arguments("with-dashes-and_underscores")]
+    [Arguments("with:colons:and|pipes")]
+    [Arguments("üñíçödé")]
+    [Arguments("😀🎉🚀")]
+    [Arguments("very_long_key_name_that_exceeds_typical_lengths_to_test_buffer_handling_in_both_clients_1234567890")]
     public async Task VariousKeyFormats_ShouldWork(string keySuffix)
     {
         // Test various key formats to ensure both clients handle them the same way
@@ -293,7 +296,7 @@ public class ClientComparisonTests : IAsyncLifetime
         retrievedR.ToString().Should().Be(newValue);
     }
     
-    [Fact]
+    [Test]
     public async Task NullAndEmptyValues_ShouldBeHandledConsistently()
     {
         // Test null/empty value handling
