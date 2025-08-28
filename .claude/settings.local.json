@@ -30,7 +30,8 @@
       "mcp__serena__create_text_file",
       "Bash(python:*)",
       "Bash(dotnet restore:*)",
-      "Bash(sed:*)"
+      "Bash(sed:*)",
+      "mcp__serena__insert_after_symbol"
     ],
     "deny": [],
     "ask": []

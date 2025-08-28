@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
@@ -24,6 +25,7 @@ public sealed class RespireCommandQueue : IAsyncDisposable
     // Object pools to reduce allocations
     private readonly ObjectPool<ValueTaskCompletionSource> _vtcsPool;
     private readonly ObjectPool<List<QueuedCommand>> _batchPool;
+    private readonly ArrayPool<Func<PipelineCommandWriter, ValueTask>> _delegateArrayPool;
     
     // Pre-compiled delegates to avoid lambda allocations for common commands
     private static readonly Func<PipelineCommandWriter, ValueTask> _pingDelegate = static writer => writer.WritePingAsync(default);
@@ -126,6 +128,8 @@ public sealed class RespireCommandQueue : IAsyncDisposable
         
         var batchPoolPolicy = new BatchListPooledObjectPolicy(options.BatchSize);
         _batchPool = new DefaultObjectPool<List<QueuedCommand>>(batchPoolPolicy, options.BatchPoolSize);
+        
+        _delegateArrayPool = ArrayPool<Func<PipelineCommandWriter, ValueTask>>.Shared;
         
         // Create bounded channel with specified options
         var channelOptions = new BoundedChannelOptions(options.Capacity)
@@ -381,11 +385,13 @@ public sealed class RespireCommandQueue : IAsyncDisposable
     
     private async ValueTask ProcessCommandBatch(List<QueuedCommand> batch)
     {
+        // Get pooled lists for command grouping
+        var commandsWithoutResponse = _batchPool.Get();
+        var commandsWithResponse = _batchPool.Get();
+        
         try
         {
             // Group commands by whether they need responses
-            var commandsWithoutResponse = new List<QueuedCommand>();
-            var commandsWithResponse = new List<QueuedCommand>();
             
             foreach (var command in batch)
             {
@@ -398,8 +404,23 @@ public sealed class RespireCommandQueue : IAsyncDisposable
             // Process commands without responses in parallel
             if (commandsWithoutResponse.Count > 0)
             {
-                var parallelActions = commandsWithoutResponse.Select(cmd => cmd.CommandAction);
-                await _multiplexer.ExecuteParallelCommandsAsync(parallelActions, _cancellationTokenSource.Token).ConfigureAwait(false);
+                // Use pooled array to avoid allocations
+                var parallelActions = _delegateArrayPool.Rent(commandsWithoutResponse.Count);
+                try
+                {
+                    for (int i = 0; i < commandsWithoutResponse.Count; i++)
+                    {
+                        parallelActions[i] = commandsWithoutResponse[i].CommandAction;
+                    }
+                    
+                    // Create span to pass exact size
+                    var actionsSpan = new ArraySegment<Func<PipelineCommandWriter, ValueTask>>(parallelActions, 0, commandsWithoutResponse.Count);
+                    await _multiplexer.ExecuteParallelCommandsAsync(actionsSpan, _cancellationTokenSource.Token).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _delegateArrayPool.Return(parallelActions, clearArray: true);
+                }
             }
             
             // Process commands with responses sequentially (for now)
@@ -426,6 +447,12 @@ public sealed class RespireCommandQueue : IAsyncDisposable
             {
                 command.ResponseHandler.SetException(ex);
             }
+        }
+        finally
+        {
+            // Return pooled lists
+            _batchPool.Return(commandsWithoutResponse);
+            _batchPool.Return(commandsWithResponse);
         }
     }
     

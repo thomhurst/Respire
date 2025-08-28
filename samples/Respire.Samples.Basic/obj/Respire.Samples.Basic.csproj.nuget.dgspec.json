@@ -773,6 +773,10 @@
               "target": "Package",
               "version": "[8.0.0, )"
             },
+            "Microsoft.Extensions.ObjectPool": {
+              "target": "Package",
+              "version": "[8.0.0, )"
+            },
             "System.IO.Pipelines": {
               "target": "Package",
               "version": "[8.0.0, )"
@@ -1105,6 +1109,10 @@
           "targetAlias": "net9.0",
           "dependencies": {
             "Microsoft.Extensions.Logging.Abstractions": {
+              "target": "Package",
+              "version": "[8.0.0, )"
+            },
+            "Microsoft.Extensions.ObjectPool": {
               "target": "Package",
               "version": "[8.0.0, )"
             },

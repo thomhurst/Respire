@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "dgSpecHash": "WMcruQEMY9M=",
+  "dgSpecHash": "9IASocdScGQ=",
   "success": true,
   "projectFilePath": "D:\\git\\Keva\\benchmarks\\Respire.Benchmarks\\Respire.Benchmarks.csproj",
   "expectedPackageFiles": [
@@ -23,6 +23,7 @@
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.dependencyinjection.abstractions\\8.0.2\\microsoft.extensions.dependencyinjection.abstractions.8.0.2.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.logging\\6.0.0\\microsoft.extensions.logging.6.0.0.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.logging.abstractions\\8.0.3\\microsoft.extensions.logging.abstractions.8.0.3.nupkg.sha512",
+    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.objectpool\\8.0.0\\microsoft.extensions.objectpool.8.0.0.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.options\\6.0.0\\microsoft.extensions.options.6.0.0.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.primitives\\6.0.0\\microsoft.extensions.primitives.6.0.0.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\perfolizer\\0.5.3\\perfolizer.0.5.3.nupkg.sha512",

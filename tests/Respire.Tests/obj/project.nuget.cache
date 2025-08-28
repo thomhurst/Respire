@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "dgSpecHash": "dx3GjxpmRbI=",
+  "dgSpecHash": "XfWG/yDyIdQ=",
   "success": true,
   "projectFilePath": "D:\\git\\Keva\\tests\\Respire.Tests\\Respire.Tests.csproj",
   "expectedPackageFiles": [
@@ -9,6 +9,7 @@
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.dependencyinjection\\8.0.0\\microsoft.extensions.dependencyinjection.8.0.0.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.dependencyinjection.abstractions\\8.0.0\\microsoft.extensions.dependencyinjection.abstractions.8.0.0.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.logging.abstractions\\8.0.0\\microsoft.extensions.logging.abstractions.8.0.0.nupkg.sha512",
+    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.objectpool\\8.0.0\\microsoft.extensions.objectpool.8.0.0.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.net.test.sdk\\17.9.0\\microsoft.net.test.sdk.17.9.0.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.testing.extensions.trxreport.abstractions\\1.4.0\\microsoft.testing.extensions.trxreport.abstractions.1.4.0.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.testing.platform\\1.4.0\\microsoft.testing.platform.1.4.0.nupkg.sha512",
