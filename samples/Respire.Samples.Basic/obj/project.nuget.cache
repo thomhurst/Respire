@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "9fn8vVxsli8=",
+  "dgSpecHash": "rZIlzr24HjY=",
   "success": true,
-  "projectFilePath": "D:\\git\\Respire\\samples\\Respire.Samples.Basic\\Respire.Samples.Basic.csproj",
+  "projectFilePath": "D:\\git\\Keva\\samples\\Respire.Samples.Basic\\Respire.Samples.Basic.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.dependencyinjection.abstractions\\8.0.0\\microsoft.extensions.dependencyinjection.abstractions.8.0.0.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.logging.abstractions\\8.0.0\\microsoft.extensions.logging.abstractions.8.0.0.nupkg.sha512",

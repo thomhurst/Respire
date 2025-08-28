@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "h6pEjochrl0=",
+  "dgSpecHash": "Y2EAbr5dk9o=",
   "success": true,
-  "projectFilePath": "D:\\git\\Respire\\src\\Respire\\Respire.csproj",
+  "projectFilePath": "D:\\git\\Keva\\src\\Respire\\Respire.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.dependencyinjection.abstractions\\8.0.0\\microsoft.extensions.dependencyinjection.abstractions.8.0.0.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.extensions.logging.abstractions\\8.0.0\\microsoft.extensions.logging.abstractions.8.0.0.nupkg.sha512",
@@ -20,27 +20,27 @@
       "code": "NU1510",
       "level": "Warning",
       "message": "PackageReference System.Threading.Channels will not be pruned. Consider removing this package from your dependencies, as it is likely unnecessary.",
-      "projectPath": "D:\\git\\Respire\\src\\Respire\\Respire.csproj",
+      "projectPath": "D:\\git\\Keva\\src\\Respire\\Respire.csproj",
       "warningLevel": 1,
-      "filePath": "D:\\git\\Respire\\src\\Respire\\Respire.csproj",
+      "filePath": "D:\\git\\Keva\\src\\Respire\\Respire.csproj",
       "targetGraphs": []
     },
     {
       "code": "NU1510",
       "level": "Warning",
       "message": "PackageReference System.IO.Pipelines will not be pruned. Consider removing this package from your dependencies, as it is likely unnecessary.",
-      "projectPath": "D:\\git\\Respire\\src\\Respire\\Respire.csproj",
+      "projectPath": "D:\\git\\Keva\\src\\Respire\\Respire.csproj",
       "warningLevel": 1,
-      "filePath": "D:\\git\\Respire\\src\\Respire\\Respire.csproj",
+      "filePath": "D:\\git\\Keva\\src\\Respire\\Respire.csproj",
       "targetGraphs": []
     },
     {
       "code": "NU1510",
       "level": "Warning",
       "message": "PackageReference System.Threading.Channels will not be pruned. Consider removing this package from your dependencies, as it is likely unnecessary.",
-      "projectPath": "D:\\git\\Respire\\src\\Respire\\Respire.csproj",
+      "projectPath": "D:\\git\\Keva\\src\\Respire\\Respire.csproj",
       "warningLevel": 1,
-      "filePath": "D:\\git\\Respire\\src\\Respire\\Respire.csproj",
+      "filePath": "D:\\git\\Keva\\src\\Respire\\Respire.csproj",
       "targetGraphs": []
     }
   ]

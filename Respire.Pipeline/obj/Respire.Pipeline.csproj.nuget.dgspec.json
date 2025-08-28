@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "D:\\git\\Respire\\Respire.Pipeline\\Respire.Pipeline.csproj": {}
+    "D:\\git\\Keva\\Respire.Pipeline\\Respire.Pipeline.csproj": {}
   },
   "projects": {
-    "D:\\git\\Respire\\Respire.Pipeline\\Respire.Pipeline.csproj": {
+    "D:\\git\\Keva\\Respire.Pipeline\\Respire.Pipeline.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "D:\\git\\Respire\\Respire.Pipeline\\Respire.Pipeline.csproj",
+        "projectUniqueName": "D:\\git\\Keva\\Respire.Pipeline\\Respire.Pipeline.csproj",
         "projectName": "Respire.Pipeline",
-        "projectPath": "D:\\git\\Respire\\Respire.Pipeline\\Respire.Pipeline.csproj",
+        "projectPath": "D:\\git\\Keva\\Respire.Pipeline\\Respire.Pipeline.csproj",
         "packagesPath": "C:\\Users\\thomh\\.nuget\\packages\\",
-        "outputPath": "D:\\git\\Respire\\Respire.Pipeline\\obj\\",
+        "outputPath": "D:\\git\\Keva\\Respire.Pipeline\\obj\\",
         "projectStyle": "PackageReference",
         "crossTargeting": true,
         "fallbackFolders": [

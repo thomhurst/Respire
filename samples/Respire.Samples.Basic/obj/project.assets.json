@@ -53,20 +53,18 @@
           "buildTransitive/net6.0/_._": {}
         }
       },
-      "System.Threading.Channels/8.0.0": {
-        "type": "package",
+      "Respire/1.0.0": {
+        "type": "project",
+        "framework": ".NETCoreApp,Version=v8.0",
+        "dependencies": {
+          "Microsoft.Extensions.Logging.Abstractions": "8.0.0",
+          "System.IO.Pipelines": "8.0.0"
+        },
         "compile": {
-          "lib/net8.0/System.Threading.Channels.dll": {
-            "related": ".xml"
-          }
+          "bin/placeholder/Respire.dll": {}
         },
         "runtime": {
-          "lib/net8.0/System.Threading.Channels.dll": {
-            "related": ".xml"
-          }
-        },
-        "build": {
-          "buildTransitive/net6.0/_._": {}
+          "bin/placeholder/Respire.dll": {}
         }
       }
     },
@@ -106,36 +104,17 @@
           "buildTransitive/net6.0/Microsoft.Extensions.Logging.Abstractions.targets": {}
         }
       },
-      "System.IO.Pipelines/8.0.0": {
-        "type": "package",
+      "Respire/1.0.0": {
+        "type": "project",
+        "framework": ".NETCoreApp,Version=v9.0",
+        "dependencies": {
+          "Microsoft.Extensions.Logging.Abstractions": "8.0.0"
+        },
         "compile": {
-          "lib/net8.0/System.IO.Pipelines.dll": {
-            "related": ".xml"
-          }
+          "bin/placeholder/Respire.dll": {}
         },
         "runtime": {
-          "lib/net8.0/System.IO.Pipelines.dll": {
-            "related": ".xml"
-          }
-        },
-        "build": {
-          "buildTransitive/net6.0/_._": {}
-        }
-      },
-      "System.Threading.Channels/8.0.0": {
-        "type": "package",
-        "compile": {
-          "lib/net8.0/System.Threading.Channels.dll": {
-            "related": ".xml"
-          }
-        },
-        "runtime": {
-          "lib/net8.0/System.Threading.Channels.dll": {
-            "related": ".xml"
-          }
-        },
-        "build": {
-          "buildTransitive/net6.0/_._": {}
+          "bin/placeholder/Respire.dll": {}
         }
       }
     }
@@ -275,49 +254,18 @@
         "useSharedDesignerContext.txt"
       ]
     },
-    "System.Threading.Channels/8.0.0": {
-      "sha512": "CMaFr7v+57RW7uZfZkPExsPB6ljwzhjACWW1gfU35Y56rk72B/Wu+sTqxVmGSk4SFUlPc3cjeKND0zktziyjBA==",
-      "type": "package",
-      "path": "system.threading.channels/8.0.0",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "Icon.png",
-        "LICENSE.TXT",
-        "PACKAGE.md",
-        "THIRD-PARTY-NOTICES.TXT",
-        "buildTransitive/net461/System.Threading.Channels.targets",
-        "buildTransitive/net462/_._",
-        "buildTransitive/net6.0/_._",
-        "buildTransitive/netcoreapp2.0/System.Threading.Channels.targets",
-        "lib/net462/System.Threading.Channels.dll",
-        "lib/net462/System.Threading.Channels.xml",
-        "lib/net6.0/System.Threading.Channels.dll",
-        "lib/net6.0/System.Threading.Channels.xml",
-        "lib/net7.0/System.Threading.Channels.dll",
-        "lib/net7.0/System.Threading.Channels.xml",
-        "lib/net8.0/System.Threading.Channels.dll",
-        "lib/net8.0/System.Threading.Channels.xml",
-        "lib/netstandard2.0/System.Threading.Channels.dll",
-        "lib/netstandard2.0/System.Threading.Channels.xml",
-        "lib/netstandard2.1/System.Threading.Channels.dll",
-        "lib/netstandard2.1/System.Threading.Channels.xml",
-        "system.threading.channels.8.0.0.nupkg.sha512",
-        "system.threading.channels.nuspec",
-        "useSharedDesignerContext.txt"
-      ]
+    "Respire/1.0.0": {
+      "type": "project",
+      "path": "../../src/Respire/Respire.csproj",
+      "msbuildProject": "../../src/Respire/Respire.csproj"
     }
   },
   "projectFileDependencyGroups": {
     "net8.0": [
-      "Microsoft.Extensions.Logging.Abstractions >= 8.0.0",
-      "System.IO.Pipelines >= 8.0.0",
-      "System.Threading.Channels >= 8.0.0"
+      "Respire >= 1.0.0"
     ],
     "net9.0": [
-      "Microsoft.Extensions.Logging.Abstractions >= 8.0.0",
-      "System.IO.Pipelines >= 8.0.0",
-      "System.Threading.Channels >= 8.0.0"
+      "Respire >= 1.0.0"
     ]
   },
   "packageFolders": {
@@ -327,11 +275,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "D:\\git\\Respire\\src\\Respire\\Respire.csproj",
-      "projectName": "Respire",
-      "projectPath": "D:\\git\\Respire\\src\\Respire\\Respire.csproj",
+      "projectUniqueName": "D:\\git\\Keva\\samples\\Respire.Samples.Basic\\Respire.Samples.Basic.csproj",
+      "projectName": "Respire.Samples.Basic",
+      "projectPath": "D:\\git\\Keva\\samples\\Respire.Samples.Basic\\Respire.Samples.Basic.csproj",
       "packagesPath": "C:\\Users\\thomh\\.nuget\\packages\\",
-      "outputPath": "D:\\git\\Respire\\src\\Respire\\obj\\",
+      "outputPath": "D:\\git\\Keva\\samples\\Respire.Samples.Basic\\obj\\",
       "projectStyle": "PackageReference",
       "crossTargeting": true,
       "fallbackFolders": [
@@ -354,11 +302,19 @@
       "frameworks": {
         "net8.0": {
           "targetAlias": "net8.0",
-          "projectReferences": {}
+          "projectReferences": {
+            "D:\\git\\Keva\\src\\Respire\\Respire.csproj": {
+              "projectPath": "D:\\git\\Keva\\src\\Respire\\Respire.csproj"
+            }
+          }
         },
         "net9.0": {
           "targetAlias": "net9.0",
-          "projectReferences": {}
+          "projectReferences": {
+            "D:\\git\\Keva\\src\\Respire\\Respire.csproj": {
+              "projectPath": "D:\\git\\Keva\\src\\Respire\\Respire.csproj"
+            }
+          }
         }
       },
       "warningProperties": {
@@ -376,20 +332,6 @@
     "frameworks": {
       "net8.0": {
         "targetAlias": "net8.0",
-        "dependencies": {
-          "Microsoft.Extensions.Logging.Abstractions": {
-            "target": "Package",
-            "version": "[8.0.0, )"
-          },
-          "System.IO.Pipelines": {
-            "target": "Package",
-            "version": "[8.0.0, )"
-          },
-          "System.Threading.Channels": {
-            "target": "Package",
-            "version": "[8.0.0, )"
-          }
-        },
         "imports": [
           "net461",
           "net462",
@@ -404,6 +346,10 @@
         "downloadDependencies": [
           {
             "name": "Microsoft.AspNetCore.App.Ref",
+            "version": "[8.0.14, 8.0.14]"
+          },
+          {
+            "name": "Microsoft.NETCore.App.Host.win-x64",
             "version": "[8.0.14, 8.0.14]"
           },
           {
@@ -711,20 +657,6 @@
       },
       "net9.0": {
         "targetAlias": "net9.0",
-        "dependencies": {
-          "Microsoft.Extensions.Logging.Abstractions": {
-            "target": "Package",
-            "version": "[8.0.0, )"
-          },
-          "System.IO.Pipelines": {
-            "target": "Package",
-            "version": "[8.0.0, )"
-          },
-          "System.Threading.Channels": {
-            "target": "Package",
-            "version": "[8.0.0, )"
-          }
-        },
         "imports": [
           "net461",
           "net462",
@@ -739,6 +671,10 @@
         "downloadDependencies": [
           {
             "name": "Microsoft.AspNetCore.App.Ref",
+            "version": "[9.0.3, 9.0.3]"
+          },
+          {
+            "name": "Microsoft.NETCore.App.Host.win-x64",
             "version": "[9.0.3, 9.0.3]"
           },
           {
@@ -1047,25 +983,5 @@
         }
       }
     }
-  },
-  "logs": [
-    {
-      "code": "NU1510",
-      "level": "Warning",
-      "warningLevel": 1,
-      "message": "PackageReference System.Threading.Channels will not be pruned. Consider removing this package from your dependencies, as it is likely unnecessary."
-    },
-    {
-      "code": "NU1510",
-      "level": "Warning",
-      "warningLevel": 1,
-      "message": "PackageReference System.IO.Pipelines will not be pruned. Consider removing this package from your dependencies, as it is likely unnecessary."
-    },
-    {
-      "code": "NU1510",
-      "level": "Warning",
-      "warningLevel": 1,
-      "message": "PackageReference System.Threading.Channels will not be pruned. Consider removing this package from your dependencies, as it is likely unnecessary."
-    }
-  ]
+  }
 }

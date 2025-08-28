@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "D:\\git\\Respire\\samples\\Respire.Samples.Basic\\Respire.Samples.Basic.csproj": {}
+    "D:\\git\\Keva\\benchmarks\\Respire.Benchmarks\\Respire.Benchmarks.csproj": {}
   },
   "projects": {
-    "D:\\git\\Respire\\samples\\Respire.Samples.Basic\\Respire.Samples.Basic.csproj": {
+    "D:\\git\\Keva\\benchmarks\\Respire.Benchmarks\\Respire.Benchmarks.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "D:\\git\\Respire\\samples\\Respire.Samples.Basic\\Respire.Samples.Basic.csproj",
-        "projectName": "Respire.Samples.Basic",
-        "projectPath": "D:\\git\\Respire\\samples\\Respire.Samples.Basic\\Respire.Samples.Basic.csproj",
+        "projectUniqueName": "D:\\git\\Keva\\benchmarks\\Respire.Benchmarks\\Respire.Benchmarks.csproj",
+        "projectName": "Respire.Benchmarks",
+        "projectPath": "D:\\git\\Keva\\benchmarks\\Respire.Benchmarks\\Respire.Benchmarks.csproj",
         "packagesPath": "C:\\Users\\thomh\\.nuget\\packages\\",
-        "outputPath": "D:\\git\\Respire\\samples\\Respire.Samples.Basic\\obj\\",
+        "outputPath": "D:\\git\\Keva\\benchmarks\\Respire.Benchmarks\\obj\\",
         "projectStyle": "PackageReference",
         "crossTargeting": true,
         "fallbackFolders": [
@@ -35,16 +35,16 @@
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "D:\\git\\Respire\\src\\Respire\\Respire.csproj": {
-                "projectPath": "D:\\git\\Respire\\src\\Respire\\Respire.csproj"
+              "D:\\git\\Keva\\src\\Respire\\Respire.csproj": {
+                "projectPath": "D:\\git\\Keva\\src\\Respire\\Respire.csproj"
               }
             }
           },
           "net9.0": {
             "targetAlias": "net9.0",
             "projectReferences": {
-              "D:\\git\\Respire\\src\\Respire\\Respire.csproj": {
-                "projectPath": "D:\\git\\Respire\\src\\Respire\\Respire.csproj"
+              "D:\\git\\Keva\\src\\Respire\\Respire.csproj": {
+                "projectPath": "D:\\git\\Keva\\src\\Respire\\Respire.csproj"
               }
             }
           }
@@ -64,6 +64,20 @@
       "frameworks": {
         "net8.0": {
           "targetAlias": "net8.0",
+          "dependencies": {
+            "BenchmarkDotNet": {
+              "target": "Package",
+              "version": "[0.15.2, )"
+            },
+            "StackExchange.Redis": {
+              "target": "Package",
+              "version": "[2.7.10, )"
+            },
+            "Testcontainers.Redis": {
+              "target": "Package",
+              "version": "[4.6.0, )"
+            }
+          },
           "imports": [
             "net461",
             "net462",
@@ -389,6 +403,20 @@
         },
         "net9.0": {
           "targetAlias": "net9.0",
+          "dependencies": {
+            "BenchmarkDotNet": {
+              "target": "Package",
+              "version": "[0.15.2, )"
+            },
+            "StackExchange.Redis": {
+              "target": "Package",
+              "version": "[2.7.10, )"
+            },
+            "Testcontainers.Redis": {
+              "target": "Package",
+              "version": "[4.6.0, )"
+            }
+          },
           "imports": [
             "net461",
             "net462",
@@ -716,14 +744,14 @@
         }
       }
     },
-    "D:\\git\\Respire\\src\\Respire\\Respire.csproj": {
+    "D:\\git\\Keva\\src\\Respire\\Respire.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "D:\\git\\Respire\\src\\Respire\\Respire.csproj",
+        "projectUniqueName": "D:\\git\\Keva\\src\\Respire\\Respire.csproj",
         "projectName": "Respire",
-        "projectPath": "D:\\git\\Respire\\src\\Respire\\Respire.csproj",
+        "projectPath": "D:\\git\\Keva\\src\\Respire\\Respire.csproj",
         "packagesPath": "C:\\Users\\thomh\\.nuget\\packages\\",
-        "outputPath": "D:\\git\\Respire\\src\\Respire\\obj\\",
+        "outputPath": "D:\\git\\Keva\\src\\Respire\\obj\\",
         "projectStyle": "PackageReference",
         "crossTargeting": true,
         "fallbackFolders": [

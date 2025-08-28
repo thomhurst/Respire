@@ -28,7 +28,8 @@
       "mcp__serena__replace_regex",
       "Bash(gh run view:*)",
       "mcp__serena__create_text_file",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(dotnet restore:*)"
     ],
     "deny": [],
     "ask": []

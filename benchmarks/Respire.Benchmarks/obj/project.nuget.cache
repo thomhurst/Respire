@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "sEfjl8VU2D0=",
+  "dgSpecHash": "WMcruQEMY9M=",
   "success": true,
-  "projectFilePath": "D:\\git\\Respire\\benchmarks\\Respire.Benchmarks\\Respire.Benchmarks.csproj",
+  "projectFilePath": "D:\\git\\Keva\\benchmarks\\Respire.Benchmarks\\Respire.Benchmarks.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\thomh\\.nuget\\packages\\benchmarkdotnet\\0.15.2\\benchmarkdotnet.0.15.2.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\benchmarkdotnet.annotations\\0.15.2\\benchmarkdotnet.annotations.0.15.2.nupkg.sha512",

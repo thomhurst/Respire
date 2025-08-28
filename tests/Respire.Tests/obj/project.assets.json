@@ -1895,14 +1895,14 @@
   },
   "projectFileDependencyGroups": {
     "net8.0": [
-      "Respire >= 1.0.0",
       "Microsoft.NET.Test.Sdk >= 17.9.0",
+      "Respire >= 1.0.0",
       "TUnit >= 0.1.738",
       "TUnit.Assertions >= 0.1.738"
     ],
     "net9.0": [
-      "Respire >= 1.0.0",
       "Microsoft.NET.Test.Sdk >= 17.9.0",
+      "Respire >= 1.0.0",
       "TUnit >= 0.1.738",
       "TUnit.Assertions >= 0.1.738"
     ]
@@ -1914,11 +1914,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "D:\\git\\Respire\\tests\\Respire.Tests\\Respire.Tests.csproj",
+      "projectUniqueName": "D:\\git\\Keva\\tests\\Respire.Tests\\Respire.Tests.csproj",
       "projectName": "Respire.Tests",
-      "projectPath": "D:\\git\\Respire\\tests\\Respire.Tests\\Respire.Tests.csproj",
+      "projectPath": "D:\\git\\Keva\\tests\\Respire.Tests\\Respire.Tests.csproj",
       "packagesPath": "C:\\Users\\thomh\\.nuget\\packages\\",
-      "outputPath": "D:\\git\\Respire\\tests\\Respire.Tests\\obj\\",
+      "outputPath": "D:\\git\\Keva\\tests\\Respire.Tests\\obj\\",
       "projectStyle": "PackageReference",
       "crossTargeting": true,
       "fallbackFolders": [
@@ -1942,16 +1942,16 @@
         "net8.0": {
           "targetAlias": "net8.0",
           "projectReferences": {
-            "D:\\git\\Respire\\src\\Respire\\Respire.csproj": {
-              "projectPath": "D:\\git\\Respire\\src\\Respire\\Respire.csproj"
+            "D:\\git\\Keva\\src\\Respire\\Respire.csproj": {
+              "projectPath": "D:\\git\\Keva\\src\\Respire\\Respire.csproj"
             }
           }
         },
         "net9.0": {
           "targetAlias": "net9.0",
           "projectReferences": {
-            "D:\\git\\Respire\\src\\Respire\\Respire.csproj": {
-              "projectPath": "D:\\git\\Respire\\src\\Respire\\Respire.csproj"
+            "D:\\git\\Keva\\src\\Respire\\Respire.csproj": {
+              "projectPath": "D:\\git\\Keva\\src\\Respire\\Respire.csproj"
             }
           }
         }
