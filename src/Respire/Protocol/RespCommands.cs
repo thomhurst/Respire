@@ -485,6 +485,28 @@ public static class RespCommands
         WriteBulkString(buffer, ref offset, key);
         return offset;
     }
+
+    
+    /// <summary>
+    /// Builds PING command with zero allocations
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int BuildPingCommand(Span<byte> buffer)
+    {
+        var offset = 0;
+        WriteArrayHeader(buffer, ref offset, 1);
+        WriteCommandBytes(buffer, ref offset, "PING"u8);
+        return offset;
+    }
+    
+    /// <summary>
+    /// Returns the pre-built PING command bytes for caching
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static ReadOnlyMemory<byte> BuildPingCommandBytes()
+    {
+        return new ReadOnlyMemory<byte>(Ping);
+    }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void WriteDoubleAsBulkString(Span<byte> buffer, ref int offset, double value)

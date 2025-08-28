@@ -54,7 +54,10 @@ public sealed class PipelineCommandWriter : IDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ValueTask WritePingAsync(CancellationToken cancellationToken = default)
     {
-        return WritePreCompiledAsync(RespCommands.Ping, cancellationToken);
+        ThrowIfDisposed();
+        
+        // Use the pre-built PING command message (zero allocation)
+        return WriteCommandMessageAsync(CommandMessages.Ping, cancellationToken);
     }
     
     /// <summary>
@@ -103,14 +106,33 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        // With C# 13, we can use ref structs directly in async methods!
-        using var writer = _memoryPool.CreateBufferWriter();
-        var estimatedLength = 32 + key.Length; 
-        var buffer = writer.GetSpan(estimatedLength);
-        var length = RespCommands.BuildGetCommand(buffer, key);
-        writer.Advance(length);
-        
-        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
+        var message = CommandMessages.Get(key);
+        await WriteCommandMessageAsync(message, cancellationToken).ConfigureAwait(false);
+    }
+
+    
+    /// <summary>
+    /// Writes a command message using the optimized pre-built command system
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private async ValueTask WriteCommandMessageAsync(CommandMessage message, CancellationToken cancellationToken = default)
+    {
+        if (message.IsPreBuilt)
+        {
+            // Zero allocation path for pre-built commands
+            await _connection.WritePreCompiledCommandAsync(message.PreBuiltCommand, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            // Dynamic command building path
+            using var writer = _memoryPool.CreateBufferWriter();
+            var estimatedLength = 64; // Conservative estimate
+            var buffer = writer.GetSpan(estimatedLength);
+            var length = message.BuildCommand(buffer);
+            writer.Advance(length);
+            
+            await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
+        }
     }
     
     /// <summary>

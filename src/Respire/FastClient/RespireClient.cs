@@ -231,52 +231,133 @@ public sealed class RespireClient : IAsyncDisposable
     
     /// <summary>
     /// Fast path for GET operations that bypasses the command queue
-    /// Now optimized with C# 13 to use ref structs in async methods
+    /// Optimized with ConnectionLease to avoid boxing and async state machines
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private async ValueTask<RespireValue> ExecuteGetFastPathAsync(string key, CancellationToken cancellationToken)
+    private ValueTask<RespireValue> ExecuteGetFastPathAsync(string key, CancellationToken cancellationToken)
     {
         // Try to use pre-encoded command if available for minimal allocations
         if (_preEncodedGetCommands.TryGetValue(key, out var encodedCommand))
         {
-            return await ExecutePreEncodedGetAsync(encodedCommand, cancellationToken).ConfigureAwait(false);
+            return ExecutePreEncodedGetOptimizedAsync(encodedCommand, cancellationToken);
         }
         
-        // Fallback to standard fast path with pooled buffer
-        using var handle = await _multiplexer.GetConnectionHandleAsync(cancellationToken).ConfigureAwait(false);
+        // Get connection lease - often completes synchronously!
+        var leaseTask = _multiplexer.GetConnectionLeaseAsync(cancellationToken);
         
-        // With C# 13, we can now use ref structs in async methods!
-        using var bufferWriter = RespireMemoryPool.Shared.CreateBufferWriter();
-        
-        // Build command directly into pooled buffer
-        var span = bufferWriter.GetSpan(32 + key.Length);
-        var written = Protocol.RespCommands.BuildGetCommandSpan(span, key);
-        bufferWriter.Advance(written);
-        
-        // Get the written memory for sending and potential caching
-        var commandMemory = bufferWriter.WrittenMemory;
-        
-        // Write directly without additional allocation
-        await handle.Connection.WritePreCompiledCommandAsync(commandMemory, cancellationToken).ConfigureAwait(false);
-        
-        // Cache for future use if appropriate
-        if (_preEncodedGetCommands.Count < MaxPreEncodedCommands && key.Length <= 128)
+        if (leaseTask.IsCompletedSuccessfully)
         {
-            // Need to copy to a new array for caching since buffer will be returned to pool
-            var commandBytes = new byte[commandMemory.Length];
-            commandMemory.CopyTo(commandBytes);
-            _preEncodedGetCommands.TryAdd(key, commandBytes);
+            // Synchronous path - no async state machine!
+            var lease = leaseTask.Result;
+            return ExecuteGetWithLeaseAsync(lease, key, cancellationToken);
         }
         
-        // Read response directly
-        var readResult = await handle.Connection.ReadAsync(cancellationToken).ConfigureAwait(false);
-        
-        // Parse response
-        return ParseRespResponse(readResult.Buffer, handle.Connection);
+        // Async fallback
+        return ExecuteGetFastPathAsyncSlow(leaseTask.AsTask(), key, cancellationToken);
+    }
+    
+    private async ValueTask<RespireValue> ExecuteGetFastPathAsyncSlow(Task<Infrastructure.ConnectionLease> leaseTask, string key, CancellationToken cancellationToken)
+    {
+        var lease = await leaseTask.ConfigureAwait(false);
+        return await ExecuteGetWithLeaseAsync(lease, key, cancellationToken).ConfigureAwait(false);
+    }
+    
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private async ValueTask<RespireValue> ExecuteGetWithLeaseAsync(Infrastructure.ConnectionLease lease, string key, CancellationToken cancellationToken)
+    {
+        try
+        {
+            // With C# 13, we can use ref structs in async methods!
+            using var bufferWriter = RespireMemoryPool.Shared.CreateBufferWriter();
+            
+            // Build command directly into pooled buffer
+            var span = bufferWriter.GetSpan(32 + key.Length);
+            var written = Protocol.RespCommands.BuildGetCommandSpan(span, key);
+            bufferWriter.Advance(written);
+            
+            // Get the written memory for sending and potential caching
+            var commandMemory = bufferWriter.WrittenMemory;
+            
+            // Write directly without additional allocation
+            var writeTask = lease.Connection.WritePreCompiledCommandAsync(commandMemory, cancellationToken);
+            
+            // Cache for future use if appropriate (do this while write is in progress)
+            if (_preEncodedGetCommands.Count < MaxPreEncodedCommands && key.Length <= 128)
+            {
+                var commandBytes = new byte[commandMemory.Length];
+                commandMemory.CopyTo(commandBytes);
+                _preEncodedGetCommands.TryAdd(key, commandBytes);
+            }
+            
+            // Wait for write to complete if needed
+            if (!writeTask.IsCompletedSuccessfully)
+            {
+                await writeTask.ConfigureAwait(false);
+            }
+            
+            // Read response directly
+            var readResult = await lease.Connection.ReadAsync(cancellationToken).ConfigureAwait(false);
+            
+            // Parse response
+            return ParseRespResponse(readResult.Buffer, lease.Connection);
+        }
+        finally
+        {
+            lease.Return();
+        }
     }
     
     /// <summary>
-    /// Optimized path for pre-encoded GET commands
+    /// Optimized path for pre-encoded GET commands using ConnectionLease
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private ValueTask<RespireValue> ExecutePreEncodedGetOptimizedAsync(byte[] encodedCommand, CancellationToken cancellationToken)
+    {
+        // Get connection lease - often completes synchronously!
+        var leaseTask = _multiplexer.GetConnectionLeaseAsync(cancellationToken);
+        
+        if (leaseTask.IsCompletedSuccessfully)
+        {
+            // Synchronous path - no async state machine!
+            var lease = leaseTask.Result;
+            return ExecutePreEncodedWithLeaseAsync(lease, encodedCommand, cancellationToken);
+        }
+        
+        // Async fallback
+        return ExecutePreEncodedGetAsyncSlow(leaseTask.AsTask(), encodedCommand, cancellationToken);
+    }
+    
+    private async ValueTask<RespireValue> ExecutePreEncodedGetAsyncSlow(Task<Infrastructure.ConnectionLease> leaseTask, byte[] encodedCommand, CancellationToken cancellationToken)
+    {
+        var lease = await leaseTask.ConfigureAwait(false);
+        return await ExecutePreEncodedWithLeaseAsync(lease, encodedCommand, cancellationToken).ConfigureAwait(false);
+    }
+    
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private async ValueTask<RespireValue> ExecutePreEncodedWithLeaseAsync(Infrastructure.ConnectionLease lease, byte[] encodedCommand, CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Write pre-encoded bytes directly
+            var writeTask = lease.Connection.WritePreCompiledCommandAsync(encodedCommand, cancellationToken);
+            
+            if (!writeTask.IsCompletedSuccessfully)
+            {
+                await writeTask.ConfigureAwait(false);
+            }
+            
+            // Read and parse response
+            var readResult = await lease.Connection.ReadAsync(cancellationToken).ConfigureAwait(false);
+            return ParseRespResponse(readResult.Buffer, lease.Connection);
+        }
+        finally
+        {
+            lease.Return();
+        }
+    }
+    
+    /// <summary>
+    /// Optimized path for pre-encoded GET commands (legacy, for compatibility)
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private async ValueTask<RespireValue> ExecutePreEncodedGetAsync(byte[] encodedCommand, CancellationToken cancellationToken)

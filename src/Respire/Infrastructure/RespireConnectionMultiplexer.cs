@@ -16,6 +16,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private readonly PipelineConnection[] _connections;
     private readonly SemaphoreSlim[] _connectionSemaphores;
     private readonly ConcurrentQueue<int> _availableConnections;
+    private readonly ConcurrentQueue<ConnectionHandle>[] _connectionHandlePool;
     private readonly ILogger? _logger;
     private readonly Timer _healthCheckTimer;
     private readonly CancellationTokenSource _cancellationTokenSource;
@@ -26,6 +27,8 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     
     private volatile bool _disposed;
     private int _roundRobinIndex = -1;
+    private int _roundRobinCounter = -1;
+    private readonly int _connectionCount;
     
     public string Host { get; }
     public int Port { get; }
@@ -41,15 +44,18 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         _connections = connections;
         _connectionSemaphores = new SemaphoreSlim[connections.Length];
         _availableConnections = new ConcurrentQueue<int>();
+        _connectionHandlePool = new ConcurrentQueue<ConnectionHandle>[connections.Length];
         Host = host;
         Port = port;
         _logger = logger;
         _cancellationTokenSource = new CancellationTokenSource();
+        _connectionCount = connections.Length;
         
         // Initialize semaphores and available connections
         for (int i = 0; i < connections.Length; i++)
         {
             _connectionSemaphores[i] = new SemaphoreSlim(1, 1);
+            _connectionHandlePool[i] = new ConcurrentQueue<ConnectionHandle>();
             _availableConnections.Enqueue(i);
         }
         
@@ -121,7 +127,12 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             // Try to acquire semaphore synchronously
             if (_connectionSemaphores[freeIndex].Wait(0))
             {
-                // Semaphore acquired synchronously - return completed ValueTask
+                // Try to get a pooled handle first
+                if (_connectionHandlePool[freeIndex].TryDequeue(out var pooledHandle))
+                {
+                    return new ValueTask<ConnectionHandle>(pooledHandle);
+                }
+                // Create new handle if pool is empty
                 return new ValueTask<ConnectionHandle>(new ConnectionHandle(this, freeIndex, _connections[freeIndex]));
             }
             
@@ -135,7 +146,12 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         // Try to acquire semaphore synchronously
         if (_connectionSemaphores[index].Wait(0))
         {
-            // Semaphore acquired synchronously - return completed ValueTask
+            // Try to get a pooled handle first
+            if (_connectionHandlePool[index].TryDequeue(out var pooledHandle))
+            {
+                return new ValueTask<ConnectionHandle>(pooledHandle);
+            }
+            // Create new handle if pool is empty
             return new ValueTask<ConnectionHandle>(new ConnectionHandle(this, index, connection));
         }
         
@@ -146,7 +162,59 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private async ValueTask<ConnectionHandle> GetConnectionHandleAsyncSlow(int index, CancellationToken cancellationToken)
     {
         await _connectionSemaphores[index].WaitAsync(cancellationToken).ConfigureAwait(false);
+        
+        // Try to get a pooled handle first
+        if (_connectionHandlePool[index].TryDequeue(out var pooledHandle))
+        {
+            return pooledHandle;
+        }
+        // Create new handle if pool is empty
         return new ConnectionHandle(this, index, _connections[index]);
+    }
+    
+    /// <summary>
+    /// Gets a connection lease for zero-allocation command execution
+    /// Optimized for synchronous completion when connections are available
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public ValueTask<ConnectionLease> GetConnectionLeaseAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        
+        // Fast path: try to get a free connection immediately
+        if (_availableConnections.TryDequeue(out var freeIndex) && _connections[freeIndex].IsConnected)
+        {
+            if (_connectionSemaphores[freeIndex].Wait(0))
+            {
+                // Acquired synchronously!
+                _availableConnections.Enqueue(freeIndex);
+                return new ValueTask<ConnectionLease>(new ConnectionLease(this, freeIndex, _connections[freeIndex]));
+            }
+            _availableConnections.Enqueue(freeIndex);
+        }
+        
+        // Try round-robin with immediate acquisition
+        for (int i = 0; i < _connectionCount; i++)
+        {
+            var index = (int)((uint)Interlocked.Increment(ref _roundRobinCounter) % (uint)_connectionCount);
+            
+            if (_connectionSemaphores[index].Wait(0))
+            {
+                // Semaphore acquired synchronously - return completed ValueTask
+                return new ValueTask<ConnectionLease>(new ConnectionLease(this, index, _connections[index]));
+            }
+        }
+        
+        // Slow path: need to wait for a connection
+        return GetConnectionLeaseAsyncSlow(cancellationToken);
+    }
+    
+    private async ValueTask<ConnectionLease> GetConnectionLeaseAsyncSlow(CancellationToken cancellationToken)
+    {
+        // Fall back to waiting on next connection in sequence
+        var index = (int)((uint)Interlocked.Increment(ref _roundRobinCounter) % (uint)_connectionCount);
+        await _connectionSemaphores[index].WaitAsync(cancellationToken).ConfigureAwait(false);
+        return new ConnectionLease(this, index, _connections[index]);
     }
     
     /// <summary>
@@ -154,10 +222,10 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     /// </summary>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Pipeline command writer</returns>
-    public async ValueTask<PipelineCommandWriter> GetCommandWriterAsync(CancellationToken cancellationToken = default)
+    public ValueTask<PipelineCommandWriter> GetCommandWriterAsync(CancellationToken cancellationToken = default)
     {
         var (_, connection) = GetConnection();
-        return new PipelineCommandWriter(connection);
+        return new ValueTask<PipelineCommandWriter>(new PipelineCommandWriter(connection));
     }
     
     /// <summary>
@@ -324,8 +392,23 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
     
-    private void ReleaseConnection(int index)
+    internal void ReleaseConnection(int index)
     {
+        _connectionSemaphores[index].Release();
+        _availableConnections.Enqueue(index);
+    }
+    
+    /// <summary>
+    /// Returns a connection handle to the pool for reuse
+    /// </summary>
+    internal void ReturnConnectionHandle(int index, ConnectionHandle handle)
+    {
+        // Only pool a limited number of handles to avoid unbounded growth
+        if (_connectionHandlePool[index].Count < 4)
+        {
+            _connectionHandlePool[index].Enqueue(handle);
+        }
+        
         _connectionSemaphores[index].Release();
         _availableConnections.Enqueue(index);
     }
@@ -385,28 +468,28 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             _cancellationTokenSource.Dispose();
         }
     }
+}
+
+/// <summary>
+/// Disposable connection handle that automatically releases the connection (for compatibility)
+/// </summary>
+public readonly struct ConnectionHandle : IDisposable
+{
+    private readonly RespireConnectionMultiplexer _multiplexer;
+    private readonly int _index;
     
-    /// <summary>
-    /// Disposable connection handle that automatically releases the connection
-    /// </summary>
-    public readonly struct ConnectionHandle : IDisposable
+    public PipelineConnection Connection { get; }
+    
+    internal ConnectionHandle(RespireConnectionMultiplexer multiplexer, int index, PipelineConnection connection)
     {
-        private readonly RespireConnectionMultiplexer _multiplexer;
-        private readonly int _index;
-        
-        public PipelineConnection Connection { get; }
-        
-        internal ConnectionHandle(RespireConnectionMultiplexer multiplexer, int index, PipelineConnection connection)
-        {
-            _multiplexer = multiplexer;
-            _index = index;
-            Connection = connection;
-        }
-        
-        public void Dispose()
-        {
-            _multiplexer.ReleaseConnection(_index);
-        }
+        _multiplexer = multiplexer;
+        _index = index;
+        Connection = connection;
+    }
+    
+    public void Dispose()
+    {
+        _multiplexer.ReturnConnectionHandle(_index, this);
     }
 }
 
