@@ -11,3 +11,16 @@ D:\git\Respire\src\Respire\obj\Debug\net8.0\Respire.dll
 D:\git\Respire\src\Respire\obj\Debug\net8.0\refint\Respire.dll
 D:\git\Respire\src\Respire\obj\Debug\net8.0\Respire.pdb
 D:\git\Respire\src\Respire\obj\Debug\net8.0\ref\Respire.dll
+D:\git\Keva\src\Respire\bin\Debug\net8.0\Respire.deps.json
+D:\git\Keva\src\Respire\bin\Debug\net8.0\Respire.dll
+D:\git\Keva\src\Respire\bin\Debug\net8.0\Respire.pdb
+D:\git\Keva\src\Respire\obj\Debug\net8.0\Respire.csproj.AssemblyReference.cache
+D:\git\Keva\src\Respire\obj\Debug\net8.0\Respire.GeneratedMSBuildEditorConfig.editorconfig
+D:\git\Keva\src\Respire\obj\Debug\net8.0\Respire.AssemblyInfoInputs.cache
+D:\git\Keva\src\Respire\obj\Debug\net8.0\Respire.AssemblyInfo.cs
+D:\git\Keva\src\Respire\obj\Debug\net8.0\Respire.csproj.CoreCompileInputs.cache
+D:\git\Keva\src\Respire\obj\Debug\net8.0\Respire.sourcelink.json
+D:\git\Keva\src\Respire\obj\Debug\net8.0\Respire.dll
+D:\git\Keva\src\Respire\obj\Debug\net8.0\refint\Respire.dll
+D:\git\Keva\src\Respire\obj\Debug\net8.0\Respire.pdb
+D:\git\Keva\src\Respire\obj\Debug\net8.0\ref\Respire.dll

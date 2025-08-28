@@ -1,0 +1,8 @@
+D:\git\Keva\tests\Respire.IntegrationTests\bin\Debug\net8.0\.msCoverageSourceRootsMapping_Respire.IntegrationTests
+D:\git\Keva\tests\Respire.IntegrationTests\bin\Debug\net8.0\CoverletSourceRootsMapping_Respire.IntegrationTests
+D:\git\Keva\tests\Respire.IntegrationTests\obj\Debug\net8.0\Respire.IntegrationTests.csproj.AssemblyReference.cache
+D:\git\Keva\tests\Respire.IntegrationTests\obj\Debug\net8.0\Respire.IntegrationTests.GeneratedMSBuildEditorConfig.editorconfig
+D:\git\Keva\tests\Respire.IntegrationTests\obj\Debug\net8.0\Respire.IntegrationTests.AssemblyInfoInputs.cache
+D:\git\Keva\tests\Respire.IntegrationTests\obj\Debug\net8.0\Respire.IntegrationTests.AssemblyInfo.cs
+D:\git\Keva\tests\Respire.IntegrationTests\obj\Debug\net8.0\Respire.IntegrationTests.csproj.CoreCompileInputs.cache
+D:\git\Keva\tests\Respire.IntegrationTests\obj\Debug\net8.0\Respire.IntegrationTests.sourcelink.json
