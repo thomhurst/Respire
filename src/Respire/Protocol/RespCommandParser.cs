@@ -7,7 +7,6 @@ namespace Respire.Protocol;
 /// </summary>
 public static class RespCommandParser
 {
-    private static readonly byte[] CRLF = new byte[] { (byte)'\r', (byte)'\n' };
     
     /// <summary>
     /// Extracts the command name from a RESP-formatted command
@@ -33,7 +32,7 @@ public static class RespCommandParser
         }
         
         // Skip array header (*N\r\n)
-        var index = command.IndexOf(CRLF);
+        var index = command.IndexOf(RespConstants.CRLF);
         if (index == -1)
         {
             return string.Empty;
@@ -49,7 +48,7 @@ public static class RespCommandParser
 
         // Find the length
         var lengthStart = index + 1;
-        var lengthEnd = command.Slice(lengthStart).IndexOf(CRLF);
+        var lengthEnd = command.Slice(lengthStart).IndexOf(RespConstants.CRLF);
         if (lengthEnd == -1)
         {
             return string.Empty;
@@ -113,7 +112,7 @@ public static class RespCommandParser
 
         // Parse array count
         var index = 1;
-        var countEnd = command.Slice(index).IndexOf(CRLF);
+        var countEnd = command.Slice(index).IndexOf(RespConstants.CRLF);
         if (countEnd == -1)
         {
             return false;
@@ -143,7 +142,7 @@ public static class RespCommandParser
 
             // Parse length
             var lengthStart = index + 1;
-            var lengthEnd = command.Slice(lengthStart).IndexOf(CRLF);
+            var lengthEnd = command.Slice(lengthStart).IndexOf(RespConstants.CRLF);
             if (lengthEnd == -1)
             {
                 return false;
@@ -230,7 +229,7 @@ public static class RespCommandParser
     private static string ExtractSimpleCommand(ReadOnlySpan<byte> command)
     {
         // For simple commands like "PING\r\n"
-        var end = command.IndexOf(CRLF);
+        var end = command.IndexOf(RespConstants.CRLF);
         if (end == -1)
         {
             // No CRLF, might be just the command
