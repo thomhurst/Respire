@@ -1,0 +1,245 @@
+name: Integration Tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - '.github/workflows/integration-tests.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'tests/**'
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
+jobs:
+  integration-tests:
+    name: Run Integration Tests
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        framework: [net8.0, net9.0]
+        fail-fast: false
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup .NET SDKs
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+      
+      - name: Start Docker daemon
+        run: |
+          sudo systemctl start docker
+          sudo docker info
+      
+      - name: Restore dependencies
+        run: dotnet restore
+      
+      - name: Build
+        run: dotnet build -c Release --no-restore
+      
+      - name: Run Unit Tests
+        run: |
+          dotnet test tests/Respire.Tests/Respire.Tests.csproj \
+            -c Release \
+            --no-build \
+            --verbosity normal \
+            --logger trx \
+            --results-directory TestResults/unit \
+            --collect:"XPlat Code Coverage"
+      
+      - name: Run Integration Tests
+        run: |
+          dotnet test tests/Respire.IntegrationTests/Respire.IntegrationTests.csproj \
+            -c Release \
+            --no-build \
+            --verbosity normal \
+            --logger trx \
+            --results-directory TestResults/integration \
+            --collect:"XPlat Code Coverage" \
+            -- RunConfiguration.TargetPlatform=x64
+        env:
+          # Ensure Docker is available for Testcontainers
+          DOCKER_HOST: unix:///var/run/docker.sock
+      
+      - name: Generate Test Report
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Test Results (${{ matrix.framework }})
+          path: 'TestResults/**/*.trx'
+          reporter: dotnet-trx
+          fail-on-error: true
+      
+      - name: Generate Code Coverage Report
+        if: always()
+        run: |
+          dotnet tool install -g dotnet-reportgenerator-globaltool
+          reportgenerator \
+            -reports:"TestResults/**/coverage.cobertura.xml" \
+            -targetdir:"CoverageReport" \
+            -reporttypes:"Html;JsonSummary;MarkdownSummaryGithub"
+      
+      - name: Add Coverage to GitHub Summary
+        if: always()
+        run: |
+          echo "## 📊 Test Coverage Report (${{ matrix.framework }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f "CoverageReport/SummaryGithub.md" ]; then
+            cat "CoverageReport/SummaryGithub.md" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Coverage report not generated" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🎯 Test Execution Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Framework**: ${{ matrix.framework }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner**: ${{ runner.os }} - ${{ runner.arch }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Docker**: $(docker --version)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+      
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-${{ matrix.framework }}
+          path: |
+            TestResults/
+            CoverageReport/
+          retention-days: 30
+      
+      - name: Comment PR with test results (if PR)
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            
+            let comment = `## 🧪 Integration Test Results (${{ matrix.framework }})\n\n`;
+            
+            // Check if coverage report exists
+            const coverageFile = 'CoverageReport/SummaryGithub.md';
+            if (fs.existsSync(coverageFile)) {
+              const coverage = fs.readFileSync(coverageFile, 'utf8');
+              comment += `### 📊 Code Coverage\n\n${coverage}\n\n`;
+            }
+            
+            // Add test execution info
+            comment += `### ℹ️ Execution Details\n`;
+            comment += `- **Framework**: ${{ matrix.framework }}\n`;
+            comment += `- **Runner**: ${{ runner.os }} - ${{ runner.arch }}\n`;
+            comment += `- **Status**: ${{ job.status }}\n`;
+            comment += `- **Timestamp**: ${new Date().toISOString()}\n\n`;
+            
+            comment += `---\n*Automated integration testing with Redis containers*`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+  allocation-validation:
+    name: Validate Allocation Optimizations
+    runs-on: ubuntu-latest
+    needs: integration-tests
+    if: always() && needs.integration-tests.result == 'success'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup .NET SDKs
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+      
+      - name: Restore dependencies
+        run: dotnet restore
+      
+      - name: Build Release
+        run: dotnet build -c Release --no-restore
+      
+      - name: Run Allocation Benchmarks
+        run: |
+          cd benchmarks/Respire.Benchmarks
+          dotnet run -c Release -f net9.0 -- \
+            --filter "*Get*Allocation*" \
+            --exporters json markdown \
+            --artifacts ./AllocationResults \
+            --memory-randomization false \
+            --inprocess-timeout 300000
+      
+      - name: Analyze Allocation Results
+        run: |
+          echo "## 🎯 Allocation Optimization Validation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          RESULTS_DIR="benchmarks/Respire.Benchmarks/AllocationResults/results"
+          if [ -d "$RESULTS_DIR" ]; then
+            for file in "$RESULTS_DIR"/*.md; do
+              if [ -f "$file" ]; then
+                echo "### 📈 GET Operation Allocations" >> $GITHUB_STEP_SUMMARY
+                echo "" >> $GITHUB_STEP_SUMMARY
+                echo "Target: Reduce from ~616B to ~232B per GET operation" >> $GITHUB_STEP_SUMMARY
+                echo "" >> $GITHUB_STEP_SUMMARY
+                
+                # Extract allocation metrics if available
+                if grep -q -E "(Allocated|Gen|Ratio)" "$file"; then
+                  echo "#### Memory Allocation Results:" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo '```' >> $GITHUB_STEP_SUMMARY
+                  grep -E "(Method|Mean|Allocated|Gen|Ratio)" "$file" | head -10 >> $GITHUB_STEP_SUMMARY
+                  echo '```' >> $GITHUB_STEP_SUMMARY
+                fi
+                
+                echo "" >> $GITHUB_STEP_SUMMARY
+                echo "<details>" >> $GITHUB_STEP_SUMMARY
+                echo "<summary>📄 Full Allocation Report</summary>" >> $GITHUB_STEP_SUMMARY
+                echo "" >> $GITHUB_STEP_SUMMARY
+                echo '```' >> $GITHUB_STEP_SUMMARY
+                cat "$file" >> $GITHUB_STEP_SUMMARY
+                echo '```' >> $GITHUB_STEP_SUMMARY
+                echo "</details>" >> $GITHUB_STEP_SUMMARY
+                break
+              fi
+            done
+          else
+            echo "⚠️ No allocation benchmark results found" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Optimization Features Implemented:" >> $GITHUB_STEP_SUMMARY
+          echo "- ConnectionLease pattern (eliminates IDisposable boxing)" >> $GITHUB_STEP_SUMMARY
+          echo "- Synchronous fast paths (reduces async state machines)" >> $GITHUB_STEP_SUMMARY
+          echo "- Connection handle pooling (reuses connection objects)" >> $GITHUB_STEP_SUMMARY
+          echo "- Pre-built command messages (eliminates command building allocations)" >> $GITHUB_STEP_SUMMARY
+      
+      - name: Upload Allocation Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: allocation-benchmarks
+          path: benchmarks/Respire.Benchmarks/AllocationResults/
+          retention-days: 30

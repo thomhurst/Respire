@@ -1,0 +1,117 @@
+name: Unit Tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'tests/Respire.Tests/**'
+      - '.github/workflows/unit-tests.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'tests/Respire.Tests/**'
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
+jobs:
+  unit-tests:
+    name: Run Unit Tests
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        framework: [net8.0, net9.0]
+        fail-fast: false
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup .NET SDKs
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+      
+      - name: Restore dependencies
+        run: dotnet restore
+      
+      - name: Build
+        run: dotnet build -c Release --no-restore
+      
+      - name: Run Unit Tests
+        run: |
+          dotnet test tests/Respire.Tests/Respire.Tests.csproj \
+            -c Release \
+            -f ${{ matrix.framework }} \
+            --no-build \
+            --verbosity normal \
+            --logger trx \
+            --results-directory TestResults \
+            --collect:"XPlat Code Coverage" \
+            --settings coverlet.runsettings
+      
+      - name: Generate Code Coverage Report
+        if: always()
+        run: |
+          dotnet tool install -g dotnet-reportgenerator-globaltool
+          reportgenerator \
+            -reports:"TestResults/**/coverage.cobertura.xml" \
+            -targetdir:"CoverageReport" \
+            -reporttypes:"Html;JsonSummary;MarkdownSummaryGithub;Cobertura"
+      
+      - name: Generate Test Report
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Unit Test Results (${{ matrix.framework }})
+          path: 'TestResults/*.trx'
+          reporter: dotnet-trx
+          fail-on-error: false
+      
+      - name: Add Coverage to GitHub Summary
+        if: always()
+        run: |
+          echo "## 📊 Unit Test Coverage Report (${{ matrix.framework }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f "CoverageReport/SummaryGithub.md" ]; then
+            cat "CoverageReport/SummaryGithub.md" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Coverage report not generated" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🎯 Test Execution Details" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Framework**: ${{ matrix.framework }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner**: ${{ runner.os }} - ${{ runner.arch }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+      
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-results-${{ matrix.framework }}
+          path: |
+            TestResults/
+            CoverageReport/
+          retention-days: 30
+      
+      - name: Upload coverage to Codecov
+        if: matrix.framework == 'net9.0'
+        uses: codecov/codecov-action@v3
+        with:
+          file: CoverageReport/Cobertura.xml
+          flags: unittests
+          name: unit-tests
+          fail_ci_if_error: false
