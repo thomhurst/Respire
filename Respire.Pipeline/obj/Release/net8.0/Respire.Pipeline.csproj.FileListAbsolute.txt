@@ -1,6 +1,0 @@
-D:\git\Respire\Respire.Pipeline\obj\Release\net8.0\Respire.Pipeline.csproj.AssemblyReference.cache
-D:\git\Respire\Respire.Pipeline\obj\Release\net8.0\Respire.Pipeline.GeneratedMSBuildEditorConfig.editorconfig
-D:\git\Respire\Respire.Pipeline\obj\Release\net8.0\Respire.Pipeline.AssemblyInfoInputs.cache
-D:\git\Respire\Respire.Pipeline\obj\Release\net8.0\Respire.Pipeline.AssemblyInfo.cs
-D:\git\Respire\Respire.Pipeline\obj\Release\net8.0\Respire.Pipeline.csproj.CoreCompileInputs.cache
-D:\git\Respire\Respire.Pipeline\obj\Release\net8.0\Respire.Pipeline.sourcelink.json
