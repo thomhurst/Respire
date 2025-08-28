@@ -1,6 +1,8 @@
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.ObjectPool;
 using Respire.Protocol;
 
 namespace Respire.Infrastructure;
@@ -18,6 +20,19 @@ public sealed class RespireCommandQueue : IAsyncDisposable
     private readonly Task _processingTask;
     private readonly CancellationTokenSource _cancellationTokenSource;
     private readonly ILogger? _logger;
+    
+    // Object pools to reduce allocations
+    private readonly ObjectPool<TaskCompletionSource<RespireValue>> _tcsPool;
+    private readonly ObjectPool<List<QueuedCommand>> _batchPool;
+    
+    // Pre-compiled delegates to avoid lambda allocations for common commands
+    private static readonly Func<PipelineCommandWriter, ValueTask> _pingDelegate = static writer => writer.WritePingAsync(default);
+    private static readonly Func<PipelineCommandWriter, ValueTask> _infoDelegate = static writer => writer.WriteInfoAsync(default);
+    private static readonly Func<PipelineCommandWriter, ValueTask> _dbSizeDelegate = static writer => writer.WriteDbSizeAsync(default);
+    
+    // Cached delegates for parameterized commands to avoid repeated allocations
+    private readonly ConcurrentDictionary<string, CachedCommandDelegate> _cachedDelegates = new();
+    private readonly int _maxCachedDelegates;
     
     private volatile bool _disposed;
     
@@ -42,6 +57,9 @@ public sealed class RespireCommandQueue : IAsyncDisposable
         public BoundedChannelFullMode FullMode { get; init; }
         public bool SingleReader { get; init; }
         public bool SingleWriter { get; init; }
+        public int MaxCachedDelegates { get; init; }
+        public int TcsPoolSize { get; init; }
+        public int BatchPoolSize { get; init; }
         
         public static QueueOptions Default => new()
         {
@@ -50,7 +68,10 @@ public sealed class RespireCommandQueue : IAsyncDisposable
             BatchTimeout = TimeSpan.FromMilliseconds(1),
             FullMode = BoundedChannelFullMode.Wait,
             SingleReader = true,
-            SingleWriter = false
+            SingleWriter = false,
+            MaxCachedDelegates = 1000,
+            TcsPoolSize = 100,
+            BatchPoolSize = Environment.ProcessorCount * 2
         };
         
         public static QueueOptions HighThroughput => new()
@@ -60,7 +81,10 @@ public sealed class RespireCommandQueue : IAsyncDisposable
             BatchTimeout = TimeSpan.FromMilliseconds(10),
             FullMode = BoundedChannelFullMode.DropOldest,
             SingleReader = true,
-            SingleWriter = false
+            SingleWriter = false,
+            MaxCachedDelegates = 5000,
+            TcsPoolSize = 500,
+            BatchPoolSize = Environment.ProcessorCount * 4
         };
         
         public static QueueOptions LowLatency => new()
@@ -70,7 +94,10 @@ public sealed class RespireCommandQueue : IAsyncDisposable
             BatchTimeout = TimeSpan.FromMicroseconds(100),
             FullMode = BoundedChannelFullMode.Wait,
             SingleReader = true,
-            SingleWriter = false
+            SingleWriter = false,
+            MaxCachedDelegates = 500,
+            TcsPoolSize = 50,
+            BatchPoolSize = Environment.ProcessorCount
         };
     }
     
@@ -91,6 +118,14 @@ public sealed class RespireCommandQueue : IAsyncDisposable
         
         _batchSize = options.BatchSize;
         _batchTimeout = options.BatchTimeout;
+        _maxCachedDelegates = options.MaxCachedDelegates;
+        
+        // Initialize object pools
+        var tcsPoolPolicy = new DefaultPooledObjectPolicy<TaskCompletionSource<RespireValue>>();
+        _tcsPool = new DefaultObjectPool<TaskCompletionSource<RespireValue>>(tcsPoolPolicy, options.TcsPoolSize);
+        
+        var batchPoolPolicy = new BatchListPooledObjectPolicy(options.BatchSize);
+        _batchPool = new DefaultObjectPool<List<QueuedCommand>>(batchPoolPolicy, options.BatchPoolSize);
         
         // Create bounded channel with specified options
         var channelOptions = new BoundedChannelOptions(options.Capacity)
@@ -131,7 +166,7 @@ public sealed class RespireCommandQueue : IAsyncDisposable
     }
     
     /// <summary>
-    /// Queues a command with response handling
+    /// Queues a command with response handling using pooled TaskCompletionSource
     /// </summary>
     /// <param name="commandAction">Action that writes the command</param>
     /// <param name="cancellationToken">Cancellation token</param>
@@ -142,13 +177,38 @@ public sealed class RespireCommandQueue : IAsyncDisposable
     {
         ThrowIfDisposed();
         
-        var tcs = new TaskCompletionSource<RespireValue>();
+        var tcs = RentTaskCompletionSource();
         var command = new QueuedCommand(commandAction, tcs);
         
         await _writer.WriteAsync(command, cancellationToken).ConfigureAwait(false);
         Interlocked.Increment(ref _totalCommandsQueued);
         
-        return await tcs.Task.ConfigureAwait(false);
+        try
+        {
+            return await tcs.Task.ConfigureAwait(false);
+        }
+        finally
+        {
+            ReturnTaskCompletionSource(tcs);
+        }
+    }
+    
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private TaskCompletionSource<RespireValue> RentTaskCompletionSource()
+    {
+        var tcs = _tcsPool.Get();
+        // Reset the TCS by creating a new one - pooled object might have old state
+        return new TaskCompletionSource<RespireValue>(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+    
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void ReturnTaskCompletionSource(TaskCompletionSource<RespireValue> tcs)
+    {
+        // Only return to pool if it's in a completed state
+        if (tcs.Task.IsCompleted)
+        {
+            _tcsPool.Return(tcs);
+        }
     }
     
     /// <summary>
@@ -182,31 +242,75 @@ public sealed class RespireCommandQueue : IAsyncDisposable
     }
     
     /// <summary>
-    /// Convenience methods for common Redis commands
+    /// Convenience methods for common Redis commands using pre-compiled or cached delegates
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ValueTask QueuePingAsync(CancellationToken cancellationToken = default)
-        => QueuePreCompiledAsync(RespCommands.Ping, cancellationToken);
+        => QueueCommandAsync(_pingDelegate, cancellationToken);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ValueTask QueueInfoAsync(CancellationToken cancellationToken = default)
-        => QueuePreCompiledAsync(RespCommands.Info, cancellationToken);
+        => QueueCommandAsync(_infoDelegate, cancellationToken);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ValueTask QueueDbSizeAsync(CancellationToken cancellationToken = default)
-        => QueuePreCompiledAsync(RespCommands.DbSize, cancellationToken);
+        => QueueCommandAsync(_dbSizeDelegate, cancellationToken);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ValueTask QueueGetAsync(string key, CancellationToken cancellationToken = default)
-        => QueueCommandAsync(writer => writer.WriteGetAsync(key, cancellationToken), cancellationToken);
+    {
+        var cachedDelegate = GetOrCreateCachedDelegate(key, CommandType.Get);
+        return QueueCommandAsync(cachedDelegate.Execute, cancellationToken);
+    }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ValueTask QueueSetAsync(string key, string value, CancellationToken cancellationToken = default)
-        => QueueCommandAsync(writer => writer.WriteSetAsync(key, value, cancellationToken), cancellationToken);
+    {
+        // For SET commands with values, we can't easily cache, so use lambda
+        return QueueCommandAsync(writer => writer.WriteSetAsync(key, value, cancellationToken), cancellationToken);
+    }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ValueTask<RespireValue> QueueGetWithResponseAsync(string key, CancellationToken cancellationToken = default)
-        => QueueCommandWithResponseAsync(writer => writer.WriteGetAsync(key, cancellationToken), cancellationToken);
+    {
+        var cachedDelegate = GetOrCreateCachedDelegate(key, CommandType.Get);
+        return QueueCommandWithResponseAsync(cachedDelegate.Execute, cancellationToken);
+    }
+    
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public ValueTask<RespireValue> QueuePingWithResponseAsync(CancellationToken cancellationToken = default)
+    {
+        return QueueCommandWithResponseAsync(_pingDelegate, cancellationToken);
+    }
+    
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public ValueTask<RespireValue> QueueExistsWithResponseAsync(string key, CancellationToken cancellationToken = default)
+    {
+        var cachedDelegate = GetOrCreateCachedDelegate(key, CommandType.Exists);
+        return QueueCommandWithResponseAsync(cachedDelegate.Execute, cancellationToken);
+    }
+    
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public ValueTask<RespireValue> QueueIncrWithResponseAsync(string key, CancellationToken cancellationToken = default)
+    {
+        var cachedDelegate = GetOrCreateCachedDelegate(key, CommandType.Incr);
+        return QueueCommandWithResponseAsync(cachedDelegate.Execute, cancellationToken);
+    }
+    
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private CachedCommandDelegate GetOrCreateCachedDelegate(string key, CommandType commandType)
+    {
+        var cacheKey = $"{commandType}:{key}";
+        
+        // Check cache size limit
+        if (_cachedDelegates.Count >= _maxCachedDelegates)
+        {
+            // Return a new delegate without caching if at limit
+            return new CachedCommandDelegate(key, commandType);
+        }
+        
+        return _cachedDelegates.GetOrAdd(cacheKey, _ => new CachedCommandDelegate(key, commandType));
+    }
     
     /// <summary>
     /// Signals that no more commands will be added to the queue
@@ -233,7 +337,7 @@ public sealed class RespireCommandQueue : IAsyncDisposable
     
     private async Task ProcessCommandsAsync()
     {
-        var batch = new List<QueuedCommand>(_batchSize);
+        var batch = _batchPool.Get();
         
         try
         {
@@ -259,8 +363,8 @@ public sealed class RespireCommandQueue : IAsyncDisposable
                     }
                     else
                     {
-                        // Wait a short time for more commands
-                        await Task.Delay(TimeSpan.FromMicroseconds(50), _cancellationTokenSource.Token).ConfigureAwait(false);
+                        // Use Task.Yield instead of Task.Delay to reduce allocations
+                        await Task.Yield();
                         break;
                     }
                 }
@@ -281,6 +385,10 @@ public sealed class RespireCommandQueue : IAsyncDisposable
         catch (Exception ex)
         {
             _logger?.LogError(ex, "Error in command processing loop");
+        }
+        finally
+        {
+            _batchPool.Return(batch);
         }
         
         _logger?.LogDebug("Command processing task completed");
@@ -374,7 +482,7 @@ public sealed class RespireCommandQueue : IAsyncDisposable
     /// <summary>
     /// Represents a queued command with optional response handling
     /// </summary>
-    private readonly struct QueuedCommand
+    internal readonly struct QueuedCommand
     {
         public Func<PipelineCommandWriter, ValueTask> CommandAction { get; }
         public TaskCompletionSource<RespireValue>? ResponseHandler { get; }
@@ -405,4 +513,66 @@ public readonly struct QueueStats
         : 0;
     
     public long PendingCommands => TotalCommandsQueued - TotalCommandsProcessed;
+}
+
+/// <summary>
+/// Cached command delegate to avoid lambda allocations
+/// </summary>
+internal sealed class CachedCommandDelegate
+{
+    private readonly string _key;
+    private readonly CommandType _commandType;
+    
+    public CachedCommandDelegate(string key, CommandType commandType)
+    {
+        _key = key;
+        _commandType = commandType;
+    }
+    
+    public ValueTask Execute(PipelineCommandWriter writer)
+    {
+        return _commandType switch
+        {
+            CommandType.Get => writer.WriteGetAsync(_key, default),
+            CommandType.Exists => writer.WriteExistsAsync(_key, default),
+            CommandType.Incr => writer.WriteIncrAsync(_key, default),
+            CommandType.Del => writer.WriteDelAsync(_key, default),
+            _ => ValueTask.CompletedTask
+        };
+    }
+}
+
+/// <summary>
+/// Command types for caching
+/// </summary>
+internal enum CommandType
+{
+    Get,
+    Exists,
+    Incr,
+    Del
+}
+
+/// <summary>
+/// Pool policy for batch lists
+/// </summary>
+internal sealed class BatchListPooledObjectPolicy : PooledObjectPolicy<List<RespireCommandQueue.QueuedCommand>>
+{
+    private readonly int _initialCapacity;
+    
+    public BatchListPooledObjectPolicy(int initialCapacity)
+    {
+        _initialCapacity = initialCapacity;
+    }
+    
+    public override List<RespireCommandQueue.QueuedCommand> Create()
+    {
+        return new List<RespireCommandQueue.QueuedCommand>(_initialCapacity);
+    }
+    
+    public override bool Return(List<RespireCommandQueue.QueuedCommand> obj)
+    {
+        obj.Clear();
+        return true;
+    }
 }

@@ -225,7 +225,7 @@ public sealed class RespireClient : IAsyncDisposable
     public ValueTask<RespireValue> ExistsAsync(string key, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        return _commandQueue.QueueCommandWithResponseAsync(writer => writer.WriteExistsAsync(key, cancellationToken), cancellationToken);
+        return _commandQueue.QueueExistsWithResponseAsync(key, cancellationToken);
     }
     
     /// <summary>
@@ -265,7 +265,7 @@ public sealed class RespireClient : IAsyncDisposable
     public ValueTask<RespireValue> IncrWithResponseAsync(string key, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        return _commandQueue.QueueCommandWithResponseAsync(writer => writer.WriteIncrAsync(key, cancellationToken), cancellationToken);
+        return _commandQueue.QueueIncrWithResponseAsync(key, cancellationToken);
     }
     
     /// <summary>
@@ -275,7 +275,7 @@ public sealed class RespireClient : IAsyncDisposable
     public ValueTask<RespireValue> PingWithResponseAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        return _commandQueue.QueueCommandWithResponseAsync(writer => writer.WritePingAsync(cancellationToken), cancellationToken);
+        return _commandQueue.QueuePingWithResponseAsync(cancellationToken);
     }
     
     // Enhanced methods with RespireDirectClient optimizations integrated
