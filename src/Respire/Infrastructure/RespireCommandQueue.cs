@@ -164,6 +164,15 @@ public sealed class RespireCommandQueue : IAsyncDisposable
     {
         ThrowIfDisposed();
         
+        // Fast path: if queue is empty, execute directly
+        if (_reader.Count == 0)
+        {
+            await _multiplexer.ExecuteCommandAsync(commandAction, cancellationToken).ConfigureAwait(false);
+            Interlocked.Increment(ref _totalCommandsQueued);
+            return;
+        }
+        
+        // Standard path: queue the command
         var command = new QueuedCommand(commandAction, null);
         await _writer.WriteAsync(command, cancellationToken).ConfigureAwait(false);
         Interlocked.Increment(ref _totalCommandsQueued);
@@ -181,6 +190,15 @@ public sealed class RespireCommandQueue : IAsyncDisposable
     {
         ThrowIfDisposed();
         
+        // Fast path: if queue is empty, execute directly and return response
+        if (_reader.Count == 0)
+        {
+            var response = await _multiplexer.ExecuteCommandWithResponseAsync(commandAction, cancellationToken).ConfigureAwait(false);
+            Interlocked.Increment(ref _totalCommandsQueued);
+            return response;
+        }
+        
+        // Standard path: queue the command with response handling
         var vtcs = _vtcsPool.Get();
         vtcs.Reset(); // Reset for reuse
         var command = new QueuedCommand(commandAction, vtcs);

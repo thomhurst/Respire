@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Respire.Benchmarks")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+50ef93735ddcb6dfe6c19e96b1e3a233e68fe0c6")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+6db0c68f123089bc99ac203959cfe80669f31852")]
 [assembly: System.Reflection.AssemblyProductAttribute("Respire.Benchmarks")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Respire.Benchmarks")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
