@@ -43,47 +43,21 @@ jobs:
       
       - name: Run Unit Tests
         run: |
-          dotnet test tests/Respire.Tests/Respire.Tests.csproj \
+          dotnet run --project tests/Respire.Tests/Respire.Tests.csproj \
             -c Release \
             -f ${{ matrix.framework }} \
-            --no-build \
-            --verbosity normal \
-            --logger trx \
-            --results-directory TestResults/unit \
-            --collect:"XPlat Code Coverage" \
-            --settings coverlet.runsettings
+            --no-build
       
       - name: Run Integration Tests
         run: |
-          dotnet test tests/Respire.IntegrationTests/Respire.IntegrationTests.csproj \
+          dotnet run --project tests/Respire.IntegrationTests/Respire.IntegrationTests.csproj \
             -c Release \
-            --no-build \
-            --verbosity normal \
-            --logger trx \
-            --results-directory TestResults/integration \
-            --collect:"XPlat Code Coverage" \
-            --settings coverlet.runsettings
+            --no-build
         env:
           DOCKER_HOST: unix:///var/run/docker.sock
       
-      - name: Generate Combined Coverage Report
-        if: matrix.framework == 'net9.0'
-        run: |
-          dotnet tool install -g dotnet-reportgenerator-globaltool
-          reportgenerator \
-            -reports:"TestResults/**/coverage.cobertura.xml" \
-            -targetdir:"CoverageReport" \
-            -reporttypes:"Html;JsonSummary;MarkdownSummaryGithub;Cobertura" \
-            -assemblyfilters:"+Respire*;-*Tests*;-*Benchmarks*"
-      
-      - name: Generate Test Report
-        uses: dorny/test-reporter@v1
-        if: always()
-        with:
-          name: Test Results (${{ matrix.framework }})
-          path: 'TestResults/**/*.trx'
-          reporter: dotnet-trx
-          fail-on-error: true
+      # Coverage and test reports are not available with dotnet run
+      # TUnit will handle its own output formatting
       
       - name: Add Results to GitHub Summary
         if: always()
@@ -91,19 +65,12 @@ jobs:
           echo "## 🧪 CI Results (${{ matrix.framework }})" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          if [ -f "CoverageReport/SummaryGithub.md" ]; then
-            echo "### 📊 Code Coverage" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            cat "CoverageReport/SummaryGithub.md" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-          fi
-          
           echo "### ✅ Build & Test Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Framework**: ${{ matrix.framework }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Build Status**: ✅ Success" >> $GITHUB_STEP_SUMMARY
-          echo "- **Unit Tests**: ✅ Passed" >> $GITHUB_STEP_SUMMARY
-          echo "- **Integration Tests**: ✅ Passed" >> $GITHUB_STEP_SUMMARY
+          echo "- **Unit Tests**: Executed with TUnit" >> $GITHUB_STEP_SUMMARY
+          echo "- **Integration Tests**: Executed with TUnit" >> $GITHUB_STEP_SUMMARY
           echo "- **Runner**: ${{ runner.os }} - ${{ runner.arch }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Timestamp**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
           
@@ -118,24 +85,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Target**: GET allocations reduced from ~616B to ~232B per operation" >> $GITHUB_STEP_SUMMARY
       
-      - name: Upload Test Results & Coverage
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: ci-results-${{ matrix.framework }}
-          path: |
-            TestResults/
-            CoverageReport/
-          retention-days: 30
-      
-      - name: Upload coverage to Codecov
-        if: matrix.framework == 'net9.0'
-        uses: codecov/codecov-action@v3
-        with:
-          file: CoverageReport/Cobertura.xml
-          flags: ci
-          name: ci-coverage
-          fail_ci_if_error: false
+      # Test artifacts are not generated with dotnet run
 
   performance-validation:
     name: Performance Validation
