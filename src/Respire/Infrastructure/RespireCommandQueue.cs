@@ -22,7 +22,7 @@ public sealed class RespireCommandQueue : IAsyncDisposable
     private readonly ILogger? _logger;
     
     // Object pools to reduce allocations
-    private readonly ObjectPool<TaskCompletionSource<RespireValue>> _tcsPool;
+    private readonly ObjectPool<ValueTaskCompletionSource> _vtcsPool;
     private readonly ObjectPool<List<QueuedCommand>> _batchPool;
     
     // Pre-compiled delegates to avoid lambda allocations for common commands
@@ -121,8 +121,8 @@ public sealed class RespireCommandQueue : IAsyncDisposable
         _maxCachedDelegates = options.MaxCachedDelegates;
         
         // Initialize object pools
-        var tcsPoolPolicy = new DefaultPooledObjectPolicy<TaskCompletionSource<RespireValue>>();
-        _tcsPool = new DefaultObjectPool<TaskCompletionSource<RespireValue>>(tcsPoolPolicy, options.TcsPoolSize);
+        var vtcsPoolPolicy = new ValueTaskCompletionSourcePooledObjectPolicy();
+        _vtcsPool = new DefaultObjectPool<ValueTaskCompletionSource>(vtcsPoolPolicy, options.TcsPoolSize);
         
         var batchPoolPolicy = new BatchListPooledObjectPolicy(options.BatchSize);
         _batchPool = new DefaultObjectPool<List<QueuedCommand>>(batchPoolPolicy, options.BatchPoolSize);
@@ -166,48 +166,31 @@ public sealed class RespireCommandQueue : IAsyncDisposable
     }
     
     /// <summary>
-    /// Queues a command with response handling using pooled TaskCompletionSource
+    /// Queues a command with response handling using pooled ValueTaskCompletionSource
     /// </summary>
     /// <param name="commandAction">Action that writes the command</param>
     /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>Task that completes with the command response</returns>
+    /// <returns>ValueTask that completes with the command response</returns>
     public async ValueTask<RespireValue> QueueCommandWithResponseAsync(
         Func<PipelineCommandWriter, ValueTask> commandAction,
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         
-        var tcs = RentTaskCompletionSource();
-        var command = new QueuedCommand(commandAction, tcs);
+        var vtcs = _vtcsPool.Get();
+        vtcs.Reset(); // Reset for reuse
+        var command = new QueuedCommand(commandAction, vtcs);
         
         await _writer.WriteAsync(command, cancellationToken).ConfigureAwait(false);
         Interlocked.Increment(ref _totalCommandsQueued);
         
         try
         {
-            return await tcs.Task.ConfigureAwait(false);
+            return await vtcs.GetValueTask().ConfigureAwait(false);
         }
         finally
         {
-            ReturnTaskCompletionSource(tcs);
-        }
-    }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private TaskCompletionSource<RespireValue> RentTaskCompletionSource()
-    {
-        var tcs = _tcsPool.Get();
-        // Reset the TCS by creating a new one - pooled object might have old state
-        return new TaskCompletionSource<RespireValue>(TaskCreationOptions.RunContinuationsAsynchronously);
-    }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void ReturnTaskCompletionSource(TaskCompletionSource<RespireValue> tcs)
-    {
-        // Only return to pool if it's in a completed state
-        if (tcs.Task.IsCompleted)
-        {
-            _tcsPool.Return(tcs);
+            _vtcsPool.Return(vtcs);
         }
     }
     
@@ -487,11 +470,11 @@ public sealed class RespireCommandQueue : IAsyncDisposable
     internal readonly struct QueuedCommand
     {
         public Func<PipelineCommandWriter, ValueTask> CommandAction { get; }
-        public TaskCompletionSource<RespireValue>? ResponseHandler { get; }
+        public ValueTaskCompletionSource? ResponseHandler { get; }
         
         public QueuedCommand(
             Func<PipelineCommandWriter, ValueTask> commandAction,
-            TaskCompletionSource<RespireValue>? responseHandler)
+            ValueTaskCompletionSource? responseHandler)
         {
             CommandAction = commandAction;
             ResponseHandler = responseHandler;
@@ -575,6 +558,23 @@ internal sealed class BatchListPooledObjectPolicy : PooledObjectPolicy<List<Resp
     public override bool Return(List<RespireCommandQueue.QueuedCommand> obj)
     {
         obj.Clear();
+        return true;
+    }
+}
+
+/// <summary>
+/// Pool policy for ValueTaskCompletionSource
+/// </summary>
+internal sealed class ValueTaskCompletionSourcePooledObjectPolicy : PooledObjectPolicy<ValueTaskCompletionSource>
+{
+    public override ValueTaskCompletionSource Create()
+    {
+        return new ValueTaskCompletionSource();
+    }
+    
+    public override bool Return(ValueTaskCompletionSource obj)
+    {
+        // The object will be reset when retrieved from pool
         return true;
     }
 }
