@@ -1,0 +1,41 @@
+name: Modular Pipeline
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      publish-packages:
+        description: Publish packages?    
+        type: boolean
+        required: true
+
+jobs:
+  modularpipeline:
+    environment: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Pull Requests' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+      
+      - name: Run Pipeline
+        run: dotnet run -c Release
+        working-directory: "Respire.Pipeline"
+        env:
+          DOTNET_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Development' }}
+          NuGet__ApiKey: ${{ github.ref == 'refs/heads/main' && secrets.NuGet__ApiKey || null }}
+          PULL_REQUEST_BRANCH: ${{ github.event.pull_request.head.ref }}
+          PUBLISH_PACKAGES: ${{ github.event.inputs.publish-packages }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
