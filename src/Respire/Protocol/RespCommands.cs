@@ -287,6 +287,15 @@ public static class RespCommands
         return offset;
     }
     
+    /// <summary>
+    /// Builds a GET command directly into a span (alias for BuildGetCommand for clarity with C# 13)
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int BuildGetCommandSpan(Span<byte> buffer, string key)
+    {
+        return BuildGetCommand(buffer, key);
+    }
+    
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static int BuildSetCommand(Span<byte> buffer, string key, string value)
     {

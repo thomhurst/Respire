@@ -22,12 +22,6 @@ public sealed class RespireClient : IAsyncDisposable
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte[]> _preEncodedGetCommands = new();
     private const int MaxPreEncodedCommands = 1000;
     
-    [ThreadStatic]
-    private static byte[]? _threadLocalCommandBuffer;
-    
-    [ThreadStatic]
-    private static Protocol.PipelineCommandWriter? _threadLocalWriter;
-    
     public string Host => _multiplexer.Host;
     public int Port => _multiplexer.Port;
     public bool IsConnected => _multiplexer.IsConnected && !_disposed;
@@ -237,97 +231,67 @@ public sealed class RespireClient : IAsyncDisposable
     
     /// <summary>
     /// Fast path for GET operations that bypasses the command queue
+    /// Now optimized with C# 13 to use ref structs in async methods
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private async ValueTask<RespireValue> ExecuteGetFastPathAsync(string key, CancellationToken cancellationToken)
     {
-        // Get a connection handle with automatic semaphore management
-        using var handle = await _multiplexer.GetConnectionHandleAsync(cancellationToken).ConfigureAwait(false);
-        
-        // Try to use pre-encoded command if available
+        // Try to use pre-encoded command if available for minimal allocations
         if (_preEncodedGetCommands.TryGetValue(key, out var encodedCommand))
         {
-            // Write pre-encoded command directly - zero allocations
-            await handle.Connection.WriteWithPooledBufferAsync(writer =>
-            {
-                writer.Write(encodedCommand);
-            }, cancellationToken).ConfigureAwait(false);
+            return await ExecutePreEncodedGetAsync(encodedCommand, cancellationToken).ConfigureAwait(false);
         }
-        else
+        
+        // Fallback to standard fast path with pooled buffer
+        using var handle = await _multiplexer.GetConnectionHandleAsync(cancellationToken).ConfigureAwait(false);
+        
+        // With C# 13, we can now use ref structs in async methods!
+        using var bufferWriter = RespireMemoryPool.Shared.CreateBufferWriter();
+        
+        // Build command directly into pooled buffer
+        var span = bufferWriter.GetSpan(32 + key.Length);
+        var written = Protocol.RespCommands.BuildGetCommandSpan(span, key);
+        bufferWriter.Advance(written);
+        
+        // Get the written memory for sending and potential caching
+        var commandMemory = bufferWriter.WrittenMemory;
+        
+        // Write directly without additional allocation
+        await handle.Connection.WritePreCompiledCommandAsync(commandMemory, cancellationToken).ConfigureAwait(false);
+        
+        // Cache for future use if appropriate
+        if (_preEncodedGetCommands.Count < MaxPreEncodedCommands && key.Length <= 128)
         {
-            // Check for thread-local writer to avoid allocation
-            var writer = _threadLocalWriter;
-            if (writer == null || writer.IsDisposed)
-            {
-                writer = new Protocol.PipelineCommandWriter(handle.Connection);
-                _threadLocalWriter = writer;
-            }
-            else
-            {
-                writer.UpdateConnection(handle.Connection);
-            }
-            
-            // Write command with potential caching
-            await WriteGetCommandOptimized(handle.Connection, key, writer, cancellationToken).ConfigureAwait(false);
+            // Need to copy to a new array for caching since buffer will be returned to pool
+            var commandBytes = new byte[commandMemory.Length];
+            commandMemory.CopyTo(commandBytes);
+            _preEncodedGetCommands.TryAdd(key, commandBytes);
         }
         
         // Read response directly
         var readResult = await handle.Connection.ReadAsync(cancellationToken).ConfigureAwait(false);
         
-        // Parse response using the same pattern as multiplexer
+        // Parse response
         return ParseRespResponse(readResult.Buffer, handle.Connection);
     }
     
     /// <summary>
-    /// Writes GET command with optimized encoding and caching
+    /// Optimized path for pre-encoded GET commands
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private async ValueTask WriteGetCommandOptimized(Infrastructure.PipelineConnection connection, string key, Protocol.PipelineCommandWriter writer, CancellationToken cancellationToken)
+    private async ValueTask<RespireValue> ExecutePreEncodedGetAsync(byte[] encodedCommand, CancellationToken cancellationToken)
     {
-        // Check if we should cache this command
-        var shouldCache = _preEncodedGetCommands.Count < MaxPreEncodedCommands && key.Length <= 128;
+        // Get connection directly for pre-encoded commands
+        using var handle = await _multiplexer.GetConnectionHandleAsync(cancellationToken).ConfigureAwait(false);
         
-        if (shouldCache)
-        {
-            // Use thread-local buffer if available
-            var estimatedLength = 32 + key.Length;
-            _threadLocalCommandBuffer ??= new byte[256]; // Initialize once per thread
-            
-            byte[] encodedCommand;
-            if (_threadLocalCommandBuffer.Length >= estimatedLength)
-            {
-                // Use thread-local buffer to avoid allocation
-                var actualLength = Protocol.RespCommands.BuildGetCommand(_threadLocalCommandBuffer, key);
-                encodedCommand = new byte[actualLength];
-                Buffer.BlockCopy(_threadLocalCommandBuffer, 0, encodedCommand, 0, actualLength);
-            }
-            else
-            {
-                // Fallback to new allocation for large keys
-                encodedCommand = new byte[estimatedLength];
-                var actualLength = Protocol.RespCommands.BuildGetCommand(encodedCommand, key);
-                
-                if (actualLength < encodedCommand.Length)
-                {
-                    Array.Resize(ref encodedCommand, actualLength);
-                }
-            }
-            
-            // Cache the encoded command
-            _preEncodedGetCommands.TryAdd(key, encodedCommand);
-            
-            // Write the command
-            await connection.WriteWithPooledBufferAsync(writer =>
-            {
-                writer.Write(encodedCommand);
-            }, cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            // Use the thread-local writer
-            await writer.WriteGetAsync(key, cancellationToken).ConfigureAwait(false);
-        }
+        // Write pre-encoded bytes directly without any allocations
+        await handle.Connection.WritePreCompiledCommandAsync(encodedCommand, cancellationToken).ConfigureAwait(false);
+        
+        // Read and parse response
+        var readResult = await handle.Connection.ReadAsync(cancellationToken).ConfigureAwait(false);
+        return ParseRespResponse(readResult.Buffer, handle.Connection);
     }
+    
     
     /// <summary>
     /// Parses RESP response from buffer

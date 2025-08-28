@@ -111,21 +111,42 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     /// </summary>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Disposable connection handle</returns>
-    public async ValueTask<ConnectionHandle> GetConnectionHandleAsync(CancellationToken cancellationToken = default)
+    public ValueTask<ConnectionHandle> GetConnectionHandleAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         
         // Try to get a free connection first
         if (_availableConnections.TryDequeue(out var freeIndex) && _connections[freeIndex].IsConnected)
         {
-            await _connectionSemaphores[freeIndex].WaitAsync(cancellationToken).ConfigureAwait(false);
-            return new ConnectionHandle(this, freeIndex, _connections[freeIndex]);
+            // Try to acquire semaphore synchronously
+            if (_connectionSemaphores[freeIndex].Wait(0))
+            {
+                // Semaphore acquired synchronously - return completed ValueTask
+                return new ValueTask<ConnectionHandle>(new ConnectionHandle(this, freeIndex, _connections[freeIndex]));
+            }
+            
+            // Need to wait asynchronously
+            return GetConnectionHandleAsyncSlow(freeIndex, cancellationToken);
         }
         
         // Fallback to round-robin if no free connections
         var (index, connection) = GetConnection();
+        
+        // Try to acquire semaphore synchronously
+        if (_connectionSemaphores[index].Wait(0))
+        {
+            // Semaphore acquired synchronously - return completed ValueTask
+            return new ValueTask<ConnectionHandle>(new ConnectionHandle(this, index, connection));
+        }
+        
+        // Need to wait asynchronously
+        return GetConnectionHandleAsyncSlow(index, cancellationToken);
+    }
+    
+    private async ValueTask<ConnectionHandle> GetConnectionHandleAsyncSlow(int index, CancellationToken cancellationToken)
+    {
         await _connectionSemaphores[index].WaitAsync(cancellationToken).ConfigureAwait(false);
-        return new ConnectionHandle(this, index, connection);
+        return new ConnectionHandle(this, index, _connections[index]);
     }
     
     /// <summary>

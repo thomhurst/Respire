@@ -88,10 +88,56 @@ public sealed class PipelineConnection : IAsyncDisposable
     /// <param name="commandBytes">Pre-compiled command bytes</param>
     /// <param name="cancellationToken">Cancellation token</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask WritePreCompiledCommandAsync(ReadOnlyMemory<byte> commandBytes, CancellationToken cancellationToken = default)
+    public ValueTask WritePreCompiledCommandAsync(ReadOnlyMemory<byte> commandBytes, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         
+        // Try to acquire semaphore synchronously for fast path
+        if (_writeSemaphore.Wait(0))
+        {
+            try
+            {
+                var memory = _writer.GetMemory(commandBytes.Length);
+                commandBytes.CopyTo(memory);
+                _writer.Advance(commandBytes.Length);
+                
+                var flushTask = _writer.FlushAsync(cancellationToken);
+                
+                // If flush completes synchronously, we can return synchronously
+                if (flushTask.IsCompletedSuccessfully)
+                {
+                    _writeSemaphore.Release();
+                    return default; // Completed synchronously
+                }
+                
+                // Flush didn't complete synchronously, need async path
+                return WritePreCompiledCommandAsyncSlow(flushTask);
+            }
+            catch
+            {
+                _writeSemaphore.Release();
+                throw;
+            }
+        }
+        
+        // Semaphore not available, use async path
+        return WritePreCompiledCommandAsyncCore(commandBytes, cancellationToken);
+    }
+    
+    private async ValueTask WritePreCompiledCommandAsyncSlow(ValueTask<FlushResult> flushTask)
+    {
+        try
+        {
+            await flushTask.ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeSemaphore.Release();
+        }
+    }
+    
+    private async ValueTask WritePreCompiledCommandAsyncCore(ReadOnlyMemory<byte> commandBytes, CancellationToken cancellationToken)
+    {
         await _writeSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -136,6 +182,7 @@ public sealed class PipelineConnection : IAsyncDisposable
     
     /// <summary>
     /// Writes using a pooled buffer writer for complex commands
+    /// Now with C# 13, we can use ref structs in async methods!
     /// </summary>
     /// <param name="writeAction">Action that writes to the buffer</param>
     /// <param name="cancellationToken">Cancellation token</param>
@@ -159,10 +206,20 @@ public sealed class PipelineConnection : IAsyncDisposable
     /// </summary>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Read result containing response data</returns>
-    public async ValueTask<ReadResult> ReadAsync(CancellationToken cancellationToken = default)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public ValueTask<ReadResult> ReadAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        return await _reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+        
+        // Try to read synchronously if data is already available
+        var readTask = _reader.ReadAsync(cancellationToken);
+        if (readTask.IsCompletedSuccessfully)
+        {
+            return new ValueTask<ReadResult>(readTask.Result);
+        }
+        
+        // Data not immediately available, return the async task
+        return readTask;
     }
     
     /// <summary>

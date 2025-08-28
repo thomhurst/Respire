@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <LangVersion>12</LangVersion>
+    <LangVersion>preview</LangVersion>
     <AssemblyName>Respire</AssemblyName>
     <RootNamespace>Respire</RootNamespace>
     <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
