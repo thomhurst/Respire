@@ -68,8 +68,9 @@ public class ProtocolBenchmarks
     [BenchmarkCategory("Parsing", "SimpleTypes")]
     public RespireValue ParseSimpleString()
     {
-        var reader = new RespireReader(_simpleStringData);
-        reader.TryRead(out var value);
+        var sequence = new ReadOnlySequence<byte>(_simpleStringData);
+        var reader = new RespPipelineReader(sequence);
+        reader.TryReadValue(out var value);
         return value;
     }
 
@@ -77,8 +78,9 @@ public class ProtocolBenchmarks
     [BenchmarkCategory("Parsing", "SimpleTypes")]
     public RespireValue ParseBulkString()
     {
-        var reader = new RespireReader(_bulkStringData);
-        reader.TryRead(out var value);
+        var sequence = new ReadOnlySequence<byte>(_bulkStringData);
+        var reader = new RespPipelineReader(sequence);
+        reader.TryReadValue(out var value);
         return value;
     }
 
@@ -86,8 +88,9 @@ public class ProtocolBenchmarks
     [BenchmarkCategory("Parsing", "SimpleTypes")]
     public RespireValue ParseInteger()
     {
-        var reader = new RespireReader(_integerData);
-        reader.TryRead(out var value);
+        var sequence = new ReadOnlySequence<byte>(_integerData);
+        var reader = new RespPipelineReader(sequence);
+        reader.TryReadValue(out var value);
         return value;
     }
 
@@ -95,8 +98,9 @@ public class ProtocolBenchmarks
     [BenchmarkCategory("Parsing", "Arrays")]
     public RespireValue ParseCommandArray()
     {
-        var reader = new RespireReader(_arrayData);
-        reader.TryRead(out var value);
+        var sequence = new ReadOnlySequence<byte>(_arrayData);
+        var reader = new RespPipelineReader(sequence);
+        reader.TryReadValue(out var value);
         return value;
     }
 
@@ -104,8 +108,9 @@ public class ProtocolBenchmarks
     [BenchmarkCategory("Parsing", "Arrays")]
     public RespireValue ParseLargeArray()
     {
-        var reader = new RespireReader(_largeArrayData);
-        reader.TryRead(out var value);
+        var sequence = new ReadOnlySequence<byte>(_largeArrayData);
+        var reader = new RespPipelineReader(sequence);
+        reader.TryReadValue(out var value);
         return value;
     }
 
@@ -113,8 +118,9 @@ public class ProtocolBenchmarks
     [BenchmarkCategory("Parsing", "Arrays")]
     public RespireValue ParseNestedArray()
     {
-        var reader = new RespireReader(_nestedArrayData);
-        reader.TryRead(out var value);
+        var sequence = new ReadOnlySequence<byte>(_nestedArrayData);
+        var reader = new RespPipelineReader(sequence);
+        reader.TryReadValue(out var value);
         return value;
     }
 
@@ -122,8 +128,9 @@ public class ProtocolBenchmarks
     [BenchmarkCategory("Parsing", "Arrays")]
     public RespireValue ParseMixedTypesArray()
     {
-        var reader = new RespireReader(_mixedTypesData);
-        reader.TryRead(out var value);
+        var sequence = new ReadOnlySequence<byte>(_mixedTypesData);
+        var reader = new RespPipelineReader(sequence);
+        reader.TryReadValue(out var value);
         return value;
     }
 
@@ -224,8 +231,9 @@ public class ProtocolBenchmarks
     public void RoundTripSimpleTypes()
     {
         // Parse
-        var reader = new RespireReader(_bulkStringData);
-        reader.TryRead(out var value);
+        var sequence = new ReadOnlySequence<byte>(_bulkStringData);
+        var reader = new RespPipelineReader(sequence);
+        reader.TryReadValue(out var value);
         
         // Write
         _writer.Clear();
@@ -239,8 +247,9 @@ public class ProtocolBenchmarks
     public void RoundTripCommandArray()
     {
         // Parse
-        var reader = new RespireReader(_arrayData);
-        reader.TryRead(out var value);
+        var sequence = new ReadOnlySequence<byte>(_arrayData);
+        var reader = new RespPipelineReader(sequence);
+        reader.TryReadValue(out var value);
         
         // Write
         _writer.Clear();
@@ -254,8 +263,9 @@ public class ProtocolBenchmarks
     public void RoundTripLargeArray()
     {
         // Parse
-        var reader = new RespireReader(_largeArrayData);
-        reader.TryRead(out var value);
+        var sequence = new ReadOnlySequence<byte>(_largeArrayData);
+        var reader = new RespPipelineReader(sequence);
+        reader.TryReadValue(out var value);
         
         // Write
         _writer.Clear();
@@ -272,8 +282,9 @@ public class ProtocolBenchmarks
     {
         for (int i = 0; i < 1000; i++)
         {
-            var reader = new RespireReader(_mixedTypesData);
-            reader.TryRead(out _);
+            var sequence = new ReadOnlySequence<byte>(_mixedTypesData);
+            var reader = new RespPipelineReader(sequence);
+            reader.TryReadValue(out _);
         }
     }
 

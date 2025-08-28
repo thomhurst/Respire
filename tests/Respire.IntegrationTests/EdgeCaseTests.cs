@@ -257,12 +257,12 @@ public class EdgeCaseTests : IAsyncLifetime
             
             // Verify exists
             var exists = i % 2 == 0
-                ? await _respireClient.ExistsAsync(key)
+                ? (await _respireClient.ExistsAsync(key)).AsBoolean()
                 : await _stackExchangeDb.KeyExistsAsync(key);
             
             if (i % 2 == 0)
             {
-                exists.AsInteger().Should().Be(1);
+                exists.Should().BeTrue();
             }
             else
             {

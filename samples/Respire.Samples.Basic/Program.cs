@@ -45,41 +45,46 @@ void DemoParsing()
     Console.WriteLine("Parsing RESP responses using RespireReader:");
     
     // Parse simple string
-    var simpleStringData = "+OK\r\n"u8;
-    var reader = new RespireReader(simpleStringData);
-    if (reader.TryRead(out var value))
+    var simpleStringData = "+OK\r\n"u8.ToArray();
+    var sequence = new ReadOnlySequence<byte>(simpleStringData);
+    var reader = new RespPipelineReader(sequence);
+    if (reader.TryReadValue(out var value))
     {
         Console.WriteLine($"Parsed Simple String: Type={value.Type}");
     }
     
     // Parse integer
-    var integerData = ":1000\r\n"u8;
-    reader = new RespireReader(integerData);
-    if (reader.TryRead(out value))
+    var integerData = ":1000\r\n"u8.ToArray();
+    sequence = new ReadOnlySequence<byte>(integerData);
+    reader = new RespPipelineReader(sequence);
+    if (reader.TryReadValue(out value))
     {
         Console.WriteLine($"Parsed Integer: Type={value.Type}, Value={value.AsInteger()}");
     }
     
     // Parse bulk string
-    var bulkStringData = "$11\r\nHello World\r\n"u8;
-    reader = new RespireReader(bulkStringData);
-    if (reader.TryRead(out value))
+    var bulkStringData = "$11\r\nHello World\r\n"u8.ToArray();
+    sequence = new ReadOnlySequence<byte>(bulkStringData);
+    reader = new RespPipelineReader(sequence);
+    if (reader.TryReadValue(out value))
     {
         Console.WriteLine($"Parsed Bulk String: Type={value.Type}");
     }
     
     // Parse null bulk string
-    var nullData = "$-1\r\n"u8;
-    reader = new RespireReader(nullData);
-    if (reader.TryRead(out value))
+    var nullData = "$-1\r\n"u8.ToArray();
+    sequence = new ReadOnlySequence<byte>(nullData);
+    reader = new RespPipelineReader(sequence);
+    if (reader.TryReadValue(out value))
     {
         Console.WriteLine($"Parsed Null: Type={value.Type}, IsNull={value.IsNull}");
     }
     
     // Parse boolean
-    var boolData = "#t\r\n"u8;
-    reader = new RespireReader(boolData);
-    if (reader.TryRead(out value))
+    var boolData = "#t\r\n"u8.ToArray();
+    sequence = new ReadOnlySequence<byte>(boolData);
+    reader = new RespPipelineReader(sequence);
+    if (reader.TryReadValue(out value))
     {
         Console.WriteLine($"Parsed Boolean: Type={value.Type}, Value={value.AsBoolean()}");
     }
@@ -90,9 +95,10 @@ void DemoRoundTrip()
     Console.WriteLine("Demonstrating high-performance Redis client usage:");
     
     // Demonstrate parsing a response
-    var responseData = ":1\r\n"u8; // Integer response: 1
-    var reader = new RespireReader(responseData);
-    if (reader.TryRead(out var response))
+    var responseData = ":1\r\n"u8.ToArray(); // Integer response: 1
+    var sequence = new ReadOnlySequence<byte>(responseData);
+    var reader = new RespPipelineReader(sequence);
+    if (reader.TryReadValue(out var response))
     {
         Console.WriteLine($"Response: {response.AsInteger()} (fields added)");
     }

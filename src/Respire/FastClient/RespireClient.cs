@@ -166,6 +166,16 @@ public sealed class RespireClient : IAsyncDisposable
         ThrowIfDisposed();
         return _commandQueue.QueueCommandAsync(writer => writer.WriteSAddAsync(key, member, cancellationToken), cancellationToken);
     }
+
+    /// <summary>
+    /// Removes member from set asynchronously (fire-and-forget)
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public ValueTask SRemAsync(string key, string member, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        return _commandQueue.QueueCommandAsync(writer => writer.WriteSRemAsync(key, member, cancellationToken), cancellationToken);
+    }
     
     /// <summary>
     /// Pushes value to list head asynchronously (fire-and-forget)
