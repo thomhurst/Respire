@@ -49,17 +49,70 @@ jobs:
       
       - name: Run Redis Container Benchmarks
         run: |
-          cd benchmarks/Keva.Benchmarks
+          cd benchmarks/Respire.Benchmarks
           dotnet run -c Release -f ${{ matrix.framework }} -- \
             --filter "*RedisContainerBenchmarks*" \
-            --exporters json markdown \
+            --exporters json markdown html \
             --artifacts ./BenchmarkDotNet.Artifacts
+      
+      - name: Generate GitHub Summary
+        run: |
+          echo "## 📊 Redis Container Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Framework: ${{ matrix.framework }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Find and parse the markdown report
+          RESULTS_DIR="benchmarks/Respire.Benchmarks/BenchmarkDotNet.Artifacts/results"
+          if [ -d "$RESULTS_DIR" ]; then
+            for file in "$RESULTS_DIR"/*.md; do
+              if [ -f "$file" ]; then
+                echo "#### Benchmark Results" >> $GITHUB_STEP_SUMMARY
+                echo "" >> $GITHUB_STEP_SUMMARY
+                
+                # Extract key metrics from the markdown file
+                cat "$file" | head -50 >> $GITHUB_STEP_SUMMARY
+                
+                echo "" >> $GITHUB_STEP_SUMMARY
+                echo "<details>" >> $GITHUB_STEP_SUMMARY
+                echo "<summary>📄 View Full Benchmark Report</summary>" >> $GITHUB_STEP_SUMMARY
+                echo "" >> $GITHUB_STEP_SUMMARY
+                echo '```' >> $GITHUB_STEP_SUMMARY
+                cat "$file" >> $GITHUB_STEP_SUMMARY
+                echo '```' >> $GITHUB_STEP_SUMMARY
+                echo "</details>" >> $GITHUB_STEP_SUMMARY
+                echo "" >> $GITHUB_STEP_SUMMARY
+                
+                # Add performance insights
+                echo "### 🎯 Performance Insights" >> $GITHUB_STEP_SUMMARY
+                echo "" >> $GITHUB_STEP_SUMMARY
+                echo "- **Framework**: ${{ matrix.framework }}" >> $GITHUB_STEP_SUMMARY
+                echo "- **Runner**: ${{ runner.os }} - ${{ runner.arch }}" >> $GITHUB_STEP_SUMMARY
+                echo "- **Timestamp**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+                
+                # Extract mean times if available
+                if grep -q "Mean" "$file"; then
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "#### Key Metrics:" >> $GITHUB_STEP_SUMMARY
+                  grep -E "(Method|Mean|Error|StdDev|Median|P95)" "$file" | head -20 >> $GITHUB_STEP_SUMMARY
+                fi
+                
+                break
+              fi
+            done
+          else
+            echo "⚠️ No benchmark results found in $RESULTS_DIR" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Benchmarks powered by [BenchmarkDotNet](https://benchmarkdotnet.org/)*" >> $GITHUB_STEP_SUMMARY
       
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
           name: redis-container-benchmarks-${{ matrix.framework }}
-          path: benchmarks/Keva.Benchmarks/BenchmarkDotNet.Artifacts/
+          path: benchmarks/Respire.Benchmarks/BenchmarkDotNet.Artifacts/
           retention-days: 30
       
       - name: Comment PR with results (if PR)
@@ -70,7 +123,7 @@ jobs:
             const fs = require('fs');
             const path = require('path');
             
-            const artifactsDir = 'benchmarks/Keva.Benchmarks/BenchmarkDotNet.Artifacts/results';
+            const artifactsDir = 'benchmarks/Respire.Benchmarks/BenchmarkDotNet.Artifacts/results';
             const files = fs.readdirSync(artifactsDir);
             const markdownFile = files.find(f => f.endsWith('.md'));
             

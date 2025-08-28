@@ -66,7 +66,7 @@ jobs:
       
       - name: Run Redis Throughput Benchmarks
         run: |
-          cd benchmarks/Keva.Benchmarks
+          cd benchmarks/Respire.Benchmarks
           
           # Parse concurrent clients parameter
           IFS=',' read -ra CLIENTS <<< "${{ steps.params.outputs.concurrent_clients }}"
@@ -83,7 +83,7 @@ jobs:
       
       - name: Generate throughput report
         run: |
-          cat > benchmarks/Keva.Benchmarks/throughput-report.md << 'EOF'
+          cat > benchmarks/Respire.Benchmarks/throughput-report.md << 'EOF'
           # Redis Throughput Benchmark Report
           
           ## Configuration
@@ -96,28 +96,116 @@ jobs:
           EOF
           
           # Append individual results
-          for dir in benchmarks/Keva.Benchmarks/BenchmarkDotNet.Artifacts/*/results; do
+          for dir in benchmarks/Respire.Benchmarks/BenchmarkDotNet.Artifacts/*/results; do
             if [ -d "$dir" ]; then
-              echo "### $(basename $(dirname $dir)) Concurrent Clients" >> benchmarks/Keva.Benchmarks/throughput-report.md
-              find "$dir" -name "*.md" -exec cat {} \; >> benchmarks/Keva.Benchmarks/throughput-report.md
-              echo "" >> benchmarks/Keva.Benchmarks/throughput-report.md
+              echo "### $(basename $(dirname $dir)) Concurrent Clients" >> benchmarks/Respire.Benchmarks/throughput-report.md
+              find "$dir" -name "*.md" -exec cat {} \; >> benchmarks/Respire.Benchmarks/throughput-report.md
+              echo "" >> benchmarks/Respire.Benchmarks/throughput-report.md
             fi
           done
+      
+      - name: Generate GitHub Summary
+        run: |
+          echo "## 🚀 Redis Throughput Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Framework** | ${{ matrix.framework }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Concurrent Clients** | ${{ steps.params.outputs.concurrent_clients }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Operations per Client** | ${{ steps.params.outputs.operations }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Runner** | ${{ runner.os }} - ${{ runner.arch }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Timestamp** | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Add throughput report if it exists
+          if [ -f "benchmarks/Respire.Benchmarks/throughput-report.md" ]; then
+            echo "### 📈 Throughput Analysis" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            # Extract key sections from the report
+            sed -n '/## Results Summary/,/^##/p' benchmarks/Respire.Benchmarks/throughput-report.md | head -n -1 >> $GITHUB_STEP_SUMMARY
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Process each client count result
+          IFS=',' read -ra CLIENTS <<< "${{ steps.params.outputs.concurrent_clients }}"
+          for client_count in "${CLIENTS[@]}"; do
+            RESULTS_DIR="benchmarks/Respire.Benchmarks/BenchmarkDotNet.Artifacts/$client_count/results"
+            if [ -d "$RESULTS_DIR" ]; then
+              echo "### 👥 Results with $client_count Concurrent Client(s)" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              
+              for file in "$RESULTS_DIR"/*.md; do
+                if [ -f "$file" ]; then
+                  # Extract summary table
+                  echo '```' >> $GITHUB_STEP_SUMMARY
+                  cat "$file" | grep -A 20 "^|" | head -25 >> $GITHUB_STEP_SUMMARY
+                  echo '```' >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  
+                  # Try to extract key performance metrics
+                  if grep -q "Respire" "$file"; then
+                    echo "#### 🏆 Performance Highlights" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    
+                    # Extract Respire vs StackExchange comparison if available
+                    respire_mean=$(grep "Respire" "$file" | head -1 | awk '{print $3}')
+                    stackexchange_mean=$(grep "StackExchange" "$file" | head -1 | awk '{print $3}')
+                    
+                    if [ ! -z "$respire_mean" ] && [ ! -z "$stackexchange_mean" ]; then
+                      echo "- **Respire Mean Time**: $respire_mean" >> $GITHUB_STEP_SUMMARY
+                      echo "- **StackExchange.Redis Mean Time**: $stackexchange_mean" >> $GITHUB_STEP_SUMMARY
+                    fi
+                  fi
+                  
+                  break
+                fi
+              done
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+          
+          # Add comparison insights
+          echo "### 💡 Benchmark Insights" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Higher **Ops/sec** indicates better throughput" >> $GITHUB_STEP_SUMMARY
+          echo "- Lower **Mean** time indicates better latency" >> $GITHUB_STEP_SUMMARY
+          echo "- **P95** shows the 95th percentile latency (consistency indicator)" >> $GITHUB_STEP_SUMMARY
+          echo "- Compare Respire performance against StackExchange.Redis baseline" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Add full report as collapsed section
+          if [ -f "benchmarks/Respire.Benchmarks/throughput-report.md" ]; then
+            echo "<details>" >> $GITHUB_STEP_SUMMARY
+            echo "<summary>📄 View Complete Throughput Report</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```markdown' >> $GITHUB_STEP_SUMMARY
+            cat benchmarks/Respire.Benchmarks/throughput-report.md >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Throughput benchmarks powered by [BenchmarkDotNet](https://benchmarkdotnet.org/)*" >> $GITHUB_STEP_SUMMARY
       
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
           name: redis-throughput-benchmarks-${{ matrix.framework }}
           path: |
-            benchmarks/Keva.Benchmarks/BenchmarkDotNet.Artifacts/
-            benchmarks/Keva.Benchmarks/throughput-report.md
+            benchmarks/Respire.Benchmarks/BenchmarkDotNet.Artifacts/
+            benchmarks/Respire.Benchmarks/throughput-report.md
           retention-days: 30
       
       - name: Upload throughput report as release asset (if tag)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: benchmarks/Keva.Benchmarks/throughput-report.md
+          files: benchmarks/Respire.Benchmarks/throughput-report.md
           name: Throughput Benchmark Report - ${{ matrix.framework }}
       
       - name: Create benchmark comparison (if main branch)
@@ -125,7 +213,7 @@ jobs:
         run: |
           # Store results for comparison with future runs
           mkdir -p .benchmark-history
-          cp benchmarks/Keva.Benchmarks/throughput-report.md \
+          cp benchmarks/Respire.Benchmarks/throughput-report.md \
              .benchmark-history/throughput-${{ matrix.framework }}-$(date +%Y%m%d-%H%M%S).md
       
       - name: Comment PR with throughput results (if PR)
@@ -134,7 +222,7 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const report = fs.readFileSync('benchmarks/Keva.Benchmarks/throughput-report.md', 'utf8');
+            const report = fs.readFileSync('benchmarks/Respire.Benchmarks/throughput-report.md', 'utf8');
             
             const comment = `## 📊 Redis Throughput Benchmark Results
             
@@ -146,7 +234,7 @@ jobs:
             - Higher Ops/sec is better
             - Lower mean time is better
             - Check P95 for consistency
-            - Compare Keva vs StackExchange.Redis performance`;
+            - Compare Respire vs StackExchange.Redis performance`;
             
             github.rest.issues.createComment({
               issue_number: context.issue.number,
