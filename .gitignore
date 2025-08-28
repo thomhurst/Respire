@@ -1,0 +1,17 @@
+# Build results
+bin/
+obj/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Rider
+.idea/
+
+# macOS
+.DS_Store
+
+# Serena cache
+.serena/
