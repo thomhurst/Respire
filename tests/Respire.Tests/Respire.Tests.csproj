@@ -13,9 +13,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="TUnit" Version="0.1.738" />
-    <PackageReference Include="TUnit.Assertions" Version="0.1.738" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.9.0" />
+    <PackageReference Include="TUnit" Version="0.57.1" />
+    <PackageReference Include="TUnit.Assertions" Version="0.57.1" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
   </ItemGroup>
 
 </Project>

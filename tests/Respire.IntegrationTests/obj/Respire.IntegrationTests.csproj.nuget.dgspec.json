@@ -59,19 +59,19 @@
           "dependencies": {
             "Microsoft.Extensions.Logging.Abstractions": {
               "target": "Package",
-              "version": "[8.0.0, )"
+              "version": "[9.0.8, )"
             },
             "Microsoft.Extensions.ObjectPool": {
               "target": "Package",
-              "version": "[8.0.0, )"
+              "version": "[9.0.8, )"
             },
             "System.IO.Pipelines": {
               "target": "Package",
-              "version": "[8.0.0, )"
+              "version": "[9.0.8, )"
             },
             "System.Threading.Channels": {
               "target": "Package",
-              "version": "[8.0.0, )"
+              "version": "[9.0.8, )"
             }
           },
           "imports": [
@@ -398,19 +398,19 @@
           "dependencies": {
             "Microsoft.Extensions.Logging.Abstractions": {
               "target": "Package",
-              "version": "[8.0.0, )"
+              "version": "[9.0.8, )"
             },
             "Microsoft.Extensions.ObjectPool": {
               "target": "Package",
-              "version": "[8.0.0, )"
+              "version": "[9.0.8, )"
             },
             "System.IO.Pipelines": {
               "target": "Package",
-              "version": "[8.0.0, )"
+              "version": "[9.0.8, )"
             },
             "System.Threading.Channels": {
               "target": "Package",
-              "version": "[8.0.0, )"
+              "version": "[9.0.8, )"
             }
           },
           "imports": [
@@ -799,31 +799,31 @@
           "dependencies": {
             "FluentAssertions": {
               "target": "Package",
-              "version": "[6.12.2, )"
+              "version": "[8.6.0, )"
             },
             "Microsoft.NET.Test.Sdk": {
               "target": "Package",
-              "version": "[17.13.0, )"
+              "version": "[17.14.1, )"
             },
             "StackExchange.Redis": {
               "target": "Package",
-              "version": "[2.8.16, )"
+              "version": "[2.9.11, )"
+            },
+            "TUnit": {
+              "target": "Package",
+              "version": "[0.57.1, )"
+            },
+            "TUnit.Assertions": {
+              "target": "Package",
+              "version": "[0.57.1, )"
             },
             "Testcontainers.Redis": {
               "target": "Package",
-              "version": "[3.10.0, )"
+              "version": "[4.6.0, )"
             },
             "coverlet.collector": {
               "target": "Package",
               "version": "[6.0.4, )"
-            },
-            "xunit": {
-              "target": "Package",
-              "version": "[2.9.2, )"
-            },
-            "xunit.runner.visualstudio": {
-              "target": "Package",
-              "version": "[2.8.2, )"
             }
           },
           "imports": [
@@ -1150,31 +1150,31 @@
           "dependencies": {
             "FluentAssertions": {
               "target": "Package",
-              "version": "[6.12.2, )"
+              "version": "[8.6.0, )"
             },
             "Microsoft.NET.Test.Sdk": {
               "target": "Package",
-              "version": "[17.13.0, )"
+              "version": "[17.14.1, )"
             },
             "StackExchange.Redis": {
               "target": "Package",
-              "version": "[2.8.16, )"
+              "version": "[2.9.11, )"
+            },
+            "TUnit": {
+              "target": "Package",
+              "version": "[0.57.1, )"
+            },
+            "TUnit.Assertions": {
+              "target": "Package",
+              "version": "[0.57.1, )"
             },
             "Testcontainers.Redis": {
               "target": "Package",
-              "version": "[3.10.0, )"
+              "version": "[4.6.0, )"
             },
             "coverlet.collector": {
               "target": "Package",
               "version": "[6.0.4, )"
-            },
-            "xunit": {
-              "target": "Package",
-              "version": "[2.9.2, )"
-            },
-            "xunit.runner.visualstudio": {
-              "target": "Package",
-              "version": "[2.8.2, )"
             }
           },
           "imports": [

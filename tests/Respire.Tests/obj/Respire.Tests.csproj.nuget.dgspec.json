@@ -59,19 +59,19 @@
           "dependencies": {
             "Microsoft.Extensions.Logging.Abstractions": {
               "target": "Package",
-              "version": "[8.0.0, )"
+              "version": "[9.0.8, )"
             },
             "Microsoft.Extensions.ObjectPool": {
               "target": "Package",
-              "version": "[8.0.0, )"
+              "version": "[9.0.8, )"
             },
             "System.IO.Pipelines": {
               "target": "Package",
-              "version": "[8.0.0, )"
+              "version": "[9.0.8, )"
             },
             "System.Threading.Channels": {
               "target": "Package",
-              "version": "[8.0.0, )"
+              "version": "[9.0.8, )"
             }
           },
           "imports": [
@@ -398,19 +398,19 @@
           "dependencies": {
             "Microsoft.Extensions.Logging.Abstractions": {
               "target": "Package",
-              "version": "[8.0.0, )"
+              "version": "[9.0.8, )"
             },
             "Microsoft.Extensions.ObjectPool": {
               "target": "Package",
-              "version": "[8.0.0, )"
+              "version": "[9.0.8, )"
             },
             "System.IO.Pipelines": {
               "target": "Package",
-              "version": "[8.0.0, )"
+              "version": "[9.0.8, )"
             },
             "System.Threading.Channels": {
               "target": "Package",
-              "version": "[8.0.0, )"
+              "version": "[9.0.8, )"
             }
           },
           "imports": [
@@ -799,15 +799,15 @@
           "dependencies": {
             "Microsoft.NET.Test.Sdk": {
               "target": "Package",
-              "version": "[17.9.0, )"
+              "version": "[17.14.1, )"
             },
             "TUnit": {
               "target": "Package",
-              "version": "[0.1.738, )"
+              "version": "[0.57.1, )"
             },
             "TUnit.Assertions": {
               "target": "Package",
-              "version": "[0.1.738, )"
+              "version": "[0.57.1, )"
             }
           },
           "imports": [
@@ -1134,15 +1134,15 @@
           "dependencies": {
             "Microsoft.NET.Test.Sdk": {
               "target": "Package",
-              "version": "[17.9.0, )"
+              "version": "[17.14.1, )"
             },
             "TUnit": {
               "target": "Package",
-              "version": "[0.1.738, )"
+              "version": "[0.57.1, )"
             },
             "TUnit.Assertions": {
               "target": "Package",
-              "version": "[0.1.738, )"
+              "version": "[0.57.1, )"
             }
           },
           "imports": [

@@ -40,7 +40,7 @@
           }
         }
       },
-      "EnumerableAsyncProcessor/3.3.2": {
+      "EnumerableAsyncProcessor/3.6.3": {
         "type": "package",
         "compile": {
           "lib/net8.0/EnumerableAsyncProcessor.dll": {}
@@ -962,18 +962,18 @@
           "buildTransitive/net8.0/_._": {}
         }
       },
-      "ModularPipelines/2.47.0": {
+      "ModularPipelines/2.47.8": {
         "type": "package",
         "dependencies": {
           "AsyncSemaphore": "1.3.0",
           "CliWrap": "3.9.0",
-          "EnumerableAsyncProcessor": "3.3.2",
+          "EnumerableAsyncProcessor": "3.6.3",
           "Initialization.Microsoft.Extensions.DependencyInjection": "1.1.44",
           "Mediator.Abstractions": "3.0.1",
           "Microsoft.Extensions.DependencyInjection": "9.0.6",
           "Microsoft.Extensions.Hosting": "9.0.6",
           "Microsoft.Extensions.Http": "9.0.6",
-          "ModularPipelines.Analyzers": "2.47.0",
+          "ModularPipelines.Analyzers": "2.47.8",
           "Polly": "8.6.2",
           "Spectre.Console": "0.50.0",
           "System.Text.Json": "9.0.6",
@@ -987,13 +987,13 @@
           "lib/net8.0/ModularPipelines.dll": {}
         }
       },
-      "ModularPipelines.Analyzers/2.47.0": {
+      "ModularPipelines.Analyzers/2.47.8": {
         "type": "package"
       },
-      "ModularPipelines.DotNet/2.47.0": {
+      "ModularPipelines.DotNet/2.47.8": {
         "type": "package",
         "dependencies": {
-          "ModularPipelines": "2.47.0"
+          "ModularPipelines": "2.47.8"
         },
         "compile": {
           "lib/net8.0/ModularPipelines.DotNet.dll": {}
@@ -1002,10 +1002,10 @@
           "lib/net8.0/ModularPipelines.DotNet.dll": {}
         }
       },
-      "ModularPipelines.Git/2.47.0": {
+      "ModularPipelines.Git/2.47.8": {
         "type": "package",
         "dependencies": {
-          "ModularPipelines": "2.47.0"
+          "ModularPipelines": "2.47.8"
         },
         "compile": {
           "lib/net8.0/ModularPipelines.Git.dll": {}
@@ -1344,7 +1344,7 @@
           }
         }
       },
-      "EnumerableAsyncProcessor/3.3.2": {
+      "EnumerableAsyncProcessor/3.6.3": {
         "type": "package",
         "compile": {
           "lib/net9.0/EnumerableAsyncProcessor.dll": {}
@@ -2260,18 +2260,18 @@
           "buildTransitive/net8.0/_._": {}
         }
       },
-      "ModularPipelines/2.47.0": {
+      "ModularPipelines/2.47.8": {
         "type": "package",
         "dependencies": {
           "AsyncSemaphore": "1.3.0",
           "CliWrap": "3.9.0",
-          "EnumerableAsyncProcessor": "3.3.2",
+          "EnumerableAsyncProcessor": "3.6.3",
           "Initialization.Microsoft.Extensions.DependencyInjection": "1.1.44",
           "Mediator.Abstractions": "3.0.1",
           "Microsoft.Extensions.DependencyInjection": "9.0.6",
           "Microsoft.Extensions.Hosting": "9.0.6",
           "Microsoft.Extensions.Http": "9.0.6",
-          "ModularPipelines.Analyzers": "2.47.0",
+          "ModularPipelines.Analyzers": "2.47.8",
           "Polly": "8.6.2",
           "Spectre.Console": "0.50.0",
           "YamlDotNet": "16.3.0",
@@ -2284,13 +2284,13 @@
           "lib/net9.0/ModularPipelines.dll": {}
         }
       },
-      "ModularPipelines.Analyzers/2.47.0": {
+      "ModularPipelines.Analyzers/2.47.8": {
         "type": "package"
       },
-      "ModularPipelines.DotNet/2.47.0": {
+      "ModularPipelines.DotNet/2.47.8": {
         "type": "package",
         "dependencies": {
-          "ModularPipelines": "2.47.0"
+          "ModularPipelines": "2.47.8"
         },
         "compile": {
           "lib/net9.0/ModularPipelines.DotNet.dll": {}
@@ -2299,10 +2299,10 @@
           "lib/net9.0/ModularPipelines.DotNet.dll": {}
         }
       },
-      "ModularPipelines.Git/2.47.0": {
+      "ModularPipelines.Git/2.47.8": {
         "type": "package",
         "dependencies": {
-          "ModularPipelines": "2.47.0"
+          "ModularPipelines": "2.47.8"
         },
         "compile": {
           "lib/net9.0/ModularPipelines.Git.dll": {}
@@ -2566,15 +2566,15 @@
         "lib/netstandard2.1/CliWrap.xml"
       ]
     },
-    "EnumerableAsyncProcessor/3.3.2": {
-      "sha512": "42oESfS/5G/Do1j9XOzNUg7voH7dYNQ1QrchoUuY56K30FuVdB6PmwCCXC4ChPdW4XxbC6Ybg2CI6/JXuF/MMQ==",
+    "EnumerableAsyncProcessor/3.6.3": {
+      "sha512": "qmhjKHjjsteV3lcQy0Ep17Bn7v1lgzEnk8X7AWELAAN8/OwKy7Rqq2aUEQCpUbUZLSk+k63s5jH8ElrippEs2w==",
       "type": "package",
-      "path": "enumerableasyncprocessor/3.3.2",
+      "path": "enumerableasyncprocessor/3.6.3",
       "files": [
         ".nupkg.metadata",
         ".signature.p7s",
         "README.md",
-        "enumerableasyncprocessor.3.3.2.nupkg.sha512",
+        "enumerableasyncprocessor.3.6.3.nupkg.sha512",
         "enumerableasyncprocessor.nuspec",
         "lib/net6.0/EnumerableAsyncProcessor.dll",
         "lib/net8.0/EnumerableAsyncProcessor.dll",
@@ -3967,59 +3967,59 @@
         "useSharedDesignerContext.txt"
       ]
     },
-    "ModularPipelines/2.47.0": {
-      "sha512": "1B+yxWgu7hWeqSHG6hvaWsdOjQXqwS/OaRGKG6zWEqEhgqv8kg5IvWTIMA4lZ3bYKCeBJvkaglniaDqy5opuCw==",
+    "ModularPipelines/2.47.8": {
+      "sha512": "m7i/qF1FV/dtzjRkeLbXPwlXQxAMHWyfIJEzgen8zd4xtG8UYjfxkiMUY72kVLXv2F6i35NgjByd1BDOdnkDiQ==",
       "type": "package",
-      "path": "modularpipelines/2.47.0",
+      "path": "modularpipelines/2.47.8",
       "files": [
         ".nupkg.metadata",
         ".signature.p7s",
         "README.md",
         "lib/net8.0/ModularPipelines.dll",
         "lib/net9.0/ModularPipelines.dll",
-        "modularpipelines.2.47.0.nupkg.sha512",
+        "modularpipelines.2.47.8.nupkg.sha512",
         "modularpipelines.nuspec"
       ]
     },
-    "ModularPipelines.Analyzers/2.47.0": {
-      "sha512": "FmXKJTwWs2rwz00sCrR3p8HeSQrAis/0xloMW7BH8HHBB+rAH7bL8DNo+GMlSL7P9oh1+2Wt+tLD4ZVohKUaHg==",
+    "ModularPipelines.Analyzers/2.47.8": {
+      "sha512": "UwSfAJtBBNNdmp5Un90NjqlR1rLRaa+3K0lHZ+qnE02TMa9UW2tyu+WXVVQHvPEa/wgh4tVroa7ypUgwdo0UyQ==",
       "type": "package",
-      "path": "modularpipelines.analyzers/2.47.0",
+      "path": "modularpipelines.analyzers/2.47.8",
       "files": [
         ".nupkg.metadata",
         ".signature.p7s",
         "README.md",
         "analyzers/dotnet/cs/ModularPipelines.Analyzers.CodeFixes.dll",
         "analyzers/dotnet/cs/ModularPipelines.Analyzers.dll",
-        "modularpipelines.analyzers.2.47.0.nupkg.sha512",
+        "modularpipelines.analyzers.2.47.8.nupkg.sha512",
         "modularpipelines.analyzers.nuspec"
       ]
     },
-    "ModularPipelines.DotNet/2.47.0": {
-      "sha512": "56YC6Yfgv08Twfc4csCYW3M4j8VRZZz/wIl50+HAphZujayKSgAhaYIc/I99QZZMySSM/c/uewa4p4AFe5lqVw==",
+    "ModularPipelines.DotNet/2.47.8": {
+      "sha512": "MeVdYBnGUViRAqVTVlUnND3YCUPNgPiUGY+FDdP+E06FR7OQwWllfNxW3xpP0wIPYtm3ZBqcws8re6hPn31HNA==",
       "type": "package",
-      "path": "modularpipelines.dotnet/2.47.0",
+      "path": "modularpipelines.dotnet/2.47.8",
       "files": [
         ".nupkg.metadata",
         ".signature.p7s",
         "README.md",
         "lib/net8.0/ModularPipelines.DotNet.dll",
         "lib/net9.0/ModularPipelines.DotNet.dll",
-        "modularpipelines.dotnet.2.47.0.nupkg.sha512",
+        "modularpipelines.dotnet.2.47.8.nupkg.sha512",
         "modularpipelines.dotnet.nuspec"
       ]
     },
-    "ModularPipelines.Git/2.47.0": {
-      "sha512": "mhl5gAXdHA7p041HRBIrsWk8KsMqeSLPDUjI9c1c7w2REVwhD0Q//7qCOo39NBroStwzpqzEpksFdfsA9UH14g==",
+    "ModularPipelines.Git/2.47.8": {
+      "sha512": "vTwvq1QvHm78K3hm13LwJW9y2qs3BNl7pZLOH9AuLRnlZb364HhhuM9pn8SDRDt+VwznfzfNXBkXf7smD4i67Q==",
       "type": "package",
-      "path": "modularpipelines.git/2.47.0",
+      "path": "modularpipelines.git/2.47.8",
       "files": [
         ".nupkg.metadata",
         ".signature.p7s",
         "README.md",
         "lib/net8.0/ModularPipelines.Git.dll",
         "lib/net9.0/ModularPipelines.Git.dll",
-        "modularpipelines.git.2.47.0.nupkg.sha512",
+        "modularpipelines.git.2.47.8.nupkg.sha512",
         "modularpipelines.git.nuspec"
       ]
     },
@@ -4487,12 +4487,12 @@
   },
   "projectFileDependencyGroups": {
     "net8.0": [
-      "ModularPipelines.DotNet >= 2.47.0",
-      "ModularPipelines.Git >= 2.47.0"
+      "ModularPipelines.DotNet >= 2.47.8",
+      "ModularPipelines.Git >= 2.47.8"
     ],
     "net9.0": [
-      "ModularPipelines.DotNet >= 2.47.0",
-      "ModularPipelines.Git >= 2.47.0"
+      "ModularPipelines.DotNet >= 2.47.8",
+      "ModularPipelines.Git >= 2.47.8"
     ]
   },
   "packageFolders": {
@@ -4554,11 +4554,11 @@
         "dependencies": {
           "ModularPipelines.DotNet": {
             "target": "Package",
-            "version": "[2.47.0, )"
+            "version": "[2.47.8, )"
           },
           "ModularPipelines.Git": {
             "target": "Package",
-            "version": "[2.47.0, )"
+            "version": "[2.47.8, )"
           }
         },
         "imports": [
@@ -4889,11 +4889,11 @@
         "dependencies": {
           "ModularPipelines.DotNet": {
             "target": "Package",
-            "version": "[2.47.0, )"
+            "version": "[2.47.8, )"
           },
           "ModularPipelines.Git": {
             "target": "Package",
-            "version": "[2.47.0, )"
+            "version": "[2.47.8, )"
           }
         },
         "imports": [

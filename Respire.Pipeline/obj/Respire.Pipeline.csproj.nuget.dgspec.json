@@ -59,11 +59,11 @@
           "dependencies": {
             "ModularPipelines.DotNet": {
               "target": "Package",
-              "version": "[2.47.0, )"
+              "version": "[2.47.8, )"
             },
             "ModularPipelines.Git": {
               "target": "Package",
-              "version": "[2.47.0, )"
+              "version": "[2.47.8, )"
             }
           },
           "imports": [
@@ -394,11 +394,11 @@
           "dependencies": {
             "ModularPipelines.DotNet": {
               "target": "Package",
-              "version": "[2.47.0, )"
+              "version": "[2.47.8, )"
             },
             "ModularPipelines.Git": {
               "target": "Package",
-              "version": "[2.47.0, )"
+              "version": "[2.47.8, )"
             }
           },
           "imports": [
