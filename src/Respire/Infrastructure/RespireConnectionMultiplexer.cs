@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Collections.Concurrent;
+using System.IO.Pipelines;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.ObjectPool;
@@ -281,11 +282,32 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         // Write command
         await commandAction(writer).ConfigureAwait(false);
         
-        // Read response
-        var readResult = await handle.Connection.ReadAsync(cancellationToken).ConfigureAwait(false);
-        
-        // Parse response using ref struct outside of async context
-        return ParseRespResponse(readResult.Buffer, handle.Connection);
+        // Read response - keep reading until we have a complete response
+        ReadResult readResult;
+        while (true)
+        {
+            readResult = await handle.Connection.ReadAsync(cancellationToken).ConfigureAwait(false);
+            
+            // Parse response using ref struct outside of async context
+            var reader = new RespPipelineReader(readResult.Buffer);
+            
+            if (reader.TryReadValue(out var value))
+            {
+                handle.Connection.AdvanceReader(reader.Consumed, reader.Examined);
+                return value;
+            }
+            
+            // Check if connection was closed
+            if (readResult.IsCompleted)
+            {
+                handle.Connection.AdvanceReader(readResult.Buffer.Start, readResult.Buffer.End);
+                throw new InvalidOperationException("Connection closed before complete response received");
+            }
+            
+            // Tell the pipeline that we've examined the data but haven't consumed it
+            // Consumed = Start (nothing consumed), Examined = End (everything examined)
+            handle.Connection.AdvanceReader(readResult.Buffer.Start, readResult.Buffer.End);
+        }
     }
     
     /// <summary>

@@ -42,7 +42,10 @@ public ref struct RespPipelineReader
         if (!TryPeekByte(out var typeByte))
             return false;
         
-        return typeByte switch
+        // Save the initial consumed position
+        var initialConsumed = _consumed;
+        
+        var result = typeByte switch
         {
             (byte)'+' => TryReadSimpleString(out value),
             (byte)'-' => TryReadError(out value),
@@ -52,6 +55,14 @@ public ref struct RespPipelineReader
             (byte)'#' => TryReadBoolean(out value),
             _ => false
         };
+        
+        // If parsing failed, reset consumed position
+        if (!result)
+        {
+            _consumed = initialConsumed;
+        }
+        
+        return result;
     }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

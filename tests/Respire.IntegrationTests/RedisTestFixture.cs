@@ -6,18 +6,14 @@ namespace Respire.IntegrationTests;
 
 public class RedisTestFixture : IAsyncInitializer, IAsyncDisposable
 {
-    private static RedisContainer? _redisContainer;
+    private readonly RedisContainer _redisContainer = new RedisBuilder().Build();
     
-    public string ConnectionString => _redisContainer?.GetConnectionString() ?? throw new InvalidOperationException("Redis container not initialized");
+    public string ConnectionString => _redisContainer.GetConnectionString() ?? throw new InvalidOperationException("Redis container not initialized");
     public static string Host { get; private set; } = "localhost";
     public static int Port { get; private set; }
     
     public async Task InitializeAsync()
     {
-        _redisContainer = new RedisBuilder()
-            .WithImage("redis:7-alpine")
-            .Build();
-            
         await _redisContainer.StartAsync();
         
         // Parse the connection string to get host and port
@@ -29,11 +25,7 @@ public class RedisTestFixture : IAsyncInitializer, IAsyncDisposable
     
     public async ValueTask DisposeAsync()
     {
-        if (_redisContainer != null)
-        {
-            await _redisContainer.DisposeAsync();
-            _redisContainer = null;
-        }
+        await _redisContainer.DisposeAsync();
     }
 }
 

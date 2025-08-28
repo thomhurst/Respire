@@ -123,43 +123,56 @@ public sealed class RespireClient : IAsyncDisposable
     }
     
     /// <summary>
-    /// Sets a key-value pair asynchronously (fire-and-forget)
+    /// Sets a key-value pair asynchronously
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public ValueTask SetAsync(string key, string value, CancellationToken cancellationToken = default)
+    public async ValueTask SetAsync(string key, string value, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        return _commandQueue.QueueSetAsync(key, value, cancellationToken);
+        var response = await _multiplexer.ExecuteCommandWithResponseAsync(
+            writer => writer.WriteSetAsync(key, value, cancellationToken), cancellationToken).ConfigureAwait(false);
+        
+        // Verify we got "OK" response
+        if (!response.Type.Equals(RespDataType.SimpleString) || !response.AsString().Equals("OK", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"SET command failed. Expected 'OK' but got: {response}");
+        }
     }
     
     /// <summary>
-    /// Deletes a key asynchronously (fire-and-forget)
+    /// Deletes a key asynchronously
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public ValueTask DelAsync(string key, CancellationToken cancellationToken = default)
+    public async ValueTask<long> DelAsync(string key, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        return _commandQueue.QueueCommandAsync(writer => writer.WriteDelAsync(key, cancellationToken), cancellationToken);
+        var response = await _multiplexer.ExecuteCommandWithResponseAsync(
+            writer => writer.WriteDelAsync(key, cancellationToken), cancellationToken).ConfigureAwait(false);
+        return response.AsInteger();
     }
     
     /// <summary>
-    /// Sets expiration on a key asynchronously (fire-and-forget)
+    /// Sets expiration on a key asynchronously
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public ValueTask ExpireAsync(string key, int seconds, CancellationToken cancellationToken = default)
+    public async ValueTask<bool> ExpireAsync(string key, int seconds, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        return _commandQueue.QueueCommandAsync(writer => writer.WriteExpireAsync(key, seconds, cancellationToken), cancellationToken);
+        var response = await _multiplexer.ExecuteCommandWithResponseAsync(
+            writer => writer.WriteExpireAsync(key, seconds, cancellationToken), cancellationToken).ConfigureAwait(false);
+        return response.AsInteger() == 1;
     }
     
     /// <summary>
-    /// Increments a key asynchronously (fire-and-forget)
+    /// Increments a key asynchronously
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public ValueTask IncrAsync(string key, CancellationToken cancellationToken = default)
+    public async ValueTask<long> IncrAsync(string key, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        return _commandQueue.QueueCommandAsync(writer => writer.WriteIncrAsync(key, cancellationToken), cancellationToken);
+        var response = await _multiplexer.ExecuteCommandWithResponseAsync(
+            writer => writer.WriteIncrAsync(key, cancellationToken), cancellationToken).ConfigureAwait(false);
+        return response.AsInteger();
     }
     
     /// <summary>
@@ -346,9 +359,26 @@ public sealed class RespireClient : IAsyncDisposable
                 await writeTask.ConfigureAwait(false);
             }
             
-            // Read and parse response
-            var readResult = await lease.Connection.ReadAsync(cancellationToken).ConfigureAwait(false);
-            return ParseRespResponse(readResult.Buffer, lease.Connection);
+            // Read and parse response - keep reading until complete
+            while (true)
+            {
+                var readResult = await lease.Connection.ReadAsync(cancellationToken).ConfigureAwait(false);
+                var reader = new Protocol.RespPipelineReader(readResult.Buffer);
+                
+                if (reader.TryReadValue(out var value))
+                {
+                    lease.Connection.AdvanceReader(reader.Consumed, reader.Examined);
+                    return value;
+                }
+                
+                if (readResult.IsCompleted)
+                {
+                    lease.Connection.AdvanceReader(readResult.Buffer.Start, readResult.Buffer.End);
+                    throw new InvalidOperationException("Connection closed before complete response received");
+                }
+                
+                lease.Connection.AdvanceReader(readResult.Buffer.Start, readResult.Buffer.End);
+            }
         }
         finally
         {
@@ -368,9 +398,26 @@ public sealed class RespireClient : IAsyncDisposable
         // Write pre-encoded bytes directly without any allocations
         await handle.Connection.WritePreCompiledCommandAsync(encodedCommand, cancellationToken).ConfigureAwait(false);
         
-        // Read and parse response
-        var readResult = await handle.Connection.ReadAsync(cancellationToken).ConfigureAwait(false);
-        return ParseRespResponse(readResult.Buffer, handle.Connection);
+        // Read and parse response - keep reading until complete
+        while (true)
+        {
+            var readResult = await handle.Connection.ReadAsync(cancellationToken).ConfigureAwait(false);
+            var reader = new Protocol.RespPipelineReader(readResult.Buffer);
+            
+            if (reader.TryReadValue(out var value))
+            {
+                handle.Connection.AdvanceReader(reader.Consumed, reader.Examined);
+                return value;
+            }
+            
+            if (readResult.IsCompleted)
+            {
+                handle.Connection.AdvanceReader(readResult.Buffer.Start, readResult.Buffer.End);
+                throw new InvalidOperationException("Connection closed before complete response received");
+            }
+            
+            handle.Connection.AdvanceReader(readResult.Buffer.Start, readResult.Buffer.End);
+        }
     }
     
     
@@ -403,7 +450,7 @@ public sealed class RespireClient : IAsyncDisposable
     public ValueTask<RespireValue> Ping() => PingWithResponseAsync();
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public ValueTask Del(string key) => DelAsync(key);
+    public ValueTask<long> Del(string key) => DelAsync(key);
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ValueTask<RespireValue> Exists(string key) => ExistsAsync(key);

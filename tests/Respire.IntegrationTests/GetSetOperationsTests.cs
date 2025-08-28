@@ -83,7 +83,7 @@ public class GetSetOperationsTests(RedisTestFixture fixture)
         var value = await _respireClient!.GetAsync(key);
 
         // Assert
-        await Assert.That(value).IsNull();
+        await Assert.That(value.IsNull).IsTrue();
     }
 
     [Test]
