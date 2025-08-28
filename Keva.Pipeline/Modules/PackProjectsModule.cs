@@ -30,7 +30,7 @@ public class PackProjectsModule : Module<CommandResult[]>
         {
             var result = await context.DotNet().Pack(new DotNetPackOptions
             {
-                ProjectSolutionDirectoryDllExe = project,
+                ProjectSolution = project,
                 Configuration = Configuration.Release,
                 NoBuild = true,
                 OutputDirectory = "../artifacts/packages",

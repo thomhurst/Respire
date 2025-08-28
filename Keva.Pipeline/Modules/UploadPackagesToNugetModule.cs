@@ -46,7 +46,7 @@ public class UploadPackagesToNugetModule : Module<CommandResult[]>
             
             var result = await context.DotNet().Nuget.Push(new DotNetNugetPushOptions
             {
-                Package = packageFile.FullName,
+                Path = packageFile.FullName,
                 Source = "https://api.nuget.org/v3/index.json",
                 ApiKey = _nugetSettings.Value.ApiKey,
                 SkipDuplicate = true

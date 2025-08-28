@@ -1,5 +1,7 @@
 using Keva.Protocol;
 using TUnit.Core;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
 
 namespace Keva.Tests.Protocol;
 

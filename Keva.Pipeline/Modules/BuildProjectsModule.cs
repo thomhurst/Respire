@@ -18,7 +18,7 @@ public class BuildProjectsModule : Module<CommandResult>
         
         return await context.DotNet().Build(new DotNetBuildOptions
         {
-            ProjectSolutionDirectoryDllExe = "../Keva.sln",
+            ProjectSolution = "../Keva.sln",
             Configuration = Configuration.Release,
             NoRestore = false
         }, cancellationToken);

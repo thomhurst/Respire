@@ -31,7 +31,7 @@ public class RunUnitTestsModule : Module<CommandResult[]>
                 ProjectSolutionDirectoryDllExe = project,
                 Configuration = Configuration.Release,
                 NoBuild = true,
-                Verbosity = DotNetBuildVerbosity.Normal
+                Verbosity = "normal"
             }, cancellationToken);
             
             results.Add(result);

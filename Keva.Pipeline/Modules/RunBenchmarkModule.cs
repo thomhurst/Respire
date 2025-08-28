@@ -30,10 +30,9 @@ public class RunBenchmarkModule : Module<CommandResult[]>
             {
                 var result = await context.DotNet().Run(new DotNetRunOptions
                 {
-                    ProjectSolutionDirectoryDllExe = project,
+                    Project = project,
                     Configuration = Configuration.Release,
-                    NoBuild = true,
-                    Arguments = new[] { "--filter", "*" }
+                    NoBuild = true
                 }, cancellationToken);
                 
                 results.Add(result);
