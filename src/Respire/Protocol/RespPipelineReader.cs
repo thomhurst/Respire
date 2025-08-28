@@ -9,6 +9,9 @@ namespace Respire.Protocol;
 /// </summary>
 public ref struct RespPipelineReader
 {
+    // Shared CRLF delimiter to avoid allocations
+    private static readonly byte[] CRLF = { 13, 10 }; // ASCII values for \r\n
+    
     private ReadOnlySequence<byte> _sequence;
     private SequencePosition _position;
     private SequencePosition _consumed;
@@ -216,7 +219,7 @@ public ref struct RespPipelineReader
         var remaining = _sequence.Slice(_position);
         var reader = new SequenceReader<byte>(remaining);
         
-        if (!reader.TryReadTo(out ReadOnlySequence<byte> lineData, new byte[] { (byte)'\r', (byte)'\n' }))
+        if (!reader.TryReadTo(out ReadOnlySequence<byte> lineData, CRLF))
             return false;
         
         line = lineData;
