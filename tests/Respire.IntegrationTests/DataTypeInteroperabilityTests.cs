@@ -213,13 +213,13 @@ public class DataTypeInteroperabilityTests
         var tasks = new List<Task>();
         
         // StackExchange increments
-        for (int i = 0; i < 50; i++)
+        for (var i = 0; i < 50; i++)
         {
             tasks.Add(_stackExchangeDb.StringIncrementAsync(counterKey));
         }
         
         // Respire increments
-        for (int i = 0; i < 50; i++)
+        for (var i = 0; i < 50; i++)
         {
             tasks.Add(_respireClient.IncrWithResponseAsync(counterKey).AsTask());
         }

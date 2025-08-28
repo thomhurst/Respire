@@ -245,7 +245,7 @@ public sealed class PooledBufferWriter : IBufferWriter<byte>, IDisposable
         var start = written;
         written += digits;
         
-        for (int i = written - 1; i >= start; i--)
+        for (var i = written - 1; i >= start; i--)
         {
             buffer[i] = (byte)('0' + (value % 10));
             value /= 10;

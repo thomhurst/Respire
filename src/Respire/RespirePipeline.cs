@@ -265,7 +265,7 @@ public sealed class RespirePipeline : IDisposable
         }
         
         var results = new RespireValue[_responseTasks.Count];
-        for (int i = 0; i < _responseTasks.Count; i++)
+        for (var i = 0; i < _responseTasks.Count; i++)
         {
             results[i] = await _responseTasks[i].ConfigureAwait(false);
         }

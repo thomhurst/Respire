@@ -34,7 +34,7 @@ public sealed class OptimizedConnectionPool : IAsyncDisposable
         _logger = logger;
         
         // Initialize connection slots and semaphores
-        for (int i = 0; i < connections.Length; i++)
+        for (var i = 0; i < connections.Length; i++)
         {
             _connectionSlots[i] = new ConnectionSlot(i, connections[i]);
             _connectionSemaphores[i] = new SemaphoreSlim(1, 1);
@@ -96,7 +96,7 @@ public sealed class OptimizedConnectionPool : IAsyncDisposable
         catch
         {
             // If primary connection fails, try next available
-            for (int i = 0; i < _connections.Length; i++)
+            for (var i = 0; i < _connections.Length; i++)
             {
                 var nextIndex = (index + i + 1) % _connections.Length;
                 if (_connections[nextIndex].IsConnected)
@@ -157,7 +157,7 @@ public sealed class OptimizedConnectionPool : IAsyncDisposable
             // Send PING to each connection to keep them warm
             var tasks = new List<ValueTask>();
             
-            for (int i = 0; i < _connections.Length; i++)
+            for (var i = 0; i < _connections.Length; i++)
             {
                 if (_connections[i].IsConnected)
                 {

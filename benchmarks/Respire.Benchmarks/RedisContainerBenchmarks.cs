@@ -59,13 +59,13 @@ public class RedisContainerBenchmarks
     private async Task WarmupAsync()
     {
         // Set up test data for multi-get operations
-        for (int i = 0; i < _multiGetKeys.Length; i++)
+        for (var i = 0; i < _multiGetKeys.Length; i++)
         {
             await _kevaClient.SetAsync(_multiGetKeys[i], $"value{i}");
         }
         
         // Warm up connections
-        for (int i = 0; i < 10; i++)
+        for (var i = 0; i < 10; i++)
         {
             _kevaClient.Ping();
             await _stackExchangeDb.PingAsync();
@@ -179,7 +179,7 @@ public class RedisContainerBenchmarks
     {
         var batch = _stackExchangeDb.CreateBatch();
         var tasks = new Task[5];
-        for (int i = 0; i < 5; i++)
+        for (var i = 0; i < 5; i++)
         {
             var key = $"pipeline_key_{i}";
             var value = $"pipeline_value_{i}";

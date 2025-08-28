@@ -95,7 +95,7 @@ public class RedisThroughputBenchmarks
         _stackExchangeDb = _stackExchangeRedis.GetDatabase();
         
         // Warm up
-        for (int i = 0; i < 100; i++)
+        for (var i = 0; i < 100; i++)
         {
             await _kevaClient.SetAsync($"warmup_{i}", $"value_{i}");
         }
@@ -115,12 +115,12 @@ public class RedisThroughputBenchmarks
     {
         var tasks = new Task[ConcurrentClients];
         
-        for (int client = 0; client < ConcurrentClients; client++)
+        for (var client = 0; client < ConcurrentClients; client++)
         {
             var clientId = client;
             tasks[client] = Task.Run(async () =>
             {
-                for (int op = 0; op < OperationsPerClient; op++)
+                for (var op = 0; op < OperationsPerClient; op++)
                 {
                     var key = $"client_{clientId}_op_{op}";
                     await _kevaClient.SetAsync(key, $"value_{op}");
@@ -137,12 +137,12 @@ public class RedisThroughputBenchmarks
     {
         var tasks = new Task[ConcurrentClients];
         
-        for (int client = 0; client < ConcurrentClients; client++)
+        for (var client = 0; client < ConcurrentClients; client++)
         {
             var clientId = client;
             tasks[client] = Task.Run(async () =>
             {
-                for (int op = 0; op < OperationsPerClient; op++)
+                for (var op = 0; op < OperationsPerClient; op++)
                 {
                     var key = $"client_{clientId}_op_{op}";
                     await _stackExchangeDb.StringSetAsync(key, $"value_{op}");
@@ -159,13 +159,13 @@ public class RedisThroughputBenchmarks
     {
         var tasks = new Task[ConcurrentClients];
         
-        for (int client = 0; client < ConcurrentClients; client++)
+        for (var client = 0; client < ConcurrentClients; client++)
         {
             var clientId = client;
             tasks[client] = Task.Run(async () =>
             {
                 var key = $"counter_{clientId}";
-                for (int op = 0; op < OperationsPerClient; op++)
+                for (var op = 0; op < OperationsPerClient; op++)
                 {
                     await _kevaClient.IncrAsync(key);
                 }
@@ -180,13 +180,13 @@ public class RedisThroughputBenchmarks
     {
         var tasks = new Task[ConcurrentClients];
         
-        for (int client = 0; client < ConcurrentClients; client++)
+        for (var client = 0; client < ConcurrentClients; client++)
         {
             var clientId = client;
             tasks[client] = Task.Run(async () =>
             {
                 var key = $"counter_{clientId}";
-                for (int op = 0; op < OperationsPerClient; op++)
+                for (var op = 0; op < OperationsPerClient; op++)
                 {
                     await _stackExchangeDb.StringIncrementAsync(key);
                 }

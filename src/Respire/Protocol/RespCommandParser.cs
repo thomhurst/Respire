@@ -127,7 +127,7 @@ public static class RespCommandParser
         
         var parts = new string[count];
         
-        for (int i = 0; i < count; i++)
+        for (var i = 0; i < count; i++)
         {
             if (index >= command.Length)
             {
@@ -256,7 +256,7 @@ public static class RespCommandParser
             start = 1;
         }
         
-        for (int i = start; i < bytes.Length; i++)
+        for (var i = start; i < bytes.Length; i++)
         {
             var b = bytes[i];
             if (b < (byte)'0' || b > (byte)'9')

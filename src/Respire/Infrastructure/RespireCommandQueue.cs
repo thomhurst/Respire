@@ -426,7 +426,7 @@ public sealed class RespireCommandQueue : IAsyncDisposable
                 var parallelActions = _delegateArrayPool.Rent(commandsWithoutResponse.Count);
                 try
                 {
-                    for (int i = 0; i < commandsWithoutResponse.Count; i++)
+                    for (var i = 0; i < commandsWithoutResponse.Count; i++)
                     {
                         parallelActions[i] = commandsWithoutResponse[i].CommandAction;
                     }

@@ -43,7 +43,7 @@ public class ProtocolBenchmarks
         // Large array with 100 integers
         var largeArrayBuilder = new StringBuilder();
         largeArrayBuilder.Append("*100\r\n");
-        for (int i = 0; i < 100; i++)
+        for (var i = 0; i < 100; i++)
         {
             largeArrayBuilder.Append($":{i}\r\n");
         }
@@ -196,7 +196,7 @@ public class ProtocolBenchmarks
         // var writer = new RespWriter(_writer, _bytePool);
         
         var values = new RespireValue[100];
-        for (int i = 0; i < 100; i++)
+        for (var i = 0; i < 100; i++)
         {
             values[i] = RespireValue.Integer(i);
         }
@@ -280,7 +280,7 @@ public class ProtocolBenchmarks
     [BenchmarkCategory("Stress")]
     public void ThousandParseOperations()
     {
-        for (int i = 0; i < 1000; i++)
+        for (var i = 0; i < 1000; i++)
         {
             var sequence = new ReadOnlySequence<byte>(_mixedTypesData);
             var reader = new RespPipelineReader(sequence);
@@ -298,7 +298,7 @@ public class ProtocolBenchmarks
             RespireValue.BulkString("test")
         );
 
-        for (int i = 0; i < 1000; i++)
+        for (var i = 0; i < 1000; i++)
         {
             _writer.Clear();
             // Writer benchmarks disabled - need new writer implementation

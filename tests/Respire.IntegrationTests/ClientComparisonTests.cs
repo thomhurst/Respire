@@ -230,7 +230,7 @@ public class ClientComparisonTests
         var tasks = new List<Task>();
         
         // Alternate between clients for setting values
-        for (int i = 0; i < itemCount; i++)
+        for (var i = 0; i < itemCount; i++)
         {
             var key = $"bulk:item:{i}";
             var value = $"value_{i}";
@@ -248,7 +248,7 @@ public class ClientComparisonTests
         await Task.WhenAll(tasks);
         
         // Verify all values with alternating clients
-        for (int i = 0; i < itemCount; i++)
+        for (var i = 0; i < itemCount; i++)
         {
             var key = $"bulk:item:{i}";
             var expectedValue = $"value_{i}";

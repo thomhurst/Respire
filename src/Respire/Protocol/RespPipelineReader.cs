@@ -143,6 +143,10 @@ public ref struct RespPipelineReader
         
         if (length == 0)
         {
+            // Skip the trailing \r\n for empty bulk string
+            if (!TryAdvance(2))
+                return false;
+            
             value = RespireValue.BulkString(ReadOnlyMemory<byte>.Empty, 0, 0);
             return true;
         }
@@ -325,7 +329,7 @@ public ref struct RespPipelineReader
         if (index >= span.Length)
             return false;
         
-        for (int i = index; i < span.Length; i++)
+        for (var i = index; i < span.Length; i++)
         {
             var digit = span[i];
             if (digit < (byte)'0' || digit > (byte)'9')

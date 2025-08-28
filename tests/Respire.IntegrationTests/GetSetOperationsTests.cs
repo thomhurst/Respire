@@ -98,7 +98,8 @@ public class GetSetOperationsTests(RedisTestFixture fixture)
 
         // Assert
         var retrievedValue = await _stackExchangeDb!.StringGetAsync(key);
-        await Assert.That(retrievedValue.HasValue).IsTrue();
+        // StackExchange.Redis returns HasValue=false for empty strings, but the value is still there
+        await Assert.That(retrievedValue.IsNull).IsFalse();
         await Assert.That(retrievedValue.ToString()).IsEqualTo(value);
     }
 
@@ -330,7 +331,7 @@ public class GetSetOperationsTests(RedisTestFixture fixture)
         var tasks = new List<Task>();
 
         // Act - Set multiple keys in rapid succession
-        for (int i = 0; i < operationCount; i++)
+        for (var i = 0; i < operationCount; i++)
         {
             var key = $"test:rapid:key{i}";
             var value = $"value{i}";
@@ -340,7 +341,7 @@ public class GetSetOperationsTests(RedisTestFixture fixture)
         await Task.WhenAll(tasks);
 
         // Assert - Verify all values were set correctly
-        for (int i = 0; i < operationCount; i++)
+        for (var i = 0; i < operationCount; i++)
         {
             var key = $"test:rapid:key{i}";
             var expectedValue = $"value{i}";

@@ -18,7 +18,7 @@ public static class RespCommands
     
     static RespCommands()
     {
-        for (int i = 0; i < SmallNumbers.Length; i++)
+        for (var i = 0; i < SmallNumbers.Length; i++)
         {
             SmallNumbers[i] = i.ToString();
         }
@@ -513,7 +513,7 @@ public static class RespCommands
     {
         // Use stack allocation for the double string representation
         Span<char> temp = stackalloc char[32]; // Sufficient for most double values
-        if (value.TryFormat(temp, out int charsWritten, "G17", System.Globalization.CultureInfo.InvariantCulture))
+        if (value.TryFormat(temp, out var charsWritten, "G17", System.Globalization.CultureInfo.InvariantCulture))
         {
             // Write $<length>\r\n
             buffer[offset++] = (byte)'$';
@@ -522,7 +522,7 @@ public static class RespCommands
             buffer[offset++] = (byte)'\n';
             
             // Write the double value as ASCII bytes
-            for (int i = 0; i < charsWritten; i++)
+            for (var i = 0; i < charsWritten; i++)
             {
                 buffer[offset++] = (byte)temp[i];
             }
@@ -561,7 +561,7 @@ public static class RespCommands
         if (value >= 0 && value < SmallNumbers.Length)
         {
             var cachedStr = SmallNumbers[value];
-            for (int i = 0; i < cachedStr.Length; i++)
+            for (var i = 0; i < cachedStr.Length; i++)
             {
                 buffer[offset++] = (byte)cachedStr[i];
             }

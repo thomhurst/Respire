@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Respire.IntegrationTests")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+374f2c769590952ea950a46f8790f230583d8a3c")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+ee0e0ccaba3f178537deb70b49d521363d1ba1b1")]
 [assembly: System.Reflection.AssemblyProductAttribute("Respire.IntegrationTests")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Respire.IntegrationTests")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

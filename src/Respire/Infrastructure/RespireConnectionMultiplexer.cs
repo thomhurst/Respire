@@ -18,13 +18,11 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private readonly SemaphoreSlim[] _connectionSemaphores;
     private readonly ConcurrentQueue<int> _availableConnections;
     private readonly ConcurrentQueue<ConnectionHandle>[] _connectionHandlePool;
+    private readonly ConcurrentBag<PipelineCommandWriter>[] _writerPools;
     private readonly ILogger? _logger;
     private readonly Timer _healthCheckTimer;
     private readonly CancellationTokenSource _cancellationTokenSource;
     
-    // Thread-local storage for PipelineCommandWriter to avoid allocations
-    [ThreadStatic]
-    private static PipelineCommandWriter? _threadLocalWriter;
     
     private volatile bool _disposed;
     private int _roundRobinIndex = -1;
@@ -53,7 +51,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         _connectionCount = connections.Length;
         
         // Initialize semaphores and available connections
-        for (int i = 0; i < connections.Length; i++)
+        for (var i = 0; i < connections.Length; i++)
         {
             _connectionSemaphores[i] = new SemaphoreSlim(1, 1);
             _connectionHandlePool[i] = new ConcurrentQueue<ConnectionHandle>();
@@ -195,7 +193,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
         
         // Try round-robin with immediate acquisition
-        for (int i = 0; i < _connectionCount; i++)
+        for (var i = 0; i < _connectionCount; i++)
         {
             var index = (int)((uint)Interlocked.Increment(ref _roundRobinCounter) % (uint)_connectionCount);
             
@@ -240,17 +238,8 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     {
         using var handle = await GetConnectionHandleAsync(cancellationToken).ConfigureAwait(false);
         
-        // Reuse thread-local writer to avoid allocation
-        var writer = _threadLocalWriter;
-        if (writer == null || writer.IsDisposed)
-        {
-            writer = new PipelineCommandWriter(handle.Connection);
-            _threadLocalWriter = writer;
-        }
-        else
-        {
-            writer.UpdateConnection(handle.Connection);
-        }
+        // Create a new writer for each operation to avoid concurrency issues
+        using var writer = new PipelineCommandWriter(handle.Connection);
         
         await commandAction(writer).ConfigureAwait(false);
     }
@@ -373,7 +362,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         {
             var tasks = new List<ValueTask>();
             
-            for (int i = 0; i < _connections.Length; i++)
+            for (var i = 0; i < _connections.Length; i++)
             {
                 var connection = _connections[i];
                 if (!connection.IsConnected)

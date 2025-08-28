@@ -326,7 +326,7 @@ public static class PipelineConnectionFactory
         var connections = new PipelineConnection[poolSize];
         var tasks = new Task<PipelineConnection>[poolSize];
         
-        for (int i = 0; i < poolSize; i++)
+        for (var i = 0; i < poolSize; i++)
         {
             tasks[i] = CreateHighPerformanceConnectionAsync(host, port, logger);
         }

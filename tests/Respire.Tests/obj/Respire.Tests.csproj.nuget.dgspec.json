@@ -819,6 +819,10 @@
               "version": "[8.0.14, 8.0.14]"
             },
             {
+              "name": "Microsoft.NETCore.App.Host.win-x64",
+              "version": "[8.0.14, 8.0.14]"
+            },
+            {
               "name": "Microsoft.NETCore.App.Ref",
               "version": "[8.0.14, 8.0.14]"
             },
@@ -1143,6 +1147,10 @@
           "downloadDependencies": [
             {
               "name": "Microsoft.AspNetCore.App.Ref",
+              "version": "[9.0.3, 9.0.3]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Host.win-x64",
               "version": "[9.0.3, 9.0.3]"
             },
             {

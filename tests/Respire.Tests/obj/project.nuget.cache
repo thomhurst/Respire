@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "dgSpecHash": "Za7GrZJiupo=",
+  "dgSpecHash": "8fs3jMS2hjo=",
   "success": true,
   "projectFilePath": "D:\\git\\Keva\\tests\\Respire.Tests\\Respire.Tests.csproj",
   "expectedPackageFiles": [
@@ -21,9 +21,11 @@
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.netcore.app.ref\\8.0.14\\microsoft.netcore.app.ref.8.0.14.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.windowsdesktop.app.ref\\8.0.14\\microsoft.windowsdesktop.app.ref.8.0.14.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.aspnetcore.app.ref\\8.0.14\\microsoft.aspnetcore.app.ref.8.0.14.nupkg.sha512",
+    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.netcore.app.host.win-x64\\8.0.14\\microsoft.netcore.app.host.win-x64.8.0.14.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.netcore.app.ref\\9.0.3\\microsoft.netcore.app.ref.9.0.3.nupkg.sha512",
     "C:\\Users\\thomh\\.nuget\\packages\\microsoft.windowsdesktop.app.ref\\9.0.3\\microsoft.windowsdesktop.app.ref.9.0.3.nupkg.sha512",
-    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.aspnetcore.app.ref\\9.0.3\\microsoft.aspnetcore.app.ref.9.0.3.nupkg.sha512"
+    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.aspnetcore.app.ref\\9.0.3\\microsoft.aspnetcore.app.ref.9.0.3.nupkg.sha512",
+    "C:\\Users\\thomh\\.nuget\\packages\\microsoft.netcore.app.host.win-x64\\9.0.3\\microsoft.netcore.app.host.win-x64.9.0.3.nupkg.sha512"
   ],
   "logs": []
 }

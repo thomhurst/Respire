@@ -193,7 +193,7 @@ public class EdgeCaseTests
         // Concurrent increments from both clients
         var tasks = new List<Task>();
         
-        for (int i = 0; i < iterations; i++)
+        for (var i = 0; i < iterations; i++)
         {
             if (i % 2 == 0)
             {
@@ -244,7 +244,7 @@ public class EdgeCaseTests
     {
         const int cycles = 50;
         
-        for (int i = 0; i < cycles; i++)
+        for (var i = 0; i < cycles; i++)
         {
             var key = $"rapid:{i}";
             
