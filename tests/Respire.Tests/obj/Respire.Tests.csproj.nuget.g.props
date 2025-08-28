@@ -23,9 +23,6 @@
     <Import Project="$(NuGetPackageRoot)microsoft.testing.platform.msbuild\1.4.3\buildTransitive\net8.0\Microsoft.Testing.Platform.MSBuild.props" Condition="Exists('$(NuGetPackageRoot)microsoft.testing.platform.msbuild\1.4.3\buildTransitive\net8.0\Microsoft.Testing.Platform.MSBuild.props')" />
     <Import Project="$(NuGetPackageRoot)tunit.engine\0.57.1\buildTransitive\net8.0\TUnit.Engine.props" Condition="Exists('$(NuGetPackageRoot)tunit.engine\0.57.1\buildTransitive\net8.0\TUnit.Engine.props')" />
     <Import Project="$(NuGetPackageRoot)tunit.assertions\0.57.1\buildTransitive\net8.0\TUnit.Assertions.props" Condition="Exists('$(NuGetPackageRoot)tunit.assertions\0.57.1\buildTransitive\net8.0\TUnit.Assertions.props')" />
-    <Import Project="$(NuGetPackageRoot)microsoft.testplatform.testhost\17.14.1\build\net8.0\Microsoft.TestPlatform.TestHost.props" Condition="Exists('$(NuGetPackageRoot)microsoft.testplatform.testhost\17.14.1\build\net8.0\Microsoft.TestPlatform.TestHost.props')" />
-    <Import Project="$(NuGetPackageRoot)microsoft.codecoverage\17.14.1\build\netstandard2.0\Microsoft.CodeCoverage.props" Condition="Exists('$(NuGetPackageRoot)microsoft.codecoverage\17.14.1\build\netstandard2.0\Microsoft.CodeCoverage.props')" />
-    <Import Project="$(NuGetPackageRoot)microsoft.net.test.sdk\17.14.1\build\net8.0\Microsoft.NET.Test.Sdk.props" Condition="Exists('$(NuGetPackageRoot)microsoft.net.test.sdk\17.14.1\build\net8.0\Microsoft.NET.Test.Sdk.props')" />
   </ImportGroup>
   <ImportGroup Condition=" '$(TargetFramework)' == 'net9.0' AND '$(ExcludeRestorePackageImports)' != 'true' ">
     <Import Project="$(NuGetPackageRoot)tunit.core\0.57.1\buildTransitive\net9.0\TUnit.Core.props" Condition="Exists('$(NuGetPackageRoot)tunit.core\0.57.1\buildTransitive\net9.0\TUnit.Core.props')" />
@@ -33,8 +30,5 @@
     <Import Project="$(NuGetPackageRoot)microsoft.testing.platform.msbuild\1.4.3\buildTransitive\net8.0\Microsoft.Testing.Platform.MSBuild.props" Condition="Exists('$(NuGetPackageRoot)microsoft.testing.platform.msbuild\1.4.3\buildTransitive\net8.0\Microsoft.Testing.Platform.MSBuild.props')" />
     <Import Project="$(NuGetPackageRoot)tunit.engine\0.57.1\buildTransitive\net9.0\TUnit.Engine.props" Condition="Exists('$(NuGetPackageRoot)tunit.engine\0.57.1\buildTransitive\net9.0\TUnit.Engine.props')" />
     <Import Project="$(NuGetPackageRoot)tunit.assertions\0.57.1\buildTransitive\net9.0\TUnit.Assertions.props" Condition="Exists('$(NuGetPackageRoot)tunit.assertions\0.57.1\buildTransitive\net9.0\TUnit.Assertions.props')" />
-    <Import Project="$(NuGetPackageRoot)microsoft.testplatform.testhost\17.14.1\build\net8.0\Microsoft.TestPlatform.TestHost.props" Condition="Exists('$(NuGetPackageRoot)microsoft.testplatform.testhost\17.14.1\build\net8.0\Microsoft.TestPlatform.TestHost.props')" />
-    <Import Project="$(NuGetPackageRoot)microsoft.codecoverage\17.14.1\build\netstandard2.0\Microsoft.CodeCoverage.props" Condition="Exists('$(NuGetPackageRoot)microsoft.codecoverage\17.14.1\build\netstandard2.0\Microsoft.CodeCoverage.props')" />
-    <Import Project="$(NuGetPackageRoot)microsoft.net.test.sdk\17.14.1\build\net8.0\Microsoft.NET.Test.Sdk.props" Condition="Exists('$(NuGetPackageRoot)microsoft.net.test.sdk\17.14.1\build\net8.0\Microsoft.NET.Test.Sdk.props')" />
   </ImportGroup>
 </Project>

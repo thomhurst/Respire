@@ -797,15 +797,7 @@
         "net8.0": {
           "targetAlias": "net8.0",
           "dependencies": {
-            "Microsoft.NET.Test.Sdk": {
-              "target": "Package",
-              "version": "[17.14.1, )"
-            },
             "TUnit": {
-              "target": "Package",
-              "version": "[0.57.1, )"
-            },
-            "TUnit.Assertions": {
               "target": "Package",
               "version": "[0.57.1, )"
             }
@@ -1132,15 +1124,7 @@
         "net9.0": {
           "targetAlias": "net9.0",
           "dependencies": {
-            "Microsoft.NET.Test.Sdk": {
-              "target": "Package",
-              "version": "[17.14.1, )"
-            },
             "TUnit": {
-              "target": "Package",
-              "version": "[0.57.1, )"
-            },
-            "TUnit.Assertions": {
               "target": "Package",
               "version": "[0.57.1, )"
             }

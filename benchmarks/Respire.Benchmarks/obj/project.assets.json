@@ -66,7 +66,7 @@
           }
         }
       },
-      "Docker.DotNet.Enhanced/3.128.3": {
+      "Docker.DotNet.Enhanced/3.128.5": {
         "type": "package",
         "dependencies": {
           "Microsoft.Extensions.Logging.Abstractions": "8.0.3",
@@ -79,10 +79,10 @@
           "lib/net8.0/Docker.DotNet.dll": {}
         }
       },
-      "Docker.DotNet.Enhanced.X509/3.128.3": {
+      "Docker.DotNet.Enhanced.X509/3.128.5": {
         "type": "package",
         "dependencies": {
-          "Docker.DotNet.Enhanced": "3.128.3"
+          "Docker.DotNet.Enhanced": "3.128.5"
         },
         "compile": {
           "lib/net8.0/Docker.DotNet.X509.dll": {}
@@ -670,11 +670,11 @@
           "buildTransitive/net8.0/_._": {}
         }
       },
-      "Testcontainers/4.6.0": {
+      "Testcontainers/4.7.0": {
         "type": "package",
         "dependencies": {
-          "Docker.DotNet.Enhanced": "3.128.3",
-          "Docker.DotNet.Enhanced.X509": "3.128.3",
+          "Docker.DotNet.Enhanced": "3.128.5",
+          "Docker.DotNet.Enhanced.X509": "3.128.5",
           "Microsoft.Extensions.Logging.Abstractions": "8.0.3",
           "SSH.NET": "2024.2.0",
           "SharpZipLib": "1.4.2"
@@ -690,10 +690,10 @@
           }
         }
       },
-      "Testcontainers.Redis/4.6.0": {
+      "Testcontainers.Redis/4.7.0": {
         "type": "package",
         "dependencies": {
-          "Testcontainers": "4.6.0"
+          "Testcontainers": "4.7.0"
         },
         "compile": {
           "lib/net8.0/Testcontainers.Redis.dll": {
@@ -788,7 +788,7 @@
           }
         }
       },
-      "Docker.DotNet.Enhanced/3.128.3": {
+      "Docker.DotNet.Enhanced/3.128.5": {
         "type": "package",
         "dependencies": {
           "Microsoft.Extensions.Logging.Abstractions": "8.0.3"
@@ -800,10 +800,10 @@
           "lib/net9.0/Docker.DotNet.dll": {}
         }
       },
-      "Docker.DotNet.Enhanced.X509/3.128.3": {
+      "Docker.DotNet.Enhanced.X509/3.128.5": {
         "type": "package",
         "dependencies": {
-          "Docker.DotNet.Enhanced": "3.128.3"
+          "Docker.DotNet.Enhanced": "3.128.5"
         },
         "compile": {
           "lib/net9.0/Docker.DotNet.X509.dll": {}
@@ -1300,11 +1300,11 @@
           }
         }
       },
-      "Testcontainers/4.6.0": {
+      "Testcontainers/4.7.0": {
         "type": "package",
         "dependencies": {
-          "Docker.DotNet.Enhanced": "3.128.3",
-          "Docker.DotNet.Enhanced.X509": "3.128.3",
+          "Docker.DotNet.Enhanced": "3.128.5",
+          "Docker.DotNet.Enhanced.X509": "3.128.5",
           "Microsoft.Extensions.Logging.Abstractions": "8.0.3",
           "SSH.NET": "2024.2.0",
           "SharpZipLib": "1.4.2"
@@ -1320,10 +1320,10 @@
           }
         }
       },
-      "Testcontainers.Redis/4.6.0": {
+      "Testcontainers.Redis/4.7.0": {
         "type": "package",
         "dependencies": {
-          "Testcontainers": "4.6.0"
+          "Testcontainers": "4.7.0"
         },
         "compile": {
           "lib/net9.0/Testcontainers.Redis.dll": {
@@ -1427,15 +1427,15 @@
         "lib/netstandard2.0/CommandLine.xml"
       ]
     },
-    "Docker.DotNet.Enhanced/3.128.3": {
-      "sha512": "yOiBJfGltxjMTPBRVPt2Yeiqy2rLNQSf5x0U57FgipbsGnCXSm1a04UHi3h2QtABJSpTSHoBw+LPqA6yN9CGFg==",
+    "Docker.DotNet.Enhanced/3.128.5": {
+      "sha512": "RmhcxDmS/zEuWhV9XA5M/xwFinfGe8IRyyNuEu/7EmnLam35dxlIXabi1Kp/MeEWr1fNPjPFrgxKieZfPeOOqw==",
       "type": "package",
-      "path": "docker.dotnet.enhanced/3.128.3",
+      "path": "docker.dotnet.enhanced/3.128.5",
       "files": [
         ".nupkg.metadata",
         ".signature.p7s",
         "LICENSE",
-        "docker.dotnet.enhanced.3.128.3.nupkg.sha512",
+        "docker.dotnet.enhanced.3.128.5.nupkg.sha512",
         "docker.dotnet.enhanced.nuspec",
         "icon.png",
         "lib/net8.0/Docker.DotNet.dll",
@@ -1444,15 +1444,15 @@
         "lib/netstandard2.1/Docker.DotNet.dll"
       ]
     },
-    "Docker.DotNet.Enhanced.X509/3.128.3": {
-      "sha512": "U6G7H+vX0Htk86Fd1xS5i7iRGd0C33vx61sLH8gI9uzxqQJRfeYCbuzQOOp3J7m4zVZ2mP6x9gB9onspgP0QCg==",
+    "Docker.DotNet.Enhanced.X509/3.128.5": {
+      "sha512": "ofHQIPpv5HillvBZwk66wEGzHjV/G/771Ta1HjbOtcG8+Lv3bKNH19+fa+hgMzO4sZQCWGDIXygyDralePOKQA==",
       "type": "package",
-      "path": "docker.dotnet.enhanced.x509/3.128.3",
+      "path": "docker.dotnet.enhanced.x509/3.128.5",
       "files": [
         ".nupkg.metadata",
         ".signature.p7s",
         "LICENSE",
-        "docker.dotnet.enhanced.x509.3.128.3.nupkg.sha512",
+        "docker.dotnet.enhanced.x509.3.128.5.nupkg.sha512",
         "docker.dotnet.enhanced.x509.nuspec",
         "icon.png",
         "lib/net8.0/Docker.DotNet.X509.dll",
@@ -2931,10 +2931,10 @@
         "useSharedDesignerContext.txt"
       ]
     },
-    "Testcontainers/4.6.0": {
-      "sha512": "JFGPwuEqVuY3qJiGuxR+2J+E+dGc+1TgbBooB1346zUFKJqH6zWeSCXju5Siwek3ExOVRES4AbECXoaYt9jkXA==",
+    "Testcontainers/4.7.0": {
+      "sha512": "Nx4HR4e7XcKV5BVIqYdCpF8PAYFpukZ8QpoBe+sY9FL5q0RDtsy81MElVXIJVO4Wg3Q6j2f39QaF7i+2jf6YjA==",
       "type": "package",
-      "path": "testcontainers/4.6.0",
+      "path": "testcontainers/4.7.0",
       "files": [
         ".nupkg.metadata",
         ".signature.p7s",
@@ -2950,14 +2950,14 @@
         "lib/netstandard2.0/Testcontainers.xml",
         "lib/netstandard2.1/Testcontainers.dll",
         "lib/netstandard2.1/Testcontainers.xml",
-        "testcontainers.4.6.0.nupkg.sha512",
+        "testcontainers.4.7.0.nupkg.sha512",
         "testcontainers.nuspec"
       ]
     },
-    "Testcontainers.Redis/4.6.0": {
-      "sha512": "wZenH7D2B/HpLk7K1NwRoUaLu5Ag5B38DjzZnfD9t7RBOVgBtXeoo2gkhzlGH+ZurQdkTVvY6lg7dPZckBqEug==",
+    "Testcontainers.Redis/4.7.0": {
+      "sha512": "3uVxB4V4L1wFZRw0mJVKqKBGi3HJWxPH20kRrPqNQ8ggQMaAuE9rYsJOlIrds8JW34MkI3+sFh3IgPlW/2qfMg==",
       "type": "package",
-      "path": "testcontainers.redis/4.6.0",
+      "path": "testcontainers.redis/4.7.0",
       "files": [
         ".nupkg.metadata",
         ".signature.p7s",
@@ -2973,7 +2973,7 @@
         "lib/netstandard2.0/Testcontainers.Redis.xml",
         "lib/netstandard2.1/Testcontainers.Redis.dll",
         "lib/netstandard2.1/Testcontainers.Redis.xml",
-        "testcontainers.redis.4.6.0.nupkg.sha512",
+        "testcontainers.redis.4.7.0.nupkg.sha512",
         "testcontainers.redis.nuspec"
       ]
     },
@@ -2988,13 +2988,13 @@
       "BenchmarkDotNet >= 0.15.2",
       "Respire >= 1.0.0",
       "StackExchange.Redis >= 2.9.11",
-      "Testcontainers.Redis >= 4.6.0"
+      "Testcontainers.Redis >= 4.7.0"
     ],
     "net9.0": [
       "BenchmarkDotNet >= 0.15.2",
       "Respire >= 1.0.0",
       "StackExchange.Redis >= 2.9.11",
-      "Testcontainers.Redis >= 4.6.0"
+      "Testcontainers.Redis >= 4.7.0"
     ]
   },
   "packageFolders": {
@@ -3072,7 +3072,7 @@
           },
           "Testcontainers.Redis": {
             "target": "Package",
-            "version": "[4.6.0, )"
+            "version": "[4.7.0, )"
           }
         },
         "imports": [
@@ -3411,7 +3411,7 @@
           },
           "Testcontainers.Redis": {
             "target": "Package",
-            "version": "[4.6.0, )"
+            "version": "[4.7.0, )"
           }
         },
         "imports": [

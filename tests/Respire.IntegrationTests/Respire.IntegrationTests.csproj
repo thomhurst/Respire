@@ -1,23 +1,22 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-    <IsPackable>false</IsPackable>
-    <IsTestProject>true</IsTestProject>
-    <LangVersion>13</LangVersion>
-  </PropertyGroup>
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <IsPackable>false</IsPackable>
+        <LangVersion>13</LangVersion>
+    </PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Include="TUnit" Version="0.57.1" />
-    <PackageReference Include="Testcontainers.Redis" Version="4.6.0" />
-    <PackageReference Include="StackExchange.Redis" Version="2.9.11" />
-    <PackageReference Include="FluentAssertions" Version="8.6.0" />
-  </ItemGroup>
-  
-  <ItemGroup>
-    <ProjectReference Include="..\..\src\Respire\Respire.csproj" />
-  </ItemGroup>
+    <ItemGroup>
+        <PackageReference Include="TUnit" Version="0.57.1" />
+        <PackageReference Include="Testcontainers.Redis" Version="4.7.0" />
+        <PackageReference Include="StackExchange.Redis" Version="2.9.11" />
+        <PackageReference Include="FluentAssertions" Version="8.6.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\..\src\Respire\Respire.csproj" />
+    </ItemGroup>
 
 </Project>

@@ -801,10 +801,6 @@
               "target": "Package",
               "version": "[8.6.0, )"
             },
-            "Microsoft.NET.Test.Sdk": {
-              "target": "Package",
-              "version": "[17.14.1, )"
-            },
             "StackExchange.Redis": {
               "target": "Package",
               "version": "[2.9.11, )"
@@ -813,17 +809,9 @@
               "target": "Package",
               "version": "[0.57.1, )"
             },
-            "TUnit.Assertions": {
-              "target": "Package",
-              "version": "[0.57.1, )"
-            },
             "Testcontainers.Redis": {
               "target": "Package",
-              "version": "[4.6.0, )"
-            },
-            "coverlet.collector": {
-              "target": "Package",
-              "version": "[6.0.4, )"
+              "version": "[4.7.0, )"
             }
           },
           "imports": [
@@ -1152,10 +1140,6 @@
               "target": "Package",
               "version": "[8.6.0, )"
             },
-            "Microsoft.NET.Test.Sdk": {
-              "target": "Package",
-              "version": "[17.14.1, )"
-            },
             "StackExchange.Redis": {
               "target": "Package",
               "version": "[2.9.11, )"
@@ -1164,17 +1148,9 @@
               "target": "Package",
               "version": "[0.57.1, )"
             },
-            "TUnit.Assertions": {
-              "target": "Package",
-              "version": "[0.57.1, )"
-            },
             "Testcontainers.Redis": {
               "target": "Package",
-              "version": "[4.6.0, )"
-            },
-            "coverlet.collector": {
-              "target": "Package",
-              "version": "[6.0.4, )"
+              "version": "[4.7.0, )"
             }
           },
           "imports": [

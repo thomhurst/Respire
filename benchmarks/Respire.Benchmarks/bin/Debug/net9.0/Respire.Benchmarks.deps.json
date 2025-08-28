@@ -11,7 +11,7 @@
           "BenchmarkDotNet": "0.15.2",
           "Respire": "1.0.0",
           "StackExchange.Redis": "2.9.11",
-          "Testcontainers.Redis": "4.6.0"
+          "Testcontainers.Redis": "4.7.0"
         },
         "runtime": {
           "Respire.Benchmarks.dll": {}
@@ -61,25 +61,25 @@
           }
         }
       },
-      "Docker.DotNet.Enhanced/3.128.3": {
+      "Docker.DotNet.Enhanced/3.128.5": {
         "dependencies": {
           "Microsoft.Extensions.Logging.Abstractions": "9.0.8"
         },
         "runtime": {
           "lib/net9.0/Docker.DotNet.dll": {
             "assemblyVersion": "3.128.0.0",
-            "fileVersion": "3.128.3.1"
+            "fileVersion": "3.128.5.1"
           }
         }
       },
-      "Docker.DotNet.Enhanced.X509/3.128.3": {
+      "Docker.DotNet.Enhanced.X509/3.128.5": {
         "dependencies": {
-          "Docker.DotNet.Enhanced": "3.128.3"
+          "Docker.DotNet.Enhanced": "3.128.5"
         },
         "runtime": {
           "lib/net9.0/Docker.DotNet.X509.dll": {
             "assemblyVersion": "3.128.0.0",
-            "fileVersion": "3.128.3.1"
+            "fileVersion": "3.128.5.1"
           }
         }
       },
@@ -451,29 +451,29 @@
           }
         }
       },
-      "Testcontainers/4.6.0": {
+      "Testcontainers/4.7.0": {
         "dependencies": {
-          "Docker.DotNet.Enhanced": "3.128.3",
-          "Docker.DotNet.Enhanced.X509": "3.128.3",
+          "Docker.DotNet.Enhanced": "3.128.5",
+          "Docker.DotNet.Enhanced.X509": "3.128.5",
           "Microsoft.Extensions.Logging.Abstractions": "9.0.8",
           "SSH.NET": "2024.2.0",
           "SharpZipLib": "1.4.2"
         },
         "runtime": {
           "lib/net9.0/Testcontainers.dll": {
-            "assemblyVersion": "4.6.0.0",
-            "fileVersion": "4.6.0.0"
+            "assemblyVersion": "4.7.0.0",
+            "fileVersion": "4.7.0.0"
           }
         }
       },
-      "Testcontainers.Redis/4.6.0": {
+      "Testcontainers.Redis/4.7.0": {
         "dependencies": {
-          "Testcontainers": "4.6.0"
+          "Testcontainers": "4.7.0"
         },
         "runtime": {
           "lib/net9.0/Testcontainers.Redis.dll": {
-            "assemblyVersion": "4.6.0.0",
-            "fileVersion": "4.6.0.0"
+            "assemblyVersion": "4.7.0.0",
+            "fileVersion": "4.7.0.0"
           }
         }
       },
@@ -525,19 +525,19 @@
       "path": "commandlineparser/2.9.1",
       "hashPath": "commandlineparser.2.9.1.nupkg.sha512"
     },
-    "Docker.DotNet.Enhanced/3.128.3": {
+    "Docker.DotNet.Enhanced/3.128.5": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-yOiBJfGltxjMTPBRVPt2Yeiqy2rLNQSf5x0U57FgipbsGnCXSm1a04UHi3h2QtABJSpTSHoBw+LPqA6yN9CGFg==",
-      "path": "docker.dotnet.enhanced/3.128.3",
-      "hashPath": "docker.dotnet.enhanced.3.128.3.nupkg.sha512"
+      "sha512": "sha512-RmhcxDmS/zEuWhV9XA5M/xwFinfGe8IRyyNuEu/7EmnLam35dxlIXabi1Kp/MeEWr1fNPjPFrgxKieZfPeOOqw==",
+      "path": "docker.dotnet.enhanced/3.128.5",
+      "hashPath": "docker.dotnet.enhanced.3.128.5.nupkg.sha512"
     },
-    "Docker.DotNet.Enhanced.X509/3.128.3": {
+    "Docker.DotNet.Enhanced.X509/3.128.5": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-U6G7H+vX0Htk86Fd1xS5i7iRGd0C33vx61sLH8gI9uzxqQJRfeYCbuzQOOp3J7m4zVZ2mP6x9gB9onspgP0QCg==",
-      "path": "docker.dotnet.enhanced.x509/3.128.3",
-      "hashPath": "docker.dotnet.enhanced.x509.3.128.3.nupkg.sha512"
+      "sha512": "sha512-ofHQIPpv5HillvBZwk66wEGzHjV/G/771Ta1HjbOtcG8+Lv3bKNH19+fa+hgMzO4sZQCWGDIXygyDralePOKQA==",
+      "path": "docker.dotnet.enhanced.x509/3.128.5",
+      "hashPath": "docker.dotnet.enhanced.x509.3.128.5.nupkg.sha512"
     },
     "Gee.External.Capstone/2.3.0": {
       "type": "package",
@@ -700,19 +700,19 @@
       "path": "system.management/9.0.5",
       "hashPath": "system.management.9.0.5.nupkg.sha512"
     },
-    "Testcontainers/4.6.0": {
+    "Testcontainers/4.7.0": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-JFGPwuEqVuY3qJiGuxR+2J+E+dGc+1TgbBooB1346zUFKJqH6zWeSCXju5Siwek3ExOVRES4AbECXoaYt9jkXA==",
-      "path": "testcontainers/4.6.0",
-      "hashPath": "testcontainers.4.6.0.nupkg.sha512"
+      "sha512": "sha512-Nx4HR4e7XcKV5BVIqYdCpF8PAYFpukZ8QpoBe+sY9FL5q0RDtsy81MElVXIJVO4Wg3Q6j2f39QaF7i+2jf6YjA==",
+      "path": "testcontainers/4.7.0",
+      "hashPath": "testcontainers.4.7.0.nupkg.sha512"
     },
-    "Testcontainers.Redis/4.6.0": {
+    "Testcontainers.Redis/4.7.0": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-wZenH7D2B/HpLk7K1NwRoUaLu5Ag5B38DjzZnfD9t7RBOVgBtXeoo2gkhzlGH+ZurQdkTVvY6lg7dPZckBqEug==",
-      "path": "testcontainers.redis/4.6.0",
-      "hashPath": "testcontainers.redis.4.6.0.nupkg.sha512"
+      "sha512": "sha512-3uVxB4V4L1wFZRw0mJVKqKBGi3HJWxPH20kRrPqNQ8ggQMaAuE9rYsJOlIrds8JW34MkI3+sFh3IgPlW/2qfMg==",
+      "path": "testcontainers.redis/4.7.0",
+      "hashPath": "testcontainers.redis.4.7.0.nupkg.sha512"
     },
     "Respire/1.0.0": {
       "type": "project",

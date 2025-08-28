@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Respire.Extensions.DependencyInjection")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+801eee3e3ab82bf0b31cad79c37da4ab633db57f")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+374f2c769590952ea950a46f8790f230583d8a3c")]
 [assembly: System.Reflection.AssemblyProductAttribute("Respire.Extensions.DependencyInjection")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Respire.Extensions.DependencyInjection")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

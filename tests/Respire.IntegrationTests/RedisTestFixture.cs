@@ -1,9 +1,10 @@
 using Testcontainers.Redis;
 using TUnit.Core;
+using TUnit.Core.Interfaces;
 
 namespace Respire.IntegrationTests;
 
-public class RedisTestFixture
+public class RedisTestFixture : IAsyncInitializer, IAsyncDisposable
 {
     private static RedisContainer? _redisContainer;
     
@@ -11,8 +12,7 @@ public class RedisTestFixture
     public static string Host { get; private set; } = "localhost";
     public static int Port { get; private set; }
     
-    [Before(HookType.Class)]
-    public static async Task InitializeAsync()
+    public async Task InitializeAsync()
     {
         _redisContainer = new RedisBuilder()
             .WithImage("redis:7-alpine")
@@ -27,8 +27,7 @@ public class RedisTestFixture
         Port = int.Parse(parts[1]);
     }
     
-    [After(HookType.Class)]
-    public static async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         if (_redisContainer != null)
         {

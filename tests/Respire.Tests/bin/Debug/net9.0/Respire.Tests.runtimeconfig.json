@@ -6,7 +6,6 @@
       "version": "9.0.0"
     },
     "configProperties": {
-      "MSTest.EnableParentProcessQuery": true,
       "System.Runtime.Serialization.EnableUnsafeBinaryFormatterSerialization": false
     }
   }
