@@ -39,9 +39,10 @@ public class NugetVersionGeneratorModule : Module<string>
         var baseVersion = "1.0.0";
         
         // If we have commit info, add pre-release suffix
-        if (!string.IsNullOrEmpty(gitInfo.CommitHash))
+        string commitHash = gitInfo.CommitHash;
+        if (!string.IsNullOrEmpty(commitHash))
         {
-            var shortHash = gitInfo.CommitHash[..Math.Min(7, gitInfo.CommitHash.Length)];
+            var shortHash = commitHash.Substring(0, Math.Min(7, commitHash.Length));
             
             // Check if we're on main/master branch
             if (gitInfo.BranchName is "main" or "master")
