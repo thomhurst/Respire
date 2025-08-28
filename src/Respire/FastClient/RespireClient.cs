@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using Respire.Infrastructure;
@@ -16,6 +17,16 @@ public sealed class RespireClient : IAsyncDisposable
     private readonly RespireCommandQueue _commandQueue;
     private readonly ILogger? _logger;
     private volatile bool _disposed;
+    
+    // Fast path optimizations for GET operations
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte[]> _preEncodedGetCommands = new();
+    private const int MaxPreEncodedCommands = 1000;
+    
+    [ThreadStatic]
+    private static byte[]? _threadLocalCommandBuffer;
+    
+    [ThreadStatic]
+    private static Protocol.PipelineCommandWriter? _threadLocalWriter;
     
     public string Host => _multiplexer.Host;
     public int Port => _multiplexer.Port;
@@ -200,13 +211,140 @@ public sealed class RespireClient : IAsyncDisposable
     // Command methods with responses
     
     /// <summary>
-    /// Gets value for key with response
+    /// Gets value for key with response - uses fast path for single GET operations
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ValueTask<RespireValue> GetAsync(string key, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
+        
+        // Fast path: bypass command queue for single GET operations
+        // This avoids queue allocations and batching overhead  
+        // Controlled via static flag for now, can be made configurable later
+        if (EnableGetFastPath)
+        {
+            return ExecuteGetFastPathAsync(key, cancellationToken);
+        }
+        
         return _commandQueue.QueueGetWithResponseAsync(key, cancellationToken);
+    }
+    
+    /// <summary>
+    /// Static flag to enable GET fast path optimization
+    /// Set to true to bypass command queue for GET operations
+    /// </summary>
+    public static bool EnableGetFastPath { get; set; } = true;
+    
+    /// <summary>
+    /// Fast path for GET operations that bypasses the command queue
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private async ValueTask<RespireValue> ExecuteGetFastPathAsync(string key, CancellationToken cancellationToken)
+    {
+        // Get a connection handle with automatic semaphore management
+        using var handle = await _multiplexer.GetConnectionHandleAsync(cancellationToken).ConfigureAwait(false);
+        
+        // Try to use pre-encoded command if available
+        if (_preEncodedGetCommands.TryGetValue(key, out var encodedCommand))
+        {
+            // Write pre-encoded command directly - zero allocations
+            await handle.Connection.WriteWithPooledBufferAsync(writer =>
+            {
+                writer.Write(encodedCommand);
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            // Check for thread-local writer to avoid allocation
+            var writer = _threadLocalWriter;
+            if (writer == null || writer.IsDisposed)
+            {
+                writer = new Protocol.PipelineCommandWriter(handle.Connection);
+                _threadLocalWriter = writer;
+            }
+            else
+            {
+                writer.UpdateConnection(handle.Connection);
+            }
+            
+            // Write command with potential caching
+            await WriteGetCommandOptimized(handle.Connection, key, writer, cancellationToken).ConfigureAwait(false);
+        }
+        
+        // Read response directly
+        var readResult = await handle.Connection.ReadAsync(cancellationToken).ConfigureAwait(false);
+        
+        // Parse response using the same pattern as multiplexer
+        return ParseRespResponse(readResult.Buffer, handle.Connection);
+    }
+    
+    /// <summary>
+    /// Writes GET command with optimized encoding and caching
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private async ValueTask WriteGetCommandOptimized(Infrastructure.PipelineConnection connection, string key, Protocol.PipelineCommandWriter writer, CancellationToken cancellationToken)
+    {
+        // Check if we should cache this command
+        var shouldCache = _preEncodedGetCommands.Count < MaxPreEncodedCommands && key.Length <= 128;
+        
+        if (shouldCache)
+        {
+            // Use thread-local buffer if available
+            var estimatedLength = 32 + key.Length;
+            _threadLocalCommandBuffer ??= new byte[256]; // Initialize once per thread
+            
+            byte[] encodedCommand;
+            if (_threadLocalCommandBuffer.Length >= estimatedLength)
+            {
+                // Use thread-local buffer to avoid allocation
+                var actualLength = Protocol.RespCommands.BuildGetCommand(_threadLocalCommandBuffer, key);
+                encodedCommand = new byte[actualLength];
+                Buffer.BlockCopy(_threadLocalCommandBuffer, 0, encodedCommand, 0, actualLength);
+            }
+            else
+            {
+                // Fallback to new allocation for large keys
+                encodedCommand = new byte[estimatedLength];
+                var actualLength = Protocol.RespCommands.BuildGetCommand(encodedCommand, key);
+                
+                if (actualLength < encodedCommand.Length)
+                {
+                    Array.Resize(ref encodedCommand, actualLength);
+                }
+            }
+            
+            // Cache the encoded command
+            _preEncodedGetCommands.TryAdd(key, encodedCommand);
+            
+            // Write the command
+            await connection.WriteWithPooledBufferAsync(writer =>
+            {
+                writer.Write(encodedCommand);
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            // Use the thread-local writer
+            await writer.WriteGetAsync(key, cancellationToken).ConfigureAwait(false);
+        }
+    }
+    
+    /// <summary>
+    /// Parses RESP response from buffer
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static RespireValue ParseRespResponse(ReadOnlySequence<byte> buffer, Infrastructure.PipelineConnection connection)
+    {
+        var reader = new Protocol.RespPipelineReader(buffer);
+        
+        if (reader.TryReadValue(out var value))
+        {
+            connection.AdvanceReader(reader.Consumed, reader.Examined);
+            return value;
+        }
+        
+        connection.AdvanceReader(buffer.Start, buffer.End);
+        return default;
     }
     
     // Synchronous wrapper methods for benchmark compatibility
@@ -469,6 +607,20 @@ public sealed class RespireClient : IAsyncDisposable
         DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
     
+    /// <summary>
+    /// Clears the pre-encoded command cache to free memory
+    /// </summary>
+    public void ClearCommandCache()
+    {
+        _preEncodedGetCommands.Clear();
+        _logger?.LogDebug("Cleared pre-encoded command cache");
+    }
+    
+    /// <summary>
+    /// Gets the current size of the pre-encoded command cache
+    /// </summary>
+    public int GetCommandCacheSize() => _preEncodedGetCommands.Count;
+    
     public async ValueTask DisposeAsync()
     {
         if (_disposed) return;
@@ -477,6 +629,9 @@ public sealed class RespireClient : IAsyncDisposable
         
         try
         {
+            // Clear pre-encoded command cache
+            _preEncodedGetCommands.Clear();
+            
             // Complete command queue first
             _commandQueue.CompleteAdding();
             await _commandQueue.DisposeAsync().ConfigureAwait(false);
