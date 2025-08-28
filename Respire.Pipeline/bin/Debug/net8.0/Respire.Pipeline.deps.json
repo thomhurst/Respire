@@ -8,8 +8,8 @@
     ".NETCoreApp,Version=v8.0": {
       "Respire.Pipeline/1.0.0": {
         "dependencies": {
-          "ModularPipelines.DotNet": "2.47.0",
-          "ModularPipelines.Git": "2.47.0"
+          "ModularPipelines.DotNet": "2.47.8",
+          "ModularPipelines.Git": "2.47.8"
         },
         "runtime": {
           "Respire.Pipeline.dll": {}
@@ -46,11 +46,11 @@
           }
         }
       },
-      "EnumerableAsyncProcessor/3.3.2": {
+      "EnumerableAsyncProcessor/3.6.3": {
         "runtime": {
           "lib/net8.0/EnumerableAsyncProcessor.dll": {
-            "assemblyVersion": "3.3.2.0",
-            "fileVersion": "3.3.2.0"
+            "assemblyVersion": "3.6.3.0",
+            "fileVersion": "3.6.3.0"
           }
         }
       },
@@ -696,17 +696,17 @@
           }
         }
       },
-      "ModularPipelines/2.47.0": {
+      "ModularPipelines/2.47.8": {
         "dependencies": {
           "AsyncSemaphore": "1.3.0",
           "CliWrap": "3.9.0",
-          "EnumerableAsyncProcessor": "3.3.2",
+          "EnumerableAsyncProcessor": "3.6.3",
           "Initialization.Microsoft.Extensions.DependencyInjection": "1.1.44",
           "Mediator.Abstractions": "3.0.1",
           "Microsoft.Extensions.DependencyInjection": "9.0.6",
           "Microsoft.Extensions.Hosting": "9.0.6",
           "Microsoft.Extensions.Http": "9.0.6",
-          "ModularPipelines.Analyzers": "2.47.0",
+          "ModularPipelines.Analyzers": "2.47.8",
           "Polly": "8.6.2",
           "Spectre.Console": "0.50.0",
           "System.Text.Json": "9.0.6",
@@ -715,31 +715,31 @@
         },
         "runtime": {
           "lib/net8.0/ModularPipelines.dll": {
-            "assemblyVersion": "2.47.0.0",
-            "fileVersion": "2.47.0.0"
+            "assemblyVersion": "2.47.8.0",
+            "fileVersion": "2.47.8.0"
           }
         }
       },
-      "ModularPipelines.Analyzers/2.47.0": {},
-      "ModularPipelines.DotNet/2.47.0": {
+      "ModularPipelines.Analyzers/2.47.8": {},
+      "ModularPipelines.DotNet/2.47.8": {
         "dependencies": {
-          "ModularPipelines": "2.47.0"
+          "ModularPipelines": "2.47.8"
         },
         "runtime": {
           "lib/net8.0/ModularPipelines.DotNet.dll": {
-            "assemblyVersion": "2.47.0.0",
-            "fileVersion": "2.47.0.0"
+            "assemblyVersion": "2.47.8.0",
+            "fileVersion": "2.47.8.0"
           }
         }
       },
-      "ModularPipelines.Git/2.47.0": {
+      "ModularPipelines.Git/2.47.8": {
         "dependencies": {
-          "ModularPipelines": "2.47.0"
+          "ModularPipelines": "2.47.8"
         },
         "runtime": {
           "lib/net8.0/ModularPipelines.Git.dll": {
-            "assemblyVersion": "2.47.0.0",
-            "fileVersion": "2.47.0.0"
+            "assemblyVersion": "2.47.8.0",
+            "fileVersion": "2.47.8.0"
           }
         }
       },
@@ -951,12 +951,12 @@
       "path": "cliwrap/3.9.0",
       "hashPath": "cliwrap.3.9.0.nupkg.sha512"
     },
-    "EnumerableAsyncProcessor/3.3.2": {
+    "EnumerableAsyncProcessor/3.6.3": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-42oESfS/5G/Do1j9XOzNUg7voH7dYNQ1QrchoUuY56K30FuVdB6PmwCCXC4ChPdW4XxbC6Ybg2CI6/JXuF/MMQ==",
-      "path": "enumerableasyncprocessor/3.3.2",
-      "hashPath": "enumerableasyncprocessor.3.3.2.nupkg.sha512"
+      "sha512": "sha512-qmhjKHjjsteV3lcQy0Ep17Bn7v1lgzEnk8X7AWELAAN8/OwKy7Rqq2aUEQCpUbUZLSk+k63s5jH8ElrippEs2w==",
+      "path": "enumerableasyncprocessor/3.6.3",
+      "hashPath": "enumerableasyncprocessor.3.6.3.nupkg.sha512"
     },
     "Humanizer.Core/2.14.1": {
       "type": "package",
@@ -1224,33 +1224,33 @@
       "path": "microsoft.extensions.primitives/9.0.6",
       "hashPath": "microsoft.extensions.primitives.9.0.6.nupkg.sha512"
     },
-    "ModularPipelines/2.47.0": {
+    "ModularPipelines/2.47.8": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-1B+yxWgu7hWeqSHG6hvaWsdOjQXqwS/OaRGKG6zWEqEhgqv8kg5IvWTIMA4lZ3bYKCeBJvkaglniaDqy5opuCw==",
-      "path": "modularpipelines/2.47.0",
-      "hashPath": "modularpipelines.2.47.0.nupkg.sha512"
+      "sha512": "sha512-m7i/qF1FV/dtzjRkeLbXPwlXQxAMHWyfIJEzgen8zd4xtG8UYjfxkiMUY72kVLXv2F6i35NgjByd1BDOdnkDiQ==",
+      "path": "modularpipelines/2.47.8",
+      "hashPath": "modularpipelines.2.47.8.nupkg.sha512"
     },
-    "ModularPipelines.Analyzers/2.47.0": {
+    "ModularPipelines.Analyzers/2.47.8": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-FmXKJTwWs2rwz00sCrR3p8HeSQrAis/0xloMW7BH8HHBB+rAH7bL8DNo+GMlSL7P9oh1+2Wt+tLD4ZVohKUaHg==",
-      "path": "modularpipelines.analyzers/2.47.0",
-      "hashPath": "modularpipelines.analyzers.2.47.0.nupkg.sha512"
+      "sha512": "sha512-UwSfAJtBBNNdmp5Un90NjqlR1rLRaa+3K0lHZ+qnE02TMa9UW2tyu+WXVVQHvPEa/wgh4tVroa7ypUgwdo0UyQ==",
+      "path": "modularpipelines.analyzers/2.47.8",
+      "hashPath": "modularpipelines.analyzers.2.47.8.nupkg.sha512"
     },
-    "ModularPipelines.DotNet/2.47.0": {
+    "ModularPipelines.DotNet/2.47.8": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-56YC6Yfgv08Twfc4csCYW3M4j8VRZZz/wIl50+HAphZujayKSgAhaYIc/I99QZZMySSM/c/uewa4p4AFe5lqVw==",
-      "path": "modularpipelines.dotnet/2.47.0",
-      "hashPath": "modularpipelines.dotnet.2.47.0.nupkg.sha512"
+      "sha512": "sha512-MeVdYBnGUViRAqVTVlUnND3YCUPNgPiUGY+FDdP+E06FR7OQwWllfNxW3xpP0wIPYtm3ZBqcws8re6hPn31HNA==",
+      "path": "modularpipelines.dotnet/2.47.8",
+      "hashPath": "modularpipelines.dotnet.2.47.8.nupkg.sha512"
     },
-    "ModularPipelines.Git/2.47.0": {
+    "ModularPipelines.Git/2.47.8": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-mhl5gAXdHA7p041HRBIrsWk8KsMqeSLPDUjI9c1c7w2REVwhD0Q//7qCOo39NBroStwzpqzEpksFdfsA9UH14g==",
-      "path": "modularpipelines.git/2.47.0",
-      "hashPath": "modularpipelines.git.2.47.0.nupkg.sha512"
+      "sha512": "sha512-vTwvq1QvHm78K3hm13LwJW9y2qs3BNl7pZLOH9AuLRnlZb364HhhuM9pn8SDRDt+VwznfzfNXBkXf7smD4i67Q==",
+      "path": "modularpipelines.git/2.47.8",
+      "hashPath": "modularpipelines.git.2.47.8.nupkg.sha512"
     },
     "Polly/8.6.2": {
       "type": "package",

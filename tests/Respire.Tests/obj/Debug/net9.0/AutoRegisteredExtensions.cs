@@ -5,7 +5,7 @@
 //------------------------------------------------------------------------------
 
 [global::System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
-public static class SelfRegisteredExtensions
+internal static class SelfRegisteredExtensions
 {
     public static void AddSelfRegisteredExtensions(this global::Microsoft.Testing.Platform.Builder.ITestApplicationBuilder builder, string[] args)
     {

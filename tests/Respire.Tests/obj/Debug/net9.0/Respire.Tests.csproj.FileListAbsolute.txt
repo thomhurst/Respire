@@ -138,7 +138,6 @@ D:\git\Keva\tests\Respire.Tests\bin\Debug\net9.0\Respire.Tests.dll
 D:\git\Keva\tests\Respire.Tests\bin\Debug\net9.0\Respire.Tests.pdb
 D:\git\Keva\tests\Respire.Tests\bin\Debug\net9.0\EnumerableAsyncProcessor.dll
 D:\git\Keva\tests\Respire.Tests\bin\Debug\net9.0\Microsoft.VisualStudio.CodeCoverage.Shim.dll
-D:\git\Keva\tests\Respire.Tests\bin\Debug\net9.0\Microsoft.Extensions.DependencyInjection.dll
 D:\git\Keva\tests\Respire.Tests\bin\Debug\net9.0\Microsoft.Extensions.DependencyInjection.Abstractions.dll
 D:\git\Keva\tests\Respire.Tests\bin\Debug\net9.0\Microsoft.Extensions.Logging.Abstractions.dll
 D:\git\Keva\tests\Respire.Tests\bin\Debug\net9.0\Microsoft.Extensions.ObjectPool.dll
@@ -267,3 +266,4 @@ D:\git\Keva\tests\Respire.Tests\obj\Debug\net9.0\refint\Respire.Tests.dll
 D:\git\Keva\tests\Respire.Tests\obj\Debug\net9.0\Respire.Tests.pdb
 D:\git\Keva\tests\Respire.Tests\obj\Debug\net9.0\Respire.Tests.genruntimeconfig.cache
 D:\git\Keva\tests\Respire.Tests\obj\Debug\net9.0\ref\Respire.Tests.dll
+D:\git\Keva\tests\Respire.Tests\bin\Debug\net9.0\.msCoverageSourceRootsMapping_Respire.Tests

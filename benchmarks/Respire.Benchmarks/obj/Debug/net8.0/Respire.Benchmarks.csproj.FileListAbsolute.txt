@@ -193,3 +193,5 @@ D:\git\Keva\benchmarks\Respire.Benchmarks\obj\Debug\net8.0\Respire.Benchmarks.dl
 D:\git\Keva\benchmarks\Respire.Benchmarks\obj\Debug\net8.0\refint\Respire.Benchmarks.dll
 D:\git\Keva\benchmarks\Respire.Benchmarks\obj\Debug\net8.0\Respire.Benchmarks.genruntimeconfig.cache
 D:\git\Keva\benchmarks\Respire.Benchmarks\obj\Debug\net8.0\ref\Respire.Benchmarks.dll
+D:\git\Keva\benchmarks\Respire.Benchmarks\bin\Debug\net8.0\System.Diagnostics.DiagnosticSource.dll
+D:\git\Keva\benchmarks\Respire.Benchmarks\bin\Debug\net8.0\System.Threading.Channels.dll

@@ -23,7 +23,7 @@ public sealed class PipelineCommandWriter : IDisposable
     
     public PipelineCommandWriter(PipelineConnection connection, RespireMemoryPool? memoryPool = null)
     {
-        _connection = connection!; // Allow null for pooling scenario
+        _connection = connection; // Allow null for pooling scenario
         _memoryPool = memoryPool ?? RespireMemoryPool.Shared;
     }
     

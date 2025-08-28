@@ -43,3 +43,5 @@ D:\git\Keva\samples\Respire.Samples.Basic\obj\Debug\net8.0\Respire.Samples.Basic
 D:\git\Keva\samples\Respire.Samples.Basic\obj\Debug\net8.0\refint\Respire.Samples.Basic.dll
 D:\git\Keva\samples\Respire.Samples.Basic\obj\Debug\net8.0\Respire.Samples.Basic.genruntimeconfig.cache
 D:\git\Keva\samples\Respire.Samples.Basic\obj\Debug\net8.0\ref\Respire.Samples.Basic.dll
+D:\git\Keva\samples\Respire.Samples.Basic\bin\Debug\net8.0\System.Diagnostics.DiagnosticSource.dll
+D:\git\Keva\samples\Respire.Samples.Basic\bin\Debug\net8.0\System.Threading.Channels.dll
