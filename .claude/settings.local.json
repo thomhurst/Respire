@@ -29,7 +29,8 @@
       "Bash(gh run view:*)",
       "mcp__serena__create_text_file",
       "Bash(python:*)",
-      "Bash(dotnet restore:*)"
+      "Bash(dotnet restore:*)",
+      "Bash(sed:*)"
     ],
     "deny": [],
     "ask": []
