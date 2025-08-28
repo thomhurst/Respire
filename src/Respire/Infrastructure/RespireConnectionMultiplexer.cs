@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.ObjectPool;
 using Respire.Protocol;
 
 namespace Respire.Infrastructure;
@@ -18,6 +19,10 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private readonly ILogger? _logger;
     private readonly Timer _healthCheckTimer;
     private readonly CancellationTokenSource _cancellationTokenSource;
+    
+    // Thread-local storage for PipelineCommandWriter to avoid allocations
+    [ThreadStatic]
+    private static PipelineCommandWriter? _threadLocalWriter;
     
     private volatile bool _disposed;
     private int _roundRobinIndex = -1;
@@ -144,7 +149,19 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         using var handle = await GetConnectionHandleAsync(cancellationToken).ConfigureAwait(false);
-        using var writer = new PipelineCommandWriter(handle.Connection);
+        
+        // Reuse thread-local writer to avoid allocation
+        var writer = _threadLocalWriter;
+        if (writer == null || writer.IsDisposed)
+        {
+            writer = new PipelineCommandWriter(handle.Connection);
+            _threadLocalWriter = writer;
+        }
+        else
+        {
+            writer.UpdateConnection(handle.Connection);
+        }
+        
         await commandAction(writer).ConfigureAwait(false);
     }
     
@@ -159,7 +176,18 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         using var handle = await GetConnectionHandleAsync(cancellationToken).ConfigureAwait(false);
-        using var writer = new PipelineCommandWriter(handle.Connection);
+        
+        // Reuse thread-local writer to avoid allocation
+        var writer = _threadLocalWriter;
+        if (writer == null || writer.IsDisposed)
+        {
+            writer = new PipelineCommandWriter(handle.Connection);
+            _threadLocalWriter = writer;
+        }
+        else
+        {
+            writer.UpdateConnection(handle.Connection);
+        }
         
         // Write command
         await commandAction(writer).ConfigureAwait(false);

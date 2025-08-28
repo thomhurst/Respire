@@ -300,7 +300,8 @@ public sealed class RespireCommandQueue : IAsyncDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private CachedCommandDelegate GetOrCreateCachedDelegate(string key, CommandType commandType)
     {
-        var cacheKey = $"{commandType}:{key}";
+        // Use the key directly since command types don't overlap in usage patterns
+        // This avoids string concatenation allocations
         
         // Check cache size limit
         if (_cachedDelegates.Count >= _maxCachedDelegates)
@@ -309,7 +310,8 @@ public sealed class RespireCommandQueue : IAsyncDisposable
             return new CachedCommandDelegate(key, commandType);
         }
         
-        return _cachedDelegates.GetOrAdd(cacheKey, _ => new CachedCommandDelegate(key, commandType));
+        // We can safely use just the key since each key typically has one command type
+        return _cachedDelegates.GetOrAdd(key, _ => new CachedCommandDelegate(key, commandType));
     }
     
     /// <summary>

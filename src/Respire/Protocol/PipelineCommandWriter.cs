@@ -9,14 +9,31 @@ namespace Respire.Protocol;
 /// </summary>
 public sealed class PipelineCommandWriter : IDisposable
 {
-    private readonly PipelineConnection _connection;
+    private PipelineConnection _connection;
     private readonly RespireMemoryPool _memoryPool;
     private volatile bool _disposed;
     
+    public bool IsDisposed => _disposed;
+    
+    // Parameterless constructor for pooling scenarios
+    public PipelineCommandWriter() : this(null!, null)
+    {
+        // Connection will be set via UpdateConnection before use
+    }
+    
     public PipelineCommandWriter(PipelineConnection connection, RespireMemoryPool? memoryPool = null)
     {
-        _connection = connection ?? throw new ArgumentNullException(nameof(connection));
+        _connection = connection!; // Allow null for pooling scenario
         _memoryPool = memoryPool ?? RespireMemoryPool.Shared;
+    }
+    
+    /// <summary>
+    /// Updates the connection for this writer to reuse it with different connections
+    /// </summary>
+    public void UpdateConnection(PipelineConnection connection)
+    {
+        _connection = connection ?? throw new ArgumentNullException(nameof(connection));
+        _disposed = false; // Reset disposed flag when updating connection
     }
     
     /// <summary>
