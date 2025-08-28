@@ -1,6 +1,0 @@
-D:\git\Keva\Keva.Pipeline\obj\Debug\net8.0\Keva.Pipeline.csproj.AssemblyReference.cache
-D:\git\Keva\Keva.Pipeline\obj\Debug\net8.0\Keva.Pipeline.GeneratedMSBuildEditorConfig.editorconfig
-D:\git\Keva\Keva.Pipeline\obj\Debug\net8.0\Keva.Pipeline.AssemblyInfoInputs.cache
-D:\git\Keva\Keva.Pipeline\obj\Debug\net8.0\Keva.Pipeline.AssemblyInfo.cs
-D:\git\Keva\Keva.Pipeline\obj\Debug\net8.0\Keva.Pipeline.csproj.CoreCompileInputs.cache
-D:\git\Keva\Keva.Pipeline\obj\Debug\net8.0\Keva.Pipeline.sourcelink.json

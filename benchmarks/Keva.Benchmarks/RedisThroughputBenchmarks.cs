@@ -5,11 +5,11 @@ using BenchmarkDotNet.Jobs;
 using BenchmarkDotNet.Reports;
 using BenchmarkDotNet.Running;
 using DotNet.Testcontainers.Containers;
-using Keva.FastClient;
+using Respire.FastClient;
 using StackExchange.Redis;
 using Testcontainers.Redis;
 
-namespace Keva.Benchmarks;
+namespace Respire.Benchmarks;
 
 [MemoryDiagnoser]
 [SimpleJob(RuntimeMoniker.Net80, warmupCount: 1, iterationCount: 3)]
@@ -17,7 +17,7 @@ namespace Keva.Benchmarks;
 public class RedisThroughputBenchmarks
 {
     private readonly IContainer _redisContainer = new RedisBuilder().Build();
-    private KevaClient _kevaClient = null!;
+    private RespireClient _kevaClient = null!;
     private ConnectionMultiplexer _stackExchangeRedis = null!;
     private IDatabase _stackExchangeDb = null!;
     
@@ -83,8 +83,8 @@ public class RedisThroughputBenchmarks
         
         var port = _redisContainer.GetMappedPublicPort(6379);
         
-        // Setup Keva client with larger pool for concurrent operations
-        _kevaClient = await KevaClient.CreateAsync("localhost", port, connectionCount: 10);
+        // Setup Respire client with larger pool for concurrent operations
+        _kevaClient = await RespireClient.CreateAsync("localhost", port, connectionCount: 10);
         
         // Setup StackExchange.Redis with similar configuration
         var options = ConfigurationOptions.Parse($"localhost:{port}");
@@ -111,7 +111,7 @@ public class RedisThroughputBenchmarks
     }
     
     [Benchmark(Baseline = true)]
-    public async Task Keva_Concurrent_SetGet()
+    public async Task Respire_Concurrent_SetGet()
     {
         var tasks = new Task[ConcurrentClients];
         
@@ -155,7 +155,7 @@ public class RedisThroughputBenchmarks
     }
     
     [Benchmark]
-    public async Task Keva_Concurrent_Incr()
+    public async Task Respire_Concurrent_Incr()
     {
         var tasks = new Task[ConcurrentClients];
         

@@ -1,0 +1,641 @@
+// Validating benchmarks:
+// ***** BenchmarkRunner: Start   *****
+// ***** Found 20 benchmark(s) in total *****
+// ***** Building 1 exe(s) in Parallel: Start   *****
+// start dotnet  restore /p:UseSharedCompilation=false /p:BuildInParallel=false /m:1 /p:Deterministic=true /p:Optimize=true in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6
+// command took 1.78 sec and exited with 0
+// start dotnet  build -c Release --no-restore /p:UseSharedCompilation=false /p:BuildInParallel=false /m:1 /p:Deterministic=true /p:Optimize=true in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6
+// command took 4.68 sec and exited with 0
+// ***** Done, took 00:00:06 (6.57 sec)   *****
+// Found 20 benchmarks:
+//   RedisContainerBenchmarks.Respire_Ping: .NET 8.0(Runtime=.NET 8.0)
+//   RedisContainerBenchmarks.StackExchange_Ping: .NET 8.0(Runtime=.NET 8.0)
+//   RedisContainerBenchmarks.Respire_Set_Small: .NET 8.0(Runtime=.NET 8.0)
+//   RedisContainerBenchmarks.StackExchange_Set_Small: .NET 8.0(Runtime=.NET 8.0)
+//   RedisContainerBenchmarks.Respire_Set_Medium: .NET 8.0(Runtime=.NET 8.0)
+//   RedisContainerBenchmarks.StackExchange_Set_Medium: .NET 8.0(Runtime=.NET 8.0)
+//   RedisContainerBenchmarks.Respire_Set_Large: .NET 8.0(Runtime=.NET 8.0)
+//   RedisContainerBenchmarks.StackExchange_Set_Large: .NET 8.0(Runtime=.NET 8.0)
+//   RedisContainerBenchmarks.Respire_Get: .NET 8.0(Runtime=.NET 8.0)
+//   RedisContainerBenchmarks.StackExchange_Get: .NET 8.0(Runtime=.NET 8.0)
+//   RedisContainerBenchmarks.Respire_MGet: .NET 8.0(Runtime=.NET 8.0)
+//   RedisContainerBenchmarks.StackExchange_MGet: .NET 8.0(Runtime=.NET 8.0)
+//   RedisContainerBenchmarks.Respire_Pipeline_10_Sets: .NET 8.0(Runtime=.NET 8.0)
+//   RedisContainerBenchmarks.StackExchange_Pipeline_10_Sets: .NET 8.0(Runtime=.NET 8.0)
+//   RedisContainerBenchmarks.Respire_Exists: .NET 8.0(Runtime=.NET 8.0)
+//   RedisContainerBenchmarks.StackExchange_Exists: .NET 8.0(Runtime=.NET 8.0)
+//   RedisContainerBenchmarks.Respire_Del: .NET 8.0(Runtime=.NET 8.0)
+//   RedisContainerBenchmarks.StackExchange_Del: .NET 8.0(Runtime=.NET 8.0)
+//   RedisContainerBenchmarks.Respire_Incr: .NET 8.0(Runtime=.NET 8.0)
+//   RedisContainerBenchmarks.StackExchange_Incr: .NET 8.0(Runtime=.NET 8.0)
+
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.Respire_Ping: .NET 8.0(Runtime=.NET 8.0)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet f2da7785-2b11-43b5-8f3b-5b043df6bdf6.dll --anonymousPipes 1736 1732 --benchmarkName Respire.Benchmarks.RedisContainerBenchmarks.Respire_Ping --job ".NET 8.0" --benchmarkId 0 in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\bin\Release\net8.0
+// BeforeAnythingElse
+
+System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+ ---> System.TypeInitializationException: The type initializer for 'DotNet.Testcontainers.Configurations.TestcontainersSettings' threw an exception.
+ ---> System.ArgumentException: npipe:////pipe/docker_engine is not a valid npipe URI
+   at Docker.DotNet.DockerClient..ctor(DockerClientConfiguration configuration, Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClient.cs:line 50
+   at Docker.DotNet.DockerClientConfiguration.CreateClient(Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClientConfiguration.cs:line 55
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.<>c__DisplayClass5_0.<<IsAvailable>b__0>d.MoveNext() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 44
+--- End of stack trace from previous location ---
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.IsAvailable() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 40
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.<>c.<.cctor>b__3_0(DockerEndpointAuthenticationProvider authProvider) in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 35
+   at System.Linq.Enumerable.TryGetFirst[TSource](IEnumerable`1 source, Func`2 predicate, Boolean& found)
+   at System.Linq.Enumerable.FirstOrDefault[TSource](IEnumerable`1 source, Func`2 predicate)
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings..cctor() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 34
+   --- End of inner exception stack trace ---
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.get_OS() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 144
+   at DotNet.Testcontainers.Builders.AbstractBuilder`4.Init() in /_/src/Testcontainers/Builders/AbstractBuilder`4.cs:line 134
+   at DotNet.Testcontainers.Builders.ContainerBuilder`3.Init() in /_/src/Testcontainers/Builders/ContainerBuilder`3.cs:line 389
+   at Testcontainers.Redis.RedisBuilder.Init() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 43
+   at Testcontainers.Redis.RedisBuilder..ctor() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 17
+   at Respire.Benchmarks.RedisContainerBenchmarks..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\RedisContainerBenchmarks.cs:line 27
+   at BenchmarkDotNet.Autogenerated.Runnable_0..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 190
+   at BenchmarkDotNet.Autogenerated.Runnable_0.Run(IHost host, String benchmarkName) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 138
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at BenchmarkDotNet.Autogenerated.UniqueProgramName.AfterAssemblyLoadingAttached(String[] args) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 57
+// AfterAll
+No Workload Results were obtained from the run.
+// Benchmark Process 48944 has exited with code -1.
+
+// ** Remained 19 (95.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:03 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.StackExchange_Ping: .NET 8.0(Runtime=.NET 8.0)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet f2da7785-2b11-43b5-8f3b-5b043df6bdf6.dll --anonymousPipes 1640 1612 --benchmarkName Respire.Benchmarks.RedisContainerBenchmarks.StackExchange_Ping --job ".NET 8.0" --benchmarkId 1 in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\bin\Release\net8.0
+// BeforeAnythingElse
+
+System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+ ---> System.TypeInitializationException: The type initializer for 'DotNet.Testcontainers.Configurations.TestcontainersSettings' threw an exception.
+ ---> System.ArgumentException: npipe:////pipe/docker_engine is not a valid npipe URI
+   at Docker.DotNet.DockerClient..ctor(DockerClientConfiguration configuration, Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClient.cs:line 50
+   at Docker.DotNet.DockerClientConfiguration.CreateClient(Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClientConfiguration.cs:line 55
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.<>c__DisplayClass5_0.<<IsAvailable>b__0>d.MoveNext() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 44
+--- End of stack trace from previous location ---
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.IsAvailable() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 40
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.<>c.<.cctor>b__3_0(DockerEndpointAuthenticationProvider authProvider) in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 35
+   at System.Linq.Enumerable.TryGetFirst[TSource](IEnumerable`1 source, Func`2 predicate, Boolean& found)
+   at System.Linq.Enumerable.FirstOrDefault[TSource](IEnumerable`1 source, Func`2 predicate)
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings..cctor() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 34
+   --- End of inner exception stack trace ---
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.get_OS() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 144
+   at DotNet.Testcontainers.Builders.AbstractBuilder`4.Init() in /_/src/Testcontainers/Builders/AbstractBuilder`4.cs:line 134
+   at DotNet.Testcontainers.Builders.ContainerBuilder`3.Init() in /_/src/Testcontainers/Builders/ContainerBuilder`3.cs:line 389
+   at Testcontainers.Redis.RedisBuilder.Init() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 43
+   at Testcontainers.Redis.RedisBuilder..ctor() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 17
+   at Respire.Benchmarks.RedisContainerBenchmarks..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\RedisContainerBenchmarks.cs:line 27
+   at BenchmarkDotNet.Autogenerated.Runnable_1..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 387
+   at BenchmarkDotNet.Autogenerated.Runnable_1.Run(IHost host, String benchmarkName) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 335
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at BenchmarkDotNet.Autogenerated.UniqueProgramName.AfterAssemblyLoadingAttached(String[] args) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 57
+// AfterAll
+No Workload Results were obtained from the run.
+// Benchmark Process 9728 has exited with code -1.
+
+// ** Remained 18 (90.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:03 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.Respire_Set_Small: .NET 8.0(Runtime=.NET 8.0)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet f2da7785-2b11-43b5-8f3b-5b043df6bdf6.dll --anonymousPipes 1772 1440 --benchmarkName Respire.Benchmarks.RedisContainerBenchmarks.Respire_Set_Small --job ".NET 8.0" --benchmarkId 2 in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\bin\Release\net8.0
+// BeforeAnythingElse
+
+System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+ ---> System.TypeInitializationException: The type initializer for 'DotNet.Testcontainers.Configurations.TestcontainersSettings' threw an exception.
+ ---> System.ArgumentException: npipe:////pipe/docker_engine is not a valid npipe URI
+   at Docker.DotNet.DockerClient..ctor(DockerClientConfiguration configuration, Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClient.cs:line 50
+   at Docker.DotNet.DockerClientConfiguration.CreateClient(Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClientConfiguration.cs:line 55
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.<>c__DisplayClass5_0.<<IsAvailable>b__0>d.MoveNext() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 44
+--- End of stack trace from previous location ---
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.IsAvailable() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 40
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.<>c.<.cctor>b__3_0(DockerEndpointAuthenticationProvider authProvider) in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 35
+   at System.Linq.Enumerable.TryGetFirst[TSource](IEnumerable`1 source, Func`2 predicate, Boolean& found)
+   at System.Linq.Enumerable.FirstOrDefault[TSource](IEnumerable`1 source, Func`2 predicate)
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings..cctor() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 34
+   --- End of inner exception stack trace ---
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.get_OS() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 144
+   at DotNet.Testcontainers.Builders.AbstractBuilder`4.Init() in /_/src/Testcontainers/Builders/AbstractBuilder`4.cs:line 134
+   at DotNet.Testcontainers.Builders.ContainerBuilder`3.Init() in /_/src/Testcontainers/Builders/ContainerBuilder`3.cs:line 389
+   at Testcontainers.Redis.RedisBuilder.Init() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 43
+   at Testcontainers.Redis.RedisBuilder..ctor() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 17
+   at Respire.Benchmarks.RedisContainerBenchmarks..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\RedisContainerBenchmarks.cs:line 27
+   at BenchmarkDotNet.Autogenerated.Runnable_2..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 595
+   at BenchmarkDotNet.Autogenerated.Runnable_2.Run(IHost host, String benchmarkName) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 543
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at BenchmarkDotNet.Autogenerated.UniqueProgramName.AfterAssemblyLoadingAttached(String[] args) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 57
+// AfterAll
+No Workload Results were obtained from the run.
+// Benchmark Process 50384 has exited with code -1.
+
+// ** Remained 17 (85.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:03 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.StackExchange_Set_Small: .NET 8.0(Runtime=.NET 8.0)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet f2da7785-2b11-43b5-8f3b-5b043df6bdf6.dll --anonymousPipes 1692 1772 --benchmarkName Respire.Benchmarks.RedisContainerBenchmarks.StackExchange_Set_Small --job ".NET 8.0" --benchmarkId 3 in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\bin\Release\net8.0
+// BeforeAnythingElse
+
+System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+ ---> System.TypeInitializationException: The type initializer for 'DotNet.Testcontainers.Configurations.TestcontainersSettings' threw an exception.
+ ---> System.ArgumentException: npipe:////pipe/docker_engine is not a valid npipe URI
+   at Docker.DotNet.DockerClient..ctor(DockerClientConfiguration configuration, Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClient.cs:line 50
+   at Docker.DotNet.DockerClientConfiguration.CreateClient(Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClientConfiguration.cs:line 55
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.<>c__DisplayClass5_0.<<IsAvailable>b__0>d.MoveNext() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 44
+--- End of stack trace from previous location ---
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.IsAvailable() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 40
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.<>c.<.cctor>b__3_0(DockerEndpointAuthenticationProvider authProvider) in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 35
+   at System.Linq.Enumerable.TryGetFirst[TSource](IEnumerable`1 source, Func`2 predicate, Boolean& found)
+   at System.Linq.Enumerable.FirstOrDefault[TSource](IEnumerable`1 source, Func`2 predicate)
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings..cctor() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 34
+   --- End of inner exception stack trace ---
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.get_OS() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 144
+   at DotNet.Testcontainers.Builders.AbstractBuilder`4.Init() in /_/src/Testcontainers/Builders/AbstractBuilder`4.cs:line 134
+   at DotNet.Testcontainers.Builders.ContainerBuilder`3.Init() in /_/src/Testcontainers/Builders/ContainerBuilder`3.cs:line 389
+   at Testcontainers.Redis.RedisBuilder.Init() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 43
+   at Testcontainers.Redis.RedisBuilder..ctor() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 17
+   at Respire.Benchmarks.RedisContainerBenchmarks..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\RedisContainerBenchmarks.cs:line 27
+   at BenchmarkDotNet.Autogenerated.Runnable_3..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 792
+   at BenchmarkDotNet.Autogenerated.Runnable_3.Run(IHost host, String benchmarkName) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 740
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at BenchmarkDotNet.Autogenerated.UniqueProgramName.AfterAssemblyLoadingAttached(String[] args) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 57
+// AfterAll
+No Workload Results were obtained from the run.
+// Benchmark Process 51320 has exited with code -1.
+
+// ** Remained 16 (80.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:03 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.Respire_Set_Medium: .NET 8.0(Runtime=.NET 8.0)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet f2da7785-2b11-43b5-8f3b-5b043df6bdf6.dll --anonymousPipes 1704 1444 --benchmarkName Respire.Benchmarks.RedisContainerBenchmarks.Respire_Set_Medium --job ".NET 8.0" --benchmarkId 4 in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\bin\Release\net8.0
+// BeforeAnythingElse
+
+System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+ ---> System.TypeInitializationException: The type initializer for 'DotNet.Testcontainers.Configurations.TestcontainersSettings' threw an exception.
+ ---> System.ArgumentException: npipe:////pipe/docker_engine is not a valid npipe URI
+   at Docker.DotNet.DockerClient..ctor(DockerClientConfiguration configuration, Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClient.cs:line 50
+   at Docker.DotNet.DockerClientConfiguration.CreateClient(Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClientConfiguration.cs:line 55
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.<>c__DisplayClass5_0.<<IsAvailable>b__0>d.MoveNext() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 44
+--- End of stack trace from previous location ---
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.IsAvailable() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 40
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.<>c.<.cctor>b__3_0(DockerEndpointAuthenticationProvider authProvider) in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 35
+   at System.Linq.Enumerable.TryGetFirst[TSource](IEnumerable`1 source, Func`2 predicate, Boolean& found)
+   at System.Linq.Enumerable.FirstOrDefault[TSource](IEnumerable`1 source, Func`2 predicate)
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings..cctor() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 34
+   --- End of inner exception stack trace ---
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.get_OS() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 144
+   at DotNet.Testcontainers.Builders.AbstractBuilder`4.Init() in /_/src/Testcontainers/Builders/AbstractBuilder`4.cs:line 134
+   at DotNet.Testcontainers.Builders.ContainerBuilder`3.Init() in /_/src/Testcontainers/Builders/ContainerBuilder`3.cs:line 389
+   at Testcontainers.Redis.RedisBuilder.Init() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 43
+   at Testcontainers.Redis.RedisBuilder..ctor() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 17
+   at Respire.Benchmarks.RedisContainerBenchmarks..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\RedisContainerBenchmarks.cs:line 27
+   at BenchmarkDotNet.Autogenerated.Runnable_4..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 989
+   at BenchmarkDotNet.Autogenerated.Runnable_4.Run(IHost host, String benchmarkName) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 937
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at BenchmarkDotNet.Autogenerated.UniqueProgramName.AfterAssemblyLoadingAttached(String[] args) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 57
+// AfterAll
+No Workload Results were obtained from the run.
+// Benchmark Process 36364 has exited with code -1.
+
+// ** Remained 15 (75.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:03 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.StackExchange_Set_Medium: .NET 8.0(Runtime=.NET 8.0)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet f2da7785-2b11-43b5-8f3b-5b043df6bdf6.dll --anonymousPipes 1796 1800 --benchmarkName Respire.Benchmarks.RedisContainerBenchmarks.StackExchange_Set_Medium --job ".NET 8.0" --benchmarkId 5 in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\bin\Release\net8.0
+// BeforeAnythingElse
+
+System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+ ---> System.TypeInitializationException: The type initializer for 'DotNet.Testcontainers.Configurations.TestcontainersSettings' threw an exception.
+ ---> System.ArgumentException: npipe:////pipe/docker_engine is not a valid npipe URI
+   at Docker.DotNet.DockerClient..ctor(DockerClientConfiguration configuration, Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClient.cs:line 50
+   at Docker.DotNet.DockerClientConfiguration.CreateClient(Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClientConfiguration.cs:line 55
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.<>c__DisplayClass5_0.<<IsAvailable>b__0>d.MoveNext() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 44
+--- End of stack trace from previous location ---
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.IsAvailable() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 40
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.<>c.<.cctor>b__3_0(DockerEndpointAuthenticationProvider authProvider) in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 35
+   at System.Linq.Enumerable.TryGetFirst[TSource](IEnumerable`1 source, Func`2 predicate, Boolean& found)
+   at System.Linq.Enumerable.FirstOrDefault[TSource](IEnumerable`1 source, Func`2 predicate)
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings..cctor() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 34
+   --- End of inner exception stack trace ---
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.get_OS() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 144
+   at DotNet.Testcontainers.Builders.AbstractBuilder`4.Init() in /_/src/Testcontainers/Builders/AbstractBuilder`4.cs:line 134
+   at DotNet.Testcontainers.Builders.ContainerBuilder`3.Init() in /_/src/Testcontainers/Builders/ContainerBuilder`3.cs:line 389
+   at Testcontainers.Redis.RedisBuilder.Init() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 43
+   at Testcontainers.Redis.RedisBuilder..ctor() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 17
+   at Respire.Benchmarks.RedisContainerBenchmarks..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\RedisContainerBenchmarks.cs:line 27
+   at BenchmarkDotNet.Autogenerated.Runnable_5..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 1186
+   at BenchmarkDotNet.Autogenerated.Runnable_5.Run(IHost host, String benchmarkName) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 1134
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at BenchmarkDotNet.Autogenerated.UniqueProgramName.AfterAssemblyLoadingAttached(String[] args) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 57
+// AfterAll
+No Workload Results were obtained from the run.
+// Benchmark Process 1780 has exited with code -1.
+
+// ** Remained 14 (70.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:03 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.Respire_Set_Large: .NET 8.0(Runtime=.NET 8.0)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet f2da7785-2b11-43b5-8f3b-5b043df6bdf6.dll --anonymousPipes 1824 1808 --benchmarkName Respire.Benchmarks.RedisContainerBenchmarks.Respire_Set_Large --job ".NET 8.0" --benchmarkId 6 in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\bin\Release\net8.0
+// BeforeAnythingElse
+
+System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+ ---> System.TypeInitializationException: The type initializer for 'DotNet.Testcontainers.Configurations.TestcontainersSettings' threw an exception.
+ ---> System.ArgumentException: npipe:////pipe/docker_engine is not a valid npipe URI
+   at Docker.DotNet.DockerClient..ctor(DockerClientConfiguration configuration, Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClient.cs:line 50
+   at Docker.DotNet.DockerClientConfiguration.CreateClient(Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClientConfiguration.cs:line 55
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.<>c__DisplayClass5_0.<<IsAvailable>b__0>d.MoveNext() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 44
+--- End of stack trace from previous location ---
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.IsAvailable() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 40
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.<>c.<.cctor>b__3_0(DockerEndpointAuthenticationProvider authProvider) in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 35
+   at System.Linq.Enumerable.TryGetFirst[TSource](IEnumerable`1 source, Func`2 predicate, Boolean& found)
+   at System.Linq.Enumerable.FirstOrDefault[TSource](IEnumerable`1 source, Func`2 predicate)
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings..cctor() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 34
+   --- End of inner exception stack trace ---
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.get_OS() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 144
+   at DotNet.Testcontainers.Builders.AbstractBuilder`4.Init() in /_/src/Testcontainers/Builders/AbstractBuilder`4.cs:line 134
+   at DotNet.Testcontainers.Builders.ContainerBuilder`3.Init() in /_/src/Testcontainers/Builders/ContainerBuilder`3.cs:line 389
+   at Testcontainers.Redis.RedisBuilder.Init() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 43
+   at Testcontainers.Redis.RedisBuilder..ctor() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 17
+   at Respire.Benchmarks.RedisContainerBenchmarks..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\RedisContainerBenchmarks.cs:line 27
+   at BenchmarkDotNet.Autogenerated.Runnable_6..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 1383
+   at BenchmarkDotNet.Autogenerated.Runnable_6.Run(IHost host, String benchmarkName) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 1331
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at BenchmarkDotNet.Autogenerated.UniqueProgramName.AfterAssemblyLoadingAttached(String[] args) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 57
+// AfterAll
+No Workload Results were obtained from the run.
+// Benchmark Process 22944 has exited with code -1.
+
+// ** Remained 13 (65.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:03 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.StackExchange_Set_Large: .NET 8.0(Runtime=.NET 8.0)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet f2da7785-2b11-43b5-8f3b-5b043df6bdf6.dll --anonymousPipes 1600 1260 --benchmarkName Respire.Benchmarks.RedisContainerBenchmarks.StackExchange_Set_Large --job ".NET 8.0" --benchmarkId 7 in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\bin\Release\net8.0
+// BeforeAnythingElse
+
+System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+ ---> System.TypeInitializationException: The type initializer for 'DotNet.Testcontainers.Configurations.TestcontainersSettings' threw an exception.
+ ---> System.ArgumentException: npipe:////pipe/docker_engine is not a valid npipe URI
+   at Docker.DotNet.DockerClient..ctor(DockerClientConfiguration configuration, Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClient.cs:line 50
+   at Docker.DotNet.DockerClientConfiguration.CreateClient(Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClientConfiguration.cs:line 55
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.<>c__DisplayClass5_0.<<IsAvailable>b__0>d.MoveNext() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 44
+--- End of stack trace from previous location ---
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.IsAvailable() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 40
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.<>c.<.cctor>b__3_0(DockerEndpointAuthenticationProvider authProvider) in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 35
+   at System.Linq.Enumerable.TryGetFirst[TSource](IEnumerable`1 source, Func`2 predicate, Boolean& found)
+   at System.Linq.Enumerable.FirstOrDefault[TSource](IEnumerable`1 source, Func`2 predicate)
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings..cctor() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 34
+   --- End of inner exception stack trace ---
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.get_OS() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 144
+   at DotNet.Testcontainers.Builders.AbstractBuilder`4.Init() in /_/src/Testcontainers/Builders/AbstractBuilder`4.cs:line 134
+   at DotNet.Testcontainers.Builders.ContainerBuilder`3.Init() in /_/src/Testcontainers/Builders/ContainerBuilder`3.cs:line 389
+   at Testcontainers.Redis.RedisBuilder.Init() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 43
+   at Testcontainers.Redis.RedisBuilder..ctor() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 17
+   at Respire.Benchmarks.RedisContainerBenchmarks..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\RedisContainerBenchmarks.cs:line 27
+   at BenchmarkDotNet.Autogenerated.Runnable_7..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 1580
+   at BenchmarkDotNet.Autogenerated.Runnable_7.Run(IHost host, String benchmarkName) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 1528
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at BenchmarkDotNet.Autogenerated.UniqueProgramName.AfterAssemblyLoadingAttached(String[] args) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 57
+// AfterAll
+No Workload Results were obtained from the run.
+// Benchmark Process 45640 has exited with code -1.
+
+// ** Remained 12 (60.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:03 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.Respire_Get: .NET 8.0(Runtime=.NET 8.0)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet f2da7785-2b11-43b5-8f3b-5b043df6bdf6.dll --anonymousPipes 1864 1860 --benchmarkName Respire.Benchmarks.RedisContainerBenchmarks.Respire_Get --job ".NET 8.0" --benchmarkId 8 in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\bin\Release\net8.0
+// BeforeAnythingElse
+
+System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+ ---> System.TypeInitializationException: The type initializer for 'DotNet.Testcontainers.Configurations.TestcontainersSettings' threw an exception.
+ ---> System.ArgumentException: npipe:////pipe/docker_engine is not a valid npipe URI
+   at Docker.DotNet.DockerClient..ctor(DockerClientConfiguration configuration, Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClient.cs:line 50
+   at Docker.DotNet.DockerClientConfiguration.CreateClient(Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClientConfiguration.cs:line 55
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.<>c__DisplayClass5_0.<<IsAvailable>b__0>d.MoveNext() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 44
+--- End of stack trace from previous location ---
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.IsAvailable() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 40
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.<>c.<.cctor>b__3_0(DockerEndpointAuthenticationProvider authProvider) in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 35
+   at System.Linq.Enumerable.TryGetFirst[TSource](IEnumerable`1 source, Func`2 predicate, Boolean& found)
+   at System.Linq.Enumerable.FirstOrDefault[TSource](IEnumerable`1 source, Func`2 predicate)
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings..cctor() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 34
+   --- End of inner exception stack trace ---
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.get_OS() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 144
+   at DotNet.Testcontainers.Builders.AbstractBuilder`4.Init() in /_/src/Testcontainers/Builders/AbstractBuilder`4.cs:line 134
+   at DotNet.Testcontainers.Builders.ContainerBuilder`3.Init() in /_/src/Testcontainers/Builders/ContainerBuilder`3.cs:line 389
+   at Testcontainers.Redis.RedisBuilder.Init() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 43
+   at Testcontainers.Redis.RedisBuilder..ctor() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 17
+   at Respire.Benchmarks.RedisContainerBenchmarks..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\RedisContainerBenchmarks.cs:line 27
+   at BenchmarkDotNet.Autogenerated.Runnable_8..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 1777
+   at BenchmarkDotNet.Autogenerated.Runnable_8.Run(IHost host, String benchmarkName) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 1725
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at BenchmarkDotNet.Autogenerated.UniqueProgramName.AfterAssemblyLoadingAttached(String[] args) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 57
+// AfterAll
+No Workload Results were obtained from the run.
+// Benchmark Process 51988 has exited with code -1.
+
+// ** Remained 11 (55.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:03 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.StackExchange_Get: .NET 8.0(Runtime=.NET 8.0)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet f2da7785-2b11-43b5-8f3b-5b043df6bdf6.dll --anonymousPipes 1836 1828 --benchmarkName Respire.Benchmarks.RedisContainerBenchmarks.StackExchange_Get --job ".NET 8.0" --benchmarkId 9 in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\bin\Release\net8.0
+// BeforeAnythingElse
+
+System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+ ---> System.TypeInitializationException: The type initializer for 'DotNet.Testcontainers.Configurations.TestcontainersSettings' threw an exception.
+ ---> System.ArgumentException: npipe:////pipe/docker_engine is not a valid npipe URI
+   at Docker.DotNet.DockerClient..ctor(DockerClientConfiguration configuration, Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClient.cs:line 50
+   at Docker.DotNet.DockerClientConfiguration.CreateClient(Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClientConfiguration.cs:line 55
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.<>c__DisplayClass5_0.<<IsAvailable>b__0>d.MoveNext() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 44
+--- End of stack trace from previous location ---
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.IsAvailable() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 40
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.<>c.<.cctor>b__3_0(DockerEndpointAuthenticationProvider authProvider) in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 35
+   at System.Linq.Enumerable.TryGetFirst[TSource](IEnumerable`1 source, Func`2 predicate, Boolean& found)
+   at System.Linq.Enumerable.FirstOrDefault[TSource](IEnumerable`1 source, Func`2 predicate)
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings..cctor() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 34
+   --- End of inner exception stack trace ---
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.get_OS() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 144
+   at DotNet.Testcontainers.Builders.AbstractBuilder`4.Init() in /_/src/Testcontainers/Builders/AbstractBuilder`4.cs:line 134
+   at DotNet.Testcontainers.Builders.ContainerBuilder`3.Init() in /_/src/Testcontainers/Builders/ContainerBuilder`3.cs:line 389
+   at Testcontainers.Redis.RedisBuilder.Init() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 43
+   at Testcontainers.Redis.RedisBuilder..ctor() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 17
+   at Respire.Benchmarks.RedisContainerBenchmarks..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\RedisContainerBenchmarks.cs:line 27
+   at BenchmarkDotNet.Autogenerated.Runnable_9..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 1974
+   at BenchmarkDotNet.Autogenerated.Runnable_9.Run(IHost host, String benchmarkName) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 1922
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at BenchmarkDotNet.Autogenerated.UniqueProgramName.AfterAssemblyLoadingAttached(String[] args) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 57
+// AfterAll
+No Workload Results were obtained from the run.
+// Benchmark Process 44128 has exited with code -1.
+
+// ** Remained 10 (50.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:03 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.Respire_MGet: .NET 8.0(Runtime=.NET 8.0)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet f2da7785-2b11-43b5-8f3b-5b043df6bdf6.dll --anonymousPipes 1868 1872 --benchmarkName Respire.Benchmarks.RedisContainerBenchmarks.Respire_MGet --job ".NET 8.0" --benchmarkId 10 in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\bin\Release\net8.0
+// BeforeAnythingElse
+
+System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+ ---> System.TypeInitializationException: The type initializer for 'DotNet.Testcontainers.Configurations.TestcontainersSettings' threw an exception.
+ ---> System.ArgumentException: npipe:////pipe/docker_engine is not a valid npipe URI
+   at Docker.DotNet.DockerClient..ctor(DockerClientConfiguration configuration, Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClient.cs:line 50
+   at Docker.DotNet.DockerClientConfiguration.CreateClient(Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClientConfiguration.cs:line 55
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.<>c__DisplayClass5_0.<<IsAvailable>b__0>d.MoveNext() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 44
+--- End of stack trace from previous location ---
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.IsAvailable() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 40
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.<>c.<.cctor>b__3_0(DockerEndpointAuthenticationProvider authProvider) in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 35
+   at System.Linq.Enumerable.TryGetFirst[TSource](IEnumerable`1 source, Func`2 predicate, Boolean& found)
+   at System.Linq.Enumerable.FirstOrDefault[TSource](IEnumerable`1 source, Func`2 predicate)
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings..cctor() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 34
+   --- End of inner exception stack trace ---
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.get_OS() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 144
+   at DotNet.Testcontainers.Builders.AbstractBuilder`4.Init() in /_/src/Testcontainers/Builders/AbstractBuilder`4.cs:line 134
+   at DotNet.Testcontainers.Builders.ContainerBuilder`3.Init() in /_/src/Testcontainers/Builders/ContainerBuilder`3.cs:line 389
+   at Testcontainers.Redis.RedisBuilder.Init() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 43
+   at Testcontainers.Redis.RedisBuilder..ctor() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 17
+   at Respire.Benchmarks.RedisContainerBenchmarks..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\RedisContainerBenchmarks.cs:line 27
+   at BenchmarkDotNet.Autogenerated.Runnable_10..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 2182
+   at BenchmarkDotNet.Autogenerated.Runnable_10.Run(IHost host, String benchmarkName) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 2130
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at BenchmarkDotNet.Autogenerated.UniqueProgramName.AfterAssemblyLoadingAttached(String[] args) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 57
+// AfterAll
+No Workload Results were obtained from the run.
+// Benchmark Process 3276 has exited with code -1.
+
+// ** Remained 9 (45.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:03 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.StackExchange_MGet: .NET 8.0(Runtime=.NET 8.0)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet f2da7785-2b11-43b5-8f3b-5b043df6bdf6.dll --anonymousPipes 1356 1904 --benchmarkName Respire.Benchmarks.RedisContainerBenchmarks.StackExchange_MGet --job ".NET 8.0" --benchmarkId 11 in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\bin\Release\net8.0
+// BeforeAnythingElse
+
+System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+ ---> System.TypeInitializationException: The type initializer for 'DotNet.Testcontainers.Configurations.TestcontainersSettings' threw an exception.
+ ---> System.ArgumentException: npipe:////pipe/docker_engine is not a valid npipe URI
+   at Docker.DotNet.DockerClient..ctor(DockerClientConfiguration configuration, Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClient.cs:line 50
+   at Docker.DotNet.DockerClientConfiguration.CreateClient(Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClientConfiguration.cs:line 55
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.<>c__DisplayClass5_0.<<IsAvailable>b__0>d.MoveNext() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 44
+--- End of stack trace from previous location ---
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.IsAvailable() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 40
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.<>c.<.cctor>b__3_0(DockerEndpointAuthenticationProvider authProvider) in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 35
+   at System.Linq.Enumerable.TryGetFirst[TSource](IEnumerable`1 source, Func`2 predicate, Boolean& found)
+   at System.Linq.Enumerable.FirstOrDefault[TSource](IEnumerable`1 source, Func`2 predicate)
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings..cctor() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 34
+   --- End of inner exception stack trace ---
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.get_OS() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 144
+   at DotNet.Testcontainers.Builders.AbstractBuilder`4.Init() in /_/src/Testcontainers/Builders/AbstractBuilder`4.cs:line 134
+   at DotNet.Testcontainers.Builders.ContainerBuilder`3.Init() in /_/src/Testcontainers/Builders/ContainerBuilder`3.cs:line 389
+   at Testcontainers.Redis.RedisBuilder.Init() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 43
+   at Testcontainers.Redis.RedisBuilder..ctor() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 17
+   at Respire.Benchmarks.RedisContainerBenchmarks..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\RedisContainerBenchmarks.cs:line 27
+   at BenchmarkDotNet.Autogenerated.Runnable_11..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 2379
+   at BenchmarkDotNet.Autogenerated.Runnable_11.Run(IHost host, String benchmarkName) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 2327
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at BenchmarkDotNet.Autogenerated.UniqueProgramName.AfterAssemblyLoadingAttached(String[] args) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 57
+// AfterAll
+No Workload Results were obtained from the run.
+// Benchmark Process 44720 has exited with code -1.
+
+// ** Remained 8 (40.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:03 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.Respire_Pipeline_10_Sets: .NET 8.0(Runtime=.NET 8.0)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet f2da7785-2b11-43b5-8f3b-5b043df6bdf6.dll --anonymousPipes 1400 1888 --benchmarkName Respire.Benchmarks.RedisContainerBenchmarks.Respire_Pipeline_10_Sets --job ".NET 8.0" --benchmarkId 12 in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\bin\Release\net8.0
+// BeforeAnythingElse
+
+System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+ ---> System.TypeInitializationException: The type initializer for 'DotNet.Testcontainers.Configurations.TestcontainersSettings' threw an exception.
+ ---> System.ArgumentException: npipe:////pipe/docker_engine is not a valid npipe URI
+   at Docker.DotNet.DockerClient..ctor(DockerClientConfiguration configuration, Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClient.cs:line 50
+   at Docker.DotNet.DockerClientConfiguration.CreateClient(Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClientConfiguration.cs:line 55
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.<>c__DisplayClass5_0.<<IsAvailable>b__0>d.MoveNext() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 44
+--- End of stack trace from previous location ---
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.IsAvailable() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 40
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.<>c.<.cctor>b__3_0(DockerEndpointAuthenticationProvider authProvider) in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 35
+   at System.Linq.Enumerable.TryGetFirst[TSource](IEnumerable`1 source, Func`2 predicate, Boolean& found)
+   at System.Linq.Enumerable.FirstOrDefault[TSource](IEnumerable`1 source, Func`2 predicate)
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings..cctor() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 34
+   --- End of inner exception stack trace ---
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.get_OS() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 144
+   at DotNet.Testcontainers.Builders.AbstractBuilder`4.Init() in /_/src/Testcontainers/Builders/AbstractBuilder`4.cs:line 134
+   at DotNet.Testcontainers.Builders.ContainerBuilder`3.Init() in /_/src/Testcontainers/Builders/ContainerBuilder`3.cs:line 389
+   at Testcontainers.Redis.RedisBuilder.Init() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 43
+   at Testcontainers.Redis.RedisBuilder..ctor() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 17
+   at Respire.Benchmarks.RedisContainerBenchmarks..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\RedisContainerBenchmarks.cs:line 27
+   at BenchmarkDotNet.Autogenerated.Runnable_12..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 2576
+   at BenchmarkDotNet.Autogenerated.Runnable_12.Run(IHost host, String benchmarkName) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 2524
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at BenchmarkDotNet.Autogenerated.UniqueProgramName.AfterAssemblyLoadingAttached(String[] args) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 57
+// AfterAll
+No Workload Results were obtained from the run.
+// Benchmark Process 23036 has exited with code -1.
+
+// ** Remained 7 (35.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:03 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.StackExchange_Pipeline_10_Sets: .NET 8.0(Runtime=.NET 8.0)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet f2da7785-2b11-43b5-8f3b-5b043df6bdf6.dll --anonymousPipes 1464 1816 --benchmarkName Respire.Benchmarks.RedisContainerBenchmarks.StackExchange_Pipeline_10_Sets --job ".NET 8.0" --benchmarkId 13 in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\bin\Release\net8.0
+// BeforeAnythingElse
+
+System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+ ---> System.TypeInitializationException: The type initializer for 'DotNet.Testcontainers.Configurations.TestcontainersSettings' threw an exception.
+ ---> System.ArgumentException: npipe:////pipe/docker_engine is not a valid npipe URI
+   at Docker.DotNet.DockerClient..ctor(DockerClientConfiguration configuration, Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClient.cs:line 50
+   at Docker.DotNet.DockerClientConfiguration.CreateClient(Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClientConfiguration.cs:line 55
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.<>c__DisplayClass5_0.<<IsAvailable>b__0>d.MoveNext() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 44
+--- End of stack trace from previous location ---
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.IsAvailable() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 40
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.<>c.<.cctor>b__3_0(DockerEndpointAuthenticationProvider authProvider) in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 35
+   at System.Linq.Enumerable.TryGetFirst[TSource](IEnumerable`1 source, Func`2 predicate, Boolean& found)
+   at System.Linq.Enumerable.FirstOrDefault[TSource](IEnumerable`1 source, Func`2 predicate)
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings..cctor() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 34
+   --- End of inner exception stack trace ---
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.get_OS() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 144
+   at DotNet.Testcontainers.Builders.AbstractBuilder`4.Init() in /_/src/Testcontainers/Builders/AbstractBuilder`4.cs:line 134
+   at DotNet.Testcontainers.Builders.ContainerBuilder`3.Init() in /_/src/Testcontainers/Builders/ContainerBuilder`3.cs:line 389
+   at Testcontainers.Redis.RedisBuilder.Init() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 43
+   at Testcontainers.Redis.RedisBuilder..ctor() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 17
+   at Respire.Benchmarks.RedisContainerBenchmarks..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\RedisContainerBenchmarks.cs:line 27
+   at BenchmarkDotNet.Autogenerated.Runnable_13..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 2768
+   at BenchmarkDotNet.Autogenerated.Runnable_13.Run(IHost host, String benchmarkName) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 2716
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at BenchmarkDotNet.Autogenerated.UniqueProgramName.AfterAssemblyLoadingAttached(String[] args) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 57
+// AfterAll
+No Workload Results were obtained from the run.
+// Benchmark Process 27776 has exited with code -1.
+
+// ** Remained 6 (30.0%) benchmark(s) to run. Estimated finish 2025-08-27 21:03 (0h 0m from now) **
+Setup power plan (GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c FriendlyName: High performance)
+// **************************
+// Benchmark: RedisContainerBenchmarks.Respire_Exists: .NET 8.0(Runtime=.NET 8.0)
+// *** Execute ***
+// Launch: 1 / 1
+// Execute: dotnet f2da7785-2b11-43b5-8f3b-5b043df6bdf6.dll --anonymousPipes 1280 1548 --benchmarkName Respire.Benchmarks.RedisContainerBenchmarks.Respire_Exists --job ".NET 8.0" --benchmarkId 14 in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\bin\Release\net8.0
+// BeforeAnythingElse
+
+System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation.
+ ---> System.TypeInitializationException: The type initializer for 'DotNet.Testcontainers.Configurations.TestcontainersSettings' threw an exception.
+ ---> System.ArgumentException: npipe:////pipe/docker_engine is not a valid npipe URI
+   at Docker.DotNet.DockerClient..ctor(DockerClientConfiguration configuration, Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClient.cs:line 50
+   at Docker.DotNet.DockerClientConfiguration.CreateClient(Version requestedApiVersion, ILogger logger) in /_/src/Docker.DotNet/DockerClientConfiguration.cs:line 55
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.<>c__DisplayClass5_0.<<IsAvailable>b__0>d.MoveNext() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 44
+--- End of stack trace from previous location ---
+   at DotNet.Testcontainers.Builders.DockerEndpointAuthenticationProvider.IsAvailable() in /_/src/Testcontainers/Builders/DockerEndpointAuthenticationProvider.cs:line 40
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.<>c.<.cctor>b__3_0(DockerEndpointAuthenticationProvider authProvider) in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 35
+   at System.Linq.Enumerable.TryGetFirst[TSource](IEnumerable`1 source, Func`2 predicate, Boolean& found)
+   at System.Linq.Enumerable.FirstOrDefault[TSource](IEnumerable`1 source, Func`2 predicate)
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings..cctor() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 34
+   --- End of inner exception stack trace ---
+   at DotNet.Testcontainers.Configurations.TestcontainersSettings.get_OS() in /_/src/Testcontainers/Configurations/TestcontainersSettings.cs:line 144
+   at DotNet.Testcontainers.Builders.AbstractBuilder`4.Init() in /_/src/Testcontainers/Builders/AbstractBuilder`4.cs:line 134
+   at DotNet.Testcontainers.Builders.ContainerBuilder`3.Init() in /_/src/Testcontainers/Builders/ContainerBuilder`3.cs:line 389
+   at Testcontainers.Redis.RedisBuilder.Init() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 43
+   at Testcontainers.Redis.RedisBuilder..ctor() in /_/src/Testcontainers.Redis/RedisBuilder.cs:line 17
+   at Respire.Benchmarks.RedisContainerBenchmarks..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\RedisContainerBenchmarks.cs:line 27
+   at BenchmarkDotNet.Autogenerated.Runnable_14..ctor() in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 2960
+   at BenchmarkDotNet.Autogenerated.Runnable_14.Run(IHost host, String benchmarkName) in D:\git\Respire\benchmarks\Respire.Benchmarks\bin\Release\net8.0\f2da7785-2b11-43b5-8f3b-5b043df6bdf6\f2da7785-2b11-43b5-8f3b-5b043df6bdf6.notcs:line 2908
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   --- End of inner exception stack trace ---
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+   at System.Reflection.MethodBase.Invoke(Object obj, Object[] parameters)
+   at Benchm

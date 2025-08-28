@@ -1,10 +1,10 @@
-# Keva Pipeline
+# Respire Pipeline
 
-A ModularPipelines-based CI/CD pipeline for the Keva Redis client library.
+A ModularPipelines-based CI/CD pipeline for the Respire Redis client library.
 
 ## Features
 
-- **Automated Building**: Builds the entire Keva solution
+- **Automated Building**: Builds the entire Respire solution
 - **Unit Testing**: Runs all unit tests with comprehensive reporting
 - **Benchmarking**: Executes performance benchmarks
 - **Version Generation**: Git-based semantic versioning
@@ -25,7 +25,7 @@ Configure the pipeline through `appsettings.json`:
   },
   "GitHub": {
     "Token": "your-github-token",
-    "Repository": "Keva",
+    "Repository": "Respire",
     "Owner": "your-github-username"
   }
 }
@@ -56,7 +56,7 @@ You can also use environment variables:
 In development mode, packages are copied to a local NuGet folder:
 
 ```bash
-cd Keva.Pipeline
+cd Respire.Pipeline
 dotnet run --environment Development
 ```
 
@@ -73,7 +73,7 @@ This will:
 In production mode, packages are published to NuGet.org and GitHub releases are created:
 
 ```bash
-cd Keva.Pipeline
+cd Respire.Pipeline
 dotnet run --environment Production
 ```
 
@@ -136,13 +136,13 @@ You can customize the pipeline by:
 ## Example Output
 
 ```
-info: Building Keva solution...
+info: Building Respire solution...
 info: Running unit tests...
 info: Running performance benchmarks...
 info: Generated version: 1.0.0-feature-optimization-a1b2c3d
 info: Packing NuGet packages...
 info: Found 2 package files:
-info:   - Keva.1.0.0-feature-optimization-a1b2c3d.nupkg (245,760 bytes)
-info:   - Keva.Extensions.DependencyInjection.1.0.0-feature-optimization-a1b2c3d.nupkg (12,345 bytes)
+info:   - Respire.1.0.0-feature-optimization-a1b2c3d.nupkg (245,760 bytes)
+info:   - Respire.Extensions.DependencyInjection.1.0.0-feature-optimization-a1b2c3d.nupkg (12,345 bytes)
 info: Completed copying 2 packages to local NuGet
 ```

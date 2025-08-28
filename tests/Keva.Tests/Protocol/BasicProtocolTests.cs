@@ -1,10 +1,10 @@
 using System.Text;
-using Keva.Protocol;
+using Respire.Protocol;
 using TUnit.Core;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 
-namespace Keva.Tests.Protocol;
+namespace Respire.Tests.Protocol;
 
 /// <summary>
 /// Basic tests for core RESP protocol functionality
@@ -14,7 +14,7 @@ public class BasicProtocolTests
     [Test]
     public async Task RespValue_SimpleString_Works()
     {
-        var value = KevaValue.SimpleString("OK");
+        var value = RespireValue.SimpleString("OK");
         
         await Assert.That(value.Type).IsEqualTo(RespDataType.SimpleString);
         await Assert.That(value.AsString()).IsEqualTo("OK");
@@ -24,7 +24,7 @@ public class BasicProtocolTests
     [Test]
     public async Task RespValue_Error_Works()
     {
-        var value = KevaValue.Error("ERR unknown");
+        var value = RespireValue.Error("ERR unknown");
         
         await Assert.That(value.Type).IsEqualTo(RespDataType.Error);
         await Assert.That(value.IsError).IsTrue();
@@ -34,7 +34,7 @@ public class BasicProtocolTests
     [Test]
     public async Task RespValue_Integer_Works()
     {
-        var value = KevaValue.Integer(42);
+        var value = RespireValue.Integer(42);
         
         await Assert.That(value.Type).IsEqualTo(RespDataType.Integer);
         await Assert.That(value.AsInteger()).IsEqualTo(42);
@@ -43,7 +43,7 @@ public class BasicProtocolTests
     [Test]
     public async Task RespValue_BulkString_Works()
     {
-        var value = KevaValue.BulkString("Hello");
+        var value = RespireValue.BulkString("Hello");
         
         await Assert.That(value.Type).IsEqualTo(RespDataType.BulkString);
         await Assert.That(value.AsString()).IsEqualTo("Hello");
@@ -52,7 +52,7 @@ public class BasicProtocolTests
     [Test]
     public async Task RespValue_Null_Works()
     {
-        var value = KevaValue.Null;
+        var value = RespireValue.Null;
         
         await Assert.That(value.Type).IsEqualTo(RespDataType.Null);
         await Assert.That(value.IsNull).IsTrue();
@@ -61,9 +61,9 @@ public class BasicProtocolTests
     [Test]
     public async Task RespValue_Array_Works()
     {
-        var value = KevaValue.Array(
-            KevaValue.BulkString("first"),
-            KevaValue.Integer(2)
+        var value = RespireValue.Array(
+            RespireValue.BulkString("first"),
+            RespireValue.Integer(2)
         );
         
         await Assert.That(value.Type).IsEqualTo(RespDataType.Array);

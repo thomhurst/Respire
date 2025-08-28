@@ -2,7 +2,7 @@ using Microsoft.Extensions.Logging;
 using ModularPipelines.Context;
 using ModularPipelines.Modules;
 
-namespace Keva.Pipeline.Modules.LocalMachine;
+namespace Respire.Pipeline.Modules.LocalMachine;
 
 public class CreateLocalNugetFolderModule : Module<DirectoryInfo>
 {

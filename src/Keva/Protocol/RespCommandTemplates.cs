@@ -1,7 +1,7 @@
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 
-namespace Keva.Protocol;
+namespace Respire.Protocol;
 
 /// <summary>
 /// High-performance command templates for parameterized Redis commands

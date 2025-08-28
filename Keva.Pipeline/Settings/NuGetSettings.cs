@@ -1,4 +1,4 @@
-namespace Keva.Pipeline.Settings;
+namespace Respire.Pipeline.Settings;
 
 public record NuGetSettings
 {

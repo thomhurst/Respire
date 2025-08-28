@@ -6,9 +6,9 @@ using ModularPipelines.DotNet.Extensions;
 using ModularPipelines.DotNet.Options;
 using ModularPipelines.Models;
 using ModularPipelines.Modules;
-using Keva.Pipeline.Settings;
+using Respire.Pipeline.Settings;
 
-namespace Keva.Pipeline.Modules;
+namespace Respire.Pipeline.Modules;
 
 [DependsOn<PackagePathsParserModule>]
 public class UploadPackagesToNugetModule : Module<CommandResult[]>

@@ -8,7 +8,7 @@ using ModularPipelines.Enums;
 using ModularPipelines.Models;
 using ModularPipelines.Modules;
 
-namespace Keva.Pipeline.Modules;
+namespace Respire.Pipeline.Modules;
 
 [DependsOn<RunBenchmarkModule>]
 public class PackProjectsModule : Module<CommandResult[]>
@@ -19,8 +19,8 @@ public class PackProjectsModule : Module<CommandResult[]>
 
         var packageProjects = context.Configuration.GetSection("PackageProjects").Get<string[]>() ?? new[]
         {
-            "../src/Keva/Keva.csproj",
-            "../src/Keva.Extensions.DependencyInjection/Keva.Extensions.DependencyInjection.csproj"
+            "../src/Respire/Respire.csproj",
+            "../src/Respire.Extensions.DependencyInjection/Respire.Extensions.DependencyInjection.csproj"
         };
 
         var version = Environment.GetEnvironmentVariable("KEVA_VERSION") ?? "1.0.0-dev";

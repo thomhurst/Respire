@@ -1,4 +1,4 @@
-namespace Keva.Protocol;
+namespace Respire.Protocol;
 
 public enum RespDataType : byte
 {

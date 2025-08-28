@@ -8,7 +8,7 @@
     ".NETCoreApp,Version=v8.0": {
       "f2da7785-2b11-43b5-8f3b-5b043df6bdf6/1.0.0": {
         "dependencies": {
-          "Keva.Benchmarks": "1.0.0"
+          "Respire.Benchmarks": "1.0.0"
         },
         "runtime": {
           "f2da7785-2b11-43b5-8f3b-5b043df6bdf6.dll": {}
@@ -549,40 +549,40 @@
           }
         }
       },
-      "Keva.Benchmarks/1.0.0": {
+      "Respire.Benchmarks/1.0.0": {
         "dependencies": {
           "BenchmarkDotNet": "0.13.12",
-          "Keva.Client": "1.0.0",
-          "Keva": "1.0.0",
+          "Respire.Client": "1.0.0",
+          "Respire": "1.0.0",
           "StackExchange.Redis": "2.7.10",
           "Testcontainers.Redis": "4.6.0"
         },
         "runtime": {
-          "Keva.Benchmarks.dll": {
+          "Respire.Benchmarks.dll": {
             "assemblyVersion": "1.0.0.0",
             "fileVersion": "1.0.0.0"
           }
         }
       },
-      "Keva.Client/1.0.0": {
+      "Respire.Client/1.0.0": {
         "dependencies": {
-          "Keva": "1.0.0",
+          "Respire": "1.0.0",
           "Microsoft.Extensions.DependencyInjection.Abstractions": "8.0.2",
           "Microsoft.Extensions.Hosting.Abstractions": "8.0.0"
         },
         "runtime": {
-          "Keva.Client.dll": {
+          "Respire.Client.dll": {
             "assemblyVersion": "1.0.0.0",
             "fileVersion": "1.0.0.0"
           }
         }
       },
-      "Keva/1.0.0": {
+      "Respire/1.0.0": {
         "dependencies": {
           "System.IO.Pipelines": "8.0.0"
         },
         "runtime": {
-          "Keva.dll": {
+          "Respire.dll": {
             "assemblyVersion": "1.0.0.0",
             "fileVersion": "1.0.0.0"
           }
@@ -862,17 +862,17 @@
       "path": "testcontainers.redis/4.6.0",
       "hashPath": "testcontainers.redis.4.6.0.nupkg.sha512"
     },
-    "Keva.Benchmarks/1.0.0": {
+    "Respire.Benchmarks/1.0.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""
     },
-    "Keva.Client/1.0.0": {
+    "Respire.Client/1.0.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""
     },
-    "Keva/1.0.0": {
+    "Respire/1.0.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

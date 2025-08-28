@@ -8,7 +8,7 @@ using ModularPipelines.Enums;
 using ModularPipelines.Models;
 using ModularPipelines.Modules;
 
-namespace Keva.Pipeline.Modules;
+namespace Respire.Pipeline.Modules;
 
 [DependsOn<RunUnitTestsModule>]
 public class RunBenchmarkModule : Module<CommandResult[]>
@@ -19,7 +19,7 @@ public class RunBenchmarkModule : Module<CommandResult[]>
 
         var benchmarkProjects = context.Configuration.GetSection("BenchmarkProjects").Get<string[]>() ?? new[]
         {
-            "../benchmarks/Keva.Benchmarks/Keva.Benchmarks.csproj"
+            "../benchmarks/Respire.Benchmarks/Respire.Benchmarks.csproj"
         };
 
         var results = new List<CommandResult>();

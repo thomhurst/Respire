@@ -3,12 +3,12 @@ using BenchmarkDotNet.Columns;
 using BenchmarkDotNet.Configs;
 using BenchmarkDotNet.Jobs;
 using DotNet.Testcontainers.Containers;
-using Keva.FastClient;
-using Keva.Protocol;
+using Respire.FastClient;
+using Respire.Protocol;
 using StackExchange.Redis;
 using Testcontainers.Redis;
 
-namespace Keva.Benchmarks;
+namespace Respire.Benchmarks;
 
 [MemoryDiagnoser]
 [SimpleJob(RuntimeMoniker.Net80, warmupCount: 1, iterationCount: 3)]
@@ -16,7 +16,7 @@ namespace Keva.Benchmarks;
 public class RedisContainerBenchmarks
 {
     private readonly IContainer _redisContainer = new RedisBuilder().Build();
-    private KevaClient _kevaClient = null!;
+    private RespireClient _kevaClient = null!;
     private ConnectionMultiplexer? _stackExchangeRedis;
     private IDatabase? _stackExchangeDb;
     
@@ -45,8 +45,8 @@ public class RedisContainerBenchmarks
         
         var port = _redisContainer.GetMappedPublicPort(6379);
         
-        // Setup Keva client
-        _kevaClient = await KevaClient.CreateAsync("localhost", port);
+        // Setup Respire client
+        _kevaClient = await RespireClient.CreateAsync("localhost", port);
         
         // Setup StackExchange.Redis
         _stackExchangeRedis = await ConnectionMultiplexer.ConnectAsync($"localhost:{port}");
@@ -84,7 +84,7 @@ public class RedisContainerBenchmarks
     
     // PING benchmarks
     [Benchmark(Baseline = true)]
-    public async Task<KevaValue> UltraKeva_Ping()
+    public async Task<RespireValue> UltraRespire_Ping()
     {
         return await _kevaClient.Ping();
     }
@@ -97,7 +97,7 @@ public class RedisContainerBenchmarks
     
     // SET benchmarks - Small value
     [Benchmark]
-    public async Task UltraKeva_Set_Small()
+    public async Task UltraRespire_Set_Small()
     {
         await _kevaClient.Set("benchmark_key", _smallValue);
     }
@@ -110,7 +110,7 @@ public class RedisContainerBenchmarks
     
     // SET benchmarks - Medium value (1KB)
     [Benchmark]
-    public async Task UltraKeva_Set_Medium()
+    public async Task UltraRespire_Set_Medium()
     {
         await _kevaClient.Set("benchmark_key_medium", _mediumValue);
     }
@@ -123,7 +123,7 @@ public class RedisContainerBenchmarks
     
     // SET benchmarks - Large value (10KB)
     [Benchmark]
-    public async Task UltraKeva_Set_Large()
+    public async Task UltraRespire_Set_Large()
     {
         await _kevaClient.Set("benchmark_key_large", _largeValue);
     }
@@ -136,7 +136,7 @@ public class RedisContainerBenchmarks
     
     // GET benchmarks
     [Benchmark]
-    public async Task<KevaValue> UltraKeva_Get()
+    public async Task<RespireValue> UltraRespire_Get()
     {
         return await _kevaClient.Get("key0");
     }
@@ -149,7 +149,7 @@ public class RedisContainerBenchmarks
     
     // MGET benchmarks (5 keys)
     // [Benchmark]
-    // public string?[] UltraKeva_MGet()
+    // public string?[] UltraRespire_MGet()
     // {
     //     return _kevaClient.MGet(_multiGetKeys);
     // }
@@ -163,7 +163,7 @@ public class RedisContainerBenchmarks
     
     // Pipeline benchmarks - 5 operations
     // [Benchmark]
-    // public void UltraKeva_Pipeline_5_Sets()
+    // public void UltraRespire_Pipeline_5_Sets()
     // {
     //     _kevaClient.Pipeline(p =>
     //     {
@@ -191,7 +191,7 @@ public class RedisContainerBenchmarks
     
     // EXISTS benchmarks
     [Benchmark]
-    public async Task<KevaValue> UltraKeva_Exists()
+    public async Task<RespireValue> UltraRespire_Exists()
     {
         return await _kevaClient.Exists("key0");
     }
@@ -204,7 +204,7 @@ public class RedisContainerBenchmarks
     
     // DEL benchmarks
     [Benchmark]
-    public async Task UltraKeva_Del()
+    public async Task UltraRespire_Del()
     {
         await _kevaClient.Set("temp_key", "temp_value");
         await _kevaClient.Del("temp_key");
@@ -219,7 +219,7 @@ public class RedisContainerBenchmarks
     
     // INCR benchmarks
     [Benchmark]
-    public async Task<KevaValue> UltraKeva_Incr()
+    public async Task<RespireValue> UltraRespire_Incr()
     {
         return await _kevaClient.Incr("counter");
     }

@@ -327,11 +327,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "D:\\git\\Keva\\src\\Keva\\Keva.csproj",
-      "projectName": "Keva",
-      "projectPath": "D:\\git\\Keva\\src\\Keva\\Keva.csproj",
+      "projectUniqueName": "D:\\git\\Respire\\src\\Respire\\Respire.csproj",
+      "projectName": "Respire",
+      "projectPath": "D:\\git\\Respire\\src\\Respire\\Respire.csproj",
       "packagesPath": "C:\\Users\\thomh\\.nuget\\packages\\",
-      "outputPath": "D:\\git\\Keva\\src\\Keva\\obj\\",
+      "outputPath": "D:\\git\\Respire\\src\\Respire\\obj\\",
       "projectStyle": "PackageReference",
       "crossTargeting": true,
       "fallbackFolders": [

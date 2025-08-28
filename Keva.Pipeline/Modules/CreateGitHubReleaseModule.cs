@@ -5,9 +5,9 @@ using ModularPipelines.Context;
 using ModularPipelines.Git.Options;
 using ModularPipelines.Git.Extensions;
 using ModularPipelines.Modules;
-using Keva.Pipeline.Settings;
+using Respire.Pipeline.Settings;
 
-namespace Keva.Pipeline.Modules;
+namespace Respire.Pipeline.Modules;
 
 [DependsOn<UploadPackagesToNugetModule>]
 [DependsOn<PackagePathsParserModule>]
@@ -59,7 +59,7 @@ public class CreateGitHubReleaseModule : Module<string>
     private static string GenerateReleaseNotes(string version, dynamic gitInfo)
     {
         return $"""
-            # Keva {version}
+            # Respire {version}
             
             High-performance Redis client for .NET
             
@@ -74,7 +74,7 @@ public class CreateGitHubReleaseModule : Module<string>
             
             ## Installation
             ```
-            dotnet add package Keva --version {version}
+            dotnet add package Respire --version {version}
             ```
             """;
     }

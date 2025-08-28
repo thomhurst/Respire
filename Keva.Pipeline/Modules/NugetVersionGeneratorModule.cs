@@ -4,7 +4,7 @@ using ModularPipelines.Git.Options;
 using ModularPipelines.Git.Extensions;
 using ModularPipelines.Modules;
 
-namespace Keva.Pipeline.Modules;
+namespace Respire.Pipeline.Modules;
 
 public class NugetVersionGeneratorModule : Module<string>
 {

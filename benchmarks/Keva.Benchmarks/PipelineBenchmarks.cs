@@ -1,11 +1,11 @@
 using System.Buffers;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Jobs;
-using Keva.FastClient;
-using Keva.Infrastructure;
-using Keva.Protocol;
+using Respire.FastClient;
+using Respire.Infrastructure;
+using Respire.Protocol;
 
-namespace Keva.Benchmarks;
+namespace Respire.Benchmarks;
 
 /// <summary>
 /// Comprehensive benchmarks comparing the new pipeline architecture against previous implementations
@@ -16,8 +16,8 @@ namespace Keva.Benchmarks;
 [ThreadingDiagnoser]
 public class PipelineBenchmarks
 {
-    private KevaClient _kevaClient = null!;
-    private KevaMemoryPool _memoryPool = null!;
+    private RespireClient _kevaClient = null!;
+    private RespireMemoryPool _memoryPool = null!;
     private const string TestKey = "benchmark_key";
     private const string TestValue = "benchmark_value_with_some_length_to_it";
     
@@ -26,10 +26,10 @@ public class PipelineBenchmarks
     {
         try
         {
-            _memoryPool = KevaMemoryPool.Shared;
+            _memoryPool = RespireMemoryPool.Shared;
             
             // Create unified client (will fail if Redis is not available, but benchmark structure will be valid)
-            _kevaClient = await KevaClient.CreateAsync("localhost", 6379);
+            _kevaClient = await RespireClient.CreateAsync("localhost", 6379);
         }
         catch (Exception ex)
         {
@@ -139,7 +139,7 @@ public class PipelineBenchmarks
     {
         try
         {
-            await using var client = await KevaClient.CreateAsync("localhost", 6379);
+            await using var client = await RespireClient.CreateAsync("localhost", 6379);
         }
         catch
         {
@@ -152,7 +152,7 @@ public class PipelineBenchmarks
     {
         try
         {
-            await using var client = await KevaClient.CreateAsync("localhost", 6379);
+            await using var client = await RespireClient.CreateAsync("localhost", 6379);
         }
         catch
         {
@@ -165,7 +165,7 @@ public class PipelineBenchmarks
     {
         try
         {
-            await using var client = await KevaClient.CreateAsync("localhost", 6379);
+            await using var client = await RespireClient.CreateAsync("localhost", 6379);
         }
         catch
         {
@@ -176,7 +176,7 @@ public class PipelineBenchmarks
     // Live Redis operation benchmarks (conditional on Redis availability)
     
     [Benchmark]
-    public async Task KevaClient_SetOperation()
+    public async Task RespireClient_SetOperation()
     {
         if (_kevaClient != null)
         {
@@ -185,7 +185,7 @@ public class PipelineBenchmarks
     }
     
     [Benchmark]
-    public async Task KevaClient_GetOperation()
+    public async Task RespireClient_GetOperation()
     {
         if (_kevaClient != null)
         {
@@ -194,7 +194,7 @@ public class PipelineBenchmarks
     }
     
     [Benchmark]
-    public async Task KevaClient_PingOperation()
+    public async Task RespireClient_PingOperation()
     {
         if (_kevaClient != null)
         {
@@ -208,7 +208,7 @@ public class PipelineBenchmarks
     [Arguments(10)]
     [Arguments(100)]
     [Arguments(1000)]
-    public async Task KevaClient_BatchSetOperations(int batchSize)
+    public async Task RespireClient_BatchSetOperations(int batchSize)
     {
         if (_kevaClient != null)
         {
@@ -260,7 +260,7 @@ public class PipelineBenchmarks
 [MemoryDiagnoser]
 public class PipelineThroughputBenchmarks
 {
-    private KevaClient _kevaClient = null!;
+    private RespireClient _kevaClient = null!;
     private const string TestKey = "throughput_test";
     private const string TestValue = "throughput_value";
     
@@ -272,7 +272,7 @@ public class PipelineThroughputBenchmarks
     {
         try
         {
-            _kevaClient = await KevaClient.CreateAsync("localhost", 6379);
+            _kevaClient = await RespireClient.CreateAsync("localhost", 6379);
         }
         catch (Exception ex)
         {
@@ -287,7 +287,7 @@ public class PipelineThroughputBenchmarks
     }
     
     [Benchmark]
-    public async Task KevaClient_ConcurrentSets()
+    public async Task RespireClient_ConcurrentSets()
     {
         if (_kevaClient != null)
         {
@@ -300,7 +300,7 @@ public class PipelineThroughputBenchmarks
     }
     
     [Benchmark]
-    public async Task KevaClient_ConcurrentGets()
+    public async Task RespireClient_ConcurrentGets()
     {
         if (_kevaClient != null)
         {

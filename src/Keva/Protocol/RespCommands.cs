@@ -1,7 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Text;
 
-namespace Keva.Protocol;
+namespace Respire.Protocol;
 
 /// <summary>
 /// Pre-compiled RESP protocol commands for maximum performance

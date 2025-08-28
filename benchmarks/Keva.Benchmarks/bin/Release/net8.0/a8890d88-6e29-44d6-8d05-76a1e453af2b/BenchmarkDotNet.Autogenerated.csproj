@@ -33,7 +33,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="D:\git\Keva\benchmarks\Keva.Benchmarks\Keva.Benchmarks.csproj" />
+    <ProjectReference Include="D:\git\Respire\benchmarks\Respire.Benchmarks\Respire.Benchmarks.csproj" />
   </ItemGroup>
 
   <!-- Begin copied settings from benchmarks project -->

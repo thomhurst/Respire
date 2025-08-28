@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Bash script to run Keva benchmarks locally
+# Bash script to run Respire benchmarks locally
 
 # Colors for output
 RED='\033[0;31m'
@@ -51,7 +51,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-echo -e "${CYAN}Keva Benchmark Runner${NC}"
+echo -e "${CYAN}Respire Benchmark Runner${NC}"
 echo -e "${CYAN}=====================${NC}"
 
 # Build the solution first
@@ -64,7 +64,7 @@ if [ $? -ne 0 ]; then
 fi
 
 # Navigate to benchmark project
-cd benchmarks/Keva.Benchmarks || exit 1
+cd benchmarks/Respire.Benchmarks || exit 1
 
 # Determine frameworks to test
 if [ "$FRAMEWORK" = "Both" ]; then
@@ -146,5 +146,5 @@ Benchmark Tips:
 - To open results automatically: ./run-benchmarks.sh -o
 - Custom filter: ./run-benchmarks.sh --filter "*Set*"
 
-Results are saved in: benchmarks/Keva.Benchmarks/BenchmarkDotNet.Artifacts/
+Results are saved in: benchmarks/Respire.Benchmarks/BenchmarkDotNet.Artifacts/
 EOF

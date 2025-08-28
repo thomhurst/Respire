@@ -1,7 +1,7 @@
 using System.Buffers;
 using System.Runtime.CompilerServices;
 
-namespace Keva.Protocol;
+namespace Respire.Protocol;
 
 /// <summary>
 /// Zero-allocation RESP protocol reader using System.IO.Pipelines
@@ -31,7 +31,7 @@ public ref struct RespPipelineReader
     /// </summary>
     /// <param name="value">The parsed RESP value</param>
     /// <returns>True if a complete value was read, false if more data is needed</returns>
-    public bool TryReadValue(out KevaValue value)
+    public bool TryReadValue(out RespireValue value)
     {
         value = default;
         
@@ -54,7 +54,7 @@ public ref struct RespPipelineReader
     }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool TryReadSimpleString(out KevaValue value)
+    private bool TryReadSimpleString(out RespireValue value)
     {
         value = default;
         
@@ -65,14 +65,14 @@ public ref struct RespPipelineReader
         if (!TryReadLine(out var lineSpan, out var lineLength))
             return false;
         
-        // Convert ReadOnlySequence to ReadOnlyMemory for KevaValue
+        // Convert ReadOnlySequence to ReadOnlyMemory for RespireValue
         var buffer = GetBufferFromSequence(lineSpan, lineLength);
-        value = KevaValue.SimpleString(buffer, 0, lineLength);
+        value = RespireValue.SimpleString(buffer, 0, lineLength);
         return true;
     }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool TryReadError(out KevaValue value)
+    private bool TryReadError(out RespireValue value)
     {
         value = default;
         
@@ -84,12 +84,12 @@ public ref struct RespPipelineReader
             return false;
         
         var buffer = GetBufferFromSequence(lineSpan, lineLength);
-        value = KevaValue.Error(buffer, 0, lineLength);
+        value = RespireValue.Error(buffer, 0, lineLength);
         return true;
     }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool TryReadInteger(out KevaValue value)
+    private bool TryReadInteger(out RespireValue value)
     {
         value = default;
         
@@ -103,12 +103,12 @@ public ref struct RespPipelineReader
         if (!TryParseInteger(lineSpan, lineLength, out var intValue))
             return false;
         
-        value = KevaValue.Integer(intValue);
+        value = RespireValue.Integer(intValue);
         return true;
     }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool TryReadBulkString(out KevaValue value)
+    private bool TryReadBulkString(out RespireValue value)
     {
         value = default;
         
@@ -125,13 +125,13 @@ public ref struct RespPipelineReader
         
         if (length == -1)
         {
-            value = KevaValue.Null;
+            value = RespireValue.Null;
             return true;
         }
         
         if (length == 0)
         {
-            value = KevaValue.BulkString(ReadOnlyMemory<byte>.Empty, 0, 0);
+            value = RespireValue.BulkString(ReadOnlyMemory<byte>.Empty, 0, 0);
             return true;
         }
         
@@ -144,12 +144,12 @@ public ref struct RespPipelineReader
             return false;
         
         var buffer = GetBufferFromSequence(dataSpan, (int)length);
-        value = KevaValue.BulkString(buffer, 0, (int)length);
+        value = RespireValue.BulkString(buffer, 0, (int)length);
         return true;
     }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool TryReadBoolean(out KevaValue value)
+    private bool TryReadBoolean(out RespireValue value)
     {
         value = default;
         
@@ -167,11 +167,11 @@ public ref struct RespPipelineReader
         if (!TryReadLine(out _, out _))
             return false;
         
-        value = boolByte == (byte)'t' ? KevaValue.True : KevaValue.False;
+        value = boolByte == (byte)'t' ? RespireValue.True : RespireValue.False;
         return true;
     }
     
-    private bool TryReadArray(out KevaValue value)
+    private bool TryReadArray(out RespireValue value)
     {
         // Arrays require allocation for the results, so we'll skip this for zero-alloc version
         // This would need to return a different structure that can hold multiple values

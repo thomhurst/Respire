@@ -3,7 +3,7 @@ using ModularPipelines.Attributes;
 using ModularPipelines.Context;
 using ModularPipelines.Modules;
 
-namespace Keva.Pipeline.Modules.LocalMachine;
+namespace Respire.Pipeline.Modules.LocalMachine;
 
 [DependsOn<PackagePathsParserModule>]
 [DependsOn<AddLocalNugetSourceModule>]

@@ -1,16 +1,16 @@
-using Keva.Protocol;
+using Respire.Protocol;
 using TUnit.Core;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 
-namespace Keva.Tests.Protocol;
+namespace Respire.Tests.Protocol;
 
-public class KevaValueTests
+public class RespireValueTests
 {
     [Test]
     public async Task SimpleString_CreatesCorrectValue()
     {
-        var value = KevaValue.SimpleString("OK");
+        var value = RespireValue.SimpleString("OK");
         
         await Assert.That(value.Type).IsEqualTo(RespDataType.SimpleString);
         await Assert.That(value.AsString()).IsEqualTo("OK");
@@ -19,7 +19,7 @@ public class KevaValueTests
     [Test]
     public async Task Integer_CreatesCorrectValue()
     {
-        var value = KevaValue.Integer(42);
+        var value = RespireValue.Integer(42);
         
         await Assert.That(value.Type).IsEqualTo(RespDataType.Integer);
         await Assert.That(value.AsInteger()).IsEqualTo(42);
@@ -28,7 +28,7 @@ public class KevaValueTests
     [Test]
     public async Task BulkString_CreatesCorrectValue()
     {
-        var value = KevaValue.BulkString("Hello World");
+        var value = RespireValue.BulkString("Hello World");
         
         await Assert.That(value.Type).IsEqualTo(RespDataType.BulkString);
         await Assert.That(value.AsString()).IsEqualTo("Hello World");
@@ -37,7 +37,7 @@ public class KevaValueTests
     [Test]
     public async Task Null_CreatesNullValue()
     {
-        var value = KevaValue.Null;
+        var value = RespireValue.Null;
         
         await Assert.That(value.Type).IsEqualTo(RespDataType.Null);
         await Assert.That(value.IsNull).IsTrue();
@@ -46,10 +46,10 @@ public class KevaValueTests
     [Test]
     public async Task Array_CreatesCorrectValue()
     {
-        var array = KevaValue.Array(
-            KevaValue.BulkString("first"),
-            KevaValue.BulkString("second"),
-            KevaValue.Integer(3)
+        var array = RespireValue.Array(
+            RespireValue.BulkString("first"),
+            RespireValue.BulkString("second"),
+            RespireValue.Integer(3)
         );
         
         await Assert.That(array.Type).IsEqualTo(RespDataType.Array);
@@ -62,7 +62,7 @@ public class KevaValueTests
     [Test]
     public async Task Error_CreatesErrorValue()
     {
-        var value = KevaValue.Error("ERR unknown command");
+        var value = RespireValue.Error("ERR unknown command");
         
         await Assert.That(value.Type).IsEqualTo(RespDataType.Error);
         await Assert.That(value.IsError).IsTrue();
@@ -72,8 +72,8 @@ public class KevaValueTests
     [Test]
     public async Task Boolean_CreatesCorrectValues()
     {
-        var trueValue = KevaValue.Boolean(true);
-        var falseValue = KevaValue.Boolean(false);
+        var trueValue = RespireValue.Boolean(true);
+        var falseValue = RespireValue.Boolean(false);
         
         await Assert.That(trueValue.Type).IsEqualTo(RespDataType.Boolean);
         await Assert.That(trueValue.AsBoolean()).IsTrue();
@@ -85,7 +85,7 @@ public class KevaValueTests
     [Test]
     public async Task Double_CreatesCorrectValue()
     {
-        var value = KevaValue.Double(3.14159);
+        var value = RespireValue.Double(3.14159);
         
         await Assert.That(value.Type).IsEqualTo(RespDataType.Double);
         await Assert.That(value.AsDouble()).IsEqualTo(3.14159);

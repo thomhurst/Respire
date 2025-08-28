@@ -3,7 +3,7 @@ using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 
-namespace Keva.Infrastructure;
+namespace Respire.Infrastructure;
 
 /// <summary>
 /// High-performance pipeline-based Redis connection
@@ -145,7 +145,7 @@ public sealed class PipelineConnection : IAsyncDisposable
     {
         ThrowIfDisposed();
         
-        using var bufferWriter = KevaMemoryPool.Shared.CreateBufferWriter();
+        using var bufferWriter = RespireMemoryPool.Shared.CreateBufferWriter();
         writeAction(bufferWriter);
         
         if (bufferWriter.WrittenCount > 0)

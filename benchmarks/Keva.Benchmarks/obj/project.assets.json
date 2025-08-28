@@ -660,7 +660,7 @@
           }
         }
       },
-      "Keva/1.0.0": {
+      "Respire/1.0.0": {
         "type": "project",
         "framework": ".NETCoreApp,Version=v8.0",
         "dependencies": {
@@ -668,10 +668,10 @@
           "System.IO.Pipelines": "8.0.0"
         },
         "compile": {
-          "bin/placeholder/Keva.dll": {}
+          "bin/placeholder/Respire.dll": {}
         },
         "runtime": {
-          "bin/placeholder/Keva.dll": {}
+          "bin/placeholder/Respire.dll": {}
         }
       }
     },
@@ -1275,17 +1275,17 @@
           }
         }
       },
-      "Keva/1.0.0": {
+      "Respire/1.0.0": {
         "type": "project",
         "framework": ".NETCoreApp,Version=v9.0",
         "dependencies": {
           "Microsoft.Extensions.Logging.Abstractions": "8.0.0"
         },
         "compile": {
-          "bin/placeholder/Keva.dll": {}
+          "bin/placeholder/Respire.dll": {}
         },
         "runtime": {
-          "bin/placeholder/Keva.dll": {}
+          "bin/placeholder/Respire.dll": {}
         }
       }
     }
@@ -2841,22 +2841,22 @@
         "testcontainers.redis.nuspec"
       ]
     },
-    "Keva/1.0.0": {
+    "Respire/1.0.0": {
       "type": "project",
-      "path": "../../src/Keva/Keva.csproj",
-      "msbuildProject": "../../src/Keva/Keva.csproj"
+      "path": "../../src/Respire/Respire.csproj",
+      "msbuildProject": "../../src/Respire/Respire.csproj"
     }
   },
   "projectFileDependencyGroups": {
     "net8.0": [
       "BenchmarkDotNet >= 0.15.2",
-      "Keva >= 1.0.0",
+      "Respire >= 1.0.0",
       "StackExchange.Redis >= 2.7.10",
       "Testcontainers.Redis >= 4.6.0"
     ],
     "net9.0": [
       "BenchmarkDotNet >= 0.15.2",
-      "Keva >= 1.0.0",
+      "Respire >= 1.0.0",
       "StackExchange.Redis >= 2.7.10",
       "Testcontainers.Redis >= 4.6.0"
     ]
@@ -2868,11 +2868,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "D:\\git\\Keva\\benchmarks\\Keva.Benchmarks\\Keva.Benchmarks.csproj",
-      "projectName": "Keva.Benchmarks",
-      "projectPath": "D:\\git\\Keva\\benchmarks\\Keva.Benchmarks\\Keva.Benchmarks.csproj",
+      "projectUniqueName": "D:\\git\\Respire\\benchmarks\\Respire.Benchmarks\\Respire.Benchmarks.csproj",
+      "projectName": "Respire.Benchmarks",
+      "projectPath": "D:\\git\\Respire\\benchmarks\\Respire.Benchmarks\\Respire.Benchmarks.csproj",
       "packagesPath": "C:\\Users\\thomh\\.nuget\\packages\\",
-      "outputPath": "D:\\git\\Keva\\benchmarks\\Keva.Benchmarks\\obj\\",
+      "outputPath": "D:\\git\\Respire\\benchmarks\\Respire.Benchmarks\\obj\\",
       "projectStyle": "PackageReference",
       "crossTargeting": true,
       "fallbackFolders": [
@@ -2896,16 +2896,16 @@
         "net8.0": {
           "targetAlias": "net8.0",
           "projectReferences": {
-            "D:\\git\\Keva\\src\\Keva\\Keva.csproj": {
-              "projectPath": "D:\\git\\Keva\\src\\Keva\\Keva.csproj"
+            "D:\\git\\Respire\\src\\Respire\\Respire.csproj": {
+              "projectPath": "D:\\git\\Respire\\src\\Respire\\Respire.csproj"
             }
           }
         },
         "net9.0": {
           "targetAlias": "net9.0",
           "projectReferences": {
-            "D:\\git\\Keva\\src\\Keva\\Keva.csproj": {
-              "projectPath": "D:\\git\\Keva\\src\\Keva\\Keva.csproj"
+            "D:\\git\\Respire\\src\\Respire\\Respire.csproj": {
+              "projectPath": "D:\\git\\Respire\\src\\Respire\\Respire.csproj"
             }
           }
         }

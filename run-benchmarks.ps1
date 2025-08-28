@@ -1,4 +1,4 @@
-# PowerShell script to run Keva benchmarks locally
+# PowerShell script to run Respire benchmarks locally
 
 param(
     [Parameter()]
@@ -16,7 +16,7 @@ param(
     [switch]$OpenResults
 )
 
-Write-Host "Keva Benchmark Runner" -ForegroundColor Cyan
+Write-Host "Respire Benchmark Runner" -ForegroundColor Cyan
 Write-Host "=====================" -ForegroundColor Cyan
 
 # Build the solution first
@@ -29,7 +29,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Navigate to benchmark project
-Push-Location "benchmarks/Keva.Benchmarks"
+Push-Location "benchmarks/Respire.Benchmarks"
 
 try {
     $frameworks = @()
@@ -97,5 +97,5 @@ Benchmark Tips:
 - To open results automatically: .\run-benchmarks.ps1 -OpenResults
 - Custom filter: .\run-benchmarks.ps1 -Filter "*Set*"
 
-Results are saved in: benchmarks\Keva.Benchmarks\BenchmarkDotNet.Artifacts\
+Results are saved in: benchmarks\Respire.Benchmarks\BenchmarkDotNet.Artifacts\
 "@ -ForegroundColor Gray

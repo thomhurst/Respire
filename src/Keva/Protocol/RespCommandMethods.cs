@@ -1,7 +1,7 @@
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 
-namespace Keva.Protocol;
+namespace Respire.Protocol;
 
 /// <summary>
 /// Static methods for executing zero-argument Redis commands with pre-compiled RESP protocol

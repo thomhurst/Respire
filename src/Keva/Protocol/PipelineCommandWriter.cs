@@ -1,7 +1,7 @@
 using System.Runtime.CompilerServices;
-using Keva.Infrastructure;
+using Respire.Infrastructure;
 
-namespace Keva.Protocol;
+namespace Respire.Protocol;
 
 /// <summary>
 /// High-performance command writer that integrates pre-compiled commands with pipeline infrastructure
@@ -10,13 +10,13 @@ namespace Keva.Protocol;
 public sealed class PipelineCommandWriter : IDisposable
 {
     private readonly PipelineConnection _connection;
-    private readonly KevaMemoryPool _memoryPool;
+    private readonly RespireMemoryPool _memoryPool;
     private volatile bool _disposed;
     
-    public PipelineCommandWriter(PipelineConnection connection, KevaMemoryPool? memoryPool = null)
+    public PipelineCommandWriter(PipelineConnection connection, RespireMemoryPool? memoryPool = null)
     {
         _connection = connection ?? throw new ArgumentNullException(nameof(connection));
-        _memoryPool = memoryPool ?? KevaMemoryPool.Shared;
+        _memoryPool = memoryPool ?? RespireMemoryPool.Shared;
     }
     
     /// <summary>

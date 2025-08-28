@@ -7,7 +7,7 @@ using ModularPipelines.DotNet.Options;
 using ModularPipelines.Models;
 using ModularPipelines.Modules;
 
-namespace Keva.Pipeline.Modules.LocalMachine;
+namespace Respire.Pipeline.Modules.LocalMachine;
 
 [DependsOn<CreateLocalNugetFolderModule>]
 public class AddLocalNugetSourceModule : Module<CommandResult>

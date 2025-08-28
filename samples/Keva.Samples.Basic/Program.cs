@@ -1,8 +1,8 @@
 ﻿using System.Buffers;
 using System.Text;
-using Keva.Protocol;
+using Respire.Protocol;
 
-Console.WriteLine("===== Keva RESP Protocol Demo =====\n");
+Console.WriteLine("===== Respire RESP Protocol Demo =====\n");
 
 // Create pools for zero-allocation operations
 var bytePool = ArrayPool<byte>.Shared;
@@ -42,11 +42,11 @@ void DemoWriting()
 
 void DemoParsing()
 {
-    Console.WriteLine("Parsing RESP responses using KevaReader:");
+    Console.WriteLine("Parsing RESP responses using RespireReader:");
     
     // Parse simple string
     var simpleStringData = "+OK\r\n"u8;
-    var reader = new KevaReader(simpleStringData);
+    var reader = new RespireReader(simpleStringData);
     if (reader.TryRead(out var value))
     {
         Console.WriteLine($"Parsed Simple String: Type={value.Type}");
@@ -54,7 +54,7 @@ void DemoParsing()
     
     // Parse integer
     var integerData = ":1000\r\n"u8;
-    reader = new KevaReader(integerData);
+    reader = new RespireReader(integerData);
     if (reader.TryRead(out value))
     {
         Console.WriteLine($"Parsed Integer: Type={value.Type}, Value={value.AsInteger()}");
@@ -62,7 +62,7 @@ void DemoParsing()
     
     // Parse bulk string
     var bulkStringData = "$11\r\nHello World\r\n"u8;
-    reader = new KevaReader(bulkStringData);
+    reader = new RespireReader(bulkStringData);
     if (reader.TryRead(out value))
     {
         Console.WriteLine($"Parsed Bulk String: Type={value.Type}");
@@ -70,7 +70,7 @@ void DemoParsing()
     
     // Parse null bulk string
     var nullData = "$-1\r\n"u8;
-    reader = new KevaReader(nullData);
+    reader = new RespireReader(nullData);
     if (reader.TryRead(out value))
     {
         Console.WriteLine($"Parsed Null: Type={value.Type}, IsNull={value.IsNull}");
@@ -78,7 +78,7 @@ void DemoParsing()
     
     // Parse boolean
     var boolData = "#t\r\n"u8;
-    reader = new KevaReader(boolData);
+    reader = new RespireReader(boolData);
     if (reader.TryRead(out value))
     {
         Console.WriteLine($"Parsed Boolean: Type={value.Type}, Value={value.AsBoolean()}");
@@ -91,7 +91,7 @@ void DemoRoundTrip()
     
     // Demonstrate parsing a response
     var responseData = ":1\r\n"u8; // Integer response: 1
-    var reader = new KevaReader(responseData);
+    var reader = new RespireReader(responseData);
     if (reader.TryRead(out var response))
     {
         Console.WriteLine($"Response: {response.AsInteger()} (fields added)");

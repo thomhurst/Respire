@@ -1,9 +1,9 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
-using Keva.Protocol;
+using Respire.Protocol;
 
-namespace Keva.Infrastructure;
+namespace Respire.Infrastructure;
 
 /// <summary>
 /// Optimized connection pool with advanced load balancing and connection warming

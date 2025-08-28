@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace Keva.Protocol;
+namespace Respire.Protocol;
 
 /// <summary>
 /// Provides utility methods for parsing RESP commands

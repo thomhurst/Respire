@@ -7,18 +7,18 @@ using ModularPipelines.Enums;
 using ModularPipelines.Models;
 using ModularPipelines.Modules;
 
-namespace Keva.Pipeline.Modules;
+namespace Respire.Pipeline.Modules;
 
 [DependsOn<NugetVersionGeneratorModule>]
 public class BuildProjectsModule : Module<CommandResult>
 {
     protected override async Task<CommandResult> ExecuteAsync(IPipelineContext context, CancellationToken cancellationToken)
     {
-        context.Logger.LogInformation("Building Keva solution...");
+        context.Logger.LogInformation("Building Respire solution...");
         
         return await context.DotNet().Build(new DotNetBuildOptions
         {
-            ProjectSolution = "../Keva.sln",
+            ProjectSolution = "../Respire.sln",
             Configuration = Configuration.Release,
             NoRestore = false
         }, cancellationToken);

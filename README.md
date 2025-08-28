@@ -1,6 +1,6 @@
-# Keva - High-Performance RESP Protocol Client for .NET
+# Respire - High-Performance RESP Protocol Client for .NET
 
-Keva is a lightning-fast, zero-allocation C# .NET client for interacting with key-value datastores that use the RESP protocol (Redis, Valkey, KeyDB, etc.).
+Respire is a lightning-fast, zero-allocation C# .NET client for interacting with key-value datastores that use the RESP protocol (Redis, Valkey, KeyDB, etc.).
 
 ## Features
 
@@ -15,28 +15,28 @@ Keva is a lightning-fast, zero-allocation C# .NET client for interacting with ke
 
 ### Core Components
 
-- **Keva**: Core protocol implementation with zero dependencies beyond .NET BCL
+- **Respire**: Core protocol implementation with zero dependencies beyond .NET BCL
   - RESP protocol reader/writer with zero allocations
   - Pipeline architecture for interceptors
   - Connection abstractions
 
-- **Keva.Client**: High-level client with dependency injection support
+- **Respire.Client**: High-level client with dependency injection support
 
 ### Optional Packages
 
-- **Keva.Compression**: GZip, Brotli compression support
-- **Keva.Serialization.Json**: JSON serialization with System.Text.Json
-- **Keva.Serialization.MessagePack**: MessagePack serialization
-- **Keva.Resilience**: Circuit breaker, retry policies with Polly
-- **Keva.Telemetry**: Logging, metrics, distributed tracing
-- **Keva.Caching**: Local caching layer
+- **Respire.Compression**: GZip, Brotli compression support
+- **Respire.Serialization.Json**: JSON serialization with System.Text.Json
+- **Respire.Serialization.MessagePack**: MessagePack serialization
+- **Respire.Resilience**: Circuit breaker, retry policies with Polly
+- **Respire.Telemetry**: Logging, metrics, distributed tracing
+- **Respire.Caching**: Local caching layer
 
 ## Usage
 
 ### Basic Usage
 
 ```csharp
-var client = new KevaClient("localhost:6379");
+var client = new RespireClient("localhost:6379");
 await client.SetAsync("key", "value");
 var value = await client.GetAsync("key");
 ```
@@ -44,7 +44,7 @@ var value = await client.GetAsync("key");
 ### With Dependency Injection
 
 ```csharp
-services.AddKeva(builder => builder
+services.AddRespire(builder => builder
     .ConfigureConnection(options => {
         options.Endpoints = new[] { "localhost:6379" };
         options.EnableAutoReconnect = true;
@@ -63,7 +63,7 @@ services.AddKeva(builder => builder
 public class LoggingInterceptor : DelegatingInterceptor
 {
     protected override async ValueTask<RespValue> OnRequestAsync(
-        KevaInterceptorContext context,
+        RespireInterceptorContext context,
         CancellationToken cancellationToken)
     {
         Console.WriteLine($"Executing: {context.CommandName}");
@@ -71,7 +71,7 @@ public class LoggingInterceptor : DelegatingInterceptor
     }
     
     protected override async ValueTask<RespValue> OnResponseAsync(
-        KevaInterceptorContext context,
+        RespireInterceptorContext context,
         RespValue response,
         CancellationToken cancellationToken)
     {
@@ -81,7 +81,7 @@ public class LoggingInterceptor : DelegatingInterceptor
 }
 
 // Register the interceptor
-services.AddKeva(builder => builder
+services.AddRespire(builder => builder
     .AddInterceptor<LoggingInterceptor>()
 );
 ```
@@ -101,7 +101,7 @@ Zero-allocation design principles:
 ```bash
 dotnet build
 dotnet test
-dotnet run --project benchmarks/Keva.Benchmarks
+dotnet run --project benchmarks/Respire.Benchmarks
 ```
 
 ## License

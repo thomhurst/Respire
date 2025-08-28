@@ -4,7 +4,7 @@ using ModularPipelines.Context;
 using ModularPipelines.FileSystem;
 using ModularPipelines.Modules;
 
-namespace Keva.Pipeline.Modules;
+namespace Respire.Pipeline.Modules;
 
 [DependsOn<PackProjectsModule>]
 public class PackagePathsParserModule : Module<FileInfo[]>

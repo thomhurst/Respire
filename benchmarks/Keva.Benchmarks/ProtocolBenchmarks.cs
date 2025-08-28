@@ -1,9 +1,9 @@
 using System.Buffers;
 using System.Text;
 using BenchmarkDotNet.Attributes;
-using Keva.Protocol;
+using Respire.Protocol;
 
-namespace Keva.Benchmarks;
+namespace Respire.Benchmarks;
 
 [MemoryDiagnoser]
 [SimpleJob(warmupCount: 3, iterationCount: 10)]
@@ -18,14 +18,14 @@ public class ProtocolBenchmarks
     private byte[] _mixedTypesData = null!;
     
     private ArrayPool<byte> _bytePool = null!;
-    private ArrayPool<KevaValue> _valuePool = null!;
+    private ArrayPool<RespireValue> _valuePool = null!;
     private ArrayBufferWriter<byte> _writer = null!;
 
     [GlobalSetup]
     public void Setup()
     {
         _bytePool = ArrayPool<byte>.Shared;
-        _valuePool = ArrayPool<KevaValue>.Shared;
+        _valuePool = ArrayPool<RespireValue>.Shared;
         _writer = new ArrayBufferWriter<byte>(4096);
         
         // Simple string: +OK\r\n
@@ -66,63 +66,63 @@ public class ProtocolBenchmarks
     
     [Benchmark(Description = "Parse Simple String")]
     [BenchmarkCategory("Parsing", "SimpleTypes")]
-    public KevaValue ParseSimpleString()
+    public RespireValue ParseSimpleString()
     {
-        var reader = new KevaReader(_simpleStringData);
+        var reader = new RespireReader(_simpleStringData);
         reader.TryRead(out var value);
         return value;
     }
 
     [Benchmark(Description = "Parse Bulk String")]
     [BenchmarkCategory("Parsing", "SimpleTypes")]
-    public KevaValue ParseBulkString()
+    public RespireValue ParseBulkString()
     {
-        var reader = new KevaReader(_bulkStringData);
+        var reader = new RespireReader(_bulkStringData);
         reader.TryRead(out var value);
         return value;
     }
 
     [Benchmark(Description = "Parse Integer")]
     [BenchmarkCategory("Parsing", "SimpleTypes")]
-    public KevaValue ParseInteger()
+    public RespireValue ParseInteger()
     {
-        var reader = new KevaReader(_integerData);
+        var reader = new RespireReader(_integerData);
         reader.TryRead(out var value);
         return value;
     }
 
     [Benchmark(Description = "Parse Command Array")]
     [BenchmarkCategory("Parsing", "Arrays")]
-    public KevaValue ParseCommandArray()
+    public RespireValue ParseCommandArray()
     {
-        var reader = new KevaReader(_arrayData);
+        var reader = new RespireReader(_arrayData);
         reader.TryRead(out var value);
         return value;
     }
 
     [Benchmark(Description = "Parse Large Array (100 items)")]
     [BenchmarkCategory("Parsing", "Arrays")]
-    public KevaValue ParseLargeArray()
+    public RespireValue ParseLargeArray()
     {
-        var reader = new KevaReader(_largeArrayData);
+        var reader = new RespireReader(_largeArrayData);
         reader.TryRead(out var value);
         return value;
     }
 
     [Benchmark(Description = "Parse Nested Array")]
     [BenchmarkCategory("Parsing", "Arrays")]
-    public KevaValue ParseNestedArray()
+    public RespireValue ParseNestedArray()
     {
-        var reader = new KevaReader(_nestedArrayData);
+        var reader = new RespireReader(_nestedArrayData);
         reader.TryRead(out var value);
         return value;
     }
 
     [Benchmark(Description = "Parse Mixed Types Array")]
     [BenchmarkCategory("Parsing", "Arrays")]
-    public KevaValue ParseMixedTypesArray()
+    public RespireValue ParseMixedTypesArray()
     {
-        var reader = new KevaReader(_mixedTypesData);
+        var reader = new RespireReader(_mixedTypesData);
         reader.TryRead(out var value);
         return value;
     }
@@ -136,7 +136,7 @@ public class ProtocolBenchmarks
         _writer.Clear();
         // Writer benchmarks disabled - need new writer implementation
         // var writer = new RespWriter(_writer, _bytePool);
-        // writer.Write(KevaValue.SimpleString("OK"));
+        // writer.Write(RespireValue.SimpleString("OK"));
     }
 
     [Benchmark(Description = "Write Bulk String")]
@@ -146,7 +146,7 @@ public class ProtocolBenchmarks
         _writer.Clear();
         // Writer benchmarks disabled - need new writer implementation
         // var writer = new RespWriter(_writer, _bytePool);
-        // writer.Write(KevaValue.BulkString("Hello World"));
+        // writer.Write(RespireValue.BulkString("Hello World"));
     }
 
     [Benchmark(Description = "Write Integer")]
@@ -156,7 +156,7 @@ public class ProtocolBenchmarks
         _writer.Clear();
         // Writer benchmarks disabled - need new writer implementation
         // var writer = new RespWriter(_writer, _bytePool);
-        // writer.Write(KevaValue.Integer(42));
+        // writer.Write(RespireValue.Integer(42));
     }
 
     [Benchmark(Description = "Write Command")]
@@ -188,13 +188,13 @@ public class ProtocolBenchmarks
         // Writer benchmarks disabled - need new writer implementation
         // var writer = new RespWriter(_writer, _bytePool);
         
-        var values = new KevaValue[100];
+        var values = new RespireValue[100];
         for (int i = 0; i < 100; i++)
         {
-            values[i] = KevaValue.Integer(i);
+            values[i] = RespireValue.Integer(i);
         }
         
-        // writer.Write(KevaValue.Array(values));
+        // writer.Write(RespireValue.Array(values));
     }
 
     [Benchmark(Description = "Write Mixed Types Array")]
@@ -205,13 +205,13 @@ public class ProtocolBenchmarks
         // Writer benchmarks disabled - need new writer implementation
         // var writer = new RespWriter(_writer, _bytePool);
         
-        var array = KevaValue.Array(
-            KevaValue.SimpleString("OK"),
-            KevaValue.Integer(42),
-            KevaValue.BulkString("test"),
-            KevaValue.Null,
-            KevaValue.Boolean(true),
-            KevaValue.Double(3.14)
+        var array = RespireValue.Array(
+            RespireValue.SimpleString("OK"),
+            RespireValue.Integer(42),
+            RespireValue.BulkString("test"),
+            RespireValue.Null,
+            RespireValue.Boolean(true),
+            RespireValue.Double(3.14)
         );
         
         // writer.Write(array);
@@ -224,7 +224,7 @@ public class ProtocolBenchmarks
     public void RoundTripSimpleTypes()
     {
         // Parse
-        var reader = new KevaReader(_bulkStringData);
+        var reader = new RespireReader(_bulkStringData);
         reader.TryRead(out var value);
         
         // Write
@@ -239,7 +239,7 @@ public class ProtocolBenchmarks
     public void RoundTripCommandArray()
     {
         // Parse
-        var reader = new KevaReader(_arrayData);
+        var reader = new RespireReader(_arrayData);
         reader.TryRead(out var value);
         
         // Write
@@ -254,7 +254,7 @@ public class ProtocolBenchmarks
     public void RoundTripLargeArray()
     {
         // Parse
-        var reader = new KevaReader(_largeArrayData);
+        var reader = new RespireReader(_largeArrayData);
         reader.TryRead(out var value);
         
         // Write
@@ -272,7 +272,7 @@ public class ProtocolBenchmarks
     {
         for (int i = 0; i < 1000; i++)
         {
-            var reader = new KevaReader(_mixedTypesData);
+            var reader = new RespireReader(_mixedTypesData);
             reader.TryRead(out _);
         }
     }
@@ -281,10 +281,10 @@ public class ProtocolBenchmarks
     [BenchmarkCategory("Stress")]
     public void ThousandWriteOperations()
     {
-        var value = KevaValue.Array(
-            KevaValue.SimpleString("OK"),
-            KevaValue.Integer(42),
-            KevaValue.BulkString("test")
+        var value = RespireValue.Array(
+            RespireValue.SimpleString("OK"),
+            RespireValue.Integer(42),
+            RespireValue.BulkString("test")
         );
 
         for (int i = 0; i < 1000; i++)
