@@ -12,6 +12,7 @@ public sealed class PipelineCommandWriter : IDisposable
     private PipelineConnection _connection;
     private readonly RespireMemoryPool _memoryPool;
     private volatile bool _disposed;
+    private bool _batchMode;
     
     public bool IsDisposed => _disposed;
     
@@ -37,6 +38,37 @@ public sealed class PipelineCommandWriter : IDisposable
     }
     
     /// <summary>
+    /// Resets the writer state for reuse from the pool
+    /// </summary>
+    public void Reset()
+    {
+        // Currently just reset the disposed flag
+        // Add any other state cleanup here if needed in the future
+        _disposed = false;
+        _batchMode = false;
+    }
+    
+    /// <summary>
+    /// Enters batch mode where commands are buffered without flushing until EndBatch is called
+    /// </summary>
+    public void BeginBatch()
+    {
+        ThrowIfDisposed();
+        _batchMode = true;
+    }
+    
+    /// <summary>
+    /// Exits batch mode and flushes all buffered commands
+    /// </summary>
+    public async ValueTask EndBatchAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        _batchMode = false;
+        // Now flush all buffered data
+        await _connection.FlushAsync(cancellationToken).ConfigureAwait(false);
+    }
+    
+    /// <summary>
     /// Writes a pre-compiled zero-argument command directly to the pipeline
     /// </summary>
     /// <param name="preCompiledCommand">Pre-compiled command bytes from RespCommands</param>
@@ -45,7 +77,37 @@ public sealed class PipelineCommandWriter : IDisposable
     public async ValueTask WritePreCompiledAsync(ReadOnlyMemory<byte> preCompiledCommand, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        await _connection.WritePreCompiledCommandAsync(preCompiledCommand, cancellationToken).ConfigureAwait(false);
+        if (_batchMode)
+        {
+            await _connection.WritePreCompiledCommandNoFlushAsync(preCompiledCommand, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await _connection.WritePreCompiledCommandAsync(preCompiledCommand, cancellationToken).ConfigureAwait(false);
+        }
+    }
+    
+    /// <summary>
+    /// Writes a pre-compiled command without flushing (for batched operations)
+    /// </summary>
+    /// <param name="preCompiledCommand">Pre-compiled command bytes from RespCommands</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public async ValueTask WritePreCompiledNoFlushAsync(ReadOnlyMemory<byte> preCompiledCommand, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        await _connection.WritePreCompiledCommandNoFlushAsync(preCompiledCommand, cancellationToken).ConfigureAwait(false);
+    }
+    
+    /// <summary>
+    /// Flushes any buffered commands to the network
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public async ValueTask FlushAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        await _connection.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -120,7 +182,14 @@ public sealed class PipelineCommandWriter : IDisposable
         if (message.IsPreBuilt)
         {
             // Zero allocation path for pre-built commands
-            await _connection.WritePreCompiledCommandAsync(message.PreBuiltCommand, cancellationToken).ConfigureAwait(false);
+            if (_batchMode)
+            {
+                await _connection.WritePreCompiledCommandNoFlushAsync(message.PreBuiltCommand, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await _connection.WritePreCompiledCommandAsync(message.PreBuiltCommand, cancellationToken).ConfigureAwait(false);
+            }
         }
         else
         {
@@ -131,7 +200,30 @@ public sealed class PipelineCommandWriter : IDisposable
             var length = message.BuildCommand(buffer);
             writer.Advance(length);
             
-            await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
+            if (_batchMode)
+            {
+                await _connection.WritePreCompiledCommandNoFlushAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await WriteCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Helper method to write commands respecting batch mode
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private ValueTask WriteCommandAsync(ReadOnlyMemory<byte> commandBytes, CancellationToken cancellationToken)
+    {
+        if (_batchMode)
+        {
+            return _connection.WritePreCompiledCommandNoFlushAsync(commandBytes, cancellationToken);
+        }
+        else
+        {
+            return _connection.WritePreCompiledCommandAsync(commandBytes, cancellationToken);
         }
     }
     
@@ -152,7 +244,7 @@ public sealed class PipelineCommandWriter : IDisposable
         var length = RespCommands.BuildSetCommand(buffer, key, value);
         writer.Advance(length);
         
-        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
+        await WriteCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -171,7 +263,7 @@ public sealed class PipelineCommandWriter : IDisposable
         var length = RespCommands.BuildDelCommand(buffer, key);
         writer.Advance(length);
         
-        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
+        await WriteCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -190,7 +282,7 @@ public sealed class PipelineCommandWriter : IDisposable
         var length = RespCommands.BuildExistsCommand(buffer, key);
         writer.Advance(length);
         
-        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
+        await WriteCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -210,7 +302,7 @@ public sealed class PipelineCommandWriter : IDisposable
         var length = RespCommands.BuildHGetCommand(buffer, key, field);
         writer.Advance(length);
         
-        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
+        await WriteCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -231,7 +323,7 @@ public sealed class PipelineCommandWriter : IDisposable
         var length = RespCommands.BuildHSetCommand(buffer, key, field, value);
         writer.Advance(length);
         
-        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
+        await WriteCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -250,7 +342,7 @@ public sealed class PipelineCommandWriter : IDisposable
         var length = RespCommands.BuildLPushCommand(buffer, key, value);
         writer.Advance(length);
         
-        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
+        await WriteCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -268,7 +360,7 @@ public sealed class PipelineCommandWriter : IDisposable
         var length = RespCommands.BuildIncrCommand(buffer, key);
         writer.Advance(length);
         
-        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
+        await WriteCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -287,7 +379,7 @@ public sealed class PipelineCommandWriter : IDisposable
         var length = RespCommands.BuildExpireCommand(buffer, key, seconds);
         writer.Advance(length);
         
-        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
+        await WriteCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -305,7 +397,7 @@ public sealed class PipelineCommandWriter : IDisposable
         var length = RespCommands.BuildTtlCommand(buffer, key);
         writer.Advance(length);
         
-        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
+        await WriteCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -324,7 +416,7 @@ public sealed class PipelineCommandWriter : IDisposable
         var length = RespCommands.BuildSAddCommand(buffer, key, member);
         writer.Advance(length);
         
-        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
+        await WriteCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -343,7 +435,7 @@ public sealed class PipelineCommandWriter : IDisposable
         var length = RespCommands.BuildSRemCommand(buffer, key, member);
         writer.Advance(length);
         
-        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
+        await WriteCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -361,7 +453,7 @@ public sealed class PipelineCommandWriter : IDisposable
         var length = RespCommands.BuildRPopCommand(buffer, key);
         writer.Advance(length);
         
-        await _connection.WritePreCompiledCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
+        await WriteCommandAsync(writer.WrittenMemory, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>

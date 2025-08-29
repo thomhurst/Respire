@@ -12,7 +12,7 @@ namespace Respire.Infrastructure;
 /// High-performance command queue using System.Threading.Channels
 /// Provides async command queueing with backpressure management and batch processing
 /// </summary>
-public sealed class RespireCommandQueue : IAsyncDisposable
+public sealed class RespireCommandQueue : IRespireCommandQueue
 {
     private readonly Channel<QueuedCommand> _commandChannel;
     private readonly ChannelWriter<QueuedCommand> _writer;
@@ -164,15 +164,7 @@ public sealed class RespireCommandQueue : IAsyncDisposable
     {
         ThrowIfDisposed();
         
-        // Fast path: if queue is empty, execute directly
-        if (_reader.Count == 0)
-        {
-            await _multiplexer.ExecuteCommandAsync(commandAction, cancellationToken).ConfigureAwait(false);
-            Interlocked.Increment(ref _totalCommandsQueued);
-            return;
-        }
-        
-        // Standard path: queue the command
+        // Always queue the command to avoid deadlocks
         var command = new QueuedCommand(commandAction, null);
         await _writer.WriteAsync(command, cancellationToken).ConfigureAwait(false);
         Interlocked.Increment(ref _totalCommandsQueued);
@@ -189,14 +181,6 @@ public sealed class RespireCommandQueue : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        
-        // Fast path: if queue is empty, execute directly and return response
-        if (_reader.Count == 0)
-        {
-            var response = await _multiplexer.ExecuteCommandWithResponseAsync(commandAction, cancellationToken).ConfigureAwait(false);
-            Interlocked.Increment(ref _totalCommandsQueued);
-            return response;
-        }
         
         // Standard path: queue the command with response handling
         var vtcs = _vtcsPool.Get();

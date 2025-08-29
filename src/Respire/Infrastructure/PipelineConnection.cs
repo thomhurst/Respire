@@ -92,7 +92,7 @@ public sealed class PipelineConnection : IAsyncDisposable
     {
         ThrowIfDisposed();
         
-        // Try to acquire semaphore synchronously for fast path
+        // Try to acquire semaphore synchronously
         if (_writeSemaphore.Wait(0))
         {
             try
@@ -152,6 +152,73 @@ public sealed class PipelineConnection : IAsyncDisposable
             _writeSemaphore.Release();
         }
     }
+    
+    /// <summary>
+    /// Writes pre-compiled RESP command bytes without flushing (for batched operations)
+    /// </summary>
+    /// <param name="commandBytes">Pre-compiled RESP command bytes</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public ValueTask WritePreCompiledCommandNoFlushAsync(ReadOnlyMemory<byte> commandBytes, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        
+        // Try to acquire semaphore synchronously  
+        if (_writeSemaphore.Wait(0))
+        {
+            try
+            {
+                var memory = _writer.GetMemory(commandBytes.Length);
+                commandBytes.CopyTo(memory);
+                _writer.Advance(commandBytes.Length);
+                _writeSemaphore.Release();
+                return ValueTask.CompletedTask;
+            }
+            catch
+            {
+                _writeSemaphore.Release();
+                throw;
+            }
+        }
+        
+        // Semaphore not available, use async path
+        return WritePreCompiledCommandNoFlushAsyncCore(commandBytes, cancellationToken);
+    }
+    
+    private async ValueTask WritePreCompiledCommandNoFlushAsyncCore(ReadOnlyMemory<byte> commandBytes, CancellationToken cancellationToken)
+    {
+        await _writeSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var memory = _writer.GetMemory(commandBytes.Length);
+            commandBytes.CopyTo(memory);
+            _writer.Advance(commandBytes.Length);
+        }
+        finally
+        {
+            _writeSemaphore.Release();
+        }
+    }
+    
+    /// <summary>
+    /// Flushes any buffered data to the network
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token</param>
+    public async ValueTask FlushAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        
+        await _writeSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeSemaphore.Release();
+        }
+    }
+    
     
     /// <summary>
     /// Writes multiple pre-compiled commands in a batch for maximum throughput

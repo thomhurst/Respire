@@ -11,12 +11,12 @@ namespace Respire.FastClient;
 public sealed class RespirePipeline : IDisposable
 {
     private readonly RespireClient _client;
-    private readonly RespireCommandQueue _commandQueue;
+    private readonly IRespireCommandQueue _commandQueue;
     private readonly List<Func<PipelineCommandWriter, ValueTask>> _commands;
     private readonly List<ValueTask<RespireValue>> _responseTasks;
     private bool _disposed;
     
-    internal RespirePipeline(RespireClient client, RespireCommandQueue commandQueue)
+    internal RespirePipeline(RespireClient client, IRespireCommandQueue commandQueue)
     {
         _client = client;
         _commandQueue = commandQueue;
@@ -235,7 +235,11 @@ public sealed class RespirePipeline : IDisposable
             // Execute fire-and-forget commands in batch
             if (_commands.Count > 0)
             {
-                await _commandQueue.QueueBatchAsync(_commands, cancellationToken).ConfigureAwait(false);
+                // Queue each command individually - they will be batched by the pipelined queue
+                foreach (var command in _commands)
+                {
+                    await _commandQueue.QueueCommandAsync(command, cancellationToken).ConfigureAwait(false);
+                }
             }
             
             // Wait for all response tasks (these were already queued when added to pipeline)

@@ -14,11 +14,11 @@ namespace Respire.FastClient;
 public sealed class RespireClient : IAsyncDisposable
 {
     private readonly RespireConnectionMultiplexer _multiplexer;
-    private readonly RespireCommandQueue _commandQueue;
+    private readonly IRespireCommandQueue _commandQueue;
     private readonly ILogger? _logger;
     private volatile bool _disposed;
     
-    // Fast path optimizations for GET operations
+    // Direct execution for GET operations
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte[]> _preEncodedGetCommands = new();
     private const int MaxPreEncodedCommands = 1000;
     
@@ -28,7 +28,7 @@ public sealed class RespireClient : IAsyncDisposable
     
     private RespireClient(
         RespireConnectionMultiplexer multiplexer,
-        RespireCommandQueue commandQueue,
+        IRespireCommandQueue commandQueue,
         ILogger? logger)
     {
         _multiplexer = multiplexer;
@@ -49,15 +49,29 @@ public sealed class RespireClient : IAsyncDisposable
         string host,
         int port = 6379,
         int connectionCount = 0,
-        RespireCommandQueue.QueueOptions queueOptions = default,
+        RespireCommandQueue.QueueOptions? queueOptions = null,
         ILogger? logger = null)
     {
+        // Console.WriteLine($"[DEBUG] CreateAsync called for {host}:{port}");
         var multiplexer = await RespireConnectionMultiplexer.CreateAsync(
             host, port, connectionCount, logger: logger).ConfigureAwait(false);
         
-        var commandQueue = new RespireCommandQueue(multiplexer, queueOptions, logger);
+        // Console.WriteLine("[DEBUG] Multiplexer created");
+        
+        // Use the pipelined queue for proper batching
+        var options = queueOptions ?? RespireCommandQueue.QueueOptions.Default;
+        IRespireCommandQueue commandQueue = new RespireCommandQueuePipelined(
+            multiplexer, 
+            maxBatchSize: options.BatchSize, 
+            batchTimeout: options.BatchTimeout,
+            tcsPoolSize: options.TcsPoolSize,
+            logger);
+        
+        // Console.WriteLine("[DEBUG] Command queue created");
         
         var client = new RespireClient(multiplexer, commandQueue, logger);
+        
+        // Console.WriteLine("[DEBUG] Client created");
         
         logger?.LogInformation(
             "Created RespireClient for {Host}:{Port} with {ConnectionCount} connections",
@@ -67,7 +81,7 @@ public sealed class RespireClient : IAsyncDisposable
     }
     
     /// <summary>
-    /// Creates a client optimized for high throughput scenarios
+    /// Creates a client configured for high throughput scenarios
     /// </summary>
     public static Task<RespireClient> CreateHighThroughputAsync(
         string host,
@@ -79,7 +93,7 @@ public sealed class RespireClient : IAsyncDisposable
     }
     
     /// <summary>
-    /// Creates a client optimized for low latency scenarios
+    /// Creates a client configured for low latency scenarios
     /// </summary>
     public static Task<RespireClient> CreateLowLatencyAsync(
         string host,
@@ -99,7 +113,7 @@ public sealed class RespireClient : IAsyncDisposable
     public ValueTask PingAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        return _commandQueue.QueuePingAsync(cancellationToken);
+        return _commandQueue.QueueCommandAsync(writer => writer.WritePingAsync(cancellationToken), cancellationToken);
     }
     
     /// <summary>
@@ -109,7 +123,7 @@ public sealed class RespireClient : IAsyncDisposable
     public ValueTask InfoAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        return _commandQueue.QueueInfoAsync(cancellationToken);
+        return _commandQueue.QueueCommandAsync(writer => writer.WriteInfoAsync(cancellationToken), cancellationToken);
     }
     
     /// <summary>
@@ -119,7 +133,7 @@ public sealed class RespireClient : IAsyncDisposable
     public ValueTask DbSizeAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        return _commandQueue.QueueDbSizeAsync(cancellationToken);
+        return _commandQueue.QueueCommandAsync(writer => writer.WriteDbSizeAsync(cancellationToken), cancellationToken);
     }
     
     /// <summary>
@@ -128,9 +142,12 @@ public sealed class RespireClient : IAsyncDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public async ValueTask SetAsync(string key, string value, CancellationToken cancellationToken = default)
     {
+        // Console.WriteLine($"[DEBUG] SetAsync called with key: {key}, value: {value}");
         ThrowIfDisposed();
-        var response = await _multiplexer.ExecuteCommandWithResponseAsync(
+        // Console.WriteLine("[DEBUG] About to queue command");
+        var response = await _commandQueue.QueueCommandWithResponseAsync(
             writer => writer.WriteSetAsync(key, value, cancellationToken), cancellationToken).ConfigureAwait(false);
+        // Console.WriteLine($"[DEBUG] Got response: {response}");
         
         // Verify we got "OK" response
         if (!response.Type.Equals(RespDataType.SimpleString) || !response.AsString().Equals("OK", StringComparison.OrdinalIgnoreCase))
@@ -146,7 +163,7 @@ public sealed class RespireClient : IAsyncDisposable
     public async ValueTask<long> DelAsync(string key, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        var response = await _multiplexer.ExecuteCommandWithResponseAsync(
+        var response = await _commandQueue.QueueCommandWithResponseAsync(
             writer => writer.WriteDelAsync(key, cancellationToken), cancellationToken).ConfigureAwait(false);
         return response.AsInteger();
     }
@@ -158,7 +175,7 @@ public sealed class RespireClient : IAsyncDisposable
     public async ValueTask<bool> ExpireAsync(string key, int seconds, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        var response = await _multiplexer.ExecuteCommandWithResponseAsync(
+        var response = await _commandQueue.QueueCommandWithResponseAsync(
             writer => writer.WriteExpireAsync(key, seconds, cancellationToken), cancellationToken).ConfigureAwait(false);
         return response.AsInteger() == 1;
     }
@@ -170,7 +187,7 @@ public sealed class RespireClient : IAsyncDisposable
     public async ValueTask<long> IncrAsync(string key, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        var response = await _multiplexer.ExecuteCommandWithResponseAsync(
+        var response = await _commandQueue.QueueCommandWithResponseAsync(
             writer => writer.WriteIncrAsync(key, cancellationToken), cancellationToken).ConfigureAwait(false);
         return response.AsInteger();
     }
@@ -218,41 +235,30 @@ public sealed class RespireClient : IAsyncDisposable
     // Command methods with responses
     
     /// <summary>
-    /// Gets value for key with response - uses fast path for single GET operations
+    /// Gets value for key with response
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public ValueTask<RespireValue> GetAsync(string key, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         
-        // Fast path: bypass command queue for single GET operations
-        // This avoids queue allocations and batching overhead  
-        // Controlled via static flag for now, can be made configurable later
-        if (EnableGetFastPath)
-        {
-            return ExecuteGetFastPathAsync(key, cancellationToken);
-        }
-        
-        return _commandQueue.QueueGetWithResponseAsync(key, cancellationToken);
+        // All commands must go through the queue to avoid deadlocks
+        return _commandQueue.QueueCommandWithResponseAsync(
+            writer => writer.WriteGetAsync(key, cancellationToken), 
+            cancellationToken);
     }
     
     /// <summary>
-    /// Static flag to enable GET fast path optimization
-    /// Set to true to bypass command queue for GET operations
-    /// </summary>
-    public static bool EnableGetFastPath { get; set; } = true;
-    
-    /// <summary>
-    /// Fast path for GET operations that bypasses the command queue
-    /// Optimized with ConnectionLease to avoid boxing and async state machines
+    /// Executes GET operation directly on connection
+    /// Uses ConnectionLease to avoid boxing and async state machines
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private ValueTask<RespireValue> ExecuteGetFastPathAsync(string key, CancellationToken cancellationToken)
+    private ValueTask<RespireValue> ExecuteGetDirectAsync(string key, CancellationToken cancellationToken)
     {
         // Try to use pre-encoded command if available for minimal allocations
         if (_preEncodedGetCommands.TryGetValue(key, out var encodedCommand))
         {
-            return ExecutePreEncodedGetOptimizedAsync(encodedCommand, cancellationToken);
+            return ExecutePreEncodedGetDirectAsync(encodedCommand, cancellationToken);
         }
         
         // Get connection lease - often completes synchronously!
@@ -266,10 +272,10 @@ public sealed class RespireClient : IAsyncDisposable
         }
         
         // Async fallback
-        return ExecuteGetFastPathAsyncSlow(leaseTask.AsTask(), key, cancellationToken);
+        return ExecuteGetDirectAsyncSlow(leaseTask.AsTask(), key, cancellationToken);
     }
     
-    private async ValueTask<RespireValue> ExecuteGetFastPathAsyncSlow(Task<Infrastructure.ConnectionLease> leaseTask, string key, CancellationToken cancellationToken)
+    private async ValueTask<RespireValue> ExecuteGetDirectAsyncSlow(Task<Infrastructure.ConnectionLease> leaseTask, string key, CancellationToken cancellationToken)
     {
         var lease = await leaseTask.ConfigureAwait(false);
         return await ExecuteGetWithLeaseAsync(lease, key, cancellationToken).ConfigureAwait(false);
@@ -308,11 +314,26 @@ public sealed class RespireClient : IAsyncDisposable
                 await writeTask.ConfigureAwait(false);
             }
             
-            // Read response directly
-            var readResult = await lease.Connection.ReadAsync(cancellationToken).ConfigureAwait(false);
-            
-            // Parse response
-            return ParseRespResponse(readResult.Buffer, lease.Connection);
+            // Read response - keep reading until we have a complete response
+            while (true)
+            {
+                var readResult = await lease.Connection.ReadAsync(cancellationToken).ConfigureAwait(false);
+                
+                // Parse response
+                var value = ParseRespResponse(readResult.Buffer, lease.Connection);
+                if (!value.Type.Equals(RespDataType.None))
+                {
+                    return value;
+                }
+                
+                // Check if connection was closed
+                if (readResult.IsCompleted)
+                {
+                    throw new InvalidOperationException("Connection closed before complete response received");
+                }
+                
+                // Continue reading more data
+            }
         }
         finally
         {
@@ -321,10 +342,10 @@ public sealed class RespireClient : IAsyncDisposable
     }
     
     /// <summary>
-    /// Optimized path for pre-encoded GET commands using ConnectionLease
+    /// Direct execution for pre-encoded GET commands using ConnectionLease
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private ValueTask<RespireValue> ExecutePreEncodedGetOptimizedAsync(byte[] encodedCommand, CancellationToken cancellationToken)
+    private ValueTask<RespireValue> ExecutePreEncodedGetDirectAsync(byte[] encodedCommand, CancellationToken cancellationToken)
     {
         // Get connection lease - often completes synchronously!
         var leaseTask = _multiplexer.GetConnectionLeaseAsync(cancellationToken);
@@ -435,6 +456,8 @@ public sealed class RespireClient : IAsyncDisposable
             return value;
         }
         
+        // Incomplete response - mark as examined but not consumed
+        // The caller should continue reading more data
         connection.AdvanceReader(buffer.Start, buffer.End);
         return default;
     }
@@ -465,7 +488,7 @@ public sealed class RespireClient : IAsyncDisposable
     public ValueTask<RespireValue> ExistsAsync(string key, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        return _commandQueue.QueueExistsWithResponseAsync(key, cancellationToken);
+        return _commandQueue.QueueCommandWithResponseAsync(writer => writer.WriteExistsAsync(key, cancellationToken), cancellationToken);
     }
     
     /// <summary>
@@ -505,7 +528,7 @@ public sealed class RespireClient : IAsyncDisposable
     public ValueTask<RespireValue> IncrWithResponseAsync(string key, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        return _commandQueue.QueueIncrWithResponseAsync(key, cancellationToken);
+        return _commandQueue.QueueCommandWithResponseAsync(writer => writer.WriteIncrAsync(key, cancellationToken), cancellationToken);
     }
     
     /// <summary>
@@ -515,7 +538,7 @@ public sealed class RespireClient : IAsyncDisposable
     public ValueTask<RespireValue> PingWithResponseAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        return _commandQueue.QueuePingWithResponseAsync(cancellationToken);
+        return _commandQueue.QueueCommandWithResponseAsync(writer => writer.WritePingAsync(cancellationToken), cancellationToken);
     }
     
     // Enhanced methods with RespireDirectClient optimizations integrated
@@ -569,7 +592,11 @@ public sealed class RespireClient : IAsyncDisposable
         var commands = keyValues.Select<(string Key, string Value), Func<PipelineCommandWriter, ValueTask>>(
             kv => writer => writer.WriteSetAsync(kv.Key, kv.Value, cancellationToken));
         
-        await _commandQueue.QueueBatchAsync(commands, cancellationToken).ConfigureAwait(false);
+        // Queue each command individually - they will be batched by the pipelined queue
+        foreach (var command in commands)
+        {
+            await _commandQueue.QueueCommandAsync(command, cancellationToken).ConfigureAwait(false);
+        }
     }
     
     /// <summary>
@@ -621,7 +648,8 @@ public sealed class RespireClient : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        return _commandQueue.QueuePreCompiledAsync(preCompiledCommand, cancellationToken);
+        return _commandQueue.QueueCommandAsync(
+            writer => writer.WritePreCompiledAsync(preCompiledCommand, cancellationToken), cancellationToken);
     }
     
     // Pipeline operations (inspired by FastRespClient but async)
@@ -659,7 +687,11 @@ public sealed class RespireClient : IAsyncDisposable
     /// <summary>
     /// Gets command queue statistics
     /// </summary>
-    public QueueStats GetQueueStats() => _commandQueue.GetStats();
+    public QueueStats GetQueueStats()
+    {
+        // Return default stats since interface doesn't expose stats
+        return new QueueStats();
+    }
     
     /// <summary>
     /// Gets combined performance metrics
@@ -679,14 +711,6 @@ public sealed class RespireClient : IAsyncDisposable
         };
     }
     
-    /// <summary>
-    /// Gets a command writer for advanced scenarios
-    /// </summary>
-    public async ValueTask<PipelineCommandWriter> GetCommandWriterAsync(CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        return await _multiplexer.GetCommandWriterAsync(cancellationToken).ConfigureAwait(false);
-    }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void ThrowIfDisposed()
@@ -724,8 +748,7 @@ public sealed class RespireClient : IAsyncDisposable
             // Clear pre-encoded command cache
             _preEncodedGetCommands.Clear();
             
-            // Complete command queue first
-            _commandQueue.CompleteAdding();
+            // Dispose command queue
             await _commandQueue.DisposeAsync().ConfigureAwait(false);
             
             // Then dispose multiplexer
