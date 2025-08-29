@@ -56,8 +56,13 @@ public ref struct RespPipelineReader
             _ => false
         };
         
+        // If parsing succeeded, update consumed to current position
         // If parsing failed, reset consumed position
-        if (!result)
+        if (result)
+        {
+            _consumed = _position;
+        }
+        else
         {
             _consumed = initialConsumed;
         }

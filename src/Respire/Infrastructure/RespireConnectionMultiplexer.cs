@@ -16,9 +16,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
 {
     private readonly PipelineConnection[] _connections;
     private readonly SemaphoreSlim[] _connectionSemaphores;
-    private readonly ConcurrentQueue<int> _availableConnections;
-    private readonly ConcurrentQueue<ConnectionHandle>[] _connectionHandlePool;
-    private readonly ConcurrentBag<PipelineCommandWriter>[] _writerPools;
+    private readonly ObjectPool<PipelineCommandWriter>[] _writerPools;
     private readonly ILogger? _logger;
     private readonly Timer _healthCheckTimer;
     private readonly CancellationTokenSource _cancellationTokenSource;
@@ -42,20 +40,21 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     {
         _connections = connections;
         _connectionSemaphores = new SemaphoreSlim[connections.Length];
-        _availableConnections = new ConcurrentQueue<int>();
-        _connectionHandlePool = new ConcurrentQueue<ConnectionHandle>[connections.Length];
+        _writerPools = new ObjectPool<PipelineCommandWriter>[connections.Length];
         Host = host;
         Port = port;
         _logger = logger;
         _cancellationTokenSource = new CancellationTokenSource();
         _connectionCount = connections.Length;
         
-        // Initialize semaphores and available connections
+        // Initialize semaphores and writer pools
         for (var i = 0; i < connections.Length; i++)
         {
             _connectionSemaphores[i] = new SemaphoreSlim(1, 1);
-            _connectionHandlePool[i] = new ConcurrentQueue<ConnectionHandle>();
-            _availableConnections.Enqueue(i);
+            
+            // Create an ObjectPool for each connection with a custom policy
+            var policy = new PipelineCommandWriterPooledObjectPolicy(connections[i]);
+            _writerPools[i] = new DefaultObjectPool<PipelineCommandWriter>(policy, maximumRetained: 16);
         }
         
         // Start health check timer (every 30 seconds)
@@ -120,54 +119,33 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     {
         ThrowIfDisposed();
         
-        // Try to get a free connection first
-        if (_availableConnections.TryDequeue(out var freeIndex) && _connections[freeIndex].IsConnected)
+        // Try to find an available connection using round-robin
+        // Try all connections before waiting
+        for (int i = 0; i < _connectionCount; i++)
         {
-            // Try to acquire semaphore synchronously
-            if (_connectionSemaphores[freeIndex].Wait(0))
-            {
-                // Try to get a pooled handle first
-                if (_connectionHandlePool[freeIndex].TryDequeue(out var pooledHandle))
-                {
-                    return new ValueTask<ConnectionHandle>(pooledHandle);
-                }
-                // Create new handle if pool is empty
-                return new ValueTask<ConnectionHandle>(new ConnectionHandle(this, freeIndex, _connections[freeIndex]));
-            }
+            var index = (int)((uint)Interlocked.Increment(ref _roundRobinCounter) % (uint)_connectionCount);
             
-            // Need to wait asynchronously
-            return GetConnectionHandleAsyncSlow(freeIndex, cancellationToken);
-        }
-        
-        // Fallback to round-robin if no free connections
-        var (index, connection) = GetConnection();
-        
-        // Try to acquire semaphore synchronously
-        if (_connectionSemaphores[index].Wait(0))
-        {
-            // Try to get a pooled handle first
-            if (_connectionHandlePool[index].TryDequeue(out var pooledHandle))
+            // Try to acquire semaphore synchronously
+            if (_connectionSemaphores[index].Wait(0))
             {
-                return new ValueTask<ConnectionHandle>(pooledHandle);
+                // Always create a new handle - pooling them causes double-dispose issues
+                return new ValueTask<ConnectionHandle>(new ConnectionHandle(this, index, _connections[index]));
             }
-            // Create new handle if pool is empty
-            return new ValueTask<ConnectionHandle>(new ConnectionHandle(this, index, connection));
         }
         
-        // Need to wait asynchronously
-        return GetConnectionHandleAsyncSlow(index, cancellationToken);
+        // All connections busy, need to wait for one
+        // Select next connection in round-robin order and wait
+        var waitIndex = (int)((uint)Interlocked.Increment(ref _roundRobinCounter) % (uint)_connectionCount);
+        return GetConnectionHandleAsyncSlow(waitIndex, cancellationToken);
     }
     
     private async ValueTask<ConnectionHandle> GetConnectionHandleAsyncSlow(int index, CancellationToken cancellationToken)
     {
+        Console.WriteLine($"[DEBUG-MUX] Waiting for semaphore on connection {index}...");
         await _connectionSemaphores[index].WaitAsync(cancellationToken).ConfigureAwait(false);
+        Console.WriteLine($"[DEBUG-MUX] Acquired semaphore on connection {index}");
         
-        // Try to get a pooled handle first
-        if (_connectionHandlePool[index].TryDequeue(out var pooledHandle))
-        {
-            return pooledHandle;
-        }
-        // Create new handle if pool is empty
+        // Always create a new handle - pooling them causes double-dispose issues
         return new ConnectionHandle(this, index, _connections[index]);
     }
     
@@ -179,18 +157,6 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     public ValueTask<ConnectionLease> GetConnectionLeaseAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        
-        // Fast path: try to get a free connection immediately
-        if (_availableConnections.TryDequeue(out var freeIndex) && _connections[freeIndex].IsConnected)
-        {
-            if (_connectionSemaphores[freeIndex].Wait(0))
-            {
-                // Acquired synchronously!
-                _availableConnections.Enqueue(freeIndex);
-                return new ValueTask<ConnectionLease>(new ConnectionLease(this, freeIndex, _connections[freeIndex]));
-            }
-            _availableConnections.Enqueue(freeIndex);
-        }
         
         // Try round-robin with immediate acquisition
         for (var i = 0; i < _connectionCount; i++)
@@ -217,14 +183,28 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     }
     
     /// <summary>
-    /// Creates a command writer for the optimal connection
+    /// Rents a writer for a specific connection
+    /// Writers are pooled per connection to reduce allocations
     /// </summary>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>Pipeline command writer</returns>
-    public ValueTask<PipelineCommandWriter> GetCommandWriterAsync(CancellationToken cancellationToken = default)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private PipelineCommandWriter RentWriter(int connectionIndex, PipelineConnection connection)
     {
-        var (_, connection) = GetConnection();
-        return new ValueTask<PipelineCommandWriter>(new PipelineCommandWriter(connection));
+        var pool = _writerPools[connectionIndex];
+        var writer = pool.Get();
+        
+        // Ensure the writer is using the correct connection
+        writer.UpdateConnection(connection);
+        return writer;
+    }
+    
+    /// <summary>
+    /// Returns a writer to the pool for reuse
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void ReturnWriter(int connectionIndex, PipelineCommandWriter writer)
+    {
+        var pool = _writerPools[connectionIndex];
+        pool.Return(writer);
     }
     
     /// <summary>
@@ -238,10 +218,17 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     {
         using var handle = await GetConnectionHandleAsync(cancellationToken).ConfigureAwait(false);
         
-        // Create a new writer for each operation to avoid concurrency issues
-        using var writer = new PipelineCommandWriter(handle.Connection);
+        // Rent a writer from the pool
+        var writer = RentWriter(handle.Index, handle.Connection);
         
-        await commandAction(writer).ConfigureAwait(false);
+        try
+        {
+            await commandAction(writer).ConfigureAwait(false);
+        }
+        finally
+        {
+            ReturnWriter(handle.Index, writer);
+        }
     }
     
     /// <summary>
@@ -254,48 +241,76 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         Func<PipelineCommandWriter, ValueTask> commandAction,
         CancellationToken cancellationToken = default)
     {
+        Console.WriteLine("[DEBUG-MUX] ExecuteCommandWithResponseAsync started");
+        
+        Console.WriteLine("[DEBUG-MUX] Getting connection handle...");
         using var handle = await GetConnectionHandleAsync(cancellationToken).ConfigureAwait(false);
+        Console.WriteLine($"[DEBUG-MUX] Got connection handle, index: {handle.Index}");
         
-        // Reuse thread-local writer to avoid allocation
-        var writer = _threadLocalWriter;
-        if (writer == null || writer.IsDisposed)
-        {
-            writer = new PipelineCommandWriter(handle.Connection);
-            _threadLocalWriter = writer;
-        }
-        else
-        {
-            writer.UpdateConnection(handle.Connection);
-        }
+        // Rent a writer from the pool
+        var writer = RentWriter(handle.Index, handle.Connection);
+        Console.WriteLine("[DEBUG-MUX] Got writer from pool");
         
-        // Write command
-        await commandAction(writer).ConfigureAwait(false);
-        
-        // Read response - keep reading until we have a complete response
-        ReadResult readResult;
-        while (true)
+        try
         {
-            readResult = await handle.Connection.ReadAsync(cancellationToken).ConfigureAwait(false);
+            // Write command
+            Console.WriteLine("[DEBUG-MUX] Writing command...");
+            await commandAction(writer).ConfigureAwait(false);
+            Console.WriteLine("[DEBUG-MUX] Command written, reading response...");
             
-            // Parse response using ref struct outside of async context
-            var reader = new RespPipelineReader(readResult.Buffer);
-            
-            if (reader.TryReadValue(out var value))
+            // Read response - keep reading until we have a complete response
+            ReadResult readResult;
+            while (true)
             {
-                handle.Connection.AdvanceReader(reader.Consumed, reader.Examined);
-                return value;
-            }
-            
-            // Check if connection was closed
-            if (readResult.IsCompleted)
-            {
+                Console.WriteLine("[DEBUG-MUX] Calling ReadAsync...");
+                readResult = await handle.Connection.ReadAsync(cancellationToken).ConfigureAwait(false);
+                Console.WriteLine($"[DEBUG-MUX] ReadAsync returned, buffer length: {readResult.Buffer.Length}, IsCompleted: {readResult.IsCompleted}");
+                
+                // Debug: Print first few bytes of buffer
+                if (readResult.Buffer.Length > 0)
+                {
+                    var firstBytes = readResult.Buffer.Slice(0, Math.Min(20, readResult.Buffer.Length)).ToArray();
+                    var preview = System.Text.Encoding.UTF8.GetString(firstBytes).Replace("\r", "\\r").Replace("\n", "\\n");
+                    Console.WriteLine($"[DEBUG-MUX] Buffer preview: {preview}");
+                }
+                
+                // Parse response using ref struct outside of async context
+                var reader = new RespPipelineReader(readResult.Buffer);
+                
+                if (reader.TryReadValue(out var value))
+                {
+                    Console.WriteLine($"[DEBUG-MUX] Successfully parsed response: {value.Type}");
+                    handle.Connection.AdvanceReader(reader.Consumed, reader.Examined);
+                    Console.WriteLine("[DEBUG-MUX] Reader advanced, returning response");
+                    Console.WriteLine($"[DEBUG-MUX] About to return value, handle will be disposed");
+                    return value;
+                }
+                
+                Console.WriteLine("[DEBUG-MUX] TryReadValue returned false, need more data");
+                
+                // Check if connection was closed
+                if (readResult.IsCompleted)
+                {
+                    handle.Connection.AdvanceReader(readResult.Buffer.Start, readResult.Buffer.End);
+                    throw new InvalidOperationException("Connection closed before complete response received");
+                }
+                
+                // Tell the pipeline that we've examined the data but haven't consumed it
+                // Consumed = Start (nothing consumed), Examined = End (everything examined)
+                Console.WriteLine("[DEBUG-MUX] Advancing reader to wait for more data");
                 handle.Connection.AdvanceReader(readResult.Buffer.Start, readResult.Buffer.End);
-                throw new InvalidOperationException("Connection closed before complete response received");
             }
-            
-            // Tell the pipeline that we've examined the data but haven't consumed it
-            // Consumed = Start (nothing consumed), Examined = End (everything examined)
-            handle.Connection.AdvanceReader(readResult.Buffer.Start, readResult.Buffer.End);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[DEBUG-MUX] Exception in ExecuteCommandWithResponseAsync: {ex.Message}");
+            throw;
+        }
+        finally
+        {
+            Console.WriteLine($"[DEBUG-MUX] Finally block: returning writer for connection {handle.Index}");
+            ReturnWriter(handle.Index, writer);
+            Console.WriteLine($"[DEBUG-MUX] Writer returned, exiting ExecuteCommandWithResponseAsync");
         }
     }
     
@@ -314,10 +329,11 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         
         foreach (var command in commandList)
         {
-            var connection = _connections[connectionIndex % _connections.Length];
+            var index = connectionIndex % _connections.Length;
+            var connection = _connections[index];
             connectionIndex++;
             
-            tasks.Add(ExecuteOnConnectionAsync(connection, command, cancellationToken));
+            tasks.Add(ExecuteOnConnectionAsync(index, connection, command, cancellationToken));
         }
         
         foreach (var task in tasks)
@@ -327,12 +343,20 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     }
     
     private async ValueTask ExecuteOnConnectionAsync(
+        int connectionIndex,
         PipelineConnection connection, 
         Func<PipelineCommandWriter, ValueTask> commandAction,
         CancellationToken cancellationToken)
     {
-        using var writer = new PipelineCommandWriter(connection);
-        await commandAction(writer).ConfigureAwait(false);
+        var writer = RentWriter(connectionIndex, connection);
+        try
+        {
+            await commandAction(writer).ConfigureAwait(false);
+        }
+        finally
+        {
+            ReturnWriter(connectionIndex, writer);
+        }
     }
     
     /// <summary>
@@ -348,7 +372,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         {
             TotalConnections = totalConnections,
             ConnectedConnections = connectedCount,
-            AvailableConnections = _availableConnections.Count,
+            AvailableConnections = 0, // Not tracking anymore, using semaphores
             Host = Host,
             Port = Port
         };
@@ -390,12 +414,19 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     {
         try
         {
-            using var writer = new PipelineCommandWriter(connection);
-            await writer.WritePingAsync(_cancellationTokenSource.Token).ConfigureAwait(false);
-            
-            // Read the response to complete the ping
-            var readResult = await connection.ReadAsync(_cancellationTokenSource.Token).ConfigureAwait(false);
-            connection.AdvanceReader(readResult.Buffer.Start, readResult.Buffer.End);
+            var writer = RentWriter(index, connection);
+            try
+            {
+                await writer.WritePingAsync(_cancellationTokenSource.Token).ConfigureAwait(false);
+                
+                // Read the response to complete the ping
+                var readResult = await connection.ReadAsync(_cancellationTokenSource.Token).ConfigureAwait(false);
+                connection.AdvanceReader(readResult.Buffer.Start, readResult.Buffer.End);
+            }
+            finally
+            {
+                ReturnWriter(index, writer);
+            }
         }
         catch (Exception ex)
         {
@@ -406,22 +437,17 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     internal void ReleaseConnection(int index)
     {
         _connectionSemaphores[index].Release();
-        _availableConnections.Enqueue(index);
     }
     
     /// <summary>
-    /// Returns a connection handle to the pool for reuse
+    /// Returns a connection handle (releases the semaphore)
     /// </summary>
     internal void ReturnConnectionHandle(int index, ConnectionHandle handle)
     {
-        // Only pool a limited number of handles to avoid unbounded growth
-        if (_connectionHandlePool[index].Count < 4)
-        {
-            _connectionHandlePool[index].Enqueue(handle);
-        }
-        
+        // Just release the semaphore - we don't pool handles anymore since they're structs
+        Console.WriteLine($"[DEBUG-MUX] Releasing semaphore for connection {index}");
         _connectionSemaphores[index].Release();
-        _availableConnections.Enqueue(index);
+        Console.WriteLine($"[DEBUG-MUX] Semaphore released for connection {index}");
     }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -455,6 +481,9 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         {
             _cancellationTokenSource.Cancel();
             _healthCheckTimer.Dispose();
+            
+            // Writer pools will be GC'd with their contents
+            // ObjectPool doesn't provide a way to drain all items
             
             // Dispose all connections
             foreach (var connection in _connections)
@@ -490,6 +519,7 @@ public readonly struct ConnectionHandle : IDisposable
     private readonly int _index;
     
     public PipelineConnection Connection { get; }
+    public int Index => _index;
     
     internal ConnectionHandle(RespireConnectionMultiplexer multiplexer, int index, PipelineConnection connection)
     {
@@ -500,6 +530,7 @@ public readonly struct ConnectionHandle : IDisposable
     
     public void Dispose()
     {
+        Console.WriteLine($"[DEBUG-HANDLE] ConnectionHandle.Dispose called for index {_index}");
         _multiplexer.ReturnConnectionHandle(_index, this);
     }
 }
