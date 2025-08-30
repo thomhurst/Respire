@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using Respire.Infrastructure;
 using Respire.Protocol;
+using Respire.Commands;
 
 namespace Respire.FastClient;
 
@@ -106,7 +107,8 @@ public sealed class RespireClient : IAsyncDisposable
     public ValueTask PingAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        return _commandQueue.QueueCommandAsync(writer => writer.WritePingAsync(cancellationToken), cancellationToken);
+        var command = new PooledCommands.PingCommand(cancellationToken);
+        return _commandQueue.QueueCommandAsync(command.ExecuteAsync, cancellationToken);
     }
     
     /// <summary>
@@ -136,8 +138,9 @@ public sealed class RespireClient : IAsyncDisposable
     public async ValueTask SetAsync(string key, string value, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
+        var command = new PooledCommands.SetCommand(key, value, cancellationToken);
         var response = await _commandQueue.QueueCommandWithResponseAsync(
-            writer => writer.WriteSetAsync(key, value, cancellationToken), cancellationToken).ConfigureAwait(false);
+            command.ExecuteAsync, cancellationToken).ConfigureAwait(false);
         
         // Verify we got "OK" response
         if (!response.Type.Equals(RespDataType.SimpleString) || !response.AsString().Equals("OK", StringComparison.OrdinalIgnoreCase))
@@ -153,8 +156,9 @@ public sealed class RespireClient : IAsyncDisposable
     public async ValueTask<long> DelAsync(string key, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
+        var command = new PooledCommands.DelCommand(key, cancellationToken);
         var response = await _commandQueue.QueueCommandWithResponseAsync(
-            writer => writer.WriteDelAsync(key, cancellationToken), cancellationToken).ConfigureAwait(false);
+            command.ExecuteAsync, cancellationToken).ConfigureAwait(false);
         return response.AsInteger();
     }
     
@@ -177,8 +181,9 @@ public sealed class RespireClient : IAsyncDisposable
     public async ValueTask<long> IncrAsync(string key, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
+        var command = new PooledCommands.IncrCommand(key, cancellationToken);
         var response = await _commandQueue.QueueCommandWithResponseAsync(
-            writer => writer.WriteIncrAsync(key, cancellationToken), cancellationToken).ConfigureAwait(false);
+            command.ExecuteAsync, cancellationToken).ConfigureAwait(false);
         return response.AsInteger();
     }
     
@@ -233,8 +238,9 @@ public sealed class RespireClient : IAsyncDisposable
         ThrowIfDisposed();
         
         // All commands must go through the queue to avoid deadlocks
+        var command = new PooledCommands.GetCommand(key, cancellationToken);
         return _commandQueue.QueueCommandWithResponseAsync(
-            writer => writer.WriteGetAsync(key, cancellationToken), 
+            command.ExecuteAsync, 
             cancellationToken);
     }
     
@@ -478,7 +484,8 @@ public sealed class RespireClient : IAsyncDisposable
     public ValueTask<RespireValue> ExistsAsync(string key, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        return _commandQueue.QueueCommandWithResponseAsync(writer => writer.WriteExistsAsync(key, cancellationToken), cancellationToken);
+        var command = new PooledCommands.ExistsCommand(key, cancellationToken);
+        return _commandQueue.QueueCommandWithResponseAsync(command.ExecuteAsync, cancellationToken);
     }
     
     /// <summary>
@@ -518,7 +525,8 @@ public sealed class RespireClient : IAsyncDisposable
     public ValueTask<RespireValue> IncrWithResponseAsync(string key, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        return _commandQueue.QueueCommandWithResponseAsync(writer => writer.WriteIncrAsync(key, cancellationToken), cancellationToken);
+        var command = new PooledCommands.IncrCommand(key, cancellationToken);
+        return _commandQueue.QueueCommandWithResponseAsync(command.ExecuteAsync, cancellationToken);
     }
     
     /// <summary>
@@ -528,7 +536,8 @@ public sealed class RespireClient : IAsyncDisposable
     public ValueTask<RespireValue> PingWithResponseAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        return _commandQueue.QueueCommandWithResponseAsync(writer => writer.WritePingAsync(cancellationToken), cancellationToken);
+        var command = new PooledCommands.PingCommand(cancellationToken);
+        return _commandQueue.QueueCommandWithResponseAsync(command.ExecuteAsync, cancellationToken);
     }
     
     // Enhanced methods with RespireDirectClient optimizations integrated
@@ -541,8 +550,9 @@ public sealed class RespireClient : IAsyncDisposable
     public async ValueTask<RespireValue> GetDirectAsync(string key, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
+        var command = new PooledCommands.GetCommand(key, cancellationToken);
         return await _multiplexer.ExecuteCommandWithResponseAsync(
-            writer => writer.WriteGetAsync(key, cancellationToken), cancellationToken).ConfigureAwait(false);
+            command.ExecuteAsync, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -551,8 +561,9 @@ public sealed class RespireClient : IAsyncDisposable
     public async ValueTask<RespireValue> PingDirectAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
+        var command = new PooledCommands.PingCommand(cancellationToken);
         return await _multiplexer.ExecuteCommandWithResponseAsync(
-            writer => writer.WritePingAsync(cancellationToken), cancellationToken).ConfigureAwait(false);
+            command.ExecuteAsync, cancellationToken).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -570,7 +581,7 @@ public sealed class RespireClient : IAsyncDisposable
     
     /// <summary>
     /// Executes multiple SET operations in a batch with zero-allocation command building
-    /// Uses optimizations from RespireDirectClient including pre-allocated digit strings and pinned buffers
+    /// Uses ArrayPool for temporary arrays and avoids LINQ allocations
     /// </summary>
     public async ValueTask SetBatchAsync(
         IEnumerable<(string Key, string Value)> keyValues,
@@ -578,19 +589,39 @@ public sealed class RespireClient : IAsyncDisposable
     {
         ThrowIfDisposed();
         
-        // Enhanced with RespireDirectClient optimizations: use larger buffers for batch operations
-        var commands = keyValues.Select<(string Key, string Value), Func<PipelineCommandWriter, ValueTask>>(
-            kv => writer => writer.WriteSetAsync(kv.Key, kv.Value, cancellationToken));
+        // Convert to array using ArrayPool to avoid allocations
+        var keyValueList = keyValues as IList<(string Key, string Value)> ?? keyValues.ToList();
+        var count = keyValueList.Count;
         
-        // Queue each command individually - they will be batched by the pipelined queue
-        foreach (var command in commands)
+        if (count == 0) return;
+        
+        // Use ArrayPool for temporary command storage to reduce allocations
+        var commands = ArrayPool<PooledCommands.SetCommand>.Shared.Rent(count);
+        
+        try
         {
-            await _commandQueue.QueueCommandAsync(command, cancellationToken).ConfigureAwait(false);
+            // Pre-create all SetCommand structs
+            for (var i = 0; i < count; i++)
+            {
+                var kv = keyValueList[i];
+                commands[i] = new PooledCommands.SetCommand(kv.Key, kv.Value, cancellationToken);
+            }
+            
+            // Queue each command individually - they will be batched by the pipelined queue
+            for (var i = 0; i < count; i++)
+            {
+                await _commandQueue.QueueCommandAsync(commands[i].ExecuteAsync, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            ArrayPool<PooledCommands.SetCommand>.Shared.Return(commands, clearArray: true);
         }
     }
     
     /// <summary>
     /// Executes multiple GET operations in a batch and returns responses (like MGET but optimized)
+    /// Zero-allocation ValueTask handling with ArrayPool for temporary arrays
     /// </summary>
     public async ValueTask<RespireValue[]> GetBatchAsync(
         IEnumerable<string> keys,
@@ -598,10 +629,36 @@ public sealed class RespireClient : IAsyncDisposable
     {
         ThrowIfDisposed();
         
-        var keyList = keys.ToList();
-        var tasks = keyList.Select(key => GetAsync(key, cancellationToken)).ToArray();
+        var keyList = keys as IList<string> ?? keys.ToList();
+        var count = keyList.Count;
         
-        return await Task.WhenAll(tasks.Select(t => t.AsTask())).ConfigureAwait(false);
+        if (count == 0) return Array.Empty<RespireValue>();
+        
+        // Use ArrayPool for temporary task storage to reduce allocations
+        var tasks = ArrayPool<ValueTask<RespireValue>>.Shared.Rent(count);
+        
+        try
+        {
+            // Create GET commands using pooled struct commands
+            for (var i = 0; i < count; i++)
+            {
+                var command = new PooledCommands.GetCommand(keyList[i], cancellationToken);
+                tasks[i] = _commandQueue.QueueCommandWithResponseAsync(command.ExecuteAsync, cancellationToken);
+            }
+            
+            // Optimized ValueTask processing without boxing - await each directly
+            var results = new RespireValue[count];
+            for (var i = 0; i < count; i++)
+            {
+                results[i] = await tasks[i].ConfigureAwait(false);
+            }
+            
+            return results;
+        }
+        finally
+        {
+            ArrayPool<ValueTask<RespireValue>>.Shared.Return(tasks, clearArray: true);
+        }
     }
     
     /// <summary>

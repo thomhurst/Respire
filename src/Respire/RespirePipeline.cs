@@ -243,9 +243,13 @@ public sealed class RespirePipeline : IDisposable
             }
             
             // Wait for all response tasks (these were already queued when added to pipeline)
+            // Optimized ValueTask processing without boxing - await each directly
             if (_responseTasks.Count > 0)
             {
-                await Task.WhenAll(_responseTasks.Select(t => t.AsTask())).ConfigureAwait(false);
+                for (var i = 0; i < _responseTasks.Count; i++)
+                {
+                    await _responseTasks[i].ConfigureAwait(false);
+                }
             }
         }
         finally

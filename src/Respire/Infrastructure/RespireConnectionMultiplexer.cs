@@ -148,6 +148,39 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     }
     
     /// <summary>
+    /// Gets a connection directly with zero allocations for high-performance scenarios
+    /// Returns connection index and connection reference as a tuple
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public ValueTask<(int Index, PipelineConnection Connection)> GetConnectionDirectAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        
+        // Try round-robin with immediate acquisition
+        for (var i = 0; i < _connectionCount; i++)
+        {
+            var index = (int)((uint)Interlocked.Increment(ref _roundRobinCounter) % (uint)_connectionCount);
+            
+            if (_connectionSemaphores[index].Wait(0))
+            {
+                // Semaphore acquired synchronously - return completed ValueTask with no allocations
+                return new ValueTask<(int, PipelineConnection)>((index, _connections[index]));
+            }
+        }
+        
+        // Slow path: need to wait for a connection
+        return GetConnectionDirectAsyncSlow(cancellationToken);
+    }
+    
+    private async ValueTask<(int Index, PipelineConnection Connection)> GetConnectionDirectAsyncSlow(CancellationToken cancellationToken)
+    {
+        // Fall back to waiting on next connection in sequence
+        var index = (int)((uint)Interlocked.Increment(ref _roundRobinCounter) % (uint)_connectionCount);
+        await _connectionSemaphores[index].WaitAsync(cancellationToken).ConfigureAwait(false);
+        return (index, _connections[index]);
+    }
+    
+    /// <summary>
     /// Gets a connection lease for zero-allocation command execution
     /// Optimized for synchronous completion when connections are available
     /// </summary>
@@ -239,10 +272,11 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         Func<PipelineCommandWriter, ValueTask> commandAction,
         CancellationToken cancellationToken = default)
     {
-        using var handle = await GetConnectionHandleAsync(cancellationToken).ConfigureAwait(false);
+        // Get connection directly with zero allocations
+        var (connectionIndex, connection) = await GetConnectionDirectAsync(cancellationToken).ConfigureAwait(false);
         
         // Rent a writer from the pool
-        var writer = RentWriter(handle.Index, handle.Connection);
+        var writer = RentWriter(connectionIndex, connection);
         
         try
         {
@@ -253,32 +287,34 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             ReadResult readResult;
             while (true)
             {
-                readResult = await handle.Connection.ReadAsync(cancellationToken).ConfigureAwait(false);
+                readResult = await connection.ReadAsync(cancellationToken).ConfigureAwait(false);
                 
                 // Parse response using ref struct outside of async context
                 var reader = new RespPipelineReader(readResult.Buffer);
                 
                 if (reader.TryReadValue(out var value))
                 {
-                    handle.Connection.AdvanceReader(reader.Consumed, reader.Examined);
+                    connection.AdvanceReader(reader.Consumed, reader.Examined);
                     return value;
                 }
                 
                 // Check if connection was closed
                 if (readResult.IsCompleted)
                 {
-                    handle.Connection.AdvanceReader(readResult.Buffer.Start, readResult.Buffer.End);
+                    connection.AdvanceReader(readResult.Buffer.Start, readResult.Buffer.End);
                     throw new InvalidOperationException("Connection closed before complete response received");
                 }
                 
                 // Tell the pipeline that we've examined the data but haven't consumed it
                 // Consumed = Start (nothing consumed), Examined = End (everything examined)
-                handle.Connection.AdvanceReader(readResult.Buffer.Start, readResult.Buffer.End);
+                connection.AdvanceReader(readResult.Buffer.Start, readResult.Buffer.End);
             }
         }
         finally
         {
-            ReturnWriter(handle.Index, writer);
+            ReturnWriter(connectionIndex, writer);
+            // Release the semaphore directly
+            _connectionSemaphores[connectionIndex].Release();
         }
     }
     
@@ -414,6 +450,14 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     {
         // Just release the semaphore - we don't pool handles anymore since they're structs
         _connectionSemaphores[index].Release();
+    }
+    
+    /// <summary>
+    /// Releases the semaphore for a connection directly (zero-allocation path)
+    /// </summary>
+    internal void ReleaseSemaphore(int connectionIndex)
+    {
+        _connectionSemaphores[connectionIndex].Release();
     }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

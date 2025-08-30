@@ -240,12 +240,12 @@ public sealed class RespireCommandQueuePipelined : IRespireCommandQueue
         
         // Multiple commands - pipeline them!
         _logger?.LogDebug("Pipelining {Count} commands", batch.Count);
-        using var handle = await _multiplexer.GetConnectionHandleAsync(_cancellationTokenSource.Token).ConfigureAwait(false);
+        var (connectionIndex, connection) = await _multiplexer.GetConnectionDirectAsync(_cancellationTokenSource.Token).ConfigureAwait(false);
         
         try
         {
             // Write ALL commands in the batch
-            using var writer = new PipelineCommandWriter(handle.Connection);
+            using var writer = new PipelineCommandWriter(connection);
             
             // Enter batch mode to buffer all commands without flushing
             writer.BeginBatch();
@@ -276,7 +276,7 @@ public sealed class RespireCommandQueuePipelined : IRespireCommandQueue
                 try
                 {
                     // Read response (even for fire-and-forget to keep protocol in sync)
-                    var response = await ReadResponseAsync(handle.Connection, _cancellationTokenSource.Token).ConfigureAwait(false);
+                    var response = await ReadResponseAsync(connection, _cancellationTokenSource.Token).ConfigureAwait(false);
                     
                     // Set the response if there's a handler waiting
                     command.ResponseHandler?.SetResult(response);
@@ -301,6 +301,11 @@ public sealed class RespireCommandQueuePipelined : IRespireCommandQueue
                 command.ResponseHandler?.TrySetException(ex);
             }
             throw; // Re-throw to let the processing loop handle it
+        }
+        finally
+        {
+            // Release the connection semaphore directly
+            _multiplexer.ReleaseSemaphore(connectionIndex);
         }
     }
     
