@@ -7,7 +7,7 @@ namespace Respire.Infrastructure;
 /// <summary>
 /// A reusable, poolable ValueTask completion source to eliminate Task allocations
 /// </summary>
-internal sealed class ValueTaskCompletionSource : IValueTaskSource<RespireValue>, IValueTaskSource
+public sealed class ValueTaskCompletionSource : IValueTaskSource<RespireValue>, IValueTaskSource
 {
     private ManualResetValueTaskSourceCore<RespireValue> _core;
     private short _version;

@@ -11,21 +11,21 @@ public readonly struct CommandMessage
 {
     private readonly ReadOnlyMemory<byte> _preBuiltCommand;
     private readonly string? _dynamicKey;
-    private readonly CommandType _commandType;
+    private readonly ProtocolCommandType _commandType;
     
     public ReadOnlyMemory<byte> PreBuiltCommand => _preBuiltCommand;
     public string? DynamicKey => _dynamicKey;
-    public CommandType CommandType => _commandType;
+    public ProtocolCommandType CommandType => _commandType;
     public bool IsPreBuilt => _preBuiltCommand.Length > 0;
     
-    private CommandMessage(ReadOnlyMemory<byte> preBuiltCommand, CommandType commandType)
+    private CommandMessage(ReadOnlyMemory<byte> preBuiltCommand, ProtocolCommandType commandType)
     {
         _preBuiltCommand = preBuiltCommand;
         _dynamicKey = null;
         _commandType = commandType;
     }
     
-    private CommandMessage(string dynamicKey, CommandType commandType)
+    private CommandMessage(string dynamicKey, ProtocolCommandType commandType)
     {
         _preBuiltCommand = default;
         _dynamicKey = dynamicKey;
@@ -36,7 +36,7 @@ public readonly struct CommandMessage
     /// Creates a message for a pre-built command (zero allocation)
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static CommandMessage CreatePreBuilt(ReadOnlyMemory<byte> command, CommandType commandType)
+    public static CommandMessage CreatePreBuilt(ReadOnlyMemory<byte> command, ProtocolCommandType commandType)
     {
         return new CommandMessage(command, commandType);
     }
@@ -45,7 +45,7 @@ public readonly struct CommandMessage
     /// Creates a message for a dynamic command that needs building
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static CommandMessage CreateDynamic(string key, CommandType commandType)
+    public static CommandMessage CreateDynamic(string key, ProtocolCommandType commandType)
     {
         return new CommandMessage(key, commandType);
     }
@@ -64,10 +64,10 @@ public readonly struct CommandMessage
         
         return _commandType switch
         {
-            CommandType.Get => RespCommands.BuildGetCommand(buffer, _dynamicKey!),
-            CommandType.Set => throw new InvalidOperationException("SET command requires value parameter"),
-            CommandType.Del => RespCommands.BuildDelCommand(buffer, _dynamicKey!),
-            CommandType.Ping => RespCommands.BuildPingCommand(buffer),
+            ProtocolCommandType.Get => RespCommands.BuildGetCommand(buffer, _dynamicKey!),
+            ProtocolCommandType.Set => throw new InvalidOperationException("SET command requires value parameter"),
+            ProtocolCommandType.Del => RespCommands.BuildDelCommand(buffer, _dynamicKey!),
+            ProtocolCommandType.Ping => RespCommands.BuildPingCommand(buffer),
             _ => throw new ArgumentOutOfRangeException()
         };
     }
@@ -76,7 +76,7 @@ public readonly struct CommandMessage
 /// <summary>
 /// Redis command types for message building
 /// </summary>
-public enum CommandType : byte
+public enum ProtocolCommandType : byte
 {
     Get = 0,
     Set = 1,
@@ -96,7 +96,7 @@ public static class CommandMessages
     /// <summary>
     /// Reusable PING command message (zero allocation)
     /// </summary>
-    public static readonly CommandMessage Ping = CommandMessage.CreatePreBuilt(_pingCommand, CommandType.Ping);
+    public static readonly CommandMessage Ping = CommandMessage.CreatePreBuilt(_pingCommand, ProtocolCommandType.Ping);
     
     /// <summary>
     /// Creates a GET command message, preferring pre-built if available
@@ -105,7 +105,7 @@ public static class CommandMessages
     public static CommandMessage Get(string key)
     {
         // For now, always create dynamic - could cache common keys later
-        return CommandMessage.CreateDynamic(key, CommandType.Get);
+        return CommandMessage.CreateDynamic(key, ProtocolCommandType.Get);
     }
     
     /// <summary>
@@ -114,6 +114,6 @@ public static class CommandMessages
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static CommandMessage Del(string key)
     {
-        return CommandMessage.CreateDynamic(key, CommandType.Del);
+        return CommandMessage.CreateDynamic(key, ProtocolCommandType.Del);
     }
 }

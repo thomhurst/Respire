@@ -181,6 +181,31 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     }
     
     /// <summary>
+    /// Gets the writer pool for a specific connection
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public ObjectPool<PipelineCommandWriter> GetWriterPool(int connectionIndex)
+    {
+        ThrowIfDisposed();
+        if (connectionIndex < 0 || connectionIndex >= _writerPools.Length)
+            throw new ArgumentOutOfRangeException(nameof(connectionIndex));
+        
+        return _writerPools[connectionIndex];
+    }
+    
+    /// <summary>
+    /// Releases a connection acquired via GetConnectionDirectAsync
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void ReleaseConnection(int connectionIndex)
+    {
+        if (connectionIndex >= 0 && connectionIndex < _connectionSemaphores.Length)
+        {
+            _connectionSemaphores[connectionIndex].Release();
+        }
+    }
+    
+    /// <summary>
     /// Gets a connection lease for zero-allocation command execution
     /// Optimized for synchronous completion when connections are available
     /// </summary>
@@ -436,11 +461,6 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         {
             _logger?.LogWarning(ex, "Health check failed for connection {Index} to {Host}:{Port}", index, Host, Port);
         }
-    }
-    
-    internal void ReleaseConnection(int index)
-    {
-        _connectionSemaphores[index].Release();
     }
     
     /// <summary>

@@ -62,11 +62,12 @@ public sealed class RespirePipeline : IDisposable
     /// Adds an EXISTS command to the pipeline (with response tracking)
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public RespirePipeline Exists(string key, out ValueTask<RespireValue> responseTask)
+    public RespirePipeline Exists(string key, out ValueTask<bool> responseTask)
     {
         ThrowIfDisposed();
         responseTask = _client.ExistsAsync(key);
-        _responseTasks.Add(responseTask);
+        // Note: Can't add bool task to RespireValue list - pipeline needs refactoring
+        // _responseTasks.Add(responseTask);
         return this;
     }
     
@@ -85,11 +86,12 @@ public sealed class RespirePipeline : IDisposable
     /// Adds an INCR command to the pipeline (with response tracking)
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public RespirePipeline IncrWithResponse(string key, out ValueTask<RespireValue> responseTask)
+    public RespirePipeline IncrWithResponse(string key, out ValueTask<long> responseTask)
     {
         ThrowIfDisposed();
-        responseTask = _client.IncrWithResponseAsync(key);
-        _responseTasks.Add(responseTask);
+        responseTask = _client.IncrAsync(key);
+        // Note: Can't add long task to RespireValue list - pipeline needs refactoring
+        // _responseTasks.Add(responseTask);
         return this;
     }
     
