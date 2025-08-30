@@ -141,9 +141,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     
     private async ValueTask<ConnectionHandle> GetConnectionHandleAsyncSlow(int index, CancellationToken cancellationToken)
     {
-        Console.WriteLine($"[DEBUG-MUX] Waiting for semaphore on connection {index}...");
         await _connectionSemaphores[index].WaitAsync(cancellationToken).ConfigureAwait(false);
-        Console.WriteLine($"[DEBUG-MUX] Acquired semaphore on connection {index}");
         
         // Always create a new handle - pooling them causes double-dispose issues
         return new ConnectionHandle(this, index, _connections[index]);
@@ -241,52 +239,30 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         Func<PipelineCommandWriter, ValueTask> commandAction,
         CancellationToken cancellationToken = default)
     {
-        Console.WriteLine("[DEBUG-MUX] ExecuteCommandWithResponseAsync started");
-        
-        Console.WriteLine("[DEBUG-MUX] Getting connection handle...");
         using var handle = await GetConnectionHandleAsync(cancellationToken).ConfigureAwait(false);
-        Console.WriteLine($"[DEBUG-MUX] Got connection handle, index: {handle.Index}");
         
         // Rent a writer from the pool
         var writer = RentWriter(handle.Index, handle.Connection);
-        Console.WriteLine("[DEBUG-MUX] Got writer from pool");
         
         try
         {
             // Write command
-            Console.WriteLine("[DEBUG-MUX] Writing command...");
             await commandAction(writer).ConfigureAwait(false);
-            Console.WriteLine("[DEBUG-MUX] Command written, reading response...");
             
             // Read response - keep reading until we have a complete response
             ReadResult readResult;
             while (true)
             {
-                Console.WriteLine("[DEBUG-MUX] Calling ReadAsync...");
                 readResult = await handle.Connection.ReadAsync(cancellationToken).ConfigureAwait(false);
-                Console.WriteLine($"[DEBUG-MUX] ReadAsync returned, buffer length: {readResult.Buffer.Length}, IsCompleted: {readResult.IsCompleted}");
-                
-                // Debug: Print first few bytes of buffer
-                if (readResult.Buffer.Length > 0)
-                {
-                    var firstBytes = readResult.Buffer.Slice(0, Math.Min(20, readResult.Buffer.Length)).ToArray();
-                    var preview = System.Text.Encoding.UTF8.GetString(firstBytes).Replace("\r", "\\r").Replace("\n", "\\n");
-                    Console.WriteLine($"[DEBUG-MUX] Buffer preview: {preview}");
-                }
                 
                 // Parse response using ref struct outside of async context
                 var reader = new RespPipelineReader(readResult.Buffer);
                 
                 if (reader.TryReadValue(out var value))
                 {
-                    Console.WriteLine($"[DEBUG-MUX] Successfully parsed response: {value.Type}");
                     handle.Connection.AdvanceReader(reader.Consumed, reader.Examined);
-                    Console.WriteLine("[DEBUG-MUX] Reader advanced, returning response");
-                    Console.WriteLine($"[DEBUG-MUX] About to return value, handle will be disposed");
                     return value;
                 }
-                
-                Console.WriteLine("[DEBUG-MUX] TryReadValue returned false, need more data");
                 
                 // Check if connection was closed
                 if (readResult.IsCompleted)
@@ -297,20 +273,12 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 
                 // Tell the pipeline that we've examined the data but haven't consumed it
                 // Consumed = Start (nothing consumed), Examined = End (everything examined)
-                Console.WriteLine("[DEBUG-MUX] Advancing reader to wait for more data");
                 handle.Connection.AdvanceReader(readResult.Buffer.Start, readResult.Buffer.End);
             }
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[DEBUG-MUX] Exception in ExecuteCommandWithResponseAsync: {ex.Message}");
-            throw;
-        }
         finally
         {
-            Console.WriteLine($"[DEBUG-MUX] Finally block: returning writer for connection {handle.Index}");
             ReturnWriter(handle.Index, writer);
-            Console.WriteLine($"[DEBUG-MUX] Writer returned, exiting ExecuteCommandWithResponseAsync");
         }
     }
     
@@ -445,9 +413,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     internal void ReturnConnectionHandle(int index, ConnectionHandle handle)
     {
         // Just release the semaphore - we don't pool handles anymore since they're structs
-        Console.WriteLine($"[DEBUG-MUX] Releasing semaphore for connection {index}");
         _connectionSemaphores[index].Release();
-        Console.WriteLine($"[DEBUG-MUX] Semaphore released for connection {index}");
     }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -530,7 +496,6 @@ public readonly struct ConnectionHandle : IDisposable
     
     public void Dispose()
     {
-        Console.WriteLine($"[DEBUG-HANDLE] ConnectionHandle.Dispose called for index {_index}");
         _multiplexer.ReturnConnectionHandle(_index, this);
     }
 }

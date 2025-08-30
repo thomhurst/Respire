@@ -52,11 +52,8 @@ public sealed class RespireClient : IAsyncDisposable
         RespireCommandQueue.QueueOptions? queueOptions = null,
         ILogger? logger = null)
     {
-        // Console.WriteLine($"[DEBUG] CreateAsync called for {host}:{port}");
         var multiplexer = await RespireConnectionMultiplexer.CreateAsync(
             host, port, connectionCount, logger: logger).ConfigureAwait(false);
-        
-        // Console.WriteLine("[DEBUG] Multiplexer created");
         
         // Use the pipelined queue for proper batching
         var options = queueOptions ?? RespireCommandQueue.QueueOptions.Default;
@@ -67,11 +64,7 @@ public sealed class RespireClient : IAsyncDisposable
             tcsPoolSize: options.TcsPoolSize,
             logger);
         
-        // Console.WriteLine("[DEBUG] Command queue created");
-        
         var client = new RespireClient(multiplexer, commandQueue, logger);
-        
-        // Console.WriteLine("[DEBUG] Client created");
         
         logger?.LogInformation(
             "Created RespireClient for {Host}:{Port} with {ConnectionCount} connections",
@@ -142,12 +135,9 @@ public sealed class RespireClient : IAsyncDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public async ValueTask SetAsync(string key, string value, CancellationToken cancellationToken = default)
     {
-        // Console.WriteLine($"[DEBUG] SetAsync called with key: {key}, value: {value}");
         ThrowIfDisposed();
-        // Console.WriteLine("[DEBUG] About to queue command");
         var response = await _commandQueue.QueueCommandWithResponseAsync(
             writer => writer.WriteSetAsync(key, value, cancellationToken), cancellationToken).ConfigureAwait(false);
-        // Console.WriteLine($"[DEBUG] Got response: {response}");
         
         // Verify we got "OK" response
         if (!response.Type.Equals(RespDataType.SimpleString) || !response.AsString().Equals("OK", StringComparison.OrdinalIgnoreCase))

@@ -69,11 +69,9 @@ public sealed class RespireCommandQueuePipelined : IRespireCommandQueue
     {
         ThrowIfDisposed();
         
-        // Console.WriteLine("[DEBUG] QueueCommandAsync called");
         var command = new QueuedCommand(commandAction, null);
         await _commandChannel.Writer.WriteAsync(command, cancellationToken).ConfigureAwait(false);
         Interlocked.Increment(ref _totalCommandsQueued);
-        // Console.WriteLine($"[DEBUG] Command queued, total: {_totalCommandsQueued}");
     }
     
     /// <summary>
@@ -85,20 +83,16 @@ public sealed class RespireCommandQueuePipelined : IRespireCommandQueue
     {
         ThrowIfDisposed();
         
-        // Console.WriteLine("[DEBUG] QueueCommandWithResponseAsync called");
         var vtcs = _vtcsPool.Get();
         vtcs.Reset();
         var command = new QueuedCommand(commandAction, vtcs);
         
         await _commandChannel.Writer.WriteAsync(command, cancellationToken).ConfigureAwait(false);
         Interlocked.Increment(ref _totalCommandsQueued);
-        // Console.WriteLine($"[DEBUG] Command with response queued, total: {_totalCommandsQueued}");
         
         try
         {
-            // Console.WriteLine("[DEBUG] Waiting for response...");
             var result = await vtcs.GetValueTask().ConfigureAwait(false);
-            // Console.WriteLine($"[DEBUG] Got response: {result}");
             return result;
         }
         finally
@@ -112,7 +106,6 @@ public sealed class RespireCommandQueuePipelined : IRespireCommandQueue
         var reader = _commandChannel.Reader;
         var batch = new List<QueuedCommand>(_maxBatchSize);
         
-        // Console.WriteLine("[DEBUG] Command processing task started");
         _logger?.LogInformation("Command processing task started");
         
         while (!_cancellationTokenSource.Token.IsCancellationRequested)
@@ -125,20 +118,16 @@ public sealed class RespireCommandQueuePipelined : IRespireCommandQueue
                 bool hasData;
                 try
                 {
-                    Console.WriteLine("[DEBUG] Waiting for commands...");
                     hasData = await reader.WaitToReadAsync(_cancellationTokenSource.Token).ConfigureAwait(false);
-                    Console.WriteLine($"[DEBUG] WaitToReadAsync returned: {hasData}");
                 }
                 catch (OperationCanceledException)
                 {
-                    // Console.WriteLine("[DEBUG] Operation cancelled");
                     break; // Shutdown requested
                 }
                 
                 if (!hasData)
                 {
                     // Channel is completed
-                    // Console.WriteLine("[DEBUG] Channel completed");
                     _logger?.LogInformation("Command channel completed");
                     break;
                 }
@@ -146,11 +135,9 @@ public sealed class RespireCommandQueuePipelined : IRespireCommandQueue
                 // Read first command
                 if (!reader.TryRead(out var firstCommand))
                 {
-                    Console.WriteLine("[DEBUG] Spurious wakeup, no command available");
                     continue; // Spurious wakeup, try again
                 }
                 
-                Console.WriteLine($"[DEBUG] Processing command batch, first command received");
                 batch.Add(firstCommand);
                 
                 // Try to batch more commands that are immediately available
@@ -183,14 +170,12 @@ public sealed class RespireCommandQueuePipelined : IRespireCommandQueue
                 // Process the batch
                 if (batch.Count > 0)
                 {
-                    Console.WriteLine($"[DEBUG] Processing batch with {batch.Count} commands");
                     _logger?.LogDebug("Processing batch with {Count} commands", batch.Count);
                     try
                     {
                         await ProcessBatchPipelined(batch).ConfigureAwait(false);
                         Interlocked.Add(ref _totalCommandsProcessed, batch.Count);
                         Interlocked.Increment(ref _totalBatchesProcessed);
-                        Console.WriteLine("[DEBUG] Batch processed successfully");
                         _logger?.LogDebug("Batch processed successfully");
                     }
                     catch (Exception ex)
@@ -221,7 +206,6 @@ public sealed class RespireCommandQueuePipelined : IRespireCommandQueue
     
     private async ValueTask ProcessBatchPipelined(List<QueuedCommand> batch)
     {
-        Console.WriteLine($"[DEBUG] ProcessBatchPipelined started with {batch.Count} commands");
         _logger?.LogDebug("Processing batch of {Count} commands", batch.Count);
         
         if (batch.Count == 1)
@@ -230,35 +214,27 @@ public sealed class RespireCommandQueuePipelined : IRespireCommandQueue
             var command = batch[0];
             try
             {
-                Console.WriteLine("[DEBUG] Executing single command");
                 _logger?.LogDebug("Executing single command");
                 if (command.ResponseHandler != null)
                 {
-                    Console.WriteLine("[DEBUG] Command expects response, calling ExecuteCommandWithResponseAsync");
                     var response = await _multiplexer.ExecuteCommandWithResponseAsync(
                         command.CommandAction, _cancellationTokenSource.Token).ConfigureAwait(false);
-                    Console.WriteLine($"[DEBUG] Got response: {response.Type}");
                     command.ResponseHandler.SetResult(response);
-                    Console.WriteLine("[DEBUG] Response handler set");
                     _logger?.LogDebug("Single command completed with response");
                 }
                 else
                 {
-                    Console.WriteLine("[DEBUG] Command is fire-and-forget, calling ExecuteCommandAsync");
                     await _multiplexer.ExecuteCommandAsync(
                         command.CommandAction, _cancellationTokenSource.Token).ConfigureAwait(false);
-                    Console.WriteLine("[DEBUG] Fire-and-forget command completed");
                     _logger?.LogDebug("Single command completed (no response)");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[DEBUG] Exception in single command: {ex.Message}");
                 command.ResponseHandler?.SetException(ex);
                 if (command.ResponseHandler == null)
                     _logger?.LogError(ex, "Error executing command");
             }
-            Console.WriteLine("[DEBUG] ProcessBatchPipelined returning for single command");
             return;
         }
         
