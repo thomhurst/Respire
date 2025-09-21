@@ -148,8 +148,8 @@ public class DataTypeInteroperabilityTests
         var incrResult = await _stackExchangeDb.StringIncrementAsync(intKey);
         incrResult.Should().Be(43);
         
-        var respireIncr = await _respireClient.IncrWithResponseAsync(intKey);
-        respireIncr.AsInteger().Should().Be(44);
+        var respireIncr = await _respireClient.IncrAsync(intKey);
+        respireIncr.Should().Be(44);
     }
     
     [Test]
@@ -221,7 +221,7 @@ public class DataTypeInteroperabilityTests
         // Respire increments
         for (var i = 0; i < 50; i++)
         {
-            tasks.Add(_respireClient.IncrWithResponseAsync(counterKey).AsTask());
+            tasks.Add(_respireClient.IncrAsync(counterKey).AsTask());
         }
         
         await Task.WhenAll(tasks);
@@ -263,9 +263,9 @@ public class DataTypeInteroperabilityTests
         var exists3 = await _respireClient.ExistsAsync("pattern:b:1");
         var exists4 = await _respireClient.ExistsAsync("pattern:b:2");
         
-        exists1.AsInteger().Should().Be(0);
-        exists2.AsInteger().Should().Be(0);
-        exists3.AsInteger().Should().Be(1);
-        exists4.AsInteger().Should().Be(1);
+        exists1.Should().BeFalse();
+        exists2.Should().BeFalse();
+        exists3.Should().BeTrue();
+        exists4.Should().BeTrue();
     }
 }

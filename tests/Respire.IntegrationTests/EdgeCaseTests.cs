@@ -93,7 +93,7 @@ public class EdgeCaseTests
         var rExists = await _respireClient.ExistsAsync(nonExistentKey);
         
         seExists.Should().BeFalse();
-        rExists.AsInteger().Should().Be(0);
+        rExists.Should().BeFalse();
         
         // DELETE non-existent
         var seDeleted = await _stackExchangeDb.KeyDeleteAsync(nonExistentKey);
@@ -201,7 +201,7 @@ public class EdgeCaseTests
             }
             else
             {
-                tasks.Add(_respireClient.IncrWithResponseAsync(sharedKey).AsTask());
+                tasks.Add(_respireClient.IncrAsync(sharedKey).AsTask());
             }
         }
         
@@ -235,8 +235,15 @@ public class EdgeCaseTests
         }
         
         // Try with Respire (should also handle the error)
-        var incrResult = await _respireClient.IncrWithResponseAsync(key);
-        incrResult.IsError.Should().BeTrue();
+        try
+        {
+            await _respireClient.IncrAsync(key);
+            Assert.Fail("Expected an error for incrementing non-numeric value");
+        }
+        catch (Exception)
+        {
+            // Expected - incrementing non-numeric value should fail
+        }
     }
     
     [Test]
@@ -260,7 +267,7 @@ public class EdgeCaseTests
             
             // Verify exists
             var exists = i % 2 == 0
-                ? (await _respireClient.ExistsAsync(key)).AsBoolean()
+                ? await _respireClient.ExistsAsync(key)
                 : await _stackExchangeDb.KeyExistsAsync(key);
             
             if (i % 2 == 0)

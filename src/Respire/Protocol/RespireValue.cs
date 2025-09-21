@@ -1,5 +1,7 @@
+using System.Buffers;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace Respire.Protocol;
 
@@ -75,26 +77,56 @@ public readonly struct RespireValue : IEquatable<RespireValue>
     public static RespireValue Error(ReadOnlyMemory<byte> buffer)
         => new(RespDataType.Error, bufferRef: buffer, startIndex: 0, length: buffer.Length);
     
-    // String overloads for convenience in tests
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    // String overloads optimized to avoid allocations
     public static RespireValue SimpleString(string value)
     {
-        var bytes = System.Text.Encoding.UTF8.GetBytes(value);
-        return new(RespDataType.SimpleString, bufferRef: bytes, startIndex: 0, length: bytes.Length);
+        return CreateStringValue(value, RespDataType.SimpleString);
     }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+
     public static RespireValue BulkString(string value)
     {
-        var bytes = System.Text.Encoding.UTF8.GetBytes(value);
-        return new(RespDataType.BulkString, bufferRef: bytes, startIndex: 0, length: bytes.Length);
+        return CreateStringValue(value, RespDataType.BulkString);
     }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+
     public static RespireValue Error(string value)
     {
-        var bytes = System.Text.Encoding.UTF8.GetBytes(value);
-        return new(RespDataType.Error, bufferRef: bytes, startIndex: 0, length: bytes.Length);
+        return CreateStringValue(value, RespDataType.Error);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static RespireValue CreateStringValue(string value, RespDataType type)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return new(type, bufferRef: ReadOnlyMemory<byte>.Empty, startIndex: 0, length: 0);
+        }
+
+        var maxByteCount = Encoding.UTF8.GetMaxByteCount(value.Length);
+
+        // Use stackalloc for small strings
+        if (maxByteCount <= 256)
+        {
+            Span<byte> tempBuffer = stackalloc byte[maxByteCount];
+            var actualBytes = Encoding.UTF8.GetBytes(value, tempBuffer);
+            var result = new byte[actualBytes];
+            tempBuffer.Slice(0, actualBytes).CopyTo(result);
+            return new(type, bufferRef: result, startIndex: 0, length: actualBytes);
+        }
+
+        // Use ArrayPool for larger strings
+        var pool = ArrayPool<byte>.Shared;
+        var buffer = pool.Rent(maxByteCount);
+        try
+        {
+            var actualBytes = Encoding.UTF8.GetBytes(value, buffer);
+            var result = new byte[actualBytes];
+            buffer.AsSpan(0, actualBytes).CopyTo(result);
+            return new(type, bufferRef: result, startIndex: 0, length: actualBytes);
+        }
+        finally
+        {
+            pool.Return(buffer);
+        }
     }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

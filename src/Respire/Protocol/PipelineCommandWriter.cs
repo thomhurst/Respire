@@ -194,7 +194,7 @@ public sealed class PipelineCommandWriter : IDisposable
         else
         {
             // Dynamic command building path
-            using var writer = _memoryPool.CreateBufferWriter();
+            using var writer = _memoryPool.GetBufferWriterHandle();
             var estimatedLength = 64; // Conservative estimate
             var buffer = writer.GetSpan(estimatedLength);
             var length = message.BuildCommand(buffer);
@@ -238,7 +238,7 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        using var writer = _memoryPool.CreateBufferWriter();
+        using var writer = _memoryPool.GetBufferWriterHandle();
         var estimatedLength = 64 + key.Length + value.Length;
         var buffer = writer.GetSpan(estimatedLength);
         var length = RespCommands.BuildSetCommand(buffer, key, value);
@@ -257,7 +257,7 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        using var writer = _memoryPool.CreateBufferWriter();
+        using var writer = _memoryPool.GetBufferWriterHandle();
         var estimatedLength = 32 + key.Length;
         var buffer = writer.GetSpan(estimatedLength);
         var length = RespCommands.BuildDelCommand(buffer, key);
@@ -276,7 +276,7 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        using var writer = _memoryPool.CreateBufferWriter();
+        using var writer = _memoryPool.GetBufferWriterHandle();
         var estimatedLength = 32 + key.Length;
         var buffer = writer.GetSpan(estimatedLength);
         var length = RespCommands.BuildExistsCommand(buffer, key);
@@ -296,7 +296,7 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        using var writer = _memoryPool.CreateBufferWriter();
+        using var writer = _memoryPool.GetBufferWriterHandle();
         var estimatedLength = 64 + key.Length + field.Length;
         var buffer = writer.GetSpan(estimatedLength);
         var length = RespCommands.BuildHGetCommand(buffer, key, field);
@@ -317,7 +317,7 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        using var writer = _memoryPool.CreateBufferWriter();
+        using var writer = _memoryPool.GetBufferWriterHandle();
         var estimatedLength = 96 + key.Length + field.Length + value.Length;
         var buffer = writer.GetSpan(estimatedLength);
         var length = RespCommands.BuildHSetCommand(buffer, key, field, value);
@@ -336,7 +336,7 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        using var writer = _memoryPool.CreateBufferWriter();
+        using var writer = _memoryPool.GetBufferWriterHandle();
         var estimatedLength = 64 + key.Length + value.Length;
         var buffer = writer.GetSpan(estimatedLength);
         var length = RespCommands.BuildLPushCommand(buffer, key, value);
@@ -354,7 +354,7 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        using var writer = _memoryPool.CreateBufferWriter();
+        using var writer = _memoryPool.GetBufferWriterHandle();
         var estimatedLength = 32 + key.Length;
         var buffer = writer.GetSpan(estimatedLength);
         var length = RespCommands.BuildIncrCommand(buffer, key);
@@ -373,7 +373,7 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        using var writer = _memoryPool.CreateBufferWriter();
+        using var writer = _memoryPool.GetBufferWriterHandle();
         var estimatedLength = 64 + key.Length;
         var buffer = writer.GetSpan(estimatedLength);
         var length = RespCommands.BuildExpireCommand(buffer, key, seconds);
@@ -391,7 +391,7 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        using var writer = _memoryPool.CreateBufferWriter();
+        using var writer = _memoryPool.GetBufferWriterHandle();
         var estimatedLength = 32 + key.Length;
         var buffer = writer.GetSpan(estimatedLength);
         var length = RespCommands.BuildTtlCommand(buffer, key);
@@ -410,7 +410,7 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        using var writer = _memoryPool.CreateBufferWriter();
+        using var writer = _memoryPool.GetBufferWriterHandle();
         var estimatedLength = 64 + key.Length + member.Length;
         var buffer = writer.GetSpan(estimatedLength);
         var length = RespCommands.BuildSAddCommand(buffer, key, member);
@@ -429,7 +429,7 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        using var writer = _memoryPool.CreateBufferWriter();
+        using var writer = _memoryPool.GetBufferWriterHandle();
         var estimatedLength = 64 + key.Length + member.Length;
         var buffer = writer.GetSpan(estimatedLength);
         var length = RespCommands.BuildSRemCommand(buffer, key, member);
@@ -447,7 +447,7 @@ public sealed class PipelineCommandWriter : IDisposable
     {
         ThrowIfDisposed();
         
-        using var writer = _memoryPool.CreateBufferWriter();
+        using var writer = _memoryPool.GetBufferWriterHandle();
         var estimatedLength = 32 + key.Length;
         var buffer = writer.GetSpan(estimatedLength);
         var length = RespCommands.BuildRPopCommand(buffer, key);

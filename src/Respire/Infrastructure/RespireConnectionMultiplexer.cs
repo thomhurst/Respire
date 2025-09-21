@@ -352,22 +352,61 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         IEnumerable<Func<PipelineCommandWriter, ValueTask>> commands,
         CancellationToken cancellationToken = default)
     {
-        var commandList = commands.ToList();
-        var tasks = new List<ValueTask>(commandList.Count);
-        var connectionIndex = 0;
-        
-        foreach (var command in commandList)
+        // First, try to get the count without materializing the collection
+        int commandCount;
+        Func<PipelineCommandWriter, ValueTask>[]? commandArray;
+
+        if (commands is ICollection<Func<PipelineCommandWriter, ValueTask>> collection)
         {
-            var index = connectionIndex % _connections.Length;
-            var connection = _connections[index];
-            connectionIndex++;
-            
-            tasks.Add(ExecuteOnConnectionAsync(index, connection, command, cancellationToken));
+            commandCount = collection.Count;
+            commandArray = ArrayPool<Func<PipelineCommandWriter, ValueTask>>.Shared.Rent(commandCount);
+            collection.CopyTo(commandArray, 0);
         }
-        
-        foreach (var task in tasks)
+        else if (commands is IList<Func<PipelineCommandWriter, ValueTask>> list)
         {
-            await task.ConfigureAwait(false);
+            commandCount = list.Count;
+            commandArray = ArrayPool<Func<PipelineCommandWriter, ValueTask>>.Shared.Rent(commandCount);
+            for (int i = 0; i < commandCount; i++)
+            {
+                commandArray[i] = list[i];
+            }
+        }
+        else
+        {
+            // Fallback: materialize to array for unknown enumerables
+            var tempList = commands.ToArray();
+            commandCount = tempList.Length;
+            commandArray = ArrayPool<Func<PipelineCommandWriter, ValueTask>>.Shared.Rent(commandCount);
+            Array.Copy(tempList, commandArray, commandCount);
+        }
+
+        // Use ArrayPool for tasks
+        var tasks = ArrayPool<ValueTask>.Shared.Rent(commandCount);
+
+        try
+        {
+            var connectionIndex = 0;
+
+            for (int i = 0; i < commandCount; i++)
+            {
+                var command = commandArray[i];
+                var index = connectionIndex % _connections.Length;
+                var connection = _connections[index];
+                connectionIndex++;
+
+                tasks[i] = ExecuteOnConnectionAsync(index, connection, command, cancellationToken);
+            }
+
+            // Await all tasks
+            for (int i = 0; i < commandCount; i++)
+            {
+                await tasks[i].ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            ArrayPool<Func<PipelineCommandWriter, ValueTask>>.Shared.Return(commandArray);
+            ArrayPool<ValueTask>.Shared.Return(tasks);
         }
     }
     

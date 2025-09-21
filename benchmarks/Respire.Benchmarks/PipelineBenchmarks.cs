@@ -72,10 +72,10 @@ public class PipelineBenchmarks
     [Benchmark]
     public void PooledBufferWriter_Write1KB()
     {
-        using var writer = _memoryPool.CreateBufferWriter();
+        using var handle = _memoryPool.GetBufferWriterHandle();
         var data = new byte[1024];
         Array.Fill(data, (byte)0x42);
-        writer.WritePreCompiledCommand(data);
+        handle.Writer.WritePreCompiledCommand(data);
     }
     
     // Command building benchmarks
@@ -97,10 +97,10 @@ public class PipelineBenchmarks
     [Benchmark]
     public void PooledBufferWriter_BuildComplexCommand()
     {
-        using var writer = _memoryPool.CreateBufferWriter();
-        writer.WriteBulkString(TestKey);
-        writer.WriteBulkString(TestValue);
-        writer.WritePreCompiledCommand("*2\r\n$3\r\nSET\r\n"u8);
+        using var handle = _memoryPool.GetBufferWriterHandle();
+        handle.Writer.WriteBulkString(TestKey);
+        handle.Writer.WriteBulkString(TestValue);
+        handle.Writer.WritePreCompiledCommand("*2\r\n$3\r\nSET\r\n"u8.ToArray());
     }
     
     // Pipeline reader benchmarks

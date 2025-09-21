@@ -72,15 +72,15 @@ public class ClientComparisonTests
         
         // Act - Increment with both clients alternately
         var se1 = await _stackExchangeDb.StringIncrementAsync(key); // 1
-        var r1 = await _respireClient.IncrWithResponseAsync(key);   // 2
+        var r1 = await _respireClient.IncrAsync(key);   // 2
         var se2 = await _stackExchangeDb.StringIncrementAsync(key);  // 3
-        var r2 = await _respireClient.IncrWithResponseAsync(key);    // 4
+        var r2 = await _respireClient.IncrAsync(key);    // 4
         
         // Assert
         se1.Should().Be(1);
-        r1.AsInteger().Should().Be(2);
+        r1.Should().Be(2);
         se2.Should().Be(3);
-        r2.AsInteger().Should().Be(4);
+        r2.Should().Be(4);
         
         // Verify final value with both clients
         var finalValueSE = await _stackExchangeDb.StringGetAsync(key);
@@ -109,9 +109,9 @@ public class ClientComparisonTests
         
         // Assert
         existsSE.Should().BeTrue();
-        existsR.AsInteger().Should().Be(1);
+        existsR.Should().BeTrue();
         notExistsSE.Should().BeFalse();
-        notExistsR.AsInteger().Should().Be(0);
+        notExistsR.Should().BeFalse();
     }
     
     [Test]
@@ -126,7 +126,7 @@ public class ClientComparisonTests
         
         // Verify exists
         var existsBefore = await _respireClient.ExistsAsync(key);
-        existsBefore.AsInteger().Should().Be(1);
+        existsBefore.Should().BeTrue();
         
         // Delete with Respire
         await _respireClient.DelAsync(key);
@@ -137,7 +137,7 @@ public class ClientComparisonTests
         
         // Assert
         existsAfterSE.Should().BeFalse();
-        existsAfterR.AsInteger().Should().Be(0);
+        existsAfterR.Should().BeFalse();
     }
     
     [Test]
@@ -179,9 +179,9 @@ public class ClientComparisonTests
         var hashExists = await _respireClient.ExistsAsync(hashKey);
         var setExists = await _respireClient.ExistsAsync(setKey);
         
-        listExists.AsInteger().Should().Be(1);
-        hashExists.AsInteger().Should().Be(1);
-        setExists.AsInteger().Should().Be(1);
+        listExists.Should().BeTrue();
+        hashExists.Should().BeTrue();
+        setExists.Should().BeTrue();
         
         // Clean up with mixed clients
         await _respireClient.DelAsync(listKey);

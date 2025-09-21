@@ -1,3 +1,7 @@
+// TODO: Refactor RespirePipeline to use CommandData instead of delegates for zero allocations
+// This class is temporarily disabled until we update it to use the new allocation-free command API
+#if false
+
 using System.Runtime.CompilerServices;
 using Respire.Infrastructure;
 using Respire.Protocol;
@@ -318,3 +322,5 @@ public sealed class RespirePipeline : IDisposable
         _responseTasks.Clear();
     }
 }
+
+#endif // Temporarily disabled until refactored

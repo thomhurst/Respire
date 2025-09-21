@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.ObjectPool;
@@ -117,100 +118,96 @@ public sealed class RespireCommandQueue : IRespireCommandQueue
         }
     }
     
-    // Legacy interface methods - these will allocate but are for backward compatibility
-    public ValueTask QueueCommandAsync(Func<PipelineCommandWriter, ValueTask> commandAction, CancellationToken cancellationToken = default)
-    {
-        // This path still allocates - only here for compatibility
-        throw new NotSupportedException("Legacy delegate-based commands are not supported. Use CommandData instead.");
-    }
-    
-    public ValueTask<RespireValue> QueueCommandWithResponseAsync(Func<PipelineCommandWriter, ValueTask> commandAction, CancellationToken cancellationToken = default)
-    {
-        // This path still allocates - only here for compatibility
-        throw new NotSupportedException("Legacy delegate-based commands are not supported. Use CommandData instead.");
-    }
-    
     private async Task ProcessCommandsAsync()
     {
         var reader = _commandChannel.Reader;
-        var batch = new List<QueuedCommandData>(_maxBatchSize);
-        
-        _logger?.LogInformation("Command processing started");
-        
-        while (!_cancellationTokenSource.Token.IsCancellationRequested)
+        // Use ArrayPool to avoid allocations
+        var batchArray = ArrayPool<QueuedCommandData>.Shared.Rent(_maxBatchSize);
+
+        try
         {
-            try
+            _logger?.LogInformation("Command processing started");
+
+            while (!_cancellationTokenSource.Token.IsCancellationRequested)
             {
-                batch.Clear();
-                
-                // Wait for at least one command
-                if (await reader.WaitToReadAsync(_cancellationTokenSource.Token).ConfigureAwait(false))
+                try
                 {
-                    // Try to read the first command
-                    if (reader.TryRead(out var firstCommand))
+                    var batchCount = 0;
+
+                    // Wait for at least one command
+                    if (await reader.WaitToReadAsync(_cancellationTokenSource.Token).ConfigureAwait(false))
                     {
-                        batch.Add(firstCommand);
-                        _logger?.LogDebug("Read first command, type: {Type}", firstCommand.Command.Type);
-                        
-                        // Try to batch more commands if immediately available
-                        while (batch.Count < _maxBatchSize && reader.TryRead(out var nextCommand))
+                        // Try to read the first command
+                        if (reader.TryRead(out var firstCommand))
                         {
-                            batch.Add(nextCommand);
-                            _logger?.LogDebug("Batched additional command, type: {Type}", nextCommand.Command.Type);
+                            batchArray[batchCount++] = firstCommand;
+                            _logger?.LogDebug("Read first command, type: {Type}", firstCommand.Command.Type);
+
+                            // Try to batch more commands if immediately available
+                            while (batchCount < _maxBatchSize && reader.TryRead(out var nextCommand))
+                            {
+                                batchArray[batchCount++] = nextCommand;
+                                _logger?.LogDebug("Batched additional command, type: {Type}", nextCommand.Command.Type);
+                            }
+                        }
+
+                        if (batchCount > 0)
+                        {
+                            _logger?.LogDebug("Processing batch of {Count} commands", batchCount);
+                            await ProcessBatch(batchArray, batchCount).ConfigureAwait(false);
+                            Interlocked.Add(ref _totalCommandsProcessed, batchCount);
+                            Interlocked.Increment(ref _totalBatchesProcessed);
+                            _logger?.LogDebug("Batch processed successfully");
                         }
                     }
-                    
-                    if (batch.Count > 0)
-                    {
-                        _logger?.LogDebug("Processing batch of {Count} commands", batch.Count);
-                        await ProcessBatch(batch).ConfigureAwait(false);
-                        Interlocked.Add(ref _totalCommandsProcessed, batch.Count);
-                        Interlocked.Increment(ref _totalBatchesProcessed);
-                        _logger?.LogDebug("Batch processed successfully");
-                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogError(ex, "Error processing command batch");
                 }
             }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogError(ex, "Error processing command batch");
-            }
+
+            _logger?.LogInformation("Command processing stopped");
         }
-        
-        _logger?.LogInformation("Command processing stopped");
+        finally
+        {
+            ArrayPool<QueuedCommandData>.Shared.Return(batchArray);
+        }
     }
-    
-    private async ValueTask ProcessBatch(List<QueuedCommandData> batch)
+
+    private async ValueTask ProcessBatch(QueuedCommandData[] batch, int batchCount)
     {
-        _logger?.LogDebug("Processing batch of {Count} commands", batch.Count);
-        
+        _logger?.LogDebug("Processing batch of {Count} commands", batchCount);
+
         // Get a connection for this batch
         var (connectionIndex, connection) = await _multiplexer.GetConnectionDirectAsync().ConfigureAwait(false);
-        
+
         try
         {
             // Get a writer from the pool
             var writerPool = _multiplexer.GetWriterPool(connectionIndex);
             var writer = writerPool.Get();
-            
+
             try
             {
                 // Write all commands to the pipeline
-                foreach (var queuedCommand in batch)
+                for (int i = 0; i < batchCount; i++)
                 {
-                    var command = queuedCommand.Command;
+                    var command = batch[i].Command;
                     await CommandExecutor.ExecuteAsync(ref command, writer, CancellationToken.None).ConfigureAwait(false);
                 }
-                
+
                 // Flush the pipeline
                 await writer.FlushAsync().ConfigureAwait(false);
-                
+
                 // Read responses for commands that expect them
-                foreach (var queuedCommand in batch)
+                for (int i = 0; i < batchCount; i++)
                 {
+                    var queuedCommand = batch[i];
                     if (queuedCommand.ExpectsResponse && queuedCommand.ResponseHandler != null)
                     {
                         try

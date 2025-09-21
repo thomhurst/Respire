@@ -254,17 +254,17 @@ public sealed class PipelineConnection : IAsyncDisposable
     /// <param name="writeAction">Action that writes to the buffer</param>
     /// <param name="cancellationToken">Cancellation token</param>
     public async ValueTask WriteWithPooledBufferAsync(
-        Action<PooledBufferWriter> writeAction, 
+        Action<PooledBufferWriter> writeAction,
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        
-        using var bufferWriter = RespireMemoryPool.Shared.CreateBufferWriter();
-        writeAction(bufferWriter);
-        
-        if (bufferWriter.WrittenCount > 0)
+
+        using var handle = RespireMemoryPool.Shared.GetBufferWriterHandle();
+        writeAction(handle.Writer);
+
+        if (handle.WrittenCount > 0)
         {
-            await WritePreCompiledCommandAsync(bufferWriter.WrittenMemory, cancellationToken).ConfigureAwait(false);
+            await WritePreCompiledCommandAsync(handle.WrittenMemory, cancellationToken).ConfigureAwait(false);
         }
     }
     

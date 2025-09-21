@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Runtime.CompilerServices;
+using Microsoft.Extensions.ObjectPool;
 
 namespace Respire.Infrastructure;
 
@@ -12,21 +13,26 @@ public sealed class RespireMemoryPool : IDisposable
     private readonly MemoryPool<byte> _memoryPool;
     private readonly ArrayPool<byte> _smallArrayPool;
     private readonly ArrayPool<byte> _largeArrayPool;
+    private readonly ObjectPool<PooledBufferWriter> _bufferWriterPool;
     private volatile bool _disposed;
-    
+
     // Common buffer sizes for Redis operations
     public const int SmallBufferSize = 1024;      // 1KB for most commands
     public const int MediumBufferSize = 4096;     // 4KB for larger commands
     public const int LargeBufferSize = 16384;     // 16KB for bulk operations
     public const int HighPerformanceBufferSize = 131072; // 128KB for high-performance scenarios
-    
+
     public static readonly RespireMemoryPool Shared = new();
-    
+
     private RespireMemoryPool()
     {
         _memoryPool = MemoryPool<byte>.Shared;
         _smallArrayPool = ArrayPool<byte>.Create(maxArrayLength: SmallBufferSize, maxArraysPerBucket: 50);
         _largeArrayPool = ArrayPool<byte>.Create(maxArrayLength: LargeBufferSize, maxArraysPerBucket: 20);
+
+        // Initialize the buffer writer pool with a custom policy
+        var policy = new PooledBufferWriterPooledObjectPolicy(this);
+        _bufferWriterPool = new DefaultObjectPool<PooledBufferWriter>(policy, maximumRetained: 100);
     }
     
     /// <summary>
@@ -77,15 +83,56 @@ public sealed class RespireMemoryPool : IDisposable
     }
     
     /// <summary>
-    /// Creates a pooled buffer writer for efficient sequential writing
+    /// Gets a pooled buffer writer for efficient sequential writing
     /// </summary>
     /// <param name="initialCapacity">Initial buffer capacity</param>
     /// <returns>Pooled buffer writer</returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public PooledBufferWriter CreateBufferWriter(int initialCapacity = SmallBufferSize)
+    public PooledBufferWriter GetBufferWriter(int initialCapacity = SmallBufferSize)
     {
         ThrowIfDisposed();
-        return new PooledBufferWriter(this, initialCapacity);
+        var writer = _bufferWriterPool.Get();
+        writer.Reset(initialCapacity);
+        return writer;
+    }
+
+    /// <summary>
+    /// Gets a pooled buffer writer handle for use with using statements
+    /// </summary>
+    /// <param name="initialCapacity">Initial buffer capacity</param>
+    /// <returns>Disposable handle that returns writer to pool on dispose</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public PooledBufferWriterHandle GetBufferWriterHandle(int initialCapacity = SmallBufferSize)
+    {
+        ThrowIfDisposed();
+        var writer = _bufferWriterPool.Get();
+        writer.Reset(initialCapacity);
+        return new PooledBufferWriterHandle(this, writer);
+    }
+
+    /// <summary>
+    /// Returns a buffer writer to the pool
+    /// </summary>
+    /// <param name="writer">Buffer writer to return</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void ReturnBufferWriter(PooledBufferWriter writer)
+    {
+        if (writer != null)
+        {
+            _bufferWriterPool.Return(writer);
+        }
+    }
+
+    /// <summary>
+    /// Creates a pooled buffer writer for efficient sequential writing (legacy method for compatibility)
+    /// </summary>
+    /// <param name="initialCapacity">Initial buffer capacity</param>
+    /// <returns>Pooled buffer writer</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [Obsolete("Use GetBufferWriterHandle instead to benefit from pooling")]
+    public PooledBufferWriterHandle CreateBufferWriter(int initialCapacity = SmallBufferSize)
+    {
+        return GetBufferWriterHandle(initialCapacity);
     }
     
     /// <summary>
@@ -130,6 +177,25 @@ public sealed class PooledBufferWriter : IBufferWriter<byte>, IDisposable
         _pool = pool;
         _buffer = pool.RentArray(initialCapacity);
         _position = 0;
+    }
+
+    // Parameterless constructor for pooling
+    internal PooledBufferWriter() : this(RespireMemoryPool.Shared, RespireMemoryPool.SmallBufferSize)
+    {
+    }
+
+    /// <summary>
+    /// Resets the buffer writer for reuse from the pool
+    /// </summary>
+    internal void Reset(int initialCapacity = RespireMemoryPool.SmallBufferSize)
+    {
+        if (_buffer != null && _buffer.Length > 0)
+        {
+            _pool.ReturnArray(_buffer);
+        }
+        _buffer = _pool.RentArray(initialCapacity);
+        _position = 0;
+        _disposed = false;
     }
     
     public ReadOnlyMemory<byte> WrittenMemory => _buffer.AsMemory(0, _position);
@@ -285,5 +351,70 @@ public sealed class PooledBufferWriter : IBufferWriter<byte>, IDisposable
             _pool.ReturnArray(_buffer);
             _buffer = null!;
         }
+    }
+}
+
+/// <summary>
+/// Disposable wrapper for pooled buffer writer to support using statements
+/// </summary>
+public readonly struct PooledBufferWriterHandle : IDisposable
+{
+    private readonly RespireMemoryPool _pool;
+    private readonly PooledBufferWriter _writer;
+
+    internal PooledBufferWriterHandle(RespireMemoryPool pool, PooledBufferWriter writer)
+    {
+        _pool = pool;
+        _writer = writer;
+    }
+
+    public PooledBufferWriter Writer => _writer;
+
+    public ReadOnlyMemory<byte> WrittenMemory => _writer.WrittenMemory;
+    public ReadOnlySpan<byte> WrittenSpan => _writer.WrittenSpan;
+    public int WrittenCount => _writer.WrittenCount;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public Memory<byte> GetMemory(int sizeHint = 0) => _writer.GetMemory(sizeHint);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public Span<byte> GetSpan(int sizeHint = 0) => _writer.GetSpan(sizeHint);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Advance(int count) => _writer.Advance(count);
+
+    public void Dispose()
+    {
+        _pool.ReturnBufferWriter(_writer);
+    }
+}
+
+/// <summary>
+/// ObjectPool policy for PooledBufferWriter
+/// </summary>
+internal sealed class PooledBufferWriterPooledObjectPolicy : IPooledObjectPolicy<PooledBufferWriter>
+{
+    private readonly RespireMemoryPool _pool;
+
+    public PooledBufferWriterPooledObjectPolicy(RespireMemoryPool pool)
+    {
+        _pool = pool;
+    }
+
+    public PooledBufferWriter Create()
+    {
+        return new PooledBufferWriter(_pool, RespireMemoryPool.SmallBufferSize);
+    }
+
+    public bool Return(PooledBufferWriter obj)
+    {
+        if (obj == null || obj.WrittenCount > RespireMemoryPool.LargeBufferSize)
+        {
+            // Don't return very large buffers to the pool
+            return false;
+        }
+
+        // Reset will be called when retrieved from pool
+        return true;
     }
 }

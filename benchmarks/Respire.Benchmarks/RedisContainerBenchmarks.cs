@@ -67,7 +67,7 @@ public class RedisContainerBenchmarks
         // Warm up connections
         for (var i = 0; i < 10; i++)
         {
-            _kevaClient.Ping();
+            await _kevaClient.PingWithResponseAsync();
             await _stackExchangeDb.PingAsync();
         }
     }
@@ -86,7 +86,7 @@ public class RedisContainerBenchmarks
     [Benchmark(Baseline = true)]
     public async Task<RespireValue> Respire_Ping()
     {
-        return await _kevaClient.Ping();
+        return await _kevaClient.PingWithResponseAsync();
     }
     
     [Benchmark]
@@ -99,7 +99,7 @@ public class RedisContainerBenchmarks
     [Benchmark]
     public async Task Respire_Set_Small()
     {
-        await _kevaClient.Set("benchmark_key", _smallValue);
+        await _kevaClient.SetAsync("benchmark_key", _smallValue);
     }
     
     [Benchmark]
@@ -112,7 +112,7 @@ public class RedisContainerBenchmarks
     [Benchmark]
     public async Task Respire_Set_Medium()
     {
-        await _kevaClient.Set("benchmark_key_medium", _mediumValue);
+        await _kevaClient.SetAsync("benchmark_key_medium", _mediumValue);
     }
     
     [Benchmark]
@@ -125,7 +125,7 @@ public class RedisContainerBenchmarks
     [Benchmark]
     public async Task Respire_Set_Large()
     {
-        await _kevaClient.Set("benchmark_key_large", _largeValue);
+        await _kevaClient.SetAsync("benchmark_key_large", _largeValue);
     }
     
     [Benchmark]
@@ -138,7 +138,7 @@ public class RedisContainerBenchmarks
     [Benchmark]
     public async Task<RespireValue> Respire_Get()
     {
-        return await _kevaClient.Get("key0");
+        return await _kevaClient.GetAsync("key0");
     }
     
     [Benchmark]
@@ -191,9 +191,9 @@ public class RedisContainerBenchmarks
     
     // EXISTS benchmarks
     [Benchmark]
-    public async Task<RespireValue> Respire_Exists()
+    public async Task<bool> Respire_Exists()
     {
-        return await _kevaClient.Exists("key0");
+        return await _kevaClient.ExistsAsync("key0");
     }
     
     [Benchmark]
@@ -206,8 +206,8 @@ public class RedisContainerBenchmarks
     [Benchmark]
     public async Task Respire_Del()
     {
-        await _kevaClient.Set("temp_key", "temp_value");
-        await _kevaClient.Del("temp_key");
+        await _kevaClient.SetAsync("temp_key", "temp_value");
+        await _kevaClient.DelAsync("temp_key");
     }
     
     [Benchmark]
@@ -219,9 +219,9 @@ public class RedisContainerBenchmarks
     
     // INCR benchmarks
     [Benchmark]
-    public async Task<RespireValue> Respire_Incr()
+    public async Task<long> Respire_Incr()
     {
-        return await _kevaClient.Incr("counter");
+        return await _kevaClient.IncrAsync("counter");
     }
     
     [Benchmark]

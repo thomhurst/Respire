@@ -100,6 +100,18 @@ public sealed class RespireClient : IAsyncDisposable
         var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
         return response.AsInteger() > 0;
     }
+
+    /// <summary>
+    /// Set a key's time to live in seconds
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public async ValueTask<bool> ExpireAsync(string key, int seconds, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        var command = new CommandData(CommandType.Expire, key, seconds.ToString());
+        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
+        return response.AsInteger() == 1;
+    }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public async ValueTask<long> IncrAsync(string key, CancellationToken cancellationToken = default)
