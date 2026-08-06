@@ -8,6 +8,7 @@ using TUnit.Assertions;
 namespace Respire.IntegrationTests;
 
 [ClassDataSource<RedisTestFixture>(Shared = SharedType.Keyed)]
+[NotInParallel("redis-integration")]
 public class DataTypeInteroperabilityTests
 {
     private readonly RedisTestFixture _fixture;
@@ -23,7 +24,7 @@ public class DataTypeInteroperabilityTests
     [Before(HookType.Test)]
     public async Task InitializeAsync()
     {
-        _respireClient = await RespireClient.CreateAsync(RedisTestFixture.Host, RedisTestFixture.Port);
+        _respireClient = await RespireClient.CreateAsync(_fixture.Host, _fixture.Port);
         _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.ConnectionString);
         _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase();
         await _stackExchangeDb.ExecuteAsync("FLUSHDB");
@@ -135,9 +136,10 @@ public class DataTypeInteroperabilityTests
         intFromRespire.ToString().Should().Be("42");
         
         // Set floats
+        // StackExchange formats doubles with G17 ("3.1415899999999999"), so compare numerically.
         await _stackExchangeDb.StringSetAsync(floatKey, 3.14159);
         var floatFromRespire = await _respireClient.GetAsync(floatKey);
-        floatFromRespire.ToString().Should().Be("3.14159");
+        double.Parse(floatFromRespire.ToString()).Should().Be(3.14159);
         
         // Set negative numbers
         await _respireClient.SetAsync(negativeKey, "-123");

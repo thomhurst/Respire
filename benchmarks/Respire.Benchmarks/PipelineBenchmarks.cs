@@ -1,241 +1,154 @@
-using System.Buffers;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Jobs;
 using Respire.FastClient;
-using Respire.Infrastructure;
 using Respire.Protocol;
 
 namespace Respire.Benchmarks;
 
 /// <summary>
-/// Comprehensive benchmarks comparing the new pipeline architecture against previous implementations
-/// Measures throughput, memory allocation, and latency improvements
+/// Benchmarks for the wire protocol (parsing, command building) and live client operations.
 /// </summary>
 [SimpleJob(RuntimeMoniker.Net80)]
 [MemoryDiagnoser]
 [ThreadingDiagnoser]
 public class PipelineBenchmarks
 {
-    private RespireClient _kevaClient = null!;
-    private RespireMemoryPool _memoryPool = null!;
+    private static readonly byte[] SimpleStringData = "+PONG\r\n"u8.ToArray();
+    private static readonly byte[] BulkStringData = "$13\r\nbenchmark_val\r\n"u8.ToArray();
+    private static readonly byte[] IntegerData = ":12345\r\n"u8.ToArray();
+
+    private RespireClient _client = null!;
     private const string TestKey = "benchmark_key";
     private const string TestValue = "benchmark_value_with_some_length_to_it";
-    
+
     [GlobalSetup]
     public async Task Setup()
     {
         try
         {
-            _memoryPool = RespireMemoryPool.Shared;
-            
-            // Create unified client (will fail if Redis is not available, but benchmark structure will be valid)
-            _kevaClient = await RespireClient.CreateAsync("localhost", 6379);
+            _client = await RespireClient.CreateAsync("localhost", 6379);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Warning: Could not connect to Redis for benchmarks: {ex.Message}");
-            Console.WriteLine("Benchmarks will measure client creation and command building only");
+            Console.WriteLine("Benchmarks will measure parsing and command building only");
         }
     }
-    
+
     [GlobalCleanup]
     public void Cleanup()
     {
-        _kevaClient?.Dispose();
+        _client?.Dispose();
     }
-    
-    // Memory pooling benchmarks
-    
-    [Benchmark]
-    public void MemoryPool_RentReturn_1KB()
-    {
-        using var memory = _memoryPool.RentMemory(1024);
-        // Simulate some work
-        memory.Memory.Span.Fill(0x42);
-    }
-    
-    [Benchmark]
-    public void MemoryPool_ArrayRentReturn_1KB()
-    {
-        var array = _memoryPool.RentArray(1024);
-        Array.Fill(array, (byte)0x42, 0, Math.Min(1024, array.Length));
-        _memoryPool.ReturnArray(array);
-    }
-    
-    [Benchmark]
-    public void StandardAllocation_1KB()
-    {
-        var array = new byte[1024];
-        Array.Fill(array, (byte)0x42);
-    }
-    
-    [Benchmark]
-    public void PooledBufferWriter_Write1KB()
-    {
-        using var handle = _memoryPool.GetBufferWriterHandle();
-        var data = new byte[1024];
-        Array.Fill(data, (byte)0x42);
-        handle.Writer.WritePreCompiledCommand(data);
-    }
-    
+
     // Command building benchmarks
-    
+
     [Benchmark]
     public int PreCompiledCommands_BuildGetCommand()
     {
         Span<byte> buffer = stackalloc byte[256];
         return RespCommands.BuildGetCommand(buffer, TestKey);
     }
-    
+
     [Benchmark]
     public int PreCompiledCommands_BuildSetCommand()
     {
         Span<byte> buffer = stackalloc byte[512];
         return RespCommands.BuildSetCommand(buffer, TestKey, TestValue);
     }
-    
+
+    // Wire parser benchmarks
+
     [Benchmark]
-    public void PooledBufferWriter_BuildComplexCommand()
+    public bool RespParser_ParseSimpleString()
     {
-        using var handle = _memoryPool.GetBufferWriterHandle();
-        handle.Writer.WriteBulkString(TestKey);
-        handle.Writer.WriteBulkString(TestValue);
-        handle.Writer.WritePreCompiledCommand("*2\r\n$3\r\nSET\r\n"u8.ToArray());
+        var pos = 0;
+        var status = RespParser.TryParseValue(SimpleStringData, ref pos, out var value);
+        value.Dispose();
+        return status == RespParseStatus.Done;
     }
-    
-    // Pipeline reader benchmarks
-    
+
     [Benchmark]
-    public bool RespPipelineReader_ParseSimpleString()
+    public bool RespParser_ParseBulkString()
     {
-        var data = "+PONG\r\n"u8.ToArray();
-        var sequence = new ReadOnlySequence<byte>(data);
-        var reader = new RespPipelineReader(sequence);
-        return reader.TryReadValue(out _);
+        var pos = 0;
+        var status = RespParser.TryParseValue(BulkStringData, ref pos, out var value);
+        value.Dispose();
+        return status == RespParseStatus.Done;
     }
-    
+
     [Benchmark]
-    public bool RespPipelineReader_ParseBulkString()
+    public bool RespParser_ParseInteger()
     {
-        var data = "$13\r\nbenchmark_val\r\n"u8.ToArray();
-        var sequence = new ReadOnlySequence<byte>(data);
-        var reader = new RespPipelineReader(sequence);
-        return reader.TryReadValue(out _);
+        var pos = 0;
+        var status = RespParser.TryParseValue(IntegerData, ref pos, out var value);
+        value.Dispose();
+        return status == RespParseStatus.Done;
     }
-    
-    [Benchmark]
-    public bool RespPipelineReader_ParseInteger()
-    {
-        var data = ":12345\r\n"u8.ToArray();
-        var sequence = new ReadOnlySequence<byte>(data);
-        var reader = new RespPipelineReader(sequence);
-        return reader.TryReadValue(out _);
-    }
-    
-    // Connection creation benchmarks (measures client initialization overhead)
-    
-    [Benchmark]
-    public async Task CreatePipelineClient()
-    {
-        try
-        {
-            await using var client = await RespireClient.CreateAsync("localhost", 6379);
-        }
-        catch
-        {
-            // Expected if Redis is not available
-        }
-    }
-    
-    [Benchmark]
-    public async Task CreatePreCompiledClient()
-    {
-        try
-        {
-            await using var client = await RespireClient.CreateAsync("localhost", 6379);
-        }
-        catch
-        {
-            // Expected if Redis is not available
-        }
-    }
-    
-    [Benchmark]
-    public async Task CreateFastClient()
-    {
-        try
-        {
-            await using var client = await RespireClient.CreateAsync("localhost", 6379);
-        }
-        catch
-        {
-            // Expected if Redis is not available
-        }
-    }
-    
+
     // Live Redis operation benchmarks (conditional on Redis availability)
-    
+
     [Benchmark]
     public async Task RespireClient_SetOperation()
     {
-        if (_kevaClient != null)
+        if (_client != null)
         {
-            await _kevaClient.SetAsync($"{TestKey}_keva", TestValue);
+            await _client.SetAsync($"{TestKey}_respire", TestValue);
         }
     }
-    
+
     [Benchmark]
     public async Task RespireClient_GetOperation()
     {
-        if (_kevaClient != null)
+        if (_client != null)
         {
-            await _kevaClient.GetAsync(TestKey);
+            var value = await _client.GetAsync(TestKey);
+            value.Dispose();
         }
     }
-    
+
     [Benchmark]
     public async Task RespireClient_PingOperation()
     {
-        if (_kevaClient != null)
+        if (_client != null)
         {
-            await _kevaClient.PingAsync();
+            await _client.PingAsync();
         }
     }
-    
+
     // Batch operation benchmarks
-    
+
     [Benchmark]
     [Arguments(10)]
     [Arguments(100)]
     [Arguments(1000)]
     public async Task RespireClient_BatchSetOperations(int batchSize)
     {
-        if (_kevaClient != null)
+        if (_client != null)
         {
             var tasks = Enumerable.Range(0, batchSize)
-                .Select(i => _kevaClient.SetAsync($"{TestKey}_batch_{i}", $"{TestValue}_{i}").AsTask())
+                .Select(i => _client.SetAsync($"{TestKey}_batch_{i}", $"{TestValue}_{i}").AsTask())
                 .ToArray();
-            
+
             await Task.WhenAll(tasks);
         }
     }
-    
+
     // Memory allocation comparison benchmarks
-    
+
     [Benchmark]
     public void RespCommands_PreCompiledPing()
     {
         var pingCommand = RespCommands.Ping;
-        // Simulate sending
         var _ = pingCommand.AsSpan();
     }
-    
+
     [Benchmark]
     public byte[] ManualCommandBuilding_Ping()
     {
         return "*1\r\n$4\r\nPING\r\n"u8.ToArray();
     }
-    
+
     [Benchmark]
     public void ZeroAllocCommandBuilding_Get()
     {
@@ -243,7 +156,7 @@ public class PipelineBenchmarks
         var length = RespCommands.BuildGetCommand(buffer, "test");
         var command = buffer[..length];
     }
-    
+
     [Benchmark]
     public byte[] TraditionalCommandBuilding_Get()
     {
@@ -260,54 +173,58 @@ public class PipelineBenchmarks
 [MemoryDiagnoser]
 public class PipelineThroughputBenchmarks
 {
-    private RespireClient _kevaClient = null!;
+    private RespireClient _client = null!;
     private const string TestKey = "throughput_test";
     private const string TestValue = "throughput_value";
-    
+
     [Params(1, 10, 100, 1000)]
     public int OperationCount { get; set; }
-    
+
     [GlobalSetup]
     public async Task Setup()
     {
         try
         {
-            _kevaClient = await RespireClient.CreateAsync("localhost", 6379);
+            _client = await RespireClient.CreateAsync("localhost", 6379);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Warning: Could not connect to Redis: {ex.Message}");
         }
     }
-    
+
     [GlobalCleanup]
     public void Cleanup()
     {
-        _kevaClient?.Dispose();
+        _client?.Dispose();
     }
-    
+
     [Benchmark]
     public async Task RespireClient_ConcurrentSets()
     {
-        if (_kevaClient != null)
+        if (_client != null)
         {
             var tasks = Enumerable.Range(0, OperationCount)
-                .Select(i => _kevaClient.SetAsync($"{TestKey}_{i}", $"{TestValue}_{i}").AsTask())
+                .Select(i => _client.SetAsync($"{TestKey}_{i}", $"{TestValue}_{i}").AsTask())
                 .ToArray();
-            
+
             await Task.WhenAll(tasks);
         }
     }
-    
+
     [Benchmark]
     public async Task RespireClient_ConcurrentGets()
     {
-        if (_kevaClient != null)
+        if (_client != null)
         {
             var tasks = Enumerable.Range(0, OperationCount)
-                .Select(i => _kevaClient.GetAsync($"{TestKey}_{i}").AsTask())
+                .Select(async i =>
+                {
+                    var value = await _client.GetAsync($"{TestKey}_{i}");
+                    value.Dispose();
+                })
                 .ToArray();
-            
+
             await Task.WhenAll(tasks);
         }
     }

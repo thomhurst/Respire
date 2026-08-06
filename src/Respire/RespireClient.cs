@@ -1,386 +1,264 @@
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
+using Respire.Commands;
 using Respire.Infrastructure;
+using Respire.Networking;
 using Respire.Protocol;
-using CommandType = Respire.Commands.CommandType;
-using CommandData = Respire.Commands.CommandData;
 
 namespace Respire.FastClient;
 
 /// <summary>
-/// High-performance Redis client using enum-based commands to reduce allocations
+/// High-performance Redis client. Commands serialize straight into the connection's coalescing
+/// write buffer as pre-compiled prefix + argument bulk strings; responses complete pooled
+/// value-task sources in FIFO order — no delegates, queues, or per-command allocations.
 /// </summary>
-public sealed class RespireClient : IAsyncDisposable
+/// <remarks>
+/// Methods returning <see cref="RespireValue"/> hand the caller a value backed by pooled
+/// storage: call <see cref="RespireValue.Dispose"/> when finished with it (forgetting is safe,
+/// just less efficient). Scalar-returning methods dispose internally.
+/// </remarks>
+public sealed class RespireClient : IAsyncDisposable, IDisposable
 {
     private readonly RespireConnectionMultiplexer _multiplexer;
-    private readonly RespireCommandQueue _commandQueue;
     private readonly ILogger? _logger;
     private volatile bool _disposed;
-    
+
     public string Host => _multiplexer.Host;
     public int Port => _multiplexer.Port;
     public bool IsConnected => _multiplexer.IsConnected && !_disposed;
-    
-    private RespireClient(
-        RespireConnectionMultiplexer multiplexer,
-        RespireCommandQueue commandQueue,
-        ILogger? logger)
+
+    private RespireClient(RespireConnectionMultiplexer multiplexer, ILogger? logger)
     {
         _multiplexer = multiplexer;
-        _commandQueue = commandQueue;
         _logger = logger;
     }
-    
-    /// <summary>
-    /// Creates a high-performance Redis client
-    /// </summary>
+
     public static async Task<RespireClient> CreateAsync(
         string host,
         int port = 6379,
         int connectionCount = 0,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        RespireConnectionOptions? options = null,
+        CancellationToken cancellationToken = default)
     {
         var multiplexer = await RespireConnectionMultiplexer.CreateAsync(
-            host, port, connectionCount, logger: logger).ConfigureAwait(false);
-        
-        var commandQueue = new RespireCommandQueue(
-            multiplexer, 
-            maxBatchSize: 128, 
-            batchTimeout: TimeSpan.FromMilliseconds(1),
-            tcsPoolSize: 1024,
-            logger);
-        
-        var client = new RespireClient(multiplexer, commandQueue, logger);
-        
+            host, port, connectionCount, options, logger, cancellationToken).ConfigureAwait(false);
+
         logger?.LogInformation(
             "Created RespireClient for {Host}:{Port} with {ConnectionCount} connections",
             host, port, multiplexer.ConnectionCount);
-        
-        return client;
-    }
-    
-    // String Commands
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<RespireValue> GetAsync(string key, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.Get, key);
-        return await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-    }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask SetAsync(string key, string value, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.Set, key, value);
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        
-        // Verify we got "OK" response
-        if (!response.Type.Equals(RespDataType.SimpleString) || !response.AsString().Equals("OK", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException($"SET command failed. Expected 'OK' but got: {response}");
-        }
-    }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<long> DelAsync(string key, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.Del, key);
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        return response.AsInteger();
-    }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<bool> ExistsAsync(string key, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.Exists, key);
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        return response.AsInteger() > 0;
+
+        return new RespireClient(multiplexer, logger);
     }
 
-    /// <summary>
-    /// Set a key's time to live in seconds
-    /// </summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    // String commands
+
+    public ValueTask<RespireValue> GetAsync(string key, CancellationToken cancellationToken = default)
+        => SendForValueAsync(new KeyCommand(CommandPrefixes.Get, key), cancellationToken);
+
+    public ValueTask SetAsync(string key, string value, CancellationToken cancellationToken = default)
+        => SendForOkAsync(new KeyValueCommand(CommandPrefixes.Set, key, value), cancellationToken);
+
+    public ValueTask<long> DelAsync(string key, CancellationToken cancellationToken = default)
+        => SendForIntegerAsync(new KeyCommand(CommandPrefixes.Del, key), cancellationToken);
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    public async ValueTask<bool> ExistsAsync(string key, CancellationToken cancellationToken = default)
+        => await SendForIntegerAsync(new KeyCommand(CommandPrefixes.Exists, key), cancellationToken).ConfigureAwait(false) > 0;
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     public async ValueTask<bool> ExpireAsync(string key, int seconds, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.Expire, key, seconds.ToString());
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        return response.AsInteger() == 1;
-    }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<long> IncrAsync(string key, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.Incr, key);
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        return response.AsInteger();
-    }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<long> DecrAsync(string key, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.Decr, key);
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        return response.AsInteger();
-    }
-    
-    // [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    // public async ValueTask<long> IncrByAsync(string key, long value, CancellationToken cancellationToken = default)
-    // {
-    //     ThrowIfDisposed();
-    //     var command = new CommandData(Commands.CommandType.IncrBy, key, value);
-    //     var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-    //     return response.AsInteger();
-    // }
-    
-    // [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    // public async ValueTask<long> DecrByAsync(string key, long value, CancellationToken cancellationToken = default)
-    // {
-    //     ThrowIfDisposed();
-    //     var command = new CommandData(Commands.CommandType.DecrBy, key, value);
-    //     var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-    //     return response.AsInteger();
-    // }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<long> AppendAsync(string key, string value, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.Append, key, value);
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        return response.AsInteger();
-    }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<long> StrLenAsync(string key, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.StrLen, key);
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        return response.AsInteger();
-    }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<RespireValue> TtlAsync(string key, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.Ttl, key);
-        return await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-    }
-    
-    // Hash Commands
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<RespireValue> HGetAsync(string key, string field, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.HGet, key, field);
-        return await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-    }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<long> HSetAsync(string key, string field, string value, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.HSet, key, field, value);
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        return response.AsInteger();
-    }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<long> HDelAsync(string key, string field, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.HDel, key, field);
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        return response.AsInteger();
-    }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        => await SendForIntegerAsync(new KeyIntegerCommand(CommandPrefixes.Expire, key, seconds), cancellationToken).ConfigureAwait(false) == 1;
+
+    public ValueTask<long> IncrAsync(string key, CancellationToken cancellationToken = default)
+        => SendForIntegerAsync(new KeyCommand(CommandPrefixes.Incr, key), cancellationToken);
+
+    public ValueTask<long> DecrAsync(string key, CancellationToken cancellationToken = default)
+        => SendForIntegerAsync(new KeyCommand(CommandPrefixes.Decr, key), cancellationToken);
+
+    public ValueTask<long> AppendAsync(string key, string value, CancellationToken cancellationToken = default)
+        => SendForIntegerAsync(new KeyValueCommand(CommandPrefixes.Append, key, value), cancellationToken);
+
+    public ValueTask<long> StrLenAsync(string key, CancellationToken cancellationToken = default)
+        => SendForIntegerAsync(new KeyCommand(CommandPrefixes.StrLen, key), cancellationToken);
+
+    public ValueTask<RespireValue> TtlAsync(string key, CancellationToken cancellationToken = default)
+        => SendForValueAsync(new KeyCommand(CommandPrefixes.Ttl, key), cancellationToken);
+
+    // Hash commands
+
+    public ValueTask<RespireValue> HGetAsync(string key, string field, CancellationToken cancellationToken = default)
+        => SendForValueAsync(new KeyValueCommand(CommandPrefixes.HGet, key, field), cancellationToken);
+
+    public ValueTask<long> HSetAsync(string key, string field, string value, CancellationToken cancellationToken = default)
+        => SendForIntegerAsync(new KeyFieldValueCommand(CommandPrefixes.HSet, key, field, value), cancellationToken);
+
+    public ValueTask<long> HDelAsync(string key, string field, CancellationToken cancellationToken = default)
+        => SendForIntegerAsync(new KeyValueCommand(CommandPrefixes.HDel, key, field), cancellationToken);
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     public async ValueTask<bool> HExistsAsync(string key, string field, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.HExists, key, field);
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        return response.AsInteger() > 0;
-    }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<long> HLenAsync(string key, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.HLen, key);
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        return response.AsInteger();
-    }
-    
-    // List Commands
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<long> LPushAsync(string key, string value, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.LPush, key, value);
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        return response.AsInteger();
-    }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<long> RPushAsync(string key, string value, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.RPush, key, value);
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        return response.AsInteger();
-    }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<RespireValue> LPopAsync(string key, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.LPop, key);
-        return await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-    }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<RespireValue> RPopAsync(string key, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.RPop, key);
-        return await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-    }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<long> LLenAsync(string key, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.LLen, key);
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        return response.AsInteger();
-    }
-    
-    // Set Commands
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<long> SAddAsync(string key, string member, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.SAdd, key, member);
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        return response.AsInteger();
-    }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<long> SRemAsync(string key, string member, CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.SRem, key, member);
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        return response.AsInteger();
-    }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        => await SendForIntegerAsync(new KeyValueCommand(CommandPrefixes.HExists, key, field), cancellationToken).ConfigureAwait(false) > 0;
+
+    public ValueTask<long> HLenAsync(string key, CancellationToken cancellationToken = default)
+        => SendForIntegerAsync(new KeyCommand(CommandPrefixes.HLen, key), cancellationToken);
+
+    // List commands
+
+    public ValueTask<long> LPushAsync(string key, string value, CancellationToken cancellationToken = default)
+        => SendForIntegerAsync(new KeyValueCommand(CommandPrefixes.LPush, key, value), cancellationToken);
+
+    public ValueTask<long> RPushAsync(string key, string value, CancellationToken cancellationToken = default)
+        => SendForIntegerAsync(new KeyValueCommand(CommandPrefixes.RPush, key, value), cancellationToken);
+
+    public ValueTask<RespireValue> LPopAsync(string key, CancellationToken cancellationToken = default)
+        => SendForValueAsync(new KeyCommand(CommandPrefixes.LPop, key), cancellationToken);
+
+    public ValueTask<RespireValue> RPopAsync(string key, CancellationToken cancellationToken = default)
+        => SendForValueAsync(new KeyCommand(CommandPrefixes.RPop, key), cancellationToken);
+
+    public ValueTask<long> LLenAsync(string key, CancellationToken cancellationToken = default)
+        => SendForIntegerAsync(new KeyCommand(CommandPrefixes.LLen, key), cancellationToken);
+
+    // Set commands
+
+    public ValueTask<long> SAddAsync(string key, string member, CancellationToken cancellationToken = default)
+        => SendForIntegerAsync(new KeyValueCommand(CommandPrefixes.SAdd, key, member), cancellationToken);
+
+    public ValueTask<long> SRemAsync(string key, string member, CancellationToken cancellationToken = default)
+        => SendForIntegerAsync(new KeyValueCommand(CommandPrefixes.SRem, key, member), cancellationToken);
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     public async ValueTask<bool> SIsMemberAsync(string key, string member, CancellationToken cancellationToken = default)
+        => await SendForIntegerAsync(new KeyValueCommand(CommandPrefixes.SIsMember, key, member), cancellationToken).ConfigureAwait(false) > 0;
+
+    public ValueTask<long> SCardAsync(string key, CancellationToken cancellationToken = default)
+        => SendForIntegerAsync(new KeyCommand(CommandPrefixes.SCard, key), cancellationToken);
+
+    // Connection commands
+
+    public ValueTask<string> PingAsync(CancellationToken cancellationToken = default)
+        => SendForStringAsync(new RawCommand(RespCommands.Ping), cancellationToken);
+
+    public ValueTask<RespireValue> PingWithResponseAsync(CancellationToken cancellationToken = default)
+        => SendForValueAsync(new RawCommand(RespCommands.Ping), cancellationToken);
+
+    public ValueTask<string> EchoAsync(string message, CancellationToken cancellationToken = default)
+        => SendForStringAsync(new SingleValueCommand(CommandPrefixes.Echo, message), cancellationToken);
+
+    // Server commands
+
+    public ValueTask FlushDbAsync(CancellationToken cancellationToken = default)
+        => SendForOkAsync(new RawCommand(RespCommands.FlushDb), cancellationToken);
+
+    public ValueTask FlushAllAsync(CancellationToken cancellationToken = default)
+        => SendForOkAsync(new RawCommand(RespCommands.FlushAll), cancellationToken);
+
+    public ValueTask<long> DbSizeAsync(CancellationToken cancellationToken = default)
+        => SendForIntegerAsync(new RawCommand(RespCommands.DbSize), cancellationToken);
+
+    // Pub/sub
+
+    /// <summary>Publishes a message and returns the number of subscribers that received it.</summary>
+    public ValueTask<long> PublishAsync(string channel, string message, CancellationToken cancellationToken = default)
+        => SendForIntegerAsync(new KeyValueCommand(CommandPrefixes.Publish, channel, message), cancellationToken);
+
+    /// <summary>
+    /// Opens a dedicated pub/sub connection using this client's host, port, and connection
+    /// options (including authentication). The subscriber has its own lifetime — dispose it
+    /// separately.
+    /// </summary>
+    public Task<RespireSubscriber> CreateSubscriberAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        var command = new CommandData(CommandType.SIsMember, key, member);
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        return response.AsInteger() > 0;
+        return RespireSubscriber.CreateAsync(Host, Port, _multiplexer.Options, _logger, cancellationToken);
     }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<long> SCardAsync(string key, CancellationToken cancellationToken = default)
+
+    // Transactions
+
+    /// <summary>Starts building a MULTI/EXEC transaction. Build, execute once, discard.</summary>
+    public RespireTransaction CreateTransaction()
     {
         ThrowIfDisposed();
-        var command = new CommandData(CommandType.SCard, key);
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        return response.AsInteger();
+        return new RespireTransaction(_multiplexer);
     }
-    
-    // Connection Commands
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<string> PingAsync(CancellationToken cancellationToken = default)
+
+    // Shared response handling
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<RespireValue> SendForValueAsync<TCommand>(TCommand command, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
     {
         ThrowIfDisposed();
-        var command = new CommandData(CommandType.Ping, string.Empty);
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        return response.AsString();
+        var response = await _multiplexer.SendAsync(in command, cancellationToken).ConfigureAwait(false);
+        response.ThrowIfError();
+        return response;
     }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<RespireValue> PingWithResponseAsync(CancellationToken cancellationToken = default)
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<long> SendForIntegerAsync<TCommand>(TCommand command, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
     {
         ThrowIfDisposed();
-        var command = new CommandData(CommandType.Ping, string.Empty);
-        return await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
+        var response = await _multiplexer.SendAsync(in command, cancellationToken).ConfigureAwait(false);
+        response.ThrowIfError();
+        var result = response.AsInteger();
+        response.Dispose();
+        return result;
     }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<string> EchoAsync(string message, CancellationToken cancellationToken = default)
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<string> SendForStringAsync<TCommand>(TCommand command, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
     {
         ThrowIfDisposed();
-        var command = new CommandData(CommandType.Echo, message);
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        return response.AsString();
+        var response = await _multiplexer.SendAsync(in command, cancellationToken).ConfigureAwait(false);
+        response.ThrowIfError();
+        var result = response.AsString();
+        response.Dispose();
+        return result;
     }
-    
-    // Server Commands
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask FlushDbAsync(CancellationToken cancellationToken = default)
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+    private async ValueTask SendForOkAsync<TCommand>(TCommand command, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
     {
         ThrowIfDisposed();
-        var command = new CommandData(CommandType.FlushDb, string.Empty);
-        await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
+        var response = await _multiplexer.SendAsync(in command, cancellationToken).ConfigureAwait(false);
+        response.ThrowIfError();
+        try
+        {
+            if (response.Type != RespDataType.SimpleString || !response.AsSpan().SequenceEqual("OK"u8))
+            {
+                throw new RespireException($"Expected 'OK' but got: {response}");
+            }
+        }
+        finally
+        {
+            response.Dispose();
+        }
     }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask FlushAllAsync(CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.FlushAll, string.Empty);
-        await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-    }
-    
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public async ValueTask<long> DbSizeAsync(CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        var command = new CommandData(CommandType.DbSize, string.Empty);
-        var response = await _commandQueue.QueueCommandWithResponseAsync(command, cancellationToken).ConfigureAwait(false);
-        return response.AsInteger();
-    }
-    
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void ThrowIfDisposed()
     {
-        if (_disposed)
-            throw new ObjectDisposedException(nameof(RespireClient));
+        ObjectDisposedException.ThrowIf(_disposed, this);
     }
-    
+
     public async ValueTask DisposeAsync()
     {
         if (_disposed)
+        {
             return;
-        
+        }
+
         _disposed = true;
-        
-        await _commandQueue.DisposeAsync().ConfigureAwait(false);
         await _multiplexer.DisposeAsync().ConfigureAwait(false);
-        
         _logger?.LogInformation("RespireClient disposed");
     }
-    
+
     public void Dispose()
     {
-        DisposeAsync().AsTask().Wait();
+        DisposeAsync().AsTask().GetAwaiter().GetResult();
     }
 }
