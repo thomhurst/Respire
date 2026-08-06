@@ -378,7 +378,7 @@ public sealed partial class RespireClient : IRespireClient
         {
             // The connection may still be mid-block server-side; don't return it to the pool.
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            await connection.DisposeAsync().ConfigureAwait(false);
+            await core.DedicatedPool.DiscardAsync(connection).ConfigureAwait(false);
             throw;
         }
     }

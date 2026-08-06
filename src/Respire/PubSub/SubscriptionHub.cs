@@ -320,9 +320,21 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             subscription.Buffer.Writer.TryComplete();
         }
 
-        if (_connection is { } connection)
+        // Synchronize with a racing first connect: once the gate is ours, any connection an
+        // in-flight EnsureConnectionAsync published is visible here and gets swept instead of
+        // leaking an open socket past client disposal.
+        await _connectionGate.WaitAsync().ConfigureAwait(false);
+        try
         {
-            await connection.DisposeAsync().ConfigureAwait(false);
+            if (_connection is { } connection)
+            {
+                await connection.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            _connectionGate.Release();
+            _connectionGate.Dispose();
         }
     }
 }

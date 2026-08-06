@@ -99,16 +99,30 @@ public sealed class RespireTransaction : IAsyncDisposable
             RespValue result;
             try
             {
-                result = _watchConnection is not null
-                    ? await _watchConnection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, cancellationToken)
-                        .ConfigureAwait(false)
-                    : await _client.SendTransactionCoreAsync(_buffer.WrittenMemory, _ops.Count, cancellationToken)
-                        .ConfigureAwait(false);
+                // Transactions are not intentionally blocking, so CommandTimeout applies here
+                // exactly as it does on the regular send path.
+                if (_client.Core.Options.CommandTimeout is { } timeout)
+                {
+                    using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    timeoutSource.CancelAfter(timeout);
+                    try
+                    {
+                        result = await SendAsync(timeoutSource.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        throw new RespireTimeoutException("MULTI/EXEC", timeout);
+                    }
+                }
+                else
+                {
+                    result = await SendAsync(cancellationToken).ConfigureAwait(false);
+                }
             }
             catch (Exception ex)
             {
-                // The commit never produced a reply (connection loss, cancellation, …): every
-                // pending must observe that failure, not a stale "not committed yet" state.
+                // The commit never produced a reply (connection loss, timeout, cancellation, …):
+                // every pending must observe that failure, not a stale "not committed yet" state.
                 foreach (var op in _ops)
                 {
                     op.Fail(ex);
@@ -164,6 +178,11 @@ public sealed class RespireTransaction : IAsyncDisposable
         {
             await ReleaseAsync().ConfigureAwait(false);
         }
+
+        ValueTask<RespValue> SendAsync(CancellationToken token)
+            => _watchConnection is not null
+                ? _watchConnection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, token)
+                : _client.SendTransactionCoreAsync(_buffer.WrittenMemory, _ops.Count, token);
     }
 
     /// <summary>Releases the buffer (and any watch connection) of an uncommitted transaction.</summary>

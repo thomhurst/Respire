@@ -34,6 +34,7 @@ internal sealed class ClientCore : IAsyncDisposable
     {
         get
         {
+            ObjectDisposedException.ThrowIf(Disposed, this);
             if (_hub is { } hub)
             {
                 return hub;
@@ -41,6 +42,9 @@ internal sealed class ClientCore : IAsyncDisposable
 
             lock (_hubGate)
             {
+                // Re-checked under the gate: disposal must not be revivable through a
+                // freshly created hub (and its dedicated connection).
+                ObjectDisposedException.ThrowIf(Disposed, this);
                 return _hub ??= new SubscriptionHub(this);
             }
         }
@@ -54,9 +58,15 @@ internal sealed class ClientCore : IAsyncDisposable
         }
 
         Disposed = true;
-        if (_hub is not null)
+        SubscriptionHub? hub;
+        lock (_hubGate)
         {
-            await _hub.DisposeAsync().ConfigureAwait(false);
+            hub = _hub;
+        }
+
+        if (hub is not null)
+        {
+            await hub.DisposeAsync().ConfigureAwait(false);
         }
 
         await DedicatedPool.DisposeAsync().ConfigureAwait(false);

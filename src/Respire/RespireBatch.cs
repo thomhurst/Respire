@@ -22,64 +22,66 @@ public sealed class RespireBatch
     public int Count => _ops.Count;
 
     public RespirePending<string?> GetStringAsync(RespireKey key)
-        => Add<Cmd1, string?>(new Cmd1(Verbs.Get, _client.Key(in key)), static (c, v) => ResponseReader.StringOrNull(in v));
+        => Add<Cmd1, string?>("GET", new Cmd1(Verbs.Get, _client.Key(in key)), static (c, v) => ResponseReader.StringOrNull(in v));
 
     public RespirePending<T?> GetAsync<T>(RespireKey key)
-        => Add<Cmd1, T?>(new Cmd1(Verbs.Get, _client.Key(in key)), static (c, v) => c.DeserializeBorrowed<T>(in v));
+        => Add<Cmd1, T?>("GET", new Cmd1(Verbs.Get, _client.Key(in key)), static (c, v) => c.DeserializeBorrowed<T>(in v));
 
     public RespirePending<byte[]?> GetBytesAsync(RespireKey key)
-        => Add<Cmd1, byte[]?>(new Cmd1(Verbs.Get, _client.Key(in key)), static (c, v) => ResponseReader.BytesOrNull(in v));
+        => Add<Cmd1, byte[]?>("GET", new Cmd1(Verbs.Get, _client.Key(in key)), static (c, v) => ResponseReader.BytesOrNull(in v));
 
     public RespirePending<bool> SetAsync(
         RespireKey key, RespireValue value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always, bool keepTtl = false)
         => Add<SetCommand, bool>(
-            new SetCommand(_client.Key(in key), value, expiry, when, keepTtl, returnOld: false),
+            "SET", new SetCommand(_client.Key(in key), value, expiry, when, keepTtl, returnOld: false),
             static (c, v) => ResponseReader.OkOrNull(in v));
 
     public RespirePending<bool> SetAsync<T>(
         RespireKey key, T value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always, bool keepTtl = false)
         => Add<SetCommand, bool>(
-            new SetCommand(_client.Key(in key), _client.Serialize(value), expiry, when, keepTtl, returnOld: false),
+            "SET", new SetCommand(_client.Key(in key), _client.Serialize(value), expiry, when, keepTtl, returnOld: false),
             static (c, v) => ResponseReader.OkOrNull(in v));
 
     public RespirePending<long> DeleteAsync(RespireKey key)
-        => Add<CmdN, long>(new CmdN(Verbs.Del, [_client.Key(in key)]), static (c, v) => ResponseReader.Integer(in v));
+        => Add<CmdN, long>("DEL", new CmdN(Verbs.Del, [_client.Key(in key)]), static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<bool> ExistsAsync(RespireKey key)
-        => Add<Cmd1, bool>(new Cmd1(Verbs.Exists, _client.Key(in key)), static (c, v) => ResponseReader.Flag(in v));
+        => Add<Cmd1, bool>("EXISTS", new Cmd1(Verbs.Exists, _client.Key(in key)), static (c, v) => ResponseReader.Flag(in v));
 
     public RespirePending<long> IncrementAsync(RespireKey key, long by = 1)
-        => Add<Cmd2, long>(new Cmd2(Verbs.IncrBy, _client.Key(in key), by), static (c, v) => ResponseReader.Integer(in v));
+        => Add<Cmd2, long>("INCRBY", new Cmd2(Verbs.IncrBy, _client.Key(in key), by), static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<long> DecrementAsync(RespireKey key, long by = 1)
-        => Add<Cmd2, long>(new Cmd2(Verbs.DecrBy, _client.Key(in key), by), static (c, v) => ResponseReader.Integer(in v));
+        => Add<Cmd2, long>("DECRBY", new Cmd2(Verbs.DecrBy, _client.Key(in key), by), static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<bool> ExpireAsync(RespireKey key, TimeSpan expiry)
         => Add<Cmd2, bool>(
-            new Cmd2(Verbs.PExpire, _client.Key(in key), (long)expiry.TotalMilliseconds),
+            "PEXPIRE", new Cmd2(Verbs.PExpire, _client.Key(in key), (long)expiry.TotalMilliseconds),
             static (c, v) => ResponseReader.Flag(in v));
 
     public RespirePending<bool> HashSetAsync(RespireKey key, string field, RespireValue value)
-        => Add<Cmd3, bool>(new Cmd3(Verbs.HSet, _client.Key(in key), field, value), static (c, v) => ResponseReader.Flag(in v));
+        => Add<Cmd3, bool>("HSET", new Cmd3(Verbs.HSet, _client.Key(in key), field, value), static (c, v) => ResponseReader.Flag(in v));
 
     public RespirePending<string?> HashGetAsync(RespireKey key, string field)
-        => Add<Cmd2, string?>(new Cmd2(Verbs.HGet, _client.Key(in key), field), static (c, v) => ResponseReader.StringOrNull(in v));
+        => Add<Cmd2, string?>("HGET", new Cmd2(Verbs.HGet, _client.Key(in key), field), static (c, v) => ResponseReader.StringOrNull(in v));
 
     public RespirePending<long> ListLeftPushAsync(RespireKey key, RespireValue value)
-        => Add<Cmd2, long>(new Cmd2(Verbs.LPush, _client.Key(in key), value), static (c, v) => ResponseReader.Integer(in v));
+        => Add<Cmd2, long>("LPUSH", new Cmd2(Verbs.LPush, _client.Key(in key), value), static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<long> ListRightPushAsync(RespireKey key, RespireValue value)
-        => Add<Cmd2, long>(new Cmd2(Verbs.RPush, _client.Key(in key), value), static (c, v) => ResponseReader.Integer(in v));
+        => Add<Cmd2, long>("RPUSH", new Cmd2(Verbs.RPush, _client.Key(in key), value), static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<bool> SetAddAsync(RespireKey key, RespireValue member)
-        => Add<Cmd2, bool>(new Cmd2(Verbs.SAdd, _client.Key(in key), member), static (c, v) => ResponseReader.Flag(in v));
+        => Add<Cmd2, bool>("SADD", new Cmd2(Verbs.SAdd, _client.Key(in key), member), static (c, v) => ResponseReader.Flag(in v));
 
     public RespirePending<bool> SortedSetAddAsync(RespireKey key, RespireValue member, double score)
-        => Add<Cmd3, bool>(new Cmd3(Verbs.ZAdd, _client.Key(in key), score, member), static (c, v) => ResponseReader.Flag(in v));
+        => Add<Cmd3, bool>("ZADD", new Cmd3(Verbs.ZAdd, _client.Key(in key), score, member), static (c, v) => ResponseReader.Flag(in v));
 
     /// <summary>
-    /// Sends every queued command in one flush and completes all pendings. Per-command server
-    /// errors fault that command's pending, not this call.
+    /// Sends every queued command in one flush and completes all pendings. Per-command failures
+    /// (server errors, <see cref="RespireOptions.CommandTimeout"/> expiry) fault that command's
+    /// pending, not this call; failing to obtain a connection at all faults every pending and
+    /// rethrows.
     /// </summary>
     public async ValueTask SendAsync(CancellationToken cancellationToken = default)
     {
@@ -94,17 +96,40 @@ public sealed class RespireBatch
             return;
         }
 
-        var connection = await _client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
+        RespireConnection connection;
+        try
+        {
+            connection = await _client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // The batch is single-shot: without a connection nothing ran, so every pending
+            // must observe the acquisition failure rather than stay unreadable forever.
+            foreach (var op in _ops)
+            {
+                op.Fail(ex);
+            }
+
+            throw;
+        }
+
+        var timeout = _client.Core.Options.CommandTimeout;
+        using var timeoutSource = timeout is null
+            ? null
+            : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource?.CancelAfter(timeout!.Value);
+        var effectiveToken = timeoutSource?.Token ?? cancellationToken;
+
         var tasks = new Task[_ops.Count];
         for (var i = 0; i < _ops.Count; i++)
         {
-            tasks[i] = _ops[i].RunAsync(_client, connection, cancellationToken);
+            tasks[i] = _ops[i].RunAsync(_client, connection, effectiveToken, cancellationToken, timeout);
         }
 
         await Task.WhenAll(tasks).ConfigureAwait(false);
     }
 
-    private RespirePending<T> Add<TCommand, T>(in TCommand command, Func<RespireClient, RespValue, T> convert)
+    private RespirePending<T> Add<TCommand, T>(string operation, in TCommand command, Func<RespireClient, RespValue, T> convert)
         where TCommand : struct, IRespCommand
     {
         if (_sent)
@@ -113,23 +138,32 @@ public sealed class RespireBatch
         }
 
         var pending = new RespirePending<T>();
-        _ops.Add(new Op<TCommand, T>(command, pending, convert));
+        _ops.Add(new Op<TCommand, T>(operation, command, pending, convert));
         return pending;
     }
 
     private abstract class Op
     {
-        public abstract Task RunAsync(RespireClient client, RespireConnection connection, CancellationToken cancellationToken);
+        public abstract Task RunAsync(
+            RespireClient client, RespireConnection connection, CancellationToken effectiveToken,
+            CancellationToken callerToken, TimeSpan? timeout);
+
+        public abstract void Fail(Exception error);
     }
 
-    private sealed class Op<TCommand, T>(TCommand command, RespirePending<T> pending, Func<RespireClient, RespValue, T> convert) : Op
+    private sealed class Op<TCommand, T>(
+        string operation, TCommand command, RespirePending<T> pending, Func<RespireClient, RespValue, T> convert) : Op
         where TCommand : struct, IRespCommand
     {
-        public override async Task RunAsync(RespireClient client, RespireConnection connection, CancellationToken cancellationToken)
+        public override void Fail(Exception error) => pending.Fail(error);
+
+        public override async Task RunAsync(
+            RespireClient client, RespireConnection connection, CancellationToken effectiveToken,
+            CancellationToken callerToken, TimeSpan? timeout)
         {
             try
             {
-                var value = await connection.SendAsync(in command, cancellationToken).ConfigureAwait(false);
+                var value = await connection.SendAsync(in command, effectiveToken).ConfigureAwait(false);
                 if (value.IsError)
                 {
                     var error = ResponseReader.ServerError(in value);
@@ -146,6 +180,10 @@ public sealed class RespireBatch
                 {
                     value.Dispose();
                 }
+            }
+            catch (OperationCanceledException) when (timeout is { } expired && !callerToken.IsCancellationRequested)
+            {
+                pending.Fail(new RespireTimeoutException(operation, expired));
             }
             catch (Exception ex)
             {
