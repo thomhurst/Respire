@@ -55,10 +55,14 @@ public sealed class RespireTransaction : IAsyncDisposable
         => Add<CmdN, long>(new CmdN(Verbs.Del, [_client.Key(in key)]), static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<long> IncrementAsync(RespireKey key, long by = 1)
-        => Add<Cmd2, long>(new Cmd2(Verbs.IncrBy, _client.Key(in key), by), static (c, v) => ResponseReader.Integer(in v));
+        => by == 1
+            ? Add<Cmd1, long>(new Cmd1(Verbs.Incr, _client.Key(in key)), static (c, v) => ResponseReader.Integer(in v))
+            : Add<Cmd2, long>(new Cmd2(Verbs.IncrBy, _client.Key(in key), by), static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<long> DecrementAsync(RespireKey key, long by = 1)
-        => Add<Cmd2, long>(new Cmd2(Verbs.DecrBy, _client.Key(in key), by), static (c, v) => ResponseReader.Integer(in v));
+        => by == 1
+            ? Add<Cmd1, long>(new Cmd1(Verbs.Decr, _client.Key(in key)), static (c, v) => ResponseReader.Integer(in v))
+            : Add<Cmd2, long>(new Cmd2(Verbs.DecrBy, _client.Key(in key), by), static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<bool> ExpireAsync(RespireKey key, TimeSpan expiry)
         => Add<Cmd2, bool>(

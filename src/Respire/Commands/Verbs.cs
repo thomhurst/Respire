@@ -34,6 +34,8 @@ internal static class Verbs
     public static readonly Verb StrLen = new("STRLEN");
     public static readonly Verb GetRange = new("GETRANGE");
     public static readonly Verb GetDel = new("GETDEL");
+    public static readonly Verb Incr = new("INCR");
+    public static readonly Verb Decr = new("DECR");
     public static readonly Verb IncrBy = new("INCRBY");
     public static readonly Verb DecrBy = new("DECRBY");
     public static readonly Verb IncrByFloat = new("INCRBYFLOAT");
