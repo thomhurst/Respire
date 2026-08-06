@@ -355,11 +355,35 @@ public static class RespParser
         return RespParseStatus.Done;
     }
 
+    private static readonly ReadOnlyMemory<byte> InternedOk = "OK"u8.ToArray();
+    private static readonly ReadOnlyMemory<byte> InternedPong = "PONG"u8.ToArray();
+    private static readonly ReadOnlyMemory<byte> InternedQueued = "QUEUED"u8.ToArray();
+
     private static RespValue CopyToPooled(RespDataType type, ReadOnlySpan<byte> payload)
     {
         if (payload.IsEmpty)
         {
             return RespValue.PooledString(type, [], 0);
+        }
+
+        // The constant replies that dominate write-heavy traffic (+OK, +PONG, +QUEUED) are
+        // interned: no pooled rent on this thread + return on the caller's thread per reply.
+        if (type == RespDataType.SimpleString)
+        {
+            if (payload.SequenceEqual("OK"u8))
+            {
+                return RespValue.SimpleString(InternedOk);
+            }
+
+            if (payload.SequenceEqual("PONG"u8))
+            {
+                return RespValue.SimpleString(InternedPong);
+            }
+
+            if (payload.SequenceEqual("QUEUED"u8))
+            {
+                return RespValue.SimpleString(InternedQueued);
+            }
         }
 
         var array = RespirePools.ResponsePayloads.Rent(payload.Length);
