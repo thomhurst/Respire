@@ -46,6 +46,9 @@ internal sealed class WriteBuffer
 
     public void Reset() => _count = 0;
 
+    /// <summary>Truncates back to a marked position (used to undo a partially written command).</summary>
+    public void TruncateTo(int position) => _count = position;
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void Grow(int sizeHint)
     {

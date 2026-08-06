@@ -258,6 +258,16 @@ public sealed class RespireConnection : IAsyncDisposable
     [ThreadStatic]
     private static WriteBuffer? _serializeScratch;
 
+    /// <summary>
+    /// Set when a frame outgrew <see cref="ScratchRetainLimit"/>: the thread's next command
+    /// serializes directly into the active buffer under the gate instead, and stays on that
+    /// path while its frames remain large. A thread issuing sustained large writes therefore
+    /// reuses the active buffer's growth rather than renting, copying, and discarding an
+    /// oversized scratch buffer per command; the first small frame returns it to scratch.
+    /// </summary>
+    [ThreadStatic]
+    private static bool _bypassScratchNext;
+
     private const int ScratchInitialSize = 4 * 1024;
     private const int ScratchRetainLimit = 64 * 1024;
 
@@ -278,6 +288,12 @@ public sealed class RespireConnection : IAsyncDisposable
         if (_inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
         {
             return false;
+        }
+
+        if (_bypassScratchNext)
+        {
+            _bypassScratchNext = false;
+            return TryEnqueueDirect(in command, source, discardRepliesBefore);
         }
 
         var scratch = _serializeScratch ??= new WriteBuffer(ScratchInitialSize);
@@ -319,7 +335,55 @@ public sealed class RespireConnection : IAsyncDisposable
             {
                 _serializeScratch = null;
                 scratch.Release();
+                _bypassScratchNext = true;
             }
+        }
+    }
+
+    /// <summary>
+    /// The pre-scratch path: serializes under the gate straight into the active buffer, whose
+    /// storage persists across commands. Used for the command after an oversized frame so
+    /// large-write workloads reuse the active buffer's growth instead of churning scratch.
+    /// </summary>
+    private bool TryEnqueueDirect<TCommand>(in TCommand command, PendingResponseSource source, int discardRepliesBefore)
+        where TCommand : struct, IRespCommand
+    {
+        lock (_writeGate)
+        {
+            if (_dead)
+            {
+                throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+            }
+
+            if (_inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
+            {
+                return false;
+            }
+
+            var mark = _activeBuffer.Count;
+            try
+            {
+                var writer = new RespWriter(_activeBuffer);
+                command.Write(ref writer);
+            }
+            catch
+            {
+                _activeBuffer.TruncateTo(mark);
+                throw;
+            }
+
+            if (_activeBuffer.Count - mark > ScratchRetainLimit)
+            {
+                _bypassScratchNext = true;
+            }
+
+            for (var i = 0; i < discardRepliesBefore; i++)
+            {
+                _inflight.TryEnqueue(InflightRing.DiscardSentinel);
+            }
+
+            _inflight.TryEnqueue(source);
+            return true;
         }
     }
 
