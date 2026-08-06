@@ -8,8 +8,15 @@ internal sealed class RespireStressClient : IStressClient
 
     private RespireStressClient(RespireClient client) => _client = client;
 
-    public static async Task<RespireStressClient> ConnectAsync(string host, int port) =>
-        new(await RespireClient.ConnectAsync($"{host}:{port}").ConfigureAwait(false));
+    public static async Task<RespireStressClient> ConnectAsync(string host, int port)
+    {
+        // RESPIRE_CONNECTIONS overrides the multiplexed connection count for perf sweeps.
+        var connections = Environment.GetEnvironmentVariable("RESPIRE_CONNECTIONS");
+        var connectionString = string.IsNullOrEmpty(connections)
+            ? $"{host}:{port}"
+            : $"redis://{host}:{port}?connections={connections}";
+        return new(await RespireClient.ConnectAsync(connectionString).ConfigureAwait(false));
+    }
 
     public string Name => ClientName;
 

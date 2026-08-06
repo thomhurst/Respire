@@ -255,13 +255,100 @@ public sealed class RespireConnection : IAsyncDisposable
         return SendFireAndForgetSlowAsync(command, cancellationToken);
     }
 
+    [ThreadStatic]
+    private static WriteBuffer? _serializeScratch;
+
+    /// <summary>
+    /// Positive after a frame outgrew <see cref="ScratchRetainLimit"/>: the thread's next
+    /// commands serialize directly into the active buffer under the gate, whose storage
+    /// persists across commands. Any further large frame refreshes the budget, so workloads
+    /// mixing large writes with small commands stay on the direct path instead of renting,
+    /// copying, and discarding an oversized scratch buffer per large command (above the
+    /// pool's limit that is an LOH allocation each time). Sustained small traffic decays the
+    /// budget and returns to the scratch path.
+    /// </summary>
+    [ThreadStatic]
+    private static int _directPathBudget;
+
+    private const int ScratchInitialSize = 4 * 1024;
+    private const int ScratchRetainLimit = 64 * 1024;
+    private const int DirectPathBudgetAfterLargeFrame = 64;
+
     /// <summary>
     /// Appends the command and its pending source atomically: buffer byte order must exactly
     /// match ring order, or every later response on this connection answers the wrong command.
     /// A transaction reserves <paramref name="discardRepliesBefore"/> discard slots ahead of
     /// its real source, one per reply that is consumed but not delivered.
+    /// Serialization runs outside the write gate into a per-thread scratch buffer, so
+    /// concurrent callers contend only for a memcpy and the ring enqueue — not for UTF-8
+    /// encoding their payloads.
     /// </summary>
     private bool TryEnqueue<TCommand>(in TCommand command, PendingResponseSource source, int discardRepliesBefore = 0)
+        where TCommand : struct, IRespCommand
+    {
+        // Racy pre-check; the authoritative one runs under the gate below. This keeps the
+        // ring-full retry loop from re-serializing the frame on every attempt.
+        if (_inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
+        {
+            return false;
+        }
+
+        if (_directPathBudget > 0)
+        {
+            _directPathBudget--;
+            return TryEnqueueDirect(in command, source, discardRepliesBefore);
+        }
+
+        var scratch = _serializeScratch ??= new WriteBuffer(ScratchInitialSize);
+        try
+        {
+            scratch.Reset();
+            var writer = new RespWriter(scratch);
+            command.Write(ref writer);
+            var frame = scratch.WrittenMemory.Span;
+
+            lock (_writeGate)
+            {
+                if (_dead)
+                {
+                    throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+                }
+
+                if (_inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
+                {
+                    return false;
+                }
+
+                _activeBuffer.Append(frame);
+
+                for (var i = 0; i < discardRepliesBefore; i++)
+                {
+                    _inflight.TryEnqueue(InflightRing.DiscardSentinel);
+                }
+
+                _inflight.TryEnqueue(source);
+                return true;
+            }
+        }
+        finally
+        {
+            // An oversized frame (a multi-megabyte SET, a large transaction block) must not
+            // stay pinned to this thread for the rest of its life.
+            if (scratch.Capacity > ScratchRetainLimit)
+            {
+                _serializeScratch = null;
+                scratch.Release();
+                _directPathBudget = DirectPathBudgetAfterLargeFrame;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The pre-scratch path: serializes under the gate straight into the active buffer, whose
+    /// storage persists across commands. Used while the thread's direct-path budget lasts so
+    /// large-write workloads reuse the active buffer's growth instead of churning scratch.
+    /// </summary>
+    private bool TryEnqueueDirect<TCommand>(in TCommand command, PendingResponseSource source, int discardRepliesBefore)
         where TCommand : struct, IRespCommand
     {
         lock (_writeGate)
@@ -286,6 +373,11 @@ public sealed class RespireConnection : IAsyncDisposable
             {
                 _activeBuffer.TruncateTo(mark);
                 throw;
+            }
+
+            if (_activeBuffer.Count - mark > ScratchRetainLimit)
+            {
+                _directPathBudget = DirectPathBudgetAfterLargeFrame;
             }
 
             for (var i = 0; i < discardRepliesBefore; i++)

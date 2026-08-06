@@ -68,7 +68,11 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     {
         if (connectionCount <= 0)
         {
-            connectionCount = Math.Clamp(Environment.ProcessorCount / 2, 1, 8);
+            // One connection maximizes pipelining: concurrent commands coalesce into deep
+            // batches per syscall. Spreading load across sockets divides the batch depth —
+            // measured under 50-worker stress, every added connection lowered throughput
+            // (small commands worst: 1 connection doubled PING ops/s over 8).
+            connectionCount = 1;
         }
 
         return new RespireConnectionMultiplexer(host, port, connectionCount, options ?? RespireConnectionOptions.Default, logger);

@@ -19,7 +19,16 @@ internal sealed class WriteBuffer
 
     public int Count => _count;
 
+    public int Capacity => _array.Length;
+
     public ReadOnlyMemory<byte> WrittenMemory => _array.AsMemory(0, _count);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Append(ReadOnlySpan<byte> bytes)
+    {
+        bytes.CopyTo(GetSpan(bytes.Length));
+        _count += bytes.Length;
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Span<byte> GetSpan(int sizeHint)

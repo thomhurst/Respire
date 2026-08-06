@@ -319,6 +319,9 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     /// <summary>The central send path: lazy connect, optional command timeout, telemetry, error translation.</summary>
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     internal async ValueTask<RespValue> SendAsync<TCommand>(string operation, TCommand command, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
