@@ -37,9 +37,10 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             SingleReader = false,
         });
 
-        // Defensive copy: unsubscription must look up the names that were registered, not
-        // whatever the caller later wrote into their array.
-        return new RespireSubscription(this, kind, [.. names], buffer);
+        // Defensive copy (unsubscription must look up the names that were registered, not
+        // whatever the caller later wrote into their array), deduplicated so one published
+        // message is never delivered twice through duplicate route entries.
+        return new RespireSubscription(this, kind, [.. names.Distinct(StringComparer.Ordinal)], buffer);
     }
 
     /// <summary>Registers the subscription's routes and sends SUBSCRIBE; idempotent per subscription.</summary>
@@ -79,6 +80,15 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                 await SendControlAsync(connection, SubscribeVerb(subscription.Kind), name, cancellationToken)
                     .ConfigureAwait(false);
             }
+
+            // A DisposeAsync racing this activation may have run before the routes existed —
+            // its removal saw nothing to undo. Re-check and take the registration back out
+            // (including the server-side subscription) so a disposed subscription cannot
+            // linger routed with a completed buffer.
+            if (subscription.IsDisposed)
+            {
+                await ReleaseRoutesAsync(subscription).ConfigureAwait(false);
+            }
         }
         catch
         {
@@ -109,6 +119,13 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
     /// <summary>Unregisters the subscription, unsubscribing channels it was the last consumer of.</summary>
     public async ValueTask RemoveAsync(RespireSubscription subscription)
     {
+        subscription.Buffer.Writer.TryComplete();
+        await ReleaseRoutesAsync(subscription).ConfigureAwait(false);
+    }
+
+    /// <summary>Removes the subscription's routes and unsubscribes channels left without consumers.</summary>
+    private async ValueTask ReleaseRoutesAsync(RespireSubscription subscription)
+    {
         var releasedRoutes = new List<(SubscriptionKind Kind, string Name)>();
         lock (_gate)
         {
@@ -125,8 +142,6 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                 }
             }
         }
-
-        subscription.Buffer.Writer.TryComplete();
 
         var connection = _connection;
         if (_disposed || connection is not { IsConnected: true })

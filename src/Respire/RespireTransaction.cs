@@ -202,7 +202,9 @@ public sealed class RespireTransaction : IAsyncDisposable
         _buffer.Release();
         if (_watchConnection is not null)
         {
-            await _watchConnection.DisposeAsync().ConfigureAwait(false);
+            // Rented from the dedicated pool at creation; discarded (never reused) because an
+            // uncommitted transaction still carries WATCH state on the connection.
+            await _client.Core.DedicatedPool.DiscardAsync(_watchConnection).ConfigureAwait(false);
         }
     }
 

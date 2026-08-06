@@ -41,6 +41,8 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
 
     internal Channel<RespireMessage> Buffer { get; }
 
+    internal bool IsDisposed => Volatile.Read(ref _disposed) != 0;
+
     internal bool TryMarkActivated() => Interlocked.CompareExchange(ref _activated, 1, 0) == 0;
 
     /// <summary>Failed activations roll back so the next enumeration attempt subscribes again.</summary>

@@ -14,7 +14,7 @@ internal sealed class PooledValueOwner(in RespValue value)
     private RespValue _value = value;
     private int _disposed;
 
-    public RespValue Value => Volatile.Read(ref _disposed) == 0 ? _value : default;
+    public RespValue Value => Volatile.Read(ref _disposed) == 0 ? _value : RespValue.Null;
 
     public void Dispose()
     {

@@ -200,13 +200,32 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         ObjectDisposedException.ThrowIf(_core.Disposed, this);
-        var connection = await RespireConnection.ConnectAsync(
-            _core.Multiplexer.Host, _core.Multiplexer.Port, _core.Options.ToConnectionOptions(), _core.Logger,
-            cancellationToken).ConfigureAwait(false);
+
+        // Rented from the tracked dedicated pool (not raw-connected) so client disposal can
+        // see and abort this connection even if it opens mid-disposal.
+        var connection = await _core.DedicatedPool.RentAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var reply = await connection.SendAsync(
-                new Cmd1N(Verbs.Watch, Key(watchKeys[0]), MapKeys(watchKeys.AsSpan(1))), cancellationToken).ConfigureAwait(false);
+            var command = new Cmd1N(Verbs.Watch, Key(watchKeys[0]), MapKeys(watchKeys.AsSpan(1)));
+            RespValue reply;
+            if (_core.Options.CommandTimeout is { } timeout)
+            {
+                using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeoutSource.CancelAfter(timeout);
+                try
+                {
+                    reply = await connection.SendAsync(in command, timeoutSource.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    throw new RespireTimeoutException("WATCH", timeout);
+                }
+            }
+            else
+            {
+                reply = await connection.SendAsync(in command, cancellationToken).ConfigureAwait(false);
+            }
+
             if (reply.IsError)
             {
                 var error = ResponseReader.ServerError(in reply);
@@ -219,7 +238,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch
         {
-            await connection.DisposeAsync().ConfigureAwait(false);
+            await _core.DedicatedPool.DiscardAsync(connection).ConfigureAwait(false);
             throw;
         }
     }
