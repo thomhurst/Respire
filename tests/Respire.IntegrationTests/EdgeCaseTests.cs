@@ -1,5 +1,4 @@
 using FluentAssertions;
-using Respire.FastClient;
 using StackExchange.Redis;
 using TUnit.Core;
 using TUnit.Assertions;
@@ -14,96 +13,98 @@ public class EdgeCaseTests
     private RespireClient _respireClient = null!;
     private IConnectionMultiplexer _stackExchangeMultiplexer = null!;
     private IDatabase _stackExchangeDb = null!;
-    
+
     public EdgeCaseTests(RedisTestFixture fixture)
     {
         _fixture = fixture;
     }
-    
+
     [Before(HookType.Test)]
     public async Task InitializeAsync()
     {
-        _respireClient = await RespireClient.CreateAsync(_fixture.Host, _fixture.Port);
+        _respireClient = await RespireClient.ConnectAsync($"{_fixture.Host}:{_fixture.Port}");
         _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.ConnectionString);
         _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase();
         await _stackExchangeDb.ExecuteAsync("FLUSHDB");
     }
-    
+
     [After(HookType.Test)]
     public async Task DisposeAsync()
     {
         await _respireClient.DisposeAsync();
         await _stackExchangeMultiplexer.DisposeAsync();
     }
-    
+
     [Test]
     public async Task VeryLargeValues_HandledCorrectly()
     {
         const string largeKey = "test:large";
-        
+
         // Create a large value (1MB)
         var largeValue = new string('x', 1024 * 1024);
-        
+
         // Set with StackExchange
         await _stackExchangeDb.StringSetAsync(largeKey, largeValue);
-        
+
         // Get with Respire
-        var retrieved = await _respireClient.GetAsync(largeKey);
-        retrieved.ToString().Length.Should().Be(1024 * 1024);
-        retrieved.ToString().Should().StartWith("xxxx");
-        retrieved.ToString().Should().EndWith("xxxx");
+        var retrieved = await _respireClient.GetStringAsync(largeKey);
+        retrieved.Should().NotBeNull();
+        retrieved!.Length.Should().Be(1024 * 1024);
+        retrieved.Should().StartWith("xxxx");
+        retrieved.Should().EndWith("xxxx");
     }
-    
+
     [Test]
     public async Task EmptyStringValues_HandledCorrectly()
     {
         const string emptyKey1 = "test:empty1";
         const string emptyKey2 = "test:empty2";
-        
+
         // Set empty string with StackExchange
         await _stackExchangeDb.StringSetAsync(emptyKey1, "");
-        
+
         // Get with Respire
-        var empty1 = await _respireClient.GetAsync(emptyKey1);
-        empty1.IsNull.Should().BeFalse();
-        empty1.ToString().Should().Be("");
-        
+        var empty1 = await _respireClient.GetStringAsync(emptyKey1);
+        empty1.Should().NotBeNull();
+        empty1.Should().Be("");
+
         // Set empty string with Respire
         await _respireClient.SetAsync(emptyKey2, "");
-        
+
         // Get with StackExchange. RedisValue.HasValue means "non-null and non-empty",
         // so for an empty string assert on IsNull instead.
         var empty2 = await _stackExchangeDb.StringGetAsync(emptyKey2);
         empty2.IsNull.Should().BeFalse();
         empty2.ToString().Should().Be("");
     }
-    
+
     [Test]
     public async Task NonExistentKeys_ReturnNull()
     {
         const string nonExistentKey = "test:nonexistent";
-        
+
         // Get non-existent with both clients
         var seNull = await _stackExchangeDb.StringGetAsync(nonExistentKey);
-        var rNull = await _respireClient.GetAsync(nonExistentKey);
-        
+        var rNull = await _respireClient.GetStringAsync(nonExistentKey);
+
         seNull.IsNull.Should().BeTrue();
-        rNull.IsNull.Should().BeTrue();
-        
+        rNull.Should().BeNull();
+
         // EXISTS on non-existent
         var seExists = await _stackExchangeDb.KeyExistsAsync(nonExistentKey);
         var rExists = await _respireClient.ExistsAsync(nonExistentKey);
-        
+
         seExists.Should().BeFalse();
         rExists.Should().BeFalse();
-        
+
         // DELETE non-existent
         var seDeleted = await _stackExchangeDb.KeyDeleteAsync(nonExistentKey);
-        await _respireClient.DelAsync(nonExistentKey); // Should not throw
-        
+        var rDeleted = await _respireClient.DeleteAsync(nonExistentKey); // Should not throw
+
         seDeleted.Should().BeFalse();
+        rDeleted.Should().Be(0);
     }
-    
+
     [Test]
     public async Task SpecialCharacters_InKeysAndValues()
     {
@@ -138,18 +139,18 @@ public class EdgeCaseTests
             ("key~with~tilde", "value~with~tilde"),
             ("key`with`backtick", "value`with`backtick"),
         };
-        
+
         foreach (var (key, value) in testCases)
         {
             // Set with Respire
             await _respireClient.SetAsync(key, value);
-            
+
             // Get with StackExchange
             var retrieved = await _stackExchangeDb.StringGetAsync(key);
             retrieved.ToString().Should().Be(value, $"Failed for key: {key}");
         }
     }
-    
+
     [Test]
     public async Task UnicodeAndEmoji_HandledCorrectly()
     {
@@ -163,38 +164,38 @@ public class EdgeCaseTests
             ("unicode:emoji", "😀🎉🚀💻🔥"),
             ("unicode:mixed", "Hello世界🌍")
         };
-        
+
         foreach (var (key, value) in unicodeCases)
         {
             // Set with StackExchange
             await _stackExchangeDb.StringSetAsync(key, value);
-            
+
             // Get with Respire
-            var retrieved = await _respireClient.GetAsync(key);
-            retrieved.ToString().Should().Be(value);
-            
+            var retrieved = await _respireClient.GetStringAsync(key);
+            retrieved.Should().Be(value);
+
             // Overwrite with Respire
             var newValue = value + "✨";
             await _respireClient.SetAsync(key, newValue);
-            
+
             // Verify with StackExchange
             var updated = await _stackExchangeDb.StringGetAsync(key);
             updated.ToString().Should().Be(newValue);
         }
     }
-    
+
     [Test]
     public async Task ConcurrentModifications_MaintainConsistency()
     {
         const string sharedKey = "test:concurrent";
         const int iterations = 100;
-        
+
         // Initialize counter
         await _stackExchangeDb.StringSetAsync(sharedKey, 0);
-        
+
         // Concurrent increments from both clients
         var tasks = new List<Task>();
-        
+
         for (var i = 0; i < iterations; i++)
         {
             if (i % 2 == 0)
@@ -203,28 +204,28 @@ public class EdgeCaseTests
             }
             else
             {
-                tasks.Add(_respireClient.IncrAsync(sharedKey).AsTask());
+                tasks.Add(_respireClient.IncrementAsync(sharedKey).AsTask());
             }
         }
-        
+
         await Task.WhenAll(tasks);
-        
+
         // Both clients should see the same final value
         var finalSE = await _stackExchangeDb.StringGetAsync(sharedKey);
-        var finalR = await _respireClient.GetAsync(sharedKey);
-        
+        var finalR = await _respireClient.GetStringAsync(sharedKey);
+
         finalSE.ToString().Should().Be(iterations.ToString());
-        finalR.ToString().Should().Be(iterations.ToString());
+        finalR.Should().Be(iterations.ToString());
     }
-    
+
     [Test]
     public async Task TypeMismatch_HandledGracefully()
     {
         const string key = "test:typemismatch";
-        
+
         // Set as string
         await _stackExchangeDb.StringSetAsync(key, "not_a_number");
-        
+
         // Try to increment (should fail gracefully)
         try
         {
@@ -235,28 +236,28 @@ public class EdgeCaseTests
         {
             ex.Message.Should().Contain("not an integer");
         }
-        
+
         // Try with Respire (should also handle the error)
         try
         {
-            await _respireClient.IncrAsync(key);
+            await _respireClient.IncrementAsync(key);
             Assert.Fail("Expected an error for incrementing non-numeric value");
         }
-        catch (Exception)
+        catch (RespireServerException)
         {
             // Expected - incrementing non-numeric value should fail
         }
     }
-    
+
     [Test]
     public async Task RapidKeyCreationAndDeletion()
     {
         const int cycles = 50;
-        
+
         for (var i = 0; i < cycles; i++)
         {
             var key = $"rapid:{i}";
-            
+
             // Create with alternating clients
             if (i % 2 == 0)
             {
@@ -266,12 +267,12 @@ public class EdgeCaseTests
             {
                 await _respireClient.SetAsync(key, $"value_{i}");
             }
-            
+
             // Verify exists
             var exists = i % 2 == 0
                 ? await _respireClient.ExistsAsync(key)
                 : await _stackExchangeDb.KeyExistsAsync(key);
-            
+
             if (i % 2 == 0)
             {
                 exists.Should().BeTrue();
@@ -280,17 +281,17 @@ public class EdgeCaseTests
             {
                 exists.Should().BeTrue();
             }
-            
+
             // Delete with opposite client
             if (i % 2 == 0)
             {
-                await _respireClient.DelAsync(key);
+                await _respireClient.DeleteAsync(key);
             }
             else
             {
                 await _stackExchangeDb.KeyDeleteAsync(key);
             }
-            
+
             // Verify deleted
             var stillExists = await _stackExchangeDb.KeyExistsAsync(key);
             stillExists.Should().BeFalse();

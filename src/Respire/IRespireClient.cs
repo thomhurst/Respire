@@ -1,0 +1,74 @@
+namespace Respire;
+
+/// <summary>
+/// The Respire client surface — implemented by <see cref="RespireClient"/> and its key-prefixed
+/// views, and the type to inject and mock.
+/// </summary>
+public interface IRespireClient : IAsyncDisposable
+{
+    RespireEndpoint Endpoint { get; }
+
+    bool IsConnected { get; }
+
+    event Action<RespireConnectionState>? ConnectionStateChanged;
+
+    // Facets — the full command surface, grouped by data type.
+    IStringCommands Strings { get; }
+    IKeyCommands Keys { get; }
+    IHashCommands Hashes { get; }
+    IListCommands Lists { get; }
+    ISetCommands Sets { get; }
+    ISortedSetCommands SortedSets { get; }
+    IStreamCommands Streams { get; }
+    IScriptCommands Scripts { get; }
+    IServerCommands Server { get; }
+
+    // Root shortcuts for the most common operations.
+    ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken cancellationToken = default);
+    ValueTask<T?> GetAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
+    ValueTask<byte[]?> GetBytesAsync(RespireKey key, CancellationToken cancellationToken = default);
+
+    ValueTask<bool> SetAsync(
+        RespireKey key,
+        RespireValue value,
+        TimeSpan? expiry = null,
+        SetWhen when = SetWhen.Always,
+        bool keepTtl = false,
+        CancellationToken cancellationToken = default);
+
+    ValueTask<bool> SetAsync<T>(
+        RespireKey key,
+        T value,
+        TimeSpan? expiry = null,
+        SetWhen when = SetWhen.Always,
+        bool keepTtl = false,
+        CancellationToken cancellationToken = default);
+
+    ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys);
+    ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default);
+    ValueTask<long> IncrementAsync(RespireKey key, long by = 1, CancellationToken cancellationToken = default);
+    ValueTask<long> DecrementAsync(RespireKey key, long by = 1, CancellationToken cancellationToken = default);
+    ValueTask<bool> ExpireAsync(RespireKey key, TimeSpan expiry, CancellationToken cancellationToken = default);
+    ValueTask<TimeSpan> PingAsync(CancellationToken cancellationToken = default);
+
+    // Pub/sub.
+    ValueTask<long> PublishAsync(string channel, RespireValue message, CancellationToken cancellationToken = default);
+    ValueTask<long> PublishShardedAsync(string channel, RespireValue message, CancellationToken cancellationToken = default);
+    RespireSubscription Subscribe(params string[] channels);
+    RespireSubscription SubscribePattern(params string[] patterns);
+    RespireSubscription SubscribeSharded(params string[] channels);
+
+    // Batches and transactions.
+    RespireBatch CreateBatch();
+    RespireTransaction CreateTransaction();
+    ValueTask<RespireTransaction> CreateTransactionAsync(RespireKey[] watchKeys, CancellationToken cancellationToken = default);
+
+    // Raw escape hatch.
+    ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args);
+
+    ValueTask<RespireResult> ExecuteAsync(
+        RespireCommandInterpolatedStringHandler command, CancellationToken cancellationToken = default);
+
+    /// <summary>A view that prepends a prefix to every key; shares this client's connections.</summary>
+    IRespireClient WithKeyPrefix(string prefix);
+}

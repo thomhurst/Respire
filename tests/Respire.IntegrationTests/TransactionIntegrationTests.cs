@@ -1,8 +1,4 @@
 using FluentAssertions;
-using Respire;
-using Respire.Commands;
-using Respire.FastClient;
-using Respire.Protocol;
 using TUnit.Core;
 
 namespace Respire.IntegrationTests;
@@ -22,7 +18,7 @@ public class TransactionIntegrationTests
     [Before(HookType.Test)]
     public async Task InitializeAsync()
     {
-        _client = await RespireClient.CreateAsync(_fixture.Host, _fixture.Port);
+        _client = await RespireClient.ConnectAsync($"{_fixture.Host}:{_fixture.Port}");
     }
 
     [After(HookType.Test)]
@@ -34,75 +30,76 @@ public class TransactionIntegrationTests
     [Test]
     public async Task Transaction_ReturnsPerCommandResultsInOrder()
     {
-        await _client.DelAsync("tx:key");
-        await _client.DelAsync("tx:counter");
+        await _client.DeleteAsync("tx:key", "tx:counter");
 
-        var result = await _client.CreateTransaction()
-            .Set("tx:key", "tx-value")
-            .Incr("tx:counter")
-            .Get("tx:key")
-            .ExecuteAsync();
+        var transaction = _client.CreateTransaction();
+        var setPending = transaction.SetAsync("tx:key", "tx-value");
+        var incrPending = transaction.IncrementAsync("tx:counter");
+        var getPending = transaction.GetStringAsync("tx:key");
+        transaction.Count.Should().Be(3);
 
-        result.Type.Should().Be(RespDataType.Array);
-        var count = result.AsArray().Length;
-        var setReply = result.AsArray()[0].AsString();
-        var incrReply = result.AsArray()[1].AsInteger();
-        var getReply = result.AsArray()[2].AsString();
-        count.Should().Be(3);
-        setReply.Should().Be("OK");
-        incrReply.Should().Be(1);
-        getReply.Should().Be("tx-value");
-        result.Dispose();
+        // Queued results are unreadable until the transaction commits.
+        var readEarly = () => getPending.Result;
+        readEarly.Should().Throw<InvalidOperationException>();
+
+        var committed = await transaction.CommitAsync();
+
+        committed.Should().BeTrue();
+        setPending.Result.Should().BeTrue();
+        incrPending.Result.Should().Be(1);
+        getPending.Result.Should().Be("tx-value");
 
         // Effects are visible after EXEC.
-        var value = await _client.GetAsync("tx:key");
-        value.AsString().Should().Be("tx-value");
-        value.Dispose();
+        (await _client.GetStringAsync("tx:key")).Should().Be("tx-value");
     }
 
     [Test]
-    public async Task Transaction_QueueTimeError_AbortsWholeTransaction()
+    public async Task Transaction_RuntimeError_FaultsOnlyThatCommand()
     {
-        await _client.DelAsync("tx:abort");
+        await _client.DeleteAsync("tx:err:applied");
+        await _client.SetAsync("tx:err:string", "not-a-number");
 
-        var transaction = _client.CreateTransaction()
-            .Set("tx:abort", "should-not-persist")
-            // INCR with no key: rejected at queue time, forcing EXECABORT.
-            .Add(new RawCommand("*1\r\n$4\r\nINCR\r\n"u8.ToArray()));
+        var transaction = _client.CreateTransaction();
+        var setPending = transaction.SetAsync("tx:err:applied", "persisted");
+        // INCR on a non-numeric value queues fine but fails inside EXEC.
+        var incrPending = transaction.IncrementAsync("tx:err:string");
 
-        var act = async () => (await transaction.ExecuteAsync()).Dispose();
-        (await act.Should().ThrowAsync<RespireServerException>())
-            .Which.Message.Should().Contain("EXECABORT");
+        var committed = await transaction.CommitAsync();
 
-        // Nothing in the aborted transaction was applied, and the connection still works.
-        var exists = await _client.ExistsAsync("tx:abort");
-        exists.Should().BeFalse();
-        (await _client.PingAsync()).Should().Be("PONG");
+        // EXEC ran: only the failing command's pending faults, the rest of the transaction applies.
+        committed.Should().BeTrue();
+        setPending.Result.Should().BeTrue();
+        var readFaulted = () => incrPending.Result;
+        readFaulted.Should().Throw<RespireServerException>()
+            .Which.Code.Should().Be("ERR");
+
+        // The other command in the transaction was applied, and the connection still works.
+        (await _client.GetStringAsync("tx:err:applied")).Should().Be("persisted");
+        (await _client.PingAsync()).Should().BePositive();
     }
 
     [Test]
     public async Task Transaction_ManyCommands_AllApplied()
     {
         var transaction = _client.CreateTransaction();
+        var pendings = new RespirePending<bool>[100];
         for (var i = 0; i < 100; i++)
         {
-            transaction.Set($"tx:bulk:{i}", $"value-{i}");
+            pendings[i] = transaction.SetAsync($"tx:bulk:{i}", $"value-{i}");
         }
 
-        var result = await transaction.ExecuteAsync();
-        var count = result.AsArray().Length;
-        count.Should().Be(100);
-        result.Dispose();
+        var committed = await transaction.CommitAsync();
 
-        var spot = await _client.GetAsync("tx:bulk:73");
-        spot.AsString().Should().Be("value-73");
-        spot.Dispose();
+        committed.Should().BeTrue();
+        pendings.Should().OnlyContain(pending => pending.Result);
+
+        (await _client.GetStringAsync("tx:bulk:73")).Should().Be("value-73");
     }
 
     [Test]
     public async Task Transaction_ConcurrentWithRegularTraffic_StaysAtomic()
     {
-        await _client.DelAsync("tx:concurrent:counter");
+        await _client.DeleteAsync("tx:concurrent:counter");
 
         // Regular commands hammer the same multiplexer while the transaction executes; the
         // atomic MULTI..EXEC append must keep them out of the transaction block.
@@ -111,24 +108,43 @@ public class TransactionIntegrationTests
             .ToArray();
 
         var transaction = _client.CreateTransaction();
+        var pendings = new RespirePending<long>[10];
         for (var i = 0; i < 10; i++)
         {
-            transaction.Incr("tx:concurrent:counter");
+            pendings[i] = transaction.IncrementAsync("tx:concurrent:counter");
         }
 
-        var result = await transaction.ExecuteAsync();
+        var committed = await transaction.CommitAsync();
         await Task.WhenAll(traffic);
+
+        committed.Should().BeTrue();
 
         // INCR replies inside the transaction must be strictly sequential 1..10 — proof that
         // no interleaved command executed between them.
-        var replies = new long[10];
-        for (var i = 0; i < 10; i++)
-        {
-            replies[i] = result.AsArray()[i].AsInteger();
-        }
-
+        var replies = pendings.Select(pending => pending.Result).ToArray();
         replies.Should().BeEquivalentTo(Enumerable.Range(1, 10).Select(i => (long)i),
             options => options.WithStrictOrdering());
-        result.Dispose();
+    }
+
+    [Test]
+    public async Task WatchedTransaction_WatchedKeyModified_CommitReturnsFalse()
+    {
+        await _client.SetAsync("tx:watched", "initial");
+
+        await using var transaction = await _client.CreateTransactionAsync(new RespireKey[] { "tx:watched" });
+        var setPending = transaction.SetAsync("tx:watched", "from-transaction");
+
+        // Another client writes the watched key between WATCH and EXEC, voiding the transaction.
+        await using (var interloper = await RespireClient.ConnectAsync($"{_fixture.Host}:{_fixture.Port}"))
+        {
+            await interloper.SetAsync("tx:watched", "from-interloper");
+        }
+
+        var committed = await transaction.CommitAsync();
+
+        committed.Should().BeFalse();
+        var readAborted = () => setPending.Result;
+        readAborted.Should().Throw<InvalidOperationException>();
+        (await _client.GetStringAsync("tx:watched")).Should().Be("from-interloper");
     }
 }

@@ -1,7 +1,6 @@
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Configs;
 using DotNet.Testcontainers.Containers;
-using Respire.FastClient;
 using StackExchange.Redis;
 using Testcontainers.Redis;
 
@@ -51,13 +50,13 @@ public class CommonOperationsBenchmarks
             port = int.TryParse(Environment.GetEnvironmentVariable("REDIS_PORT"), out var p) ? p : 6379;
         }
 
-        _respire = await RespireClient.CreateAsync(host, port);
+        _respire = await RespireClient.ConnectAsync($"{host}:{port}");
         _stackExchange = await ConnectionMultiplexer.ConnectAsync($"{host}:{port}");
         _stackExchangeDb = _stackExchange.GetDatabase();
 
         await _respire.SetAsync("seeded:string", _smallValue);
-        await _respire.HSetAsync("seeded:hash", "field", _smallValue);
-        await _respire.SAddAsync("seeded:set", "member");
+        await _respire.Hashes.SetAsync("seeded:hash", "field", _smallValue);
+        await _respire.Sets.AddAsync("seeded:set", "member");
 
         for (var i = 0; i < 10; i++)
         {
@@ -84,7 +83,7 @@ public class CommonOperationsBenchmarks
     public async Task<TimeSpan> StackExchange_Ping() => await _stackExchangeDb.PingAsync();
 
     [Benchmark, BenchmarkCategory("PING")]
-    public async Task<string> Respire_Ping() => await _respire.PingAsync();
+    public async Task<TimeSpan> Respire_Ping() => await _respire.PingAsync();
 
     // GET (value read as a string, as a typical caller would)
 
@@ -92,13 +91,7 @@ public class CommonOperationsBenchmarks
     public async Task<string?> StackExchange_Get() => await _stackExchangeDb.StringGetAsync("seeded:string");
 
     [Benchmark, BenchmarkCategory("GET")]
-    public async Task<string> Respire_Get()
-    {
-        var value = await _respire.GetAsync("seeded:string");
-        var result = value.AsString();
-        value.Dispose();
-        return result;
-    }
+    public async Task<string?> Respire_Get() => await _respire.GetStringAsync("seeded:string");
 
     // SET
 
@@ -126,7 +119,7 @@ public class CommonOperationsBenchmarks
     public async Task<long> StackExchange_Incr() => await _stackExchangeDb.StringIncrementAsync("bench:counter");
 
     [Benchmark, BenchmarkCategory("INCR")]
-    public async Task<long> Respire_Incr() => await _respire.IncrAsync("bench:counter");
+    public async Task<long> Respire_Incr() => await _respire.IncrementAsync("bench:counter");
 
     // EXISTS
 
@@ -149,7 +142,7 @@ public class CommonOperationsBenchmarks
     public async Task<long> Respire_SetDel()
     {
         await _respire.SetAsync("bench:del", _smallValue);
-        return await _respire.DelAsync("bench:del");
+        return await _respire.DeleteAsync("bench:del");
     }
 
     // HSET / HGET
@@ -158,19 +151,13 @@ public class CommonOperationsBenchmarks
     public async Task<bool> StackExchange_HSet() => await _stackExchangeDb.HashSetAsync("bench:hash", "field", _smallValue);
 
     [Benchmark, BenchmarkCategory("HSET")]
-    public async Task<long> Respire_HSet() => await _respire.HSetAsync("bench:hash", "field", _smallValue);
+    public async Task<bool> Respire_HSet() => await _respire.Hashes.SetAsync("bench:hash", "field", _smallValue);
 
     [Benchmark(Baseline = true), BenchmarkCategory("HGET")]
     public async Task<string?> StackExchange_HGet() => await _stackExchangeDb.HashGetAsync("seeded:hash", "field");
 
     [Benchmark, BenchmarkCategory("HGET")]
-    public async Task<string> Respire_HGet()
-    {
-        var value = await _respire.HGetAsync("seeded:hash", "field");
-        var result = value.AsString();
-        value.Dispose();
-        return result;
-    }
+    public async Task<string?> Respire_HGet() => await _respire.Hashes.GetStringAsync("seeded:hash", "field");
 
     // LPUSH + LPOP (paired so the list stays a constant size)
 
@@ -182,13 +169,10 @@ public class CommonOperationsBenchmarks
     }
 
     [Benchmark, BenchmarkCategory("LPUSH+LPOP")]
-    public async Task<string> Respire_LPushLPop()
+    public async Task<string?> Respire_LPushLPop()
     {
-        await _respire.LPushAsync("bench:list", _smallValue);
-        var value = await _respire.LPopAsync("bench:list");
-        var result = value.AsString();
-        value.Dispose();
-        return result;
+        await _respire.Lists.LeftPushAsync("bench:list", _smallValue);
+        return await _respire.Lists.LeftPopAsync("bench:list");
     }
 
     // SADD (same member every time, so set size stays constant)
@@ -197,7 +181,7 @@ public class CommonOperationsBenchmarks
     public async Task<bool> StackExchange_SAdd() => await _stackExchangeDb.SetAddAsync("seeded:set", "member");
 
     [Benchmark, BenchmarkCategory("SADD")]
-    public async Task<long> Respire_SAdd() => await _respire.SAddAsync("seeded:set", "member");
+    public async Task<long> Respire_SAdd() => await _respire.Sets.AddAsync("seeded:set", "member");
 
     // SISMEMBER
 
@@ -205,7 +189,7 @@ public class CommonOperationsBenchmarks
     public async Task<bool> StackExchange_SIsMember() => await _stackExchangeDb.SetContainsAsync("seeded:set", "member");
 
     [Benchmark, BenchmarkCategory("SISMEMBER")]
-    public async Task<bool> Respire_SIsMember() => await _respire.SIsMemberAsync("seeded:set", "member");
+    public async Task<bool> Respire_SIsMember() => await _respire.Sets.ContainsAsync("seeded:set", "member");
 
     // Concurrent GETs — 50 overlapping requests per invocation; reported per operation
 
@@ -227,15 +211,9 @@ public class CommonOperationsBenchmarks
         var tasks = new Task[ConcurrentOps];
         for (var i = 0; i < ConcurrentOps; i++)
         {
-            tasks[i] = RespireGetOneAsync();
+            tasks[i] = _respire.GetStringAsync("seeded:string").AsTask();
         }
 
         await Task.WhenAll(tasks);
-    }
-
-    private async Task RespireGetOneAsync()
-    {
-        var value = await _respire.GetAsync("seeded:string");
-        value.Dispose();
     }
 }

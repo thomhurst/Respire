@@ -1,6 +1,6 @@
 using System;
 using System.Threading.Tasks;
-using Respire.FastClient;
+using Respire;
 using Testcontainers.Redis;
 
 class Program 
@@ -51,7 +51,7 @@ class Program
         
         Console.WriteLine("\n--- CLIENT CREATION ---");
         var beforeCreate = GC.GetTotalAllocatedBytes(false);
-        var client = await RespireClient.CreateAsync(host, port);
+        var client = await RespireClient.ConnectAsync($"{host}:{port}");
         var afterCreate = GC.GetTotalAllocatedBytes(false);
         Console.WriteLine($"✓ Client created - Allocated: {afterCreate - beforeCreate:N0} bytes");
         
@@ -60,7 +60,7 @@ class Program
         for (int i = 0; i < 10; i++)
         {
             await client.SetAsync($"warmup{i}", $"value{i}");
-            await client.GetAsync($"warmup{i}");
+            using var lease = await client.Strings.GetLeaseAsync($"warmup{i}");
         }
         Console.WriteLine("✓ Warmup completed");
         
@@ -86,7 +86,7 @@ class Program
         var beforeGets = GC.GetTotalAllocatedBytes(false);
         for (int i = 0; i < 100; i++)
         {
-            var value = await client.GetAsync($"key{i}");
+            using var lease = await client.Strings.GetLeaseAsync($"key{i}");
         }
         var afterGets = GC.GetTotalAllocatedBytes(false);
         var getAllocations = afterGets - beforeGets;
@@ -98,7 +98,7 @@ class Program
         for (int i = 0; i < 50; i++)
         {
             await client.SetAsync($"mixed{i}", $"mixedvalue{i}");
-            var value = await client.GetAsync($"mixed{i}");
+            using var lease = await client.Strings.GetLeaseAsync($"mixed{i}");
         }
         var afterMixed = GC.GetTotalAllocatedBytes(false);
         var mixedAllocations = afterMixed - beforeMixed;
@@ -109,7 +109,7 @@ class Program
         var beforeDels = GC.GetTotalAllocatedBytes(false);
         for (int i = 0; i < 100; i++)
         {
-            await client.DelAsync($"key{i}");
+            await client.DeleteAsync($"key{i}");
         }
         var afterDels = GC.GetTotalAllocatedBytes(false);
         var delAllocations = afterDels - beforeDels;

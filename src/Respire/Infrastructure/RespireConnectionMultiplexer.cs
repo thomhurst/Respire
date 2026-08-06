@@ -7,16 +7,19 @@ namespace Respire.Infrastructure;
 /// <summary>
 /// Round-robins commands across a fixed set of fully multiplexed <see cref="RespireConnection"/>s.
 /// Every connection pipelines concurrent commands, so there is no per-command checkout — a dead
-/// connection is skipped and replaced in the background.
+/// connection is skipped and replaced in the background. Supports lazy start: create unconnected,
+/// then <see cref="EnsureConnectedAsync"/> before first use (idempotent, thread-safe).
 /// </summary>
 public sealed class RespireConnectionMultiplexer : IAsyncDisposable
 {
-    private readonly RespireConnection[] _connections;
+    private readonly RespireConnection?[] _connections;
     private readonly int[] _reconnecting;
     private readonly RespireConnectionOptions _options;
     private readonly ILogger? _logger;
+    private readonly SemaphoreSlim _connectGate = new(1, 1);
     private uint _next;
     private int _disposed;
+    private volatile bool _connected;
 
     public string Host { get; }
     public int Port { get; }
@@ -25,18 +28,21 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     /// <summary>The options every connection (and any subscriber) is built from.</summary>
     public RespireConnectionOptions Options => _options;
 
+    /// <summary>Raised when a dead connection is noticed and when its replacement lands.</summary>
+    public event Action<RespireConnectionState>? StateChanged;
+
     public bool IsConnected
     {
         get
         {
-            if (Volatile.Read(ref _disposed) != 0)
+            if (Volatile.Read(ref _disposed) != 0 || !_connected)
             {
                 return false;
             }
 
             foreach (var connection in _connections)
             {
-                if (connection.IsConnected)
+                if (connection is { IsConnected: true })
                 {
                     return true;
                 }
@@ -46,15 +52,26 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
-    private RespireConnectionMultiplexer(
-        RespireConnection[] connections, string host, int port, RespireConnectionOptions options, ILogger? logger)
+    private RespireConnectionMultiplexer(string host, int port, int connectionCount, RespireConnectionOptions options, ILogger? logger)
     {
-        _connections = connections;
         Host = host;
         Port = port;
         _options = options;
         _logger = logger;
-        _reconnecting = new int[connections.Length];
+        _connections = new RespireConnection?[connectionCount];
+        _reconnecting = new int[connectionCount];
+    }
+
+    /// <summary>Creates an unconnected multiplexer; call <see cref="EnsureConnectedAsync"/> before use.</summary>
+    public static RespireConnectionMultiplexer Create(
+        string host, int port = 6379, int connectionCount = 0, RespireConnectionOptions? options = null, ILogger? logger = null)
+    {
+        if (connectionCount <= 0)
+        {
+            connectionCount = Math.Clamp(Environment.ProcessorCount / 2, 1, 8);
+        }
+
+        return new RespireConnectionMultiplexer(host, port, connectionCount, options ?? RespireConnectionOptions.Default, logger);
     }
 
     public static async Task<RespireConnectionMultiplexer> CreateAsync(
@@ -65,34 +82,69 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         ILogger? logger = null,
         CancellationToken cancellationToken = default)
     {
-        options ??= RespireConnectionOptions.Default;
-        if (connectionCount <= 0)
-        {
-            connectionCount = Math.Clamp(Environment.ProcessorCount / 2, 1, 8);
-        }
-
-        var connectTasks = new Task<RespireConnection>[connectionCount];
-        for (var i = 0; i < connectionCount; i++)
-        {
-            connectTasks[i] = RespireConnection.ConnectAsync(host, port, options, logger, cancellationToken);
-        }
-
+        var multiplexer = Create(host, port, connectionCount, options, logger);
         try
         {
-            var connections = await Task.WhenAll(connectTasks).ConfigureAwait(false);
-            return new RespireConnectionMultiplexer(connections, host, port, options, logger);
+            await multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         }
         catch
         {
-            foreach (var task in connectTasks)
+            await multiplexer.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+
+        return multiplexer;
+    }
+
+    /// <summary>Opens all connections on first call; later calls return immediately.</summary>
+    public async ValueTask EnsureConnectedAsync(CancellationToken cancellationToken = default)
+    {
+        if (_connected)
+        {
+            return;
+        }
+
+        await _connectGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            if (_connected)
             {
-                if (task.IsCompletedSuccessfully)
-                {
-                    await task.Result.DisposeAsync().ConfigureAwait(false);
-                }
+                return;
             }
 
-            throw;
+            var connectTasks = new Task<RespireConnection>[_connections.Length];
+            for (var i = 0; i < connectTasks.Length; i++)
+            {
+                connectTasks[i] = RespireConnection.ConnectAsync(Host, Port, _options, _logger, cancellationToken);
+            }
+
+            try
+            {
+                var connections = await Task.WhenAll(connectTasks).ConfigureAwait(false);
+                for (var i = 0; i < connections.Length; i++)
+                {
+                    Volatile.Write(ref _connections[i], connections[i]);
+                }
+
+                _connected = true;
+            }
+            catch
+            {
+                foreach (var task in connectTasks)
+                {
+                    if (task.IsCompletedSuccessfully)
+                    {
+                        await task.Result.DisposeAsync().ConfigureAwait(false);
+                    }
+                }
+
+                throw;
+            }
+        }
+        finally
+        {
+            _connectGate.Release();
         }
     }
 
@@ -100,6 +152,11 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     public RespireConnection GetConnection()
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (!_connected)
+        {
+            throw new RespireConnectionException(
+                $"Not connected to {Host}:{Port} — call {nameof(EnsureConnectedAsync)} first.");
+        }
 
         var count = _connections.Length;
         var startIndex = Interlocked.Increment(ref _next);
@@ -107,7 +164,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         {
             var slot = (int)((startIndex + (uint)i) % (uint)count);
             var connection = Volatile.Read(ref _connections[slot]);
-            if (connection.IsConnected)
+            if (connection is { IsConnected: true })
             {
                 return connection;
             }
@@ -118,7 +175,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         throw new RespireConnectionException($"No healthy connections to {Host}:{Port}.");
     }
 
-    public ValueTask<RespireValue> SendAsync<TCommand>(in TCommand command, CancellationToken cancellationToken = default)
+    public ValueTask<RespValue> SendAsync<TCommand>(in TCommand command, CancellationToken cancellationToken = default)
         where TCommand : struct, IRespCommand
         => GetConnection().SendAsync(in command, cancellationToken);
 
@@ -127,7 +184,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         => GetConnection().SendFireAndForgetAsync(in command, cancellationToken);
 
     /// <summary>Runs a MULTI/EXEC block on one connection; see <see cref="RespireConnection.SendTransactionAsync"/>.</summary>
-    public ValueTask<RespireValue> SendTransactionAsync(
+    public ValueTask<RespValue> SendTransactionAsync(
         ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken = default)
         => GetConnection().SendTransactionAsync(serializedCommands, commandCount, cancellationToken);
 
@@ -138,6 +195,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             return;
         }
 
+        NotifyStateChanged(RespireConnectionState.Reconnecting);
         _ = ReconnectAsync(slot);
     }
 
@@ -154,7 +212,10 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
             var old = Interlocked.Exchange(ref _connections[slot], replacement);
             _logger?.LogInformation("Replaced dead connection {Slot} to {Host}:{Port}", slot, Host, Port);
-            await old.DisposeAsync().ConfigureAwait(false);
+            if (old is not null)
+            {
+                await old.DisposeAsync().ConfigureAwait(false);
+            }
 
             // Disposal may have swept the array between the pre-check above and the exchange,
             // missing the just-published replacement. DisposeAsync sets _disposed before it
@@ -165,6 +226,10 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             {
                 Interlocked.Exchange(ref _connections[slot], old);
                 await replacement.DisposeAsync().ConfigureAwait(false);
+            }
+            else
+            {
+                NotifyStateChanged(RespireConnectionState.Connected);
             }
         }
         catch (Exception ex)
@@ -177,6 +242,18 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
+    private void NotifyStateChanged(RespireConnectionState state)
+    {
+        try
+        {
+            StateChanged?.Invoke(state);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Connection state-change handler threw");
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
@@ -186,7 +263,12 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
         foreach (var connection in _connections)
         {
-            await connection.DisposeAsync().ConfigureAwait(false);
+            if (connection is not null)
+            {
+                await connection.DisposeAsync().ConfigureAwait(false);
+            }
         }
+
+        _connectGate.Dispose();
     }
 }

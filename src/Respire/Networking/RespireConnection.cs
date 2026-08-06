@@ -22,7 +22,7 @@ namespace Respire.Networking;
 /// <b>Read path.</b> One receive loop reads straight from the socket into a pooled contiguous
 /// buffer (no pipe — that costs a second full-payload copy) and incrementally parses RESP
 /// values, copying each payload exactly once into pooled storage owned by the completed
-/// <see cref="RespireValue"/>. Bulk payloads at or above <see cref="DirectFillThreshold"/> are
+/// <see cref="RespValue"/>. Bulk payloads at or above <see cref="DirectFillThreshold"/> are
 /// received directly into their pooled payload array. Because RESP has no correlation ids,
 /// responses complete in-flight sources strictly in FIFO order.
 /// </para>
@@ -56,6 +56,12 @@ public sealed class RespireConnection : IAsyncDisposable
     public string Host { get; }
     public int Port { get; }
     public bool IsConnected => !Volatile.Read(ref _dead);
+
+    /// <summary>
+    /// Completes when the connection dies for any reason (fault, remote close, disposal). Never
+    /// faults itself — used to observe connection lifetime (e.g. pub/sub auto-resubscribe).
+    /// </summary>
+    internal Task Closed => _receiveTask;
 
     private RespireConnection(Socket socket, string host, int port, RespireConnectionOptions options, ILogger? logger)
     {
@@ -152,9 +158,17 @@ public sealed class RespireConnection : IAsyncDisposable
             ThrowIfHandshakeFailed(in reply, "CLIENT SETNAME");
             reply.Dispose();
         }
+
+        if (options.Database != 0)
+        {
+            var reply = await SendAsync(
+                new Commands.SelectCommand(options.Database), cancellationToken).ConfigureAwait(false);
+            ThrowIfHandshakeFailed(in reply, "SELECT");
+            reply.Dispose();
+        }
     }
 
-    private void ThrowIfHandshakeFailed(in RespireValue reply, string step)
+    private void ThrowIfHandshakeFailed(in RespValue reply, string step)
     {
         if (reply.IsError)
         {
@@ -168,7 +182,7 @@ public sealed class RespireConnection : IAsyncDisposable
     /// Serializes the command into the coalescing write buffer and returns a task that
     /// completes with its response.
     /// </summary>
-    public ValueTask<RespireValue> SendAsync<TCommand>(in TCommand command, CancellationToken cancellationToken = default)
+    public ValueTask<RespValue> SendAsync<TCommand>(in TCommand command, CancellationToken cancellationToken = default)
         where TCommand : struct, IRespCommand
         => SendCoreAsync(in command, discardRepliesBefore: 0, cancellationToken);
 
@@ -179,7 +193,7 @@ public sealed class RespireConnection : IAsyncDisposable
     /// EXEC's reply — an array of per-command results, or an error (e.g. EXECABORT when a
     /// command failed to queue).
     /// </summary>
-    public ValueTask<RespireValue> SendTransactionAsync(
+    public ValueTask<RespValue> SendTransactionAsync(
         ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(commandCount);
@@ -199,7 +213,7 @@ public sealed class RespireConnection : IAsyncDisposable
             new TransactionCommand(serializedCommands), discardRepliesBefore: commandCount + 1, cancellationToken);
     }
 
-    private ValueTask<RespireValue> SendCoreAsync<TCommand>(
+    private ValueTask<RespValue> SendCoreAsync<TCommand>(
         in TCommand command, int discardRepliesBefore, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
@@ -287,7 +301,7 @@ public sealed class RespireConnection : IAsyncDisposable
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
-    private async ValueTask<RespireValue> SendSlowAsync<TCommand>(
+    private async ValueTask<RespValue> SendSlowAsync<TCommand>(
         TCommand command, PendingResponseSource source, int discardRepliesBefore, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
@@ -553,7 +567,7 @@ public sealed class RespireConnection : IAsyncDisposable
 
             start += 2;
 
-            var value = RespireValue.PooledString(type, payload, payloadLength);
+            var value = RespValue.PooledString(type, payload, payloadLength);
             payload = null;
             CompleteResponse(in value);
             return (start, end);
@@ -567,7 +581,7 @@ public sealed class RespireConnection : IAsyncDisposable
         }
     }
 
-    private void CompleteResponse(in RespireValue value)
+    private void CompleteResponse(in RespValue value)
     {
         if (TryRoutePush(in value))
         {
@@ -602,7 +616,7 @@ public sealed class RespireConnection : IAsyncDisposable
     /// out of the reply stream, but they answer the pending SUBSCRIBE/UNSUBSCRIBE command, so
     /// they fall through to normal FIFO completion.
     /// </summary>
-    private bool TryRoutePush(in RespireValue value)
+    private bool TryRoutePush(in RespValue value)
     {
         var isPushFrame = value.Type == RespDataType.Push;
         if (!isPushFrame && (value.Type != RespDataType.Array || _pushHandler is null))
@@ -644,7 +658,7 @@ public sealed class RespireConnection : IAsyncDisposable
     }
 
     /// <summary>Runs on the receive loop; the value is only valid during the callback.</summary>
-    private void DeliverPush(in RespireValue value)
+    private void DeliverPush(in RespValue value)
     {
         try
         {
@@ -762,7 +776,7 @@ public sealed class RespireConnection : IAsyncDisposable
 /// loop. The value is only valid for the duration of the callback — copy what you need; the
 /// connection disposes it afterwards. Do not block.
 /// </summary>
-public delegate void RespirePushHandler(in RespireValue value);
+public delegate void RespirePushHandler(in RespValue value);
 
 /// <summary>Tuning options for a single RESP connection.</summary>
 public sealed record RespireConnectionOptions
@@ -771,7 +785,7 @@ public sealed record RespireConnectionOptions
 
     /// <summary>
     /// Receives out-of-band frames on connections built from these options (see
-    /// <see cref="RespirePushHandler"/>). Set by <see cref="FastClient.RespireSubscriber"/>.
+    /// <see cref="RespirePushHandler"/>). Set by the client's pub/sub hub.
     /// </summary>
     public RespirePushHandler? PushHandler { get; init; }
 
@@ -786,6 +800,9 @@ public sealed record RespireConnectionOptions
 
     /// <summary>When set, CLIENT SETNAME runs during the handshake.</summary>
     public string? ClientName { get; init; }
+
+    /// <summary>Logical database SELECTed during the handshake; 0 skips the SELECT.</summary>
+    public int Database { get; init; }
 
     /// <summary>Negotiate RESP3 via HELLO 3 during the handshake. Requires Redis 6+.</summary>
     public bool UseResp3 { get; init; }

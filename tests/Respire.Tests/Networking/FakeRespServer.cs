@@ -109,7 +109,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
         }
     }
 
-    private void RecordCommand(in RespireValue command)
+    private void RecordCommand(in RespValue command)
     {
         var elements = command.AsArray();
         var builder = new StringBuilder();

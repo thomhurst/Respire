@@ -1,5 +1,3 @@
-using Respire.FastClient;
-
 namespace Respire.StressTests.Clients;
 
 internal sealed class RespireStressClient : IStressClient
@@ -11,46 +9,30 @@ internal sealed class RespireStressClient : IStressClient
     private RespireStressClient(RespireClient client) => _client = client;
 
     public static async Task<RespireStressClient> ConnectAsync(string host, int port) =>
-        new(await RespireClient.CreateAsync(host, port).ConfigureAwait(false));
+        new(await RespireClient.ConnectAsync($"{host}:{port}").ConfigureAwait(false));
 
     public string Name => ClientName;
 
     public async ValueTask PingAsync() =>
         _ = await _client.PingAsync().ConfigureAwait(false);
 
-    public async ValueTask<string?> GetStringAsync(string key)
-    {
-        var value = await _client.GetAsync(key).ConfigureAwait(false);
-        var result = value.AsString();
-        value.Dispose();
-        return result;
-    }
+    public ValueTask<string?> GetStringAsync(string key) => _client.GetStringAsync(key);
 
-    public ValueTask SetStringAsync(string key, string value) => _client.SetAsync(key, value);
+    public async ValueTask SetStringAsync(string key, string value) =>
+        _ = await _client.SetAsync(key, value).ConfigureAwait(false);
 
-    public ValueTask<long> IncrementAsync(string key) => _client.IncrAsync(key);
+    public ValueTask<long> IncrementAsync(string key) => _client.IncrementAsync(key);
 
     public async ValueTask HashSetAsync(string key, string field, string value) =>
-        _ = await _client.HSetAsync(key, field, value).ConfigureAwait(false);
+        _ = await _client.Hashes.SetAsync(key, field, value).ConfigureAwait(false);
 
-    public async ValueTask<string?> HashGetAsync(string key, string field)
-    {
-        var value = await _client.HGetAsync(key, field).ConfigureAwait(false);
-        var result = value.AsString();
-        value.Dispose();
-        return result;
-    }
+    public ValueTask<string?> HashGetAsync(string key, string field) =>
+        _client.Hashes.GetStringAsync(key, field);
 
     public async ValueTask ListLeftPushAsync(string key, string value) =>
-        _ = await _client.LPushAsync(key, value).ConfigureAwait(false);
+        _ = await _client.Lists.LeftPushAsync(key, value).ConfigureAwait(false);
 
-    public async ValueTask<string?> ListLeftPopAsync(string key)
-    {
-        var value = await _client.LPopAsync(key).ConfigureAwait(false);
-        var result = value.AsString();
-        value.Dispose();
-        return result;
-    }
+    public ValueTask<string?> ListLeftPopAsync(string key) => _client.Lists.LeftPopAsync(key);
 
     public ValueTask DisposeAsync() => _client.DisposeAsync();
 }

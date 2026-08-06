@@ -5,7 +5,6 @@ using BenchmarkDotNet.Jobs;
 using BenchmarkDotNet.Reports;
 using BenchmarkDotNet.Running;
 using DotNet.Testcontainers.Containers;
-using Respire.FastClient;
 using StackExchange.Redis;
 using Testcontainers.Redis;
 
@@ -84,7 +83,11 @@ public class RedisThroughputBenchmarks
         var port = _redisContainer.GetMappedPublicPort(6379);
         
         // Setup Respire client with larger pool for concurrent operations
-        _kevaClient = await RespireClient.CreateAsync("localhost", port, connectionCount: 10);
+        _kevaClient = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("localhost", port) },
+            Connections = 10
+        });
         
         // Setup StackExchange.Redis with similar configuration
         var options = ConfigurationOptions.Parse($"localhost:{port}");
@@ -124,7 +127,7 @@ public class RedisThroughputBenchmarks
                 {
                     var key = $"client_{clientId}_op_{op}";
                     await _kevaClient.SetAsync(key, $"value_{op}");
-                    await _kevaClient.GetAsync(key);
+                    await _kevaClient.GetStringAsync(key);
                 }
             });
         }
@@ -167,7 +170,7 @@ public class RedisThroughputBenchmarks
                 var key = $"counter_{clientId}";
                 for (var op = 0; op < OperationsPerClient; op++)
                 {
-                    await _kevaClient.IncrAsync(key);
+                    await _kevaClient.IncrementAsync(key);
                 }
             });
         }

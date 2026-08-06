@@ -1,6 +1,5 @@
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Jobs;
-using Respire.FastClient;
 using Respire.Protocol;
 
 namespace Respire.Benchmarks;
@@ -26,7 +25,7 @@ public class PipelineBenchmarks
     {
         try
         {
-            _client = await RespireClient.CreateAsync("localhost", 6379);
+            _client = await RespireClient.ConnectAsync("localhost:6379");
         }
         catch (Exception ex)
         {
@@ -36,9 +35,12 @@ public class PipelineBenchmarks
     }
 
     [GlobalCleanup]
-    public void Cleanup()
+    public async Task Cleanup()
     {
-        _client?.Dispose();
+        if (_client != null)
+        {
+            await _client.DisposeAsync();
+        }
     }
 
     // Command building benchmarks
@@ -102,8 +104,7 @@ public class PipelineBenchmarks
     {
         if (_client != null)
         {
-            var value = await _client.GetAsync(TestKey);
-            value.Dispose();
+            await _client.GetStringAsync(TestKey);
         }
     }
 
@@ -185,7 +186,7 @@ public class PipelineThroughputBenchmarks
     {
         try
         {
-            _client = await RespireClient.CreateAsync("localhost", 6379);
+            _client = await RespireClient.ConnectAsync("localhost:6379");
         }
         catch (Exception ex)
         {
@@ -194,9 +195,12 @@ public class PipelineThroughputBenchmarks
     }
 
     [GlobalCleanup]
-    public void Cleanup()
+    public async Task Cleanup()
     {
-        _client?.Dispose();
+        if (_client != null)
+        {
+            await _client.DisposeAsync();
+        }
     }
 
     [Benchmark]
@@ -218,11 +222,7 @@ public class PipelineThroughputBenchmarks
         if (_client != null)
         {
             var tasks = Enumerable.Range(0, OperationCount)
-                .Select(async i =>
-                {
-                    var value = await _client.GetAsync($"{TestKey}_{i}");
-                    value.Dispose();
-                })
+                .Select(i => _client.GetStringAsync($"{TestKey}_{i}").AsTask())
                 .ToArray();
 
             await Task.WhenAll(tasks);

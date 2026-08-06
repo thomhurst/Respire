@@ -27,5 +27,47 @@ public class RespireConnectionException : RespireException
 /// <summary>The byte stream violated the RESP protocol; the connection is no longer usable.</summary>
 public sealed class RespireProtocolException(string message) : RespireException(message);
 
-/// <summary>The server answered a command with a RESP error reply ("-ERR ...").</summary>
-public sealed class RespireServerException(string message) : RespireException(message);
+/// <summary>The server answered a command with a RESP error reply ("-WRONGTYPE ...").</summary>
+public sealed class RespireServerException : RespireException
+{
+    public RespireServerException(string message) : base(message)
+    {
+        Code = ParseCode(message);
+    }
+
+    /// <summary>
+    /// The error's leading code token ("ERR", "WRONGTYPE", "NOSCRIPT", "BUSYGROUP", …), or an
+    /// empty string when the reply had no recognizable code.
+    /// </summary>
+    public string Code { get; }
+
+    private static string ParseCode(string message)
+    {
+        var end = message.IndexOf(' ');
+        var token = end < 0 ? message : message[..end];
+        foreach (var c in token)
+        {
+            if (c is not (>= 'A' and <= 'Z') and not (>= '0' and <= '9') and not '_')
+            {
+                return string.Empty;
+            }
+        }
+
+        return token;
+    }
+}
+
+/// <summary>
+/// A command's response did not arrive within <see cref="RespireOptions.CommandTimeout"/>. The
+/// timeout covers waiting for the response only — the command was already sent and may still
+/// execute on the server.
+/// </summary>
+public sealed class RespireTimeoutException(string commandName, TimeSpan timeout) : RespireException(
+    $"{commandName} timed out after {timeout.TotalMilliseconds:0}ms. The command was sent and may still " +
+    "execute on the server; only the wait was abandoned. If this recurs, check server load and slow " +
+    $"commands (SLOWLOG), network latency, and whether {nameof(RespireOptions)}.{nameof(RespireOptions.CommandTimeout)} is realistic.")
+{
+    public string CommandName { get; } = commandName;
+
+    public TimeSpan Timeout { get; } = timeout;
+}

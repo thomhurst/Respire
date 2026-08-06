@@ -3,5 +3,7 @@
         <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+        <!-- The public API uses C# 13 params collections (params ReadOnlySpan<T>). -->
+        <LangVersion>13</LangVersion>
     </PropertyGroup>
 </Project>

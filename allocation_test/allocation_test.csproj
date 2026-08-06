@@ -10,4 +10,8 @@
     <ProjectReference Include="..\src\Respire\Respire.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Testcontainers.Redis" Version="4.7.0" />
+  </ItemGroup>
+
 </Project>
