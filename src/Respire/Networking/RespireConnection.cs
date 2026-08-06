@@ -273,6 +273,13 @@ public sealed class RespireConnection : IAsyncDisposable
     private bool TryEnqueue<TCommand>(in TCommand command, PendingResponseSource source, int discardRepliesBefore = 0)
         where TCommand : struct, IRespCommand
     {
+        // Racy pre-check; the authoritative one runs under the gate below. This keeps the
+        // ring-full retry loop from re-serializing the frame on every attempt.
+        if (_inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
+        {
+            return false;
+        }
+
         var scratch = _serializeScratch ??= new WriteBuffer(ScratchInitialSize);
         try
         {
