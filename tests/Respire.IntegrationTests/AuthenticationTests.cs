@@ -1,9 +1,6 @@
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
 using FluentAssertions;
-using Respire;
-using Respire.FastClient;
-using Respire.Networking;
 using TUnit.Core;
 using TUnit.Core.Interfaces;
 
@@ -36,52 +33,58 @@ public class AuthenticationTests(SecuredRedisFixture fixture)
     [Test]
     public async Task CorrectPassword_Resp2_CommandsWork()
     {
-        await using var client = await RespireClient.CreateAsync(
-            fixture.Host, fixture.Port, connectionCount: 1,
-            options: new RespireConnectionOptions { Password = SecuredRedisFixture.Password });
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint(fixture.Host, fixture.Port) },
+            Password = SecuredRedisFixture.Password,
+            Connections = 1,
+        });
 
-        var pong = await client.PingAsync();
-        pong.Should().Be("PONG");
+        var roundTrip = await client.PingAsync();
+        roundTrip.Should().BePositive();
 
-        await client.SetAsync("auth:key", "auth-value");
-        var value = await client.GetAsync("auth:key");
-        value.AsString().Should().Be("auth-value");
-        value.Dispose();
+        (await client.SetAsync("auth:key", "auth-value")).Should().BeTrue();
+        (await client.GetStringAsync("auth:key")).Should().Be("auth-value");
     }
 
     [Test]
     public async Task CorrectPassword_Resp3Hello_CommandsWork()
     {
-        await using var client = await RespireClient.CreateAsync(
-            fixture.Host, fixture.Port, connectionCount: 1,
-            options: new RespireConnectionOptions { Password = SecuredRedisFixture.Password, UseResp3 = true });
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint(fixture.Host, fixture.Port) },
+            Password = SecuredRedisFixture.Password,
+            Protocol = RespProtocol.Resp3,
+            Connections = 1,
+        });
 
-        await client.SetAsync("auth:resp3", "resp3-value");
-        var value = await client.GetAsync("auth:resp3");
-        value.AsString().Should().Be("resp3-value");
-        value.Dispose();
+        (await client.SetAsync("auth:resp3", "resp3-value")).Should().BeTrue();
+        (await client.GetStringAsync("auth:resp3")).Should().Be("resp3-value");
     }
 
     [Test]
     public async Task ClientName_AcceptedDuringHandshake()
     {
-        await using var client = await RespireClient.CreateAsync(
-            fixture.Host, fixture.Port, connectionCount: 1,
-            options: new RespireConnectionOptions
-            {
-                Password = SecuredRedisFixture.Password,
-                ClientName = "respire-integration",
-            });
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint(fixture.Host, fixture.Port) },
+            Password = SecuredRedisFixture.Password,
+            ClientName = "respire-integration",
+            Connections = 1,
+        });
 
-        (await client.PingAsync()).Should().Be("PONG");
+        (await client.PingAsync()).Should().BePositive();
     }
 
     [Test]
     public async Task WrongPassword_ConnectThrows()
     {
-        var act = async () => await RespireClient.CreateAsync(
-            fixture.Host, fixture.Port, connectionCount: 1,
-            options: new RespireConnectionOptions { Password = "wrong-password" });
+        var act = async () => await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint(fixture.Host, fixture.Port) },
+            Password = "wrong-password",
+            Connections = 1,
+        });
 
         await act.Should().ThrowAsync<RespireConnectionException>();
     }
@@ -89,12 +92,17 @@ public class AuthenticationTests(SecuredRedisFixture fixture)
     [Test]
     public async Task NoPassword_FirstCommandFailsWithNoAuth()
     {
-        await using var client = await RespireClient.CreateAsync(
-            fixture.Host, fixture.Port, connectionCount: 1);
+        // A RESP2 connection with no password sends no handshake commands, so the connect itself
+        // succeeds; the NOAUTH error surfaces on the first command.
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint(fixture.Host, fixture.Port) },
+            Connections = 1,
+        });
 
         var act = async () => await client.PingAsync();
 
         (await act.Should().ThrowAsync<RespireServerException>())
-            .Which.Message.Should().Contain("NOAUTH");
+            .Which.Code.Should().Be("NOAUTH");
     }
 }

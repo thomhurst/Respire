@@ -1,107 +1,177 @@
-# Respire - High-Performance RESP Protocol Client for .NET
+# Respire
 
-Respire is a lightning-fast, zero-allocation C# .NET client for interacting with key-value datastores that use the RESP protocol (Redis, Valkey, KeyDB, etc.).
-
-## Features
-
-- **Zero Allocations**: Designed from the ground up to minimize heap allocations
-- **High Performance**: Uses `Span<T>`, `Memory<T>`, and `System.IO.Pipelines` for maximum throughput
-- **Pipeline Architecture**: Flexible interceptor pipeline for cross-cutting concerns
-- **Resilient Connections**: Automatic reconnection, health monitoring, and connection pooling
-- **RESP2 & RESP3**: Full support for both protocol versions
-- **Modular Design**: Core library with minimal dependencies, optional packages for specific features
-
-## Architecture
-
-### Core Components
-
-- **Respire**: Core protocol implementation with zero dependencies beyond .NET BCL
-  - RESP protocol reader/writer with zero allocations
-  - Pipeline architecture for interceptors
-  - Connection abstractions
-
-- **Respire.Client**: High-level client with dependency injection support
-
-### Optional Packages
-
-- **Respire.Compression**: GZip, Brotli compression support
-- **Respire.Serialization.Json**: JSON serialization with System.Text.Json
-- **Respire.Serialization.MessagePack**: MessagePack serialization
-- **Respire.Resilience**: Circuit breaker, retry policies with Polly
-- **Respire.Telemetry**: Logging, metrics, distributed tracing
-- **Respire.Caching**: Local caching layer
-
-## Usage
-
-### Basic Usage
+A modern, high-performance Redis/RESP client for .NET — for Redis, Valkey, KeyDB, and anything
+else that speaks RESP.
 
 ```csharp
-var client = new RespireClient("localhost:6379");
-await client.SetAsync("key", "value");
-var value = await client.GetAsync("key");
+await using var redis = await RespireClient.ConnectAsync("redis://localhost");
+
+await redis.SetAsync("greeting", "hello", expiry: TimeSpan.FromMinutes(5));
+string? greeting = await redis.GetStringAsync("greeting");
+
+await redis.SetAsync("user:1", new User("Ada", 36));       // System.Text.Json under the hood
+User? user = await redis.GetAsync<User>("user:1");
 ```
 
-### With Dependency Injection
+> **Status:** pre-release. The API is new and still allowed to change. TLS, cluster, and
+> RESP3 client-side caching are on the [roadmap](docs/API_DESIGN.md#18-roadmap-designed-for-not-v1).
+
+## Where Respire shines
+
+**Blocking commands actually work.** `BLPOP`-style waits are forbidden or hazardous in
+multiplexing clients — one blocking command would stall every pipelined command behind it.
+Respire routes them to dedicated pooled connections automatically, so they're just an argument:
 
 ```csharp
-services.AddRespire(builder => builder
-    .ConfigureConnection(options => {
-        options.Endpoints = new[] { "localhost:6379" };
-        options.EnableAutoReconnect = true;
-        options.EnableHealthChecks = true;
-    })
-    .UseCompression()
-    .UseJson()
-    .UseRetry(maxAttempts: 3)
-    .UseCircuitBreaker()
-);
+// LPOP when waitFor is omitted; BLPOP on a dedicated connection when it's set.
+string? job = await redis.Lists.LeftPopAsync("jobs", waitFor: TimeSpan.FromSeconds(30));
 ```
 
-### Custom Interceptor
+**Results are real .NET types.** Commands return `string?`, `long`, `bool`, `TimeSpan?`, `T?` —
+missing key means `null`, and the nullability annotations tell you which calls can miss. There
+is no protocol union struct to interrogate, and nothing to remember to dispose on the common
+path. Zero-copy reads exist, but as an explicit opt-in lease so the obligation is visible:
 
 ```csharp
-public class LoggingInterceptor : DelegatingInterceptor
+using RespireLease blob = await redis.Strings.GetLeaseAsync("blob:4mb");
+Process(blob.Span);   // pooled memory, no copy, freed on dispose
+```
+
+**Discoverable by data type.** Commands are grouped into facets — `redis.Hashes`,
+`redis.SortedSets`, `redis.Streams`, … — so IntelliSense shows you fifteen relevant methods
+instead of four hundred. Every method's doc comment carries the Redis command name
+(`/// Redis: HGET`), so searching by the name you know still finds it. The everyday string ops
+also live directly on the client root.
+
+**Modern C# is the interface.** Pub/sub is an `IAsyncEnumerable` — subscribe is a
+`foreach`, unsubscribe is a `Dispose`, and no delegate bookkeeping exists. Stream consumer
+groups read the same way. SCAN hides its cursor behind `IAsyncEnumerable<string>`. Expiries are
+`TimeSpan`/`DateTimeOffset`, never `int seconds`.
+
+```csharp
+await using var sub = redis.Subscribe("orders");
+await foreach (var msg in sub.WithCancellation(token))
 {
-    protected override async ValueTask<RespValue> OnRequestAsync(
-        RespireInterceptorContext context,
-        CancellationToken cancellationToken)
-    {
-        Console.WriteLine($"Executing: {context.CommandName}");
-        return default;
-    }
-    
-    protected override async ValueTask<RespValue> OnResponseAsync(
-        RespireInterceptorContext context,
-        RespValue response,
-        CancellationToken cancellationToken)
-    {
-        Console.WriteLine($"Response: {response.Type}");
-        return response;
-    }
+    Console.WriteLine($"{msg.Channel}: {msg.Text}");
 }
-
-// Register the interceptor
-services.AddRespire(builder => builder
-    .AddInterceptor<LoggingInterceptor>()
-);
 ```
 
-## Performance
+**Footguns are designed out.** Batch results are unreadable until the batch is sent — awaiting
+early throws immediately instead of deadlocking. Timeout exceptions say what actually happened
+(the wait was abandoned; the command may still run) and where to look next. Cancellation
+cancels the *wait*, never a partially-written frame — the protocol stream can't desync.
 
-Zero-allocation design principles:
-- Stack-allocated buffers for small operations
-- ArrayPool/MemoryPool for larger buffers
-- Struct-based value types
-- ValueTask for hot paths
-- Span/Memory APIs throughout
-- Pipeline-based I/O with System.IO.Pipelines
+```csharp
+var batch = redis.CreateBatch();
+var a = batch.GetStringAsync("a");
+var n = batch.IncrementAsync("hits");
+await batch.SendAsync();               // one flush for the whole batch
+Console.WriteLine($"{a.Result}, {n.Result}");
+```
 
-## Building
+**Transactions with typed results.** MULTI/EXEC blocks are written as one atomic append on a
+single connection, so concurrent multiplexed traffic can't interleave into them. Each queued
+command hands back a typed pending; `CommitAsync` tells you whether EXEC ran:
+
+```csharp
+var tx = redis.CreateTransaction();
+var balance = tx.IncrementAsync("balance", -100);
+tx.ListRightPushAsync("audit", "withdraw:100");
+bool committed = await tx.CommitAsync();
+
+// Optimistic concurrency: WATCH on a dedicated connection.
+await using var watched = await redis.CreateTransactionAsync(["balance"]);
+watched.IncrementAsync("balance", -100);
+bool won = await watched.CommitAsync();   // false if "balance" changed underneath you
+```
+
+**An escape hatch, not a dead end.** Any command Respire hasn't wrapped is one call away —
+including as an interpolated string, where each hole is exactly one argument (never
+re-tokenized, so values with spaces are safe) and writes straight into the RESP frame:
+
+```csharp
+using var reply = await redis.ExecuteAsync($"SET {key} {payload} EX {60}");
+using var enc = await redis.ExecuteAsync("OBJECT", "ENCODING", "user:1");
+```
+
+**Observability built in.** An `ActivitySource` and `Meter` (both named `"Respire"`) follow the
+OpenTelemetry database conventions — spans per command, command counters, duration histograms.
+Zero cost until a listener subscribes:
+
+```csharp
+tracing.AddSource("Respire");
+metrics.AddMeter("Respire");
+```
+
+**Performance is the foundation, not a feature flag.** The wire layer was built
+allocation-free first: commands from all callers coalesce into one buffer and go out in a
+single syscall (auto-pipelining, no batching API required); replies parse out of pooled buffers
+with exactly one copy off the socket; completion sources, buffers, and async state machines are
+pooled. Multiple multiplexed connections spread load across cores. See
+`benchmarks/` for the numbers against StackExchange.Redis.
+
+**And the rest:**
+
+- **Lua scripts** with automatic `EVALSHA` → `EVAL` fallback: `redis.Scripts.ExecuteAsync(script, keys, args)`.
+- **Streams**, including consumer groups as an endless `await foreach` with per-entry `AckAsync()`.
+- **Key-prefix views** for multi-tenancy: `var tenant = redis.WithKeyPrefix($"t:{id}:");` — same
+  connections, every key prefixed, `ScanAsync` transparently scoped.
+- **Sharded pub/sub** (Redis 7): `SubscribeSharded` / `PublishShardedAsync`.
+- **Reconnects handled**: dead connections are replaced in the background; pub/sub reconnects
+  *and resubscribes* by itself; `ConnectionStateChanged` tells you it happened.
+- **Typed serialization** you control: `IRespireSerializer`, with a source-generator-friendly
+  System.Text.Json default.
+- **Testable**: everything is behind `IRespireClient` and per-facet interfaces; implementations
+  are sealed.
+
+## Getting started
+
+```csharp
+// URI (redis://user:password@host:port/db) or "host:port"
+await using var redis = await RespireClient.ConnectAsync("redis://localhost");
+
+// Full control
+await using var redis2 = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = { new RespireEndpoint("cache.example.com", 6379) },
+    Password = secret,
+    ClientName = "checkout-api",
+    CommandTimeout = TimeSpan.FromSeconds(2),
+    Protocol = RespProtocol.Resp3,
+});
+```
+
+### Dependency injection
+
+```csharp
+builder.Services.AddRespire(builder.Configuration.GetConnectionString("redis")!);
+
+// Multiple clients, keyed:
+builder.Services.AddRespire("sessions", "redis://sessions-host");
+public sealed class CartService([FromKeyedServices("sessions")] IRespireClient redis);
+```
+
+Registration is lazy — nothing connects until the first command, so app startup never blocks
+on Redis.
+
+## Design
+
+The full API design — principles, per-facet surface, conventions, rejected alternatives, and
+roadmap (TLS, cluster/sentinel, RESP3-first internals, client-side caching, source-generated
+module commands) — lives in [docs/API_DESIGN.md](docs/API_DESIGN.md).
+
+The wire layer is documented in the code: one socket per connection with a coalescing
+double-buffered write path, a single persistent flush loop, a FIFO in-flight ring pairing
+pipelined commands with replies, and pooled everything. Sends are never cancelled (a partial
+frame would desync the stream permanently); failures abort the connection, which is replaced in
+the background.
+
+## Building and testing
 
 ```bash
-dotnet build
-dotnet test
-dotnet run --project benchmarks/Respire.Benchmarks
+dotnet build Respire.sln
+dotnet test tests/Respire.Tests               # wire-level tests, no Docker needed
+dotnet test tests/Respire.IntegrationTests    # real Redis via Testcontainers (needs Docker)
 ```
 
 ## License

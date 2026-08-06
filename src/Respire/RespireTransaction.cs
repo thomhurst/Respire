@@ -1,116 +1,264 @@
 using Respire.Commands;
-using Respire.Infrastructure;
+using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
 
-namespace Respire.FastClient;
+namespace Respire;
 
 /// <summary>
-/// A MULTI/EXEC transaction builder. Commands serialize immediately into a pooled buffer as
-/// they are added; <see cref="ExecuteAsync"/> sends MULTI + all commands + EXEC as one atomic
-/// append on a single connection, so no other multiplexed command can interleave into the
-/// server-side transaction state.
+/// A MULTI/EXEC transaction. Commands serialize immediately into a pooled buffer as they are
+/// queued, each returning a <see cref="RespirePending{T}"/>; <see cref="CommitAsync"/> sends
+/// MULTI + commands + EXEC as one atomic append so no other multiplexed command can interleave
+/// into the server-side transaction, then completes every pending from EXEC's reply.
 /// </summary>
 /// <remarks>
-/// Single-shot and not thread-safe: build, execute once, discard. The result is EXEC's reply —
-/// an array with one element per queued command, in order. Dispose it when done. If any
-/// command fails to queue (e.g. bad arity), Redis aborts the whole transaction and
-/// <see cref="ExecuteAsync"/> throws <see cref="RespireServerException"/> (EXECABORT).
-/// Executing releases the internal buffer; call <see cref="Dispose"/> only when abandoning a
-/// transaction without executing it.
+/// Single-shot and not thread-safe: build, commit once, discard. When created with watch keys
+/// (<see cref="RespireClient.CreateTransactionAsync"/>), the transaction owns a dedicated
+/// connection and <see cref="CommitAsync"/> returns false if a watched key changed — always
+/// commit or dispose so that connection is released.
 /// </remarks>
-public sealed class RespireTransaction : IDisposable
+public sealed class RespireTransaction : IAsyncDisposable
 {
-    private readonly RespireConnectionMultiplexer _multiplexer;
+    private readonly RespireClient _client;
+    private readonly RespireConnection? _watchConnection;
     private readonly WriteBuffer _buffer = new(1024);
-    private int _commandCount;
+    private readonly List<TxOp> _ops = [];
     private bool _completed;
 
-    internal RespireTransaction(RespireConnectionMultiplexer multiplexer)
+    internal RespireTransaction(RespireClient client, RespireConnection? watchConnection)
     {
-        _multiplexer = multiplexer;
+        _client = client;
+        _watchConnection = watchConnection;
     }
 
-    public int CommandCount => _commandCount;
+    public int Count => _ops.Count;
 
-    /// <summary>Appends any command to the transaction.</summary>
-    public RespireTransaction Add<TCommand>(in TCommand command) where TCommand : struct, IRespCommand
-    {
-        ThrowIfCompleted();
-        var writer = new RespWriter(_buffer);
-        command.Write(ref writer);
-        _commandCount++;
-        return this;
-    }
+    public RespirePending<string?> GetStringAsync(RespireKey key)
+        => Add<Cmd1, string?>(new Cmd1(Verbs.Get, _client.Key(in key)), static (c, v) => ResponseReader.StringOrNull(in v));
 
-    public RespireTransaction Get(string key)
-        => Add(new KeyCommand(CommandPrefixes.Get, key));
+    public RespirePending<T?> GetAsync<T>(RespireKey key)
+        => Add<Cmd1, T?>(new Cmd1(Verbs.Get, _client.Key(in key)), static (c, v) => c.DeserializeBorrowed<T>(in v));
 
-    public RespireTransaction Set(string key, string value)
-        => Add(new KeyValueCommand(CommandPrefixes.Set, key, value));
+    public RespirePending<bool> SetAsync(
+        RespireKey key, RespireValue value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always, bool keepTtl = false)
+        => Add<SetCommand, bool>(
+            new SetCommand(_client.Key(in key), value, expiry, when, keepTtl, returnOld: false),
+            static (c, v) => ResponseReader.OkOrNull(in v));
 
-    public RespireTransaction Del(string key)
-        => Add(new KeyCommand(CommandPrefixes.Del, key));
+    public RespirePending<bool> SetAsync<T>(
+        RespireKey key, T value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always, bool keepTtl = false)
+        => Add<SetCommand, bool>(
+            new SetCommand(_client.Key(in key), _client.Serialize(value), expiry, when, keepTtl, returnOld: false),
+            static (c, v) => ResponseReader.OkOrNull(in v));
 
-    public RespireTransaction Incr(string key)
-        => Add(new KeyCommand(CommandPrefixes.Incr, key));
+    public RespirePending<long> DeleteAsync(RespireKey key)
+        => Add<CmdN, long>(new CmdN(Verbs.Del, [_client.Key(in key)]), static (c, v) => ResponseReader.Integer(in v));
 
-    public RespireTransaction Decr(string key)
-        => Add(new KeyCommand(CommandPrefixes.Decr, key));
+    public RespirePending<long> IncrementAsync(RespireKey key, long by = 1)
+        => Add<Cmd2, long>(new Cmd2(Verbs.IncrBy, _client.Key(in key), by), static (c, v) => ResponseReader.Integer(in v));
 
-    public RespireTransaction Expire(string key, int seconds)
-        => Add(new KeyIntegerCommand(CommandPrefixes.Expire, key, seconds));
+    public RespirePending<long> DecrementAsync(RespireKey key, long by = 1)
+        => Add<Cmd2, long>(new Cmd2(Verbs.DecrBy, _client.Key(in key), by), static (c, v) => ResponseReader.Integer(in v));
 
-    public RespireTransaction HSet(string key, string field, string value)
-        => Add(new KeyFieldValueCommand(CommandPrefixes.HSet, key, field, value));
+    public RespirePending<bool> ExpireAsync(RespireKey key, TimeSpan expiry)
+        => Add<Cmd2, bool>(
+            new Cmd2(Verbs.PExpire, _client.Key(in key), (long)expiry.TotalMilliseconds),
+            static (c, v) => ResponseReader.Flag(in v));
 
-    public RespireTransaction LPush(string key, string value)
-        => Add(new KeyValueCommand(CommandPrefixes.LPush, key, value));
+    public RespirePending<bool> HashSetAsync(RespireKey key, string field, RespireValue value)
+        => Add<Cmd3, bool>(new Cmd3(Verbs.HSet, _client.Key(in key), field, value), static (c, v) => ResponseReader.Flag(in v));
 
-    public RespireTransaction RPush(string key, string value)
-        => Add(new KeyValueCommand(CommandPrefixes.RPush, key, value));
+    public RespirePending<long> ListLeftPushAsync(RespireKey key, RespireValue value)
+        => Add<Cmd2, long>(new Cmd2(Verbs.LPush, _client.Key(in key), value), static (c, v) => ResponseReader.Integer(in v));
 
-    public RespireTransaction SAdd(string key, string member)
-        => Add(new KeyValueCommand(CommandPrefixes.SAdd, key, member));
+    public RespirePending<long> ListRightPushAsync(RespireKey key, RespireValue value)
+        => Add<Cmd2, long>(new Cmd2(Verbs.RPush, _client.Key(in key), value), static (c, v) => ResponseReader.Integer(in v));
+
+    public RespirePending<bool> SetAddAsync(RespireKey key, RespireValue member)
+        => Add<Cmd2, bool>(new Cmd2(Verbs.SAdd, _client.Key(in key), member), static (c, v) => ResponseReader.Flag(in v));
+
+    public RespirePending<bool> SortedSetAddAsync(RespireKey key, RespireValue member, double score)
+        => Add<Cmd3, bool>(new Cmd3(Verbs.ZAdd, _client.Key(in key), score, member), static (c, v) => ResponseReader.Flag(in v));
 
     /// <summary>
-    /// Executes the transaction and returns EXEC's reply: an array with one result per
-    /// command, in the order they were added. Dispose the returned value when done.
+    /// Executes the transaction. Returns true when EXEC ran (pendings hold their results;
+    /// per-command runtime errors fault only that command's pending) and false when a watched
+    /// key changed and the whole transaction was discarded (pendings report aborted).
     /// </summary>
-    public async ValueTask<RespireValue> ExecuteAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<bool> CommitAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfCompleted();
-        if (_commandCount == 0)
+        if (_ops.Count == 0)
         {
-            throw new InvalidOperationException("Transaction has no commands.");
+            throw new InvalidOperationException("The transaction has no commands.");
         }
 
         _completed = true;
         try
         {
-            var result = await _multiplexer
-                .SendTransactionAsync(_buffer.WrittenMemory, _commandCount, cancellationToken).ConfigureAwait(false);
-            result.ThrowIfError();
-            return result;
+            RespValue result;
+            try
+            {
+                // Transactions are not intentionally blocking, so CommandTimeout applies here
+                // exactly as it does on the regular send path.
+                if (_client.Core.Options.CommandTimeout is { } timeout)
+                {
+                    using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    timeoutSource.CancelAfter(timeout);
+                    try
+                    {
+                        result = await SendAsync(timeoutSource.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        throw new RespireTimeoutException("MULTI/EXEC", timeout);
+                    }
+                }
+                else
+                {
+                    result = await SendAsync(cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (Exception ex)
+            {
+                // The commit never produced a reply (connection loss, timeout, cancellation, …):
+                // every pending must observe that failure, not a stale "not committed yet" state.
+                foreach (var op in _ops)
+                {
+                    op.Fail(ex);
+                }
+
+                throw;
+            }
+
+            if (result.IsError)
+            {
+                var error = ResponseReader.ServerError(in result);
+                result.Dispose();
+                foreach (var op in _ops)
+                {
+                    op.Fail(error);
+                }
+
+                throw error;
+            }
+
+            if (result.IsNull)
+            {
+                result.Dispose();
+                foreach (var op in _ops)
+                {
+                    op.Abort();
+                }
+
+                return false;
+            }
+
+            var elements = result.AsArray();
+            var completeCount = Math.Min(_ops.Count, elements.Length);
+            for (var i = 0; i < completeCount; i++)
+            {
+                _ops[i].Complete(_client, in elements[i]);
+            }
+
+            if (completeCount < _ops.Count)
+            {
+                var mismatch = new RespireProtocolException(
+                    $"EXEC returned {elements.Length} results for {_ops.Count} queued commands.");
+                for (var i = completeCount; i < _ops.Count; i++)
+                {
+                    _ops[i].Fail(mismatch);
+                }
+            }
+
+            result.Dispose();
+            return true;
         }
         finally
         {
-            _buffer.Release();
+            await ReleaseAsync().ConfigureAwait(false);
+        }
+
+        ValueTask<RespValue> SendAsync(CancellationToken token)
+            => _watchConnection is not null
+                ? _watchConnection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, token)
+                : _client.SendTransactionCoreAsync(_buffer.WrittenMemory, _ops.Count, token);
+    }
+
+    /// <summary>Releases the buffer (and any watch connection) of an uncommitted transaction.</summary>
+    public async ValueTask DisposeAsync()
+    {
+        if (_completed)
+        {
+            return;
+        }
+
+        _completed = true;
+        await ReleaseAsync().ConfigureAwait(false);
+    }
+
+    private async ValueTask ReleaseAsync()
+    {
+        _buffer.Release();
+        if (_watchConnection is not null)
+        {
+            // Rented from the dedicated pool at creation; discarded (never reused) because an
+            // uncommitted transaction still carries WATCH state on the connection.
+            await _client.Core.DedicatedPool.DiscardAsync(_watchConnection).ConfigureAwait(false);
         }
     }
 
-    /// <summary>Returns the pooled buffer of a transaction that was built but never executed.</summary>
-    public void Dispose()
+    private RespirePending<T> Add<TCommand, T>(in TCommand command, Func<RespireClient, RespValue, T> convert)
+        where TCommand : struct, IRespCommand
     {
-        _completed = true;
-        _buffer.Release();
+        ThrowIfCompleted();
+        var writer = new RespWriter(_buffer);
+        command.Write(ref writer);
+        var pending = new RespirePending<T>();
+        _ops.Add(new TxOp<T>(pending, convert));
+        return pending;
     }
 
     private void ThrowIfCompleted()
     {
         if (_completed)
         {
-            throw new InvalidOperationException("Transaction has already been executed or disposed.");
+            throw new InvalidOperationException("The transaction has already been committed or disposed.");
         }
+    }
+
+    private abstract class TxOp
+    {
+        public abstract void Complete(RespireClient client, in RespValue element);
+
+        public abstract void Fail(Exception error);
+
+        public abstract void Abort();
+    }
+
+    /// <summary>Completes from a borrowed EXEC-array element; the parent reply owns the storage.</summary>
+    private sealed class TxOp<T>(RespirePending<T> pending, Func<RespireClient, RespValue, T> convert) : TxOp
+    {
+        public override void Complete(RespireClient client, in RespValue element)
+        {
+            if (element.IsError)
+            {
+                pending.Fail(ResponseReader.ServerError(in element));
+                return;
+            }
+
+            try
+            {
+                pending.Succeed(convert(client, element));
+            }
+            catch (Exception ex)
+            {
+                pending.Fail(ex);
+            }
+        }
+
+        public override void Fail(Exception error) => pending.Fail(error);
+
+        public override void Abort() => pending.Abort();
     }
 }

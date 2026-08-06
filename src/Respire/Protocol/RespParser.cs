@@ -7,7 +7,7 @@ namespace Respire.Protocol;
 /// <summary>
 /// Incremental, allocation-conscious RESP2/RESP3 response parser over a contiguous receive
 /// buffer. Payloads are copied exactly once, off the wire into pooled storage owned by the
-/// resulting <see cref="RespireValue"/>.
+/// resulting <see cref="RespValue"/>.
 /// </summary>
 /// <remarks>
 /// The parser is restartable: on <see cref="RespParseStatus.NeedMoreData"/> the caller receives
@@ -31,7 +31,7 @@ public static class RespParser
     /// On <see cref="RespParseStatus.Done"/>, <paramref name="pos"/> is advanced past the value.
     /// On any other status, <paramref name="pos"/> is unchanged and no storage is retained.
     /// </summary>
-    public static RespParseStatus TryParseValue(ReadOnlySpan<byte> buffer, ref int pos, out RespireValue value)
+    public static RespParseStatus TryParseValue(ReadOnlySpan<byte> buffer, ref int pos, out RespValue value)
     {
         value = default;
         var cursor = pos;
@@ -106,7 +106,7 @@ public static class RespParser
         return true;
     }
 
-    private static RespParseStatus TryParseCore(ReadOnlySpan<byte> buffer, ref int cursor, out RespireValue value)
+    private static RespParseStatus TryParseCore(ReadOnlySpan<byte> buffer, ref int cursor, out RespValue value)
     {
         value = default;
         var typeByte = buffer[cursor];
@@ -147,7 +147,7 @@ public static class RespParser
     }
 
     private static RespParseStatus TryParseLineString(
-        ReadOnlySpan<byte> buffer, ref int cursor, RespDataType type, out RespireValue value)
+        ReadOnlySpan<byte> buffer, ref int cursor, RespDataType type, out RespValue value)
     {
         value = default;
         var pos = cursor + 1;
@@ -161,7 +161,7 @@ public static class RespParser
         return RespParseStatus.Done;
     }
 
-    private static RespParseStatus TryParseInteger(ReadOnlySpan<byte> buffer, ref int cursor, out RespireValue value)
+    private static RespParseStatus TryParseInteger(ReadOnlySpan<byte> buffer, ref int cursor, out RespValue value)
     {
         value = default;
         var pos = cursor + 1;
@@ -175,12 +175,12 @@ public static class RespParser
             return RespParseStatus.InvalidData;
         }
 
-        value = RespireValue.Integer(integer);
+        value = RespValue.Integer(integer);
         cursor = pos;
         return RespParseStatus.Done;
     }
 
-    private static RespParseStatus TryParseBoolean(ReadOnlySpan<byte> buffer, ref int cursor, out RespireValue value)
+    private static RespParseStatus TryParseBoolean(ReadOnlySpan<byte> buffer, ref int cursor, out RespValue value)
     {
         value = default;
         var pos = cursor + 1;
@@ -194,12 +194,12 @@ public static class RespParser
             return RespParseStatus.InvalidData;
         }
 
-        value = line[0] == (byte)'t' ? RespireValue.True : RespireValue.False;
+        value = line[0] == (byte)'t' ? RespValue.True : RespValue.False;
         cursor = pos;
         return RespParseStatus.Done;
     }
 
-    private static RespParseStatus TryParseDouble(ReadOnlySpan<byte> buffer, ref int cursor, out RespireValue value)
+    private static RespParseStatus TryParseDouble(ReadOnlySpan<byte> buffer, ref int cursor, out RespValue value)
     {
         value = default;
         var pos = cursor + 1;
@@ -226,12 +226,12 @@ public static class RespParser
             return RespParseStatus.InvalidData;
         }
 
-        value = RespireValue.Double(result);
+        value = RespValue.Double(result);
         cursor = pos;
         return RespParseStatus.Done;
     }
 
-    private static RespParseStatus TryParseNull(ReadOnlySpan<byte> buffer, ref int cursor, out RespireValue value)
+    private static RespParseStatus TryParseNull(ReadOnlySpan<byte> buffer, ref int cursor, out RespValue value)
     {
         value = default;
         var pos = cursor + 1;
@@ -240,13 +240,13 @@ public static class RespParser
             return RespParseStatus.NeedMoreData;
         }
 
-        value = RespireValue.Null;
+        value = RespValue.Null;
         cursor = pos;
         return RespParseStatus.Done;
     }
 
     private static RespParseStatus TryParseBulk(
-        ReadOnlySpan<byte> buffer, ref int cursor, RespDataType type, out RespireValue value)
+        ReadOnlySpan<byte> buffer, ref int cursor, RespDataType type, out RespValue value)
     {
         value = default;
         var pos = cursor + 1;
@@ -262,7 +262,7 @@ public static class RespParser
 
         if (length == -1)
         {
-            value = RespireValue.Null;
+            value = RespValue.Null;
             cursor = pos;
             return RespParseStatus.Done;
         }
@@ -290,7 +290,7 @@ public static class RespParser
     }
 
     private static RespParseStatus TryParseAggregate(
-        ReadOnlySpan<byte> buffer, ref int cursor, RespDataType type, bool pairCount, out RespireValue value)
+        ReadOnlySpan<byte> buffer, ref int cursor, RespDataType type, bool pairCount, out RespValue value)
     {
         value = default;
         var pos = cursor + 1;
@@ -306,7 +306,7 @@ public static class RespParser
 
         if (declaredCount == -1)
         {
-            value = RespireValue.Null;
+            value = RespValue.Null;
             cursor = pos;
             return RespParseStatus.Done;
         }
@@ -320,7 +320,7 @@ public static class RespParser
         var count = (int)elementCount;
         if (count == 0)
         {
-            value = RespireValue.PooledAggregate(type, [], 0);
+            value = RespValue.PooledAggregate(type, [], 0);
             cursor = pos;
             return RespParseStatus.Done;
         }
@@ -350,21 +350,21 @@ public static class RespParser
             }
         }
 
-        value = RespireValue.PooledAggregate(type, elements, count);
+        value = RespValue.PooledAggregate(type, elements, count);
         cursor = pos;
         return RespParseStatus.Done;
     }
 
-    private static RespireValue CopyToPooled(RespDataType type, ReadOnlySpan<byte> payload)
+    private static RespValue CopyToPooled(RespDataType type, ReadOnlySpan<byte> payload)
     {
         if (payload.IsEmpty)
         {
-            return RespireValue.PooledString(type, [], 0);
+            return RespValue.PooledString(type, [], 0);
         }
 
         var array = RespirePools.ResponsePayloads.Rent(payload.Length);
         payload.CopyTo(array);
-        return RespireValue.PooledString(type, array, payload.Length);
+        return RespValue.PooledString(type, array, payload.Length);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

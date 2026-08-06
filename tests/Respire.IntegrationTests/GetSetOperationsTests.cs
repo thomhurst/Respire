@@ -1,4 +1,3 @@
-using Respire.FastClient;
 using StackExchange.Redis;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -23,8 +22,8 @@ public class GetSetOperationsTests(RedisTestFixture fixture)
         var parts = connectionString.Split(',')[0].Split(':');
         var host = parts[0];
         var port = int.Parse(parts[1]);
-        
-        _respireClient = await RespireClient.CreateAsync(host, port);
+
+        _respireClient = await RespireClient.ConnectAsync($"{host}:{port}");
 
         _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.ConnectionString);
         _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase();
@@ -36,7 +35,11 @@ public class GetSetOperationsTests(RedisTestFixture fixture)
     [After(Test)]
     public async ValueTask DisposeAsync()
     {
-        _respireClient?.Dispose();
+        if (_respireClient is not null)
+        {
+            await _respireClient.DisposeAsync();
+        }
+
         _stackExchangeMultiplexer?.Dispose();
     }
 
@@ -62,16 +65,16 @@ public class GetSetOperationsTests(RedisTestFixture fixture)
         // Arrange
         const string key = "test:get:existing";
         const string expectedValue = "Test Value 123";
-        
+
         // Set using StackExchange.Redis to ensure the value is there
         await _stackExchangeDb!.StringSetAsync(key, expectedValue);
 
         // Act
-        var actualValue = await _respireClient!.GetAsync(key);
+        var actualValue = await _respireClient!.GetStringAsync(key);
 
         // Assert
-        await Assert.That(actualValue).IsNotDefault();
-        await Assert.That(actualValue.AsString()).IsEqualTo(expectedValue);
+        await Assert.That(actualValue).IsNotNull();
+        await Assert.That(actualValue).IsEqualTo(expectedValue);
     }
 
     [Test]
@@ -81,10 +84,10 @@ public class GetSetOperationsTests(RedisTestFixture fixture)
         const string key = "test:get:nonexistent";
 
         // Act
-        var value = await _respireClient!.GetAsync(key);
+        var value = await _respireClient!.GetStringAsync(key);
 
         // Assert
-        await Assert.That(value.IsNull).IsTrue();
+        await Assert.That(value).IsNull();
     }
 
     [Test]
@@ -151,7 +154,7 @@ public class GetSetOperationsTests(RedisTestFixture fixture)
         var retrievedValue = await _stackExchangeDb!.StringGetAsync(key);
         await Assert.That(retrievedValue.HasValue).IsTrue();
         await Assert.That(retrievedValue.ToString()).IsEqualTo(value);
-        
+
         // Verify it's stored as string, not converted to number
         await Assert.That(retrievedValue.ToString()).IsTypeOf<string>();
     }
@@ -165,12 +168,12 @@ public class GetSetOperationsTests(RedisTestFixture fixture)
 
         // Act
         await _respireClient!.SetAsync(key, originalValue);
-        var retrievedValue = await _respireClient.GetAsync(key);
+        var retrievedValue = await _respireClient.GetStringAsync(key);
 
         // Assert
-        await Assert.That(retrievedValue.IsNull).IsFalse();
-        await Assert.That(retrievedValue.ToString()).IsEqualTo(originalValue);
-        
+        await Assert.That(retrievedValue).IsNotNull();
+        await Assert.That(retrievedValue).IsEqualTo(originalValue);
+
         // Also verify with StackExchange
         var stackExchangeValue = await _stackExchangeDb!.StringGetAsync(key);
         await Assert.That(stackExchangeValue.ToString()).IsEqualTo(originalValue);
@@ -189,10 +192,10 @@ public class GetSetOperationsTests(RedisTestFixture fixture)
         await _respireClient.SetAsync(key, newValue);
 
         // Assert
-        var retrievedValue = await _respireClient.GetAsync(key);
-        await Assert.That(retrievedValue.ToString()).IsEqualTo(newValue);
-        await Assert.That(retrievedValue.ToString()).IsNotEqualTo(originalValue);
-        
+        var retrievedValue = await _respireClient.GetStringAsync(key);
+        await Assert.That(retrievedValue).IsEqualTo(newValue);
+        await Assert.That(retrievedValue).IsNotEqualTo(originalValue);
+
         // Verify with StackExchange
         var stackExchangeValue = await _stackExchangeDb!.StringGetAsync(key);
         await Assert.That(stackExchangeValue.ToString()).IsEqualTo(newValue);
@@ -220,9 +223,9 @@ public class GetSetOperationsTests(RedisTestFixture fixture)
         // Assert - verify each key has correct value
         foreach (var kvp in keyValuePairs)
         {
-            var retrievedValue = await _respireClient!.GetAsync(kvp.Key);
-            await Assert.That(retrievedValue.ToString()).IsEqualTo(kvp.Value);
-            
+            var retrievedValue = await _respireClient!.GetStringAsync(kvp.Key);
+            await Assert.That(retrievedValue).IsEqualTo(kvp.Value);
+
             // Also verify with StackExchange
             var stackExchangeValue = await _stackExchangeDb!.StringGetAsync(kvp.Key);
             await Assert.That(stackExchangeValue.ToString()).IsEqualTo(kvp.Value);
@@ -235,15 +238,15 @@ public class GetSetOperationsTests(RedisTestFixture fixture)
         // Arrange
         const string key = "test:delete:key";
         const string value = "To be deleted";
-        
+
         await _respireClient!.SetAsync(key, value);
         await _stackExchangeDb!.KeyDeleteAsync(key); // Delete using StackExchange
 
         // Act
-        var retrievedValue = await _respireClient.GetAsync(key);
+        var retrievedValue = await _respireClient.GetStringAsync(key);
 
         // Assert
-        await Assert.That(retrievedValue.IsNull).IsTrue();
+        await Assert.That(retrievedValue).IsNull();
     }
 
     [Test]
@@ -257,8 +260,8 @@ public class GetSetOperationsTests(RedisTestFixture fixture)
         await _respireClient!.SetAsync(key, value);
 
         // Assert
-        var retrievedValue = await _respireClient.GetAsync(key);
-        await Assert.That(retrievedValue.ToString()).IsEqualTo(value);
+        var retrievedValue = await _respireClient.GetStringAsync(key);
+        await Assert.That(retrievedValue).IsEqualTo(value);
     }
 
     [Test]
@@ -272,8 +275,8 @@ public class GetSetOperationsTests(RedisTestFixture fixture)
         await _respireClient!.SetAsync(key, value);
 
         // Assert
-        var retrievedValue = await _respireClient.GetAsync(key);
-        await Assert.That(retrievedValue.ToString()).IsEqualTo(value);
+        var retrievedValue = await _respireClient.GetStringAsync(key);
+        await Assert.That(retrievedValue).IsEqualTo(value);
     }
 
     [Test]
@@ -293,13 +296,13 @@ public class GetSetOperationsTests(RedisTestFixture fixture)
         await _respireClient.SetAsync(key3, value3);
 
         // Assert
-        var retrieved1 = await _respireClient.GetAsync(key1);
-        var retrieved2 = await _respireClient.GetAsync(key2);
-        var retrieved3 = await _respireClient.GetAsync(key3);
+        var retrieved1 = await _respireClient.GetStringAsync(key1);
+        var retrieved2 = await _respireClient.GetStringAsync(key2);
+        var retrieved3 = await _respireClient.GetStringAsync(key3);
 
-        await Assert.That(retrieved1.ToString()).IsEqualTo(value1);
-        await Assert.That(retrieved2.ToString()).IsEqualTo(value2);
-        await Assert.That(retrieved3.ToString()).IsEqualTo(value3);
+        await Assert.That(retrieved1).IsEqualTo(value1);
+        await Assert.That(retrieved2).IsEqualTo(value2);
+        await Assert.That(retrieved3).IsEqualTo(value3);
     }
 
     [Test]
@@ -316,12 +319,12 @@ public class GetSetOperationsTests(RedisTestFixture fixture)
 
         // Act
         await _respireClient!.SetAsync(key, binaryString);
-        var retrievedValue = await _respireClient.GetAsync(key);
+        var retrievedValue = await _respireClient.GetStringAsync(key);
 
         // Assert
-        await Assert.That(retrievedValue.IsNull).IsFalse();
-        await Assert.That(retrievedValue.ToString()).IsEqualTo(binaryString);
-        await Assert.That(retrievedValue.ToString().Length).IsEqualTo(binaryString.Length);
+        await Assert.That(retrievedValue).IsNotNull();
+        await Assert.That(retrievedValue).IsEqualTo(binaryString);
+        await Assert.That(retrievedValue!.Length).IsEqualTo(binaryString.Length);
     }
 
     [Test]
@@ -338,7 +341,7 @@ public class GetSetOperationsTests(RedisTestFixture fixture)
             var value = $"value{i}";
             tasks.Add(_respireClient!.SetAsync(key, value).AsTask());
         }
-        
+
         await Task.WhenAll(tasks);
 
         // Assert - Verify all values were set correctly
@@ -346,9 +349,9 @@ public class GetSetOperationsTests(RedisTestFixture fixture)
         {
             var key = $"test:rapid:key{i}";
             var expectedValue = $"value{i}";
-            
-            var actualValue = await _respireClient!.GetAsync(key);
-            await Assert.That(actualValue.ToString()).IsEqualTo(expectedValue);
+
+            var actualValue = await _respireClient!.GetStringAsync(key);
+            await Assert.That(actualValue).IsEqualTo(expectedValue);
         }
     }
 }

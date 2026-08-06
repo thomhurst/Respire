@@ -8,7 +8,7 @@ namespace Respire.Tests.Protocol;
 
 public class RespParserTests
 {
-    private static (RespParseStatus Status, RespireValue Value, int Consumed) Parse(ReadOnlySpan<byte> data)
+    private static (RespParseStatus Status, RespValue Value, int Consumed) Parse(ReadOnlySpan<byte> data)
     {
         var pos = 0;
         var status = RespParser.TryParseValue(data, ref pos, out var value);

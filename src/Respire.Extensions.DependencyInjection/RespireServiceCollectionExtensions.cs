@@ -1,133 +1,51 @@
-using Respire.FastClient;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace Respire.Extensions.DependencyInjection;
 
 public static class RespireServiceCollectionExtensions
 {
-    public static IServiceCollection AddRespire(
-        this IServiceCollection services,
-        string host = "localhost",
-        int port = 6379,
-        string? password = null)
+    /// <summary>
+    /// Registers a singleton <see cref="IRespireClient"/> (and <see cref="RespireClient"/>).
+    /// Construction is lazy — nothing connects until the first command — so startup never
+    /// blocks on Redis. The client picks up the container's <see cref="ILoggerFactory"/> unless
+    /// the options set one explicitly.
+    /// </summary>
+    public static IServiceCollection AddRespire(this IServiceCollection services, string connectionString)
+        => services.AddRespire(_ => RespireOptions.Parse(connectionString));
+
+    public static IServiceCollection AddRespire(this IServiceCollection services, Func<IServiceProvider, RespireOptions> configure)
     {
-        // Register the client factory
-        services.TryAddSingleton<IRespireClientFactory>(sp =>
-        {
-            return new RespireClientFactory(host, port, password);
-        });
-        
-        // Register the default client
-        services.TryAddSingleton<RespireClient>(sp =>
-        {
-            var factory = sp.GetRequiredService<IRespireClientFactory>();
-            return factory.CreateClient().GetAwaiter().GetResult();
-        });
-        
-        // Register hosted service for cleanup
-        services.AddHostedService<RespireClientHostedService>();
-        
+        services.TryAddSingleton(provider => RespireClient.Create(Resolve(provider, configure)));
+        services.TryAddSingleton<IRespireClient>(provider => provider.GetRequiredService<RespireClient>());
         return services;
     }
-    
+
+    /// <summary>
+    /// Registers an additional named client as a keyed singleton — inject it with
+    /// <c>[FromKeyedServices("cache")] IRespireClient client</c>.
+    /// </summary>
+    public static IServiceCollection AddRespire(this IServiceCollection services, string name, string connectionString)
+        => services.AddRespire(name, _ => RespireOptions.Parse(connectionString));
+
     public static IServiceCollection AddRespire(
-        this IServiceCollection services,
-        Func<IServiceProvider, (string host, int port, string? password)> configureFactory)
+        this IServiceCollection services, string name, Func<IServiceProvider, RespireOptions> configure)
     {
-        // Register the client factory
-        services.TryAddSingleton<IRespireClientFactory>(sp =>
-        {
-            var (host, port, password) = configureFactory(sp);
-            return new RespireClientFactory(host, port, password);
-        });
-        
-        // Register the default client
-        services.TryAddSingleton<RespireClient>(sp =>
-        {
-            var factory = sp.GetRequiredService<IRespireClientFactory>();
-            return factory.CreateClient().GetAwaiter().GetResult();
-        });
-        
-        // Register hosted service for cleanup
-        services.AddHostedService<RespireClientHostedService>();
-        
+        services.TryAddKeyedSingleton(name, (provider, _) => RespireClient.Create(Resolve(provider, configure)));
+        services.TryAddKeyedSingleton<IRespireClient>(
+            name, (provider, key) => provider.GetRequiredKeyedService<RespireClient>(key));
         return services;
     }
-}
 
-public interface IRespireClientFactory
-{
-    Task<RespireClient> CreateClient(string? name = null);
-}
-
-internal class RespireClientFactory : IRespireClientFactory
-{
-    private readonly string _host;
-    private readonly int _port;
-    private readonly string? _password;
-    private readonly Dictionary<string, RespireClient> _clients = new();
-    private readonly object _lock = new();
-    
-    public RespireClientFactory(string host, int port, string? password)
+    private static RespireOptions Resolve(IServiceProvider provider, Func<IServiceProvider, RespireOptions> configure)
     {
-        _host = host;
-        _port = port;
-        _password = password;
-    }
-    
-    public async Task<RespireClient> CreateClient(string? name = null)
-    {
-        name ??= "default";
-        
-        lock (_lock)
+        var options = configure(provider);
+        if (options.LoggerFactory is null && provider.GetService<ILoggerFactory>() is { } loggerFactory)
         {
-            if (_clients.TryGetValue(name, out var existingClient))
-            {
-                return existingClient;
-            }
+            options = options with { LoggerFactory = loggerFactory };
         }
-        
-        // Create client outside of lock to avoid blocking
-        var options = _password is null
-            ? null
-            : new Respire.Networking.RespireConnectionOptions { Password = _password };
-        var client = await RespireClient.CreateAsync(_host, _port, options: options);
-        
-        lock (_lock)
-        {
-            // Double check in case another thread created it
-            if (_clients.TryGetValue(name, out var existingClient))
-            {
-                client.Dispose();
-                return existingClient;
-            }
-            
-            _clients[name] = client;
-            return client;
-        }
-    }
-}
 
-internal class RespireClientHostedService : IHostedService
-{
-    private readonly RespireClient? _client;
-    
-    public RespireClientHostedService(RespireClient? client = null)
-    {
-        _client = client;
-    }
-    
-    public Task StartAsync(CancellationToken cancellationToken)
-    {
-        // Client will connect on first use
-        return Task.CompletedTask;
-    }
-    
-    public Task StopAsync(CancellationToken cancellationToken)
-    {
-        _client?.Dispose();
-        return Task.CompletedTask;
+        return options;
     }
 }

@@ -1,63 +1,86 @@
-using System.Text;
-using Respire.Protocol;
+using Respire;
 
-Console.WriteLine("===== Respire RESP Protocol Demo =====\n");
+// A tour of the Respire API. Needs a Redis on localhost:6379 — e.g.:
+//   docker run --rm -p 6379:6379 redis:7
 
-// Demo: Writing RESP Commands
-Console.WriteLine("1. Writing RESP Commands:");
-Console.WriteLine("--------------------------");
-DemoWriting();
+await using var redis = await RespireClient.ConnectAsync("redis://localhost");
 
-// Demo: Parsing RESP Responses
-Console.WriteLine("\n2. Parsing RESP Responses:");
-Console.WriteLine("---------------------------");
-DemoParsing();
+// ── Strings ──────────────────────────────────────────────────────────────────
+await redis.SetAsync("greeting", "hello world", expiry: TimeSpan.FromMinutes(5));
+Console.WriteLine($"greeting = {await redis.GetStringAsync("greeting")}");
 
-Console.WriteLine("\nPress any key to exit...");
-Console.ReadKey();
+var hits = await redis.IncrementAsync("stats:hits");
+Console.WriteLine($"hits = {hits}");
 
-void DemoWriting()
+// Typed values — serialized with System.Text.Json by default.
+await redis.SetAsync("user:1", new User("Ada", 36));
+var user = await redis.GetAsync<User>("user:1");
+Console.WriteLine($"user:1 = {user}");
+
+// Conditional set: only when the key does not exist.
+var claimed = await redis.SetAsync("lock:job42", "worker-a", expiry: TimeSpan.FromSeconds(30), when: SetWhen.NotExists);
+Console.WriteLine($"lock claimed: {claimed}");
+
+// ── Facets: one group per data type ──────────────────────────────────────────
+await redis.Hashes.SetAsync("user:1:profile", ("name", "Ada"), ("lang", "en"));
+Console.WriteLine($"profile.name = {await redis.Hashes.GetStringAsync("user:1:profile", "name")}");
+
+await redis.Lists.RightPushAsync("queue", "job-1", "job-2");
+Console.WriteLine($"popped = {await redis.Lists.LeftPopAsync("queue")}");
+
+await redis.SortedSets.AddAsync("leaderboard", "ada", 42);
+await redis.SortedSets.AddAsync("leaderboard", "grace", 58);
+foreach (var entry in await redis.SortedSets.RangeWithScoresAsync("leaderboard", descending: true))
 {
-    Console.WriteLine("Writing RESP commands using pre-compiled commands:");
-
-    // Use pre-compiled commands for maximum performance
-    var pingCommand = RespCommands.Ping;
-    Console.WriteLine($"PING command: {EscapeString(Encoding.UTF8.GetString(pingCommand))}");
-
-    var infoCommand = RespCommands.Info;
-    Console.WriteLine($"INFO command: {EscapeString(Encoding.UTF8.GetString(infoCommand))}");
-
-    var dbSizeCommand = RespCommands.DbSize;
-    Console.WriteLine($"DBSIZE command: {EscapeString(Encoding.UTF8.GetString(dbSizeCommand))}");
+    Console.WriteLine($"  {entry.Member}: {entry.Score}");
 }
 
-void DemoParsing()
-{
-    Console.WriteLine("Parsing RESP responses using RespParser:");
+// ── Batch: explicit pipeline, one flush ──────────────────────────────────────
+var batch = redis.CreateBatch();
+var a = batch.GetStringAsync("greeting");
+var b = batch.IncrementAsync("stats:hits");
+await batch.SendAsync();
+Console.WriteLine($"batched: {a.Result} / hits={b.Result}");
 
-    ParseAndPrint("+OK\r\n"u8, "Simple String");
-    ParseAndPrint(":1000\r\n"u8, "Integer");
-    ParseAndPrint("$11\r\nHello World\r\n"u8, "Bulk String");
-    ParseAndPrint("$-1\r\n"u8, "Null Bulk String");
-    ParseAndPrint("#t\r\n"u8, "Boolean");
-    ParseAndPrint("*2\r\n$3\r\nfoo\r\n:42\r\n"u8, "Array");
+// ── Transaction: MULTI/EXEC with typed results ───────────────────────────────
+var tx = redis.CreateTransaction();
+var newBalance = tx.IncrementAsync("balance", 100);
+tx.ListRightPushAsync("audit", "deposit:100");
+var committed = await tx.CommitAsync();
+Console.WriteLine($"committed={committed}, balance={newBalance.Result}");
+
+// ── Raw escape hatch — any command, interpolated safely ──────────────────────
+using (var encoding = await redis.ExecuteAsync($"OBJECT ENCODING {"greeting"}"))
+{
+    Console.WriteLine($"encoding = {encoding.AsString()}");
 }
 
-void ParseAndPrint(ReadOnlySpan<byte> data, string label)
+// ── Pub/sub as an async stream ───────────────────────────────────────────────
+using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+var listener = Task.Run(async () =>
 {
-    var pos = 0;
-    if (RespParser.TryParseValue(data, ref pos, out var value) == RespParseStatus.Done)
+    await using var subscription = redis.Subscribe("news");
+    try
     {
-        Console.WriteLine($"Parsed {label}: Type={value.Type}, Value={value}");
-        value.Dispose();
+        await foreach (var message in subscription.WithCancellation(cts.Token))
+        {
+            Console.WriteLine($"received on {message.Channel}: {message.Text}");
+            break;
+        }
     }
-    else
+    catch (OperationCanceledException)
     {
-        Console.WriteLine($"Failed to parse {label}");
     }
+});
+
+// Retry until the subscriber is registered (PublishAsync returns the receiver count).
+while (await redis.PublishAsync("news", "respire 1.0 shipped") == 0 && !cts.IsCancellationRequested)
+{
+    await Task.Delay(50);
 }
 
-string EscapeString(string input)
-{
-    return input.Replace("\r", "\\r").Replace("\n", "\\n");
-}
+await listener;
+
+Console.WriteLine("done.");
+
+public sealed record User(string Name, int Age);

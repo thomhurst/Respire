@@ -1,5 +1,3 @@
-using Respire;
-using Respire.FastClient;
 using Respire.Protocol;
 using TUnit.Core;
 using TUnit.Assertions;
@@ -9,38 +7,70 @@ namespace Respire.Tests.Networking;
 
 /// <summary>
 /// MULTI/EXEC wire tests against the fake server: framing order, discarded QUEUED replies,
-/// EXEC result delivery, and abort handling.
+/// typed pending completion, abort handling, and the read-before-commit guard.
 /// </summary>
 public class TransactionTests
 {
     private static readonly byte[] QueuedReply = "+QUEUED\r\n"u8.ToArray();
 
+    private static ValueTask<RespireClient> ConnectAsync(int port)
+        => RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", port) },
+            Connections = 1,
+        });
+
     [Test]
-    public async Task Transaction_SendsMultiCommandsExec_ReturnsPerCommandResults()
+    public async Task Transaction_SendsMultiCommandsExec_CompletesTypedPendings()
     {
         await using var server = new FakeRespServer(
             FakeRespServer.OkReply, QueuedReply, QueuedReply, "*2\r\n+OK\r\n:5\r\n"u8.ToArray());
-        await using var client = await RespireClient.CreateAsync("127.0.0.1", server.Port, connectionCount: 1);
+        await using var client = await ConnectAsync(server.Port);
 
-        var result = await client.CreateTransaction()
-            .Set("k", "v")
-            .Incr("counter")
-            .ExecuteAsync();
+        var transaction = client.CreateTransaction();
+        var set = transaction.SetAsync("k", "v");
+        var incremented = transaction.IncrementAsync("counter", 5);
+        var committed = await transaction.CommitAsync();
 
         var commands = server.ReceivedCommands;
         await Assert.That(commands[0]).IsEqualTo("MULTI");
         await Assert.That(commands[1]).IsEqualTo("SET k v");
-        await Assert.That(commands[2]).IsEqualTo("INCR counter");
+        await Assert.That(commands[2]).IsEqualTo("INCRBY counter 5");
         await Assert.That(commands[3]).IsEqualTo("EXEC");
 
-        await Assert.That(result.Type).IsEqualTo(RespDataType.Array);
-        var count = result.AsArray().Length;
-        var first = result.AsArray()[0].AsString();
-        var second = result.AsArray()[1].AsInteger();
-        await Assert.That(count).IsEqualTo(2);
-        await Assert.That(first).IsEqualTo("OK");
-        await Assert.That(second).IsEqualTo(5);
-        result.Dispose();
+        await Assert.That(committed).IsTrue();
+        await Assert.That(set.Result).IsTrue();
+        await Assert.That(incremented.Result).IsEqualTo(5);
+        await Assert.That(await incremented).IsEqualTo(5);
+    }
+
+    [Test]
+    public async Task PendingResult_BeforeCommit_ThrowsInsteadOfDeadlocking()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = await ConnectAsync(server.Port);
+
+        var transaction = client.CreateTransaction();
+        var pending = transaction.GetStringAsync("k");
+
+        await Assert.That(() => _ = pending.Result).Throws<InvalidOperationException>();
+        await transaction.DisposeAsync();
+    }
+
+    [Test]
+    public async Task AbortedExec_ReturnsFalse_PendingsReportAborted()
+    {
+        // EXEC replies null when a watched key changed: MULTI +OK, QUEUED, then *-1.
+        await using var server = new FakeRespServer(
+            FakeRespServer.OkReply, QueuedReply, "*-1\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server.Port);
+
+        var transaction = client.CreateTransaction();
+        var pending = transaction.IncrementAsync("counter");
+        var committed = await transaction.CommitAsync();
+
+        await Assert.That(committed).IsFalse();
+        await Assert.That(() => _ = pending.Result).Throws<InvalidOperationException>();
     }
 
     [Test]
@@ -50,39 +80,37 @@ public class TransactionTests
             FakeRespServer.OkReply,
             "-ERR wrong number of arguments for 'incr' command\r\n"u8.ToArray(),
             "-EXECABORT Transaction discarded because of previous errors.\r\n"u8.ToArray());
-        await using var client = await RespireClient.CreateAsync("127.0.0.1", server.Port, connectionCount: 1);
+        await using var client = await ConnectAsync(server.Port);
 
-        var transaction = client.CreateTransaction().Incr("counter");
+        var transaction = client.CreateTransaction();
+        _ = transaction.IncrementAsync("counter");
 
-        await Assert.That(async () => (await transaction.ExecuteAsync()).Dispose())
-            .Throws<RespireServerException>();
+        await Assert.That(async () => await transaction.CommitAsync()).Throws<RespireServerException>();
     }
 
     [Test]
     public async Task EmptyTransaction_Throws()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
-        await using var client = await RespireClient.CreateAsync("127.0.0.1", server.Port, connectionCount: 1);
+        await using var client = await ConnectAsync(server.Port);
 
         var transaction = client.CreateTransaction();
 
-        await Assert.That(async () => (await transaction.ExecuteAsync()).Dispose())
-            .Throws<InvalidOperationException>();
+        await Assert.That(async () => await transaction.CommitAsync()).Throws<InvalidOperationException>();
     }
 
     [Test]
     public async Task ConcurrentCommands_DoNotInterleaveIntoTransaction()
     {
-        // Every command gets +OK except the EXEC-shaped reply script below; the point of the
-        // assertion is ordering on the wire: the MULTI..EXEC block must be contiguous even
-        // with concurrent traffic on the same connection.
+        // Every command gets +OK; the point of the assertion is ordering on the wire: the
+        // MULTI..EXEC block must be contiguous even with concurrent traffic on the connection.
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
-        await using var client = await RespireClient.CreateAsync("127.0.0.1", server.Port, connectionCount: 1);
+        await using var client = await ConnectAsync(server.Port);
 
         var transaction = client.CreateTransaction();
         for (var i = 0; i < 50; i++)
         {
-            transaction.Set($"tx{i}", "v");
+            _ = transaction.SetAsync($"tx{i}", "v");
         }
 
         var concurrent = new List<Task>();
@@ -91,9 +119,9 @@ public class TransactionTests
             concurrent.Add(client.SetAsync($"plain{i}", "v").AsTask());
         }
 
-        var execTask = transaction.ExecuteAsync().AsTask();
+        var commitTask = transaction.CommitAsync().AsTask();
         await Task.WhenAll(concurrent);
-        (await execTask).Dispose();
+        await commitTask;
 
         var commands = server.ReceivedCommands;
         var multiIndex = -1;
@@ -137,12 +165,12 @@ public class TransactionTests
     {
         await using var server = new FakeRespServer(
             FakeRespServer.OkReply, QueuedReply, "*1\r\n+OK\r\n"u8.ToArray());
-        await using var client = await RespireClient.CreateAsync("127.0.0.1", server.Port, connectionCount: 1);
+        await using var client = await ConnectAsync(server.Port);
 
-        var transaction = client.CreateTransaction().Set("k", "v");
-        (await transaction.ExecuteAsync()).Dispose();
+        var transaction = client.CreateTransaction();
+        _ = transaction.SetAsync("k", "v");
+        await transaction.CommitAsync();
 
-        await Assert.That(async () => (await transaction.ExecuteAsync()).Dispose())
-            .Throws<InvalidOperationException>();
+        await Assert.That(async () => await transaction.CommitAsync()).Throws<InvalidOperationException>();
     }
 }

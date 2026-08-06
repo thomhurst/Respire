@@ -5,7 +5,7 @@ using Respire.Protocol;
 namespace Respire.Networking;
 
 /// <summary>
-/// A poolable <see cref="IValueTaskSource{RespireValue}"/> representing one in-flight command
+/// A poolable <see cref="IValueTaskSource{RespValue}"/> representing one in-flight command
 /// awaiting its RESP response. Wraps <see cref="ManualResetValueTaskSourceCore{T}"/> for
 /// zero-allocation async completion.
 /// </summary>
@@ -22,22 +22,22 @@ namespace Respire.Networking;
 /// ids, so a recycled source completing a stale slot would silently answer the wrong command.
 /// </para>
 /// </remarks>
-internal sealed class PendingResponseSource : IValueTaskSource<RespireValue>
+internal sealed class PendingResponseSource : IValueTaskSource<RespValue>
 {
-    private ManualResetValueTaskSourceCore<RespireValue> _core = new() { RunContinuationsAsynchronously = true };
+    private ManualResetValueTaskSourceCore<RespValue> _core = new() { RunContinuationsAsynchronously = true };
     private PendingResponsePool? _pool;
     private CancellationTokenRegistration _cancellationRegistration;
     private int _completed;
     private int _refs;
 
-    public ValueTask<RespireValue> Task => new(this, _core.Version);
+    public ValueTask<RespValue> Task => new(this, _core.Version);
 
     internal void SetPool(PendingResponsePool pool) => _pool = pool;
 
     /// <summary>Called by the pool on rent, before the source is published anywhere.</summary>
     internal void PrepareForUse() => _refs = 2;
 
-    public bool TrySetResult(in RespireValue result)
+    public bool TrySetResult(in RespValue result)
     {
         if (Interlocked.CompareExchange(ref _completed, 1, 0) != 0)
         {
@@ -99,7 +99,7 @@ internal sealed class PendingResponseSource : IValueTaskSource<RespireValue>
         _pool?.Return(this);
     }
 
-    RespireValue IValueTaskSource<RespireValue>.GetResult(short token)
+    RespValue IValueTaskSource<RespValue>.GetResult(short token)
     {
         try
         {
@@ -113,10 +113,10 @@ internal sealed class PendingResponseSource : IValueTaskSource<RespireValue>
         }
     }
 
-    ValueTaskSourceStatus IValueTaskSource<RespireValue>.GetStatus(short token)
+    ValueTaskSourceStatus IValueTaskSource<RespValue>.GetStatus(short token)
         => _core.GetStatus(token);
 
-    void IValueTaskSource<RespireValue>.OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags)
+    void IValueTaskSource<RespValue>.OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags)
         => _core.OnCompleted(continuation, state, token, flags);
 }
 

@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <LangVersion>12</LangVersion>
+    <LangVersion>13</LangVersion>
     <RootNamespace>Respire.StressTests</RootNamespace>
   </PropertyGroup>
 

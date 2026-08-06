@@ -38,7 +38,7 @@ public class RespireConnectionTests
         await using var server = new FakeRespServer(replies);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
 
-        var tasks = new List<Task<RespireValue>>();
+        var tasks = new List<Task<RespValue>>();
         for (var i = 0; i < 50; i++)
         {
             tasks.Add(connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask());
@@ -73,10 +73,10 @@ public class RespireConnectionTests
         await using var server = new FakeRespServer("+OK\r\n"u8.ToArray());
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
 
-        var tasks = new List<Task<RespireValue>>();
+        var tasks = new List<Task<RespValue>>();
         for (var i = 0; i < 1000; i++)
         {
-            tasks.Add(connection.SendAsync(new KeyValueCommand(CommandPrefixes.Set, $"key{i}", $"value{i}")).AsTask());
+            tasks.Add(connection.SendAsync(new SetCommand($"key{i}", $"value{i}")).AsTask());
         }
 
         var results = await Task.WhenAll(tasks);
@@ -183,5 +183,17 @@ public class RespireConnectionTests
         await Assert.That(second).IsEqualTo(42);
         await Assert.That(thirdIsNull).IsTrue();
         response.Dispose();
+    }
+
+    /// <summary>SET key value, serialized through the public writer API.</summary>
+    private readonly struct SetCommand(string key, string value) : IRespCommand
+    {
+        public void Write(ref RespWriter writer)
+        {
+            writer.WriteArrayHeader(3);
+            writer.WriteBulkString("SET"u8);
+            writer.WriteBulkString(key);
+            writer.WriteBulkString(value);
+        }
     }
 }

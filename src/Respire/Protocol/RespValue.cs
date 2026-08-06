@@ -15,7 +15,7 @@ namespace Respire.Protocol;
 /// to return buffers to the pools. Forgetting to dispose is safe — the buffers are simply
 /// collected by the GC instead of being reused.
 /// </remarks>
-public readonly struct RespireValue : IEquatable<RespireValue>, IDisposable
+public readonly struct RespValue : IEquatable<RespValue>, IDisposable
 {
     [Flags]
     internal enum ValueFlags : byte
@@ -29,15 +29,15 @@ public readonly struct RespireValue : IEquatable<RespireValue>, IDisposable
     private readonly ValueFlags _flags;
     private readonly long _integerValue;
     private readonly ReadOnlyMemory<byte> _payload;
-    private readonly RespireValue[]? _elements;
+    private readonly RespValue[]? _elements;
     private readonly int _elementCount;
 
     public RespDataType Type => _type;
     public bool IsNull => _type == RespDataType.Null;
     public bool IsError => _type is RespDataType.Error or RespDataType.BulkError;
 
-    private RespireValue(RespDataType type, ValueFlags flags = ValueFlags.None, long integerValue = 0,
-        ReadOnlyMemory<byte> payload = default, RespireValue[]? elements = null, int elementCount = 0)
+    private RespValue(RespDataType type, ValueFlags flags = ValueFlags.None, long integerValue = 0,
+        ReadOnlyMemory<byte> payload = default, RespValue[]? elements = null, int elementCount = 0)
     {
         _type = type;
         _flags = flags;
@@ -47,72 +47,72 @@ public readonly struct RespireValue : IEquatable<RespireValue>, IDisposable
         _elementCount = elementCount;
     }
 
-    public static readonly RespireValue Null = new(RespDataType.Null);
-    public static readonly RespireValue True = new(RespDataType.Boolean, integerValue: 1);
-    public static readonly RespireValue False = new(RespDataType.Boolean, integerValue: 0);
+    public static readonly RespValue Null = new(RespDataType.Null);
+    public static readonly RespValue True = new(RespDataType.Boolean, integerValue: 1);
+    public static readonly RespValue False = new(RespDataType.Boolean, integerValue: 0);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static RespireValue Integer(long value) => new(RespDataType.Integer, integerValue: value);
+    public static RespValue Integer(long value) => new(RespDataType.Integer, integerValue: value);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static RespireValue Boolean(bool value) => value ? True : False;
+    public static RespValue Boolean(bool value) => value ? True : False;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static RespireValue Double(double value)
+    public static RespValue Double(double value)
         => new(RespDataType.Double, integerValue: BitConverter.DoubleToInt64Bits(value));
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static RespireValue SimpleString(ReadOnlyMemory<byte> buffer, int startIndex, int length)
+    public static RespValue SimpleString(ReadOnlyMemory<byte> buffer, int startIndex, int length)
         => new(RespDataType.SimpleString, payload: buffer.Slice(startIndex, length));
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static RespireValue SimpleString(ReadOnlyMemory<byte> buffer)
+    public static RespValue SimpleString(ReadOnlyMemory<byte> buffer)
         => new(RespDataType.SimpleString, payload: buffer);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static RespireValue BulkString(ReadOnlyMemory<byte> buffer, int startIndex, int length)
+    public static RespValue BulkString(ReadOnlyMemory<byte> buffer, int startIndex, int length)
         => new(RespDataType.BulkString, payload: buffer.Slice(startIndex, length));
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static RespireValue BulkString(ReadOnlyMemory<byte> buffer)
+    public static RespValue BulkString(ReadOnlyMemory<byte> buffer)
         => new(RespDataType.BulkString, payload: buffer);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static RespireValue Error(ReadOnlyMemory<byte> buffer, int startIndex, int length)
+    public static RespValue Error(ReadOnlyMemory<byte> buffer, int startIndex, int length)
         => new(RespDataType.Error, payload: buffer.Slice(startIndex, length));
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static RespireValue Error(ReadOnlyMemory<byte> buffer)
+    public static RespValue Error(ReadOnlyMemory<byte> buffer)
         => new(RespDataType.Error, payload: buffer);
 
-    public static RespireValue SimpleString(string value) => CreateStringValue(value, RespDataType.SimpleString);
+    public static RespValue SimpleString(string value) => CreateStringValue(value, RespDataType.SimpleString);
 
-    public static RespireValue BulkString(string value) => CreateStringValue(value, RespDataType.BulkString);
+    public static RespValue BulkString(string value) => CreateStringValue(value, RespDataType.BulkString);
 
-    public static RespireValue Error(string value) => CreateStringValue(value, RespDataType.Error);
+    public static RespValue Error(string value) => CreateStringValue(value, RespDataType.Error);
 
-    private static RespireValue CreateStringValue(string value, RespDataType type)
+    private static RespValue CreateStringValue(string value, RespDataType type)
     {
         if (string.IsNullOrEmpty(value))
         {
-            return new RespireValue(type);
+            return new RespValue(type);
         }
 
-        return new RespireValue(type, payload: Encoding.UTF8.GetBytes(value));
+        return new RespValue(type, payload: Encoding.UTF8.GetBytes(value));
     }
 
-    public static RespireValue Array(params RespireValue[] values)
+    public static RespValue Array(params RespValue[] values)
         => new(RespDataType.Array, elements: values, elementCount: values.Length);
 
-    public static RespireValue Array(ReadOnlySpan<RespireValue> values)
+    public static RespValue Array(ReadOnlySpan<RespValue> values)
         => new(RespDataType.Array, elements: values.ToArray(), elementCount: values.Length);
 
     /// <summary>Wire-path factory: payload lives in an array rented from <see cref="RespirePools.ResponsePayloads"/>.</summary>
-    internal static RespireValue PooledString(RespDataType type, byte[] pooledArray, int length)
+    internal static RespValue PooledString(RespDataType type, byte[] pooledArray, int length)
         => new(type, ValueFlags.PooledPayload, payload: new ReadOnlyMemory<byte>(pooledArray, 0, length));
 
     /// <summary>Wire-path factory: elements live in an array rented from <see cref="RespirePools.ValueArrays"/>.</summary>
-    internal static RespireValue PooledAggregate(RespDataType type, RespireValue[] pooledElements, int count)
+    internal static RespValue PooledAggregate(RespDataType type, RespValue[] pooledElements, int count)
         => new(type, ValueFlags.PooledElements, elements: pooledElements, elementCount: count);
 
     public long AsInteger() => _type == RespDataType.Integer ? _integerValue : 0;
@@ -122,7 +122,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>, IDisposable
     public double AsDouble() => _type == RespDataType.Double ? BitConverter.Int64BitsToDouble(_integerValue) : 0.0;
 
     /// <summary>The value's element list for aggregate types (map pairs are flattened key,value,key,value).</summary>
-    public ReadOnlySpan<RespireValue> AsArray()
+    public ReadOnlySpan<RespValue> AsArray()
         => _elements is null ? default : _elements.AsSpan(0, _elementCount);
 
     public ReadOnlySpan<byte> AsSpan()
@@ -220,7 +220,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>, IDisposable
         };
     }
 
-    public bool Equals(RespireValue other)
+    public bool Equals(RespValue other)
     {
         if (_type != other._type)
         {
@@ -258,7 +258,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>, IDisposable
         }
     }
 
-    public override bool Equals(object? obj) => obj is RespireValue other && Equals(other);
+    public override bool Equals(object? obj) => obj is RespValue other && Equals(other);
 
     public override int GetHashCode() => HashCode.Combine(_type, _integerValue, _payload.Length, _elementCount);
 }
