@@ -14,11 +14,7 @@ public class TransactionTests
     private static readonly byte[] QueuedReply = "+QUEUED\r\n"u8.ToArray();
 
     private static ValueTask<RespireClient> ConnectAsync(int port)
-        => RespireClient.ConnectAsync(new RespireOptions
-        {
-            Endpoints = { new RespireEndpoint("127.0.0.1", port) },
-            Connections = 1,
-        });
+        => FakeRespServer.ConnectClientAsync(port);
 
     [Test]
     public async Task Transaction_SendsMultiCommandsExec_CompletesTypedPendings()

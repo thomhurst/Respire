@@ -128,17 +128,13 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         => client.StringAsync("GETRANGE", new Cmd3(Verbs.GetRange, client.Key(in key), start, end), cancellationToken);
 
     public ValueTask<long> IncrementAsync(RespireKey key, long by = 1, CancellationToken cancellationToken = default)
-        => by == 1
-            ? client.IntegerAsync("INCR", new Cmd1(Verbs.Incr, client.Key(in key)), cancellationToken)
-            : client.IntegerAsync("INCRBY", new Cmd2(Verbs.IncrBy, client.Key(in key), by), cancellationToken);
+        => client.IntegerAsync("INCRBY", new IncrementCommand(Verbs.Incr, Verbs.IncrBy, client.Key(in key), by), cancellationToken);
 
     public ValueTask<double> IncrementAsync(RespireKey key, double by, CancellationToken cancellationToken = default)
         => client.DoubleAsync("INCRBYFLOAT", new Cmd2(Verbs.IncrByFloat, client.Key(in key), by), cancellationToken);
 
     public ValueTask<long> DecrementAsync(RespireKey key, long by = 1, CancellationToken cancellationToken = default)
-        => by == 1
-            ? client.IntegerAsync("DECR", new Cmd1(Verbs.Decr, client.Key(in key)), cancellationToken)
-            : client.IntegerAsync("DECRBY", new Cmd2(Verbs.DecrBy, client.Key(in key), by), cancellationToken);
+        => client.IntegerAsync("DECRBY", new IncrementCommand(Verbs.Decr, Verbs.DecrBy, client.Key(in key), by), cancellationToken);
 
     public ValueTask<string?[]> GetManyAsync(params ReadOnlySpan<RespireKey> keys)
         => client.NullableStringArrayAsync("MGET", new CmdN(Verbs.MGet, client.MapKeys(keys)), CancellationToken.None);

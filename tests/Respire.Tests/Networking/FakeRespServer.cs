@@ -41,6 +41,17 @@ internal sealed class FakeRespServer : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Connects a single-connection client to a fake server's port. One connection keeps command
+    /// order deterministic, so tests can assert on <see cref="ReceivedCommands"/> by index.
+    /// </summary>
+    public static ValueTask<RespireClient> ConnectClientAsync(int port)
+        => RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", port) },
+            Connections = 1,
+        });
+
     public FakeRespServer(params byte[][] replies)
     {
         _replies = replies;

@@ -10,18 +10,11 @@ namespace Respire.Tests.Networking;
 /// </summary>
 public class IncrementWireTests
 {
-    private static ValueTask<RespireClient> ConnectAsync(int port)
-        => RespireClient.ConnectAsync(new RespireOptions
-        {
-            Endpoints = { new RespireEndpoint("127.0.0.1", port) },
-            Connections = 1,
-        });
-
     [Test]
     public async Task Increment_DefaultDelta_SendsIncr()
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
-        await using var client = await ConnectAsync(server.Port);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         var result = await client.IncrementAsync("counter");
 
@@ -33,7 +26,7 @@ public class IncrementWireTests
     public async Task Increment_ExplicitDelta_SendsIncrBy()
     {
         await using var server = new FakeRespServer(":5\r\n"u8.ToArray());
-        await using var client = await ConnectAsync(server.Port);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         var result = await client.IncrementAsync("counter", 5);
 
@@ -45,7 +38,7 @@ public class IncrementWireTests
     public async Task Decrement_DefaultDelta_SendsDecr()
     {
         await using var server = new FakeRespServer(":-1\r\n"u8.ToArray());
-        await using var client = await ConnectAsync(server.Port);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         var result = await client.DecrementAsync("counter");
 
@@ -57,7 +50,7 @@ public class IncrementWireTests
     public async Task Decrement_ExplicitDelta_SendsDecrBy()
     {
         await using var server = new FakeRespServer(":-3\r\n"u8.ToArray());
-        await using var client = await ConnectAsync(server.Port);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         var result = await client.DecrementAsync("counter", 3);
 
