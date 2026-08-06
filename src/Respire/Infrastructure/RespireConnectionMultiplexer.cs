@@ -155,6 +155,17 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             var old = Interlocked.Exchange(ref _connections[slot], replacement);
             _logger?.LogInformation("Replaced dead connection {Slot} to {Host}:{Port}", slot, Host, Port);
             await old.DisposeAsync().ConfigureAwait(false);
+
+            // Disposal may have swept the array between the pre-check above and the exchange,
+            // missing the just-published replacement. DisposeAsync sets _disposed before it
+            // sweeps, so if the flag is still clear here the sweep is guaranteed to see the
+            // replacement; otherwise take it back out and dispose it ourselves (double
+            // dispose is idempotent).
+            if (Volatile.Read(ref _disposed) != 0)
+            {
+                Interlocked.Exchange(ref _connections[slot], old);
+                await replacement.DisposeAsync().ConfigureAwait(false);
+            }
         }
         catch (Exception ex)
         {

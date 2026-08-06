@@ -184,7 +184,17 @@ public sealed class RespireConnection : IAsyncDisposable
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(commandCount);
 
-        // MULTI's +OK plus one +QUEUED per command precede the EXEC reply.
+        // MULTI's +OK plus one +QUEUED per command precede the EXEC reply. A transaction
+        // needing more slots than the ring holds could never enqueue and would spin in the
+        // slow path forever — reject it up front.
+        var slotsNeeded = commandCount + 2;
+        if (slotsNeeded > _inflight.Capacity)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(commandCount),
+                $"A transaction with {commandCount} commands needs {slotsNeeded} in-flight slots, but this connection allows {_inflight.Capacity} (see {nameof(RespireConnectionOptions)}.{nameof(RespireConnectionOptions.MaxInflightCommands)}).");
+        }
+
         return SendCoreAsync(
             new TransactionCommand(serializedCommands), discardRepliesBefore: commandCount + 1, cancellationToken);
     }

@@ -90,7 +90,10 @@ internal class RespireClientFactory : IRespireClientFactory
         }
         
         // Create client outside of lock to avoid blocking
-        var client = await RespireClient.CreateAsync(_host, _port, password: _password);
+        var options = _password is null
+            ? null
+            : new Respire.Networking.RespireConnectionOptions { Password = _password };
+        var client = await RespireClient.CreateAsync(_host, _port, options: options);
         
         lock (_lock)
         {

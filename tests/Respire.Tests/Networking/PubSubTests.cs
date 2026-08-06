@@ -109,6 +109,32 @@ public class PubSubTests
     }
 
     [Test]
+    public async Task Resubscribe_DuringInFlightUnsubscribe_KeepsNewHandler()
+    {
+        await using var server = new FakeRespServer(
+            SubscribeConfirmation,
+            "*3\r\n$11\r\nunsubscribe\r\n$2\r\nch\r\n:0\r\n"u8.ToArray(),
+            SubscribeConfirmation);
+        // Hold the unsubscribe confirmation so the re-subscribe below races it.
+        server.DelayReply(1, 300);
+        await using var subscriber = await RespireSubscriber.CreateAsync("127.0.0.1", server.Port);
+
+        await subscriber.SubscribeAsync("ch", (string _, in RespireValue _) => { });
+
+        var received = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var unsubscribeTask = subscriber.UnsubscribeAsync("ch").AsTask();
+        var resubscribeTask = subscriber.SubscribeAsync("ch", (string _, in RespireValue message) =>
+            received.TrySetResult(message.AsString())).AsTask();
+        await Task.WhenAll(unsubscribeTask, resubscribeTask);
+
+        // The server processed UNSUBSCRIBE then SUBSCRIBE, so it is subscribed again; the
+        // completed unsubscribe must not have deleted the newer handler.
+        await server.SendRawAsync(MessageFrame);
+
+        await Assert.That(await received.Task.WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo("hello");
+    }
+
+    [Test]
     public async Task Resp3PushFrame_RoutesToHandler_RepliesUnaffected()
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);

@@ -20,6 +20,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
 
     private readonly TcpListener _listener;
     private readonly byte[][] _replies;
+    private readonly Dictionary<int, int> _replyDelays = [];
     private readonly Task _acceptTask;
     private readonly CancellationTokenSource _cts = new();
     private readonly TaskCompletionSource<Socket> _clientSocket = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -48,6 +49,12 @@ internal sealed class FakeRespServer : IAsyncDisposable
         Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
         _acceptTask = Task.Run(RunAsync);
     }
+
+    /// <summary>
+    /// Delays the reply at the given script index, for tests that need client-side work to
+    /// happen while a command's confirmation is still in flight. Call before the command is sent.
+    /// </summary>
+    public void DelayReply(int replyIndex, int milliseconds) => _replyDelays[replyIndex] = milliseconds;
 
     /// <summary>Injects a server-initiated frame (e.g. a pub/sub message) onto the wire.</summary>
     public async Task SendRawAsync(byte[] frame)
@@ -83,6 +90,11 @@ internal sealed class FakeRespServer : IAsyncDisposable
                     RecordCommand(in command);
                     command.Dispose();
                     Interlocked.Increment(ref _commandsSeen);
+                    if (_replyDelays.TryGetValue(replyIndex, out var delay))
+                    {
+                        await Task.Delay(delay, _cts.Token);
+                    }
+
                     var reply = _replies[Math.Min(replyIndex++, _replies.Length - 1)];
                     await socket.SendAsync(reply, SocketFlags.None, _cts.Token);
                 }

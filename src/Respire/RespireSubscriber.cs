@@ -86,9 +86,21 @@ public sealed class RespireSubscriber : IAsyncDisposable
         ConcurrentDictionary<string, RespireMessageHandler> handlers, byte[] prefix, string key,
         CancellationToken cancellationToken)
     {
+        // Capture the handler this unsubscribe is retiring. If a concurrent SubscribeAsync
+        // for the same key installs a newer handler while the confirmation is in flight, the
+        // server ends up subscribed (its SUBSCRIBE is queued after our UNSUBSCRIBE), so only
+        // the captured handler may be removed — a blanket TryRemove would silently drop all
+        // messages for the re-subscribed channel.
+        handlers.TryGetValue(key, out var retiring);
+
         var reply = await _connection.SendAsync(
             new SingleValueCommand(prefix, key), cancellationToken).ConfigureAwait(false);
-        handlers.TryRemove(key, out _);
+
+        if (retiring is not null)
+        {
+            handlers.TryRemove(new KeyValuePair<string, RespireMessageHandler>(key, retiring));
+        }
+
         reply.ThrowIfError();
         reply.Dispose();
     }

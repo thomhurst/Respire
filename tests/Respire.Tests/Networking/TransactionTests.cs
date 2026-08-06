@@ -119,6 +119,20 @@ public class TransactionTests
     }
 
     [Test]
+    public async Task Transaction_LargerThanInflightRing_ThrowsInsteadOfSpinning()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        // Ring capacity 4: a 3-command transaction needs 5 slots and could never enqueue.
+        await using var connection = await Respire.Networking.RespireConnection.ConnectAsync(
+            "127.0.0.1", server.Port, new Respire.Networking.RespireConnectionOptions { MaxInflightCommands = 4 });
+
+        var body = "*3\r\n$3\r\nSET\r\n$1\r\nk\r\n$1\r\nv\r\n"u8.ToArray();
+
+        await Assert.That(async () => await connection.SendTransactionAsync(body, commandCount: 3))
+            .Throws<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
     public async Task Transaction_IsSingleShot()
     {
         await using var server = new FakeRespServer(
