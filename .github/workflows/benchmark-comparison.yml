@@ -1,0 +1,99 @@
+name: Respire vs StackExchange.Redis Benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: 'BenchmarkDotNet filter (e.g. *Get* to run only GET benchmarks)'
+        required: false
+        default: '*'
+      job:
+        description: 'BenchmarkDotNet job preset'
+        required: false
+        default: short
+        type: choice
+        options:
+          - short
+          - default
+          - medium
+          - long
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
+permissions:
+  contents: read
+
+jobs:
+  comparison-benchmarks:
+    name: Benchmark (${{ matrix.framework }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net9.0]
+
+    services:
+      redis:
+        image: redis:8.0
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDKs
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+
+      - name: Build benchmarks
+        run: dotnet build benchmarks/Respire.ComparisonBenchmarks -c Release
+
+      - name: Run comparison benchmarks
+        working-directory: benchmarks/Respire.ComparisonBenchmarks
+        env:
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          BENCH_FILTER: ${{ github.event.inputs.filter || '*' }}
+          BENCH_JOB: ${{ github.event.inputs.job || 'short' }}
+        run: |
+          dotnet run -c Release -f ${{ matrix.framework }} --no-build -- \
+            --filter "$BENCH_FILTER" \
+            --job "$BENCH_JOB" \
+            --exporters json markdown \
+            --artifacts ./BenchmarkDotNet.Artifacts
+
+      - name: Publish results to job summary
+        if: always()
+        run: |
+          echo "## Respire vs StackExchange.Redis (${{ matrix.framework }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Baseline is StackExchange.Redis — a Ratio below 1.00 means Respire is faster." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          RESULTS_DIR="benchmarks/Respire.ComparisonBenchmarks/BenchmarkDotNet.Artifacts/results"
+          if compgen -G "$RESULTS_DIR/*-report-github.md" > /dev/null; then
+            cat "$RESULTS_DIR"/*-report-github.md >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No benchmark results found in $RESULTS_DIR" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: comparison-benchmarks-${{ matrix.framework }}
+          path: benchmarks/Respire.ComparisonBenchmarks/BenchmarkDotNet.Artifacts/
+          retention-days: 90
