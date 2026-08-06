@@ -137,8 +137,18 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                     if (list.Count == 0)
                     {
                         _routes.Remove((subscription.Kind, name));
-                        releasedRoutes.Add((subscription.Kind, name));
                     }
+                }
+
+                // Released = no consumer remains, regardless of who removed the route. A
+                // disposal racing activation can strip the route before activation's SUBSCRIBE
+                // even goes out; deriving the unsubscribe list from "route absent" (rather
+                // than "this call removed the last entry") makes the rollback cover that
+                // ordering too. A redundant UNSUBSCRIBE is harmless; a missing one leaks a
+                // server-side subscription.
+                if (!_routes.ContainsKey((subscription.Kind, name)))
+                {
+                    releasedRoutes.Add((subscription.Kind, name));
                 }
             }
         }
