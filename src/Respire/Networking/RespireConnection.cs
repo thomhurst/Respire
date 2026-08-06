@@ -259,17 +259,20 @@ public sealed class RespireConnection : IAsyncDisposable
     private static WriteBuffer? _serializeScratch;
 
     /// <summary>
-    /// Set when a frame outgrew <see cref="ScratchRetainLimit"/>: the thread's next command
-    /// serializes directly into the active buffer under the gate instead, and stays on that
-    /// path while its frames remain large. A thread issuing sustained large writes therefore
-    /// reuses the active buffer's growth rather than renting, copying, and discarding an
-    /// oversized scratch buffer per command; the first small frame returns it to scratch.
+    /// Positive after a frame outgrew <see cref="ScratchRetainLimit"/>: the thread's next
+    /// commands serialize directly into the active buffer under the gate, whose storage
+    /// persists across commands. Any further large frame refreshes the budget, so workloads
+    /// mixing large writes with small commands stay on the direct path instead of renting,
+    /// copying, and discarding an oversized scratch buffer per large command (above the
+    /// pool's limit that is an LOH allocation each time). Sustained small traffic decays the
+    /// budget and returns to the scratch path.
     /// </summary>
     [ThreadStatic]
-    private static bool _bypassScratchNext;
+    private static int _directPathBudget;
 
     private const int ScratchInitialSize = 4 * 1024;
     private const int ScratchRetainLimit = 64 * 1024;
+    private const int DirectPathBudgetAfterLargeFrame = 64;
 
     /// <summary>
     /// Appends the command and its pending source atomically: buffer byte order must exactly
@@ -290,9 +293,9 @@ public sealed class RespireConnection : IAsyncDisposable
             return false;
         }
 
-        if (_bypassScratchNext)
+        if (_directPathBudget > 0)
         {
-            _bypassScratchNext = false;
+            _directPathBudget--;
             return TryEnqueueDirect(in command, source, discardRepliesBefore);
         }
 
@@ -335,14 +338,14 @@ public sealed class RespireConnection : IAsyncDisposable
             {
                 _serializeScratch = null;
                 scratch.Release();
-                _bypassScratchNext = true;
+                _directPathBudget = DirectPathBudgetAfterLargeFrame;
             }
         }
     }
 
     /// <summary>
     /// The pre-scratch path: serializes under the gate straight into the active buffer, whose
-    /// storage persists across commands. Used for the command after an oversized frame so
+    /// storage persists across commands. Used while the thread's direct-path budget lasts so
     /// large-write workloads reuse the active buffer's growth instead of churning scratch.
     /// </summary>
     private bool TryEnqueueDirect<TCommand>(in TCommand command, PendingResponseSource source, int discardRepliesBefore)
@@ -374,7 +377,7 @@ public sealed class RespireConnection : IAsyncDisposable
 
             if (_activeBuffer.Count - mark > ScratchRetainLimit)
             {
-                _bypassScratchNext = true;
+                _directPathBudget = DirectPathBudgetAfterLargeFrame;
             }
 
             for (var i = 0; i < discardRepliesBefore; i++)
