@@ -255,46 +255,64 @@ public sealed class RespireConnection : IAsyncDisposable
         return SendFireAndForgetSlowAsync(command, cancellationToken);
     }
 
+    [ThreadStatic]
+    private static WriteBuffer? _serializeScratch;
+
+    private const int ScratchInitialSize = 4 * 1024;
+    private const int ScratchRetainLimit = 64 * 1024;
+
     /// <summary>
     /// Appends the command and its pending source atomically: buffer byte order must exactly
     /// match ring order, or every later response on this connection answers the wrong command.
     /// A transaction reserves <paramref name="discardRepliesBefore"/> discard slots ahead of
     /// its real source, one per reply that is consumed but not delivered.
+    /// Serialization runs outside the write gate into a per-thread scratch buffer, so
+    /// concurrent callers contend only for a memcpy and the ring enqueue — not for UTF-8
+    /// encoding their payloads.
     /// </summary>
     private bool TryEnqueue<TCommand>(in TCommand command, PendingResponseSource source, int discardRepliesBefore = 0)
         where TCommand : struct, IRespCommand
     {
-        lock (_writeGate)
+        var scratch = _serializeScratch ??= new WriteBuffer(ScratchInitialSize);
+        try
         {
-            if (_dead)
-            {
-                throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
-            }
+            scratch.Reset();
+            var writer = new RespWriter(scratch);
+            command.Write(ref writer);
+            var frame = scratch.WrittenMemory.Span;
 
-            if (_inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
+            lock (_writeGate)
             {
-                return false;
-            }
+                if (_dead)
+                {
+                    throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+                }
 
-            var mark = _activeBuffer.Count;
-            try
-            {
-                var writer = new RespWriter(_activeBuffer);
-                command.Write(ref writer);
-            }
-            catch
-            {
-                _activeBuffer.TruncateTo(mark);
-                throw;
-            }
+                if (_inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
+                {
+                    return false;
+                }
 
-            for (var i = 0; i < discardRepliesBefore; i++)
-            {
-                _inflight.TryEnqueue(InflightRing.DiscardSentinel);
-            }
+                _activeBuffer.Append(frame);
 
-            _inflight.TryEnqueue(source);
-            return true;
+                for (var i = 0; i < discardRepliesBefore; i++)
+                {
+                    _inflight.TryEnqueue(InflightRing.DiscardSentinel);
+                }
+
+                _inflight.TryEnqueue(source);
+                return true;
+            }
+        }
+        finally
+        {
+            // An oversized frame (a multi-megabyte SET, a large transaction block) must not
+            // stay pinned to this thread for the rest of its life.
+            if (scratch.Capacity > ScratchRetainLimit)
+            {
+                _serializeScratch = null;
+                scratch.Release();
+            }
         }
     }
 
