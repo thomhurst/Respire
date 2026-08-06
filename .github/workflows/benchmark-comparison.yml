@@ -66,10 +66,12 @@ jobs:
         env:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
+          BENCH_FILTER: ${{ github.event.inputs.filter || '*' }}
+          BENCH_JOB: ${{ github.event.inputs.job || 'short' }}
         run: |
           dotnet run -c Release -f ${{ matrix.framework }} --no-build -- \
-            --filter "${{ github.event.inputs.filter || '*' }}" \
-            --job "${{ github.event.inputs.job || 'short' }}" \
+            --filter "$BENCH_FILTER" \
+            --job "$BENCH_JOB" \
             --exporters json markdown \
             --artifacts ./BenchmarkDotNet.Artifacts
 
