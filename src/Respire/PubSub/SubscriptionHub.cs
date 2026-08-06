@@ -47,24 +47,26 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             return;
         }
 
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        var connection = await EnsureConnectionAsync(cancellationToken).ConfigureAwait(false);
-
-        lock (_gate)
-        {
-            foreach (var name in subscription.Names)
-            {
-                if (!_routes.TryGetValue((subscription.Kind, name), out var list))
-                {
-                    _routes[(subscription.Kind, name)] = list = [];
-                }
-
-                list.Add(subscription);
-            }
-        }
-
+        var routed = false;
         try
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            var connection = await EnsureConnectionAsync(cancellationToken).ConfigureAwait(false);
+
+            lock (_gate)
+            {
+                foreach (var name in subscription.Names)
+                {
+                    if (!_routes.TryGetValue((subscription.Kind, name), out var list))
+                    {
+                        _routes[(subscription.Kind, name)] = list = [];
+                    }
+
+                    list.Add(subscription);
+                }
+            }
+
+            routed = true;
             foreach (var name in subscription.Names)
             {
                 await SendControlAsync(connection, SubscribeVerb(subscription.Kind), name, cancellationToken)
@@ -73,21 +75,26 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         }
         catch
         {
-            lock (_gate)
+            // Roll back completely so a later enumeration attempt subscribes from scratch.
+            if (routed)
             {
-                foreach (var name in subscription.Names)
+                lock (_gate)
                 {
-                    if (_routes.TryGetValue((subscription.Kind, name), out var list))
+                    foreach (var name in subscription.Names)
                     {
-                        list.Remove(subscription);
-                        if (list.Count == 0)
+                        if (_routes.TryGetValue((subscription.Kind, name), out var list))
                         {
-                            _routes.Remove((subscription.Kind, name));
+                            list.Remove(subscription);
+                            if (list.Count == 0)
+                            {
+                                _routes.Remove((subscription.Kind, name));
+                            }
                         }
                     }
                 }
             }
 
+            subscription.ResetActivation();
             throw;
         }
     }

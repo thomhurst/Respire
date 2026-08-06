@@ -43,6 +43,9 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
 
     internal bool TryMarkActivated() => Interlocked.CompareExchange(ref _activated, 1, 0) == 0;
 
+    /// <summary>Failed activations roll back so the next enumeration attempt subscribes again.</summary>
+    internal void ResetActivation() => Volatile.Write(ref _activated, 0);
+
     public IAsyncEnumerator<RespireMessage> GetAsyncEnumerator(CancellationToken cancellationToken = default)
         => EnumerateAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
 

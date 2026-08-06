@@ -261,14 +261,23 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             return;
         }
 
-        foreach (var connection in _connections)
+        // Wait out any in-flight EnsureConnectedAsync so connections it publishes are swept
+        // here instead of leaked, and so the gate is never disposed while held.
+        await _connectGate.WaitAsync().ConfigureAwait(false);
+        try
         {
-            if (connection is not null)
+            foreach (var connection in _connections)
             {
-                await connection.DisposeAsync().ConfigureAwait(false);
+                if (connection is not null)
+                {
+                    await connection.DisposeAsync().ConfigureAwait(false);
+                }
             }
         }
-
-        _connectGate.Dispose();
+        finally
+        {
+            _connectGate.Release();
+            _connectGate.Dispose();
+        }
     }
 }

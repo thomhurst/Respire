@@ -85,9 +85,10 @@ internal sealed class KeyCommands(RespireClient client) : IKeyCommands
         string? match = null, int pageSize = 250, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // A key-prefixed view scans inside its prefix and returns keys with the prefix stripped,
-        // so results round-trip through the same view's commands.
+        // so results round-trip through the same view's commands. The prefix is glob-escaped —
+        // a prefix like "tenant:*:" must match itself literally, never act as a wildcard.
         var prefix = client.KeyPrefix;
-        var effectiveMatch = prefix is null ? match : prefix + (match ?? "*");
+        var effectiveMatch = prefix is null ? match : EscapeGlob(prefix) + (match ?? "*");
 
         var cursor = "0";
         do
@@ -105,11 +106,40 @@ internal sealed class KeyCommands(RespireClient client) : IKeyCommands
 
             foreach (var key in page)
             {
-                yield return prefix is not null && key.StartsWith(prefix, StringComparison.Ordinal)
-                    ? key[prefix.Length..]
-                    : key;
+                if (prefix is null)
+                {
+                    yield return key;
+                }
+                else if (key.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    yield return key[prefix.Length..];
+                }
+
+                // Keys outside the literal prefix never leave a prefixed view.
             }
         }
         while (cursor != "0");
+    }
+
+    /// <summary>Escapes Redis glob metacharacters so the text matches itself literally.</summary>
+    private static string EscapeGlob(string value)
+    {
+        if (value.AsSpan().IndexOfAny(@"*?[]\") < 0)
+        {
+            return value;
+        }
+
+        var builder = new System.Text.StringBuilder(value.Length + 4);
+        foreach (var c in value)
+        {
+            if (c is '*' or '?' or '[' or ']' or '\\')
+            {
+                builder.Append('\\');
+            }
+
+            builder.Append(c);
+        }
+
+        return builder.ToString();
     }
 }

@@ -96,11 +96,26 @@ public sealed class RespireTransaction : IAsyncDisposable
         _completed = true;
         try
         {
-            var result = _watchConnection is not null
-                ? await _watchConnection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, cancellationToken)
-                    .ConfigureAwait(false)
-                : await _client.SendTransactionCoreAsync(_buffer.WrittenMemory, _ops.Count, cancellationToken)
-                    .ConfigureAwait(false);
+            RespValue result;
+            try
+            {
+                result = _watchConnection is not null
+                    ? await _watchConnection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, cancellationToken)
+                        .ConfigureAwait(false)
+                    : await _client.SendTransactionCoreAsync(_buffer.WrittenMemory, _ops.Count, cancellationToken)
+                        .ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // The commit never produced a reply (connection loss, cancellation, …): every
+                // pending must observe that failure, not a stale "not committed yet" state.
+                foreach (var op in _ops)
+                {
+                    op.Fail(ex);
+                }
+
+                throw;
+            }
 
             if (result.IsError)
             {
