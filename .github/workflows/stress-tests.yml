@@ -1,0 +1,135 @@
+name: Stress Tests
+
+on:
+  schedule:
+    - cron: '0 2 * * 0' # Weekly Sunday 2 AM UTC: all scenarios, both clients, defaults below
+  workflow_dispatch:
+    inputs:
+      duration_minutes:
+        description: 'Measured minutes per scenario/client pass (runtime ≈ passes × duration; all scenarios + both clients = 14 passes)'
+        required: false
+        default: '3'
+      scenario:
+        description: 'Scenario to run'
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - ping
+          - get
+          - set
+          - incr
+          - hash
+          - list
+          - mixed
+      client:
+        description: 'Client to run'
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - respire
+          - stackexchange
+      concurrency:
+        description: 'Concurrent workers per pass'
+        required: false
+        default: '50'
+      value_size_bytes:
+        description: 'Payload size in bytes for written values'
+        required: false
+        default: '1024'
+      framework:
+        description: 'Target framework'
+        required: false
+        default: net9.0
+        type: choice
+        options:
+          - net9.0
+          - net8.0
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
+permissions:
+  contents: read
+
+# Sustained runs on the same ref queue rather than interleave; results from a
+# cancelled half-run are worthless.
+concurrency:
+  group: stress-tests-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  stress:
+    name: Stress (${{ github.event.inputs.framework || 'net9.0' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+
+    services:
+      redis:
+        image: redis:8.0
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Setup .NET SDKs
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+
+      - name: Build stress tests
+        run: dotnet build tools/Respire.StressTests -c Release
+
+      # Inputs flow through env vars, not string interpolation into the script,
+      # to avoid script injection via crafted input values.
+      - name: Run stress tests
+        working-directory: tools/Respire.StressTests
+        env:
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          STRESS_DURATION_MINUTES: ${{ github.event.inputs.duration_minutes || '3' }}
+          STRESS_SCENARIO: ${{ github.event.inputs.scenario || 'all' }}
+          STRESS_CLIENT: ${{ github.event.inputs.client || 'all' }}
+          STRESS_CONCURRENCY: ${{ github.event.inputs.concurrency || '50' }}
+          STRESS_VALUE_SIZE: ${{ github.event.inputs.value_size_bytes || '1024' }}
+          STRESS_FRAMEWORK: ${{ github.event.inputs.framework || 'net9.0' }}
+        run: |
+          dotnet run -c Release -f "$STRESS_FRAMEWORK" --no-build -- \
+            --duration "$STRESS_DURATION_MINUTES" \
+            --scenario "$STRESS_SCENARIO" \
+            --client "$STRESS_CLIENT" \
+            --concurrency "$STRESS_CONCURRENCY" \
+            --value-size "$STRESS_VALUE_SIZE" \
+            --output ./results
+
+      - name: Publish report to job summary
+        if: always()
+        run: |
+          REPORT="tools/Respire.StressTests/results/stress-report.md"
+          if [ -f "$REPORT" ]; then
+            cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No stress report was produced (the run failed before reporting)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: stress-results-${{ github.event.inputs.framework || 'net9.0' }}
+          path: tools/Respire.StressTests/results/
+          retention-days: 90
