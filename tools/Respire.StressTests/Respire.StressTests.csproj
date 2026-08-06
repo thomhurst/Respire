@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <LangVersion>12</LangVersion>
+    <RootNamespace>Respire.StressTests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Respire\Respire.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="StackExchange.Redis" Version="3.1.11" />
+    <PackageReference Include="Testcontainers.Redis" Version="4.13.0" />
+  </ItemGroup>
+
+</Project>

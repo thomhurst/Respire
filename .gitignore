@@ -15,3 +15,5 @@ obj/
 
 # Serena cache
 .serena/
+# Stress test results
+tools/Respire.StressTests/results/
