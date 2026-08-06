@@ -79,9 +79,18 @@ public static class Program
             {
                 // Fresh client per pass so connection state and allocations never
                 // leak between passes, and disposal is itself exercised every time.
-                await using var client = await ConnectAsync(clientName, redis).ConfigureAwait(false);
+                var client = await ConnectAsync(clientName, redis).ConfigureAwait(false);
 
-                var result = await StressTestRunner.RunAsync(scenario, client, options).ConfigureAwait(false);
+                StressTestResult result;
+                try
+                {
+                    result = await StressTestRunner.RunAsync(scenario, client, options).ConfigureAwait(false);
+                }
+                finally
+                {
+                    await DisposeWithTimeoutAsync(client).ConfigureAwait(false);
+                }
+
                 results.Add(result);
 
                 var fileName = $"{result.Scenario}-{SanitizeFileName(result.Client)}.json";
@@ -161,15 +170,37 @@ public static class Program
                 $"Unknown client '{client}'. Valid clients: respire, stackexchange, all")
         };
 
+    private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan DisposeTimeout = TimeSpan.FromSeconds(30);
+
     private static async Task<IStressClient> ConnectAsync(string clientName, RedisEndpoint redis) =>
         clientName switch
         {
             RespireStressClient.ClientName =>
-                await RespireStressClient.ConnectAsync(redis.Host, redis.Port).ConfigureAwait(false),
+                await RespireStressClient.ConnectAsync(redis.Host, redis.Port)
+                    .WaitAsync(ConnectTimeout).ConfigureAwait(false),
             StackExchangeStressClient.ClientName =>
-                await StackExchangeStressClient.ConnectAsync(redis.Host, redis.Port).ConfigureAwait(false),
+                await StackExchangeStressClient.ConnectAsync(redis.Host, redis.Port)
+                    .WaitAsync(ConnectTimeout).ConfigureAwait(false),
             _ => throw new ArgumentOutOfRangeException(nameof(clientName), clientName, null)
         };
+
+    /// <summary>
+    /// Disposal of a client whose connection stopped responding (the situation a
+    /// stalled pass has just reported) can itself block forever; a hung dispose must
+    /// not turn one stalled pass into a hung run, so it is bounded and logged.
+    /// </summary>
+    private static async Task DisposeWithTimeoutAsync(IStressClient client)
+    {
+        try
+        {
+            await client.DisposeAsync().AsTask().WaitAsync(DisposeTimeout).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            Console.WriteLine($"  [{client.Name}] dispose did not complete within {DisposeTimeout.TotalSeconds:0}s; abandoning the connection");
+        }
+    }
 
     private static string SanitizeFileName(string clientName) =>
         clientName.ToLowerInvariant().Replace('.', '-');
