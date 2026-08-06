@@ -36,7 +36,10 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             SingleWriter = true,
             SingleReader = false,
         });
-        return new RespireSubscription(this, kind, names, buffer);
+
+        // Defensive copy: unsubscription must look up the names that were registered, not
+        // whatever the caller later wrote into their array.
+        return new RespireSubscription(this, kind, [.. names], buffer);
     }
 
     /// <summary>Registers the subscription's routes and sends SUBSCRIBE; idempotent per subscription.</summary>
@@ -55,6 +58,10 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
 
             lock (_gate)
             {
+                // Re-checked under the routing gate: disposal snapshots and completes routed
+                // subscriptions under this same lock, so an activation that loses the race must
+                // not register routes (and subscribe server-side) on a disposed hub.
+                ObjectDisposedException.ThrowIf(_disposed, this);
                 foreach (var name in subscription.Names)
                 {
                     if (!_routes.TryGetValue((subscription.Kind, name), out var list))

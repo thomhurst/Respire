@@ -1,3 +1,4 @@
+using Respire.Internal;
 using Respire.Protocol;
 
 namespace Respire;
@@ -6,38 +7,28 @@ namespace Respire;
 /// A zero-copy read result backed by pooled memory. Valid until <see cref="Dispose"/>; the
 /// friendly APIs (<c>GetStringAsync</c>, …) never hand out pooled memory — only methods with
 /// "Lease" in the name do, so the disposal obligation is always visible at the call site.
+/// Copies share one owner: disposal is idempotent across copies, and a disposed lease reads
+/// as null/empty.
 /// </summary>
-public struct RespireLease : IDisposable
+public readonly struct RespireLease : IDisposable
 {
-    private RespValue _value;
-    private bool _disposed;
+    private readonly PooledValueOwner? _owner;
 
-    internal RespireLease(in RespValue value)
-    {
-        _value = value;
-    }
+    internal RespireLease(in RespValue value) => _owner = new PooledValueOwner(in value);
 
-    /// <summary>True when the key was missing.</summary>
-    public readonly bool IsNull => _value.IsNull;
+    private RespValue Value => _owner?.Value ?? default;
 
-    public readonly int Length => Span.Length;
+    /// <summary>True when the key was missing (or the lease has been disposed).</summary>
+    public bool IsNull => Value.IsNull;
+
+    public int Length => Span.Length;
 
     /// <summary>The payload. Do not use after <see cref="Dispose"/>.</summary>
-    public readonly ReadOnlySpan<byte> Span => _value.AsSpan();
+    public ReadOnlySpan<byte> Span => Value.AsSpan();
 
     /// <summary>Decodes the payload as a UTF-8 string (allocates).</summary>
-    public readonly override string ToString() => _value.AsString();
+    public override string ToString() => Value.AsString();
 
-    /// <summary>Returns the pooled buffer. Safe to call more than once.</summary>
-    public void Dispose()
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        _disposed = true;
-        _value.Dispose();
-        _value = default;
-    }
+    /// <summary>Returns the pooled buffer. Safe to call more than once (and on copies).</summary>
+    public void Dispose() => _owner?.Dispose();
 }
