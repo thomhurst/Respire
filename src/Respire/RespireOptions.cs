@@ -78,7 +78,11 @@ public sealed record RespireOptions
     /// </summary>
     public TimeSpan? CommandTimeout { get; init; }
 
-    /// <summary>Multiplexed connections to open; 0 picks a size from the processor count.</summary>
+    /// <summary>
+    /// Multiplexed connections to open; 0 (the default) opens one. A single connection
+    /// maximizes command coalescing per syscall and is fastest for typical workloads;
+    /// raise it only if profiling shows a single socket saturated.
+    /// </summary>
     public int Connections { get; init; }
 
     /// <summary>Serializer behind <c>GetAsync&lt;T&gt;</c>/<c>SetAsync&lt;T&gt;</c>. System.Text.Json by default.</summary>
