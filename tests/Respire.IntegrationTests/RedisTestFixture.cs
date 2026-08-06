@@ -9,8 +9,8 @@ public class RedisTestFixture : IAsyncInitializer, IAsyncDisposable
     private readonly RedisContainer _redisContainer = new RedisBuilder().Build();
     
     public string ConnectionString => _redisContainer.GetConnectionString() ?? throw new InvalidOperationException("Redis container not initialized");
-    public static string Host { get; private set; } = "localhost";
-    public static int Port { get; private set; }
+    public string Host { get; private set; } = "localhost";
+    public int Port { get; private set; }
     
     public async Task InitializeAsync()
     {

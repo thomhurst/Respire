@@ -52,6 +52,7 @@ jobs:
         run: |
           dotnet run --project tests/Respire.IntegrationTests/Respire.IntegrationTests.csproj \
             -c Release \
+            -f ${{ matrix.framework }} \
             --no-build
         env:
           DOCKER_HOST: unix:///var/run/docker.sock
@@ -78,12 +79,12 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 🎯 Performance Optimizations Active" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✅ ConnectionLease pattern for zero-allocation connections" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Synchronous fast paths to eliminate async state machines" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Connection handle pooling for object reuse" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Pre-built command messages for zero command building" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Write coalescing: pipelined commands batched into single sends" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Pooled IValueTaskSource completion sources (no Task allocations)" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Direct socket I/O with pooled buffers (single-copy receive path)" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Struct commands with pre-compiled RESP prefixes" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Target**: GET allocations reduced from ~616B to ~232B per operation" >> $GITHUB_STEP_SUMMARY
+          echo "**Target**: zero caller-thread allocations per operation" >> $GITHUB_STEP_SUMMARY
       
       # Test artifacts are not generated with dotnet run
 

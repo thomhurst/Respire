@@ -1,4 +1,3 @@
-using System.Buffers;
 using System.Text;
 using BenchmarkDotNet.Attributes;
 using Respire.Protocol;
@@ -16,294 +15,86 @@ public class ProtocolBenchmarks
     private byte[] _largeArrayData = null!;
     private byte[] _nestedArrayData = null!;
     private byte[] _mixedTypesData = null!;
-    
-    private ArrayPool<byte> _bytePool = null!;
-    private ArrayPool<RespireValue> _valuePool = null!;
-    private ArrayBufferWriter<byte> _writer = null!;
 
     [GlobalSetup]
     public void Setup()
     {
-        _bytePool = ArrayPool<byte>.Shared;
-        _valuePool = ArrayPool<RespireValue>.Shared;
-        _writer = new ArrayBufferWriter<byte>(4096);
-        
-        // Simple string: +OK\r\n
         _simpleStringData = "+OK\r\n"u8.ToArray();
-        
-        // Bulk string: $11\r\nHello World\r\n
         _bulkStringData = "$11\r\nHello World\r\n"u8.ToArray();
-        
-        // Integer: :42\r\n
         _integerData = ":42\r\n"u8.ToArray();
-        
-        // Array with 3 bulk strings: *3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n
         _arrayData = "*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n"u8.ToArray();
-        
-        // Large array with 100 integers
+
         var largeArrayBuilder = new StringBuilder();
         largeArrayBuilder.Append("*100\r\n");
         for (var i = 0; i < 100; i++)
         {
             largeArrayBuilder.Append($":{i}\r\n");
         }
+
         _largeArrayData = Encoding.UTF8.GetBytes(largeArrayBuilder.ToString());
-        
-        // Nested array: *2\r\n*3\r\n:1\r\n:2\r\n:3\r\n*2\r\n+OK\r\n$4\r\ntest\r\n
+
         _nestedArrayData = "*2\r\n*3\r\n:1\r\n:2\r\n:3\r\n*2\r\n+OK\r\n$4\r\ntest\r\n"u8.ToArray();
-        
-        // Mixed types array: *6\r\n+OK\r\n:42\r\n$4\r\ntest\r\n_\r\n#t\r\n,3.14\r\n
         _mixedTypesData = "*6\r\n+OK\r\n:42\r\n$4\r\ntest\r\n_\r\n#t\r\n,3.14\r\n"u8.ToArray();
     }
 
-    [GlobalCleanup]
-    public void Cleanup()
-    {
-        // ArrayBufferWriter doesn't need disposal
-    }
-
     // ===== PARSING BENCHMARKS =====
-    
+
     [Benchmark(Description = "Parse Simple String")]
     [BenchmarkCategory("Parsing", "SimpleTypes")]
-    public RespireValue ParseSimpleString()
-    {
-        var sequence = new ReadOnlySequence<byte>(_simpleStringData);
-        var reader = new RespPipelineReader(sequence);
-        reader.TryReadValue(out var value);
-        return value;
-    }
+    public RespDataType ParseSimpleString() => ParseAndDispose(_simpleStringData);
 
     [Benchmark(Description = "Parse Bulk String")]
     [BenchmarkCategory("Parsing", "SimpleTypes")]
-    public RespireValue ParseBulkString()
-    {
-        var sequence = new ReadOnlySequence<byte>(_bulkStringData);
-        var reader = new RespPipelineReader(sequence);
-        reader.TryReadValue(out var value);
-        return value;
-    }
+    public RespDataType ParseBulkString() => ParseAndDispose(_bulkStringData);
 
     [Benchmark(Description = "Parse Integer")]
     [BenchmarkCategory("Parsing", "SimpleTypes")]
-    public RespireValue ParseInteger()
-    {
-        var sequence = new ReadOnlySequence<byte>(_integerData);
-        var reader = new RespPipelineReader(sequence);
-        reader.TryReadValue(out var value);
-        return value;
-    }
+    public RespDataType ParseInteger() => ParseAndDispose(_integerData);
 
     [Benchmark(Description = "Parse Command Array")]
     [BenchmarkCategory("Parsing", "Arrays")]
-    public RespireValue ParseCommandArray()
-    {
-        var sequence = new ReadOnlySequence<byte>(_arrayData);
-        var reader = new RespPipelineReader(sequence);
-        reader.TryReadValue(out var value);
-        return value;
-    }
+    public RespDataType ParseCommandArray() => ParseAndDispose(_arrayData);
 
-    [Benchmark(Description = "Parse Large Array (100 items)")]
+    [Benchmark(Description = "Parse Large Array (100 ints)")]
     [BenchmarkCategory("Parsing", "Arrays")]
-    public RespireValue ParseLargeArray()
-    {
-        var sequence = new ReadOnlySequence<byte>(_largeArrayData);
-        var reader = new RespPipelineReader(sequence);
-        reader.TryReadValue(out var value);
-        return value;
-    }
+    public RespDataType ParseLargeArray() => ParseAndDispose(_largeArrayData);
 
     [Benchmark(Description = "Parse Nested Array")]
     [BenchmarkCategory("Parsing", "Arrays")]
-    public RespireValue ParseNestedArray()
-    {
-        var sequence = new ReadOnlySequence<byte>(_nestedArrayData);
-        var reader = new RespPipelineReader(sequence);
-        reader.TryReadValue(out var value);
-        return value;
-    }
+    public RespDataType ParseNestedArray() => ParseAndDispose(_nestedArrayData);
 
     [Benchmark(Description = "Parse Mixed Types Array")]
     [BenchmarkCategory("Parsing", "Arrays")]
-    public RespireValue ParseMixedTypesArray()
+    public RespDataType ParseMixedTypesArray() => ParseAndDispose(_mixedTypesData);
+
+    private static RespDataType ParseAndDispose(ReadOnlySpan<byte> data)
     {
-        var sequence = new ReadOnlySequence<byte>(_mixedTypesData);
-        var reader = new RespPipelineReader(sequence);
-        reader.TryReadValue(out var value);
-        return value;
+        var pos = 0;
+        RespParser.TryParseValue(data, ref pos, out var value);
+        var type = value.Type;
+        value.Dispose();
+        return type;
     }
 
-    // ===== WRITING BENCHMARKS =====
+    // ===== COMMAND BUILDING BENCHMARKS =====
 
-    [Benchmark(Description = "Write Simple String")]
-    [BenchmarkCategory("Writing", "SimpleTypes")]
-    public void WriteSimpleString()
+    [Benchmark(Description = "Build GET command (span)")]
+    [BenchmarkCategory("Writing")]
+    public int BuildGetCommand()
     {
-        _writer.Clear();
-        // Writer benchmarks disabled - need new writer implementation
-        // var writer = new RespWriter(_writer, _bytePool);
-        // writer.Write(RespireValue.SimpleString("OK"));
+        Span<byte> buffer = stackalloc byte[256];
+        return RespCommands.BuildGetCommand(buffer, "mykey");
     }
 
-    [Benchmark(Description = "Write Bulk String")]
-    [BenchmarkCategory("Writing", "SimpleTypes")]
-    public void WriteBulkString()
+    [Benchmark(Description = "Build SET command (span)")]
+    [BenchmarkCategory("Writing")]
+    public int BuildSetCommand()
     {
-        _writer.Clear();
-        // Writer benchmarks disabled - need new writer implementation
-        // var writer = new RespWriter(_writer, _bytePool);
-        // writer.Write(RespireValue.BulkString("Hello World"));
+        Span<byte> buffer = stackalloc byte[512];
+        return RespCommands.BuildSetCommand(buffer, "mykey", "myvalue");
     }
 
-    [Benchmark(Description = "Write Integer")]
-    [BenchmarkCategory("Writing", "SimpleTypes")]
-    public void WriteInteger()
-    {
-        _writer.Clear();
-        // Writer benchmarks disabled - need new writer implementation
-        // var writer = new RespWriter(_writer, _bytePool);
-        // writer.Write(RespireValue.Integer(42));
-    }
-
-    [Benchmark(Description = "Write Command")]
-    [BenchmarkCategory("Writing", "Commands")]
-    public void WriteCommand()
-    {
-        _writer.Clear();
-        // Writer benchmarks disabled - need new writer implementation
-        // var writer = new RespWriter(_writer, _bytePool);
-        // writer.WriteCommand("SET", "key", "value");
-    }
-
-    [Benchmark(Description = "Write Large Command (10 args)")]
-    [BenchmarkCategory("Writing", "Commands")]
-    public void WriteLargeCommand()
-    {
-        _writer.Clear();
-        // Writer benchmarks disabled - need new writer implementation
-        // var writer = new RespWriter(_writer, _bytePool);
-        var args = new[] { "arg1", "arg2", "arg3", "arg4", "arg5", "arg6", "arg7", "arg8", "arg9", "arg10" };
-        // writer.WriteCommand("COMMAND", args);
-    }
-
-    [Benchmark(Description = "Write Array of 100 Integers")]
-    [BenchmarkCategory("Writing", "Arrays")]
-    public void WriteLargeArray()
-    {
-        _writer.Clear();
-        // Writer benchmarks disabled - need new writer implementation
-        // var writer = new RespWriter(_writer, _bytePool);
-        
-        var values = new RespireValue[100];
-        for (var i = 0; i < 100; i++)
-        {
-            values[i] = RespireValue.Integer(i);
-        }
-        
-        // writer.Write(RespireValue.Array(values));
-    }
-
-    [Benchmark(Description = "Write Mixed Types Array")]
-    [BenchmarkCategory("Writing", "Arrays")]
-    public void WriteMixedTypesArray()
-    {
-        _writer.Clear();
-        // Writer benchmarks disabled - need new writer implementation
-        // var writer = new RespWriter(_writer, _bytePool);
-        
-        var array = RespireValue.Array(
-            RespireValue.SimpleString("OK"),
-            RespireValue.Integer(42),
-            RespireValue.BulkString("test"),
-            RespireValue.Null,
-            RespireValue.Boolean(true),
-            RespireValue.Double(3.14)
-        );
-        
-        // writer.Write(array);
-    }
-
-    // ===== ROUND-TRIP BENCHMARKS =====
-
-    [Benchmark(Description = "Round-trip Simple Types")]
-    [BenchmarkCategory("RoundTrip")]
-    public void RoundTripSimpleTypes()
-    {
-        // Parse
-        var sequence = new ReadOnlySequence<byte>(_bulkStringData);
-        var reader = new RespPipelineReader(sequence);
-        reader.TryReadValue(out var value);
-        
-        // Write
-        _writer.Clear();
-        // Writer benchmarks disabled - need new writer implementation
-        // var writer = new RespWriter(_writer, _bytePool);
-        // writer.Write(value);
-    }
-
-    [Benchmark(Description = "Round-trip Command Array")]
-    [BenchmarkCategory("RoundTrip")]
-    public void RoundTripCommandArray()
-    {
-        // Parse
-        var sequence = new ReadOnlySequence<byte>(_arrayData);
-        var reader = new RespPipelineReader(sequence);
-        reader.TryReadValue(out var value);
-        
-        // Write
-        _writer.Clear();
-        // Writer benchmarks disabled - need new writer implementation
-        // var writer = new RespWriter(_writer, _bytePool);
-        // writer.Write(value);
-    }
-
-    [Benchmark(Description = "Round-trip Large Array")]
-    [BenchmarkCategory("RoundTrip")]
-    public void RoundTripLargeArray()
-    {
-        // Parse
-        var sequence = new ReadOnlySequence<byte>(_largeArrayData);
-        var reader = new RespPipelineReader(sequence);
-        reader.TryReadValue(out var value);
-        
-        // Write
-        _writer.Clear();
-        // Writer benchmarks disabled - need new writer implementation
-        // var writer = new RespWriter(_writer, _bytePool);
-        // writer.Write(value);
-    }
-
-    // ===== ALLOCATION STRESS TESTS =====
-
-    [Benchmark(Description = "1000 Parse Operations")]
-    [BenchmarkCategory("Stress")]
-    public void ThousandParseOperations()
-    {
-        for (var i = 0; i < 1000; i++)
-        {
-            var sequence = new ReadOnlySequence<byte>(_mixedTypesData);
-            var reader = new RespPipelineReader(sequence);
-            reader.TryReadValue(out _);
-        }
-    }
-
-    [Benchmark(Description = "1000 Write Operations")]
-    [BenchmarkCategory("Stress")]
-    public void ThousandWriteOperations()
-    {
-        var value = RespireValue.Array(
-            RespireValue.SimpleString("OK"),
-            RespireValue.Integer(42),
-            RespireValue.BulkString("test")
-        );
-
-        for (var i = 0; i < 1000; i++)
-        {
-            _writer.Clear();
-            // Writer benchmarks disabled - need new writer implementation
-        // var writer = new RespWriter(_writer, _bytePool);
-            // writer.Write(value);
-        }
-    }
+    [Benchmark(Description = "Pre-compiled PING")]
+    [BenchmarkCategory("Writing")]
+    public int PreCompiledPing() => RespCommands.Ping.Length;
 }

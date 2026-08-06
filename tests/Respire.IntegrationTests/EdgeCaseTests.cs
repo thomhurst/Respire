@@ -7,6 +7,7 @@ using TUnit.Assertions;
 namespace Respire.IntegrationTests;
 
 [ClassDataSource<RedisTestFixture>(Shared = SharedType.Keyed)]
+[NotInParallel("redis-integration")]
 public class EdgeCaseTests
 {
     private readonly RedisTestFixture _fixture;
@@ -22,7 +23,7 @@ public class EdgeCaseTests
     [Before(HookType.Test)]
     public async Task InitializeAsync()
     {
-        _respireClient = await RespireClient.CreateAsync(RedisTestFixture.Host, RedisTestFixture.Port);
+        _respireClient = await RespireClient.CreateAsync(_fixture.Host, _fixture.Port);
         _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.ConnectionString);
         _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase();
         await _stackExchangeDb.ExecuteAsync("FLUSHDB");
@@ -70,9 +71,10 @@ public class EdgeCaseTests
         // Set empty string with Respire
         await _respireClient.SetAsync(emptyKey2, "");
         
-        // Get with StackExchange
+        // Get with StackExchange. RedisValue.HasValue means "non-null and non-empty",
+        // so for an empty string assert on IsNull instead.
         var empty2 = await _stackExchangeDb.StringGetAsync(emptyKey2);
-        empty2.HasValue.Should().BeTrue();
+        empty2.IsNull.Should().BeFalse();
         empty2.ToString().Should().Be("");
     }
     

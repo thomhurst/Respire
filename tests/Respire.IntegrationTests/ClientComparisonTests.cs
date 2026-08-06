@@ -7,6 +7,7 @@ using TUnit.Assertions;
 namespace Respire.IntegrationTests;
 
 [ClassDataSource<RedisTestFixture>(Shared = SharedType.Keyed)]
+[NotInParallel("redis-integration")]
 public class ClientComparisonTests
 {
     private readonly RedisTestFixture _fixture;
@@ -23,7 +24,7 @@ public class ClientComparisonTests
     public async Task InitializeAsync()
     {
         // Initialize Respire client
-        _respireClient = await RespireClient.CreateAsync(RedisTestFixture.Host, RedisTestFixture.Port);
+        _respireClient = await RespireClient.CreateAsync(_fixture.Host, _fixture.Port);
         
         // Initialize StackExchange.Redis client
         _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.ConnectionString);

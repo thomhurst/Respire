@@ -7,6 +7,7 @@ using TUnit.Core;
 namespace Respire.IntegrationTests;
 
 [ClassDataSource<RedisTestFixture>(Shared = SharedType.PerClass)]
+[NotInParallel("redis-integration")]
 public class GetSetOperationsTests(RedisTestFixture fixture)
 {
     private readonly RedisTestFixture _fixture = fixture;

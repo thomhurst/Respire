@@ -1,0 +1,810 @@
+using System.Net.Sockets;
+using System.Runtime.CompilerServices;
+using Microsoft.Extensions.Logging;
+using Respire.Protocol;
+
+namespace Respire.Networking;
+
+/// <summary>
+/// A single multiplexed RESP connection: one socket, a coalescing write path, a dedicated
+/// receive loop, and a FIFO in-flight queue pairing pipelined commands with their responses.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>Write path.</b> Callers serialize their command into the active write buffer and enqueue
+/// a pooled completion source into the in-flight ring under one short lock, then a single
+/// flush loop (started on demand, never more than one) swaps the double buffers and sends the
+/// coalesced bytes — many pipelined commands per syscall. Socket sends are never cancelled:
+/// aborting a partially sent frame would desynchronize the protocol stream permanently, so
+/// failures abort the whole connection instead.
+/// </para>
+/// <para>
+/// <b>Read path.</b> One receive loop reads straight from the socket into a pooled contiguous
+/// buffer (no pipe — that costs a second full-payload copy) and incrementally parses RESP
+/// values, copying each payload exactly once into pooled storage owned by the completed
+/// <see cref="RespireValue"/>. Bulk payloads at or above <see cref="DirectFillThreshold"/> are
+/// received directly into their pooled payload array. Because RESP has no correlation ids,
+/// responses complete in-flight sources strictly in FIFO order.
+/// </para>
+/// <para>
+/// <b>Failure.</b> Any socket fault marks the connection dead, wakes the receive loop by
+/// closing the socket, and fails every in-flight command. Dead connections are replaced by the
+/// multiplexer, never revived in place.
+/// </para>
+/// </remarks>
+public sealed class RespireConnection : IAsyncDisposable
+{
+    private const int DirectFillThreshold = 4 * 1024;
+    private const int MaxResponseSize = 512 * 1024 * 1024;
+
+    private readonly Socket _socket;
+    private readonly object _writeGate = new();
+    private readonly InflightRing _inflight;
+    private readonly PendingResponsePool _sourcePool;
+    private readonly int _receiveBufferSize;
+    private readonly ILogger? _logger;
+    private readonly RespirePushHandler? _pushHandler;
+    private readonly Task _receiveTask;
+    private readonly Task _flushTask;
+    private readonly AsyncFlushSignal _flushSignal = new();
+
+    private WriteBuffer _activeBuffer;
+    private WriteBuffer _spareBuffer;
+    private bool _dead;
+    private int _disposed;
+
+    public string Host { get; }
+    public int Port { get; }
+    public bool IsConnected => !Volatile.Read(ref _dead);
+
+    private RespireConnection(Socket socket, string host, int port, RespireConnectionOptions options, ILogger? logger)
+    {
+        _socket = socket;
+        Host = host;
+        Port = port;
+        _logger = logger;
+        _pushHandler = options.PushHandler;
+        _receiveBufferSize = options.ReceiveBufferSize;
+        _inflight = new InflightRing(options.MaxInflightCommands);
+        _sourcePool = new PendingResponsePool(options.CompletionSourcePoolSize);
+        _activeBuffer = new WriteBuffer(options.WriteBufferSize);
+        _spareBuffer = new WriteBuffer(options.WriteBufferSize);
+        _receiveTask = Task.Run(ReceiveLoopAsync);
+        _flushTask = Task.Run(FlushLoopAsync);
+    }
+
+    public static async Task<RespireConnection> ConnectAsync(
+        string host,
+        int port,
+        RespireConnectionOptions? options = null,
+        ILogger? logger = null,
+        CancellationToken cancellationToken = default)
+    {
+        options ??= RespireConnectionOptions.Default;
+
+        var socket = new Socket(SocketType.Stream, ProtocolType.Tcp)
+        {
+            NoDelay = true,
+        };
+
+        if (options.SocketReceiveBufferSize > 0)
+        {
+            socket.ReceiveBufferSize = options.SocketReceiveBufferSize;
+        }
+
+        if (options.SocketSendBufferSize > 0)
+        {
+            socket.SendBufferSize = options.SocketSendBufferSize;
+        }
+
+        try
+        {
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(options.ConnectTimeout);
+            await socket.ConnectAsync(host, port, timeoutCts.Token).ConfigureAwait(false);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+
+        logger?.LogDebug("Connected to {Host}:{Port}", host, port);
+        var connection = new RespireConnection(socket, host, port, options, logger);
+        try
+        {
+            await connection.HandshakeAsync(options, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+
+        return connection;
+    }
+
+    /// <summary>
+    /// Runs HELLO/AUTH/CLIENT SETNAME through the normal send path before the connection is
+    /// handed out, so every later command runs on an authenticated, protocol-negotiated stream.
+    /// </summary>
+    private async Task HandshakeAsync(RespireConnectionOptions options, CancellationToken cancellationToken)
+    {
+        if (options.UseResp3)
+        {
+            var reply = await SendAsync(
+                new Commands.HelloCommand(options.Username, options.Password), cancellationToken).ConfigureAwait(false);
+            ThrowIfHandshakeFailed(in reply, "HELLO");
+            reply.Dispose();
+        }
+        else if (options.Password is not null)
+        {
+            var reply = await SendAsync(
+                new Commands.AuthCommand(options.Username, options.Password), cancellationToken).ConfigureAwait(false);
+            ThrowIfHandshakeFailed(in reply, "AUTH");
+            reply.Dispose();
+        }
+
+        if (options.ClientName is not null)
+        {
+            var reply = await SendAsync(
+                new Commands.ClientSetNameCommand(options.ClientName), cancellationToken).ConfigureAwait(false);
+            ThrowIfHandshakeFailed(in reply, "CLIENT SETNAME");
+            reply.Dispose();
+        }
+    }
+
+    private void ThrowIfHandshakeFailed(in RespireValue reply, string step)
+    {
+        if (reply.IsError)
+        {
+            var message = reply.GetErrorMessage();
+            reply.Dispose();
+            throw new RespireConnectionException($"{step} failed for {Host}:{Port}: {message}");
+        }
+    }
+
+    /// <summary>
+    /// Serializes the command into the coalescing write buffer and returns a task that
+    /// completes with its response.
+    /// </summary>
+    public ValueTask<RespireValue> SendAsync<TCommand>(in TCommand command, CancellationToken cancellationToken = default)
+        where TCommand : struct, IRespCommand
+        => SendCoreAsync(in command, discardRepliesBefore: 0, cancellationToken);
+
+    /// <summary>
+    /// Sends MULTI + pre-serialized commands + EXEC as one atomic append, so no other
+    /// multiplexed command can interleave into the server-side transaction state. MULTI's +OK
+    /// and each +QUEUED reply are consumed and discarded; the returned task completes with
+    /// EXEC's reply — an array of per-command results, or an error (e.g. EXECABORT when a
+    /// command failed to queue).
+    /// </summary>
+    public ValueTask<RespireValue> SendTransactionAsync(
+        ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(commandCount);
+
+        // MULTI's +OK plus one +QUEUED per command precede the EXEC reply. A transaction
+        // needing more slots than the ring holds could never enqueue and would spin in the
+        // slow path forever — reject it up front.
+        var slotsNeeded = commandCount + 2;
+        if (slotsNeeded > _inflight.Capacity)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(commandCount),
+                $"A transaction with {commandCount} commands needs {slotsNeeded} in-flight slots, but this connection allows {_inflight.Capacity} (see {nameof(RespireConnectionOptions)}.{nameof(RespireConnectionOptions.MaxInflightCommands)}).");
+        }
+
+        return SendCoreAsync(
+            new TransactionCommand(serializedCommands), discardRepliesBefore: commandCount + 1, cancellationToken);
+    }
+
+    private ValueTask<RespireValue> SendCoreAsync<TCommand>(
+        in TCommand command, int discardRepliesBefore, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var source = _sourcePool.Rent();
+        bool enqueued;
+        try
+        {
+            enqueued = TryEnqueue(in command, source, discardRepliesBefore);
+        }
+        catch
+        {
+            ReclaimUnpublished(source);
+            throw;
+        }
+
+        if (enqueued)
+        {
+            source.RegisterCancellation(cancellationToken);
+            ScheduleFlush();
+            return source.Task;
+        }
+
+        return SendSlowAsync(command, source, discardRepliesBefore, cancellationToken);
+    }
+
+    /// <summary>
+    /// Sends a command whose response is read from the wire but discarded. Completes once the
+    /// command is queued for sending.
+    /// </summary>
+    public ValueTask SendFireAndForgetAsync<TCommand>(in TCommand command, CancellationToken cancellationToken = default)
+        where TCommand : struct, IRespCommand
+    {
+        if (TryEnqueue(in command, InflightRing.DiscardSentinel))
+        {
+            ScheduleFlush();
+            return ValueTask.CompletedTask;
+        }
+
+        return SendFireAndForgetSlowAsync(command, cancellationToken);
+    }
+
+    /// <summary>
+    /// Appends the command and its pending source atomically: buffer byte order must exactly
+    /// match ring order, or every later response on this connection answers the wrong command.
+    /// A transaction reserves <paramref name="discardRepliesBefore"/> discard slots ahead of
+    /// its real source, one per reply that is consumed but not delivered.
+    /// </summary>
+    private bool TryEnqueue<TCommand>(in TCommand command, PendingResponseSource source, int discardRepliesBefore = 0)
+        where TCommand : struct, IRespCommand
+    {
+        lock (_writeGate)
+        {
+            if (_dead)
+            {
+                throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+            }
+
+            if (_inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
+            {
+                return false;
+            }
+
+            var mark = _activeBuffer.Count;
+            try
+            {
+                var writer = new RespWriter(_activeBuffer);
+                command.Write(ref writer);
+            }
+            catch
+            {
+                _activeBuffer.TruncateTo(mark);
+                throw;
+            }
+
+            for (var i = 0; i < discardRepliesBefore; i++)
+            {
+                _inflight.TryEnqueue(InflightRing.DiscardSentinel);
+            }
+
+            _inflight.TryEnqueue(source);
+            return true;
+        }
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<RespireValue> SendSlowAsync<TCommand>(
+        TCommand command, PendingResponseSource source, int discardRepliesBefore, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        await WaitForInflightCapacityAsync(command, source, discardRepliesBefore, cancellationToken).ConfigureAwait(false);
+        source.RegisterCancellation(cancellationToken);
+        ScheduleFlush();
+        return await source.Task.ConfigureAwait(false);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+#endif
+    private async ValueTask SendFireAndForgetSlowAsync<TCommand>(TCommand command, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        await WaitForInflightCapacityAsync(command, InflightRing.DiscardSentinel, 0, cancellationToken).ConfigureAwait(false);
+        ScheduleFlush();
+    }
+
+    /// <summary>In-flight ring full: flush and yield until enough slots open.</summary>
+    private async ValueTask WaitForInflightCapacityAsync<TCommand>(
+        TCommand command, PendingResponseSource source, int discardRepliesBefore, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        try
+        {
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                ScheduleFlush();
+                await Task.Yield();
+
+                if (TryEnqueue(in command, source, discardRepliesBefore))
+                {
+                    return;
+                }
+            }
+        }
+        catch
+        {
+            ReclaimUnpublished(source);
+            throw;
+        }
+    }
+
+    /// <summary>Returns a rented source that was never enqueued or exposed to a caller.</summary>
+    private static void ReclaimUnpublished(PendingResponseSource source)
+    {
+        if (ReferenceEquals(source, InflightRing.DiscardSentinel))
+        {
+            return;
+        }
+
+        source.ReleaseRef();
+        source.ReleaseRef();
+    }
+
+    private void ScheduleFlush() => _flushSignal.Signal();
+
+    /// <summary>
+    /// The connection's single persistent sender. Parks on <see cref="_flushSignal"/> between
+    /// batches instead of spawning a Task per flush, then drains whatever has coalesced into
+    /// the active buffer — many pipelined commands per syscall.
+    /// </summary>
+    private async Task FlushLoopAsync()
+    {
+        try
+        {
+            while (true)
+            {
+                await _flushSignal.WaitAsync().ConfigureAwait(false);
+
+                while (true)
+                {
+                    WriteBuffer sending;
+                    lock (_writeGate)
+                    {
+                        if (_dead)
+                        {
+                            return;
+                        }
+
+                        if (_activeBuffer.Count == 0)
+                        {
+                            break;
+                        }
+
+                        sending = _activeBuffer;
+                        _activeBuffer = _spareBuffer;
+                        _spareBuffer = sending;
+                    }
+
+                    // Never cancelled: a partial RESP frame on the wire is unrecoverable.
+                    var memory = sending.WrittenMemory;
+                    while (memory.Length > 0)
+                    {
+                        var sent = await _socket.SendAsync(memory, SocketFlags.None).ConfigureAwait(false);
+                        memory = memory[sent..];
+                    }
+
+                    sending.Reset();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogDebug(ex, "Send failed for {Host}:{Port}; aborting connection", Host, Port);
+            Abort();
+        }
+    }
+
+    private async Task ReceiveLoopAsync()
+    {
+        var buffer = RespirePools.ResponsePayloads.Rent(_receiveBufferSize);
+        var start = 0;
+        var end = 0;
+        Exception? fault = null;
+
+        try
+        {
+            while (true)
+            {
+                // Drain every complete value currently in the buffer.
+                var progressing = true;
+                while (progressing && start < end)
+                {
+                    if (RespParser.TryPeekBulkHeader(buffer.AsSpan(0, end), start, out var bulkType, out var bulkLength, out var headerEnd)
+                        && bulkLength >= DirectFillThreshold)
+                    {
+                        if (bulkLength > MaxResponseSize)
+                        {
+                            throw new RespireProtocolException($"Response of {bulkLength} bytes exceeds the {MaxResponseSize} byte limit.");
+                        }
+
+                        (start, end) = await ReceiveLargeBulkAsync(buffer, headerEnd, end, bulkType, (int)bulkLength).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    var pos = start;
+                    var status = RespParser.TryParseValue(buffer.AsSpan(0, end), ref pos, out var value);
+                    switch (status)
+                    {
+                        case RespParseStatus.Done:
+                            start = pos;
+                            CompleteResponse(in value);
+                            break;
+                        case RespParseStatus.InvalidData:
+                            throw new RespireProtocolException($"Malformed RESP data from {Host}:{Port} (leading byte 0x{buffer[start]:X2}).");
+                        default:
+                            progressing = false;
+                            break;
+                    }
+                }
+
+                // Make room, then receive.
+                if (start == end)
+                {
+                    start = 0;
+                    end = 0;
+                }
+                else if (end == buffer.Length)
+                {
+                    if (start > 0)
+                    {
+                        Buffer.BlockCopy(buffer, start, buffer, 0, end - start);
+                        end -= start;
+                        start = 0;
+                    }
+                    else
+                    {
+                        // One value larger than the whole buffer (e.g. a big nested array).
+                        if (buffer.Length >= MaxResponseSize)
+                        {
+                            throw new RespireProtocolException($"Response exceeds the {MaxResponseSize} byte limit.");
+                        }
+
+                        var bigger = RespirePools.ResponsePayloads.Rent(buffer.Length * 2);
+                        buffer.AsSpan(0, end).CopyTo(bigger);
+                        RespirePools.ResponsePayloads.Return(buffer);
+                        buffer = bigger;
+                    }
+                }
+
+                var received = await _socket.ReceiveAsync(buffer.AsMemory(end), SocketFlags.None).ConfigureAwait(false);
+                if (received == 0)
+                {
+                    fault = new RespireConnectionException($"Connection to {Host}:{Port} closed by remote peer.");
+                    break;
+                }
+
+                end += received;
+            }
+        }
+        catch (Exception ex)
+        {
+            fault = TranslateReceiveFault(ex);
+        }
+        finally
+        {
+            RespirePools.ResponsePayloads.Return(buffer);
+            Abort();
+            FailAllPending(fault ?? new RespireConnectionException($"Connection to {Host}:{Port} closed."));
+        }
+    }
+
+    /// <summary>
+    /// Receives a large bulk payload straight into its pooled array — one user-space copy for
+    /// the part already buffered, zero for the remainder. Returns the new (start, end) cursors.
+    /// </summary>
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<(int Start, int End)> ReceiveLargeBulkAsync(
+        byte[] buffer, int start, int end, RespDataType type, int payloadLength)
+    {
+        var payload = RespirePools.ResponsePayloads.Rent(payloadLength);
+        try
+        {
+            var buffered = Math.Min(payloadLength, end - start);
+            buffer.AsSpan(start, buffered).CopyTo(payload);
+            start += buffered;
+            var filled = buffered;
+
+            while (filled < payloadLength)
+            {
+                var read = await _socket.ReceiveAsync(payload.AsMemory(filled, payloadLength - filled), SocketFlags.None).ConfigureAwait(false);
+                if (read == 0)
+                {
+                    throw new RespireConnectionException($"Connection to {Host}:{Port} closed mid-frame.");
+                }
+
+                filled += read;
+            }
+
+            // Consume the trailing CRLF through the buffered path.
+            while (end - start < 2)
+            {
+                if (start == end)
+                {
+                    start = 0;
+                    end = 0;
+                }
+                else if (end == buffer.Length)
+                {
+                    Buffer.BlockCopy(buffer, start, buffer, 0, end - start);
+                    end -= start;
+                    start = 0;
+                }
+
+                var read = await _socket.ReceiveAsync(buffer.AsMemory(end), SocketFlags.None).ConfigureAwait(false);
+                if (read == 0)
+                {
+                    throw new RespireConnectionException($"Connection to {Host}:{Port} closed mid-frame.");
+                }
+
+                end += read;
+            }
+
+            if (buffer[start] != RespConstants.CarriageReturn || buffer[start + 1] != RespConstants.LineFeed)
+            {
+                throw new RespireProtocolException($"Bulk payload from {Host}:{Port} not terminated by CRLF.");
+            }
+
+            start += 2;
+
+            var value = RespireValue.PooledString(type, payload, payloadLength);
+            payload = null;
+            CompleteResponse(in value);
+            return (start, end);
+        }
+        finally
+        {
+            if (payload is not null)
+            {
+                RespirePools.ResponsePayloads.Return(payload);
+            }
+        }
+    }
+
+    private void CompleteResponse(in RespireValue value)
+    {
+        if (TryRoutePush(in value))
+        {
+            return;
+        }
+
+        if (!_inflight.TryDequeue(out var source))
+        {
+            value.Dispose();
+            throw new RespireProtocolException($"Unsolicited response from {Host}:{Port} with no command in flight.");
+        }
+
+        if (ReferenceEquals(source, InflightRing.DiscardSentinel))
+        {
+            value.Dispose();
+            return;
+        }
+
+        if (!source.TrySetResult(in value))
+        {
+            // Caller already cancelled; the response still had to be consumed from the wire.
+            value.Dispose();
+        }
+
+        source.ReleaseRef();
+    }
+
+    /// <summary>
+    /// Routes out-of-band frames to the push handler. RESP3 delivers them as Push frames; on a
+    /// RESP2 subscriber connection (one constructed with a push handler) they arrive as plain
+    /// arrays. Subscribe-family confirmations are NOT pushes — both protocols deliver them
+    /// out of the reply stream, but they answer the pending SUBSCRIBE/UNSUBSCRIBE command, so
+    /// they fall through to normal FIFO completion.
+    /// </summary>
+    private bool TryRoutePush(in RespireValue value)
+    {
+        var isPushFrame = value.Type == RespDataType.Push;
+        if (!isPushFrame && (value.Type != RespDataType.Array || _pushHandler is null))
+        {
+            return false;
+        }
+
+        var elements = value.AsArray();
+        if (elements.Length > 0)
+        {
+            var kind = elements[0].AsSpan();
+            if (kind.SequenceEqual("message"u8)
+                || kind.SequenceEqual("pmessage"u8)
+                || kind.SequenceEqual("smessage"u8))
+            {
+                DeliverPush(in value);
+                return true;
+            }
+
+            if (kind.SequenceEqual("subscribe"u8)
+                || kind.SequenceEqual("unsubscribe"u8)
+                || kind.SequenceEqual("psubscribe"u8)
+                || kind.SequenceEqual("punsubscribe"u8)
+                || kind.SequenceEqual("ssubscribe"u8)
+                || kind.SequenceEqual("sunsubscribe"u8))
+            {
+                return false;
+            }
+        }
+
+        if (isPushFrame)
+        {
+            // Other pushes (e.g. client-side caching invalidation) never answer a command.
+            DeliverPush(in value);
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Runs on the receive loop; the value is only valid during the callback.</summary>
+    private void DeliverPush(in RespireValue value)
+    {
+        try
+        {
+            _pushHandler?.Invoke(in value);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Push handler threw for {Host}:{Port}; message dropped", Host, Port);
+        }
+        finally
+        {
+            value.Dispose();
+        }
+    }
+
+    /// <summary>Writes MULTI + a pre-serialized command block + EXEC as one frame sequence.</summary>
+    private readonly struct TransactionCommand(ReadOnlyMemory<byte> serializedCommands) : IRespCommand
+    {
+        public void Write(ref RespWriter writer)
+        {
+            writer.WriteRaw(RespCommands.Multi);
+            writer.WriteRaw(serializedCommands.Span);
+            writer.WriteRaw(RespCommands.Exec);
+        }
+    }
+
+    private static Exception TranslateReceiveFault(Exception ex)
+        => ex switch
+        {
+            ObjectDisposedException or SocketException { SocketErrorCode: SocketError.OperationAborted } =>
+                new RespireConnectionException("Connection closed."),
+            RespireException => ex,
+            _ => new RespireConnectionException($"Connection failed: {ex.Message}", ex),
+        };
+
+    /// <summary>
+    /// Marks the connection dead and closes the socket, waking any blocked receive. Idempotent.
+    /// The receive loop's exit path fails all in-flight commands — it is the ring's only consumer.
+    /// </summary>
+    private void Abort()
+    {
+        lock (_writeGate)
+        {
+            if (_dead)
+            {
+                return;
+            }
+
+            _dead = true;
+        }
+
+        try
+        {
+            _socket.Close(0);
+        }
+        catch
+        {
+            // Already closed.
+        }
+
+        // Wake the parked flush loop so it can observe the dead flag and exit.
+        _flushSignal.Signal();
+    }
+
+    /// <summary>
+    /// Called only from the receive loop's exit path, after <see cref="Abort"/> has set the
+    /// dead flag under the write gate — no producer can enqueue afterwards, so draining here
+    /// is single-consumer and race-free.
+    /// </summary>
+    private void FailAllPending(Exception exception)
+    {
+        var failed = 0;
+        while (_inflight.TryDequeue(out var source))
+        {
+            if (ReferenceEquals(source, InflightRing.DiscardSentinel))
+            {
+                continue;
+            }
+
+            source.TrySetException(exception);
+            source.ReleaseRef();
+            failed++;
+        }
+
+        if (failed > 0)
+        {
+            _logger?.LogDebug("Failed {Count} in-flight commands on {Host}:{Port}: {Reason}", failed, Host, Port, exception.Message);
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        Abort();
+        await _receiveTask.ConfigureAwait(false);
+        await _flushTask.ConfigureAwait(false);
+
+        lock (_writeGate)
+        {
+            _activeBuffer.Release();
+            _spareBuffer.Release();
+        }
+
+        _socket.Dispose();
+        _logger?.LogDebug("Disconnected from {Host}:{Port}", Host, Port);
+    }
+}
+
+/// <summary>
+/// Receives out-of-band frames (pub/sub messages, RESP3 pushes) on the connection's receive
+/// loop. The value is only valid for the duration of the callback — copy what you need; the
+/// connection disposes it afterwards. Do not block.
+/// </summary>
+public delegate void RespirePushHandler(in RespireValue value);
+
+/// <summary>Tuning options for a single RESP connection.</summary>
+public sealed record RespireConnectionOptions
+{
+    public static readonly RespireConnectionOptions Default = new();
+
+    /// <summary>
+    /// Receives out-of-band frames on connections built from these options (see
+    /// <see cref="RespirePushHandler"/>). Set by <see cref="FastClient.RespireSubscriber"/>.
+    /// </summary>
+    public RespirePushHandler? PushHandler { get; init; }
+
+    /// <summary>Timeout for the initial TCP connect.</summary>
+    public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>ACL username for AUTH/HELLO. Defaults to Redis's "default" user when only a password is set.</summary>
+    public string? Username { get; init; }
+
+    /// <summary>Password for AUTH (RESP2) or HELLO AUTH (RESP3). Null skips authentication.</summary>
+    public string? Password { get; init; }
+
+    /// <summary>When set, CLIENT SETNAME runs during the handshake.</summary>
+    public string? ClientName { get; init; }
+
+    /// <summary>Negotiate RESP3 via HELLO 3 during the handshake. Requires Redis 6+.</summary>
+    public bool UseResp3 { get; init; }
+
+    /// <summary>Initial size of the pooled parse buffer the receive loop reads into.</summary>
+    public int ReceiveBufferSize { get; init; } = 64 * 1024;
+
+    /// <summary>Initial size of each of the two coalescing write buffers.</summary>
+    public int WriteBufferSize { get; init; } = 64 * 1024;
+
+    /// <summary>Kernel socket receive buffer size; 0 keeps the OS default.</summary>
+    public int SocketReceiveBufferSize { get; init; } = 64 * 1024;
+
+    /// <summary>Kernel socket send buffer size; 0 keeps the OS default.</summary>
+    public int SocketSendBufferSize { get; init; } = 64 * 1024;
+
+    /// <summary>Maximum commands awaiting responses on one connection (rounded up to a power of two).</summary>
+    public int MaxInflightCommands { get; init; } = 16 * 1024;
+
+    /// <summary>Maximum pooled completion sources kept per connection.</summary>
+    public int CompletionSourcePoolSize { get; init; } = 4096;
+}
