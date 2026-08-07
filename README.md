@@ -154,6 +154,30 @@ public sealed class CartService([FromKeyedServices("sessions")] IRespireClient r
 Registration is lazy — nothing connects until the first command, so app startup never blocks
 on Redis.
 
+### IDistributedCache and HybridCache
+
+`Respire.Extensions.Caching` provides a Redis-backed `IDistributedCache` (implementing
+`IBufferDistributedCache`, so HybridCache reads and writes through pooled buffers), and
+`Respire.Extensions.Caching.Hybrid` wires it up as HybridCache's distributed backend:
+
+```csharp
+// IDistributedCache only:
+builder.Services.AddRespireDistributedCache("redis://localhost", instanceName: "myapp:");
+
+// HybridCache (L1 in-memory + L2 Redis):
+builder.Services.AddRespireHybridCache("redis://localhost", instanceName: "myapp:");
+
+// Or reuse the AddRespire client instead of a connection string:
+builder.Services.AddRespire(connectionString);
+builder.Services.AddRespireHybridCache(configureCache: o => o.InstanceName = "myapp:");
+```
+
+Entries use the same hash layout (`absexp`/`sldexp`/`data`) as
+Microsoft.Extensions.Caching.StackExchangeRedis, so the two implementations can read each
+other's entries — swapping in Respire needs no cache flush. Unlike the Microsoft
+implementation, a read of a sliding-expiration entry re-arms its TTL atomically in the same
+round trip via a Lua script.
+
 ## Design
 
 The full API design — principles, per-facet surface, conventions, rejected alternatives, and
