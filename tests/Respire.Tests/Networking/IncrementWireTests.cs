@@ -57,4 +57,37 @@ public class IncrementWireTests
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("DECRBY counter 3");
         await Assert.That(result).IsEqualTo(-3L);
     }
+
+    [Test]
+    public async Task Batch_DefaultAndExplicitDelta_SendIncrAndIncrBy()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":6\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var batch = client.CreateBatch();
+        var one = batch.IncrementAsync("counter");
+        var five = batch.IncrementAsync("counter", 5);
+        await batch.SendAsync();
+
+        await Assert.That(server.ReceivedCommands[0]).IsEqualTo("INCR counter");
+        await Assert.That(server.ReceivedCommands[1]).IsEqualTo("INCRBY counter 5");
+        await Assert.That(await one).IsEqualTo(1L);
+        await Assert.That(await five).IsEqualTo(6L);
+    }
+
+    [Test]
+    public async Task Transaction_DefaultDelta_SendsIncrInsideMultiExec()
+    {
+        await using var server = new FakeRespServer(
+            FakeRespServer.OkReply, "+QUEUED\r\n"u8.ToArray(), "*1\r\n:1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var transaction = client.CreateTransaction();
+        var incremented = transaction.IncrementAsync("counter");
+        var committed = await transaction.CommitAsync();
+
+        await Assert.That(server.ReceivedCommands[1]).IsEqualTo("INCR counter");
+        await Assert.That(committed).IsTrue();
+        await Assert.That(incremented.Result).IsEqualTo(1L);
+    }
 }

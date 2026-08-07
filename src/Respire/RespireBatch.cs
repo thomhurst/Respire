@@ -50,12 +50,12 @@ public sealed class RespireBatch
 
     public RespirePending<long> IncrementAsync(RespireKey key, long by = 1)
         => Add<IncrementCommand, long>(
-            "INCRBY", new IncrementCommand(Verbs.Incr, Verbs.IncrBy, _client.Key(in key), by),
+            by == 1 ? "INCR" : "INCRBY", new IncrementCommand(Verbs.Incr, Verbs.IncrBy, _client.Key(in key), by),
             static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<long> DecrementAsync(RespireKey key, long by = 1)
         => Add<IncrementCommand, long>(
-            "DECRBY", new IncrementCommand(Verbs.Decr, Verbs.DecrBy, _client.Key(in key), by),
+            by == 1 ? "DECR" : "DECRBY", new IncrementCommand(Verbs.Decr, Verbs.DecrBy, _client.Key(in key), by),
             static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<bool> ExpireAsync(RespireKey key, TimeSpan expiry)
