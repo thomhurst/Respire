@@ -19,6 +19,8 @@
         <!-- The Microsoft implementation, used to prove the wire layouts are interchangeable. -->
         <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="9.0.8" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.8" />
+        <!-- AddDistributedMemoryCache, for the registration-override test. -->
+        <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="9.0.8" />
     </ItemGroup>
 
     <ItemGroup>

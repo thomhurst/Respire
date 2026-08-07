@@ -44,6 +44,33 @@ public class ServiceCollectionTests(RedisTestFixture fixture)
     }
 
     [Test]
+    public async Task AddRespireDistributedCache_OverridesEarlierBackendRegistration()
+    {
+        var services = new ServiceCollection();
+        services.AddDistributedMemoryCache();
+        services.AddRespireDistributedCache(fixture.ConnectionString);
+
+        await using var provider = services.BuildServiceProvider();
+        var cache = provider.GetRequiredService<IDistributedCache>();
+
+        await Assert.That(cache is RespireDistributedCache).IsTrue();
+    }
+
+    [Test]
+    public async Task SynchronousProviderDispose_Works()
+    {
+        var services = new ServiceCollection();
+        services.AddRespireDistributedCache(fixture.ConnectionString, instanceName: "sync-dispose:");
+
+        var provider = services.BuildServiceProvider();
+        var cache = provider.GetRequiredService<IDistributedCache>();
+        await cache.SetAsync("key", [1], new DistributedCacheEntryOptions());
+
+        // The cache owns its client here; a synchronous container teardown must not throw.
+        provider.Dispose();
+    }
+
+    [Test]
     public async Task NoClientAndNoConnectionString_ThrowsOnResolve()
     {
         var services = new ServiceCollection();

@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -23,7 +22,9 @@ public static class RespireCachingServiceCollectionExtensions
 
         services.AddOptions();
         services.Configure(configure);
-        services.TryAddSingleton<IDistributedCache>(provider =>
+        // Add, not TryAdd: choosing a distributed-cache backend must win over an earlier
+        // registration (e.g. AddDistributedMemoryCache), matching AddStackExchangeRedisCache.
+        services.AddSingleton<IDistributedCache>(provider =>
         {
             var options = provider.GetRequiredService<IOptions<RespireCacheOptions>>().Value;
             if (options.ConnectionString is { } connectionString)

@@ -11,7 +11,7 @@ namespace Respire.Extensions.Caching;
 /// Unlike the Microsoft implementation, a read of a sliding-expiration entry refreshes the TTL
 /// in the same round trip via a Lua script instead of issuing a second command.
 /// </summary>
-public sealed class RespireDistributedCache : IDistributedCache, IBufferDistributedCache, IAsyncDisposable
+public sealed class RespireDistributedCache : IDistributedCache, IBufferDistributedCache, IAsyncDisposable, IDisposable
 {
     private const long NotPresent = -1;
 
@@ -31,6 +31,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     // ARGV: [1] '1' to return the payload ('0' for refresh-only), [2] current UTC ticks. For
     // sliding entries the TTL is re-armed to min(sliding, time left until absolute expiration),
     // atomically with the read. Ticks (100ns) to Redis milliseconds is a divide by 10000.
+    // The TTL Redis already holds is the authority on expiry — absexp only caps re-arming, and a
+    // non-positive remainder just skips the re-arm rather than deleting. The metadata can carry
+    // a writer's clock-offset quirk (the Microsoft implementation stores DateTimeOffset.Ticks
+    // with the caller's offset baked in, then reads them back as UTC), so deleting on its say-so
+    // would drop entries whose real TTL is still live.
     private static readonly RespireScript GetAndRefreshScript = RespireScript.Create("""
         local entry = redis.call('HMGET', KEYS[1], 'absexp', 'sldexp', 'data')
         if entry[1] == false and entry[3] == false then
@@ -42,10 +47,6 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
           local absexp = tonumber(entry[1]) or -1
           if absexp ~= -1 then
             local remaining = math.floor((absexp - tonumber(ARGV[2])) / 10000)
-            if remaining <= 0 then
-              redis.call('UNLINK', KEYS[1])
-              return nil
-            end
             if remaining < ttl then
               ttl = remaining
             end
@@ -57,6 +58,13 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         if ARGV[1] == '1' then
           return entry[3]
         end
+        return 1
+        """);
+
+    // Removal goes through a script (rather than the client's UNLINK facet) so the caller's
+    // cancellation token covers the wait for the reply, like every other cache operation.
+    private static readonly RespireScript RemoveScript = RespireScript.Create("""
+        redis.call('UNLINK', KEYS[1])
         return 1
         """);
 
@@ -85,6 +93,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     public async Task<byte[]?> GetAsync(string key, CancellationToken token = default)
     {
         ArgumentNullException.ThrowIfNull(key);
+        token.ThrowIfCancellationRequested();
         using var result = await RunGetScriptAsync(key, returnData: true, token).ConfigureAwait(false);
         return result.IsNull ? null : result.AsBytes();
     }
@@ -96,6 +105,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     {
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(destination);
+        token.ThrowIfCancellationRequested();
         using var result = await RunGetScriptAsync(key, returnData: true, token).ConfigureAwait(false);
         if (result.IsNull)
         {
@@ -125,6 +135,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     {
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(options);
+        token.ThrowIfCancellationRequested();
 
         var now = DateTimeOffset.UtcNow;
         var absoluteExpiration = GetAbsoluteExpiration(now, options);
@@ -146,16 +157,19 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     public async Task RefreshAsync(string key, CancellationToken token = default)
     {
         ArgumentNullException.ThrowIfNull(key);
+        token.ThrowIfCancellationRequested();
         var result = await RunGetScriptAsync(key, returnData: false, token).ConfigureAwait(false);
         result.Dispose();
     }
 
     public void Remove(string key) => RemoveAsync(key).GetAwaiter().GetResult();
 
-    public Task RemoveAsync(string key, CancellationToken token = default)
+    public async Task RemoveAsync(string key, CancellationToken token = default)
     {
         ArgumentNullException.ThrowIfNull(key);
-        return _client.Keys.UnlinkAsync(key).AsTask();
+        token.ThrowIfCancellationRequested();
+        var result = await _client.Scripts.ExecuteAsync(RemoveScript, [key], args: null, token).ConfigureAwait(false);
+        result.Dispose();
     }
 
     private ValueTask<RespireResult> RunGetScriptAsync(string key, bool returnData, CancellationToken token)
@@ -190,4 +204,13 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
     /// <summary>Disposes the client only when the cache created it (connection-string configuration).</summary>
     public ValueTask DisposeAsync() => _ownedClient?.DisposeAsync() ?? ValueTask.CompletedTask;
+
+    /// <summary>Synchronous counterpart, for containers that are disposed synchronously.</summary>
+    public void Dispose()
+    {
+        if (_ownedClient is not null)
+        {
+            DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
 }

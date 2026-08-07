@@ -211,6 +211,27 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
     }
 
     [Test]
+    public async Task RemoveAsync_PreCanceledToken_ThrowsAndLeavesEntry()
+    {
+        await Cache.SetAsync("cancel-remove", [1], new DistributedCacheEntryOptions());
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var threw = false;
+        try
+        {
+            await Cache.RemoveAsync("cancel-remove", cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            threw = true;
+        }
+
+        await Assert.That(threw).IsTrue();
+        await Assert.That(await Cache.GetAsync("cancel-remove")).IsNotNull();
+    }
+
+    [Test]
     public async Task NullKey_Throws()
     {
         var threw = false;
