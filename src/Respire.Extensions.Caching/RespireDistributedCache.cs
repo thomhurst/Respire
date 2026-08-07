@@ -31,11 +31,13 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     // ARGV: [1] '1' to return the payload ('0' for refresh-only), [2] current UTC ticks. For
     // sliding entries the TTL is re-armed to min(sliding, time left until absolute expiration),
     // atomically with the read. Ticks (100ns) to Redis milliseconds is a divide by 10000.
-    // The TTL Redis already holds is the authority on expiry — absexp only caps re-arming, and a
-    // non-positive remainder just skips the re-arm rather than deleting. The metadata can carry
-    // a writer's clock-offset quirk (the Microsoft implementation stores DateTimeOffset.Ticks
-    // with the caller's offset baked in, then reads them back as UTC), so deleting on its say-so
-    // would drop entries whose real TTL is still live.
+    // The TTL Redis already holds is the authority on expiry — absexp only caps re-arming, and
+    // only when the remainder is positive. The metadata can carry a writer's clock-offset quirk
+    // (the Microsoft implementation stores DateTimeOffset.Ticks with the caller's offset baked
+    // in, then reads them back as UTC), so it must never delete or pin an entry: a correct
+    // writer arms a TTL no longer than the time to absolute expiration, so a live key whose
+    // absexp reads as past proves the metadata is skewed — the sliding window re-arms in full
+    // rather than being silently disabled.
     private static readonly RespireScript GetAndRefreshScript = RespireScript.Create("""
         local entry = redis.call('HMGET', KEYS[1], 'absexp', 'sldexp', 'data')
         if entry[1] == false and entry[3] == false then
@@ -47,7 +49,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
           local absexp = tonumber(entry[1]) or -1
           if absexp ~= -1 then
             local remaining = math.floor((absexp - tonumber(ARGV[2])) / 10000)
-            if remaining < ttl then
+            if remaining > 0 and remaining < ttl then
               ttl = remaining
             end
           end

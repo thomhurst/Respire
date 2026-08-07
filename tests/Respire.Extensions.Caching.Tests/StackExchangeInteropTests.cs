@@ -111,8 +111,8 @@ public class StackExchangeInteropTests(RedisTestFixture fixture)
         // The Microsoft implementation stores AbsoluteExpiration as DateTimeOffset.Ticks — with
         // the caller's offset baked in — and reads them back as UTC. A future instant expressed
         // with a negative offset therefore looks already-expired in the stored metadata. The
-        // read script must not trust that metadata to delete: the value stays readable and the
-        // TTL Redis armed at write time keeps governing expiry.
+        // read script must not trust that metadata to delete or to disable sliding refresh: the
+        // value stays readable and each read re-arms the sliding window in full.
         var futureWithNegativeOffset = DateTimeOffset.UtcNow.AddHours(1).ToOffset(TimeSpan.FromHours(-5));
         await _microsoftCache.SetAsync("ms-offset", [1], new DistributedCacheEntryOptions
         {
@@ -120,10 +120,12 @@ public class StackExchangeInteropTests(RedisTestFixture fixture)
             SlidingExpiration = TimeSpan.FromSeconds(30),
         });
 
+        await Task.Delay(TimeSpan.FromSeconds(2));
         await Assert.That(await _respireCache.GetAsync("ms-offset")).IsNotNull();
 
+        // Without the re-arm the TTL would have decayed to ~28s; the read restores the full 30s.
         using var pttl = await _client.ExecuteAsync("PTTL", InstanceName + "ms-offset");
-        await Assert.That(pttl.AsInteger()).IsGreaterThan(0);
+        await Assert.That(pttl.AsInteger()).IsGreaterThan(28500);
     }
 
     [Test]
