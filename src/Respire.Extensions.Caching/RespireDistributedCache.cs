@@ -34,11 +34,17 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     // The TTL Redis already holds is the authority on expiry — absexp caps re-arming and never
     // deletes. The metadata can carry a writer's clock-offset quirk (the Microsoft
     // implementation stores DateTimeOffset.Ticks with the caller's offset baked in, then reads
-    // them back as UTC), which makes a live key's absexp able to read as already past. The true
-    // deadline is then unknowable, so no re-arm can be proven safe: a non-positive remainder
-    // skips the re-arm and lets the write-time TTL run out. Such an entry loses sliding
-    // refresh but is never served past its deadline nor deleted early (the Microsoft reader
-    // deletes it on sight, via KeyExpire with a negative TimeSpan).
+    // them back as UTC), skewing the remainder by the writer's offset in either direction:
+    // - Negative offset: a live key's absexp reads as already past. That contradiction is
+    //   detectable, and since the true deadline is unknowable no re-arm can be proven safe — a
+    //   non-positive remainder skips the re-arm and lets the write-time TTL run out. The entry
+    //   loses sliding refresh but is never served past its deadline nor deleted early (the
+    //   Microsoft reader deletes it on sight, via KeyExpire with a negative TimeSpan).
+    // - Positive offset: the remainder reads inflated, so the sliding window re-arms in full
+    //   and the entry can outlive its real deadline — exactly as the Microsoft reader treats
+    //   the same entry. This skew is undetectable (an inflated absexp is indistinguishable
+    //   from a genuinely distant one), so the only cap that could contain it is refusing to
+    //   ever extend the TTL, which would disable sliding refresh for every honest entry.
     private static readonly RespireScript GetAndRefreshScript = RespireScript.Create("""
         local entry = redis.call('HMGET', KEYS[1], 'absexp', 'sldexp', 'data')
         if entry[1] == false and entry[3] == false then

@@ -131,6 +131,28 @@ public class StackExchangeInteropTests(RedisTestFixture fixture)
     }
 
     [Test]
+    public async Task MicrosoftEntryWithPositiveOffsetAbsoluteExpiration_SlidesLikeTheMicrosoftReader()
+    {
+        // A positive writer offset inflates the stored absexp, and that skew is undetectable:
+        // an inflated deadline is indistinguishable from a genuinely distant one. Both readers
+        // therefore re-arm the full sliding window even past the real deadline — parity with
+        // the Microsoft reader is the only behavior the wire format leaves open.
+        var soonWithPositiveOffset = DateTimeOffset.UtcNow.AddSeconds(10).ToOffset(TimeSpan.FromHours(5));
+        await _microsoftCache.SetAsync("ms-positive-offset", [1], new DistributedCacheEntryOptions
+        {
+            AbsoluteExpiration = soonWithPositiveOffset,
+            SlidingExpiration = TimeSpan.FromSeconds(30),
+        });
+
+        await Assert.That(await _respireCache.GetAsync("ms-positive-offset")).IsNotNull();
+
+        // The write armed ~10s of TTL; the read re-armed the full 30s window, as the
+        // Microsoft reader would for the same entry.
+        using var pttl = await _client.ExecuteAsync("PTTL", InstanceName + "ms-positive-offset");
+        await Assert.That(pttl.AsInteger()).IsGreaterThan(15000);
+    }
+
+    [Test]
     public async Task EntryWithoutExpiration_ReadableBothWays()
     {
         await _microsoftCache.SetAsync("ms-forever", [1], new DistributedCacheEntryOptions());
