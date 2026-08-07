@@ -311,11 +311,18 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     /// delay — so the args are re-derived from a fresh clock and re-sent until one pass
     /// round-trips inside the tolerance; shrink-only makes every extra pass safe, and each pass
     /// costs one server round trip, so the loop paces itself and converges as soon as the stall
-    /// clears. Requires the wire client; a mocked client falls back to a single round-robin
-    /// send and keeps only its weaker ordering.
+    /// clears. A pass earns a retry only by at least halving the previous round trip: the
+    /// remainder a pass arms goes stale by exactly its own round trip, so under latency that
+    /// never clears (a slow backend, one persistently slow connection in the broadcast) that
+    /// round trip is the irreducible floor — a pass that no longer improves proves further
+    /// passes cannot either, and the loop stops with a residual bounded by that floor instead
+    /// of retrying forever. The halving requirement also caps the pass count at a logarithm of
+    /// the initial stall. Requires the wire client; a mocked client falls back to a single
+    /// round-robin send and keeps only its weaker ordering.
     /// </summary>
     private async ValueTask RunCorrectionAsync(RespireScript script, string key, Func<RespireValue[]> args)
     {
+        var previous = TimeSpan.MaxValue;
         while (true)
         {
             var sent = DateTimeOffset.UtcNow;
@@ -329,10 +336,13 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 result.Dispose();
             }
 
-            if (DateTimeOffset.UtcNow - sent < SendDelayTolerance)
+            var roundTrip = DateTimeOffset.UtcNow - sent;
+            if (roundTrip < SendDelayTolerance || roundTrip > previous / 2)
             {
                 return;
             }
+
+            previous = roundTrip;
         }
     }
 

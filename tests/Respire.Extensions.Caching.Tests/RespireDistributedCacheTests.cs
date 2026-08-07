@@ -618,4 +618,143 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         await Assert.That(pttl).IsGreaterThan(0);
         await Assert.That(pttl).IsLessThanOrEqualTo(30_000);
     }
+
+    [Test]
+    public async Task Set_SustainedLatency_CorrectionStopsAfterBoundedPasses()
+    {
+        // Latency that never clears: every script round trip exceeds SendDelayTolerance, so a
+        // "retry until one pass is fresh" loop would never return. A pass that fails to improve
+        // on the previous one proves the floor is the latency itself, and the correction must
+        // stop there instead of livelocking the set.
+        var slowClient = new SustainedLatencyClient(Client, TimeSpan.FromMilliseconds(1200));
+        await using var slowCache = new RespireDistributedCache(slowClient);
+
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(30);
+        await slowCache.SetAsync("sustained", [1],
+                new DistributedCacheEntryOptions { AbsoluteExpiration = deadline })
+            .WaitAsync(TimeSpan.FromSeconds(15));
+
+        // One set, then exactly two correction passes: the first is allowed to chase, the
+        // second round-trips no better and ends the loop.
+        await Assert.That(slowClient.ScriptCalls).IsEqualTo(3);
+
+        // Stopping early must not abandon the correction's job: the TTL is pinned to the
+        // remainder, stale by at most one round trip.
+        var pttl = await PttlAsync("sustained");
+        var remaining = (long)(deadline - DateTimeOffset.UtcNow).TotalMilliseconds;
+        await Assert.That(pttl).IsGreaterThan(0);
+        await Assert.That(pttl).IsLessThanOrEqualTo(remaining + 2_000);
+    }
+
+    /// <summary>
+    /// Delegates to a real client but stretches every script round trip past
+    /// SendDelayTolerance, modeling backend latency that never clears. Deliberately not a
+    /// RespireClient, so the cache degrades to the single-send correction path.
+    /// </summary>
+    private sealed class SustainedLatencyClient(RespireClient inner, TimeSpan latency) : IRespireClient
+    {
+        private int _scriptCalls;
+
+        public int ScriptCalls => _scriptCalls;
+
+        public IScriptCommands Scripts => new SlowScripts(this, inner.Scripts, latency);
+
+        private sealed class SlowScripts(SustainedLatencyClient owner, IScriptCommands inner, TimeSpan latency) : IScriptCommands
+        {
+            public async ValueTask<RespireResult> ExecuteAsync(
+                RespireScript script, RespireKey[]? keys = null, RespireValue[]? args = null,
+                CancellationToken cancellationToken = default)
+            {
+                Interlocked.Increment(ref owner._scriptCalls);
+                var result = await inner.ExecuteAsync(script, keys, args, cancellationToken);
+                await Task.Delay(latency, CancellationToken.None);
+                return result;
+            }
+
+            public ValueTask<string> LoadAsync(RespireScript script, CancellationToken cancellationToken = default)
+                => inner.LoadAsync(script, cancellationToken);
+        }
+
+        public RespireEndpoint Endpoint => inner.Endpoint;
+        public bool IsConnected => inner.IsConnected;
+
+        public event Action<RespireConnectionState>? ConnectionStateChanged
+        {
+            add => inner.ConnectionStateChanged += value;
+            remove => inner.ConnectionStateChanged -= value;
+        }
+
+        public IStringCommands Strings => inner.Strings;
+        public IKeyCommands Keys => inner.Keys;
+        public IHashCommands Hashes => inner.Hashes;
+        public IListCommands Lists => inner.Lists;
+        public ISetCommands Sets => inner.Sets;
+        public ISortedSetCommands SortedSets => inner.SortedSets;
+        public IStreamCommands Streams => inner.Streams;
+        public IServerCommands Server => inner.Server;
+
+        public ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken cancellationToken = default)
+            => inner.GetStringAsync(key, cancellationToken);
+
+        public ValueTask<T?> GetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
+            => inner.GetAsync<T>(key, cancellationToken);
+
+        public ValueTask<byte[]?> GetBytesAsync(RespireKey key, CancellationToken cancellationToken = default)
+            => inner.GetBytesAsync(key, cancellationToken);
+
+        public ValueTask<bool> SetAsync(
+            RespireKey key, RespireValue value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always,
+            bool keepTtl = false, CancellationToken cancellationToken = default)
+            => inner.SetAsync(key, value, expiry, when, keepTtl, cancellationToken);
+
+        public ValueTask<bool> SetAsync<T>(
+            RespireKey key, T value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always,
+            bool keepTtl = false, CancellationToken cancellationToken = default)
+            => inner.SetAsync(key, value, expiry, when, keepTtl, cancellationToken);
+
+        public ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys) => inner.DeleteAsync(keys);
+
+        public ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default)
+            => inner.ExistsAsync(key, cancellationToken);
+
+        public ValueTask<long> IncrementAsync(RespireKey key, long by = 1, CancellationToken cancellationToken = default)
+            => inner.IncrementAsync(key, by, cancellationToken);
+
+        public ValueTask<long> DecrementAsync(RespireKey key, long by = 1, CancellationToken cancellationToken = default)
+            => inner.DecrementAsync(key, by, cancellationToken);
+
+        public ValueTask<bool> ExpireAsync(RespireKey key, TimeSpan expiry, CancellationToken cancellationToken = default)
+            => inner.ExpireAsync(key, expiry, cancellationToken);
+
+        public ValueTask<TimeSpan> PingAsync(CancellationToken cancellationToken = default)
+            => inner.PingAsync(cancellationToken);
+
+        public ValueTask<long> PublishAsync(string channel, RespireValue message, CancellationToken cancellationToken = default)
+            => inner.PublishAsync(channel, message, cancellationToken);
+
+        public ValueTask<long> PublishShardedAsync(string channel, RespireValue message, CancellationToken cancellationToken = default)
+            => inner.PublishShardedAsync(channel, message, cancellationToken);
+
+        public RespireSubscription Subscribe(params string[] channels) => inner.Subscribe(channels);
+        public RespireSubscription SubscribePattern(params string[] patterns) => inner.SubscribePattern(patterns);
+        public RespireSubscription SubscribeSharded(params string[] channels) => inner.SubscribeSharded(channels);
+
+        public RespireBatch CreateBatch() => inner.CreateBatch();
+        public RespireTransaction CreateTransaction() => inner.CreateTransaction();
+
+        public ValueTask<RespireTransaction> CreateTransactionAsync(RespireKey[] watchKeys, CancellationToken cancellationToken = default)
+            => inner.CreateTransactionAsync(watchKeys, cancellationToken);
+
+        public ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args)
+            => inner.ExecuteAsync(command, args);
+
+        public ValueTask<RespireResult> ExecuteAsync(
+            RespireCommandInterpolatedStringHandler command, CancellationToken cancellationToken = default)
+            => inner.ExecuteAsync(command, cancellationToken);
+
+        public IRespireClient WithKeyPrefix(string prefix) => inner.WithKeyPrefix(prefix);
+
+        // The test owns the wrapped client's lifetime.
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
 }
