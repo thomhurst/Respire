@@ -132,6 +132,31 @@ internal readonly struct DynamicCommand(RespireValue[] tokens) : IRespCommand
     }
 }
 
+/// <summary>
+/// INCR/DECR key when the delta is 1 (the two-token form StackExchange.Redis sends), INCRBY/DECRBY
+/// key delta otherwise. The wire-form choice lives here so the facet, batch, and transaction layers
+/// all share it.
+/// </summary>
+internal readonly struct IncrementCommand(Verb one, Verb by, RespireValue key, long delta) : IRespCommand
+{
+    public void Write(ref RespWriter writer)
+    {
+        if (delta == 1)
+        {
+            writer.WriteArrayHeader(one.Tokens + 1);
+            writer.WriteRaw(one.Bulk);
+            key.WriteTo(ref writer);
+        }
+        else
+        {
+            writer.WriteArrayHeader(by.Tokens + 2);
+            writer.WriteRaw(by.Bulk);
+            key.WriteTo(ref writer);
+            writer.WriteBulkInteger(delta);
+        }
+    }
+}
+
 /// <summary>SET key value [PX ms] [NX|XX] [KEEPTTL] [GET].</summary>
 internal readonly struct SetCommand(
     RespireValue key, RespireValue value, TimeSpan? expiry, SetWhen when, bool keepTtl, bool returnOld) : IRespCommand

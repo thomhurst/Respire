@@ -67,13 +67,13 @@ public interface IStringCommands
     /// <summary>A substring by byte offsets (negative offsets count from the end). Redis: GETRANGE.</summary>
     ValueTask<string> GetRangeAsync(RespireKey key, long start, long end, CancellationToken cancellationToken = default);
 
-    /// <summary>Atomically adds <paramref name="by"/> and returns the new value. Redis: INCRBY.</summary>
+    /// <summary>Atomically adds <paramref name="by"/> and returns the new value. Redis: INCR when <paramref name="by"/> is 1, INCRBY otherwise.</summary>
     ValueTask<long> IncrementAsync(RespireKey key, long by = 1, CancellationToken cancellationToken = default);
 
     /// <summary>Atomically adds a floating-point delta and returns the new value. Redis: INCRBYFLOAT.</summary>
     ValueTask<double> IncrementAsync(RespireKey key, double by, CancellationToken cancellationToken = default);
 
-    /// <summary>Atomically subtracts <paramref name="by"/> and returns the new value. Redis: DECRBY.</summary>
+    /// <summary>Atomically subtracts <paramref name="by"/> and returns the new value. Redis: DECR when <paramref name="by"/> is 1, DECRBY otherwise.</summary>
     ValueTask<long> DecrementAsync(RespireKey key, long by = 1, CancellationToken cancellationToken = default);
 
     /// <summary>Gets many keys in one round trip; missing keys yield null. Redis: MGET.</summary>
@@ -128,13 +128,17 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         => client.StringAsync("GETRANGE", new Cmd3(Verbs.GetRange, client.Key(in key), start, end), cancellationToken);
 
     public ValueTask<long> IncrementAsync(RespireKey key, long by = 1, CancellationToken cancellationToken = default)
-        => client.IntegerAsync("INCRBY", new Cmd2(Verbs.IncrBy, client.Key(in key), by), cancellationToken);
+        => client.IntegerAsync(
+            by == 1 ? "INCR" : "INCRBY",
+            new IncrementCommand(Verbs.Incr, Verbs.IncrBy, client.Key(in key), by), cancellationToken);
 
     public ValueTask<double> IncrementAsync(RespireKey key, double by, CancellationToken cancellationToken = default)
         => client.DoubleAsync("INCRBYFLOAT", new Cmd2(Verbs.IncrByFloat, client.Key(in key), by), cancellationToken);
 
     public ValueTask<long> DecrementAsync(RespireKey key, long by = 1, CancellationToken cancellationToken = default)
-        => client.IntegerAsync("DECRBY", new Cmd2(Verbs.DecrBy, client.Key(in key), by), cancellationToken);
+        => client.IntegerAsync(
+            by == 1 ? "DECR" : "DECRBY",
+            new IncrementCommand(Verbs.Decr, Verbs.DecrBy, client.Key(in key), by), cancellationToken);
 
     public ValueTask<string?[]> GetManyAsync(params ReadOnlySpan<RespireKey> keys)
         => client.NullableStringArrayAsync("MGET", new CmdN(Verbs.MGet, client.MapKeys(keys)), CancellationToken.None);
