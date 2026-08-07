@@ -319,27 +319,10 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     /// <summary>The central send path: lazy connect, optional command timeout, telemetry, error translation.</summary>
-    internal ValueTask<RespValue> SendAsync<TCommand>(string operation, TCommand command, CancellationToken cancellationToken)
-        where TCommand : struct, IRespCommand
-        => SendCoreAsync(operation, command, cancellationToken, applyCommandTimeout: true);
-
-    /// <summary>
-    /// Sends a command whose reply wait must not be abandoned before the command's fate is
-    /// known: no caller token and no <see cref="RespireOptions.CommandTimeout"/> apply, so the
-    /// wait ends only with the reply or the connection's death (which also kills the queued
-    /// command). For operations whose time-shifted execution after an abandoned wait would be
-    /// destructive — the caching package's removal, whose late UNLINK could delete a
-    /// replacement value written after the caller observed the failure.
-    /// </summary>
-    internal ValueTask<RespValue> SendUntimedAsync<TCommand>(string operation, TCommand command)
-        where TCommand : struct, IRespCommand
-        => SendCoreAsync(operation, command, CancellationToken.None, applyCommandTimeout: false);
-
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
-    private async ValueTask<RespValue> SendCoreAsync<TCommand>(
-        string operation, TCommand command, CancellationToken cancellationToken, bool applyCommandTimeout)
+    internal async ValueTask<RespValue> SendAsync<TCommand>(string operation, TCommand command, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -351,7 +334,7 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             RespValue response;
-            if (applyCommandTimeout && core.Options.CommandTimeout is { } timeout)
+            if (core.Options.CommandTimeout is { } timeout)
             {
                 using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 timeoutSource.CancelAfter(timeout);
@@ -446,10 +429,39 @@ public sealed partial class RespireClient : IRespireClient
     // Wire-level primitives for the caching package (see InternalsVisibleTo). Both honor this
     // view's key prefix.
 
-    /// <summary>UNLINK through <see cref="SendUntimedAsync"/> — see there for why removal must not race its own wait.</summary>
-    internal async ValueTask UnlinkUntimedAsync(RespireKey key)
+    /// <summary>
+    /// UNLINK on a dedicated pooled connection, with the wait bounded by both the caller's
+    /// token and <see cref="RespireOptions.CommandTimeout"/>. Boundedness is safe here only
+    /// because <see cref="SendBlockingAsync"/> discards the dedicated connection when a wait is
+    /// abandoned: the queued UNLINK dies with the socket instead of lingering to delete a value
+    /// written after the caller observed the failure. (Bytes already received by the server can
+    /// still execute — the residual every Redis client shares on an abandoned wait.) On the
+    /// multiplexed connections neither bound could be honored, since abandoning a wait there
+    /// leaves the command queued indefinitely, and killing a shared connection would fault every
+    /// innocent in-flight command on it.
+    /// </summary>
+    internal async ValueTask UnlinkGuardedAsync(RespireKey key, CancellationToken cancellationToken)
     {
-        var value = await SendUntimedAsync("UNLINK", new Cmd1(Verbs.Unlink, Key(in key))).ConfigureAwait(false);
+        var command = new Cmd1(Verbs.Unlink, Key(in key));
+        RespValue value;
+        if (_core.Options.CommandTimeout is { } timeout)
+        {
+            using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutSource.CancelAfter(timeout);
+            try
+            {
+                value = await SendBlockingAsync("UNLINK", command, timeoutSource.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new RespireTimeoutException("UNLINK", timeout);
+            }
+        }
+        else
+        {
+            value = await SendBlockingAsync("UNLINK", command, cancellationToken).ConfigureAwait(false);
+        }
+
         value.Dispose();
     }
 

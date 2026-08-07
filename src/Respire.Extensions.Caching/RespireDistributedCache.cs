@@ -293,6 +293,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         => RunCorrectionAsync(
             CapTtlScript,
             key,
+            () =>
             [
                 absolute.UtcTicks,
                 options.SlidingExpiration?.Ticks ?? NotPresent,
@@ -305,19 +306,34 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     /// connection where it would execute before the still-buffered original and no-op — so the
     /// correction is sent on every connection: the copy sharing the original's connection is
     /// FIFO-ordered after it, and the scripts are idempotent and guarded, so the other copies
-    /// are harmless wherever they land. Requires the wire client; a mocked client falls back to
-    /// a single round-robin send and keeps only its weaker ordering.
+    /// are harmless wherever they land. A correction usually queues behind the same stall that
+    /// delayed the command it chases, which would leave its own remainder stale by its own send
+    /// delay — so the args are re-derived from a fresh clock and re-sent until one pass
+    /// round-trips inside the tolerance; shrink-only makes every extra pass safe, and each pass
+    /// costs one server round trip, so the loop paces itself and converges as soon as the stall
+    /// clears. Requires the wire client; a mocked client falls back to a single round-robin
+    /// send and keeps only its weaker ordering.
     /// </summary>
-    private async ValueTask RunCorrectionAsync(RespireScript script, string key, RespireValue[] args)
+    private async ValueTask RunCorrectionAsync(RespireScript script, string key, Func<RespireValue[]> args)
     {
-        if (_wireClient is { } wire)
+        while (true)
         {
-            await wire.ExecuteOnAllConnectionsAsync(script, [key], args).ConfigureAwait(false);
-            return;
-        }
+            var sent = DateTimeOffset.UtcNow;
+            if (_wireClient is { } wire)
+            {
+                await wire.ExecuteOnAllConnectionsAsync(script, [key], args()).ConfigureAwait(false);
+            }
+            else
+            {
+                var result = await _client.Scripts.ExecuteAsync(script, [key], args(), CancellationToken.None).ConfigureAwait(false);
+                result.Dispose();
+            }
 
-        var result = await _client.Scripts.ExecuteAsync(script, [key], args, CancellationToken.None).ConfigureAwait(false);
-        result.Dispose();
+            if (DateTimeOffset.UtcNow - sent < SendDelayTolerance)
+            {
+                return;
+            }
+        }
     }
 
     public void Refresh(string key) => RefreshAsync(key).GetAwaiter().GetResult();
@@ -336,17 +352,16 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     {
         ArgumentNullException.ThrowIfNull(key);
         token.ThrowIfCancellationRequested();
-        // Deliberately unabandonable past this point — no caller token AND no CommandTimeout.
-        // The wire layer never cancels a queued send, so any abandoned wait (cancellation or
-        // timeout) would let the caller observe failure, write a replacement (possibly on
-        // another connection), and have the still-queued UNLINK silently delete it. Deletion
-        // carries no identity to fence on in the shared hash layout, so the only safe ordering
-        // is to not complete until the UNLINK has executed or the connection has died and
-        // taken it along. A mocked client falls back to the facet, whose token-less wait is
-        // still subject to the mock's own semantics.
+        // Deletion carries no identity to fence on in the shared hash layout, so an UNLINK left
+        // queued after an abandoned wait could later delete a replacement the caller wrote
+        // after observing the failure. The guarded send solves both halves: the wait stays
+        // bounded (caller token and CommandTimeout are honored, so a wedged server cannot hang
+        // removal forever), and abandoning it discards the dedicated connection so the queued
+        // UNLINK dies with the socket instead of firing late. A mocked client falls back to the
+        // facet, whose token-less wait keeps the mock's own semantics.
         if (_wireClient is { } wire)
         {
-            await wire.UnlinkUntimedAsync(key).ConfigureAwait(false);
+            await wire.UnlinkGuardedAsync(key, token).ConfigureAwait(false);
         }
         else
         {
@@ -402,7 +417,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     }
 
     private ValueTask CapRefreshedTtlAsync(string key)
-        => RunCorrectionAsync(CapRefreshedTtlScript, key, [DateTimeOffset.UtcNow.UtcTicks]);
+        => RunCorrectionAsync(CapRefreshedTtlScript, key, () => [DateTimeOffset.UtcNow.UtcTicks]);
 
     private static DateTimeOffset? GetAbsoluteExpiration(DateTimeOffset now, DistributedCacheEntryOptions options)
     {

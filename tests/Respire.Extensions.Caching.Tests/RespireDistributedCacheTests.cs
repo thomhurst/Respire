@@ -441,12 +441,12 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
 
     // The next tests pin down how the cache behaves when RespireOptions.CommandTimeout abandons
     // a wait whose command is still queued. The server is stalled deterministically with a Lua
-    // busy-loop (~500ms), so a 50ms command timeout always fires first while the queued command
-    // still executes once the stall ends.
+    // busy-loop (ARGV[1] seconds), so a 50ms command timeout always fires first while the queued
+    // command still executes once the stall ends.
 
     private const string StallScriptSource = """
         local t = redis.call('TIME')
-        local deadline = tonumber(t[1]) + (tonumber(t[2]) / 1000000) + 0.5
+        local deadline = tonumber(t[1]) + (tonumber(t[2]) / 1000000) + tonumber(ARGV[1])
         repeat
           t = redis.call('TIME')
         until tonumber(t[1]) + (tonumber(t[2]) / 1000000) >= deadline
@@ -457,22 +457,40 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         => await RespireClient.ConnectAsync(
             RespireOptions.Parse(fixture.ConnectionString) with { CommandTimeout = TimeSpan.FromMilliseconds(50) });
 
+    private Task StallServerAsync(string seconds)
+        => Task.Run(async () => (await Client.ExecuteAsync("EVAL", StallScriptSource, "0", seconds)).Dispose());
+
     [Test]
-    public async Task Remove_WaitIsImmuneToCommandTimeout()
+    public async Task Remove_TimedOutWait_FailsFast_WithoutLeavingTheUnlinkQueued()
     {
         await Cache.SetAsync("timeout-remove", [1], new DistributedCacheEntryOptions());
         await using var timeoutClient = await ConnectTimeoutClientAsync();
         await using var timeoutCache = new RespireDistributedCache(timeoutClient);
 
-        var stallObserved = Task.Run(async () => (await Client.ExecuteAsync("EVAL", StallScriptSource, "0")).Dispose());
+        // Warm the dedicated pool while the server is responsive, so the stalled removal below
+        // fails in the reply wait (UNLINK already on the wire), not during connection setup.
+        await timeoutCache.RemoveAsync("warmup");
+
+        var stallObserved = StallServerAsync("0.5");
         await Task.Delay(100);
 
-        // A timed wait would throw RespireTimeoutException at 50ms; removal must instead wait
-        // out the stall and complete only once the UNLINK has executed.
-        await timeoutCache.RemoveAsync("timeout-remove");
+        var threw = false;
+        try
+        {
+            await timeoutCache.RemoveAsync("timeout-remove");
+        }
+        catch (RespireTimeoutException)
+        {
+            threw = true;
+        }
 
-        await Assert.That(await Cache.GetAsync("timeout-remove")).IsNull();
+        // The wait is bounded — a wedged server cannot hang removal forever — and abandoning it
+        // discarded the dedicated connection, so the queued UNLINK died with the socket instead
+        // of lingering client-side; only bytes already at the server (as here) still execute.
+        await Assert.That(threw).IsTrue();
         await stallObserved;
+        await timeoutCache.RemoveAsync("proves-the-pool-recovered");
+        await Assert.That(await Cache.GetAsync("timeout-remove")).IsNull();
     }
 
     [Test]
@@ -483,7 +501,7 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         await using var timeoutClient = await ConnectTimeoutClientAsync();
         await using var timeoutCache = new RespireDistributedCache(timeoutClient);
 
-        var stallObserved = Task.Run(async () => (await Client.ExecuteAsync("EVAL", StallScriptSource, "0")).Dispose());
+        var stallObserved = StallServerAsync("0.5");
         await Task.Delay(100);
 
         var threw = false;
@@ -520,7 +538,7 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         await using var timeoutClient = await ConnectTimeoutClientAsync();
         await using var timeoutCache = new RespireDistributedCache(timeoutClient);
 
-        var stallObserved = Task.Run(async () => (await Client.ExecuteAsync("EVAL", StallScriptSource, "0")).Dispose());
+        var stallObserved = StallServerAsync("0.5");
         await Task.Delay(100);
 
         var threw = false;
@@ -542,6 +560,43 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         var pttl = await PttlAsync("timeout-get");
         await Assert.That(pttl).IsGreaterThan(0);
         await Assert.That(pttl).IsLessThanOrEqualTo((long)TimeSpan.FromSeconds(30).TotalMilliseconds);
+    }
+
+    [Test]
+    public async Task Set_TimedOutWait_CorrectionChasesTheStall_UntilTheRemainderIsFresh()
+    {
+        await Client.Scripts.LoadAsync(RespireDistributedCache.SetScript);
+        await using var timeoutClient = await ConnectTimeoutClientAsync();
+        await using var timeoutCache = new RespireDistributedCache(timeoutClient);
+
+        // A stall longer than SendDelayTolerance: the first correction pass chases the queued
+        // set through it, so its remainder is stale by more than the tolerance and a second
+        // pass with a freshly derived remainder must run.
+        var stallObserved = StallServerAsync("1.5");
+        await Task.Delay(100);
+
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
+        var threw = false;
+        try
+        {
+            await timeoutCache.SetAsync("chased-set", [1],
+                new DistributedCacheEntryOptions { AbsoluteExpiration = deadline });
+        }
+        catch (RespireTimeoutException)
+        {
+            threw = true;
+        }
+
+        await Assert.That(threw).IsTrue();
+        await stallObserved;
+
+        // A single stale pass would have left the TTL near the full 10s, letting the entry
+        // outlive its deadline by the stall; the re-derived pass pins it to the true remainder.
+        await Assert.That(await Cache.GetAsync("chased-set")).IsNotNull();
+        var pttl = await PttlAsync("chased-set");
+        var remaining = (long)(deadline - DateTimeOffset.UtcNow).TotalMilliseconds;
+        await Assert.That(pttl).IsGreaterThan(0);
+        await Assert.That(pttl).IsLessThanOrEqualTo(remaining + 500);
     }
 
     [Test]
