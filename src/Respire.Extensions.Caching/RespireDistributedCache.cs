@@ -31,13 +31,14 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     // ARGV: [1] '1' to return the payload ('0' for refresh-only), [2] current UTC ticks. For
     // sliding entries the TTL is re-armed to min(sliding, time left until absolute expiration),
     // atomically with the read. Ticks (100ns) to Redis milliseconds is a divide by 10000.
-    // The TTL Redis already holds is the authority on expiry — absexp only caps re-arming, and
-    // only when the remainder is positive. The metadata can carry a writer's clock-offset quirk
-    // (the Microsoft implementation stores DateTimeOffset.Ticks with the caller's offset baked
-    // in, then reads them back as UTC), so it must never delete or pin an entry: a correct
-    // writer arms a TTL no longer than the time to absolute expiration, so a live key whose
-    // absexp reads as past proves the metadata is skewed — the sliding window re-arms in full
-    // rather than being silently disabled.
+    // The TTL Redis already holds is the authority on expiry — absexp caps re-arming and never
+    // deletes. The metadata can carry a writer's clock-offset quirk (the Microsoft
+    // implementation stores DateTimeOffset.Ticks with the caller's offset baked in, then reads
+    // them back as UTC), which makes a live key's absexp able to read as already past. The true
+    // deadline is then unknowable, so no re-arm can be proven safe: a non-positive remainder
+    // skips the re-arm and lets the write-time TTL run out. Such an entry loses sliding
+    // refresh but is never served past its deadline nor deleted early (the Microsoft reader
+    // deletes it on sight, via KeyExpire with a negative TimeSpan).
     private static readonly RespireScript GetAndRefreshScript = RespireScript.Create("""
         local entry = redis.call('HMGET', KEYS[1], 'absexp', 'sldexp', 'data')
         if entry[1] == false and entry[3] == false then
@@ -49,7 +50,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
           local absexp = tonumber(entry[1]) or -1
           if absexp ~= -1 then
             local remaining = math.floor((absexp - tonumber(ARGV[2])) / 10000)
-            if remaining > 0 and remaining < ttl then
+            if remaining < ttl then
               ttl = remaining
             end
           end
