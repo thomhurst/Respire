@@ -237,14 +237,18 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
     // production scripts directly: first the set script with the stale TTL a delayed sender
     // would arm, then the correction with the remainder it would re-derive after the reply.
 
-    private async Task RunDelayedSetAsync(string key, long absexp, long staleTtlMs)
+    private async Task RunDelayedSetAsync(string key, long absexp, long staleTtlMs, long sldexp = -1L)
         => (await Client.Scripts.ExecuteAsync(
             RespireDistributedCache.SetScript, [key],
-            [absexp, -1L, staleTtlMs, new byte[] { 1 }])).Dispose();
+            [absexp, sldexp, staleTtlMs, new byte[] { 1 }])).Dispose();
 
-    private async Task RunTtlCorrectionAsync(string key, long absexp, long remainingMs)
+    private async Task RunTtlCorrectionAsync(string key, long absexp, long remainingMs, long sldexp = -1L)
         => (await Client.Scripts.ExecuteAsync(
-            RespireDistributedCache.CapTtlScript, [key], [absexp, remainingMs])).Dispose();
+            RespireDistributedCache.CapTtlScript, [key], [absexp, sldexp, remainingMs])).Dispose();
+
+    private async Task RunRefreshCorrectionAsync(string key, long nowTicks)
+        => (await Client.Scripts.ExecuteAsync(
+            RespireDistributedCache.CapRefreshedTtlScript, [key], [nowTicks])).Dispose();
 
     [Test]
     public async Task DelayedSet_DeadlinePassedInTransit_CorrectionRemovesEntry()
@@ -298,6 +302,81 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
 
         await Assert.That(await Cache.GetAsync("overwritten")).IsNotNull();
         await Assert.That(await PttlAsync("overwritten")).IsGreaterThan(250_000);
+    }
+
+    [Test]
+    public async Task DelayedSet_CorrectionSkipsAnEntryWithADifferentSlidingWindow()
+    {
+        // Both writers chose the same explicit absolute deadline, but the newer entry slides
+        // over a minute while the delayed one slid over 5s; matching on absexp alone would let
+        // the old correction shrink the newer entry to its smaller window.
+        var absexp = DateTimeOffset.UtcNow.AddMinutes(5).UtcTicks;
+        var newerSliding = TimeSpan.FromMinutes(1).Ticks;
+        var oldSliding = TimeSpan.FromSeconds(5).Ticks;
+        await RunDelayedSetAsync("resliding", absexp, staleTtlMs: 60_000, sldexp: newerSliding);
+
+        await RunTtlCorrectionAsync("resliding", absexp, remainingMs: 5_000, sldexp: oldSliding);
+
+        await Assert.That(await PttlAsync("resliding")).IsGreaterThan(55_000);
+    }
+
+    // Same simulation approach for the read path: a sliding read whose send stalled re-arms
+    // the TTL from a "now" that was sampled before the stall. The tests run the production
+    // get script with that stale timestamp, then the correction with a fresh one.
+
+    private async Task RunDelayedRefreshAsync(string key, long staleNowTicks)
+        => (await Client.Scripts.ExecuteAsync(
+            RespireDistributedCache.GetAndRefreshScript, [key], ["0", staleNowTicks])).Dispose();
+
+    [Test]
+    public async Task DelayedRefresh_StaleReArmIsShrunkToTheRemainder()
+    {
+        // 10s of deadline left, 30s sliding window. A refresh queued a minute "ago" re-arms
+        // the full window, stretching the entry ~20s past its deadline.
+        var now = DateTimeOffset.UtcNow;
+        var absexp = now.AddSeconds(10).UtcTicks;
+        var sliding = TimeSpan.FromSeconds(30).Ticks;
+        await RunDelayedSetAsync("stale-refresh", absexp, staleTtlMs: 10_000, sldexp: sliding);
+        await RunDelayedRefreshAsync("stale-refresh", now.AddMinutes(-1).UtcTicks);
+        await Assert.That(await PttlAsync("stale-refresh")).IsGreaterThan(10_000);
+
+        await RunRefreshCorrectionAsync("stale-refresh", DateTimeOffset.UtcNow.UtcTicks);
+
+        var pttl = await PttlAsync("stale-refresh");
+        await Assert.That(pttl).IsGreaterThan(0);
+        await Assert.That(pttl).IsLessThanOrEqualTo(10_000);
+    }
+
+    [Test]
+    public async Task DelayedRefresh_CorrectionNeverExtendsTheTtl()
+    {
+        // A correction computed from an even staler clock sees a large remainder; the PTTL
+        // guard must keep it from pushing the TTL out.
+        var now = DateTimeOffset.UtcNow;
+        var absexp = now.AddSeconds(5).UtcTicks;
+        var sliding = TimeSpan.FromSeconds(30).Ticks;
+        await RunDelayedSetAsync("no-extend", absexp, staleTtlMs: 5_000, sldexp: sliding);
+
+        await RunRefreshCorrectionAsync("no-extend", now.AddMinutes(-1).UtcTicks);
+
+        await Assert.That(await PttlAsync("no-extend")).IsLessThanOrEqualTo(5_000);
+    }
+
+    [Test]
+    public async Task DelayedRefresh_CorrectionNeverDeletesASkewedEntry()
+    {
+        // A Microsoft writer's negative clock offset makes absexp read as already past on a
+        // live key. The correction must skip — not unlink — and let the write-time TTL govern.
+        var absexp = DateTimeOffset.UtcNow.AddHours(-1).UtcTicks;
+        var sliding = TimeSpan.FromSeconds(30).Ticks;
+        await RunDelayedSetAsync("skewed", absexp, staleTtlMs: 10_000, sldexp: sliding);
+
+        await RunRefreshCorrectionAsync("skewed", DateTimeOffset.UtcNow.UtcTicks);
+
+        await Assert.That(await Cache.GetAsync("skewed")).IsNotNull();
+        var pttl = await PttlAsync("skewed");
+        await Assert.That(pttl).IsGreaterThan(0);
+        await Assert.That(pttl).IsLessThanOrEqualTo(10_000);
     }
 
     [Test]

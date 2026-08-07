@@ -35,8 +35,10 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         """);
 
     // ARGV: [1] '1' to return the payload ('0' for refresh-only), [2] current UTC ticks (the
-    // app's clock — a delayed send re-arms from a "now" stale by the delay, a transient bounded
-    // overshoot the Microsoft reader shares, since it also computes the refresh TTL client-side).
+    // app's clock, sampled just before the send — a delayed send re-arms from a "now" stale by
+    // the delay; RunGetScriptAsync measures the delay on that same clock once the reply arrives
+    // and corrects the over-extension with CapRefreshedTtlScript, so the residual overshoot is
+    // bounded by SendDelayTolerance).
     // For sliding entries the TTL is re-armed to min(sliding, time left until absolute
     // expiration), atomically with the read. Ticks (100ns) to Redis milliseconds is a divide
     // by 10000.
@@ -54,7 +56,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     //   the same entry. This skew is undetectable (an inflated absexp is indistinguishable
     //   from a genuinely distant one), so the only cap that could contain it is refusing to
     //   ever extend the TTL, which would disable sliding refresh for every honest entry.
-    private static readonly RespireScript GetAndRefreshScript = RespireScript.Create("""
+    internal static readonly RespireScript GetAndRefreshScript = RespireScript.Create("""
         local entry = redis.call('HMGET', KEYS[1], 'absexp', 'sldexp', 'data')
         if entry[1] == false and entry[3] == false then
           return nil
@@ -87,15 +89,19 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         """);
 
     // Shrink-only TTL correction for a set whose send was delayed (see CapDelayedTtlAsync).
-    // ARGV: [1] the absexp the delayed set stored — a mismatch means a concurrent overwrite won
-    // the race and the correction no longer applies; [2] the re-derived remaining ms (<= 0: the
-    // deadline has already passed, remove the entry). The TTL is only ever shortened (PTTL -1,
-    // a lost TTL, counts as infinite), so racing reads or writers can never be extended by it.
+    // ARGV: [1] absexp and [2] sldexp exactly as the delayed set stored them — a mismatch on
+    // either means a concurrent overwrite won the race and the correction no longer applies
+    // (absexp alone is not enough: another writer can share the explicit absolute deadline yet
+    // carry a different sliding window, and must not be shrunk to ours); [3] the re-derived
+    // remaining ms (<= 0: the deadline has already passed, remove the entry). The TTL is only
+    // ever shortened (PTTL -1, a lost TTL, counts as infinite), so racing reads or writers can
+    // never be extended by it.
     internal static readonly RespireScript CapTtlScript = RespireScript.Create("""
-        if redis.call('HGET', KEYS[1], 'absexp') ~= ARGV[1] then
+        local entry = redis.call('HMGET', KEYS[1], 'absexp', 'sldexp')
+        if entry[1] ~= ARGV[1] or entry[2] ~= ARGV[2] then
           return 0
         end
-        local remaining = tonumber(ARGV[2])
+        local remaining = tonumber(ARGV[3])
         if remaining <= 0 then
           redis.call('UNLINK', KEYS[1])
           return 1
@@ -103,6 +109,35 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         local ttl = redis.call('PTTL', KEYS[1])
         if ttl == -1 or ttl > remaining then
           redis.call('PEXPIRE', KEYS[1], remaining)
+        end
+        return 1
+        """);
+
+    // Shrink-only TTL correction for a sliding read whose send was delayed (see
+    // RunGetScriptAsync). ARGV: [1] a fresh app-clock "now" (UTC ticks). Unlike CapTtlScript
+    // this needs no ownership check: it re-derives min(sliding, remaining) from whatever
+    // metadata the key currently holds — the same formula any honest read applies — and the
+    // PTTL guard keeps it strictly shrink-only, so a concurrently overwritten entry is at
+    // worst a no-op. A non-positive remainder skips rather than unlinks: absexp here is wire
+    // metadata that can carry a writer's clock offset (see GetAndRefreshScript), so deletion
+    // cannot be proven safe; the stale re-arm it leaves behind is bounded by the send delay.
+    internal static readonly RespireScript CapRefreshedTtlScript = RespireScript.Create("""
+        local entry = redis.call('HMGET', KEYS[1], 'absexp', 'sldexp')
+        local absexp = tonumber(entry[1]) or -1
+        local sldexp = tonumber(entry[2]) or -1
+        if absexp == -1 or sldexp == -1 then
+          return 0
+        end
+        local ttl = math.floor(sldexp / 10000)
+        local remaining = math.floor((absexp - tonumber(ARGV[1])) / 10000)
+        if remaining < ttl then
+          ttl = remaining
+        end
+        if ttl > 0 then
+          local pttl = redis.call('PTTL', KEYS[1])
+          if pttl == -1 or pttl > ttl then
+            redis.call('PEXPIRE', KEYS[1], ttl)
+          end
         end
         return 1
         """);
@@ -178,17 +213,40 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
         var now = DateTimeOffset.UtcNow;
         var absoluteExpiration = GetAbsoluteExpiration(now, options);
-        var result = await _client.Scripts.ExecuteAsync(
-            SetScript,
-            [key],
-            [
-                absoluteExpiration?.UtcTicks ?? NotPresent,
-                options.SlidingExpiration?.Ticks ?? NotPresent,
-                GetExpirationMilliseconds(now, absoluteExpiration, options),
-                value,
-            ],
-            token).ConfigureAwait(false);
-        result.Dispose();
+        try
+        {
+            var result = await _client.Scripts.ExecuteAsync(
+                SetScript,
+                [key],
+                [
+                    absoluteExpiration?.UtcTicks ?? NotPresent,
+                    options.SlidingExpiration?.Ticks ?? NotPresent,
+                    GetExpirationMilliseconds(now, absoluteExpiration, options),
+                    value,
+                ],
+                token).ConfigureAwait(false);
+            result.Dispose();
+        }
+        catch (OperationCanceledException)
+        {
+            // A cancelled wait does not cancel the send — a queued set can still reach Redis,
+            // and if that send was delayed it stores a TTL computed before the delay. With no
+            // reply to measure the delay against, correct unconditionally and best-effort: a
+            // correction that beats a still-queued set no-ops on the ownership check, and one
+            // that fails means the connection died and took the queued set with it.
+            if (absoluteExpiration is { } cancelledDeadline)
+            {
+                try
+                {
+                    await CapDelayedTtlAsync(key, cancelledDeadline, options).ConfigureAwait(false);
+                }
+                catch (RespireException)
+                {
+                }
+            }
+
+            throw;
+        }
 
         if (absoluteExpiration is { } absolute && DateTimeOffset.UtcNow - now >= SendDelayTolerance)
         {
@@ -212,7 +270,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         var result = await _client.Scripts.ExecuteAsync(
             CapTtlScript,
             [key],
-            [absolute.UtcTicks, GetExpirationMilliseconds(DateTimeOffset.UtcNow, absolute, options)],
+            [
+                absolute.UtcTicks,
+                options.SlidingExpiration?.Ticks ?? NotPresent,
+                GetExpirationMilliseconds(DateTimeOffset.UtcNow, absolute, options),
+            ],
             CancellationToken.None).ConfigureAwait(false);
         result.Dispose();
     }
@@ -237,9 +299,50 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         result.Dispose();
     }
 
-    private ValueTask<RespireResult> RunGetScriptAsync(string key, bool returnData, CancellationToken token)
-        => _client.Scripts.ExecuteAsync(
-            GetAndRefreshScript, [key], [returnData ? "1" : "0", DateTimeOffset.UtcNow.UtcTicks], token);
+    private async ValueTask<RespireResult> RunGetScriptAsync(string key, bool returnData, CancellationToken token)
+    {
+        var now = DateTimeOffset.UtcNow;
+        RespireResult result;
+        try
+        {
+            result = await _client.Scripts.ExecuteAsync(
+                GetAndRefreshScript, [key], [returnData ? "1" : "0", now.UtcTicks], token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Same hazard as the set path: the cancelled wait leaves the script queued, and a
+            // delayed send would re-arm the sliding TTL from a stale "now". Best-effort, and
+            // swallowed for the same reasons as in SetCoreAsync.
+            try
+            {
+                await CapRefreshedTtlAsync(key).ConfigureAwait(false);
+            }
+            catch (RespireException)
+            {
+            }
+
+            throw;
+        }
+
+        // The re-arm the script just performed used a "now" stale by however long the send
+        // stalled; past the tolerance, shrink the TTL back to a fresh-clock remainder. Runs
+        // without the caller's token — the entry was already extended, so undoing the
+        // over-extension must not be skippable by cancellation.
+        if (DateTimeOffset.UtcNow - now >= SendDelayTolerance)
+        {
+            await CapRefreshedTtlAsync(key).ConfigureAwait(false);
+        }
+
+        return result;
+    }
+
+    private async ValueTask CapRefreshedTtlAsync(string key)
+    {
+        var result = await _client.Scripts.ExecuteAsync(
+            CapRefreshedTtlScript, [key], [DateTimeOffset.UtcNow.UtcTicks], CancellationToken.None)
+            .ConfigureAwait(false);
+        result.Dispose();
+    }
 
     private static DateTimeOffset? GetAbsoluteExpiration(DateTimeOffset now, DistributedCacheEntryOptions options)
     {
