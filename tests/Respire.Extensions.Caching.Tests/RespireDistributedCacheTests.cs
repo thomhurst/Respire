@@ -461,14 +461,15 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         => Task.Run(async () => (await Client.ExecuteAsync("EVAL", StallScriptSource, "0", seconds)).Dispose());
 
     [Test]
-    public async Task Remove_TimedOutWait_FailsFast_WithoutLeavingTheUnlinkQueued()
+    public async Task Remove_TimedOutWait_FailsBounded_AndTheLatentUnlinkCannotDeleteAReplacement()
     {
         await Cache.SetAsync("timeout-remove", [1], new DistributedCacheEntryOptions());
         await using var timeoutClient = await ConnectTimeoutClientAsync();
         await using var timeoutCache = new RespireDistributedCache(timeoutClient);
 
         // Warm the dedicated pool while the server is responsive, so the stalled removal below
-        // fails in the reply wait (UNLINK already on the wire), not during connection setup.
+        // fails in the reply wait (the fenced UNLINK already on the wire), not during
+        // connection setup.
         await timeoutCache.RemoveAsync("warmup");
 
         var stallObserved = StallServerAsync("0.5");
@@ -484,13 +485,39 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
             threw = true;
         }
 
-        // The wait is bounded — a wedged server cannot hang removal forever — and abandoning it
-        // discarded the dedicated connection, so the queued UNLINK died with the socket instead
-        // of lingering client-side; only bytes already at the server (as here) still execute.
+        // The wait is bounded — a wedged server cannot hang removal forever — and the failure
+        // surfaced only after the fence write round-tripped, so the flushed removal script is
+        // ordered behind the fence from the caller's viewpoint: whenever it drains, it either
+        // already ran (before the failure was reported, deleting only the old value) or sees
+        // the fence and refuses to delete. A replacement written after the observed failure
+        // must therefore survive the stall clearing.
         await Assert.That(threw).IsTrue();
+        await Cache.SetAsync("timeout-remove", [2], new DistributedCacheEntryOptions());
+
         await stallObserved;
+        await Task.Delay(200);
+
         await timeoutCache.RemoveAsync("proves-the-pool-recovered");
-        await Assert.That(await Cache.GetAsync("timeout-remove")).IsNull();
+        var survivor = await Cache.GetAsync("timeout-remove");
+        await Assert.That(survivor).IsNotNull();
+        await Assert.That(survivor!.SequenceEqual(new byte[] { 2 })).IsTrue();
+    }
+
+    [Test]
+    public async Task Remove_FencedScript_DeletesOnlyWhileUnfenced()
+    {
+        // The production removal script executed both ways: with its fence present the delete
+        // must no-op (the latent-copy case), without it the delete must run.
+        await Cache.SetAsync("fenced", [1], new DistributedCacheEntryOptions());
+        (await Client.ExecuteAsync("SET", "fence-key", "1")).Dispose();
+
+        (await Client.Scripts.ExecuteAsync(
+            RespireClient.FencedUnlinkScript, ["fenced", "fence-key"])).Dispose();
+        await Assert.That(await Cache.GetAsync("fenced")).IsNotNull();
+
+        (await Client.Scripts.ExecuteAsync(
+            RespireClient.FencedUnlinkScript, ["fenced", "absent-fence"])).Dispose();
+        await Assert.That(await Cache.GetAsync("fenced")).IsNull();
     }
 
     [Test]

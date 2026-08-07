@@ -429,40 +429,136 @@ public sealed partial class RespireClient : IRespireClient
     // Wire-level primitives for the caching package (see InternalsVisibleTo). Both honor this
     // view's key prefix.
 
+    // The removal script: delete unless this removal's fence key exists. The fence is written
+    // only after a removal's wait is abandoned, so a latent copy of this script — flushed to the
+    // server, then abandoned — refuses to delete once the failure has been fenced, and a
+    // replacement the caller writes after observing that failure can no longer be destroyed by
+    // it. Plain EVAL: removals are rare enough that EVALSHA probing isn't worth a NOSCRIPT
+    // fallback on the dedicated connection.
+    internal static readonly RespireScript FencedUnlinkScript = RespireScript.Create("""
+        if redis.call('EXISTS', KEYS[2]) == 0 then
+          redis.call('UNLINK', KEYS[1])
+        end
+        return 1
+        """);
+
+    // How long an abandoned removal's fence key lives. The latent UNLINK stays executable only
+    // until the server drains the discarded socket's input buffer — normally instants after any
+    // stall clears — so the TTL just has to dwarf any stall a live deployment survives.
+    private const long RemovalFenceTtlMs = 600_000;
+
+    // Bounds the wait for the fence write itself: without it, a wedged server would let the
+    // fence hang removal's failure path forever, resurrecting the unbounded-wait hazard the
+    // guarded send exists to prevent. Mutable so tests can shrink the bound.
+    internal TimeSpan RemovalFenceWaitBound = TimeSpan.FromSeconds(10);
+
     /// <summary>
-    /// UNLINK on a dedicated pooled connection, with the wait bounded by both the caller's
-    /// token and <see cref="RespireOptions.CommandTimeout"/>. Boundedness is safe here only
-    /// because <see cref="SendBlockingAsync"/> discards the dedicated connection when a wait is
-    /// abandoned: the queued UNLINK dies with the socket instead of lingering to delete a value
-    /// written after the caller observed the failure. (Bytes already received by the server can
-    /// still execute — the residual every Redis client shares on an abandoned wait.) On the
-    /// multiplexed connections neither bound could be honored, since abandoning a wait there
-    /// leaves the command queued indefinitely, and killing a shared connection would fault every
-    /// innocent in-flight command on it.
+    /// Removal on a dedicated pooled connection, with the wait bounded by both the caller's
+    /// token and <see cref="RespireOptions.CommandTimeout"/>. Abandoning the wait discards the
+    /// dedicated connection, killing the command when it is still queued client-side — but bytes
+    /// already flushed can execute server-side after the failure is reported, and a plain UNLINK
+    /// landing late would delete a replacement the caller wrote in response to that failure.
+    /// So removal runs as <see cref="FencedUnlinkScript"/>, and the failure path writes the
+    /// fence (uncancelable, bounded by <see cref="RemovalFenceWaitBound"/>) before the failure
+    /// is surfaced: once the fence's reply arrives, the latent script provably cannot delete
+    /// anything written afterward. The residual is a fence wait that itself times out under a
+    /// server stall longer than the bound — the fence stays queued on its multiplexed connection
+    /// and still wins unless the latent script both survives the entire stall and drains ahead
+    /// of it. On the multiplexed connections no bound could be honored at all: abandoning a wait
+    /// there leaves the command queued indefinitely, and killing a shared connection would fault
+    /// every innocent in-flight command on it.
     /// </summary>
     internal async ValueTask UnlinkGuardedAsync(RespireKey key, CancellationToken cancellationToken)
     {
-        var command = new Cmd1(Verbs.Unlink, Key(in key));
-        RespValue value;
-        if (_core.Options.CommandTimeout is { } timeout)
+        RespireKey fence = "respire-rm-fence:" + Guid.NewGuid().ToString("N");
+        var command = new Cmd2N(Verbs.Eval, FencedUnlinkScript.Source, 2, [Key(in key), Key(in fence)]);
+        try
         {
-            using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutSource.CancelAfter(timeout);
-            try
+            RespValue value;
+            if (_core.Options.CommandTimeout is { } timeout)
             {
-                value = await SendBlockingAsync("UNLINK", command, timeoutSource.Token).ConfigureAwait(false);
+                using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeoutSource.CancelAfter(timeout);
+                try
+                {
+                    value = await SendBlockingAsync("UNLINK", command, timeoutSource.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    throw new RespireTimeoutException("UNLINK", timeout);
+                }
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            else
             {
-                throw new RespireTimeoutException("UNLINK", timeout);
+                value = await SendBlockingAsync("UNLINK", command, cancellationToken).ConfigureAwait(false);
             }
+
+            value.Dispose();
         }
-        else
+        catch (Exception ex) when (ex is not RespireServerException)
         {
-            value = await SendBlockingAsync("UNLINK", command, cancellationToken).ConfigureAwait(false);
+            // Every non-server failure leaves the script's execution undecided (a server error
+            // proves it ran), so the fence must land before the caller can observe the failure
+            // and write a replacement.
+            await FenceRemovalAsync(fence).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Writes a removal's fence key on the multiplexed path — no caller token and no
+    /// <see cref="RespireOptions.CommandTimeout"/>, because a fence, once owed, must not be
+    /// abandonable — waiting only up to <see cref="RemovalFenceWaitBound"/>. A wait that
+    /// times out leaves the fence queued (multiplexed sends are never cancelled), so it still
+    /// lands when the stall clears; it is observed in the background so a late fault is not
+    /// unhandled.
+    /// </summary>
+    private async ValueTask FenceRemovalAsync(RespireKey fence)
+    {
+        var send = SendFenceAsync(new Cmd4(Verbs.Set, Key(in fence), 1, "PX", RemovalFenceTtlMs));
+        try
+        {
+            await send.WaitAsync(RemovalFenceWaitBound).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            _ = ObserveFenceAsync(send);
+        }
+        catch (Exception ex) when (ex is RespireException or ObjectDisposedException)
+        {
+            // The fence could not be sent at all — the multiplexer's connections are dead or the
+            // client is disposed. The failure is swallowed (it must not mask the caller's real
+            // failure), and the hazard it leaves needs the dead client to still deliver the
+            // latent script's bytes, which died with the same connections for anything not
+            // already at the server.
+        }
+    }
+
+    private async Task SendFenceAsync(Cmd4 command)
+    {
+        await _core.Multiplexer.EnsureConnectedAsync(CancellationToken.None).ConfigureAwait(false);
+        var reply = await _core.Multiplexer.SendAsync(in command, CancellationToken.None).ConfigureAwait(false);
+        if (reply.IsError)
+        {
+            var error = ResponseReader.ServerError(in reply);
+            reply.Dispose();
+            throw error;
         }
 
-        value.Dispose();
+        reply.Dispose();
+    }
+
+    private static async Task ObserveFenceAsync(Task send)
+    {
+        try
+        {
+            await send.ConfigureAwait(false);
+        }
+        catch
+        {
+            // An abandoned fence that fails means its connection died and cannot deliver more
+            // bytes; whatever the server already holds decides the race either way.
+        }
     }
 
     /// <summary>
