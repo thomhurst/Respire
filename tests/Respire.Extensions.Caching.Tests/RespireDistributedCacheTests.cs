@@ -125,6 +125,26 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
     }
 
     [Test]
+    public async Task StaleAbsoluteExpiration_IsIgnoredWhenRelativeTakesPrecedence()
+    {
+        // A reused options instance can carry a passed AbsoluteExpiration alongside a later,
+        // valid AbsoluteExpirationRelativeToNow; the relative value wins, so the dead absolute
+        // must not be validated.
+        var options = new DistributedCacheEntryOptions
+        {
+            AbsoluteExpiration = DateTimeOffset.UtcNow.AddMinutes(-1),
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5),
+        };
+
+        await Cache.SetAsync("stale-absolute", [1], options);
+
+        await Assert.That(await Cache.GetAsync("stale-absolute")).IsNotNull();
+        var pttl = await PttlAsync("stale-absolute");
+        await Assert.That(pttl).IsGreaterThan(0);
+        await Assert.That(pttl).IsLessThanOrEqualTo((long)TimeSpan.FromMinutes(5).TotalMilliseconds);
+    }
+
+    [Test]
     public async Task SlidingExpiration_GetExtendsLife()
     {
         var options = new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromSeconds(2) };

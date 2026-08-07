@@ -90,13 +90,6 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         return {capped}
         """);
 
-    // Removal goes through a script (rather than the client's UNLINK facet) so the caller's
-    // cancellation token covers the wait for the reply, like every other cache operation.
-    private static readonly RespireScript RemoveScript = RespireScript.Create("""
-        redis.call('UNLINK', KEYS[1])
-        return 1
-        """);
-
     // Shrink-only TTL correction for a set whose send was delayed (see CapDelayedTtlAsync).
     // ARGV: [1] absexp and [2] sldexp exactly as the delayed set stored them — a mismatch on
     // either means a concurrent overwrite won the race and the correction no longer applies
@@ -316,8 +309,14 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     {
         ArgumentNullException.ThrowIfNull(key);
         token.ThrowIfCancellationRequested();
-        var result = await _client.Scripts.ExecuteAsync(RemoveScript, [key], args: null, token).ConfigureAwait(false);
-        result.Dispose();
+        // Deliberately uncancelable past this point. The wire layer never cancels a queued
+        // send, so a token honored during the reply wait would let the caller observe
+        // cancellation, write a replacement (possibly on another connection), and have the
+        // still-queued UNLINK silently delete it. Deletion carries no identity to fence on in
+        // the shared hash layout, so the only safe ordering is to not complete until the
+        // UNLINK has executed — the same semantics as the Microsoft implementation, whose
+        // reply waits are also uncancelable.
+        await _client.Keys.UnlinkAsync(key).ConfigureAwait(false);
     }
 
     private async ValueTask<RespireResult> RunGetScriptAsync(string key, bool returnData, CancellationToken token)
@@ -377,6 +376,14 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
     private static DateTimeOffset? GetAbsoluteExpiration(DateTimeOffset now, DistributedCacheEntryOptions options)
     {
+        // AbsoluteExpirationRelativeToNow takes precedence, so a stale AbsoluteExpiration left
+        // behind on a reused options instance is dead data — only the effective deadline is
+        // validated.
+        if (options.AbsoluteExpirationRelativeToNow is { } relative)
+        {
+            return now + relative;
+        }
+
         if (options.AbsoluteExpiration is { } absolute && absolute <= now)
         {
             throw new ArgumentOutOfRangeException(
@@ -384,7 +391,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 "The absolute expiration value must be in the future.");
         }
 
-        return options.AbsoluteExpirationRelativeToNow is { } relative ? now + relative : options.AbsoluteExpiration;
+        return options.AbsoluteExpiration;
     }
 
     /// <summary>The TTL to arm at write time: min(sliding, time until absolute), or -1 for none.</summary>
