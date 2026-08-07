@@ -467,9 +467,8 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         await using var timeoutClient = await ConnectTimeoutClientAsync();
         await using var timeoutCache = new RespireDistributedCache(timeoutClient);
 
-        // Warm the dedicated pool while the server is responsive, so the stalled removal below
-        // fails in the reply wait (the fenced UNLINK already on the wire), not during
-        // connection setup.
+        // Warm the dedicated pool while the server is responsive, so nothing below fails
+        // during connection setup.
         await timeoutCache.RemoveAsync("warmup");
 
         var stallObserved = StallServerAsync("0.5");
@@ -485,12 +484,11 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
             threw = true;
         }
 
-        // The wait is bounded — a wedged server cannot hang removal forever — and the failure
-        // surfaced only after the fence write round-tripped, so the flushed removal script is
-        // ordered behind the fence from the caller's viewpoint: whenever it drains, it either
-        // already ran (before the failure was reported, deleting only the old value) or sees
-        // the fence and refuses to delete. A replacement written after the observed failure
-        // must therefore survive the stall clearing.
+        // The wait is bounded — a wedged server cannot hang removal forever. Under a stall the
+        // abandonment lands in the lease-placement stage, before the removal script was ever
+        // sent, so nothing latent exists and the failure surfaces immediately; a replacement
+        // written after the observed failure must survive the stall clearing (the script-level
+        // tests below pin the latent case, where the script itself was flushed).
         await Assert.That(threw).IsTrue();
         await Cache.SetAsync("timeout-remove", [2], new DistributedCacheEntryOptions());
 
@@ -504,20 +502,64 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
     }
 
     [Test]
-    public async Task Remove_FencedScript_DeletesOnlyWhileUnfenced()
+    public async Task Remove_LeasedScript_DeletesOnlyWhileTheLeaseIsAlive()
     {
-        // The production removal script executed both ways: with its fence present the delete
-        // must no-op (the latent-copy case), without it the delete must run.
-        await Cache.SetAsync("fenced", [1], new DistributedCacheEntryOptions());
-        (await Client.ExecuteAsync("SET", "fence-key", "1")).Dispose();
+        // The production removal script executed both ways: with its lease alive the delete
+        // runs and consumes the lease; without one it must refuse and report so.
+        await Cache.SetAsync("leased", [1], new DistributedCacheEntryOptions());
+        (await Client.ExecuteAsync("SET", "lease-key", "1", "PX", "30000")).Dispose();
 
-        (await Client.Scripts.ExecuteAsync(
-            RespireClient.FencedUnlinkScript, ["fenced", "fence-key"])).Dispose();
-        await Assert.That(await Cache.GetAsync("fenced")).IsNotNull();
+        using var withLease = await Client.Scripts.ExecuteAsync(
+            RespireClient.LeasedUnlinkScript, ["leased", "lease-key"]);
+        await Assert.That(withLease.AsInteger()).IsEqualTo(1);
+        await Assert.That(await Cache.GetAsync("leased")).IsNull();
+        await Assert.That((await Client.ExecuteAsync("EXISTS", "lease-key")).AsInteger()).IsEqualTo(0);
 
-        (await Client.Scripts.ExecuteAsync(
-            RespireClient.FencedUnlinkScript, ["fenced", "absent-fence"])).Dispose();
-        await Assert.That(await Cache.GetAsync("fenced")).IsNull();
+        await Cache.SetAsync("leased", [1], new DistributedCacheEntryOptions());
+        using var withoutLease = await Client.Scripts.ExecuteAsync(
+            RespireClient.LeasedUnlinkScript, ["leased", "lease-key"]);
+        await Assert.That(withoutLease.AsInteger()).IsEqualTo(0);
+        await Assert.That(await Cache.GetAsync("leased")).IsNotNull();
+    }
+
+    [Test]
+    public async Task Remove_LatentLeasedScript_CannotDeleteAReplacement_AfterRevocation()
+    {
+        // The failure path's fast half: the lease is revoked and the revocation's reply seen
+        // before the failure surfaces, so a latent script draining afterwards must no-op on the
+        // replacement the caller then wrote.
+        await Cache.SetAsync("revoked", [1], new DistributedCacheEntryOptions());
+        (await Client.ExecuteAsync("SET", "revoked-lease", "1", "PX", "30000")).Dispose();
+
+        (await Client.ExecuteAsync("UNLINK", "revoked-lease")).Dispose();
+        await Cache.SetAsync("revoked", [2], new DistributedCacheEntryOptions());
+
+        using var latent = await Client.Scripts.ExecuteAsync(
+            RespireClient.LeasedUnlinkScript, ["revoked", "revoked-lease"]);
+        await Assert.That(latent.AsInteger()).IsEqualTo(0);
+        var survivor = await Cache.GetAsync("revoked");
+        await Assert.That(survivor).IsNotNull();
+        await Assert.That(survivor!.SequenceEqual(new byte[] { 2 })).IsTrue();
+    }
+
+    [Test]
+    public async Task Remove_LatentLeasedScript_CannotDeleteAReplacement_AfterLeaseExpiry()
+    {
+        // The failure path's slow half: no revocation ever confirmed — the client only outwaits
+        // the TTL. The server expires the lease on its own clock, so a latent script draining
+        // after that is harmless with no client action at all.
+        await Cache.SetAsync("expired", [1], new DistributedCacheEntryOptions());
+        (await Client.ExecuteAsync("SET", "expired-lease", "1", "PX", "100")).Dispose();
+
+        await Task.Delay(300);
+        await Cache.SetAsync("expired", [2], new DistributedCacheEntryOptions());
+
+        using var latent = await Client.Scripts.ExecuteAsync(
+            RespireClient.LeasedUnlinkScript, ["expired", "expired-lease"]);
+        await Assert.That(latent.AsInteger()).IsEqualTo(0);
+        var survivor = await Cache.GetAsync("expired");
+        await Assert.That(survivor).IsNotNull();
+        await Assert.That(survivor!.SequenceEqual(new byte[] { 2 })).IsTrue();
     }
 
     [Test]

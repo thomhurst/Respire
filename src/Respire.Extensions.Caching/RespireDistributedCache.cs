@@ -404,12 +404,14 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         // Deletion carries no identity to fence on in the shared hash layout, so an UNLINK left
         // executable after an abandoned wait could later delete a replacement the caller wrote
         // after observing the failure. The guarded send solves all three hazards: the wait stays
-        // bounded (caller token and CommandTimeout are honored, so a wedged server cannot hang
-        // removal forever); abandoning it discards the dedicated connection so a still-queued
-        // command dies with the socket; and the removal runs as a fenced script whose fence key
-        // the failure path writes before the failure surfaces, so a copy already flushed to the
-        // server cannot delete anything written after the caller saw it fail. A mocked client
-        // falls back to the facet, whose token-less wait keeps the mock's own semantics.
+        // bounded (caller token and CommandTimeout are honored, and the failure path is bounded
+        // by the lease TTL, so a wedged server cannot hang removal forever); abandoning it
+        // discards the dedicated connection so a still-queued command dies with the socket; and
+        // the delete itself is leased — it only runs while a TTL'd lease key placed beforehand
+        // is still alive, and no failure surfaces until that lease is revoked or has certainly
+        // expired, so a copy already flushed to the server cannot delete anything written after
+        // the caller saw the failure. A mocked client falls back to the facet, whose token-less
+        // wait keeps the mock's own semantics.
         if (_wireClient is { } wire)
         {
             await wire.UnlinkGuardedAsync(key, token).ConfigureAwait(false);

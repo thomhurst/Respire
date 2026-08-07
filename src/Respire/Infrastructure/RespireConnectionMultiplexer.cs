@@ -236,13 +236,19 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
         if (sends is not null)
         {
-            foreach (var send in sends)
+            // Each reply is drained by its own task, not awaited in sequence: a slot that never
+            // replies must not stop the completed replies of later slots from being consumed
+            // and disposed, since a caller that detaches this broadcast would otherwise retain
+            // every undrained reply for as long as the stuck slot lives.
+            var drains = new Task<Exception?>[sends.Count];
+            for (var i = 0; i < sends.Count; i++)
             {
-                try
-                {
-                    (await send.ConfigureAwait(false)).Dispose();
-                }
-                catch (Exception ex)
+                drains[i] = DrainAsync(sends[i]);
+            }
+
+            foreach (var drain in drains)
+            {
+                if (await drain.ConfigureAwait(false) is { } ex)
                 {
                     failures++;
                     firstFailure ??= ex;
@@ -253,6 +259,19 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         if (attempted > 0 && failures == attempted && firstFailure is not null)
         {
             throw firstFailure;
+        }
+
+        static async Task<Exception?> DrainAsync(ValueTask<RespValue> send)
+        {
+            try
+            {
+                (await send.ConfigureAwait(false)).Dispose();
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return ex;
+            }
         }
     }
 

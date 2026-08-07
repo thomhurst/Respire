@@ -429,112 +429,169 @@ public sealed partial class RespireClient : IRespireClient
     // Wire-level primitives for the caching package (see InternalsVisibleTo). Both honor this
     // view's key prefix.
 
-    // The removal script: delete unless this removal's fence key exists. The fence is written
-    // only after a removal's wait is abandoned, so a latent copy of this script — flushed to the
-    // server, then abandoned — refuses to delete once the failure has been fenced, and a
-    // replacement the caller writes after observing that failure can no longer be destroyed by
-    // it. Plain EVAL: removals are rare enough that EVALSHA probing isn't worth a NOSCRIPT
-    // fallback on the dedicated connection.
-    internal static readonly RespireScript FencedUnlinkScript = RespireScript.Create("""
-        if redis.call('EXISTS', KEYS[2]) == 0 then
+    // The removal script: delete only while this removal's lease key is still alive. The lease
+    // is placed — and its reply awaited — before this script is ever sent, and it carries a
+    // TTL, so the script's authority to delete expires on the server's own duration clock: a
+    // latent copy (flushed to the server, then abandoned) becomes harmless no later than lease
+    // expiry, with no client action required. Returns whether the delete ran; 0 means the lease
+    // was gone — expired in transit under a stall — and a still-waiting caller retries with a
+    // fresh lease. Plain EVAL: removals are rare enough that EVALSHA probing isn't worth a
+    // NOSCRIPT fallback on the dedicated connection.
+    internal static readonly RespireScript LeasedUnlinkScript = RespireScript.Create("""
+        if redis.call('EXISTS', KEYS[2]) == 1 then
           redis.call('UNLINK', KEYS[1])
+          redis.call('UNLINK', KEYS[2])
+          return 1
         end
-        return 1
+        return 0
         """);
 
-    // How long an abandoned removal's fence key lives. The latent UNLINK stays executable only
-    // until the server drains the discarded socket's input buffer — normally instants after any
-    // stall clears — so the TTL just has to dwarf any stall a live deployment survives.
-    private const long RemovalFenceTtlMs = 600_000;
+    // How long a removal's lease lives: long enough that no stall a successful removal should
+    // survive expires it mid-flight (an in-transit expiry costs one retry round trip), short
+    // enough to bound the failure path, which may have to outwait it. Mutable so tests can
+    // shrink the bound.
+    internal TimeSpan RemovalLeaseTtl = TimeSpan.FromSeconds(30);
 
-    // Bounds the wait for the fence write itself: without it, a wedged server would let the
-    // fence hang removal's failure path forever, resurrecting the unbounded-wait hazard the
-    // guarded send exists to prevent. Mutable so tests can shrink the bound.
-    internal TimeSpan RemovalFenceWaitBound = TimeSpan.FromSeconds(10);
+    // Added to the client-side wait for lease expiry. The server counts the TTL from the
+    // script's execution, the client from the lease reply's arrival — strictly later — so the
+    // only error source is clock-*rate* drift between the hosts over the lease's lifetime,
+    // which this covers by orders of magnitude. No wall-clock instants are ever compared.
+    private static readonly TimeSpan LeaseExpiryMargin = TimeSpan.FromSeconds(1);
 
     /// <summary>
     /// Removal on a dedicated pooled connection, with the wait bounded by both the caller's
     /// token and <see cref="RespireOptions.CommandTimeout"/>. Abandoning the wait discards the
-    /// dedicated connection, killing the command when it is still queued client-side — but bytes
-    /// already flushed can execute server-side after the failure is reported, and a plain UNLINK
-    /// landing late would delete a replacement the caller wrote in response to that failure.
-    /// So removal runs as <see cref="FencedUnlinkScript"/>, and the failure path writes the
-    /// fence (uncancelable, bounded by <see cref="RemovalFenceWaitBound"/>) before the failure
-    /// is surfaced: once the fence's reply arrives, the latent script provably cannot delete
-    /// anything written afterward. The residual is a fence wait that itself times out under a
-    /// server stall longer than the bound — the fence stays queued on its multiplexed connection
-    /// and still wins unless the latent script both survives the entire stall and drains ahead
-    /// of it. On the multiplexed connections no bound could be honored at all: abandoning a wait
-    /// there leaves the command queued indefinitely, and killing a shared connection would fault
-    /// every innocent in-flight command on it.
+    /// dedicated connection, killing the command when it is still queued client-side — but
+    /// bytes already flushed can execute server-side after the failure is reported, and a plain
+    /// UNLINK landing late would delete a replacement the caller wrote in response to that
+    /// failure. So removal is leased (<see cref="LeasedUnlinkScript"/>): the delete only runs
+    /// while its lease key lives, and the failure path never surfaces the failure until the
+    /// latent script is provably harmless — either its lease was revoked and the revocation's
+    /// reply seen, or the lease's TTL has certainly expired on the server (waited out locally;
+    /// both are bounded by the TTL, so a wedged server cannot hang removal indefinitely). Only
+    /// then can the caller observe the failure and write a replacement, which the latent script
+    /// therefore cannot delete. On the multiplexed connections no wait bound could be honored
+    /// at all: abandoning a wait there leaves the command queued indefinitely, and killing a
+    /// shared connection would fault every innocent in-flight command on it.
     /// </summary>
     internal async ValueTask UnlinkGuardedAsync(RespireKey key, CancellationToken cancellationToken)
     {
-        RespireKey fence = "respire-rm-fence:" + Guid.NewGuid().ToString("N");
-        var command = new Cmd2N(Verbs.Eval, FencedUnlinkScript.Source, 2, [Key(in key), Key(in fence)]);
-        try
+        if (_core.Options.CommandTimeout is { } timeout)
         {
-            RespValue value;
-            if (_core.Options.CommandTimeout is { } timeout)
+            using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutSource.CancelAfter(timeout);
+            try
             {
-                using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                timeoutSource.CancelAfter(timeout);
-                try
-                {
-                    value = await SendBlockingAsync("UNLINK", command, timeoutSource.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-                {
-                    throw new RespireTimeoutException("UNLINK", timeout);
-                }
+                await UnlinkLeasedAsync(key, timeoutSource.Token).ConfigureAwait(false);
             }
-            else
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new RespireTimeoutException("UNLINK", timeout);
+            }
+        }
+        else
+        {
+            await UnlinkLeasedAsync(key, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask UnlinkLeasedAsync(RespireKey key, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            RespireKey leaseKey = "respire-rm-lease:" + Guid.NewGuid().ToString("N");
+            var lease = Key(in leaseKey);
+
+            // The lease must be on the server before the removal script is sent — its reply is
+            // the proof. A failure here (including an abandoned wait) leaves nothing latent:
+            // the script was never sent, and a lease-set that lands late just expires unused.
+            await PlaceLeaseAsync(lease, cancellationToken).ConfigureAwait(false);
+            var leaseStart = Stopwatch.GetTimestamp();
+
+            var command = new Cmd2N(Verbs.Eval, LeasedUnlinkScript.Source, 2, [Key(in key), lease]);
+            RespValue value;
+            try
             {
                 value = await SendBlockingAsync("UNLINK", command, cancellationToken).ConfigureAwait(false);
             }
+            catch (Exception ex) when (ex is not RespireServerException and not ObjectDisposedException)
+            {
+                // The script's execution is undecided (a server error would prove it ran, and a
+                // disposed client was rejected before sending), so the failure must not surface
+                // until the latent copy can no longer delete anything written after it.
+                await MakeLatentRemovalHarmlessAsync(lease, leaseStart).ConfigureAwait(false);
+                throw;
+            }
 
+            var ran = ResponseReader.Integer(in value);
             value.Dispose();
+            if (ran == 1)
+            {
+                return;
+            }
+
+            // The lease expired before the script executed — a stall longer than the TTL that
+            // the caller's bounds chose to sit out. The delete never ran, so retry fresh; each
+            // such pass costs at least a full lease lifetime, so the loop cannot spin.
         }
-        catch (Exception ex) when (ex is not RespireServerException)
+    }
+
+    private async ValueTask PlaceLeaseAsync(RespireValue lease, CancellationToken cancellationToken)
+    {
+        var command = new Cmd4(Verbs.Set, lease, 1, "PX", (long)RemovalLeaseTtl.TotalMilliseconds);
+        await _core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        var reply = await _core.Multiplexer.SendAsync(in command, cancellationToken).ConfigureAwait(false);
+        if (reply.IsError)
         {
-            // Every non-server failure leaves the script's execution undecided (a server error
-            // proves it ran), so the fence must land before the caller can observe the failure
-            // and write a replacement.
-            await FenceRemovalAsync(fence).ConfigureAwait(false);
-            throw;
+            var error = ResponseReader.ServerError(in reply);
+            reply.Dispose();
+            throw error;
         }
+
+        reply.Dispose();
     }
 
     /// <summary>
-    /// Writes a removal's fence key on the multiplexed path — no caller token and no
-    /// <see cref="RespireOptions.CommandTimeout"/>, because a fence, once owed, must not be
-    /// abandonable — waiting only up to <see cref="RemovalFenceWaitBound"/>. A wait that
-    /// times out leaves the fence queued (multiplexed sends are never cancelled), so it still
-    /// lands when the stall clears; it is observed in the background so a late fault is not
-    /// unhandled.
+    /// Blocks until the latent removal script provably cannot run its delete: either its lease
+    /// is revoked and the revocation's reply seen, or what remains of the lease's TTL (plus
+    /// <see cref="LeaseExpiryMargin"/>) has been waited out, after which the server has
+    /// certainly expired it. The revocation is uncancelable (no caller token, no
+    /// <see cref="RespireOptions.CommandTimeout"/> — once owed it must not be abandonable) and
+    /// its wait is bounded by the lease remainder, past which expiry has done its job anyway; a
+    /// timed-out revocation stays queued (multiplexed sends are never cancelled) and is
+    /// observed in the background so a late fault is not unhandled.
     /// </summary>
-    private async ValueTask FenceRemovalAsync(RespireKey fence)
+    private async ValueTask MakeLatentRemovalHarmlessAsync(RespireValue lease, long leaseStart)
     {
-        var send = SendFenceAsync(new Cmd4(Verbs.Set, Key(in fence), 1, "PX", RemovalFenceTtlMs));
-        try
+        var remaining = RemovalLeaseTtl - Stopwatch.GetElapsedTime(leaseStart);
+        if (remaining > TimeSpan.Zero)
         {
-            await send.WaitAsync(RemovalFenceWaitBound).ConfigureAwait(false);
+            var revoke = RevokeLeaseAsync(new Cmd1(Verbs.Unlink, lease));
+            try
+            {
+                await revoke.WaitAsync(remaining).ConfigureAwait(false);
+                return;
+            }
+            catch (TimeoutException)
+            {
+                _ = ObserveRevokeAsync(revoke);
+            }
+            catch (Exception ex) when (ex is RespireException or ObjectDisposedException)
+            {
+                // The revocation could not be sent or died with its connection. Swallowed — it
+                // must not mask the caller's real failure — and expiry below still bounds the
+                // latent script's authority.
+            }
         }
-        catch (TimeoutException)
+
+        var wait = RemovalLeaseTtl + LeaseExpiryMargin - Stopwatch.GetElapsedTime(leaseStart);
+        if (wait > TimeSpan.Zero)
         {
-            _ = ObserveFenceAsync(send);
-        }
-        catch (Exception ex) when (ex is RespireException or ObjectDisposedException)
-        {
-            // The fence could not be sent at all — the multiplexer's connections are dead or the
-            // client is disposed. The failure is swallowed (it must not mask the caller's real
-            // failure), and the hazard it leaves needs the dead client to still deliver the
-            // latent script's bytes, which died with the same connections for anything not
-            // already at the server.
+            await Task.Delay(wait).ConfigureAwait(false);
         }
     }
 
-    private async Task SendFenceAsync(Cmd4 command)
+    private async Task RevokeLeaseAsync(Cmd1 command)
     {
         await _core.Multiplexer.EnsureConnectedAsync(CancellationToken.None).ConfigureAwait(false);
         var reply = await _core.Multiplexer.SendAsync(in command, CancellationToken.None).ConfigureAwait(false);
@@ -548,16 +605,16 @@ public sealed partial class RespireClient : IRespireClient
         reply.Dispose();
     }
 
-    private static async Task ObserveFenceAsync(Task send)
+    private static async Task ObserveRevokeAsync(Task revoke)
     {
         try
         {
-            await send.ConfigureAwait(false);
+            await revoke.ConfigureAwait(false);
         }
         catch
         {
-            // An abandoned fence that fails means its connection died and cannot deliver more
-            // bytes; whatever the server already holds decides the race either way.
+            // An abandoned revocation that fails means its connection died and cannot deliver
+            // more bytes; lease expiry decides the race either way.
         }
     }
 
