@@ -39,6 +39,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     // the delay; RunGetScriptAsync measures the delay on that same clock once the reply arrives
     // and corrects the over-extension with CapRefreshedTtlScript, so the residual overshoot is
     // bounded by SendDelayTolerance).
+    // Returns nil for a missing key, otherwise {capped, payload?}: capped is 1 only when the
+    // re-arm ran with an absolute deadline in play — the one shape a delayed send can
+    // over-extend — so the caller knows whether a correction round trip can matter at all
+    // (sliding-only re-arms to the same window regardless of staleness; absolute-only never
+    // re-arms).
     // For sliding entries the TTL is re-armed to min(sliding, time left until absolute
     // expiration), atomically with the read. Ticks (100ns) to Redis milliseconds is a divide
     // by 10000.
@@ -61,6 +66,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         if entry[1] == false and entry[3] == false then
           return nil
         end
+        local capped = 0
         local sldexp = tonumber(entry[2]) or -1
         if sldexp ~= -1 then
           local ttl = math.floor(sldexp / 10000)
@@ -73,12 +79,15 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
           end
           if ttl > 0 then
             redis.call('PEXPIRE', KEYS[1], ttl)
+            if absexp ~= -1 then
+              capped = 1
+            end
           end
         end
         if ARGV[1] == '1' then
-          return entry[3]
+          return {capped, entry[3]}
         end
-        return 1
+        return {capped}
         """);
 
     // Removal goes through a script (rather than the client's UNLINK facet) so the caller's
@@ -169,7 +178,13 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         ArgumentNullException.ThrowIfNull(key);
         token.ThrowIfCancellationRequested();
         using var result = await RunGetScriptAsync(key, returnData: true, token).ConfigureAwait(false);
-        return result.IsNull ? null : result.AsBytes();
+        if (result.IsNull)
+        {
+            return null;
+        }
+
+        var payload = result[1];
+        return payload.IsNull ? null : payload.AsBytes();
     }
 
     public bool TryGet(string key, IBufferWriter<byte> destination)
@@ -186,7 +201,13 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             return false;
         }
 
-        destination.Write(result.AsSpan());
+        var payload = result[1];
+        if (payload.IsNull)
+        {
+            return false;
+        }
+
+        destination.Write(payload.AsSpan());
         return true;
     }
 
@@ -325,12 +346,22 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         }
 
         // The re-arm the script just performed used a "now" stale by however long the send
-        // stalled; past the tolerance, shrink the TTL back to a fresh-clock remainder. Runs
-        // without the caller's token — the entry was already extended, so undoing the
-        // over-extension must not be skippable by cancellation.
-        if (DateTimeOffset.UtcNow - now >= SendDelayTolerance)
+        // stalled; past the tolerance, shrink the TTL back to a fresh-clock remainder — but
+        // only when the script says the re-arm had an absolute deadline in play, the one
+        // shape staleness can over-extend. Runs without the caller's token — the entry was
+        // already extended, so undoing the over-extension must not be skippable by
+        // cancellation.
+        if (DateTimeOffset.UtcNow - now >= SendDelayTolerance && !result.IsNull && result[0].AsInteger() == 1)
         {
-            await CapRefreshedTtlAsync(key).ConfigureAwait(false);
+            try
+            {
+                await CapRefreshedTtlAsync(key).ConfigureAwait(false);
+            }
+            catch
+            {
+                result.Dispose();
+                throw;
+            }
         }
 
         return result;

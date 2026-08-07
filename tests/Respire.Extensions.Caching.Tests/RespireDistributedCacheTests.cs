@@ -329,6 +329,30 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
             RespireDistributedCache.GetAndRefreshScript, [key], ["0", staleNowTicks])).Dispose();
 
     [Test]
+    public async Task GetScript_FlagsOnlyAbsoluteCappedSlidingReArms()
+    {
+        // Only a sliding re-arm with an absolute deadline in play can be over-extended by a
+        // stale "now", so only that shape may trigger the correction round trip.
+        var now = DateTimeOffset.UtcNow;
+        var sliding = TimeSpan.FromSeconds(30).Ticks;
+        await RunDelayedSetAsync("both", now.AddMinutes(5).UtcTicks, staleTtlMs: 30_000, sldexp: sliding);
+        await RunDelayedSetAsync("sliding-only", -1L, staleTtlMs: 30_000, sldexp: sliding);
+        await RunDelayedSetAsync("absolute-only", now.AddMinutes(5).UtcTicks, staleTtlMs: 300_000);
+
+        using var both = await Client.Scripts.ExecuteAsync(
+            RespireDistributedCache.GetAndRefreshScript, ["both"], ["1", now.UtcTicks]);
+        using var slidingOnly = await Client.Scripts.ExecuteAsync(
+            RespireDistributedCache.GetAndRefreshScript, ["sliding-only"], ["1", now.UtcTicks]);
+        using var absoluteOnly = await Client.Scripts.ExecuteAsync(
+            RespireDistributedCache.GetAndRefreshScript, ["absolute-only"], ["1", now.UtcTicks]);
+
+        await Assert.That(both[0].AsInteger()).IsEqualTo(1);
+        await Assert.That(slidingOnly[0].AsInteger()).IsEqualTo(0);
+        await Assert.That(absoluteOnly[0].AsInteger()).IsEqualTo(0);
+        await Assert.That(both[1].AsBytes()).IsEquivalentTo(new byte[] { 1 });
+    }
+
+    [Test]
     public async Task DelayedRefresh_StaleReArmIsShrunkToTheRemainder()
     {
         // 10s of deadline left, 30s sliding window. A refresh queued a minute "ago" re-arms
