@@ -231,38 +231,73 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         await Assert.That(await Cache.GetAsync("cancel-remove")).IsNotNull();
     }
 
-    // The next two tests execute the production set script directly with a stale client-computed
-    // TTL, simulating a send that reached Redis only after a delay (lazy first connect,
-    // reconnect) — a timing that cannot be reproduced through the public API.
+    // The next tests exercise the correction a delayed set triggers (a send that reached Redis
+    // only after a stall — lazy first connect, reconnect — arms a TTL computed before the delay).
+    // The delay itself cannot be reproduced through the public API, so they execute the
+    // production scripts directly: first the set script with the stale TTL a delayed sender
+    // would arm, then the correction with the remainder it would re-derive after the reply.
+
+    private async Task RunDelayedSetAsync(string key, long absexp, long staleTtlMs)
+        => (await Client.Scripts.ExecuteAsync(
+            RespireDistributedCache.SetScript, [key],
+            [absexp, -1L, staleTtlMs, new byte[] { 1 }])).Dispose();
+
+    private async Task RunTtlCorrectionAsync(string key, long absexp, long remainingMs)
+        => (await Client.Scripts.ExecuteAsync(
+            RespireDistributedCache.CapTtlScript, [key], [absexp, remainingMs])).Dispose();
 
     [Test]
-    public async Task DelayedSet_DeadlinePassedBeforeExecution_DoesNotStoreEntry()
+    public async Task DelayedSet_DeadlinePassedInTransit_CorrectionRemovesEntry()
     {
-        await Cache.SetAsync("dead-on-arrival", [1], new DistributedCacheEntryOptions());
+        var absexp = DateTimeOffset.UtcNow.AddSeconds(30).UtcTicks;
+        await RunDelayedSetAsync("dead-on-arrival", absexp, staleTtlMs: 30_000);
 
-        // Client saw 30s until the deadline when it computed the TTL; by execution the
-        // deadline is a minute gone. The script must refuse the entry (and drop the old one).
-        var passedDeadline = DateTimeOffset.UtcNow.AddMinutes(-1).UtcTicks;
-        (await Client.Scripts.ExecuteAsync(
-            RespireDistributedCache.SetScript, ["dead-on-arrival"],
-            [passedDeadline, -1L, 30_000L, new byte[] { 2 }])).Dispose();
+        // After the reply the sender found the deadline already behind it.
+        await RunTtlCorrectionAsync("dead-on-arrival", absexp, remainingMs: -100);
 
         await Assert.That(await Cache.GetAsync("dead-on-arrival")).IsNull();
     }
 
     [Test]
-    public async Task DelayedSet_StaleTtlIsCappedToTheDeadline()
+    public async Task DelayedSet_StaleTtlIsShrunkToTheRemainder()
     {
-        // Client computed a 5-minute TTL before the send stalled; on execution the deadline is
-        // ~5s away by the server clock, so the armed TTL must be the remainder, not the 5 minutes.
-        var nearDeadline = DateTimeOffset.UtcNow.AddSeconds(5).UtcTicks;
-        (await Client.Scripts.ExecuteAsync(
-            RespireDistributedCache.SetScript, ["stale-ttl"],
-            [nearDeadline, -1L, 300_000L, new byte[] { 3 }])).Dispose();
+        // The sender computed a 5-minute TTL before the stall; only ~5s of deadline remained
+        // once the reply arrived.
+        var absexp = DateTimeOffset.UtcNow.AddMinutes(5).UtcTicks;
+        await RunDelayedSetAsync("stale-ttl", absexp, staleTtlMs: 300_000);
+
+        await RunTtlCorrectionAsync("stale-ttl", absexp, remainingMs: 5_000);
 
         var pttl = await PttlAsync("stale-ttl");
         await Assert.That(pttl).IsGreaterThan(0);
-        await Assert.That(pttl).IsLessThanOrEqualTo(60_000);
+        await Assert.That(pttl).IsLessThanOrEqualTo(5_000);
+    }
+
+    [Test]
+    public async Task DelayedSet_CorrectionNeverExtendsTheTtl()
+    {
+        var absexp = DateTimeOffset.UtcNow.AddSeconds(5).UtcTicks;
+        await RunDelayedSetAsync("shrink-only", absexp, staleTtlMs: 5_000);
+
+        // A correction computed from an even staler clock must not push the TTL out.
+        await RunTtlCorrectionAsync("shrink-only", absexp, remainingMs: 300_000);
+
+        await Assert.That(await PttlAsync("shrink-only")).IsLessThanOrEqualTo(5_000);
+    }
+
+    [Test]
+    public async Task DelayedSet_CorrectionSkipsAConcurrentlyOverwrittenEntry()
+    {
+        // Another writer overwrote the key (different absexp) between the delayed set and its
+        // correction; the correction must leave the newer entry untouched.
+        var staleAbsexp = DateTimeOffset.UtcNow.AddSeconds(30).UtcTicks;
+        var newerAbsexp = DateTimeOffset.UtcNow.AddMinutes(5).UtcTicks;
+        await RunDelayedSetAsync("overwritten", newerAbsexp, staleTtlMs: 300_000);
+
+        await RunTtlCorrectionAsync("overwritten", staleAbsexp, remainingMs: -100);
+
+        await Assert.That(await Cache.GetAsync("overwritten")).IsNotNull();
+        await Assert.That(await PttlAsync("overwritten")).IsGreaterThan(250_000);
     }
 
     [Test]

@@ -15,44 +15,31 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 {
     private const long NotPresent = -1;
 
+    // Staleness a set may accumulate before its TTL gets corrected. One second, because that is
+    // the expiry granularity the Microsoft implementation already truncates to (EXPIRE seconds).
+    private static readonly TimeSpan SendDelayTolerance = TimeSpan.FromSeconds(1);
+
     // ARGV: [1] absolute expiration (UTC ticks, -1 none), [2] sliding expiration (ticks, -1 none),
-    // [3] client-computed TTL (ms, -1 none), [4] payload. The client computes ARGV[3] before the
-    // send, but PEXPIRE starts counting only when the script executes — a delayed send (lazy
-    // first connect, reconnect) armed verbatim would let the entry outlive its absolute deadline
-    // by the delay. So when there is an absolute deadline, the script re-derives the remainder
-    // from the Redis server clock (621355968000000000 is the Unix epoch in .NET ticks) and caps
-    // the TTL with it; an entry already past its deadline on arrival is not stored at all, and
-    // any previous value is unlinked. PERSIST clears a leftover TTL when an existing entry is
-    // overwritten without one (HSET alone keeps the old TTL). TIME followed by writes needs
-    // script effect replication (Redis 5+; UNLINK already requires 4+).
+    // [3] relative expiry (ms, -1 none), [4] payload. PERSIST clears a leftover TTL when an
+    // existing entry is overwritten without one (HSET alone keeps the old TTL). Expiry stays on
+    // the app's clock — the server clock is never consulted (see CapDelayedTtlAsync for why, and
+    // for how a delayed send is corrected).
     internal static readonly RespireScript SetScript = RespireScript.Create("""
-        local ttl = tonumber(ARGV[3])
-        if ARGV[1] ~= '-1' then
-          local time = redis.call('TIME')
-          local now = tonumber(time[1]) * 10000000 + tonumber(time[2]) * 10 + 621355968000000000
-          local remaining = math.floor((tonumber(ARGV[1]) - now) / 10000)
-          if remaining <= 0 then
-            redis.call('UNLINK', KEYS[1])
-            return 0
-          end
-          if remaining < ttl then
-            ttl = remaining
-          end
-        end
         redis.call('HSET', KEYS[1], 'absexp', ARGV[1], 'sldexp', ARGV[2], 'data', ARGV[4])
-        if ttl ~= -1 then
-          redis.call('PEXPIRE', KEYS[1], ttl)
+        if ARGV[3] ~= '-1' then
+          redis.call('PEXPIRE', KEYS[1], ARGV[3])
         else
           redis.call('PERSIST', KEYS[1])
         end
         return 1
         """);
 
-    // ARGV: [1] '1' to return the payload ('0' for refresh-only). For sliding entries the TTL
-    // is re-armed to min(sliding, time left until absolute expiration), atomically with the
-    // read. The remainder is measured against the Redis server clock, sampled inside the script,
-    // so a delayed send can never re-arm from a stale notion of "now". Ticks (100ns) to Redis
-    // milliseconds is a divide by 10000.
+    // ARGV: [1] '1' to return the payload ('0' for refresh-only), [2] current UTC ticks (the
+    // app's clock — a delayed send re-arms from a "now" stale by the delay, a transient bounded
+    // overshoot the Microsoft reader shares, since it also computes the refresh TTL client-side).
+    // For sliding entries the TTL is re-armed to min(sliding, time left until absolute
+    // expiration), atomically with the read. Ticks (100ns) to Redis milliseconds is a divide
+    // by 10000.
     // The TTL Redis already holds is the authority on expiry — absexp caps re-arming and never
     // deletes. The metadata can carry a writer's clock-offset quirk (the Microsoft
     // implementation stores DateTimeOffset.Ticks with the caller's offset baked in, then reads
@@ -77,9 +64,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
           local ttl = math.floor(sldexp / 10000)
           local absexp = tonumber(entry[1]) or -1
           if absexp ~= -1 then
-            local time = redis.call('TIME')
-            local now = tonumber(time[1]) * 10000000 + tonumber(time[2]) * 10 + 621355968000000000
-            local remaining = math.floor((absexp - now) / 10000)
+            local remaining = math.floor((absexp - tonumber(ARGV[2])) / 10000)
             if remaining < ttl then
               ttl = remaining
             end
@@ -98,6 +83,27 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     // cancellation token covers the wait for the reply, like every other cache operation.
     private static readonly RespireScript RemoveScript = RespireScript.Create("""
         redis.call('UNLINK', KEYS[1])
+        return 1
+        """);
+
+    // Shrink-only TTL correction for a set whose send was delayed (see CapDelayedTtlAsync).
+    // ARGV: [1] the absexp the delayed set stored — a mismatch means a concurrent overwrite won
+    // the race and the correction no longer applies; [2] the re-derived remaining ms (<= 0: the
+    // deadline has already passed, remove the entry). The TTL is only ever shortened (PTTL -1,
+    // a lost TTL, counts as infinite), so racing reads or writers can never be extended by it.
+    internal static readonly RespireScript CapTtlScript = RespireScript.Create("""
+        if redis.call('HGET', KEYS[1], 'absexp') ~= ARGV[1] then
+          return 0
+        end
+        local remaining = tonumber(ARGV[2])
+        if remaining <= 0 then
+          redis.call('UNLINK', KEYS[1])
+          return 1
+        end
+        local ttl = redis.call('PTTL', KEYS[1])
+        if ttl == -1 or ttl > remaining then
+          redis.call('PEXPIRE', KEYS[1], remaining)
+        end
         return 1
         """);
 
@@ -183,6 +189,32 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             ],
             token).ConfigureAwait(false);
         result.Dispose();
+
+        if (absoluteExpiration is { } absolute && DateTimeOffset.UtcNow - now >= SendDelayTolerance)
+        {
+            await CapDelayedTtlAsync(key, absolute, options).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// The TTL a set arms is computed on the app's clock before the send, but PEXPIRE starts
+    /// counting only when the script executes — a delayed send (lazy first connect, reconnect)
+    /// would let the entry outlive its absolute deadline by the delay. The staleness is measured
+    /// here on the same clock once the reply arrives, and a shrink-only correction re-arms the
+    /// true remainder (or removes an entry whose deadline already passed in transit). Deadlines
+    /// are deliberately never checked against the Redis server clock: that would shift every TTL
+    /// by the hosts' skew and reject valid entries outright once the skew exceeds their lifetime.
+    /// Runs without the caller's token — once the entry is stored, enforcing its deadline must
+    /// not be skippable by cancellation.
+    /// </summary>
+    private async ValueTask CapDelayedTtlAsync(string key, DateTimeOffset absolute, DistributedCacheEntryOptions options)
+    {
+        var result = await _client.Scripts.ExecuteAsync(
+            CapTtlScript,
+            [key],
+            [absolute.UtcTicks, GetExpirationMilliseconds(DateTimeOffset.UtcNow, absolute, options)],
+            CancellationToken.None).ConfigureAwait(false);
+        result.Dispose();
     }
 
     public void Refresh(string key) => RefreshAsync(key).GetAwaiter().GetResult();
@@ -206,7 +238,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     }
 
     private ValueTask<RespireResult> RunGetScriptAsync(string key, bool returnData, CancellationToken token)
-        => _client.Scripts.ExecuteAsync(GetAndRefreshScript, [key], [returnData ? "1" : "0"], token);
+        => _client.Scripts.ExecuteAsync(
+            GetAndRefreshScript, [key], [returnData ? "1" : "0", DateTimeOffset.UtcNow.UtcTicks], token);
 
     private static DateTimeOffset? GetAbsoluteExpiration(DateTimeOffset now, DistributedCacheEntryOptions options)
     {
