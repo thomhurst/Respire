@@ -16,21 +16,43 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     private const long NotPresent = -1;
 
     // ARGV: [1] absolute expiration (UTC ticks, -1 none), [2] sliding expiration (ticks, -1 none),
-    // [3] relative expiry (ms, -1 none), [4] payload. PERSIST clears a leftover TTL when an
-    // existing entry is overwritten without one (HSET alone keeps the old TTL).
-    private static readonly RespireScript SetScript = RespireScript.Create("""
+    // [3] client-computed TTL (ms, -1 none), [4] payload. The client computes ARGV[3] before the
+    // send, but PEXPIRE starts counting only when the script executes — a delayed send (lazy
+    // first connect, reconnect) armed verbatim would let the entry outlive its absolute deadline
+    // by the delay. So when there is an absolute deadline, the script re-derives the remainder
+    // from the Redis server clock (621355968000000000 is the Unix epoch in .NET ticks) and caps
+    // the TTL with it; an entry already past its deadline on arrival is not stored at all, and
+    // any previous value is unlinked. PERSIST clears a leftover TTL when an existing entry is
+    // overwritten without one (HSET alone keeps the old TTL). TIME followed by writes needs
+    // script effect replication (Redis 5+; UNLINK already requires 4+).
+    internal static readonly RespireScript SetScript = RespireScript.Create("""
+        local ttl = tonumber(ARGV[3])
+        if ARGV[1] ~= '-1' then
+          local time = redis.call('TIME')
+          local now = tonumber(time[1]) * 10000000 + tonumber(time[2]) * 10 + 621355968000000000
+          local remaining = math.floor((tonumber(ARGV[1]) - now) / 10000)
+          if remaining <= 0 then
+            redis.call('UNLINK', KEYS[1])
+            return 0
+          end
+          if remaining < ttl then
+            ttl = remaining
+          end
+        end
         redis.call('HSET', KEYS[1], 'absexp', ARGV[1], 'sldexp', ARGV[2], 'data', ARGV[4])
-        if ARGV[3] ~= '-1' then
-          redis.call('PEXPIRE', KEYS[1], ARGV[3])
+        if ttl ~= -1 then
+          redis.call('PEXPIRE', KEYS[1], ttl)
         else
           redis.call('PERSIST', KEYS[1])
         end
         return 1
         """);
 
-    // ARGV: [1] '1' to return the payload ('0' for refresh-only), [2] current UTC ticks. For
-    // sliding entries the TTL is re-armed to min(sliding, time left until absolute expiration),
-    // atomically with the read. Ticks (100ns) to Redis milliseconds is a divide by 10000.
+    // ARGV: [1] '1' to return the payload ('0' for refresh-only). For sliding entries the TTL
+    // is re-armed to min(sliding, time left until absolute expiration), atomically with the
+    // read. The remainder is measured against the Redis server clock, sampled inside the script,
+    // so a delayed send can never re-arm from a stale notion of "now". Ticks (100ns) to Redis
+    // milliseconds is a divide by 10000.
     // The TTL Redis already holds is the authority on expiry — absexp caps re-arming and never
     // deletes. The metadata can carry a writer's clock-offset quirk (the Microsoft
     // implementation stores DateTimeOffset.Ticks with the caller's offset baked in, then reads
@@ -55,7 +77,9 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
           local ttl = math.floor(sldexp / 10000)
           local absexp = tonumber(entry[1]) or -1
           if absexp ~= -1 then
-            local remaining = math.floor((absexp - tonumber(ARGV[2])) / 10000)
+            local time = redis.call('TIME')
+            local now = tonumber(time[1]) * 10000000 + tonumber(time[2]) * 10 + 621355968000000000
+            local remaining = math.floor((absexp - now) / 10000)
             if remaining < ttl then
               ttl = remaining
             end
@@ -182,8 +206,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     }
 
     private ValueTask<RespireResult> RunGetScriptAsync(string key, bool returnData, CancellationToken token)
-        => _client.Scripts.ExecuteAsync(
-            GetAndRefreshScript, [key], [returnData ? "1" : "0", DateTimeOffset.UtcNow.UtcTicks], token);
+        => _client.Scripts.ExecuteAsync(GetAndRefreshScript, [key], [returnData ? "1" : "0"], token);
 
     private static DateTimeOffset? GetAbsoluteExpiration(DateTimeOffset now, DistributedCacheEntryOptions options)
     {

@@ -231,6 +231,40 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         await Assert.That(await Cache.GetAsync("cancel-remove")).IsNotNull();
     }
 
+    // The next two tests execute the production set script directly with a stale client-computed
+    // TTL, simulating a send that reached Redis only after a delay (lazy first connect,
+    // reconnect) — a timing that cannot be reproduced through the public API.
+
+    [Test]
+    public async Task DelayedSet_DeadlinePassedBeforeExecution_DoesNotStoreEntry()
+    {
+        await Cache.SetAsync("dead-on-arrival", [1], new DistributedCacheEntryOptions());
+
+        // Client saw 30s until the deadline when it computed the TTL; by execution the
+        // deadline is a minute gone. The script must refuse the entry (and drop the old one).
+        var passedDeadline = DateTimeOffset.UtcNow.AddMinutes(-1).UtcTicks;
+        (await Client.Scripts.ExecuteAsync(
+            RespireDistributedCache.SetScript, ["dead-on-arrival"],
+            [passedDeadline, -1L, 30_000L, new byte[] { 2 }])).Dispose();
+
+        await Assert.That(await Cache.GetAsync("dead-on-arrival")).IsNull();
+    }
+
+    [Test]
+    public async Task DelayedSet_StaleTtlIsCappedToTheDeadline()
+    {
+        // Client computed a 5-minute TTL before the send stalled; on execution the deadline is
+        // ~5s away by the server clock, so the armed TTL must be the remainder, not the 5 minutes.
+        var nearDeadline = DateTimeOffset.UtcNow.AddSeconds(5).UtcTicks;
+        (await Client.Scripts.ExecuteAsync(
+            RespireDistributedCache.SetScript, ["stale-ttl"],
+            [nearDeadline, -1L, 300_000L, new byte[] { 3 }])).Dispose();
+
+        var pttl = await PttlAsync("stale-ttl");
+        await Assert.That(pttl).IsGreaterThan(0);
+        await Assert.That(pttl).IsLessThanOrEqualTo(60_000);
+    }
+
     [Test]
     public async Task NullKey_Throws()
     {

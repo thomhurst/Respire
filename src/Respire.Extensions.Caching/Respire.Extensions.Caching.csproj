@@ -11,6 +11,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Lets the tests execute the production Lua scripts with adversarial timings (a delayed
+         send cannot be reproduced through the public API). -->
+    <InternalsVisibleTo Include="Respire.Extensions.Caching.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- 9.x to match the Microsoft.Extensions versions the other Respire projects pull in.
          Caching.Abstractions 9.x also brings IBufferDistributedCache to the net8.0 target. -->
     <PackageReference Include="Microsoft.Extensions.Caching.Abstractions" Version="9.0.8" />
