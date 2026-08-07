@@ -319,10 +319,27 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     /// <summary>The central send path: lazy connect, optional command timeout, telemetry, error translation.</summary>
+    internal ValueTask<RespValue> SendAsync<TCommand>(string operation, TCommand command, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+        => SendCoreAsync(operation, command, cancellationToken, applyCommandTimeout: true);
+
+    /// <summary>
+    /// Sends a command whose reply wait must not be abandoned before the command's fate is
+    /// known: no caller token and no <see cref="RespireOptions.CommandTimeout"/> apply, so the
+    /// wait ends only with the reply or the connection's death (which also kills the queued
+    /// command). For operations whose time-shifted execution after an abandoned wait would be
+    /// destructive — the caching package's removal, whose late UNLINK could delete a
+    /// replacement value written after the caller observed the failure.
+    /// </summary>
+    internal ValueTask<RespValue> SendUntimedAsync<TCommand>(string operation, TCommand command)
+        where TCommand : struct, IRespCommand
+        => SendCoreAsync(operation, command, CancellationToken.None, applyCommandTimeout: false);
+
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
-    internal async ValueTask<RespValue> SendAsync<TCommand>(string operation, TCommand command, CancellationToken cancellationToken)
+    private async ValueTask<RespValue> SendCoreAsync<TCommand>(
+        string operation, TCommand command, CancellationToken cancellationToken, bool applyCommandTimeout)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -334,7 +351,7 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             RespValue response;
-            if (core.Options.CommandTimeout is { } timeout)
+            if (applyCommandTimeout && core.Options.CommandTimeout is { } timeout)
             {
                 using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 timeoutSource.CancelAfter(timeout);
@@ -424,6 +441,40 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(_core.Disposed, this);
         await _core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         return _core.Multiplexer.GetConnection();
+    }
+
+    // Wire-level primitives for the caching package (see InternalsVisibleTo). Both honor this
+    // view's key prefix.
+
+    /// <summary>UNLINK through <see cref="SendUntimedAsync"/> — see there for why removal must not race its own wait.</summary>
+    internal async ValueTask UnlinkUntimedAsync(RespireKey key)
+    {
+        var value = await SendUntimedAsync("UNLINK", new Cmd1(Verbs.Unlink, Key(in key))).ConfigureAwait(false);
+        value.Dispose();
+    }
+
+    /// <summary>
+    /// Executes a script on every healthy connection via
+    /// <see cref="Infrastructure.RespireConnectionMultiplexer.SendToAllConnectionsAsync{TCommand}"/> — the copy
+    /// sharing a connection with an earlier still-buffered command executes after it, so the
+    /// script must be idempotent and safe out of order elsewhere. Plain EVAL (no EVALSHA
+    /// probing: the callers are rare correction paths) and no caller token or command timeout —
+    /// a correction, once owed, must not be abandonable.
+    /// </summary>
+    internal async ValueTask ExecuteOnAllConnectionsAsync(RespireScript script, RespireKey[] keys, RespireValue[] args)
+    {
+        var core = _core;
+        ObjectDisposedException.ThrowIf(core.Disposed, this);
+        var tail = new RespireValue[1 + keys.Length + args.Length];
+        tail[0] = keys.Length;
+        for (var i = 0; i < keys.Length; i++)
+        {
+            tail[1 + i] = Key(in keys[i]);
+        }
+
+        args.CopyTo(tail, 1 + keys.Length);
+        await core.Multiplexer.SendToAllConnectionsAsync(
+            new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]), CancellationToken.None).ConfigureAwait(false);
     }
 
     // Typed send helpers — one per reply shape, shared by every facet.

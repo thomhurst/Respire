@@ -187,6 +187,63 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         where TCommand : struct, IRespCommand
         => GetConnection().SendFireAndForgetAsync(in command, cancellationToken);
 
+    /// <summary>
+    /// Sends a command on every currently healthy connection and awaits all replies. Each
+    /// connection is FIFO, so the copy sharing a connection with any earlier still-buffered
+    /// command is guaranteed to execute after it — the ordering primitive a corrective command
+    /// needs when the connection that carried the original is unknowable (round-robin). The
+    /// command must therefore be idempotent and safe to run out of order on the other
+    /// connections. Dead connections are skipped: anything buffered on them died with the
+    /// socket. Throws only when every send failed; partial failure is success, because a
+    /// connection that died also killed whatever the correction was ordering against.
+    /// </summary>
+    internal async ValueTask SendToAllConnectionsAsync<TCommand>(TCommand command, CancellationToken cancellationToken = default)
+        where TCommand : struct, IRespCommand
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (!_connected)
+        {
+            // Never connected: nothing can be buffered anywhere, so there is nothing to order
+            // against and nothing to correct.
+            return;
+        }
+
+        List<ValueTask<RespValue>>? sends = null;
+        for (var slot = 0; slot < _connections.Length; slot++)
+        {
+            if (Volatile.Read(ref _connections[slot]) is { IsConnected: true } connection)
+            {
+                (sends ??= new List<ValueTask<RespValue>>(_connections.Length))
+                    .Add(connection.SendAsync(in command, cancellationToken));
+            }
+        }
+
+        if (sends is null)
+        {
+            return;
+        }
+
+        Exception? firstFailure = null;
+        var failures = 0;
+        foreach (var send in sends)
+        {
+            try
+            {
+                (await send.ConfigureAwait(false)).Dispose();
+            }
+            catch (Exception ex)
+            {
+                failures++;
+                firstFailure ??= ex;
+            }
+        }
+
+        if (failures == sends.Count && firstFailure is not null)
+        {
+            throw firstFailure;
+        }
+    }
+
     /// <summary>Runs a MULTI/EXEC block on one connection; see <see cref="RespireConnection.SendTransactionAsync"/>.</summary>
     public ValueTask<RespValue> SendTransactionAsync(
         ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken = default)

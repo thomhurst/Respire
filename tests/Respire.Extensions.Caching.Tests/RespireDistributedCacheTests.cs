@@ -438,4 +438,129 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
 
         await Assert.That(threw).IsTrue();
     }
+
+    // The next tests pin down how the cache behaves when RespireOptions.CommandTimeout abandons
+    // a wait whose command is still queued. The server is stalled deterministically with a Lua
+    // busy-loop (~500ms), so a 50ms command timeout always fires first while the queued command
+    // still executes once the stall ends.
+
+    private const string StallScriptSource = """
+        local t = redis.call('TIME')
+        local deadline = tonumber(t[1]) + (tonumber(t[2]) / 1000000) + 0.5
+        repeat
+          t = redis.call('TIME')
+        until tonumber(t[1]) + (tonumber(t[2]) / 1000000) >= deadline
+        return 1
+        """;
+
+    private async Task<RespireClient> ConnectTimeoutClientAsync()
+        => await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { CommandTimeout = TimeSpan.FromMilliseconds(50) });
+
+    [Test]
+    public async Task Remove_WaitIsImmuneToCommandTimeout()
+    {
+        await Cache.SetAsync("timeout-remove", [1], new DistributedCacheEntryOptions());
+        await using var timeoutClient = await ConnectTimeoutClientAsync();
+        await using var timeoutCache = new RespireDistributedCache(timeoutClient);
+
+        var stallObserved = Task.Run(async () => (await Client.ExecuteAsync("EVAL", StallScriptSource, "0")).Dispose());
+        await Task.Delay(100);
+
+        // A timed wait would throw RespireTimeoutException at 50ms; removal must instead wait
+        // out the stall and complete only once the UNLINK has executed.
+        await timeoutCache.RemoveAsync("timeout-remove");
+
+        await Assert.That(await Cache.GetAsync("timeout-remove")).IsNull();
+        await stallObserved;
+    }
+
+    [Test]
+    public async Task Set_TimedOutWait_StillStoresTheQueuedEntry()
+    {
+        // Preload so the timed-out EVALSHA cannot fall into an unobserved NOSCRIPT.
+        await Client.Scripts.LoadAsync(RespireDistributedCache.SetScript);
+        await using var timeoutClient = await ConnectTimeoutClientAsync();
+        await using var timeoutCache = new RespireDistributedCache(timeoutClient);
+
+        var stallObserved = Task.Run(async () => (await Client.ExecuteAsync("EVAL", StallScriptSource, "0")).Dispose());
+        await Task.Delay(100);
+
+        var threw = false;
+        try
+        {
+            await timeoutCache.SetAsync("timeout-set", [1],
+                new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5) });
+        }
+        catch (RespireTimeoutException)
+        {
+            threw = true;
+        }
+
+        await Assert.That(threw).IsTrue();
+        await stallObserved;
+
+        // The abandoned wait did not abandon the queued set; the correction the catch sent is
+        // FIFO-ordered after it and leaves the TTL no larger than the true remainder.
+        await Assert.That(await Cache.GetAsync("timeout-set")).IsNotNull();
+        var pttl = await PttlAsync("timeout-set");
+        await Assert.That(pttl).IsGreaterThan(0);
+        await Assert.That(pttl).IsLessThanOrEqualTo((long)TimeSpan.FromMinutes(5).TotalMilliseconds);
+    }
+
+    [Test]
+    public async Task Get_TimedOutWait_CorrectsWithoutExtendingTheTtl()
+    {
+        await Cache.SetAsync("timeout-get", [1], new DistributedCacheEntryOptions
+        {
+            SlidingExpiration = TimeSpan.FromSeconds(30),
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5),
+        });
+        await Client.Scripts.LoadAsync(RespireDistributedCache.GetAndRefreshScript);
+        await using var timeoutClient = await ConnectTimeoutClientAsync();
+        await using var timeoutCache = new RespireDistributedCache(timeoutClient);
+
+        var stallObserved = Task.Run(async () => (await Client.ExecuteAsync("EVAL", StallScriptSource, "0")).Dispose());
+        await Task.Delay(100);
+
+        var threw = false;
+        try
+        {
+            await timeoutCache.GetAsync("timeout-get");
+        }
+        catch (RespireTimeoutException)
+        {
+            threw = true;
+        }
+
+        await Assert.That(threw).IsTrue();
+        await stallObserved;
+
+        // The queued read re-armed the sliding window; the correction the catch sent must have
+        // left the TTL within it.
+        await Assert.That(await Cache.GetAsync("timeout-get")).IsNotNull();
+        var pttl = await PttlAsync("timeout-get");
+        await Assert.That(pttl).IsGreaterThan(0);
+        await Assert.That(pttl).IsLessThanOrEqualTo((long)TimeSpan.FromSeconds(30).TotalMilliseconds);
+    }
+
+    [Test]
+    public async Task Correction_BroadcastReachesEveryConnection_AndShrinksTheTtl()
+    {
+        // Round-robin makes the connection that carried a delayed set unknowable, so the
+        // correction is sent on all of them; on a multi-connection client the one sharing the
+        // set's connection must still shrink the stale TTL.
+        await using var multiClient = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Connections = 3 });
+
+        var absexp = DateTimeOffset.UtcNow.AddSeconds(30).UtcTicks;
+        await RunDelayedSetAsync("broadcast-cap", absexp, staleTtlMs: 120_000);
+
+        await multiClient.ExecuteOnAllConnectionsAsync(
+            RespireDistributedCache.CapTtlScript, ["broadcast-cap"], [absexp, -1L, 30_000L]);
+
+        var pttl = await PttlAsync("broadcast-cap");
+        await Assert.That(pttl).IsGreaterThan(0);
+        await Assert.That(pttl).IsLessThanOrEqualTo(30_000);
+    }
 }

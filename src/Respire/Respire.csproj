@@ -9,6 +9,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The caching package needs two wire-level primitives no public API should promise:
+         a reply wait immune to CommandTimeout, and all-connection sends for FIFO-ordered
+         TTL corrections. -->
+    <InternalsVisibleTo Include="Respire.Extensions.Caching" />
+    <InternalsVisibleTo Include="Respire.Extensions.Caching.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="System.IO.Pipelines" Version="9.0.8" />
     <PackageReference Include="System.Threading.Channels" Version="9.0.8" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.8" />

@@ -147,11 +147,19 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     private readonly IRespireClient _client;
     private readonly RespireClient? _ownedClient;
 
+    // The real client (a key-prefixed view is still a RespireClient), which exposes the two
+    // wire-level guarantees the interface cannot: reply waits immune to CommandTimeout, and
+    // all-connection sends whose per-connection FIFO orders a correction after a still-buffered
+    // original. Null only for a caller-supplied mock or decorator, which degrades to the plain
+    // command path and keeps only its weaker ordering.
+    private readonly RespireClient? _wireClient;
+
     /// <summary>Wraps an existing client; the caller keeps ownership of it.</summary>
     public RespireDistributedCache(IRespireClient client, RespireCacheOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(client);
         _client = ApplyInstanceName(client, options);
+        _wireClient = _client as RespireClient;
     }
 
     /// <summary>Owns <paramref name="ownedClient"/> — disposes it with the cache.</summary>
@@ -159,6 +167,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     {
         _ownedClient = ownedClient;
         _client = ApplyInstanceName(ownedClient, options);
+        _wireClient = _client as RespireClient;
     }
 
     private static IRespireClient ApplyInstanceName(IRespireClient client, RespireCacheOptions? options)
@@ -241,13 +250,14 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 token).ConfigureAwait(false);
             result.Dispose();
         }
-        catch (OperationCanceledException)
+        catch (Exception ex) when (ex is OperationCanceledException or RespireTimeoutException)
         {
-            // A cancelled wait does not cancel the send — a queued set can still reach Redis,
-            // and if that send was delayed it stores a TTL computed before the delay. With no
-            // reply to measure the delay against, correct unconditionally and best-effort: a
-            // correction that beats a still-queued set no-ops on the ownership check, and one
-            // that fails means the connection died and took the queued set with it.
+            // Neither a cancelled wait nor a command timeout cancels the send — a queued set
+            // can still reach Redis, and if that send was delayed it stores a TTL computed
+            // before the delay. With no reply to measure the delay against, correct
+            // unconditionally and best-effort: a correction that beats a still-queued set
+            // no-ops on the ownership check, and one that fails means the connection died and
+            // took the queued set with it.
             if (absoluteExpiration is { } cancelledDeadline)
             {
                 try
@@ -279,17 +289,34 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     /// Runs without the caller's token — once the entry is stored, enforcing its deadline must
     /// not be skippable by cancellation.
     /// </summary>
-    private async ValueTask CapDelayedTtlAsync(string key, DateTimeOffset absolute, DistributedCacheEntryOptions options)
-    {
-        var result = await _client.Scripts.ExecuteAsync(
+    private ValueTask CapDelayedTtlAsync(string key, DateTimeOffset absolute, DistributedCacheEntryOptions options)
+        => RunCorrectionAsync(
             CapTtlScript,
-            [key],
+            key,
             [
                 absolute.UtcTicks,
                 options.SlidingExpiration?.Ticks ?? NotPresent,
                 GetExpirationMilliseconds(DateTimeOffset.UtcNow, absolute, options),
-            ],
-            CancellationToken.None).ConfigureAwait(false);
+            ]);
+
+    /// <summary>
+    /// Runs a shrink-only correction script. Corrections chase a command whose reply was never
+    /// seen (cancelled or timed-out wait), and round-robin can put a follow-up on a different
+    /// connection where it would execute before the still-buffered original and no-op — so the
+    /// correction is sent on every connection: the copy sharing the original's connection is
+    /// FIFO-ordered after it, and the scripts are idempotent and guarded, so the other copies
+    /// are harmless wherever they land. Requires the wire client; a mocked client falls back to
+    /// a single round-robin send and keeps only its weaker ordering.
+    /// </summary>
+    private async ValueTask RunCorrectionAsync(RespireScript script, string key, RespireValue[] args)
+    {
+        if (_wireClient is { } wire)
+        {
+            await wire.ExecuteOnAllConnectionsAsync(script, [key], args).ConfigureAwait(false);
+            return;
+        }
+
+        var result = await _client.Scripts.ExecuteAsync(script, [key], args, CancellationToken.None).ConfigureAwait(false);
         result.Dispose();
     }
 
@@ -309,14 +336,22 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     {
         ArgumentNullException.ThrowIfNull(key);
         token.ThrowIfCancellationRequested();
-        // Deliberately uncancelable past this point. The wire layer never cancels a queued
-        // send, so a token honored during the reply wait would let the caller observe
-        // cancellation, write a replacement (possibly on another connection), and have the
-        // still-queued UNLINK silently delete it. Deletion carries no identity to fence on in
-        // the shared hash layout, so the only safe ordering is to not complete until the
-        // UNLINK has executed — the same semantics as the Microsoft implementation, whose
-        // reply waits are also uncancelable.
-        await _client.Keys.UnlinkAsync(key).ConfigureAwait(false);
+        // Deliberately unabandonable past this point — no caller token AND no CommandTimeout.
+        // The wire layer never cancels a queued send, so any abandoned wait (cancellation or
+        // timeout) would let the caller observe failure, write a replacement (possibly on
+        // another connection), and have the still-queued UNLINK silently delete it. Deletion
+        // carries no identity to fence on in the shared hash layout, so the only safe ordering
+        // is to not complete until the UNLINK has executed or the connection has died and
+        // taken it along. A mocked client falls back to the facet, whose token-less wait is
+        // still subject to the mock's own semantics.
+        if (_wireClient is { } wire)
+        {
+            await wire.UnlinkUntimedAsync(key).ConfigureAwait(false);
+        }
+        else
+        {
+            await _client.Keys.UnlinkAsync(key).ConfigureAwait(false);
+        }
     }
 
     private async ValueTask<RespireResult> RunGetScriptAsync(string key, bool returnData, CancellationToken token)
@@ -328,11 +363,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             result = await _client.Scripts.ExecuteAsync(
                 GetAndRefreshScript, [key], [returnData ? "1" : "0", now.UtcTicks], token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (Exception ex) when (ex is OperationCanceledException or RespireTimeoutException)
         {
-            // Same hazard as the set path: the cancelled wait leaves the script queued, and a
-            // delayed send would re-arm the sliding TTL from a stale "now". Best-effort, and
-            // swallowed for the same reasons as in SetCoreAsync.
+            // Same hazard as the set path: the abandoned wait (cancelled or timed out) leaves
+            // the script queued, and a delayed send would re-arm the sliding TTL from a stale
+            // "now". Best-effort, and swallowed for the same reasons as in SetCoreAsync.
             try
             {
                 await CapRefreshedTtlAsync(key).ConfigureAwait(false);
@@ -366,13 +401,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         return result;
     }
 
-    private async ValueTask CapRefreshedTtlAsync(string key)
-    {
-        var result = await _client.Scripts.ExecuteAsync(
-            CapRefreshedTtlScript, [key], [DateTimeOffset.UtcNow.UtcTicks], CancellationToken.None)
-            .ConfigureAwait(false);
-        result.Dispose();
-    }
+    private ValueTask CapRefreshedTtlAsync(string key)
+        => RunCorrectionAsync(CapRefreshedTtlScript, key, [DateTimeOffset.UtcNow.UtcTicks]);
 
     private static DateTimeOffset? GetAbsoluteExpiration(DateTimeOffset now, DistributedCacheEntryOptions options)
     {
