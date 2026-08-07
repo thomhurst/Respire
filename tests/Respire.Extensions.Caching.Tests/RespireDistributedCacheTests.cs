@@ -626,7 +626,12 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         // "retry until one pass is fresh" loop would never return. A pass that fails to improve
         // on the previous one proves the floor is the latency itself, and the correction must
         // stop there instead of livelocking the set.
-        var slowClient = new SustainedLatencyClient(Client, TimeSpan.FromMilliseconds(1200));
+        var slowClient = new ScriptInterceptingClient(Client, async (_, send) =>
+        {
+            var result = await send();
+            await Task.Delay(TimeSpan.FromMilliseconds(1200));
+            return result;
+        });
         await using var slowCache = new RespireDistributedCache(slowClient);
 
         var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(30);
@@ -646,34 +651,68 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         await Assert.That(pttl).IsLessThanOrEqualTo(remaining + 2_000);
     }
 
+    [Test]
+    public async Task Set_CorrectionReplyNeverArrives_WaitIsAbandonedAndSetCompletes()
+    {
+        // A blackholed correction: the set's own reply is slow enough to trigger the
+        // correction, whose pass then never completes. The pass wait must be bounded — the
+        // queued shrink-only pass can land in the background, but the caller must not hang.
+        var blackholeClient = new ScriptInterceptingClient(Client, async (call, send) =>
+        {
+            if (call > 1)
+            {
+                await new TaskCompletionSource().Task;
+            }
+
+            var result = await send();
+            await Task.Delay(TimeSpan.FromMilliseconds(1200));
+            return result;
+        });
+        await using var blackholeCache = new RespireDistributedCache(blackholeClient)
+        {
+            CorrectionWaitBound = TimeSpan.FromSeconds(2),
+        };
+
+        await blackholeCache.SetAsync("blackholed", [1],
+                new DistributedCacheEntryOptions { AbsoluteExpiration = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(30) })
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        // The set, then a single correction pass whose wait was abandoned — no retries pile up
+        // behind the same wedge. The entry itself was stored before the correction hung.
+        await Assert.That(blackholeClient.ScriptCalls).IsEqualTo(2);
+        await Assert.That(await Cache.GetAsync("blackholed")).IsNotNull();
+    }
+
     /// <summary>
-    /// Delegates to a real client but stretches every script round trip past
-    /// SendDelayTolerance, modeling backend latency that never clears. Deliberately not a
+    /// Delegates to a real client but routes every script call through the test's interceptor
+    /// (called with the 1-based call number and the real send). Deliberately not a
     /// RespireClient, so the cache degrades to the single-send correction path.
     /// </summary>
-    private sealed class SustainedLatencyClient(RespireClient inner, TimeSpan latency) : IRespireClient
+    private sealed class ScriptInterceptingClient(
+        RespireClient inner,
+        Func<int, Func<ValueTask<RespireResult>>, ValueTask<RespireResult>> onScript) : IRespireClient
     {
         private int _scriptCalls;
 
         public int ScriptCalls => _scriptCalls;
 
-        public IScriptCommands Scripts => new SlowScripts(this, inner.Scripts, latency);
+        public IScriptCommands Scripts => new InterceptedScripts(this, inner.Scripts);
 
-        private sealed class SlowScripts(SustainedLatencyClient owner, IScriptCommands inner, TimeSpan latency) : IScriptCommands
+        private sealed class InterceptedScripts(ScriptInterceptingClient owner, IScriptCommands inner) : IScriptCommands
         {
-            public async ValueTask<RespireResult> ExecuteAsync(
+            public ValueTask<RespireResult> ExecuteAsync(
                 RespireScript script, RespireKey[]? keys = null, RespireValue[]? args = null,
                 CancellationToken cancellationToken = default)
             {
-                Interlocked.Increment(ref owner._scriptCalls);
-                var result = await inner.ExecuteAsync(script, keys, args, cancellationToken);
-                await Task.Delay(latency, CancellationToken.None);
-                return result;
+                var call = Interlocked.Increment(ref owner._scriptCalls);
+                return owner._onScript(call, () => inner.ExecuteAsync(script, keys, args, cancellationToken));
             }
 
             public ValueTask<string> LoadAsync(RespireScript script, CancellationToken cancellationToken = default)
                 => inner.LoadAsync(script, cancellationToken);
         }
+
+        private readonly Func<int, Func<ValueTask<RespireResult>>, ValueTask<RespireResult>> _onScript = onScript;
 
         public RespireEndpoint Endpoint => inner.Endpoint;
         public bool IsConnected => inner.IsConnected;

@@ -19,6 +19,12 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     // the expiry granularity the Microsoft implementation already truncates to (EXPIRE seconds).
     private static readonly TimeSpan SendDelayTolerance = TimeSpan.FromSeconds(1);
 
+    // A correction pass legitimately queues behind the very stall it chases, so its wait must
+    // outlast any stall worth chasing — but not a reply that is never coming (a wedged server,
+    // a blackholed connection). Past this bound the wait is abandoned and the queued pass left
+    // to land in the background. Mutable so tests can shrink the bound.
+    internal TimeSpan CorrectionWaitBound = TimeSpan.FromSeconds(10);
+
     // ARGV: [1] absolute expiration (UTC ticks, -1 none), [2] sliding expiration (ticks, -1 none),
     // [3] relative expiry (ms, -1 none), [4] payload. PERSIST clears a leftover TTL when an
     // existing entry is overwritten without one (HSET alone keeps the old TTL). Expiry stays on
@@ -317,8 +323,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     /// round trip is the irreducible floor — a pass that no longer improves proves further
     /// passes cannot either, and the loop stops with a residual bounded by that floor instead
     /// of retrying forever. The halving requirement also caps the pass count at a logarithm of
-    /// the initial stall. Requires the wire client; a mocked client falls back to a single
-    /// round-robin send and keeps only its weaker ordering.
+    /// the initial stall. Each pass's wait is itself bounded by <see cref="CorrectionWaitBound"/>:
+    /// a reply overdue that far is never coming on a timescale where waiting helps, so the wait
+    /// is abandoned and the queued pass — safe whenever it lands — finishes in the background.
+    /// Requires the wire client; a mocked client falls back to a single round-robin send and
+    /// keeps only its weaker ordering.
     /// </summary>
     private async ValueTask RunCorrectionAsync(RespireScript script, string key, Func<RespireValue[]> args)
     {
@@ -326,14 +335,18 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         while (true)
         {
             var sent = DateTimeOffset.UtcNow;
-            if (_wireClient is { } wire)
+            var pass = RunCorrectionPassAsync(script, key, args());
+            try
             {
-                await wire.ExecuteOnAllConnectionsAsync(script, [key], args()).ConfigureAwait(false);
+                await pass.WaitAsync(CorrectionWaitBound).ConfigureAwait(false);
             }
-            else
+            catch (TimeoutException)
             {
-                var result = await _client.Scripts.ExecuteAsync(script, [key], args(), CancellationToken.None).ConfigureAwait(false);
-                result.Dispose();
+                // The pass stays queued and is shrink-only, idempotent, and ownership-guarded,
+                // so it corrects whenever it lands; retrying against the same wedge would only
+                // queue more copies behind it.
+                _ = ObservePassAsync(pass);
+                return;
             }
 
             var roundTrip = DateTimeOffset.UtcNow - sent;
@@ -343,6 +356,32 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             }
 
             previous = roundTrip;
+        }
+    }
+
+    private async Task RunCorrectionPassAsync(RespireScript script, string key, RespireValue[] args)
+    {
+        if (_wireClient is { } wire)
+        {
+            await wire.ExecuteOnAllConnectionsAsync(script, [key], args).ConfigureAwait(false);
+        }
+        else
+        {
+            var result = await _client.Scripts.ExecuteAsync(script, [key], args, CancellationToken.None).ConfigureAwait(false);
+            result.Dispose();
+        }
+    }
+
+    private static async Task ObservePassAsync(Task pass)
+    {
+        try
+        {
+            await pass.ConfigureAwait(false);
+        }
+        catch
+        {
+            // An abandoned pass that fails means its connection died and killed whatever it
+            // was chasing — nothing left to correct.
         }
     }
 

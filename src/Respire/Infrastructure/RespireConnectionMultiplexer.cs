@@ -209,36 +209,48 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
 
         List<ValueTask<RespValue>>? sends = null;
+        Exception? firstFailure = null;
+        var attempted = 0;
+        var failures = 0;
         for (var slot = 0; slot < _connections.Length; slot++)
         {
             if (Volatile.Read(ref _connections[slot]) is { IsConnected: true } connection)
             {
-                (sends ??= new List<ValueTask<RespValue>>(_connections.Length))
-                    .Add(connection.SendAsync(in command, cancellationToken));
+                attempted++;
+                try
+                {
+                    (sends ??= new List<ValueTask<RespValue>>(_connections.Length))
+                        .Add(connection.SendAsync(in command, cancellationToken));
+                }
+                catch (Exception ex)
+                {
+                    // A slot can die between the health check and the enqueue and throw
+                    // synchronously; that death also killed anything buffered there, so it is a
+                    // per-slot failure like any other — the remaining slots must still get their
+                    // copy, or a command buffered on one of them escapes the ordering fence.
+                    failures++;
+                    firstFailure ??= ex;
+                }
             }
         }
 
-        if (sends is null)
+        if (sends is not null)
         {
-            return;
-        }
-
-        Exception? firstFailure = null;
-        var failures = 0;
-        foreach (var send in sends)
-        {
-            try
+            foreach (var send in sends)
             {
-                (await send.ConfigureAwait(false)).Dispose();
-            }
-            catch (Exception ex)
-            {
-                failures++;
-                firstFailure ??= ex;
+                try
+                {
+                    (await send.ConfigureAwait(false)).Dispose();
+                }
+                catch (Exception ex)
+                {
+                    failures++;
+                    firstFailure ??= ex;
+                }
             }
         }
 
-        if (failures == sends.Count && firstFailure is not null)
+        if (attempted > 0 && failures == attempted && firstFailure is not null)
         {
             throw firstFailure;
         }
