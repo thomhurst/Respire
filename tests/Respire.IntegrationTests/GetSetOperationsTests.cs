@@ -5,11 +5,11 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-[ClassDataSource<RedisTestFixture>(Shared = SharedType.PerClass)]
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 [NotInParallel("redis-integration")]
-public class GetSetOperationsTests(RedisTestFixture fixture)
+public class GetSetOperationsTests(RedisTestContainer fixture)
 {
-    private readonly RedisTestFixture _fixture = fixture;
+    private readonly RedisTestContainer _fixture = fixture;
     private RespireClient? _respireClient;
     private ConnectionMultiplexer? _stackExchangeMultiplexer;
     private IDatabase? _stackExchangeDb;

@@ -8,9 +8,9 @@ using TUnit.Core;
 
 namespace Respire.Extensions.Caching.Tests;
 
-[ClassDataSource<RedisTestFixture>(Shared = SharedType.PerClass)]
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 [NotInParallel("redis-integration")]
-public class RespireDistributedCacheTests(RedisTestFixture fixture)
+public class RespireDistributedCacheTests(RedisTestContainer fixture)
 {
     private RespireClient? _client;
     private RespireDistributedCache? _cache;

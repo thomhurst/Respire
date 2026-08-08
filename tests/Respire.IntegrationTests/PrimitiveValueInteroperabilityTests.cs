@@ -6,9 +6,9 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-[ClassDataSource<RedisTestFixture>(Shared = SharedType.PerClass)]
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 [NotInParallel("redis-integration")]
-public class PrimitiveValueInteroperabilityTests(RedisTestFixture fixture)
+public class PrimitiveValueInteroperabilityTests(RedisTestContainer fixture)
 {
     private RespireClient _respireClient = null!;
     private IConnectionMultiplexer _stackExchangeMultiplexer = null!;

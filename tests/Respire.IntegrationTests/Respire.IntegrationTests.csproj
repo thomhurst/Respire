@@ -16,6 +16,11 @@
     </ItemGroup>
 
     <ItemGroup>
+        <Compile Include="..\RedisTestContainer.cs" Link="RedisTestContainer.cs" />
+        <Using Include="Respire.Testing" />
+    </ItemGroup>
+
+    <ItemGroup>
         <ProjectReference Include="..\..\src\Respire\Respire.csproj" />
     </ItemGroup>
 

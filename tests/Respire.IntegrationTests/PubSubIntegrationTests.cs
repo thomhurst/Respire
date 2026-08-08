@@ -3,14 +3,14 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-[ClassDataSource<RedisTestFixture>(Shared = SharedType.Keyed)]
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 [NotInParallel("redis-integration")]
 public class PubSubIntegrationTests
 {
-    private readonly RedisTestFixture _fixture;
+    private readonly RedisTestContainer _fixture;
     private RespireClient _client = null!;
 
-    public PubSubIntegrationTests(RedisTestFixture fixture)
+    public PubSubIntegrationTests(RedisTestContainer fixture)
     {
         _fixture = fixture;
     }
