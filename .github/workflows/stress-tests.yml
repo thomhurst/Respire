@@ -48,10 +48,10 @@ on:
       framework:
         description: 'Target framework'
         required: false
-        default: net9.0
+        default: net10.0
         type: choice
         options:
-          - net9.0
+          - net10.0
           - net8.0
 
 env:
@@ -70,7 +70,7 @@ concurrency:
 
 jobs:
   stress:
-    name: Stress (${{ github.event.inputs.framework || 'net9.0' }})
+    name: Stress (${{ github.event.inputs.framework || 'net10.0' }})
     runs-on: ubuntu-latest
     timeout-minutes: 300
 
@@ -94,7 +94,7 @@ jobs:
         with:
           dotnet-version: |
             8.0.x
-            9.0.x
+            10.0.x
 
       - name: Build stress tests
         run: dotnet build tools/Respire.StressTests -c Release
@@ -127,7 +127,7 @@ jobs:
           STRESS_CLIENT: ${{ steps.scope.outputs.client }}
           STRESS_CONCURRENCY: ${{ github.event.inputs.concurrency || '50' }}
           STRESS_VALUE_SIZE: ${{ github.event.inputs.value_size_bytes || '1024' }}
-          STRESS_FRAMEWORK: ${{ github.event.inputs.framework || 'net9.0' }}
+          STRESS_FRAMEWORK: ${{ github.event.inputs.framework || 'net10.0' }}
         run: |
           dotnet run -c Release -f "$STRESS_FRAMEWORK" --no-build -- \
             --duration "$STRESS_DURATION_MINUTES" \
@@ -151,7 +151,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: stress-results-${{ github.event.inputs.framework || 'net9.0' }}
+          name: stress-results-${{ github.event.inputs.framework || 'net10.0' }}
           path: tools/Respire.StressTests/results/
           retention-days: 90
 

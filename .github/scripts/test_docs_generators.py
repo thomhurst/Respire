@@ -12,7 +12,7 @@ class BenchmarkDocsTests(unittest.TestCase):
             root = Path(directory)
             report = (
                 root
-                / "comparison-benchmarks-net9.0"
+                / "comparison-benchmarks-net10.0"
                 / "results"
                 / "Respire.Benchmarks.Sample-report-github.md"
             )
@@ -23,7 +23,7 @@ class BenchmarkDocsTests(unittest.TestCase):
                 [report], root, "0123456789abcdef", "2026-08-08 12:00 UTC", "https://example.test/run"
             )
 
-        self.assertIn("## net9.0", document)
+        self.assertIn("## net10.0", document)
         self.assertIn("| Get | 1 ns |", document)
         self.assertIn("`0123456789ab`", document)
 

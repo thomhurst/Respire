@@ -26,13 +26,13 @@ runs first as the baseline, then Respire, each on a fresh connection.
 
 ```bash
 # Full run: all scenarios, both clients, 5 minutes measured per pass
-dotnet run -c Release -f net9.0 -- --duration 5
+dotnet run -c Release -f net10.0 -- --duration 5
 
 # Quick smoke: every scenario for 5 seconds
-dotnet run -c Release -f net9.0 -- --duration-seconds 5 --warmup 2
+dotnet run -c Release -f net10.0 -- --duration-seconds 5 --warmup 2
 
 # One scenario, one client
-dotnet run -c Release -f net9.0 -- --scenario get --client respire --duration 2
+dotnet run -c Release -f net10.0 -- --scenario get --client respire --duration 2
 ```
 
 Uses `REDIS_HOST` / `REDIS_PORT` when set; otherwise starts a throwaway Redis

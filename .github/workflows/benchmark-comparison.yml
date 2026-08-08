@@ -44,7 +44,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        framework: [net8.0, net9.0]
+        framework: [net8.0, net10.0]
 
     services:
       redis:
@@ -66,7 +66,7 @@ jobs:
         with:
           dotnet-version: |
             8.0.x
-            9.0.x
+            10.0.x
 
       - name: Build benchmarks
         run: dotnet build benchmarks/Respire.ComparisonBenchmarks -c Release
