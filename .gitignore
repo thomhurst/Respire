@@ -1,6 +1,8 @@
 # Build results
 bin/
 obj/
+BenchmarkDotNet.Artifacts/
+TestResults/
 
 # Visual Studio
 .vs/

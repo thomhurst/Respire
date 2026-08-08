@@ -106,6 +106,51 @@ public static class RespParser
         return true;
     }
 
+    /// <summary>
+    /// Parses a bulk-string-family value using a header already decoded by
+    /// <see cref="TryPeekBulkHeader"/>. This avoids scanning and parsing the length twice in
+    /// the connection receive path.
+    /// </summary>
+    internal static RespParseStatus TryParseBulkValue(
+        ReadOnlySpan<byte> buffer,
+        ref int pos,
+        RespDataType type,
+        long payloadLength,
+        int headerEnd,
+        out RespValue value)
+    {
+        value = default;
+
+        if (payloadLength == -1)
+        {
+            value = RespValue.Null;
+            pos = headerEnd;
+            return RespParseStatus.Done;
+        }
+
+        if (payloadLength < 0 || payloadLength > int.MaxValue - 2)
+        {
+            return RespParseStatus.InvalidData;
+        }
+
+        var length = (int)payloadLength;
+        var total = length + 2;
+        if (buffer.Length - headerEnd < total)
+        {
+            return RespParseStatus.NeedMoreData;
+        }
+
+        if (buffer[headerEnd + length] != RespConstants.CarriageReturn
+            || buffer[headerEnd + length + 1] != RespConstants.LineFeed)
+        {
+            return RespParseStatus.InvalidData;
+        }
+
+        value = CopyToPooled(type, buffer.Slice(headerEnd, length));
+        pos = headerEnd + total;
+        return RespParseStatus.Done;
+    }
+
     private static RespParseStatus TryParseCore(ReadOnlySpan<byte> buffer, ref int cursor, out RespValue value)
     {
         value = default;
@@ -260,33 +305,7 @@ public static class RespParser
             return RespParseStatus.InvalidData;
         }
 
-        if (length == -1)
-        {
-            value = RespValue.Null;
-            cursor = pos;
-            return RespParseStatus.Done;
-        }
-
-        if (length < 0 || length > int.MaxValue - 2)
-        {
-            return RespParseStatus.InvalidData;
-        }
-
-        var total = (int)length + 2;
-        if (buffer.Length - pos < total)
-        {
-            return RespParseStatus.NeedMoreData;
-        }
-
-        if (buffer[pos + (int)length] != RespConstants.CarriageReturn
-            || buffer[pos + (int)length + 1] != RespConstants.LineFeed)
-        {
-            return RespParseStatus.InvalidData;
-        }
-
-        value = CopyToPooled(type, buffer.Slice(pos, (int)length));
-        cursor = pos + total;
-        return RespParseStatus.Done;
+        return TryParseBulkValue(buffer, ref cursor, type, length, pos, out value);
     }
 
     private static RespParseStatus TryParseAggregate(

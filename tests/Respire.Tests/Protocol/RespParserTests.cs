@@ -312,4 +312,23 @@ public class RespParserTests
 
         await Assert.That(found).IsFalse();
     }
+
+    [Test]
+    [Arguments("$5\r\nhello\r\n", RespParseStatus.Done, 11)]
+    [Arguments("$5\r\nhell", RespParseStatus.NeedMoreData, 0)]
+    [Arguments("$5\r\nhelloXX", RespParseStatus.InvalidData, 0)]
+    [Arguments("$-1\r\n", RespParseStatus.Done, 5)]
+    public async Task BulkHeader_CanBeReusedForParsing(
+        string frame, RespParseStatus expectedStatus, int expectedConsumed)
+    {
+        var data = Encoding.UTF8.GetBytes(frame);
+        var found = RespParser.TryPeekBulkHeader(data, 0, out var type, out var length, out var headerEnd);
+        var pos = 0;
+        var status = RespParser.TryParseBulkValue(data, ref pos, type, length, headerEnd, out var value);
+
+        await Assert.That(found).IsTrue();
+        await Assert.That(status).IsEqualTo(expectedStatus);
+        await Assert.That(pos).IsEqualTo(expectedConsumed);
+        value.Dispose();
+    }
 }

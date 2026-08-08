@@ -47,6 +47,31 @@ public class ProtocolBenchmarks
     [BenchmarkCategory("Parsing", "SimpleTypes")]
     public RespDataType ParseBulkString() => ParseAndDispose(_bulkStringData);
 
+    [Benchmark(Baseline = true, Description = "Receive bulk string (reparse header)")]
+    [BenchmarkCategory("BulkReceive")]
+    public RespDataType ReceiveBulkString_ReparseHeader()
+    {
+        var pos = 0;
+        RespParser.TryPeekBulkHeader(_bulkStringData, pos, out _, out _, out _);
+        RespParser.TryParseValue(_bulkStringData, ref pos, out var value);
+        var type = value.Type;
+        value.Dispose();
+        return type;
+    }
+
+    [Benchmark(Description = "Receive bulk string (reuse header)")]
+    [BenchmarkCategory("BulkReceive")]
+    public RespDataType ReceiveBulkString_ReuseHeader()
+    {
+        var pos = 0;
+        RespParser.TryPeekBulkHeader(
+            _bulkStringData, pos, out var type, out var length, out var headerEnd);
+        RespParser.TryParseBulkValue(_bulkStringData, ref pos, type, length, headerEnd, out var value);
+        var parsedType = value.Type;
+        value.Dispose();
+        return parsedType;
+    }
+
     [Benchmark(Description = "Parse Integer")]
     [BenchmarkCategory("Parsing", "SimpleTypes")]
     public RespDataType ParseInteger() => ParseAndDispose(_integerData);
