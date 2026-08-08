@@ -13,9 +13,8 @@ namespace Respire.Extensions.Caching.Tests;
 /// the other. TTLs are whole seconds because the Microsoft implementation truncates to EXPIRE
 /// seconds granularity.
 /// </summary>
-[ClassDataSource<RedisTestFixture>(Shared = SharedType.PerClass)]
-[NotInParallel("redis-integration")]
-public class StackExchangeInteropTests(RedisTestFixture fixture)
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
+public class StackExchangeInteropTests(RedisTestContainer fixture)
 {
     private const string InstanceName = "interop:";
 
@@ -31,7 +30,7 @@ public class StackExchangeInteropTests(RedisTestFixture fixture)
         _respireCache = new RespireDistributedCache(_client, new RespireCacheOptions { InstanceName = InstanceName });
         _microsoftCache = new RedisCache(new RedisCacheOptions
         {
-            Configuration = fixture.ConnectionString,
+            Configuration = fixture.StackExchangeConnectionString,
             InstanceName = InstanceName,
         });
     }

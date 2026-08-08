@@ -5,16 +5,15 @@ using TUnit.Assertions;
 
 namespace Respire.IntegrationTests;
 
-[ClassDataSource<RedisTestFixture>(Shared = SharedType.Keyed)]
-[NotInParallel("redis-integration")]
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class DataTypeInteroperabilityTests
 {
-    private readonly RedisTestFixture _fixture;
+    private readonly RedisTestContainer _fixture;
     private RespireClient _respireClient = null!;
     private IConnectionMultiplexer _stackExchangeMultiplexer = null!;
     private IDatabase _stackExchangeDb = null!;
 
-    public DataTypeInteroperabilityTests(RedisTestFixture fixture)
+    public DataTypeInteroperabilityTests(RedisTestContainer fixture)
     {
         _fixture = fixture;
     }
@@ -22,8 +21,8 @@ public class DataTypeInteroperabilityTests
     [Before(HookType.Test)]
     public async Task InitializeAsync()
     {
-        _respireClient = await RespireClient.ConnectAsync($"{_fixture.Host}:{_fixture.Port}");
-        _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.ConnectionString);
+        _respireClient = await RespireClient.ConnectAsync(_fixture.ConnectionString);
+        _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.StackExchangeConnectionString);
         _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase();
         await _stackExchangeDb.ExecuteAsync("FLUSHDB");
     }
@@ -251,8 +250,8 @@ public class DataTypeInteroperabilityTests
         await _respireClient.SetAsync("pattern:b:2", "value4");
 
         // Use StackExchange to scan keys
-        var server = _stackExchangeMultiplexer.GetServer(_fixture.ConnectionString);
-        var keys = server.Keys(pattern: "pattern:a:*").ToList();
+        var server = _stackExchangeMultiplexer.GetServer(_fixture.Host, _fixture.Port);
+        var keys = server.Keys(database: _fixture.Database, pattern: "pattern:a:*").ToList();
         keys.Should().HaveCount(2);
 
         // Delete pattern with StackExchange

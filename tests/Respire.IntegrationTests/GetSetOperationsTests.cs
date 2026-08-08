@@ -5,11 +5,10 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-[ClassDataSource<RedisTestFixture>(Shared = SharedType.PerClass)]
-[NotInParallel("redis-integration")]
-public class GetSetOperationsTests(RedisTestFixture fixture)
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
+public class GetSetOperationsTests(RedisTestContainer fixture)
 {
-    private readonly RedisTestFixture _fixture = fixture;
+    private readonly RedisTestContainer _fixture = fixture;
     private RespireClient? _respireClient;
     private ConnectionMultiplexer? _stackExchangeMultiplexer;
     private IDatabase? _stackExchangeDb;
@@ -17,15 +16,9 @@ public class GetSetOperationsTests(RedisTestFixture fixture)
     [Before(Test)]
     public async Task InitializeAsync()
     {
-        // Parse connection string to get host and port
-        var connectionString = _fixture.ConnectionString;
-        var parts = connectionString.Split(',')[0].Split(':');
-        var host = parts[0];
-        var port = int.Parse(parts[1]);
+        _respireClient = await RespireClient.ConnectAsync(_fixture.ConnectionString);
 
-        _respireClient = await RespireClient.ConnectAsync($"{host}:{port}");
-
-        _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.ConnectionString);
+        _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.StackExchangeConnectionString);
         _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase();
 
         // Clean up before each test

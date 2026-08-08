@@ -9,7 +9,6 @@ using TUnit.Core;
 
 namespace Respire.Tests;
 
-[NotInParallel("respire-telemetry")]
 public class TelemetryTests
 {
     [Test]

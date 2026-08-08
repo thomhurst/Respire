@@ -6,9 +6,8 @@ using TUnit.Core;
 
 namespace Respire.Extensions.Caching.Tests;
 
-[ClassDataSource<RedisTestFixture>(Shared = SharedType.PerClass)]
-[NotInParallel("redis-integration")]
-public class ServiceCollectionTests(RedisTestFixture fixture)
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
+public class ServiceCollectionTests(RedisTestContainer fixture)
 {
     [Test]
     public async Task ConnectionString_RegistersWorkingBufferCache()

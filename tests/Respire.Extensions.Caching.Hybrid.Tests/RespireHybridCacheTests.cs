@@ -8,9 +8,8 @@ using TUnit.Core;
 
 namespace Respire.Extensions.Caching.Hybrid.Tests;
 
-[ClassDataSource<RedisTestFixture>(Shared = SharedType.PerClass)]
-[NotInParallel("redis-integration")]
-public class RespireHybridCacheTests(RedisTestFixture fixture)
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
+public class RespireHybridCacheTests(RedisTestContainer fixture)
 {
     private const string InstanceName = "hybrid:";
 

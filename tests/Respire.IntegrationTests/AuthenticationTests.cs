@@ -1,34 +1,10 @@
-using DotNet.Testcontainers.Builders;
-using DotNet.Testcontainers.Containers;
 using FluentAssertions;
 using TUnit.Core;
-using TUnit.Core.Interfaces;
 
 namespace Respire.IntegrationTests;
 
-/// <summary>Redis container started with --requirepass for authentication tests.</summary>
-public class SecuredRedisFixture : IAsyncInitializer, IAsyncDisposable
-{
-    public const string Password = "integration-pass";
-
-    private readonly IContainer _container = new ContainerBuilder()
-        .WithImage("redis:7-alpine")
-        .WithPortBinding(6379, true)
-        .WithCommand("redis-server", "--requirepass", Password)
-        .WithWaitStrategy(Wait.ForUnixContainer().UntilPortIsAvailable(6379))
-        .Build();
-
-    public string Host => _container.Hostname;
-    public int Port => _container.GetMappedPublicPort(6379);
-
-    public Task InitializeAsync() => _container.StartAsync();
-
-    public ValueTask DisposeAsync() => _container.DisposeAsync();
-}
-
-[ClassDataSource<SecuredRedisFixture>(Shared = SharedType.PerClass)]
-[NotInParallel("redis-integration")]
-public class AuthenticationTests(SecuredRedisFixture fixture)
+[ClassDataSource<SecuredRedisTestContainer>(Shared = SharedType.PerTestSession)]
+public class AuthenticationTests(SecuredRedisTestContainer fixture)
 {
     [Test]
     public async Task CorrectPassword_Resp2_CommandsWork()
@@ -36,7 +12,7 @@ public class AuthenticationTests(SecuredRedisFixture fixture)
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new RespireEndpoint(fixture.Host, fixture.Port) },
-            Password = SecuredRedisFixture.Password,
+            Password = SecuredRedisTestContainer.Password,
             Connections = 1,
         });
 
@@ -53,7 +29,7 @@ public class AuthenticationTests(SecuredRedisFixture fixture)
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new RespireEndpoint(fixture.Host, fixture.Port) },
-            Password = SecuredRedisFixture.Password,
+            Password = SecuredRedisTestContainer.Password,
             Protocol = RespProtocol.Resp3,
             Connections = 1,
         });
@@ -68,7 +44,7 @@ public class AuthenticationTests(SecuredRedisFixture fixture)
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new RespireEndpoint(fixture.Host, fixture.Port) },
-            Password = SecuredRedisFixture.Password,
+            Password = SecuredRedisTestContainer.Password,
             ClientName = "respire-integration",
             Connections = 1,
         });

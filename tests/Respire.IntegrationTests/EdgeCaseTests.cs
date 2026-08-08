@@ -5,16 +5,15 @@ using TUnit.Assertions;
 
 namespace Respire.IntegrationTests;
 
-[ClassDataSource<RedisTestFixture>(Shared = SharedType.Keyed)]
-[NotInParallel("redis-integration")]
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class EdgeCaseTests
 {
-    private readonly RedisTestFixture _fixture;
+    private readonly RedisTestContainer _fixture;
     private RespireClient _respireClient = null!;
     private IConnectionMultiplexer _stackExchangeMultiplexer = null!;
     private IDatabase _stackExchangeDb = null!;
 
-    public EdgeCaseTests(RedisTestFixture fixture)
+    public EdgeCaseTests(RedisTestContainer fixture)
     {
         _fixture = fixture;
     }
@@ -22,8 +21,8 @@ public class EdgeCaseTests
     [Before(HookType.Test)]
     public async Task InitializeAsync()
     {
-        _respireClient = await RespireClient.ConnectAsync($"{_fixture.Host}:{_fixture.Port}");
-        _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.ConnectionString);
+        _respireClient = await RespireClient.ConnectAsync(_fixture.ConnectionString);
+        _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.StackExchangeConnectionString);
         _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase();
         await _stackExchangeDb.ExecuteAsync("FLUSHDB");
     }

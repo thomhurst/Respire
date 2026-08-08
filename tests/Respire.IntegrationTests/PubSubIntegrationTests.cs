@@ -3,14 +3,13 @@ using TUnit.Core;
 
 namespace Respire.IntegrationTests;
 
-[ClassDataSource<RedisTestFixture>(Shared = SharedType.Keyed)]
-[NotInParallel("redis-integration")]
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class PubSubIntegrationTests
 {
-    private readonly RedisTestFixture _fixture;
+    private readonly RedisTestContainer _fixture;
     private RespireClient _client = null!;
 
-    public PubSubIntegrationTests(RedisTestFixture fixture)
+    public PubSubIntegrationTests(RedisTestContainer fixture)
     {
         _fixture = fixture;
     }
@@ -18,7 +17,7 @@ public class PubSubIntegrationTests
     [Before(HookType.Test)]
     public async Task InitializeAsync()
     {
-        _client = await RespireClient.ConnectAsync($"{_fixture.Host}:{_fixture.Port}");
+        _client = await RespireClient.ConnectAsync(_fixture.ConnectionString);
     }
 
     [After(HookType.Test)]
@@ -30,10 +29,11 @@ public class PubSubIntegrationTests
     [Test]
     public async Task PublishSubscribe_Roundtrip()
     {
-        await using var subscription = _client.Subscribe("it:chan");
+        var channel = IsolatedChannel("it:chan");
+        await using var subscription = _client.Subscribe(channel);
         var firstMessage = ReadFirstAsync(subscription);
 
-        var receivers = await PublishUntilReceiversAsync("it:chan", "hello-integration", 1);
+        var receivers = await PublishUntilReceiversAsync(channel, "hello-integration", 1);
 
         receivers.Should().BeGreaterThanOrEqualTo(1);
         (await firstMessage.WaitAsync(TimeSpan.FromSeconds(5))).Text.Should().Be("hello-integration");
@@ -42,21 +42,24 @@ public class PubSubIntegrationTests
     [Test]
     public async Task PatternSubscribe_Roundtrip()
     {
-        await using var subscription = _client.SubscribePattern("it:p:*");
+        var pattern = IsolatedChannel("it:p:*");
+        var channel = IsolatedChannel("it:p:orders");
+        await using var subscription = _client.SubscribePattern(pattern);
         var firstMessage = ReadFirstAsync(subscription);
 
-        await PublishUntilReceiversAsync("it:p:orders", "pattern-payload", 1);
+        await PublishUntilReceiversAsync(channel, "pattern-payload", 1);
 
         var message = await firstMessage.WaitAsync(TimeSpan.FromSeconds(5));
-        message.Channel.Should().Be("it:p:orders");
-        message.Pattern.Should().Be("it:p:*");
+        message.Channel.Should().Be(channel);
+        message.Pattern.Should().Be(pattern);
         message.Text.Should().Be("pattern-payload");
     }
 
     [Test]
     public async Task Unsubscribe_StopsDelivery()
     {
-        var subscription = _client.Subscribe("it:bye");
+        var channel = IsolatedChannel("it:bye");
+        var subscription = _client.Subscribe(channel);
 
         var deliveries = 0;
         var reader = Task.Run(async () =>
@@ -68,14 +71,14 @@ public class PubSubIntegrationTests
         });
 
         // Wait until the SUBSCRIBE is active, then unsubscribe by disposing the subscription.
-        (await PublishUntilReceiversAsync("it:bye", "warm-up", 1)).Should().Be(1);
+        (await PublishUntilReceiversAsync(channel, "warm-up", 1)).Should().Be(1);
         await subscription.DisposeAsync();
 
         // Disposal ends the enumeration; once the reader finishes, nothing can deliver anymore.
         await reader.WaitAsync(TimeSpan.FromSeconds(5));
         var deliveredBeforeUnsubscribe = Volatile.Read(ref deliveries);
 
-        var receivers = await _client.PublishAsync("it:bye", "should-not-arrive");
+        var receivers = await _client.PublishAsync(channel, "should-not-arrive");
 
         receivers.Should().Be(0);
         await Task.Delay(200);
@@ -85,16 +88,18 @@ public class PubSubIntegrationTests
     [Test]
     public async Task Resp3Subscriber_ReceivesPushFrames()
     {
+        var channel = IsolatedChannel("it:resp3");
         await using var resp3Client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new RespireEndpoint(_fixture.Host, _fixture.Port) },
+            Database = _fixture.Database,
             Protocol = RespProtocol.Resp3,
             Connections = 1,
         });
-        await using var subscription = resp3Client.Subscribe("it:resp3");
+        await using var subscription = resp3Client.Subscribe(channel);
         var firstMessage = ReadFirstAsync(subscription);
 
-        await PublishUntilReceiversAsync("it:resp3", "resp3-push", 1);
+        await PublishUntilReceiversAsync(channel, "resp3-push", 1);
 
         (await firstMessage.WaitAsync(TimeSpan.FromSeconds(5))).Text.Should().Be("resp3-push");
     }
@@ -102,15 +107,16 @@ public class PubSubIntegrationTests
     [Test]
     public async Task MultipleSubscribers_AllReceive()
     {
+        var channel = IsolatedChannel("it:fanout");
         // Each client routes its subscriptions over one dedicated pub/sub connection, so two
         // clients are needed for the server to count two receivers.
-        await using var secondClient = await RespireClient.ConnectAsync($"{_fixture.Host}:{_fixture.Port}");
-        await using var subscription1 = _client.Subscribe("it:fanout");
-        await using var subscription2 = secondClient.Subscribe("it:fanout");
+        await using var secondClient = await RespireClient.ConnectAsync(_fixture.ConnectionString);
+        await using var subscription1 = _client.Subscribe(channel);
+        await using var subscription2 = secondClient.Subscribe(channel);
         var firstMessage1 = ReadFirstAsync(subscription1);
         var firstMessage2 = ReadFirstAsync(subscription2);
 
-        var receivers = await PublishUntilReceiversAsync("it:fanout", "to-everyone", 2);
+        var receivers = await PublishUntilReceiversAsync(channel, "to-everyone", 2);
 
         receivers.Should().Be(2);
         (await firstMessage1.WaitAsync(TimeSpan.FromSeconds(5))).Text.Should().Be("to-everyone");
@@ -128,6 +134,9 @@ public class PubSubIntegrationTests
 
             throw new InvalidOperationException("The subscription ended before a message arrived.");
         });
+
+    private static string IsolatedChannel(string channel)
+        => $"{TestContext.Current!.Isolation.GetIsolatedPrefix()}{channel}";
 
     /// <summary>
     /// SUBSCRIBE is sent when enumeration starts, so publish in a loop until the server reports
