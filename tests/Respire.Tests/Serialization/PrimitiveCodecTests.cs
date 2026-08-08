@@ -66,6 +66,16 @@ public class PrimitiveCodecTests
     }
 
     [Test]
+    public async Task FloatingPointReads_RejectGroupSeparators()
+    {
+        await using var client = CreateClient(new CountingSerializer());
+
+        await Assert.That(() => client.DeserializeBorrowed<float>(Bulk("1,234"))).Throws<FormatException>();
+        await Assert.That(() => client.DeserializeBorrowed<double>(Bulk("1,234"))).Throws<FormatException>();
+        await Assert.That(() => client.DeserializeBorrowed<decimal>(Bulk("1,234"))).Throws<FormatException>();
+    }
+
+    [Test]
     public async Task Boolean_FastPath_PreservesJsonWrites_AndAcceptsRedisValues()
     {
         var serializer = new CountingSerializer();

@@ -110,7 +110,7 @@ internal static class PrimitiveCodec
                 result = Return<T, double>(ParseFiniteDouble(payload));
                 return true;
             case PrimitiveKind.Decimal:
-                result = Return<T, decimal>(Parse<decimal>(payload));
+                result = Return<T, decimal>(ParseDecimal(payload));
                 return true;
             default:
                 result = default;
@@ -169,14 +169,34 @@ internal static class PrimitiveCodec
 
     private static float ParseFiniteSingle(ReadOnlySpan<byte> payload)
     {
-        var value = Parse<float>(payload);
-        return float.IsFinite(value) ? value : throw InvalidValue<float>();
+        if (float.TryParse(payload, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+            && float.IsFinite(value))
+        {
+            return value;
+        }
+
+        throw InvalidValue<float>();
     }
 
     private static double ParseFiniteDouble(ReadOnlySpan<byte> payload)
     {
-        var value = Parse<double>(payload);
-        return double.IsFinite(value) ? value : throw InvalidValue<double>();
+        if (double.TryParse(payload, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+            && double.IsFinite(value))
+        {
+            return value;
+        }
+
+        throw InvalidValue<double>();
+    }
+
+    private static decimal ParseDecimal(ReadOnlySpan<byte> payload)
+    {
+        if (decimal.TryParse(payload, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+        {
+            return value;
+        }
+
+        throw InvalidValue<decimal>();
     }
 
     private static FormatException InvalidValue<T>()
