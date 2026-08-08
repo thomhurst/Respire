@@ -3,6 +3,8 @@
 Respire is a fast, modern RESP client for .NET. It works with Redis, Valkey, KeyDB, and other
 RESP-compatible servers while keeping the API familiar to C# developers.
 
+[Read the documentation](https://thomhurst.github.io/Respire/)
+
 ```csharp
 await using var redis = await RespireClient.ConnectAsync("redis://localhost");
 
