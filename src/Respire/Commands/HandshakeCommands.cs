@@ -54,6 +54,23 @@ public readonly struct ClientSetNameCommand(string name) : IRespCommand
     }
 }
 
+/// <summary>CLIENT ID.</summary>
+internal readonly struct ClientIdCommand : IRespCommand
+{
+    public void Write(ref RespWriter writer)
+        => writer.WriteRaw("*2\r\n$6\r\nCLIENT\r\n$2\r\nID\r\n"u8);
+}
+
+/// <summary>CLIENT KILL ID id.</summary>
+internal readonly struct ClientKillIdCommand(long id) : IRespCommand
+{
+    public void Write(ref RespWriter writer)
+    {
+        writer.WriteRaw("*4\r\n$6\r\nCLIENT\r\n$4\r\nKILL\r\n$2\r\nID\r\n"u8);
+        writer.WriteBulkInteger(id);
+    }
+}
+
 /// <summary>SELECT database.</summary>
 public readonly struct SelectCommand(int database) : IRespCommand
 {

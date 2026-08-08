@@ -9,9 +9,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The caching package needs two wire-level primitives no public API should promise:
-         a reply wait immune to CommandTimeout, and all-connection sends for FIFO-ordered
-         TTL corrections. -->
+    <!-- The caching package needs wire-level primitives no public API should promise: a reply
+         wait immune to CommandTimeout, Redis connection identities, and all-connection sends
+         for FIFO-ordered TTL corrections. -->
     <InternalsVisibleTo Include="Respire.Extensions.Caching" />
     <InternalsVisibleTo Include="Respire.Extensions.Caching.Tests" />
   </ItemGroup>

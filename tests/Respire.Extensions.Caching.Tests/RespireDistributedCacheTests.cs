@@ -454,8 +454,16 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         """;
 
     private async Task<RespireClient> ConnectTimeoutClientAsync()
-        => await RespireClient.ConnectAsync(
+    {
+        var client = await RespireClient.ConnectAsync(
             RespireOptions.Parse(fixture.ConnectionString) with { CommandTimeout = TimeSpan.FromMilliseconds(50) });
+
+        // Keep the test's 50ms timeout scoped to the cache command under test. Reliable
+        // corrections lazily capture CLIENT ID once per connection; prime that setup before
+        // deliberately stalling Redis.
+        await client.EnsureReliableCorrectionOrderingAsync();
+        return client;
+    }
 
     private Task StallServerAsync(string seconds)
         => Task.Run(async () => (await Client.ExecuteAsync("EVAL", StallScriptSource, "0", seconds)).Dispose());
@@ -686,6 +694,29 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         var pttl = await PttlAsync("broadcast-cap");
         await Assert.That(pttl).IsGreaterThan(0);
         await Assert.That(pttl).IsLessThanOrEqualTo(30_000);
+    }
+
+    [Test]
+    public async Task Correction_BroadcastFencesDeadSlot_AndRetriesOnReplacement()
+    {
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Connections = 1 });
+        await client.EnsureReliableCorrectionOrderingAsync();
+
+        // Kill the only local socket after its Redis client ID has been captured. The
+        // correction must not treat IsConnected == false as proof that flushed bytes died: it
+        // fences that ID with CLIENT KILL, waits for a replacement, then runs the correction.
+        var dead = await client.AcquireConnectionAsync(CancellationToken.None);
+        await dead.DisposeAsync();
+
+        await client.ExecuteOnAllConnectionsAsync(
+                RespireDistributedCache.CapTtlScript,
+                ["dead-slot"],
+                [DateTimeOffset.UtcNow.AddSeconds(30).UtcTicks, -1L, 30_000L])
+            .AsTask()
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        await Assert.That(client.IsConnected).IsTrue();
     }
 
     [Test]

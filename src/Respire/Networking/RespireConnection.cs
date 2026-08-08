@@ -52,6 +52,7 @@ public sealed class RespireConnection : IAsyncDisposable
     private WriteBuffer _spareBuffer;
     private bool _dead;
     private int _disposed;
+    private long _serverClientId;
 
     public string Host { get; }
     public int Port { get; }
@@ -62,6 +63,12 @@ public sealed class RespireConnection : IAsyncDisposable
     /// faults itself — used to observe connection lifetime (e.g. pub/sub auto-resubscribe).
     /// </summary>
     internal Task Closed => _receiveTask;
+
+    /// <summary>
+    /// Redis's connection ID, populated only when reliable cross-connection correction ordering
+    /// is enabled. Zero means it has not been requested.
+    /// </summary>
+    internal long ServerClientId => Volatile.Read(ref _serverClientId);
 
     private RespireConnection(Socket socket, string host, int port, RespireConnectionOptions options, ILogger? logger)
     {
@@ -176,6 +183,32 @@ public sealed class RespireConnection : IAsyncDisposable
             reply.Dispose();
             throw new RespireConnectionException($"{step} failed for {Host}:{Port}: {message}");
         }
+    }
+
+    /// <summary>
+    /// Captures Redis's connection ID. Corrections use it to kill a locally dead connection on
+    /// the server before claiming that a command previously flushed on that socket is harmless.
+    /// </summary>
+    internal async ValueTask<long> EnsureServerClientIdAsync(CancellationToken cancellationToken = default)
+    {
+        var existing = ServerClientId;
+        if (existing != 0)
+        {
+            return existing;
+        }
+
+        var reply = await SendAsync(new Commands.ClientIdCommand(), cancellationToken).ConfigureAwait(false);
+        if (reply.IsError)
+        {
+            var message = reply.GetErrorMessage();
+            reply.Dispose();
+            throw new RespireServerException(message);
+        }
+
+        var id = reply.AsInteger();
+        reply.Dispose();
+        Interlocked.CompareExchange(ref _serverClientId, id, 0);
+        return ServerClientId;
     }
 
     /// <summary>

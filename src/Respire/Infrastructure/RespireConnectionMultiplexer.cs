@@ -1,4 +1,7 @@
+using System.Collections.Concurrent;
+using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.Logging;
+using Respire.Commands;
 using Respire.Networking;
 using Respire.Protocol;
 
@@ -17,8 +20,12 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private readonly RespireConnectionOptions _options;
     private readonly ILogger? _logger;
     private readonly SemaphoreSlim _connectGate = new(1, 1);
+    private readonly SemaphoreSlim _correctionIdentityGate = new(1, 1);
+    private readonly ConcurrentDictionary<long, byte> _retiredServerClientIds = new();
     private uint _next;
     private int _disposed;
+    private int _trackServerClientIds;
+    private volatile bool _correctionOrderingReady;
     private volatile bool _connected;
 
     public string Host { get; }
@@ -188,14 +195,79 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         => GetConnection().SendFireAndForgetAsync(in command, cancellationToken);
 
     /// <summary>
-    /// Sends a command on every currently healthy connection and awaits all replies. Each
+    /// Enables server-side identities for every multiplexed connection. A correction can then
+    /// fence a socket that died locally by issuing CLIENT KILL for its Redis client ID: once
+    /// that reply arrives, an earlier command on the dead socket either already ran or was
+    /// discarded, so a following correction cannot be overtaken by latent bytes.
+    /// </summary>
+    internal async ValueTask EnsureReliableCorrectionOrderingAsync(CancellationToken cancellationToken = default)
+    {
+        if (_correctionOrderingReady)
+        {
+            return;
+        }
+
+        await _correctionIdentityGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_correctionOrderingReady)
+            {
+                return;
+            }
+
+            await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            Volatile.Write(ref _trackServerClientIds, 1);
+
+            while (true)
+            {
+                var ready = true;
+                for (var slot = 0; slot < _connections.Length; slot++)
+                {
+                    var connection = Volatile.Read(ref _connections[slot]);
+                    if (connection is not { IsConnected: true })
+                    {
+                        RetireConnection(connection);
+                        ScheduleReconnect(slot);
+                        ready = false;
+                        continue;
+                    }
+
+                    try
+                    {
+                        await connection.EnsureServerClientIdAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (IsConnectionLoss(ex))
+                    {
+                        RetireConnection(connection);
+                        ScheduleReconnect(slot);
+                        ready = false;
+                    }
+                }
+
+                if (ready)
+                {
+                    _correctionOrderingReady = true;
+                    return;
+                }
+
+                await Task.Delay(25, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            _correctionIdentityGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Sends a command on every connection and awaits all replies. Each
     /// connection is FIFO, so the copy sharing a connection with any earlier still-buffered
     /// command is guaranteed to execute after it — the ordering primitive a corrective command
     /// needs when the connection that carried the original is unknowable (round-robin). The
     /// command must therefore be idempotent and safe to run out of order on the other
-    /// connections. Dead connections are skipped: anything buffered on them died with the
-    /// socket. Throws only when every send failed; partial failure is success, because a
-    /// connection that died also killed whatever the correction was ordering against.
+    /// connections. A locally dead connection is first killed by its Redis client ID; that
+    /// server-side barrier proves its flushed commands cannot execute after the correction.
+    /// A slot dying during the broadcast is fenced and the broadcast retried.
     /// </summary>
     internal async ValueTask SendToAllConnectionsAsync<TCommand>(TCommand command, CancellationToken cancellationToken = default)
         where TCommand : struct, IRespCommand
@@ -208,34 +280,34 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             return;
         }
 
-        List<ValueTask<RespValue>>? sends = null;
-        Exception? firstFailure = null;
-        var attempted = 0;
-        var failures = 0;
-        for (var slot = 0; slot < _connections.Length; slot++)
+        await EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
+
+        while (true)
         {
-            if (Volatile.Read(ref _connections[slot]) is { IsConnected: true } connection)
+            await FenceRetiredConnectionsAsync(cancellationToken).ConfigureAwait(false);
+
+            var sends = new List<(RespireConnection Connection, ValueTask<RespValue> Send)>(_connections.Length);
+            for (var slot = 0; slot < _connections.Length; slot++)
             {
-                attempted++;
+                var connection = Volatile.Read(ref _connections[slot]);
+                if (connection is not { IsConnected: true })
+                {
+                    RetireConnection(connection);
+                    ScheduleReconnect(slot);
+                    continue;
+                }
+
                 try
                 {
-                    (sends ??= new List<ValueTask<RespValue>>(_connections.Length))
-                        .Add(connection.SendAsync(in command, cancellationToken));
+                    sends.Add((connection, connection.SendAsync(in command, cancellationToken)));
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (IsConnectionLoss(ex))
                 {
-                    // A slot can die between the health check and the enqueue and throw
-                    // synchronously; that death also killed anything buffered there, so it is a
-                    // per-slot failure like any other — the remaining slots must still get their
-                    // copy, or a command buffered on one of them escapes the ordering fence.
-                    failures++;
-                    firstFailure ??= ex;
+                    RetireConnection(connection);
+                    ScheduleReconnect(slot);
                 }
             }
-        }
 
-        if (sends is not null)
-        {
             // Each reply is drained by its own task, not awaited in sequence: a slot that never
             // replies must not stop the completed replies of later slots from being consumed
             // and disposed, since a caller that detaches this broadcast would otherwise retain
@@ -243,22 +315,40 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             var drains = new Task<Exception?>[sends.Count];
             for (var i = 0; i < sends.Count; i++)
             {
-                drains[i] = DrainAsync(sends[i]);
+                drains[i] = DrainAsync(sends[i].Send);
             }
 
-            foreach (var drain in drains)
+            var retry = sends.Count == 0;
+            Exception? fatal = null;
+            for (var i = 0; i < drains.Length; i++)
             {
-                if (await drain.ConfigureAwait(false) is { } ex)
+                if (await drains[i].ConfigureAwait(false) is { } ex)
                 {
-                    failures++;
-                    firstFailure ??= ex;
+                    if (IsConnectionLoss(ex))
+                    {
+                        RetireConnection(sends[i].Connection);
+                        retry = true;
+                    }
+                    else
+                    {
+                        fatal ??= ex;
+                    }
                 }
             }
-        }
 
-        if (attempted > 0 && failures == attempted && firstFailure is not null)
-        {
-            throw firstFailure;
+            if (fatal is not null)
+            {
+                ExceptionDispatchInfo.Capture(fatal).Throw();
+            }
+
+            if (!retry && _retiredServerClientIds.IsEmpty)
+            {
+                return;
+            }
+
+            // Any failed copy may have left bytes executable on Redis. CLIENT KILL is the
+            // ordering barrier; the next loop then sends a fresh correction after that barrier.
+            await FenceRetiredConnectionsAsync(cancellationToken).ConfigureAwait(false);
         }
 
         static async Task<Exception?> DrainAsync(ValueTask<RespValue> send)
@@ -275,6 +365,62 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
+    private async ValueTask FenceRetiredConnectionsAsync(CancellationToken cancellationToken)
+    {
+        while (!_retiredServerClientIds.IsEmpty)
+        {
+            foreach (var clientId in _retiredServerClientIds.Keys)
+            {
+                var connection = await GetHealthyConnectionAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    var reply = await connection.SendAsync(
+                        new ClientKillIdCommand(clientId), cancellationToken).ConfigureAwait(false);
+                    if (reply.IsError)
+                    {
+                        var error = new RespireServerException(reply.GetErrorMessage());
+                        reply.Dispose();
+                        throw error;
+                    }
+
+                    reply.Dispose();
+                    _retiredServerClientIds.TryRemove(clientId, out _);
+                }
+                catch (Exception ex) when (IsConnectionLoss(ex))
+                {
+                    RetireConnection(connection);
+                }
+            }
+        }
+    }
+
+    private async ValueTask<RespireConnection> GetHealthyConnectionAsync(CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            try
+            {
+                return GetConnection();
+            }
+            catch (RespireConnectionException)
+            {
+                await Task.Delay(25, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private void RetireConnection(RespireConnection? connection)
+    {
+        var clientId = connection?.ServerClientId ?? 0;
+        if (clientId > 0)
+        {
+            _retiredServerClientIds.TryAdd(clientId, 0);
+        }
+    }
+
+    private static bool IsConnectionLoss(Exception exception)
+        => exception is RespireConnectionException or ObjectDisposedException;
+
     /// <summary>Runs a MULTI/EXEC block on one connection; see <see cref="RespireConnection.SendTransactionAsync"/>.</summary>
     public ValueTask<RespValue> SendTransactionAsync(
         ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken = default)
@@ -282,6 +428,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     private void ScheduleReconnect(int slot)
     {
+        RetireConnection(Volatile.Read(ref _connections[slot]));
         if (Interlocked.CompareExchange(ref _reconnecting[slot], 1, 0) != 0)
         {
             return;
@@ -296,6 +443,11 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         try
         {
             var replacement = await RespireConnection.ConnectAsync(Host, Port, _options, _logger).ConfigureAwait(false);
+            if (Volatile.Read(ref _trackServerClientIds) != 0)
+            {
+                await replacement.EnsureServerClientIdAsync().ConfigureAwait(false);
+            }
+
             if (Volatile.Read(ref _disposed) != 0)
             {
                 await replacement.DisposeAsync().ConfigureAwait(false);
@@ -303,6 +455,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             }
 
             var old = Interlocked.Exchange(ref _connections[slot], replacement);
+            RetireConnection(old);
             _logger?.LogInformation("Replaced dead connection {Slot} to {Host}:{Port}", slot, Host, Port);
             if (old is not null)
             {

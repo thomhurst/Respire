@@ -429,6 +429,14 @@ public sealed partial class RespireClient : IRespireClient
     // Wire-level primitives for the caching package (see InternalsVisibleTo). Both honor this
     // view's key prefix.
 
+    /// <summary>
+    /// Captures Redis client IDs before any cache command can become latent. A correction can
+    /// then fence a locally dead socket server-side instead of assuming socket loss canceled
+    /// bytes Redis may already have buffered.
+    /// </summary>
+    internal ValueTask EnsureReliableCorrectionOrderingAsync(CancellationToken cancellationToken = default)
+        => _core.Multiplexer.EnsureReliableCorrectionOrderingAsync(cancellationToken);
+
     // The removal script: delete only while this removal's lease key is still alive. The lease
     // is placed — and its reply awaited — before this script is ever sent, and it carries a
     // TTL, so the script's authority to delete expires on the server's own duration clock: a
@@ -619,10 +627,11 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     /// <summary>
-    /// Executes a script on every healthy connection via
+    /// Executes a script on every connection via
     /// <see cref="Infrastructure.RespireConnectionMultiplexer.SendToAllConnectionsAsync{TCommand}"/> — the copy
     /// sharing a connection with an earlier still-buffered command executes after it, so the
-    /// script must be idempotent and safe out of order elsewhere. Plain EVAL (no EVALSHA
+    /// script must be idempotent and safe out of order elsewhere. Locally dead connections are
+    /// fenced by Redis client ID before a retry can complete. Plain EVAL (no EVALSHA
     /// probing: the callers are rare correction paths) and no caller token or command timeout —
     /// a correction, once owed, must not be abandonable.
     /// </summary>

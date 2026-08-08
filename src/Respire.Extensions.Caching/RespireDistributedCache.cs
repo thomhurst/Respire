@@ -240,6 +240,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         ArgumentNullException.ThrowIfNull(options);
         token.ThrowIfCancellationRequested();
 
+        if (_wireClient is { } wire)
+        {
+            await wire.EnsureReliableCorrectionOrderingAsync(token).ConfigureAwait(false);
+        }
+
         var now = DateTimeOffset.UtcNow;
         var absoluteExpiration = GetAbsoluteExpiration(now, options);
         try
@@ -262,8 +267,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             // can still reach Redis, and if that send was delayed it stores a TTL computed
             // before the delay. With no reply to measure the delay against, correct
             // unconditionally and best-effort: a correction that beats a still-queued set
-            // no-ops on the ownership check, and one that fails means the connection died and
-            // took the queued set with it.
+            // no-ops on the ownership check. A dead socket is fenced by its Redis client ID
+            // before correction retries, so flushed bytes cannot overtake the final pass.
             if (absoluteExpiration is { } cancelledDeadline)
             {
                 try
@@ -312,7 +317,10 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     /// connection where it would execute before the still-buffered original and no-op — so the
     /// correction is sent on every connection: the copy sharing the original's connection is
     /// FIFO-ordered after it, and the scripts are idempotent and guarded, so the other copies
-    /// are harmless wherever they land. A correction usually queues behind the same stall that
+    /// are harmless wherever they land. If that connection dies, CLIENT KILL by its captured
+    /// Redis client ID establishes a server-side barrier before the correction retries: the
+    /// original either ran before the barrier or was discarded with the server-side client.
+    /// A correction usually queues behind the same stall that
     /// delayed the command it chases, which would leave its own remainder stale by its own send
     /// delay — so the args are re-derived from a fresh clock and re-sent until one pass
     /// round-trips inside the tolerance; shrink-only makes every extra pass safe, and each pass
@@ -424,6 +432,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
     private async ValueTask<RespireResult> RunGetScriptAsync(string key, bool returnData, CancellationToken token)
     {
+        if (_wireClient is { } wire)
+        {
+            await wire.EnsureReliableCorrectionOrderingAsync(token).ConfigureAwait(false);
+        }
+
         var now = DateTimeOffset.UtcNow;
         RespireResult result;
         try
