@@ -34,7 +34,7 @@ A missing key returns `null` from string, byte-array, reference-type, and explic
 
 ## Object serialization
 
-`SetAsync<T>` and `GetAsync<T>` use `RespireOptions.Serializer`. `SystemTextJsonSerializer` is the default. Supply an `IRespireSerializer` for another format:
+`SetAsync<T>` and `GetAsync<T>` use `RespireOptions.Serializer` for object values. `SystemTextJsonSerializer` is the default. Supply an `IRespireSerializer` for another format:
 
 ```csharp
 var options = new RespireOptions
@@ -44,7 +44,9 @@ var options = new RespireOptions
 };
 ```
 
-Typed `string` and `byte[]` values bypass object serialization. Other values passed to `SetAsync<T>`, including numeric and Boolean primitives, use the configured serializer. Pass a `RespireValue` explicitly when the value must be stored as a raw Redis scalar, as shown in [Keys and input values](#keys-and-input-values).
+Typed `string`, `byte[]`, Boolean, and numeric primitive values bypass object serialization. Numbers use invariant Redis text. Generic Boolean writes retain the default JSON-compatible `true`/`false` representation; reads also accept Redis-style `1`/`0`. Nullable forms use the same fast path when they contain a value.
+
+Objects, enums, and other types use the configured serializer. Custom serializers therefore do not control primitive encoding. Pass a `RespireValue` explicitly when a command input must use raw Redis scalar conventions, as shown in [Keys and input values](#keys-and-input-values).
 
 ## Zero-copy leased reads
 

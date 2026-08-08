@@ -5,6 +5,7 @@ using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
+using Respire.Serialization;
 
 namespace Respire;
 
@@ -307,6 +308,11 @@ public sealed partial class RespireClient : IRespireClient
             return (byte[])(object)value;
         }
 
+        if (PrimitiveCodec.TrySerialize(value, out var primitive))
+        {
+            return primitive;
+        }
+
         var buffer = new ArrayBufferWriter<byte>(256);
         _core.Options.Serializer.Serialize(buffer, value);
         return buffer.WrittenMemory;
@@ -328,6 +334,11 @@ public sealed partial class RespireClient : IRespireClient
         if (typeof(T) == typeof(byte[]))
         {
             return (T)(object)value.AsSpan().ToArray();
+        }
+
+        if (PrimitiveCodec.TryDeserialize<T>(value.AsSpan(), out var primitive))
+        {
+            return primitive;
         }
 
         return _core.Options.Serializer.Deserialize<T>(value.AsSpan());

@@ -85,7 +85,7 @@ public sealed record RespireOptions
     /// </summary>
     public int Connections { get; init; }
 
-    /// <summary>Serializer behind <c>GetAsync&lt;T&gt;</c>/<c>SetAsync&lt;T&gt;</c>. System.Text.Json by default.</summary>
+    /// <summary>Serializer behind non-primitive typed values. System.Text.Json by default.</summary>
     public IRespireSerializer Serializer { get; init; } = RespireSerializer.Default;
 
     public ILoggerFactory? LoggerFactory { get; init; }
