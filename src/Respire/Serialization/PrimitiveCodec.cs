@@ -77,7 +77,7 @@ internal static class PrimitiveCodec
         var kind = TypeCache<T>.Kind;
         if (kind != PrimitiveKind.None
             && TypeCache<T>.IsNullable
-            && payload.SequenceEqual("null"u8))
+            && TrimJsonWhitespace(payload).SequenceEqual("null"u8))
         {
             result = default;
             return true;
@@ -152,18 +152,50 @@ internal static class PrimitiveCodec
 
     private static bool ParseBoolean(ReadOnlySpan<byte> payload)
     {
+        if (TryParseBooleanToken(payload, out var value)
+            || TryParseBooleanToken(TrimJsonWhitespace(payload), out value))
+        {
+            return value;
+        }
+
+        throw InvalidValue<bool>();
+    }
+
+    private static bool TryParseBooleanToken(ReadOnlySpan<byte> payload, out bool value)
+    {
         if (payload.SequenceEqual("true"u8) || payload.SequenceEqual("1"u8))
         {
+            value = true;
             return true;
         }
 
         if (payload.SequenceEqual("false"u8) || payload.SequenceEqual("0"u8))
         {
-            return false;
+            value = false;
+            return true;
         }
 
-        throw InvalidValue<bool>();
+        value = default;
+        return false;
     }
+
+    private static ReadOnlySpan<byte> TrimJsonWhitespace(ReadOnlySpan<byte> payload)
+    {
+        while (!payload.IsEmpty && IsJsonWhitespace(payload[0]))
+        {
+            payload = payload[1..];
+        }
+
+        while (!payload.IsEmpty && IsJsonWhitespace(payload[^1]))
+        {
+            payload = payload[..^1];
+        }
+
+        return payload;
+    }
+
+    private static bool IsJsonWhitespace(byte value)
+        => value is (byte)' ' or (byte)'\t' or (byte)'\n' or (byte)'\r';
 
     private static TValue Parse<TValue>(ReadOnlySpan<byte> payload)
         where TValue : IUtf8SpanParsable<TValue>

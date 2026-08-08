@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Text;
 using Respire.Protocol;
 using Respire.Serialization;
 using TUnit.Assertions;
@@ -92,6 +93,30 @@ public class PrimitiveCodecTests
     }
 
     [Test]
+    [Arguments(" true ", true)]
+    [Arguments("false\n", false)]
+    [Arguments("\t1\r", true)]
+    [Arguments("\r\n0\t", false)]
+    public async Task BooleanReads_AcceptJsonWhitespace(string payload, bool expected)
+    {
+        var serializer = new CountingSerializer();
+        await using var client = CreateClient(serializer);
+        var message = new RespireMessage("flags", pattern: null, Encoding.UTF8.GetBytes(payload), serializer);
+
+        await Assert.That(client.DeserializeBorrowed<bool>(Bulk(payload))).IsEqualTo(expected);
+        await Assert.That(message.As<bool>()).IsEqualTo(expected);
+        await Assert.That(serializer.DeserializeCalls).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task BooleanReads_RejectNonJsonWhitespace()
+    {
+        await using var client = CreateClient(new CountingSerializer());
+
+        await Assert.That(() => client.DeserializeBorrowed<bool>(Bulk("\vtrue\v"))).Throws<FormatException>();
+    }
+
+    [Test]
     public async Task NullablePrimitives_UseFastPath()
     {
         var serializer = new CountingSerializer();
@@ -112,9 +137,9 @@ public class PrimitiveCodecTests
     {
         var serializer = new CountingSerializer();
         await using var client = CreateClient(serializer);
-        var message = new RespireMessage("values", pattern: null, "null"u8.ToArray(), serializer);
+        var message = new RespireMessage("values", pattern: null, "\tnull\r\n"u8.ToArray(), serializer);
 
-        var deserialized = client.DeserializeBorrowed<int?>(Bulk("null"));
+        var deserialized = client.DeserializeBorrowed<int?>(Bulk(" null "));
         var messageValue = message.As<bool?>();
 
         await Assert.That(deserialized).IsEqualTo((int?)null);
