@@ -281,7 +281,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 await Task.Delay(25, cancellationToken).ConfigureAwait(false);
             }
         }
-        catch (RespireServerException ex)
+        catch (RespireServerException ex) when (IsDefinitiveCorrectionOrderingFailure(ex))
         {
             Volatile.Write(ref _trackServerClientIds, 0);
             Volatile.Write(ref _correctionOrderingFailure, ex.Message);
@@ -299,6 +299,13 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             _correctionIdentityGate.Release();
         }
     }
+
+    internal static bool IsDefinitiveCorrectionOrderingFailure(RespireServerException exception)
+        => exception.Code == "NOPERM" ||
+           exception.Code == "ERR" &&
+           (exception.Message.Contains("unknown command", StringComparison.OrdinalIgnoreCase) ||
+            exception.Message.Contains("unknown subcommand", StringComparison.OrdinalIgnoreCase) ||
+            exception.Message.Contains("wrong number of arguments", StringComparison.OrdinalIgnoreCase));
 
     private void ThrowIfCorrectionOrderingUnavailable()
     {

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using Microsoft.Extensions.Caching.Distributed;
+using Respire.Infrastructure;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -635,6 +636,24 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
 
             (await Client.ExecuteAsync("ACL", "DELUSER", username)).Dispose();
         }
+    }
+
+    [Test]
+    [Arguments("NOPERM this user has no permissions to run the 'client|id' command", true)]
+    [Arguments("ERR unknown command 'CLIENT'", true)]
+    [Arguments("ERR unknown subcommand 'ID'", true)]
+    [Arguments("ERR wrong number of arguments for 'client|kill' command", true)]
+    [Arguments("LOADING Redis is loading the dataset in memory", false)]
+    [Arguments("TRYAGAIN Temporary failure", false)]
+    public async Task ClientIdSetup_CachesOnlyDefinitiveCapabilityFailures(
+        string message,
+        bool expected)
+    {
+        var exception = new RespireServerException(message);
+
+        await Assert.That(
+            RespireConnectionMultiplexer.IsDefinitiveCorrectionOrderingFailure(exception))
+            .IsEqualTo(expected);
     }
 
     [Test]
