@@ -21,6 +21,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private readonly ILogger? _logger;
     private readonly SemaphoreSlim _connectGate = new(1, 1);
     private readonly SemaphoreSlim _correctionIdentityGate = new(1, 1);
+    private readonly SemaphoreSlim _retiredFenceGate = new(1, 1);
     private readonly ConcurrentDictionary<long, byte> _retiredServerClientIds = new();
     private uint _next;
     private int _disposed;
@@ -31,6 +32,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     public string Host { get; }
     public int Port { get; }
     public int ConnectionCount => _connections.Length;
+    internal bool HasReliableCorrectionOrdering => _correctionOrderingReady;
 
     /// <summary>The options every connection (and any subscriber) is built from.</summary>
     public RespireConnectionOptions Options => _options;
@@ -220,6 +222,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
             while (true)
             {
+                ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
                 var ready = true;
                 for (var slot = 0; slot < _connections.Length; slot++)
                 {
@@ -236,7 +239,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
                     {
                         await connection.EnsureServerClientIdAsync(cancellationToken).ConfigureAwait(false);
                     }
-                    catch (Exception ex) when (IsConnectionLoss(ex))
+                    catch (Exception ex) when (IsConnectionLoss(ex) && Volatile.Read(ref _disposed) == 0)
                     {
                         RetireConnection(connection);
                         ScheduleReconnect(slot);
@@ -315,7 +318,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             var drains = new Task<Exception?>[sends.Count];
             for (var i = 0; i < sends.Count; i++)
             {
-                drains[i] = DrainAsync(sends[i].Send);
+                drains[i] = DrainAsync(sends[i].Connection, sends[i].Send);
             }
 
             var retry = sends.Count == 0;
@@ -326,7 +329,6 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 {
                     if (IsConnectionLoss(ex))
                     {
-                        RetireConnection(sends[i].Connection);
                         retry = true;
                     }
                     else
@@ -351,7 +353,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             await FenceRetiredConnectionsAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        static async Task<Exception?> DrainAsync(ValueTask<RespValue> send)
+        async Task<Exception?> DrainAsync(RespireConnection connection, ValueTask<RespValue> send)
         {
             try
             {
@@ -360,37 +362,66 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             }
             catch (Exception ex)
             {
+                if (IsConnectionLoss(ex))
+                {
+                    // Publish the dead ID as soon as this individual reply faults. Aggregation
+                    // may still be waiting on another slot, but a caller abandoning that wait
+                    // must already be able to fence every failure observed so far.
+                    RetireConnection(connection);
+                }
+
                 return ex;
             }
         }
     }
 
-    private async ValueTask FenceRetiredConnectionsAsync(CancellationToken cancellationToken)
+    internal async ValueTask FenceRetiredConnectionsAsync(CancellationToken cancellationToken = default)
     {
-        while (!_retiredServerClientIds.IsEmpty)
+        await _retiredFenceGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            foreach (var clientId in _retiredServerClientIds.Keys)
+            // Catch slots that died after the broadcast started but before their reply task
+            // faulted. A caller joining this safety barrier must not return merely because the
+            // asynchronous drain has not published the dead ID yet.
+            for (var slot = 0; slot < _connections.Length; slot++)
             {
-                var connection = await GetHealthyConnectionAsync(cancellationToken).ConfigureAwait(false);
-                try
-                {
-                    var reply = await connection.SendAsync(
-                        new ClientKillIdCommand(clientId), cancellationToken).ConfigureAwait(false);
-                    if (reply.IsError)
-                    {
-                        var error = new RespireServerException(reply.GetErrorMessage());
-                        reply.Dispose();
-                        throw error;
-                    }
-
-                    reply.Dispose();
-                    _retiredServerClientIds.TryRemove(clientId, out _);
-                }
-                catch (Exception ex) when (IsConnectionLoss(ex))
+                var connection = Volatile.Read(ref _connections[slot]);
+                if (connection is not { IsConnected: true })
                 {
                     RetireConnection(connection);
+                    ScheduleReconnect(slot);
                 }
             }
+
+            while (!_retiredServerClientIds.IsEmpty)
+            {
+                foreach (var clientId in _retiredServerClientIds.Keys)
+                {
+                    var connection = await GetHealthyConnectionAsync(cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        var reply = await connection.SendAsync(
+                            new ClientKillIdCommand(clientId), cancellationToken).ConfigureAwait(false);
+                        if (reply.IsError)
+                        {
+                            var error = new RespireServerException(reply.GetErrorMessage());
+                            reply.Dispose();
+                            throw error;
+                        }
+
+                        reply.Dispose();
+                        _retiredServerClientIds.TryRemove(clientId, out _);
+                    }
+                    catch (Exception ex) when (IsConnectionLoss(ex))
+                    {
+                        RetireConnection(connection);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            _retiredFenceGate.Release();
         }
     }
 

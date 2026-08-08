@@ -350,6 +350,16 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             }
             catch (TimeoutException)
             {
+                // Reply draining may be abandoned, but a CLIENT KILL barrier may not: without
+                // its server acknowledgement, bytes flushed on a locally dead socket could
+                // still execute after the original failure is surfaced. The multiplexer
+                // serializes concurrent fence attempts, so this also joins a barrier the pass
+                // already started. With no retired sockets it returns immediately.
+                if (_wireClient is { } wire)
+                {
+                    await wire.FenceRetiredCorrectionConnectionsAsync().ConfigureAwait(false);
+                }
+
                 // The pass stays queued and is shrink-only, idempotent, and ownership-guarded,
                 // so it corrects whenever it lands; retrying against the same wedge would only
                 // queue more copies behind it.

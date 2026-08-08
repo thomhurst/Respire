@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using Microsoft.Extensions.Caching.Distributed;
 using TUnit.Assertions;
@@ -467,6 +468,62 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
 
     private Task StallServerAsync(string seconds)
         => Task.Run(async () => (await Client.ExecuteAsync("EVAL", StallScriptSource, "0", seconds)).Dispose());
+
+    [Test]
+    public async Task FirstCommand_ClientIdSetupHonorsCommandTimeout()
+    {
+        await using var timeoutClient = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { CommandTimeout = TimeSpan.FromMilliseconds(50) });
+        await using var timeoutCache = new RespireDistributedCache(timeoutClient);
+
+        var stallObserved = StallServerAsync("0.5");
+        await Task.Delay(100);
+
+        var started = Stopwatch.GetTimestamp();
+        RespireTimeoutException? failure = null;
+        try
+        {
+            await timeoutCache.SetAsync("identity-timeout", [1], new DistributedCacheEntryOptions());
+        }
+        catch (RespireTimeoutException ex)
+        {
+            failure = ex;
+        }
+
+        await Assert.That(failure).IsNotNull();
+        await Assert.That(failure!.CommandName).IsEqualTo("CLIENT ID");
+        await Assert.That(Stopwatch.GetElapsedTime(started)).IsLessThan(TimeSpan.FromSeconds(1));
+
+        await stallObserved;
+        await Assert.That(await Cache.GetAsync("identity-timeout")).IsNull();
+    }
+
+    [Test]
+    public async Task ClientIdSetup_DisposalTerminatesPendingOperation()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var cache = new RespireDistributedCache(client);
+
+        var stallObserved = StallServerAsync("1");
+        await Task.Delay(100);
+        var pending = cache.GetAsync("dispose-during-identity");
+        await Task.Delay(100);
+
+        await client.DisposeAsync();
+
+        Exception? failure = null;
+        try
+        {
+            await pending.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+        }
+
+        await Assert.That(failure).IsNotNull();
+        await stallObserved;
+    }
 
     [Test]
     public async Task Remove_TimedOutWait_FailsBounded_AndTheLatentUnlinkCannotDeleteAReplacement()

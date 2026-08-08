@@ -434,8 +434,42 @@ public sealed partial class RespireClient : IRespireClient
     /// then fence a locally dead socket server-side instead of assuming socket loss canceled
     /// bytes Redis may already have buffered.
     /// </summary>
-    internal ValueTask EnsureReliableCorrectionOrderingAsync(CancellationToken cancellationToken = default)
-        => _core.Multiplexer.EnsureReliableCorrectionOrderingAsync(cancellationToken);
+    internal async ValueTask EnsureReliableCorrectionOrderingAsync(CancellationToken cancellationToken = default)
+    {
+        var core = _core;
+        ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (core.Multiplexer.HasReliableCorrectionOrdering)
+        {
+            return;
+        }
+
+        if (core.Options.CommandTimeout is not { } timeout)
+        {
+            await core.Multiplexer.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(timeout);
+        try
+        {
+            await core.Multiplexer.EnsureReliableCorrectionOrderingAsync(timeoutSource.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // No cache command is sent until identity setup completes, so timing this stage out
+            // leaves no cache mutation to correct.
+            throw new RespireTimeoutException("CLIENT ID", timeout);
+        }
+    }
+
+    /// <summary>
+    /// Waits only for server-side CLIENT KILL barriers already owed by a correction. Unlike
+    /// correction reply draining, this safety boundary must complete before the original
+    /// cancellation or timeout can be surfaced.
+    /// </summary>
+    internal ValueTask FenceRetiredCorrectionConnectionsAsync()
+        => _core.Multiplexer.FenceRetiredConnectionsAsync(CancellationToken.None);
 
     // The removal script: delete only while this removal's lease key is still alive. The lease
     // is placed — and its reply awaited — before this script is ever sent, and it carries a
