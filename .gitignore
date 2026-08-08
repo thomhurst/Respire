@@ -17,3 +17,8 @@ obj/
 .serena/
 # Stress test results
 tools/Respire.StressTests/results/
+
+# Documentation site
+website/node_modules/
+website/build/
+website/.docusaurus/

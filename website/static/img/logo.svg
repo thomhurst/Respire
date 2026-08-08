@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Respire</title>
+  <defs>
+    <linearGradient id="breath" x1="10" y1="8" x2="54" y2="56" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8CF0D1"/>
+      <stop offset="1" stop-color="#43C7A5"/>
+    </linearGradient>
+  </defs>
+  <path d="M32 4C17.6 4 6 15.6 6 30s11.6 26 26 26c7.8 0 14.8-3.4 19.5-8.9" fill="none" stroke="url(#breath)" stroke-width="7" stroke-linecap="round"/>
+  <path d="M23 19h12.5c6.1 0 10.5 3.7 10.5 9.2 0 5.7-4.4 9.5-10.5 9.5H23V19Zm12 18.7L48 54" fill="none" stroke="#F5F1E8" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
