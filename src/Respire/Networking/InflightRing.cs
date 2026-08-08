@@ -20,7 +20,7 @@ internal sealed class InflightRing
     /// <summary>Marks a slot whose response should be read and thrown away.</summary>
     public static readonly PendingResponseSource DiscardSentinel = new();
 
-    private readonly PendingResponseSource?[] _slots;
+    private readonly PendingResponse?[] _slots;
     private readonly int _mask;
     private long _head;
     private long _tail;
@@ -29,7 +29,7 @@ internal sealed class InflightRing
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
         capacity = (int)BitOperations.RoundUpToPowerOf2((uint)capacity);
-        _slots = new PendingResponseSource?[capacity];
+        _slots = new PendingResponse?[capacity];
         _mask = capacity - 1;
     }
 
@@ -39,7 +39,7 @@ internal sealed class InflightRing
 
     /// <summary>Producer only (must be called under the connection's write gate).</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool TryEnqueue(PendingResponseSource source)
+    public bool TryEnqueue(PendingResponse source)
     {
         var tail = _tail;
         if (tail - Volatile.Read(ref _head) >= _slots.Length)
@@ -54,7 +54,7 @@ internal sealed class InflightRing
 
     /// <summary>Consumer only (receive loop, or the fail-all drain after the loop exits).</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool TryDequeue(out PendingResponseSource source)
+    public bool TryDequeue(out PendingResponse source)
     {
         var head = _head;
         if (Volatile.Read(ref _tail) == head)

@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Text;
 using Respire;
 using Respire.Commands;
+using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
 using TUnit.Core;
@@ -49,6 +50,74 @@ public class RespireConnectionTests
         {
             await Assert.That(results[i].AsInteger()).IsEqualTo(i);
         }
+    }
+
+    [Test]
+    public async Task ConvertedPipelinedCommands_CompleteInFifoOrder()
+    {
+        const int batchSize = 50;
+        var replies = Enumerable.Range(0, batchSize * 2)
+            .Select(i => Encoding.UTF8.GetBytes($":{i % batchSize}\r\n"))
+            .ToArray();
+        await using var server = new FakeRespServer(replies);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+
+        var pending = new ValueTask<long>[batchSize];
+        for (var batch = 0; batch < 2; batch++)
+        {
+            for (var i = 0; i < pending.Length; i++)
+            {
+                pending[i] = connection.SendConvertedAsync(
+                    new RawCommand(FakeRespServer.PingFrame),
+                    state: 0,
+                    static (int _, in RespValue response) => ResponseReader.Integer(in response),
+                    transferOwnership: false);
+            }
+
+            for (var i = 0; i < pending.Length; i++)
+            {
+                await Assert.That(await pending[i]).IsEqualTo(i);
+            }
+        }
+    }
+
+    [Test]
+    public async Task ConvertedCommand_ErrorReplyThrowsServerException()
+    {
+        await using var server = new FakeRespServer("-WRONGTYPE bad value\r\n"u8.ToArray());
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+
+        var pending = connection.SendConvertedAsync(
+            new RawCommand(FakeRespServer.PingFrame),
+            state: 0,
+            static (int _, in RespValue response) => ResponseReader.String(in response),
+            transferOwnership: false);
+
+        await Assert.That(async () => await pending).ThrowsExactly<RespireServerException>();
+    }
+
+    [Test]
+    public async Task ConvertedCommand_CancellationPreservesFifo()
+    {
+        await using var server = new FakeRespServer(
+            "$5\r\nfirst\r\n"u8.ToArray(),
+            "$6\r\nsecond\r\n"u8.ToArray());
+        server.DelayReply(0, 100);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var cancellation = new CancellationTokenSource();
+        var first = client.GetStringAsync("first", cancellation.Token);
+
+        using var commandTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen == 0)
+        {
+            await Task.Delay(10, commandTimeout.Token);
+        }
+
+        cancellation.Cancel();
+        await Assert.That(async () => await first)
+            .ThrowsExactly<OperationCanceledException>();
+
+        await Assert.That(await client.GetStringAsync("second")).IsEqualTo("second");
     }
 
     [Test]

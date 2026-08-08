@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
+using Respire.Internal;
 using Respire.Protocol;
 
 namespace Respire.Networking;
@@ -229,7 +230,47 @@ public sealed class RespireConnection : IAsyncDisposable
     /// </summary>
     public ValueTask<RespValue> SendAsync<TCommand>(in TCommand command, CancellationToken cancellationToken = default)
         where TCommand : struct, IRespCommand
-        => SendCoreAsync(in command, discardRepliesBefore: 0, cancellationToken);
+        => SendCoreAsync(in command, discardRepliesBefore: 0, throwOnError: false, cancellationToken);
+
+    /// <summary>Sends a command and translates a RESP error reply when its result is consumed.</summary>
+    internal ValueTask<RespValue> SendCheckedAsync<TCommand>(
+        in TCommand command, CancellationToken cancellationToken = default)
+        where TCommand : struct, IRespCommand
+        => SendCoreAsync(in command, discardRepliesBefore: 0, throwOnError: true, cancellationToken);
+
+    /// <summary>
+    /// Sends a command through a typed in-flight source, avoiding intermediate async state
+    /// machines. Conversion occurs when caller consumes result, never on receive loop.
+    /// </summary>
+    internal ValueTask<TResult> SendConvertedAsync<TCommand, TState, TResult>(
+        in TCommand command,
+        TState state,
+        ResponseConverter<TState, TResult> converter,
+        bool transferOwnership,
+        CancellationToken cancellationToken = default)
+        where TCommand : struct, IRespCommand
+    {
+        var source = ConvertedPendingResponseSource<TState, TResult>.Rent(state, converter, transferOwnership);
+        bool enqueued;
+        try
+        {
+            enqueued = TryEnqueue(in command, source);
+        }
+        catch
+        {
+            ReclaimUnpublished(source);
+            throw;
+        }
+
+        if (enqueued)
+        {
+            source.RegisterCancellation(cancellationToken);
+            ScheduleFlush();
+            return source.Task;
+        }
+
+        return SendConvertedSlowAsync(command, source, cancellationToken);
+    }
 
     /// <summary>
     /// Sends MULTI + pre-serialized commands + EXEC as one atomic append, so no other
@@ -255,14 +296,15 @@ public sealed class RespireConnection : IAsyncDisposable
         }
 
         return SendCoreAsync(
-            new TransactionCommand(serializedCommands), discardRepliesBefore: commandCount + 1, cancellationToken);
+            new TransactionCommand(serializedCommands), discardRepliesBefore: commandCount + 1,
+            throwOnError: false, cancellationToken);
     }
 
     private ValueTask<RespValue> SendCoreAsync<TCommand>(
-        in TCommand command, int discardRepliesBefore, CancellationToken cancellationToken)
+        in TCommand command, int discardRepliesBefore, bool throwOnError, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
-        var source = _sourcePool.Rent();
+        var source = _sourcePool.Rent(throwOnError);
         bool enqueued;
         try
         {
@@ -328,7 +370,7 @@ public sealed class RespireConnection : IAsyncDisposable
     /// concurrent callers contend only for a memcpy and the ring enqueue — not for UTF-8
     /// encoding their payloads.
     /// </summary>
-    private bool TryEnqueue<TCommand>(in TCommand command, PendingResponseSource source, int discardRepliesBefore = 0)
+    private bool TryEnqueue<TCommand>(in TCommand command, PendingResponse source, int discardRepliesBefore = 0)
         where TCommand : struct, IRespCommand
     {
         // Racy pre-check; the authoritative one runs under the gate below. This keeps the
@@ -393,7 +435,7 @@ public sealed class RespireConnection : IAsyncDisposable
     /// storage persists across commands. Used while the thread's direct-path budget lasts so
     /// large-write workloads reuse the active buffer's growth instead of churning scratch.
     /// </summary>
-    private bool TryEnqueueDirect<TCommand>(in TCommand command, PendingResponseSource source, int discardRepliesBefore)
+    private bool TryEnqueueDirect<TCommand>(in TCommand command, PendingResponse source, int discardRepliesBefore)
         where TCommand : struct, IRespCommand
     {
         lock (_writeGate)
@@ -449,6 +491,21 @@ public sealed class RespireConnection : IAsyncDisposable
     }
 
 #if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<TResult> SendConvertedSlowAsync<TCommand, TState, TResult>(
+        TCommand command,
+        ConvertedPendingResponseSource<TState, TResult> source,
+        CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        await WaitForInflightCapacityAsync(command, source, 0, cancellationToken).ConfigureAwait(false);
+        source.RegisterCancellation(cancellationToken);
+        ScheduleFlush();
+        return await source.Task.ConfigureAwait(false);
+    }
+
+#if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
 #endif
     private async ValueTask SendFireAndForgetSlowAsync<TCommand>(TCommand command, CancellationToken cancellationToken)
@@ -460,7 +517,7 @@ public sealed class RespireConnection : IAsyncDisposable
 
     /// <summary>In-flight ring full: flush and yield until enough slots open.</summary>
     private async ValueTask WaitForInflightCapacityAsync<TCommand>(
-        TCommand command, PendingResponseSource source, int discardRepliesBefore, CancellationToken cancellationToken)
+        TCommand command, PendingResponse source, int discardRepliesBefore, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
         try
@@ -485,7 +542,7 @@ public sealed class RespireConnection : IAsyncDisposable
     }
 
     /// <summary>Returns a rented source that was never enqueued or exposed to a caller.</summary>
-    private static void ReclaimUnpublished(PendingResponseSource source)
+    private static void ReclaimUnpublished(PendingResponse source)
     {
         if (ReferenceEquals(source, InflightRing.DiscardSentinel))
         {

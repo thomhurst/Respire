@@ -33,6 +33,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     public string Host { get; }
     public int Port { get; }
     public int ConnectionCount => _connections.Length;
+    internal bool IsInitialized => _connected;
     internal bool HasReliableCorrectionOrdering => _correctionOrderingReady;
     internal bool IsReliableCorrectionOrderingUnavailable =>
         Volatile.Read(ref _correctionOrderingFailure) is not null;
