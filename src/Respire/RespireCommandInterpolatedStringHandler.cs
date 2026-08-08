@@ -23,7 +23,7 @@ public struct RespireCommandInterpolatedStringHandler
     {
         foreach (var word in value.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            _operation ??= word.ToUpperInvariant();
+            _operation ??= word;
             _tokens.Add(word);
         }
     }

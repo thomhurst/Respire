@@ -34,55 +34,55 @@ public sealed class RespireTransaction : IAsyncDisposable
     public int Count => _ops.Count;
 
     public RespirePending<string?> GetStringAsync(RespireKey key)
-        => Add<Cmd1, string?>(new Cmd1(Verbs.Get, _client.Key(in key)), static (c, v) => ResponseReader.StringOrNull(in v));
+        => Add<Cmd1, string?>("GET", new Cmd1(Verbs.Get, _client.Key(in key)), static (c, v) => ResponseReader.StringOrNull(in v));
 
     public RespirePending<T?> GetAsync<T>(RespireKey key)
-        => Add<Cmd1, T?>(new Cmd1(Verbs.Get, _client.Key(in key)), static (c, v) => c.DeserializeBorrowed<T>(in v));
+        => Add<Cmd1, T?>("GET", new Cmd1(Verbs.Get, _client.Key(in key)), static (c, v) => c.DeserializeBorrowed<T>(in v));
 
     public RespirePending<bool> SetAsync(
         RespireKey key, RespireValue value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always, bool keepTtl = false)
-        => Add<SetCommand, bool>(
+        => Add<SetCommand, bool>("SET",
             new SetCommand(_client.Key(in key), value, expiry, when, keepTtl, returnOld: false),
             static (c, v) => ResponseReader.OkOrNull(in v));
 
     public RespirePending<bool> SetAsync<T>(
         RespireKey key, T value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always, bool keepTtl = false)
-        => Add<SetCommand, bool>(
+        => Add<SetCommand, bool>("SET",
             new SetCommand(_client.Key(in key), _client.Serialize(value), expiry, when, keepTtl, returnOld: false),
             static (c, v) => ResponseReader.OkOrNull(in v));
 
     public RespirePending<long> DeleteAsync(RespireKey key)
-        => Add<CmdN, long>(new CmdN(Verbs.Del, [_client.Key(in key)]), static (c, v) => ResponseReader.Integer(in v));
+        => Add<CmdN, long>("DEL", new CmdN(Verbs.Del, [_client.Key(in key)]), static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<long> IncrementAsync(RespireKey key, long by = 1)
-        => Add<IncrementCommand, long>(
+        => Add<IncrementCommand, long>(by == 1 ? "INCR" : "INCRBY",
             new IncrementCommand(Verbs.Incr, Verbs.IncrBy, _client.Key(in key), by),
             static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<long> DecrementAsync(RespireKey key, long by = 1)
-        => Add<IncrementCommand, long>(
+        => Add<IncrementCommand, long>(by == 1 ? "DECR" : "DECRBY",
             new IncrementCommand(Verbs.Decr, Verbs.DecrBy, _client.Key(in key), by),
             static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<bool> ExpireAsync(RespireKey key, TimeSpan expiry)
-        => Add<Cmd2, bool>(
+        => Add<Cmd2, bool>("PEXPIRE",
             new Cmd2(Verbs.PExpire, _client.Key(in key), (long)expiry.TotalMilliseconds),
             static (c, v) => ResponseReader.Flag(in v));
 
     public RespirePending<bool> HashSetAsync(RespireKey key, string field, RespireValue value)
-        => Add<Cmd3, bool>(new Cmd3(Verbs.HSet, _client.Key(in key), field, value), static (c, v) => ResponseReader.Flag(in v));
+        => Add<Cmd3, bool>("HSET", new Cmd3(Verbs.HSet, _client.Key(in key), field, value), static (c, v) => ResponseReader.Flag(in v));
 
     public RespirePending<long> ListLeftPushAsync(RespireKey key, RespireValue value)
-        => Add<Cmd2, long>(new Cmd2(Verbs.LPush, _client.Key(in key), value), static (c, v) => ResponseReader.Integer(in v));
+        => Add<Cmd2, long>("LPUSH", new Cmd2(Verbs.LPush, _client.Key(in key), value), static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<long> ListRightPushAsync(RespireKey key, RespireValue value)
-        => Add<Cmd2, long>(new Cmd2(Verbs.RPush, _client.Key(in key), value), static (c, v) => ResponseReader.Integer(in v));
+        => Add<Cmd2, long>("RPUSH", new Cmd2(Verbs.RPush, _client.Key(in key), value), static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<bool> SetAddAsync(RespireKey key, RespireValue member)
-        => Add<Cmd2, bool>(new Cmd2(Verbs.SAdd, _client.Key(in key), member), static (c, v) => ResponseReader.Flag(in v));
+        => Add<Cmd2, bool>("SADD", new Cmd2(Verbs.SAdd, _client.Key(in key), member), static (c, v) => ResponseReader.Flag(in v));
 
     public RespirePending<bool> SortedSetAddAsync(RespireKey key, RespireValue member, double score)
-        => Add<Cmd3, bool>(new Cmd3(Verbs.ZAdd, _client.Key(in key), score, member), static (c, v) => ResponseReader.Flag(in v));
+        => Add<Cmd3, bool>("ZADD", new Cmd3(Verbs.ZAdd, _client.Key(in key), score, member), static (c, v) => ResponseReader.Flag(in v));
 
     /// <summary>
     /// Executes the transaction. Returns true when EXEC ran (pendings hold their results;
@@ -98,6 +98,17 @@ public sealed class RespireTransaction : IAsyncDisposable
         }
 
         _completed = true;
+        var core = _client.Core;
+        var telemetry = RespireTelemetry.StartBatchOperation(
+            "MULTI",
+            _ops,
+            static op => op.Operation,
+            core.Multiplexer.Host,
+            core.Multiplexer.Port,
+            core.Options.Database,
+            out var telemetryOperation);
+        RespireConnection? connection = _watchConnection;
+        Exception? operationError = null;
         try
         {
             RespValue result;
@@ -125,6 +136,7 @@ public sealed class RespireTransaction : IAsyncDisposable
             }
             catch (Exception ex)
             {
+                operationError = ex;
                 // The commit never produced a reply (connection loss, timeout, cancellation, …):
                 // every pending must observe that failure, not a stale "not committed yet" state.
                 foreach (var op in _ops)
@@ -138,6 +150,7 @@ public sealed class RespireTransaction : IAsyncDisposable
             if (result.IsError)
             {
                 var error = ResponseReader.ServerError(in result);
+                operationError = error;
                 result.Dispose();
                 foreach (var op in _ops)
                 {
@@ -162,13 +175,15 @@ public sealed class RespireTransaction : IAsyncDisposable
             var completeCount = Math.Min(_ops.Count, elements.Length);
             for (var i = 0; i < completeCount; i++)
             {
-                _ops[i].Complete(_client, in elements[i]);
+                var itemError = _ops[i].Complete(_client, in elements[i]);
+                operationError ??= itemError;
             }
 
             if (completeCount < _ops.Count)
             {
                 var mismatch = new RespireProtocolException(
                     $"EXEC returned {elements.Length} results for {_ops.Count} queued commands.");
+                operationError ??= mismatch;
                 for (var i = completeCount; i < _ops.Count; i++)
                 {
                     _ops[i].Fail(mismatch);
@@ -180,13 +195,30 @@ public sealed class RespireTransaction : IAsyncDisposable
         }
         finally
         {
-            await ReleaseAsync().ConfigureAwait(false);
+            try
+            {
+                await ReleaseAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                operationError ??= ex;
+                throw;
+            }
+            finally
+            {
+                telemetry.Complete(
+                    core,
+                    telemetryOperation,
+                    error: operationError,
+                    connection: connection);
+            }
         }
 
-        ValueTask<RespValue> SendAsync(CancellationToken token)
-            => _watchConnection is not null
-                ? _watchConnection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, token)
-                : _client.SendTransactionCoreAsync(_buffer.WrittenMemory, _ops.Count, token);
+        async ValueTask<RespValue> SendAsync(CancellationToken token)
+        {
+            connection ??= await _client.AcquireConnectionAsync(token).ConfigureAwait(false);
+            return await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, token).ConfigureAwait(false);
+        }
     }
 
     /// <summary>Releases the buffer (and any watch connection) of an uncommitted transaction.</summary>
@@ -212,14 +244,15 @@ public sealed class RespireTransaction : IAsyncDisposable
         }
     }
 
-    private RespirePending<T> Add<TCommand, T>(in TCommand command, Func<RespireClient, RespValue, T> convert)
+    private RespirePending<T> Add<TCommand, T>(
+        string operation, in TCommand command, Func<RespireClient, RespValue, T> convert)
         where TCommand : struct, IRespCommand
     {
         ThrowIfCompleted();
         var writer = new RespWriter(_buffer);
         command.Write(ref writer);
         var pending = new RespirePending<T>();
-        _ops.Add(new TxOp<T>(pending, convert));
+        _ops.Add(new TxOp<T>(operation, pending, convert));
         return pending;
     }
 
@@ -233,7 +266,11 @@ public sealed class RespireTransaction : IAsyncDisposable
 
     private abstract class TxOp
     {
-        public abstract void Complete(RespireClient client, in RespValue element);
+        protected TxOp(string operation) => Operation = operation;
+
+        public string Operation { get; }
+
+        public abstract Exception? Complete(RespireClient client, in RespValue element);
 
         public abstract void Fail(Exception error);
 
@@ -241,23 +278,28 @@ public sealed class RespireTransaction : IAsyncDisposable
     }
 
     /// <summary>Completes from a borrowed EXEC-array element; the parent reply owns the storage.</summary>
-    private sealed class TxOp<T>(RespirePending<T> pending, Func<RespireClient, RespValue, T> convert) : TxOp
+    private sealed class TxOp<T>(
+        string operation, RespirePending<T> pending, Func<RespireClient, RespValue, T> convert) : TxOp(operation)
     {
-        public override void Complete(RespireClient client, in RespValue element)
+        public override Exception? Complete(RespireClient client, in RespValue element)
         {
             if (element.IsError)
             {
-                pending.Fail(ResponseReader.ServerError(in element));
-                return;
+                var error = ResponseReader.ServerError(in element);
+                pending.Fail(error);
+                return error;
             }
 
             try
             {
                 pending.Succeed(convert(client, element));
+                return null;
             }
             catch (Exception ex)
             {
                 pending.Fail(ex);
+                // Conversion failed after Redis completed successfully; not a DB error.
+                return null;
             }
         }
 

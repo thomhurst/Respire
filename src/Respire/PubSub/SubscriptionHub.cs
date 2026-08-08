@@ -77,7 +77,9 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             routed = true;
             foreach (var name in subscription.Names)
             {
-                await SendControlAsync(connection, SubscribeVerb(subscription.Kind), name, cancellationToken)
+                await SendControlAsync(
+                        connection, SubscribeVerb(subscription.Kind), SubscribeOperation(subscription.Kind), name,
+                        cancellationToken, instrument: true)
                     .ConfigureAwait(false);
             }
 
@@ -163,7 +165,10 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         {
             try
             {
-                await SendControlAsync(connection, UnsubscribeVerb(kind), name, CancellationToken.None).ConfigureAwait(false);
+                await SendControlAsync(
+                        connection, UnsubscribeVerb(kind), UnsubscribeOperation(kind), name,
+                        CancellationToken.None, instrument: true)
+                    .ConfigureAwait(false);
             }
             catch (RespireException)
             {
@@ -187,18 +192,50 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         _ => Verbs.Unsubscribe,
     };
 
-    private static async ValueTask SendControlAsync(
-        RespireConnection connection, Verb verb, string name, CancellationToken cancellationToken)
+    private static string SubscribeOperation(SubscriptionKind kind) => kind switch
     {
-        var reply = await connection.SendAsync(new Cmd1(verb, name), cancellationToken).ConfigureAwait(false);
-        if (reply.IsError)
-        {
-            var error = ResponseReader.ServerError(in reply);
-            reply.Dispose();
-            throw error;
-        }
+        SubscriptionKind.Pattern => "PSUBSCRIBE",
+        SubscriptionKind.Sharded => "SSUBSCRIBE",
+        _ => "SUBSCRIBE",
+    };
 
-        reply.Dispose();
+    private static string UnsubscribeOperation(SubscriptionKind kind) => kind switch
+    {
+        SubscriptionKind.Pattern => "PUNSUBSCRIBE",
+        SubscriptionKind.Sharded => "SUNSUBSCRIBE",
+        _ => "UNSUBSCRIBE",
+    };
+
+    private async ValueTask SendControlAsync(
+        RespireConnection connection,
+        Verb verb,
+        string operation,
+        string name,
+        CancellationToken cancellationToken,
+        bool instrument)
+    {
+        var telemetry = instrument
+            ? RespireTelemetry.StartOperation(
+                operation, core.Multiplexer.Host, core.Multiplexer.Port, core.Options.Database)
+            : default;
+        try
+        {
+            var reply = await connection.SendAsync(new Cmd1(verb, name), cancellationToken).ConfigureAwait(false);
+            if (reply.IsError)
+            {
+                var error = ResponseReader.ServerError(in reply);
+                reply.Dispose();
+                throw error;
+            }
+
+            reply.Dispose();
+            telemetry.Complete(core, operation, connection: connection);
+        }
+        catch (Exception ex)
+        {
+            telemetry.Complete(core, operation, error: ex, connection: connection);
+            throw;
+        }
     }
 
     private async ValueTask<RespireConnection> EnsureConnectionAsync(CancellationToken cancellationToken)
@@ -260,7 +297,10 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
 
                 foreach (var (kind, name) in routes)
                 {
-                    await SendControlAsync(replacement, SubscribeVerb(kind), name, CancellationToken.None).ConfigureAwait(false);
+                    await SendControlAsync(
+                            replacement, SubscribeVerb(kind), SubscribeOperation(kind), name,
+                            CancellationToken.None, instrument: false)
+                        .ConfigureAwait(false);
                 }
 
                 return;

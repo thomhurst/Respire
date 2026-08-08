@@ -194,13 +194,13 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
             if (createStream)
             {
                 await client.OkAsync(
-                    "XGROUP", new Cmd4(Verbs.XGroupCreate, client.Key(in key), group, from, "MKSTREAM"),
+                    "XGROUP CREATE", new Cmd4(Verbs.XGroupCreate, client.Key(in key), group, from, "MKSTREAM"),
                     cancellationToken).ConfigureAwait(false);
             }
             else
             {
                 await client.OkAsync(
-                    "XGROUP", new Cmd3(Verbs.XGroupCreate, client.Key(in key), group, from), cancellationToken)
+                    "XGROUP CREATE", new Cmd3(Verbs.XGroupCreate, client.Key(in key), group, from), cancellationToken)
                     .ConfigureAwait(false);
             }
 

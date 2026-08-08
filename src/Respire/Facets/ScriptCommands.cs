@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Respire.Commands;
+using Respire.Internal;
 
 namespace Respire;
 
@@ -54,26 +55,17 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
     {
         ArgumentNullException.ThrowIfNull(script);
         var tail = client.BuildScriptTail(keys, args);
-        try
-        {
-            var reply = await client.SendAsync(
-                "EVALSHA", new Cmd2N(Verbs.EvalSha, script.Sha1, tail[0], tail[1..]), cancellationToken)
-                .ConfigureAwait(false);
-            return new RespireResult(in reply);
-        }
-        catch (RespireServerException ex) when (ex.Code == "NOSCRIPT")
-        {
-            var reply = await client.SendAsync(
-                "EVAL", new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]), cancellationToken)
-                .ConfigureAwait(false);
-            return new RespireResult(in reply);
-        }
+        return await client.ExecuteScriptAsync(script, tail, cancellationToken).ConfigureAwait(false);
     }
 
-    public ValueTask<string> LoadAsync(RespireScript script, CancellationToken cancellationToken = default)
+    public async ValueTask<string> LoadAsync(RespireScript script, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(script);
-        return client.StringAsync("SCRIPT", new Cmd1(Verbs.ScriptLoad, script.Source), cancellationToken);
+        var reply = await client.SendAsync(
+            "SCRIPT LOAD", new Cmd1(Verbs.ScriptLoad, script.Source), cancellationToken).ConfigureAwait(false);
+        var result = ResponseReader.String(in reply);
+        reply.Dispose();
+        return result;
     }
 
 }

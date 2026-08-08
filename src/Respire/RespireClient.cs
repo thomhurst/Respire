@@ -126,7 +126,12 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         args.CopyTo(tokens, words.Length);
-        var response = await SendAsync(words[0].ToUpperInvariant(), new DynamicCommand(tokens), CancellationToken.None)
+        var operation = string.Join(' ', words);
+        var storedProcedureName = StoredProcedureName(operation, args);
+        var commandValue = new DynamicCommand(tokens);
+        var response = await (storedProcedureName is null
+                ? SendAsync(operation, commandValue, CancellationToken.None)
+                : SendStoredProcedureAsync(operation, commandValue, CancellationToken.None, storedProcedureName))
             .ConfigureAwait(false);
         return new RespireResult(in response);
     }
@@ -141,9 +146,22 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken = default)
     {
         var (operation, tokens) = command.Build();
-        var response = await SendAsync(operation, new DynamicCommand(tokens), cancellationToken).ConfigureAwait(false);
+        var storedProcedureName = StoredProcedureName(operation, tokens.AsSpan(1));
+        var commandValue = new DynamicCommand(tokens);
+        var response = await (storedProcedureName is null
+                ? SendAsync(operation, commandValue, cancellationToken)
+                : SendStoredProcedureAsync(operation, commandValue, cancellationToken, storedProcedureName))
+            .ConfigureAwait(false);
         return new RespireResult(in response);
     }
+
+    private static string? StoredProcedureName(string operation, ReadOnlySpan<RespireValue> arguments)
+        => arguments.Length > 0 &&
+           (operation.Equals("EVALSHA", StringComparison.OrdinalIgnoreCase) ||
+            operation.Equals("FCALL", StringComparison.OrdinalIgnoreCase) ||
+            operation.Equals("FCALL_RO", StringComparison.OrdinalIgnoreCase))
+            ? arguments[0].ToString()
+            : null;
 
     // Pub/sub
 
@@ -207,32 +225,7 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             var command = new Cmd1N(Verbs.Watch, Key(watchKeys[0]), MapKeys(watchKeys.AsSpan(1)));
-            RespValue reply;
-            if (_core.Options.CommandTimeout is { } timeout)
-            {
-                using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                timeoutSource.CancelAfter(timeout);
-                try
-                {
-                    reply = await connection.SendAsync(in command, timeoutSource.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-                {
-                    throw new RespireTimeoutException("WATCH", timeout);
-                }
-            }
-            else
-            {
-                reply = await connection.SendAsync(in command, cancellationToken).ConfigureAwait(false);
-            }
-
-            if (reply.IsError)
-            {
-                var error = ResponseReader.ServerError(in reply);
-                reply.Dispose();
-                throw error;
-            }
-
+            var reply = await SendOnConnectionAsync("WATCH", connection, command, cancellationToken).ConfigureAwait(false);
             reply.Dispose();
             return new RespireTransaction(this, connection);
         }
@@ -322,7 +315,10 @@ public sealed partial class RespireClient : IRespireClient
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
-    internal async ValueTask<RespValue> SendAsync<TCommand>(string operation, TCommand command, CancellationToken cancellationToken)
+    internal async ValueTask<RespValue> SendAsync<TCommand>(
+        string operation,
+        TCommand command,
+        CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -330,10 +326,28 @@ public sealed partial class RespireClient : IRespireClient
         await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
 
         var connection = core.Multiplexer.GetConnection();
-        return await SendOnConnectionAsync(operation, connection, command, cancellationToken).ConfigureAwait(false);
+        return await SendOnConnectionAsync(operation, connection, command, cancellationToken)
+            .ConfigureAwait(false);
     }
 
-    private async ValueTask<RespValue> SendOnConnectionAsync<TCommand>(
+    private async ValueTask<RespValue> SendStoredProcedureAsync<TCommand>(
+        string operation,
+        TCommand command,
+        CancellationToken cancellationToken,
+        string storedProcedureName)
+        where TCommand : struct, IRespCommand
+    {
+        var core = _core;
+        ObjectDisposedException.ThrowIf(core.Disposed, this);
+        await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+
+        var connection = core.Multiplexer.GetConnection();
+        return await SendOnConnectionAsync(
+                operation, connection, command, cancellationToken, storedProcedureName)
+            .ConfigureAwait(false);
+    }
+
+    private async ValueTask<RespValue> SendOnConnectionCoreAsync<TCommand>(
         string operation,
         RespireConnection connection,
         TCommand command,
@@ -341,43 +355,72 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
     {
         var core = _core;
-        using var activity = RespireTelemetry.StartActivity(operation, core.Multiplexer.Host, core.Multiplexer.Port);
-        var start = RespireTelemetry.TimestampIfEnabled();
+        RespValue response;
+        if (core.Options.CommandTimeout is { } timeout)
+        {
+            using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutSource.CancelAfter(timeout);
+            try
+            {
+                response = await connection.SendAsync(in command, timeoutSource.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new RespireTimeoutException(operation, timeout);
+            }
+        }
+        else
+        {
+            response = await connection.SendAsync(in command, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (response.IsError)
+        {
+            var error = ResponseReader.ServerError(in response);
+            response.Dispose();
+            throw error;
+        }
+
+        return response;
+    }
+
+    private ValueTask<RespValue> SendOnConnectionAsync<TCommand>(
+        string operation,
+        RespireConnection connection,
+        TCommand command,
+        CancellationToken cancellationToken,
+        string? storedProcedureName = null)
+        where TCommand : struct, IRespCommand
+        => RespireTelemetry.IsEnabled
+            ? SendOnConnectionInstrumentedAsync(
+                operation, connection, command, cancellationToken, storedProcedureName)
+            : SendOnConnectionCoreAsync(operation, connection, command, cancellationToken);
+
+    private async ValueTask<RespValue> SendOnConnectionInstrumentedAsync<TCommand>(
+        string operation,
+        RespireConnection connection,
+        TCommand command,
+        CancellationToken cancellationToken,
+        string? storedProcedureName)
+        where TCommand : struct, IRespCommand
+    {
+        var core = _core;
+        var telemetry = RespireTelemetry.StartOperation(
+            operation,
+            core.Multiplexer.Host,
+            core.Multiplexer.Port,
+            core.Options.Database,
+            storedProcedureName: storedProcedureName);
         try
         {
-            RespValue response;
-            if (core.Options.CommandTimeout is { } timeout)
-            {
-                using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                timeoutSource.CancelAfter(timeout);
-                try
-                {
-                    response = await connection.SendAsync(in command, timeoutSource.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-                {
-                    throw new RespireTimeoutException(operation, timeout);
-                }
-            }
-            else
-            {
-                response = await connection.SendAsync(in command, cancellationToken).ConfigureAwait(false);
-            }
-
-            if (response.IsError)
-            {
-                var error = ResponseReader.ServerError(in response);
-                response.Dispose();
-                throw error;
-            }
-
-            RespireTelemetry.Record(operation, start, success: true);
+            var response = await SendOnConnectionCoreAsync(operation, connection, command, cancellationToken)
+                .ConfigureAwait(false);
+            telemetry.Complete(core, operation, storedProcedureName, connection: connection);
             return response;
         }
         catch (Exception ex)
         {
-            RespireTelemetry.Record(operation, start, success: false);
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            telemetry.Complete(core, operation, storedProcedureName, ex, connection);
             throw;
         }
     }
@@ -387,18 +430,30 @@ public sealed partial class RespireClient : IRespireClient
     /// pooled connection so it cannot stall multiplexed traffic. No command timeout applies —
     /// blocking is the point; cancel via the token (which abandons the connection).
     /// </summary>
-    internal async ValueTask<RespValue> SendBlockingAsync<TCommand>(string operation, TCommand command, CancellationToken cancellationToken)
+    internal async ValueTask<RespValue> SendBlockingAsync<TCommand>(
+        string operation,
+        TCommand command,
+        CancellationToken cancellationToken,
+        string? storedProcedureName = null)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
 
-        using var activity = RespireTelemetry.StartActivity(operation, core.Multiplexer.Host, core.Multiplexer.Port);
-        var connection = await core.DedicatedPool.RentAsync(cancellationToken).ConfigureAwait(false);
+        var telemetry = RespireTelemetry.StartOperation(
+            operation,
+            core.Multiplexer.Host,
+            core.Multiplexer.Port,
+            core.Options.Database,
+            storedProcedureName: storedProcedureName);
+        RespireConnection? connection = null;
+        var returned = false;
         try
         {
+            connection = await core.DedicatedPool.RentAsync(cancellationToken).ConfigureAwait(false);
             var response = await connection.SendAsync(in command, cancellationToken).ConfigureAwait(false);
             core.DedicatedPool.Return(connection);
+            returned = true;
             if (response.IsError)
             {
                 var error = ResponseReader.ServerError(in response);
@@ -406,29 +461,20 @@ public sealed partial class RespireClient : IRespireClient
                 throw error;
             }
 
+            telemetry.Complete(core, operation, storedProcedureName, connection: connection);
             return response;
         }
-        catch (Exception ex) when (ex is not RespireServerException)
+        catch (Exception ex)
         {
-            // The connection may still be mid-block server-side; don't return it to the pool.
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            await core.DedicatedPool.DiscardAsync(connection).ConfigureAwait(false);
+            telemetry.Complete(core, operation, storedProcedureName, ex, connection);
+            if (connection is not null && !returned)
+            {
+                // The connection may still be mid-block server-side; don't return it to the pool.
+                await core.DedicatedPool.DiscardAsync(connection).ConfigureAwait(false);
+            }
+
             throw;
         }
-    }
-
-    internal ValueTask<RespValue> SendTransactionCoreAsync(
-        ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken)
-    {
-        ObjectDisposedException.ThrowIf(_core.Disposed, this);
-        return SendTransactionSlowAsync(serializedCommands, commandCount, cancellationToken);
-    }
-
-    private async ValueTask<RespValue> SendTransactionSlowAsync(
-        ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken)
-    {
-        await _core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-        return await _core.Multiplexer.SendTransactionAsync(serializedCommands, commandCount, cancellationToken).ConfigureAwait(false);
     }
 
     internal async ValueTask<RespireConnection> AcquireConnectionAsync(CancellationToken cancellationToken)
@@ -504,6 +550,36 @@ public sealed partial class RespireClient : IRespireClient
         long ServerClientId,
         ValueTask<RespireResult> Response);
 
+    internal async ValueTask<RespireResult> ExecuteScriptAsync(
+        RespireScript script,
+        RespireValue[] tail,
+        CancellationToken cancellationToken)
+    {
+        var core = _core;
+        ObjectDisposedException.ThrowIf(core.Disposed, this);
+        var telemetry = RespireTelemetry.StartOperation(
+            "EVALSHA",
+            core.Multiplexer.Host,
+            core.Multiplexer.Port,
+            core.Options.Database,
+            storedProcedureName: script.Sha1);
+        RespireConnection? connection = null;
+        try
+        {
+            await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            connection = core.Multiplexer.GetConnection();
+            var result = await ExecuteScriptOnConnectionCoreAsync(connection, script, tail, cancellationToken)
+                .ConfigureAwait(false);
+            telemetry.Complete(core, "EVALSHA", script.Sha1, connection: connection);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            telemetry.Complete(core, "EVALSHA", script.Sha1, ex, connection);
+            throw;
+        }
+    }
+
     /// <summary>
     /// Starts a cache script on a known multiplexed connection. The caller keeps the Redis
     /// client ID even when the reply wait fails, so it can establish a server-side barrier for
@@ -541,17 +617,44 @@ public sealed partial class RespireClient : IRespireClient
         RespireValue[] tail,
         CancellationToken cancellationToken)
     {
+        var core = _core;
+        var telemetry = RespireTelemetry.StartOperation(
+            "EVALSHA",
+            core.Multiplexer.Host,
+            core.Multiplexer.Port,
+            core.Options.Database,
+            storedProcedureName: script.Sha1);
         try
         {
-            var reply = await SendOnConnectionAsync(
-                "EVALSHA", connection, new Cmd2N(Verbs.EvalSha, script.Sha1, tail[0], tail[1..]), cancellationToken)
+            var result = await ExecuteScriptOnConnectionCoreAsync(connection, script, tail, cancellationToken)
+                .ConfigureAwait(false);
+            telemetry.Complete(core, "EVALSHA", script.Sha1, connection: connection);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            telemetry.Complete(core, "EVALSHA", script.Sha1, ex, connection);
+            throw;
+        }
+    }
+
+    private async ValueTask<RespireResult> ExecuteScriptOnConnectionCoreAsync(
+        RespireConnection connection,
+        RespireScript script,
+        RespireValue[] tail,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var reply = await SendOnConnectionCoreAsync(
+                    "EVALSHA", connection, new Cmd2N(Verbs.EvalSha, script.Sha1, tail[0], tail[1..]), cancellationToken)
                 .ConfigureAwait(false);
             return new RespireResult(in reply);
         }
         catch (RespireServerException ex) when (ex.Code == "NOSCRIPT")
         {
-            var reply = await SendOnConnectionAsync(
-                "EVAL", connection, new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]), cancellationToken)
+            var reply = await SendOnConnectionCoreAsync(
+                    "EVAL", connection, new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]), cancellationToken)
                 .ConfigureAwait(false);
             return new RespireResult(in reply);
         }
@@ -687,7 +790,8 @@ public sealed partial class RespireClient : IRespireClient
             RespValue value;
             try
             {
-                value = await SendBlockingAsync("UNLINK", command, cancellationToken).ConfigureAwait(false);
+                value = await SendBlockingAsync(
+                    "EVAL", command, cancellationToken, LeasedUnlinkScript.Sha1).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not RespireServerException and not ObjectDisposedException)
             {

@@ -55,8 +55,8 @@ internal sealed class ServerCommands(RespireClient client) : IServerCommands
     }
 
     public ValueTask<Dictionary<string, string>> ConfigGetAsync(string pattern, CancellationToken cancellationToken = default)
-        => client.StringMapAsync("CONFIG", new Cmd1(Verbs.ConfigGet, pattern), cancellationToken);
+        => client.StringMapAsync("CONFIG GET", new Cmd1(Verbs.ConfigGet, pattern), cancellationToken);
 
     public ValueTask ConfigSetAsync(string name, RespireValue value, CancellationToken cancellationToken = default)
-        => client.OkAsync("CONFIG", new Cmd2(Verbs.ConfigSet, name, value), cancellationToken);
+        => client.OkAsync("CONFIG SET", new Cmd2(Verbs.ConfigSet, name, value), cancellationToken);
 }
