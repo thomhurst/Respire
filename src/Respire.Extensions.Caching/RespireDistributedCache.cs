@@ -28,10 +28,12 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     internal TimeSpan CorrectionWaitBound = TimeSpan.FromSeconds(10);
 
     // A non-RespireClient wrapper exposes only token-less key deletion. Start each removal with
-    // brief temporary authority, then grow later attempts from observed backend latency. Fast
-    // cancellation therefore stays prompt while slow backends can complete within the separate
-    // operation timeout. Mutable so tests can shrink the safety window.
+    // brief temporary authority, then grow later attempts from observed backend latency up to a
+    // one-second safety cap. Cancellation therefore stays bounded even if lease revocation is
+    // blackholed, while the separate operation timeout permits repeated attempts. Mutable so
+    // tests can shrink the safety window.
     internal TimeSpan WrappedRemovalMinimumLeaseTtl = TimeSpan.FromMilliseconds(250);
+    internal TimeSpan WrappedRemovalMaximumLeaseTtl = TimeSpan.FromSeconds(1);
     internal TimeSpan WrappedRemovalLeaseExpiryMargin = TimeSpan.FromMilliseconds(50);
     internal TimeSpan WrappedRemovalTimeout = TimeSpan.FromSeconds(30);
 
@@ -569,7 +571,9 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
     private TimeSpan GrowWrappedRemovalLease(TimeSpan current, TimeSpan observedLatency)
     {
-        var maximumTicks = WrappedRemovalTimeout.Ticks;
+        var maximumTicks = Math.Min(
+            WrappedRemovalMaximumLeaseTtl.Ticks,
+            WrappedRemovalTimeout.Ticks);
         var doubledCurrent = current.Ticks >= maximumTicks / 2
             ? maximumTicks
             : current.Ticks * 2;
