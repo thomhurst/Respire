@@ -69,12 +69,17 @@ internal sealed class LockFreeStack<T> where T : class
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryPush(T item)
     {
-        var start = GetStartStripe();
+        var stripeIndex = GetStartStripe();
         for (var i = 0; i < _stripes.Length; i++)
         {
-            if (TryPush(_stripes[(start + i) % _stripes.Length], item))
+            if (TryPush(_stripes[stripeIndex], item))
             {
                 return true;
+            }
+
+            if (++stripeIndex == _stripes.Length)
+            {
+                stripeIndex = 0;
             }
         }
 
@@ -96,12 +101,17 @@ internal sealed class LockFreeStack<T> where T : class
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryPop([NotNullWhen(true)] out T? item)
     {
-        var start = GetStartStripe();
+        var stripeIndex = GetStartStripe();
         for (var i = 0; i < _stripes.Length; i++)
         {
-            if (TryPop(_stripes[(start + i) % _stripes.Length], out item))
+            if (TryPop(_stripes[stripeIndex], out item))
             {
                 return true;
+            }
+
+            if (++stripeIndex == _stripes.Length)
+            {
+                stripeIndex = 0;
             }
         }
 
