@@ -104,10 +104,10 @@ internal static class PrimitiveCodec
                 result = Return<T, ulong>(Parse<ulong>(payload));
                 return true;
             case PrimitiveKind.Single:
-                result = Return<T, float>(Parse<float>(payload));
+                result = Return<T, float>(ParseFiniteSingle(payload));
                 return true;
             case PrimitiveKind.Double:
-                result = Return<T, double>(Parse<double>(payload));
+                result = Return<T, double>(ParseFiniteDouble(payload));
                 return true;
             case PrimitiveKind.Decimal:
                 result = Return<T, decimal>(Parse<decimal>(payload));
@@ -165,6 +165,18 @@ internal static class PrimitiveCodec
         }
 
         throw InvalidValue<TValue>();
+    }
+
+    private static float ParseFiniteSingle(ReadOnlySpan<byte> payload)
+    {
+        var value = Parse<float>(payload);
+        return float.IsFinite(value) ? value : throw InvalidValue<float>();
+    }
+
+    private static double ParseFiniteDouble(ReadOnlySpan<byte> payload)
+    {
+        var value = Parse<double>(payload);
+        return double.IsFinite(value) ? value : throw InvalidValue<double>();
     }
 
     private static FormatException InvalidValue<T>()

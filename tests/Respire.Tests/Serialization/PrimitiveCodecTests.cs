@@ -50,6 +50,22 @@ public class PrimitiveCodecTests
     }
 
     [Test]
+    public async Task FloatingPointReads_RejectNonFiniteValues()
+    {
+        await using var client = CreateClient(new CountingSerializer());
+
+        foreach (var payload in new[] { "NaN", "Infinity", "-Infinity", "1e400" })
+        {
+            await Assert.That(() => client.DeserializeBorrowed<double>(Bulk(payload))).Throws<FormatException>();
+        }
+
+        foreach (var payload in new[] { "NaN", "Infinity", "-Infinity", "1e100" })
+        {
+            await Assert.That(() => client.DeserializeBorrowed<float>(Bulk(payload))).Throws<FormatException>();
+        }
+    }
+
+    [Test]
     public async Task Boolean_FastPath_PreservesJsonWrites_AndAcceptsRedisValues()
     {
         var serializer = new CountingSerializer();
