@@ -296,6 +296,23 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         await Assert.That(survivor!.SequenceEqual(new byte[] { 2 })).IsTrue();
     }
 
+    [Test]
+    public async Task RemoveAsync_WrappedClient_GrowsLeaseForSustainedLatency()
+    {
+        await Cache.SetAsync("slow-wrapped-remove", [1], new DistributedCacheEntryOptions());
+        var slowClient = new ScriptInterceptingClient(Client, async (_, send) =>
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(500));
+            return await send();
+        });
+        await using var cache = new RespireDistributedCache(slowClient);
+
+        await cache.RemoveAsync("slow-wrapped-remove").WaitAsync(TimeSpan.FromSeconds(5));
+
+        await Assert.That(slowClient.ScriptCalls).IsEqualTo(2);
+        await Assert.That(await Cache.GetAsync("slow-wrapped-remove")).IsNull();
+    }
+
     // The next tests exercise the correction a delayed set triggers (a send that reached Redis
     // only after a stall — lazy first connect, reconnect — arms a TTL computed before the delay).
     // The delay itself cannot be reproduced through the public API, so they execute the

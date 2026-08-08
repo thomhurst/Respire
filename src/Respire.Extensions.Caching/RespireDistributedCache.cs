@@ -27,11 +27,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     // land in the background. Mutable so tests can shrink the bound.
     internal TimeSpan CorrectionWaitBound = TimeSpan.FromSeconds(10);
 
-    // A non-RespireClient wrapper exposes only token-less key deletion. Give each removal attempt
-    // brief temporary authority, so cancellation can be surfaced promptly after revocation or
-    // server-side expiry. Slow attempts retry with fresh leases until the separate operation
-    // timeout. Mutable so tests can shrink the safety window.
-    internal TimeSpan WrappedRemovalLeaseTtl = TimeSpan.FromMilliseconds(250);
+    // A non-RespireClient wrapper exposes only token-less key deletion. Start each removal with
+    // brief temporary authority, then grow later attempts from observed backend latency. Fast
+    // cancellation therefore stays prompt while slow backends can complete within the separate
+    // operation timeout. Mutable so tests can shrink the safety window.
+    internal TimeSpan WrappedRemovalMinimumLeaseTtl = TimeSpan.FromMilliseconds(250);
     internal TimeSpan WrappedRemovalLeaseExpiryMargin = TimeSpan.FromMilliseconds(50);
     internal TimeSpan WrappedRemovalTimeout = TimeSpan.FromSeconds(30);
 
@@ -510,21 +510,31 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
     private async Task UnlinkWrappedLeasedAsync(string key, CancellationToken cancellationToken)
     {
+        var leaseTtl = WrappedRemovalMinimumLeaseTtl;
         while (true)
         {
             RespireKey lease = "respire-rm-lease:" + Guid.NewGuid().ToString("N");
 
             // If this wait is abandoned, only an unused expiring lease can land late; the
             // deletion script is not sent until placement is confirmed.
+            var placementStart = Stopwatch.GetTimestamp();
             await _client.SetAsync(
                     lease,
                     1,
-                    WrappedRemovalLeaseTtl,
+                    leaseTtl,
                     cancellationToken: cancellationToken)
                 .AsTask()
                 .WaitAsync(cancellationToken)
                 .ConfigureAwait(false);
             var leaseStart = Stopwatch.GetTimestamp();
+            var placementElapsed = Stopwatch.GetElapsedTime(placementStart);
+            if (placementElapsed >= leaseTtl / 2)
+            {
+                // The reply consumed a material part of this lease. No delete has been sent,
+                // so retry with enough authority for the latency already observed.
+                leaseTtl = GrowWrappedRemovalLease(leaseTtl, placementElapsed);
+                continue;
+            }
 
             Task<RespireResult>? removal = null;
             try
@@ -541,6 +551,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
+                leaseTtl = GrowWrappedRemovalLease(
+                    leaseTtl, Stopwatch.GetElapsedTime(leaseStart));
             }
             catch (Exception ex) when (ex is not RespireServerException)
             {
@@ -549,15 +561,30 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                     _ = ObserveWrappedRemovalAsync(removal);
                 }
 
-                await MakeWrappedRemovalHarmlessAsync(lease, leaseStart).ConfigureAwait(false);
+                await MakeWrappedRemovalHarmlessAsync(lease, leaseStart, leaseTtl).ConfigureAwait(false);
                 throw;
             }
         }
     }
 
-    private async Task MakeWrappedRemovalHarmlessAsync(RespireKey lease, long leaseStart)
+    private TimeSpan GrowWrappedRemovalLease(TimeSpan current, TimeSpan observedLatency)
     {
-        var remaining = WrappedRemovalLeaseTtl - Stopwatch.GetElapsedTime(leaseStart);
+        var maximumTicks = WrappedRemovalTimeout.Ticks;
+        var doubledCurrent = current.Ticks >= maximumTicks / 2
+            ? maximumTicks
+            : current.Ticks * 2;
+        var quadrupledLatency = observedLatency.Ticks >= maximumTicks / 4
+            ? maximumTicks
+            : observedLatency.Ticks * 4;
+        return TimeSpan.FromTicks(Math.Max(doubledCurrent, quadrupledLatency));
+    }
+
+    private async Task MakeWrappedRemovalHarmlessAsync(
+        RespireKey lease,
+        long leaseStart,
+        TimeSpan leaseTtl)
+    {
+        var remaining = leaseTtl - Stopwatch.GetElapsedTime(leaseStart);
         if (remaining > TimeSpan.Zero)
         {
             Task<long>? revoke = null;
@@ -580,7 +607,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             }
         }
 
-        var wait = WrappedRemovalLeaseTtl + WrappedRemovalLeaseExpiryMargin -
+        var wait = leaseTtl + WrappedRemovalLeaseExpiryMargin -
             Stopwatch.GetElapsedTime(leaseStart);
         if (wait > TimeSpan.Zero)
         {
