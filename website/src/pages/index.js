@@ -57,7 +57,7 @@ function Hero() {
         </div>
         <CodeWindow />
       </div>
-      <div className={styles.ticker} aria-label="Supported technologies">
+      <div className={styles.ticker} aria-hidden="true">
         <div>{[...ticks, ...ticks].map((tick, index) => <span key={`${tick}-${index}`}><i />{tick}</span>)}</div>
       </div>
     </header>

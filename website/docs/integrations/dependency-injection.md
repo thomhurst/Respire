@@ -44,7 +44,11 @@ builder.Services.AddRespire("sessions", "redis://sessions-host");
 builder.Services.AddRespire("jobs", "redis://jobs-host");
 
 public sealed class CartService(
-    [FromKeyedServices("sessions")] IRespireClient sessions);
+    [FromKeyedServices("sessions")] IRespireClient sessions)
+{
+    public ValueTask<string?> GetAsync(string id, CancellationToken ct) =>
+        sessions.GetStringAsync($"cart:{id}", ct);
+}
 ```
 
 ## Configure options

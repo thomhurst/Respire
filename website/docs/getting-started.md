@@ -10,7 +10,7 @@ Connect to a local RESP server and send typed commands in a few lines.
 
 ## Prerequisites
 
-- .NET 8 or .NET 9 SDK
+- .NET 9 SDK or later (Respire targets both `net8.0` and `net9.0`)
 - Redis, Valkey, KeyDB, or another RESP2-compatible server
 
 Respire is pre-release and is not currently published to NuGet. Clone the repository and add a project reference while evaluating it:
@@ -79,7 +79,7 @@ The common form is:
 redis://[username:password@]host[:port][/database]
 ```
 
-For connection timeouts, protocol selection, reconnection, serialization, or logging, use [RespireOptions](./fundamentals/connections).
+For connection timeouts, protocol selection, serialization, or logging, use [RespireOptions](./fundamentals/connections).
 
 ## Next
 

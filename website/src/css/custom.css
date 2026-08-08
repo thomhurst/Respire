@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap');
-
 :root {
   --ifm-color-primary: #168d71;
   --ifm-color-primary-dark: #137e65;
@@ -8,9 +6,9 @@
   --ifm-color-primary-light: #199c7d;
   --ifm-color-primary-lighter: #1ba483;
   --ifm-color-primary-lightest: #24ba96;
-  --ifm-font-family-base: 'Manrope', system-ui, sans-serif;
-  --ifm-font-family-monospace: 'DM Mono', ui-monospace, monospace;
-  --ifm-heading-font-family: 'Manrope', system-ui, sans-serif;
+  --ifm-font-family-base: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --ifm-font-family-monospace: 'Cascadia Code', 'SFMono-Regular', Consolas, ui-monospace, monospace;
+  --ifm-heading-font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
   --ifm-heading-font-weight: 600;
   --ifm-navbar-height: 4.25rem;
   --ifm-code-font-size: 90%;

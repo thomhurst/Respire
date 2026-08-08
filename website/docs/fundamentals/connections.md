@@ -48,7 +48,7 @@ The first command triggers connection. Dependency-injection registration uses th
 
 ## Cancellation and timeouts
 
-Each command accepts a `CancellationToken`. Cancellation abandons the wait; it cannot guarantee the server did not execute a command already written to the socket.
+Commands with a `CancellationToken` abandon the wait when cancelled; cancellation cannot guarantee the server did not execute a command already written to the socket. Some variadic `params ReadOnlySpan<T>` overloads do not accept cancellation.
 
 Likewise, a `RespireTimeoutException` means the response did not arrive within `CommandTimeout`. Treat writes as potentially executed and design retries around operation idempotency.
 
