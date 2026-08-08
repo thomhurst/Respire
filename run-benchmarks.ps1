@@ -6,7 +6,7 @@ param(
     [string]$BenchmarkType = "All",
     
     [Parameter()]
-    [ValidateSet("net8.0", "net9.0", "Both")]
+    [ValidateSet("net8.0", "net10.0", "Both")]
     [string]$Framework = "Both",
     
     [Parameter()]
@@ -34,7 +34,7 @@ Push-Location "benchmarks/Respire.Benchmarks"
 try {
     $frameworks = @()
     if ($Framework -eq "Both") {
-        $frameworks = @("net8.0", "net9.0")
+        $frameworks = @("net8.0", "net10.0")
     } else {
         $frameworks = @($Framework)
     }
@@ -92,7 +92,7 @@ try {
 Write-Host @"
 
 Benchmark Tips:
-- For quick validation: .\run-benchmarks.ps1 -BenchmarkType Container -Framework net9.0
+- For quick validation: .\run-benchmarks.ps1 -BenchmarkType Container -Framework net10.0
 - For full comparison: .\run-benchmarks.ps1 -BenchmarkType All -Framework Both
 - To open results automatically: .\run-benchmarks.ps1 -OpenResults
 - Custom filter: .\run-benchmarks.ps1 -Filter "*Set*"

@@ -32,7 +32,7 @@ dotnet-dump analyze <dump-file>
 ### 4. BenchmarkDotNet (Comprehensive performance analysis)
 ```bash
 cd benchmarks/Respire.Benchmarks
-dotnet run -c Release -f net9.0 -- --filter "*Get*" --memory
+dotnet run -c Release -f net10.0 -- --filter "*Get*" --memory
 ```
 
 ## Key Optimization Results

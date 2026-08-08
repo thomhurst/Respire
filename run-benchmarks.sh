@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [options]"
             echo "Options:"
             echo "  -t, --type <Container|Throughput|All>  Benchmark type to run (default: All)"
-            echo "  -f, --framework <net8.0|net9.0|Both>   Framework to test (default: Both)"
+            echo "  -f, --framework <net8.0|net10.0|Both>  Framework to test (default: Both)"
             echo "  --filter <pattern>                      Custom filter pattern"
             echo "  -o, --open                              Open results in browser"
             echo "  -h, --help                              Show this help message"
@@ -68,7 +68,7 @@ cd benchmarks/Respire.Benchmarks || exit 1
 
 # Determine frameworks to test
 if [ "$FRAMEWORK" = "Both" ]; then
-    FRAMEWORKS=("net8.0" "net9.0")
+    FRAMEWORKS=("net8.0" "net10.0")
 else
     FRAMEWORKS=("$FRAMEWORK")
 fi
@@ -141,7 +141,7 @@ echo -e "${CYAN}==============================${NC}"
 cat << EOF
 
 Benchmark Tips:
-- For quick validation: ./run-benchmarks.sh -t Container -f net9.0
+- For quick validation: ./run-benchmarks.sh -t Container -f net10.0
 - For full comparison: ./run-benchmarks.sh -t All -f Both
 - To open results automatically: ./run-benchmarks.sh -o
 - Custom filter: ./run-benchmarks.sh --filter "*Set*"
