@@ -183,7 +183,8 @@ their timeout-safety barriers: `EVALSHA`, `EVAL`, `SET`, `UNLINK`, `HSET`, `HMGE
 `PEXPIRE`, `PERSIST`, and `EXISTS`. Calls that can abandon a reply wait—because
 `RespireOptions.CommandTimeout` is configured or a cancellable token is supplied—also require
 `CLIENT ID` and `CLIENT KILL`; their safety setup fails before sending the cache command when
-either command is denied.
+either command is denied. Other calls probe this capability once so connection-loss failures can
+also be fenced, but fall back to best-effort correction when the server or ACL denies it.
 
 ## Design
 

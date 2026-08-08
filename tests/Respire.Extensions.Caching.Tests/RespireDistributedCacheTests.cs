@@ -649,6 +649,26 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
 
             await Assert.That(value).IsNotNull();
             await Assert.That(value!.SequenceEqual(new byte[] { 1 })).IsTrue();
+
+            // Failed optional identity setup must not poison replacement connections with the
+            // denied CLIENT ID requirement.
+            var connection = await restrictedClient.AcquireConnectionAsync(CancellationToken.None);
+            await connection.DisposeAsync();
+            try
+            {
+                await restrictedClient.PingAsync();
+            }
+            catch (RespireConnectionException)
+            {
+            }
+
+            for (var attempt = 0; attempt < 200 && !restrictedClient.IsConnected; attempt++)
+            {
+                await Task.Delay(25);
+            }
+
+            await Assert.That(restrictedClient.IsConnected).IsTrue();
+            await Assert.That(await restrictedCache.GetAsync("no-client-permission")).IsNotNull();
         }
         finally
         {
@@ -659,6 +679,17 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
 
             (await Client.ExecuteAsync("ACL", "DELUSER", username)).Dispose();
         }
+    }
+
+    [Test]
+    public async Task NonCancelableAccess_TracksConnectionWhenClientCommandsAreAllowed()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var cache = new RespireDistributedCache(client);
+
+        await cache.SetAsync("tracked-default", [1], new DistributedCacheEntryOptions());
+
+        await Assert.That(client.Core.Multiplexer.HasReliableCorrectionOrdering).IsTrue();
     }
 
     [Test]

@@ -26,6 +26,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private uint _next;
     private int _disposed;
     private int _trackServerClientIds;
+    private string? _correctionOrderingFailure;
     private volatile bool _correctionOrderingReady;
     private volatile bool _connected;
 
@@ -33,6 +34,8 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     public int Port { get; }
     public int ConnectionCount => _connections.Length;
     internal bool HasReliableCorrectionOrdering => _correctionOrderingReady;
+    internal bool IsReliableCorrectionOrderingUnavailable =>
+        Volatile.Read(ref _correctionOrderingFailure) is not null;
 
     /// <summary>The options every connection (and any subscriber) is built from.</summary>
     public RespireConnectionOptions Options => _options;
@@ -209,6 +212,8 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             return;
         }
 
+        ThrowIfCorrectionOrderingUnavailable();
+
         await _correctionIdentityGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -216,6 +221,8 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             {
                 return;
             }
+
+            ThrowIfCorrectionOrderingUnavailable();
 
             await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
             Volatile.Write(ref _trackServerClientIds, 1);
@@ -274,9 +281,30 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 await Task.Delay(25, cancellationToken).ConfigureAwait(false);
             }
         }
+        catch (RespireServerException ex)
+        {
+            Volatile.Write(ref _trackServerClientIds, 0);
+            Volatile.Write(ref _correctionOrderingFailure, ex.Message);
+            throw;
+        }
         finally
         {
+            if (!_correctionOrderingReady)
+            {
+                // A failed bootstrap must not make reconnect publication depend on a CLIENT ID
+                // permission the client may not have.
+                Volatile.Write(ref _trackServerClientIds, 0);
+            }
+
             _correctionIdentityGate.Release();
+        }
+    }
+
+    private void ThrowIfCorrectionOrderingUnavailable()
+    {
+        if (Volatile.Read(ref _correctionOrderingFailure) is { } failure)
+        {
+            throw new RespireServerException(failure);
         }
     }
 
@@ -504,7 +532,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private void RetireConnection(RespireConnection? connection)
     {
         var clientId = connection?.ServerClientId ?? 0;
-        if (clientId > 0)
+        if (clientId > 0 && Volatile.Read(ref _trackServerClientIds) != 0)
         {
             _retiredServerClientIds.TryAdd(clientId, 0);
         }

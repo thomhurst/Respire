@@ -444,6 +444,28 @@ public sealed partial class RespireClient : IRespireClient
     internal bool RequiresReliableCorrectionOrdering(CancellationToken cancellationToken)
         => cancellationToken.CanBeCanceled || _core.Options.CommandTimeout is not null;
 
+    internal async ValueTask<bool> TryEnsureReliableCorrectionOrderingAsync()
+    {
+        var multiplexer = _core.Multiplexer;
+        if (multiplexer.IsReliableCorrectionOrderingUnavailable)
+        {
+            return false;
+        }
+
+        try
+        {
+            await multiplexer.EnsureReliableCorrectionOrderingAsync().ConfigureAwait(false);
+            return true;
+        }
+        catch (RespireServerException)
+        {
+            // Normal non-cancellable access remains compatible with ACLs and RESP servers that
+            // do not expose CLIENT commands. Its connection-loss guarantee is necessarily
+            // best-effort when no server-side identity can be obtained.
+            return false;
+        }
+    }
+
     /// <summary>
     /// Captures Redis client IDs before any cache command can become latent. A correction can
     /// then fence a locally dead socket server-side instead of assuming socket loss canceled

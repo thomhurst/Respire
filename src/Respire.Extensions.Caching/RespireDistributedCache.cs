@@ -248,12 +248,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         ArgumentNullException.ThrowIfNull(options);
         token.ThrowIfCancellationRequested();
 
-        RespireClient? trackedWire = null;
-        if (_wireClient is { } reliableWire && reliableWire.RequiresReliableCorrectionOrdering(token))
-        {
-            await reliableWire.EnsureReliableCorrectionOrderingAsync(token).ConfigureAwait(false);
-            trackedWire = reliableWire;
-        }
+        var trackedWire = await GetTrackedWireAsync(token).ConfigureAwait(false);
 
         var now = DateTimeOffset.UtcNow;
         var absoluteExpiration = GetAbsoluteExpiration(now, options);
@@ -617,12 +612,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
     private async ValueTask<RespireResult> RunGetScriptAsync(string key, bool returnData, CancellationToken token)
     {
-        RespireClient? trackedWire = null;
-        if (_wireClient is { } reliableWire && reliableWire.RequiresReliableCorrectionOrdering(token))
-        {
-            await reliableWire.EnsureReliableCorrectionOrderingAsync(token).ConfigureAwait(false);
-            trackedWire = reliableWire;
-        }
+        var trackedWire = await GetTrackedWireAsync(token).ConfigureAwait(false);
 
         var now = DateTimeOffset.UtcNow;
         RespireResult result;
@@ -682,6 +672,24 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         }
 
         return result;
+    }
+
+    private async ValueTask<RespireClient?> GetTrackedWireAsync(CancellationToken cancellationToken)
+    {
+        if (_wireClient is not { } wire)
+        {
+            return null;
+        }
+
+        if (wire.RequiresReliableCorrectionOrdering(cancellationToken))
+        {
+            await wire.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
+            return wire;
+        }
+
+        return await wire.TryEnsureReliableCorrectionOrderingAsync().ConfigureAwait(false)
+            ? wire
+            : null;
     }
 
     private ValueTask CapRefreshedTtlAsync(string key, long originalServerClientId = 0)
