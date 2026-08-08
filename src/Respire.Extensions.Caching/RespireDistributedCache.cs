@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Diagnostics;
 using Microsoft.Extensions.Caching.Distributed;
 
 namespace Respire.Extensions.Caching;
@@ -25,6 +26,12 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     // correction retried; without a tracked original, the queued shrink-only pass is left to
     // land in the background. Mutable so tests can shrink the bound.
     internal TimeSpan CorrectionWaitBound = TimeSpan.FromSeconds(10);
+
+    // A non-RespireClient wrapper exposes only token-less key deletion. Give its removal script
+    // temporary authority instead, so cancellation can be surfaced safely after revocation or
+    // server-side expiry. Mutable so tests can shrink the safety window.
+    internal TimeSpan WrappedRemovalLeaseTtl = TimeSpan.FromSeconds(30);
+    internal TimeSpan WrappedRemovalLeaseExpiryMargin = TimeSpan.FromSeconds(1);
 
     // ARGV: [1] absolute expiration (UTC ticks, -1 none), [2] sliding expiration (ticks, -1 none),
     // [3] relative expiry (ms, -1 none), [4] payload. PERSIST clears a leftover TTL when an
@@ -477,16 +484,134 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         // the delete itself is leased — it only runs while a TTL'd lease key placed beforehand
         // is still alive, and no failure surfaces until that lease is revoked or has certainly
         // expired, so a copy already flushed to the server cannot delete anything written after
-        // the caller saw the failure. A mocked/decorated client falls back to its token-less
-        // facet operation; only the caller's wait can be cancelled, so any late-delete behavior
-        // remains that implementation's responsibility.
+        // the caller saw the failure. A mocked/decorated client gets the same lease invariant
+        // through public client APIs; its token-less lease revocation is bounded by expiry.
         if (_wireClient is { } wire)
         {
             await wire.UnlinkGuardedAsync(key, token).ConfigureAwait(false);
         }
         else
         {
-            await _client.Keys.UnlinkAsync(key).AsTask().WaitAsync(token).ConfigureAwait(false);
+            await UnlinkWrappedGuardedAsync(key, token).ConfigureAwait(false);
+        }
+    }
+
+    private async Task UnlinkWrappedGuardedAsync(string key, CancellationToken cancellationToken)
+    {
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(WrappedRemovalLeaseTtl);
+        try
+        {
+            await UnlinkWrappedLeasedAsync(key, timeoutSource.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new RespireTimeoutException("UNLINK", WrappedRemovalLeaseTtl);
+        }
+    }
+
+    private async Task UnlinkWrappedLeasedAsync(string key, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            RespireKey lease = "respire-rm-lease:" + Guid.NewGuid().ToString("N");
+
+            // If this wait is abandoned, only an unused expiring lease can land late; the
+            // deletion script is not sent until placement is confirmed.
+            await _client.SetAsync(
+                    lease,
+                    1,
+                    WrappedRemovalLeaseTtl,
+                    cancellationToken: cancellationToken)
+                .AsTask()
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+            var leaseStart = Stopwatch.GetTimestamp();
+
+            Task<RespireResult>? removal = null;
+            try
+            {
+                removal = _client.Scripts.ExecuteAsync(
+                        RespireClient.LeasedUnlinkScript,
+                        [key, lease],
+                        cancellationToken: cancellationToken)
+                    .AsTask();
+                using var result = await removal.WaitAsync(cancellationToken).ConfigureAwait(false);
+                if (result.AsInteger() == 1)
+                {
+                    return;
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            catch (Exception ex) when (ex is not RespireServerException)
+            {
+                if (removal is not null)
+                {
+                    _ = ObserveWrappedRemovalAsync(removal);
+                }
+
+                await MakeWrappedRemovalHarmlessAsync(lease, leaseStart).ConfigureAwait(false);
+                throw;
+            }
+        }
+    }
+
+    private async Task MakeWrappedRemovalHarmlessAsync(RespireKey lease, long leaseStart)
+    {
+        var remaining = WrappedRemovalLeaseTtl - Stopwatch.GetElapsedTime(leaseStart);
+        if (remaining > TimeSpan.Zero)
+        {
+            Task<long>? revoke = null;
+            try
+            {
+                revoke = _client.Keys.UnlinkAsync(lease).AsTask();
+                await revoke.WaitAsync(remaining).ConfigureAwait(false);
+                return;
+            }
+            catch (TimeoutException)
+            {
+                if (revoke is not null)
+                {
+                    _ = ObserveWrappedRevokeAsync(revoke);
+                }
+            }
+            catch (Exception)
+            {
+                // Expiry below remains the independent safety boundary.
+            }
+        }
+
+        var wait = WrappedRemovalLeaseTtl + WrappedRemovalLeaseExpiryMargin -
+            Stopwatch.GetElapsedTime(leaseStart);
+        if (wait > TimeSpan.Zero)
+        {
+            await Task.Delay(wait).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task ObserveWrappedRemovalAsync(Task<RespireResult> removal)
+    {
+        try
+        {
+            (await removal.ConfigureAwait(false)).Dispose();
+        }
+        catch
+        {
+            // Detached late execution is best-effort; observation and result disposal are the
+            // only remaining responsibilities after lease expiry made deletion harmless.
+        }
+    }
+
+    private static async Task ObserveWrappedRevokeAsync(Task<long> revoke)
+    {
+        try
+        {
+            await revoke.ConfigureAwait(false);
+        }
+        catch
+        {
+            // Lease expiry is the safety boundary; this only observes the abandoned revocation.
         }
     }
 

@@ -256,8 +256,20 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
     public async Task RemoveAsync_WrappedClient_CancellationStopsTheWait()
     {
         var keys = new BlockingUnlinkKeyCommands(Client.Keys);
-        var wrappedClient = new ScriptInterceptingClient(Client, (_, send) => send(), keys);
-        await using var cache = new RespireDistributedCache(wrappedClient);
+        var releaseRemoval = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var removalResult = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var wrappedClient = new ScriptInterceptingClient(Client, async (_, send) =>
+        {
+            await releaseRemoval.Task;
+            var result = await send();
+            removalResult.TrySetResult(result.AsInteger());
+            return result;
+        }, keys, ignoreScriptCancellation: true);
+        await using var cache = new RespireDistributedCache(wrappedClient)
+        {
+            WrappedRemovalLeaseTtl = TimeSpan.FromMilliseconds(100),
+            WrappedRemovalLeaseExpiryMargin = TimeSpan.FromMilliseconds(100),
+        };
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
         var cancelled = false;
@@ -279,6 +291,13 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         }
 
         await Assert.That(cancelled).IsTrue();
+        await Cache.SetAsync("cancel-wrapped-remove", [2], new DistributedCacheEntryOptions());
+
+        releaseRemoval.TrySetResult();
+        await Assert.That(await removalResult.Task.WaitAsync(TimeSpan.FromSeconds(2))).IsEqualTo(0);
+        var survivor = await Cache.GetAsync("cancel-wrapped-remove");
+        await Assert.That(survivor).IsNotNull();
+        await Assert.That(survivor!.SequenceEqual(new byte[] { 2 })).IsTrue();
     }
 
     // The next tests exercise the correction a delayed set triggers (a send that reached Redis
@@ -1068,7 +1087,8 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
     private sealed class ScriptInterceptingClient(
         RespireClient inner,
         Func<int, Func<ValueTask<RespireResult>>, ValueTask<RespireResult>> onScript,
-        IKeyCommands? keys = null) : IRespireClient
+        IKeyCommands? keys = null,
+        bool ignoreScriptCancellation = false) : IRespireClient
     {
         private int _scriptCalls;
 
@@ -1083,7 +1103,10 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
                 CancellationToken cancellationToken = default)
             {
                 var call = Interlocked.Increment(ref owner._scriptCalls);
-                return owner._onScript(call, () => inner.ExecuteAsync(script, keys, args, cancellationToken));
+                var sendToken = owner._ignoreScriptCancellation
+                    ? CancellationToken.None
+                    : cancellationToken;
+                return owner._onScript(call, () => inner.ExecuteAsync(script, keys, args, sendToken));
             }
 
             public ValueTask<string> LoadAsync(RespireScript script, CancellationToken cancellationToken = default)
@@ -1091,6 +1114,7 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         }
 
         private readonly Func<int, Func<ValueTask<RespireResult>>, ValueTask<RespireResult>> _onScript = onScript;
+        private readonly bool _ignoreScriptCancellation = ignoreScriptCancellation;
 
         public RespireEndpoint Endpoint => inner.Endpoint;
         public bool IsConnected => inner.IsConnected;
