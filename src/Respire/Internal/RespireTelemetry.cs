@@ -141,7 +141,8 @@ internal static class RespireTelemetry
             string operation,
             string? storedProcedureName = null,
             Exception? error = null,
-            RespireConnection? connection = null)
+            RespireConnection? connection = null,
+            int? batchSize = null)
             => Complete(
                 operation,
                 core.Multiplexer.Host,
@@ -149,7 +150,8 @@ internal static class RespireTelemetry
                 core.Options.Database,
                 storedProcedureName,
                 error,
-                connection);
+                connection,
+                batchSize);
 
         public void Complete(
             string operation,
@@ -158,7 +160,8 @@ internal static class RespireTelemetry
             int database,
             string? storedProcedureName = null,
             Exception? error = null,
-            RespireConnection? connection = null)
+            RespireConnection? connection = null,
+            int? batchSize = null)
         {
             if (activity is null && startTimestamp == 0)
             {
@@ -216,6 +219,11 @@ internal static class RespireTelemetry
             if (storedProcedureName is not null)
             {
                 tags.Add("db.stored_procedure.name", storedProcedureName);
+            }
+
+            if (batchSize is not null)
+            {
+                tags.Add("db.operation.batch.size", batchSize.Value);
             }
 
             if (peerAddress is not null)

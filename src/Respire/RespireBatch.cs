@@ -106,7 +106,7 @@ public sealed class RespireBatch
             out var telemetryOperation);
         if (_ops.Count == 0)
         {
-            telemetry.Complete(core, telemetryOperation);
+            telemetry.Complete(core, telemetryOperation, batchSize: 0);
             return;
         }
 
@@ -124,7 +124,11 @@ public sealed class RespireBatch
                 op.Fail(ex);
             }
 
-            telemetry.Complete(core, telemetryOperation, error: ex);
+            telemetry.Complete(
+                core,
+                telemetryOperation,
+                error: ex,
+                batchSize: _ops.Count == 1 ? null : _ops.Count);
             throw;
         }
 
@@ -146,7 +150,8 @@ public sealed class RespireBatch
             core,
             telemetryOperation,
             error: errors.FirstOrDefault(static error => error is not null),
-            connection: connection);
+            connection: connection,
+            batchSize: _ops.Count == 1 ? null : _ops.Count);
     }
 
     private RespirePending<T> Add<TCommand, T>(string operation, in TCommand command, Func<RespireClient, RespValue, T> convert)

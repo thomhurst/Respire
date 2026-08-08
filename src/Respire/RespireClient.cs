@@ -126,8 +126,8 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         args.CopyTo(tokens, words.Length);
-        var operation = string.Join(' ', words);
-        var storedProcedureName = StoredProcedureName(operation, args);
+        var operation = RawOperationName(words);
+        var storedProcedureName = words.Length == 1 ? StoredProcedureName(operation, args) : null;
         var commandValue = new DynamicCommand(tokens);
         var response = await (storedProcedureName is null
                 ? SendAsync(operation, commandValue, CancellationToken.None)
@@ -162,6 +162,28 @@ public sealed partial class RespireClient : IRespireClient
             operation.Equals("FCALL_RO", StringComparison.OrdinalIgnoreCase))
             ? arguments[0].ToString()
             : null;
+
+    private static string RawOperationName(string[] words)
+    {
+        var command = words[0].ToUpperInvariant();
+        if (words.Length == 1)
+        {
+            return command;
+        }
+
+        var subcommand = KnownRawSubcommand(command, words[1]);
+        return subcommand is null ? command : $"{command} {subcommand}";
+    }
+
+    private static string? KnownRawSubcommand(string command, string candidate)
+        => command switch
+        {
+            "CONFIG" when candidate.Equals("GET", StringComparison.OrdinalIgnoreCase) => "GET",
+            "CONFIG" when candidate.Equals("SET", StringComparison.OrdinalIgnoreCase) => "SET",
+            "SCRIPT" when candidate.Equals("LOAD", StringComparison.OrdinalIgnoreCase) => "LOAD",
+            "XGROUP" when candidate.Equals("CREATE", StringComparison.OrdinalIgnoreCase) => "CREATE",
+            _ => null,
+        };
 
     // Pub/sub
 

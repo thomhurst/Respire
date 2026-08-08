@@ -110,8 +110,8 @@ public class TelemetryTests
         await Assert.That(activities[0].OperationName).IsEqualTo("PIPELINE SET");
         await Assert.That(Tag(activities[0], "db.operation.name")).IsEqualTo("PIPELINE SET");
         await Assert.That(Tag(activities[0], "db.operation.batch.size")).IsEqualTo(2);
-        await Assert.That(capture.Measurements.Count(measurement =>
-            measurement.Tags.GetValueOrDefault("server.port") as int? == server.Port)).IsEqualTo(1);
+        var measurement = capture.SingleMeasurement("PIPELINE SET", server.Port);
+        await Assert.That(measurement.Tags["db.operation.batch.size"]).IsEqualTo(2);
     }
 
     [Test]
@@ -129,6 +129,9 @@ public class TelemetryTests
             Tag(activity, "server.address") as string == "empty-pipeline.example");
         await Assert.That(activity.OperationName).IsEqualTo("PIPELINE");
         await Assert.That(Tag(activity, "db.operation.batch.size")).IsEqualTo(0);
+        var measurement = capture.Measurements.Single(measurement =>
+            measurement.Tags.GetValueOrDefault("server.address") as string == "empty-pipeline.example");
+        await Assert.That(measurement.Tags["db.operation.batch.size"]).IsEqualTo(0);
     }
 
     [Test]
@@ -149,8 +152,8 @@ public class TelemetryTests
 
         var activity = capture.SingleActivity("MULTI SET", server.Port);
         await Assert.That(Tag(activity, "db.operation.batch.size")).IsEqualTo(2);
-        await Assert.That(capture.Measurements.Count(measurement =>
-            measurement.Tags.GetValueOrDefault("server.port") as int? == server.Port)).IsEqualTo(1);
+        var measurement = capture.SingleMeasurement("MULTI SET", server.Port);
+        await Assert.That(measurement.Tags["db.operation.batch.size"]).IsEqualTo(2);
     }
 
     [Test]
@@ -187,6 +190,22 @@ public class TelemetryTests
 
         var activity = capture.SingleActivity("CONFIG GET", server.Port);
         await Assert.That(Tag(activity, "db.operation.name")).IsEqualTo("CONFIG GET");
+    }
+
+    [Test]
+    public async Task RawCommand_ExcludesInlineArgumentsFromTelemetry()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        using var capture = new TelemetryCapture();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        using var result = await client.ExecuteAsync("AUTH my-secret");
+
+        var activity = capture.SingleActivity("AUTH", server.Port);
+        await Assert.That(Tag(activity, "db.operation.name")).IsEqualTo("AUTH");
+        var measurement = capture.SingleMeasurement("AUTH", server.Port);
+        await Assert.That(measurement.Tags["db.operation.name"]).IsEqualTo("AUTH");
+        await Assert.That(activity.OperationName.Contains("my-secret", StringComparison.Ordinal)).IsFalse();
     }
 
     [Test]

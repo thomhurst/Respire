@@ -210,7 +210,8 @@ public sealed class RespireTransaction : IAsyncDisposable
                     core,
                     telemetryOperation,
                     error: operationError,
-                    connection: connection);
+                    connection: connection,
+                    batchSize: _ops.Count == 1 ? null : _ops.Count);
             }
         }
 
