@@ -22,3 +22,7 @@ tools/Respire.StressTests/results/
 website/node_modules/
 website/build/
 website/.docusaurus/
+
+# Python tooling
+__pycache__/
+*.py[cod]

@@ -29,6 +29,8 @@ const sidebars = {
       items: ['integrations/dependency-injection', 'integrations/caching', 'integrations/observability'],
     },
     'performance',
+    'benchmarks',
+    'stress-tests',
     'roadmap',
   ],
 };
