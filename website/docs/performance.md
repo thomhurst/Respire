@@ -37,7 +37,7 @@ Long-running `BLPOP`, `BLMOVE`, and stream reads do not occupy multiplexed conne
 Repository benchmarks compare Respire with StackExchange.Redis and include protocol, pipeline, throughput, allocation, and container-backed scenarios:
 
 ```bash
-./run-benchmarks.sh all
+./run-benchmarks.sh -t All
 ```
 
 Use results as evidence about this implementation, then profile your payload sizes, concurrency, server, network, and serialization choices. Benchmark reports live in the repository's [`benchmarks`](https://github.com/thomhurst/Respire/tree/main/benchmarks) directory.

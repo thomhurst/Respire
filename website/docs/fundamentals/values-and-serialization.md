@@ -44,7 +44,7 @@ var options = new RespireOptions
 };
 ```
 
-String, binary, and primitive calls bypass object serialization.
+Typed `string` and `byte[]` values bypass object serialization. Other values passed to `SetAsync<T>`, including numeric and Boolean primitives, use the configured serializer. Pass a `RespireValue` explicitly when the value must be stored as a raw Redis scalar, as shown in [Keys and input values](#keys-and-input-values).
 
 ## Zero-copy leased reads
 
