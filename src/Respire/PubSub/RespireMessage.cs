@@ -30,7 +30,7 @@ public readonly struct RespireMessage
     /// <summary>The payload decoded as UTF-8.</summary>
     public string Text => Encoding.UTF8.GetString(Payload.Span);
 
-    /// <summary>The payload deserialized via the client's serializer.</summary>
+    /// <summary>The typed payload; strings, bytes, Boolean values, and numbers bypass the serializer.</summary>
     public T? As<T>()
     {
         if (typeof(T) == typeof(string))
@@ -41,6 +41,11 @@ public readonly struct RespireMessage
         if (typeof(T) == typeof(byte[]))
         {
             return (T)(object)Payload.ToArray();
+        }
+
+        if (PrimitiveCodec.TryDeserialize<T>(Payload.Span, out var primitive))
+        {
+            return primitive;
         }
 
         return _serializer.Deserialize<T>(Payload.Span);

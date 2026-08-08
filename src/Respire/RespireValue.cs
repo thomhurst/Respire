@@ -19,6 +19,8 @@ public readonly struct RespireValue
         String,
         Bytes,
         Integer,
+        UnsignedInteger,
+        Single,
         Double,
         Boolean,
     }
@@ -57,10 +59,29 @@ public readonly struct RespireValue
 
     public static implicit operator RespireValue(long value) => new(Kind.Integer, number: value);
 
+    public static implicit operator RespireValue(byte value) => new(Kind.Integer, number: value);
+
+    public static implicit operator RespireValue(sbyte value) => new(Kind.Integer, number: value);
+
+    public static implicit operator RespireValue(short value) => new(Kind.Integer, number: value);
+
+    public static implicit operator RespireValue(ushort value) => new(Kind.Integer, number: value);
+
     public static implicit operator RespireValue(int value) => new(Kind.Integer, number: value);
+
+    public static implicit operator RespireValue(uint value) => new(Kind.Integer, number: value);
+
+    public static implicit operator RespireValue(ulong value)
+        => new(Kind.UnsignedInteger, number: unchecked((long)value));
+
+    public static implicit operator RespireValue(float value)
+        => new(Kind.Single, number: BitConverter.SingleToInt32Bits(value));
 
     public static implicit operator RespireValue(double value)
         => new(Kind.Double, number: BitConverter.DoubleToInt64Bits(value));
+
+    public static implicit operator RespireValue(decimal value)
+        => new(value.ToString(CultureInfo.InvariantCulture));
 
     public static implicit operator RespireValue(bool value)
         => new(Kind.Boolean, number: value ? 1 : 0);
@@ -78,6 +99,16 @@ public readonly struct RespireValue
                 break;
             case Kind.Integer:
                 writer.WriteBulkInteger(_number);
+                break;
+            case Kind.UnsignedInteger:
+                Span<byte> unsignedDigits = stackalloc byte[20];
+                Utf8Formatter.TryFormat(unchecked((ulong)_number), unsignedDigits, out var unsignedWritten);
+                writer.WriteBulkString(unsignedDigits[..unsignedWritten]);
+                break;
+            case Kind.Single:
+                Span<byte> singleDigits = stackalloc byte[16];
+                Utf8Formatter.TryFormat(BitConverter.Int32BitsToSingle((int)_number), singleDigits, out var singleWritten);
+                writer.WriteBulkString(singleDigits[..singleWritten]);
                 break;
             case Kind.Double:
                 Span<byte> digits = stackalloc byte[32];
@@ -99,6 +130,8 @@ public readonly struct RespireValue
             Kind.String => _string!,
             Kind.Bytes => Encoding.UTF8.GetString(_bytes.Span),
             Kind.Integer => _number.ToString(CultureInfo.InvariantCulture),
+            Kind.UnsignedInteger => unchecked((ulong)_number).ToString(CultureInfo.InvariantCulture),
+            Kind.Single => BitConverter.Int32BitsToSingle((int)_number).ToString(CultureInfo.InvariantCulture),
             Kind.Double => BitConverter.Int64BitsToDouble(_number).ToString(CultureInfo.InvariantCulture),
             Kind.Boolean => _number != 0 ? "1" : "0",
             _ => string.Empty,
