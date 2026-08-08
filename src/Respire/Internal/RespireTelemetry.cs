@@ -192,7 +192,7 @@ internal static class RespireTelemetry
                         activity.SetTag("db.response.status_code", responseStatusCode);
                     }
 
-                    activity.SetStatus(ActivityStatusCode.Error, error.Message);
+                    activity.SetStatus(ActivityStatusCode.Error, errorType);
                 }
 
                 activity.Stop();

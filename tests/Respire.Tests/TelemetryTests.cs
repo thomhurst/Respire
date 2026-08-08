@@ -74,7 +74,7 @@ public class TelemetryTests
     [Test]
     public async Task RedisError_EmitsStatusCodeAndMatchingErrorType()
     {
-        await using var server = new FakeRespServer("-WRONGTYPE Operation against a key holding the wrong kind of value\r\n"u8.ToArray());
+        await using var server = new FakeRespServer("-WRONGTYPE rejected my-secret\r\n"u8.ToArray());
         using var capture = new TelemetryCapture();
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
@@ -84,6 +84,8 @@ public class TelemetryTests
         var activity = capture.SingleActivity("GET", server.Port);
         var tags = Tags(activity);
         await Assert.That(activity.Status).IsEqualTo(ActivityStatusCode.Error);
+        await Assert.That(activity.StatusDescription).IsEqualTo("WRONGTYPE");
+        await Assert.That(activity.StatusDescription!.Contains("my-secret", StringComparison.Ordinal)).IsFalse();
         await Assert.That(tags["error.type"]).IsEqualTo("WRONGTYPE");
         await Assert.That(tags["db.response.status_code"]).IsEqualTo("WRONGTYPE");
 
@@ -206,6 +208,21 @@ public class TelemetryTests
         var measurement = capture.SingleMeasurement("AUTH", server.Port);
         await Assert.That(measurement.Tags["db.operation.name"]).IsEqualTo("AUTH");
         await Assert.That(activity.OperationName.Contains("my-secret", StringComparison.Ordinal)).IsFalse();
+    }
+
+    [Test]
+    public async Task InterpolatedCommand_NormalizesTelemetryWithoutChangingWireToken()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        using var capture = new TelemetryCapture();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var key = new RespireKey("key");
+
+        using var result = await client.ExecuteAsync($"get {key}");
+
+        var activity = capture.SingleActivity("GET", server.Port);
+        await Assert.That(Tag(activity, "db.operation.name")).IsEqualTo("GET");
+        await Assert.That(server.ReceivedCommands.Single()).IsEqualTo("get key");
     }
 
     [Test]
