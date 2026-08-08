@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
 
@@ -80,19 +81,24 @@ internal sealed class ListCommands(RespireClient client) : IListCommands
     public ValueTask<string?> RightPopAsync(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
         => PopAsync(key, waitFor, Verbs.RPop, Verbs.BRPop, "RPOP", "BRPOP", cancellationToken);
 
-    private async ValueTask<string?> PopAsync(
+    private ValueTask<string?> PopAsync(
         RespireKey key, TimeSpan? waitFor, Verb plain, Verb blocking, string plainName, string blockingName,
         CancellationToken cancellationToken)
     {
         if (waitFor is not { } wait)
         {
-            var value = await client.SendAsync(plainName, new Cmd1(plain, client.Key(in key)), cancellationToken)
-                .ConfigureAwait(false);
-            var result = ResponseReader.StringOrNull(in value);
-            value.Dispose();
-            return result;
+            return client.StringOrNullAsync(plainName, new Cmd1(plain, client.Key(in key)), cancellationToken);
         }
 
+        return PopBlockingAsync(key, wait, blocking, blockingName, cancellationToken);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<string?> PopBlockingAsync(
+        RespireKey key, TimeSpan wait, Verb blocking, string blockingName, CancellationToken cancellationToken)
+    {
         // BLPOP replies [key, value], or null on timeout.
         var reply = await client.SendBlockingAsync(
             blockingName, new Cmd2(blocking, client.Key(in key), ToSeconds(wait)), cancellationToken).ConfigureAwait(false);
@@ -101,7 +107,7 @@ internal sealed class ListCommands(RespireClient client) : IListCommands
         return popped;
     }
 
-    public async ValueTask<string?> MoveAsync(
+    public ValueTask<string?> MoveAsync(
         RespireKey source, RespireKey destination, ListSide from = ListSide.Left, ListSide to = ListSide.Right,
         TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
     {
@@ -109,14 +115,21 @@ internal sealed class ListCommands(RespireClient client) : IListCommands
         RespireValue toSide = to == ListSide.Left ? "LEFT" : "RIGHT";
         if (waitFor is not { } wait)
         {
-            var value = await client.SendAsync(
+            return client.StringOrNullAsync(
                 "LMOVE", new Cmd4(Verbs.LMove, client.Key(in source), client.Key(in destination), fromSide, toSide),
-                cancellationToken).ConfigureAwait(false);
-            var result = ResponseReader.StringOrNull(in value);
-            value.Dispose();
-            return result;
+                cancellationToken);
         }
 
+        return MoveBlockingAsync(source, destination, fromSide, toSide, wait, cancellationToken);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<string?> MoveBlockingAsync(
+        RespireKey source, RespireKey destination, RespireValue fromSide, RespireValue toSide, TimeSpan wait,
+        CancellationToken cancellationToken)
+    {
         var reply = await client.SendBlockingAsync(
             "BLMOVE",
             new Cmd5(Verbs.BLMove, client.Key(in source), client.Key(in destination), fromSide, toSide, ToSeconds(wait)),
