@@ -426,8 +426,17 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         {
             try
             {
-                (await send.ConfigureAwait(false)).Dispose();
-                return null;
+                var reply = await send.ConfigureAwait(false);
+                try
+                {
+                    return reply.IsError
+                        ? new RespireServerException(reply.GetErrorMessage())
+                        : null;
+                }
+                finally
+                {
+                    reply.Dispose();
+                }
             }
             catch (Exception ex)
             {

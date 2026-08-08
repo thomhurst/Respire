@@ -1063,6 +1063,53 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
     }
 
     [Test]
+    public async Task Correction_BroadcastPropagatesRedisErrors()
+    {
+        var username = $"cache-no-eval-{Guid.NewGuid():N}";
+        const string password = "cache-test-password";
+        (await Client.ExecuteAsync(
+            "ACL", "SETUSER", username, "reset", "on", $">{password}", "~*", "+@all", "-eval")).Dispose();
+
+        RespireClient? restrictedClient = null;
+        try
+        {
+            var options = RespireOptions.Parse(fixture.ConnectionString) with
+            {
+                Username = username,
+                Password = password,
+                Connections = 2,
+            };
+            restrictedClient = await RespireClient.ConnectAsync(options);
+            await restrictedClient.EnsureReliableCorrectionOrderingAsync();
+
+            RespireServerException? failure = null;
+            try
+            {
+                await restrictedClient.ExecuteOnAllConnectionsAsync(
+                    RespireDistributedCache.CapTtlScript,
+                    ["broadcast-error"],
+                    [DateTimeOffset.UtcNow.AddMinutes(1).UtcTicks, -1L, 60_000L]);
+            }
+            catch (RespireServerException ex)
+            {
+                failure = ex;
+            }
+
+            await Assert.That(failure).IsNotNull();
+            await Assert.That(failure!.Code).IsEqualTo("NOPERM");
+        }
+        finally
+        {
+            if (restrictedClient is not null)
+            {
+                await restrictedClient.DisposeAsync();
+            }
+
+            (await Client.ExecuteAsync("ACL", "DELUSER", username)).Dispose();
+        }
+    }
+
+    [Test]
     public async Task Set_CorrectionTimeoutFencesExactOriginalConnection()
     {
         await Client.Scripts.LoadAsync(RespireDistributedCache.SetScript);
