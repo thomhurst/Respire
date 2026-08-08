@@ -477,15 +477,16 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         // the delete itself is leased — it only runs while a TTL'd lease key placed beforehand
         // is still alive, and no failure surfaces until that lease is revoked or has certainly
         // expired, so a copy already flushed to the server cannot delete anything written after
-        // the caller saw the failure. A mocked client falls back to the facet, whose token-less
-        // wait keeps the mock's own semantics.
+        // the caller saw the failure. A mocked/decorated client falls back to its token-less
+        // facet operation; only the caller's wait can be cancelled, so any late-delete behavior
+        // remains that implementation's responsibility.
         if (_wireClient is { } wire)
         {
             await wire.UnlinkGuardedAsync(key, token).ConfigureAwait(false);
         }
         else
         {
-            await _client.Keys.UnlinkAsync(key).ConfigureAwait(false);
+            await _client.Keys.UnlinkAsync(key).AsTask().WaitAsync(token).ConfigureAwait(false);
         }
     }
 

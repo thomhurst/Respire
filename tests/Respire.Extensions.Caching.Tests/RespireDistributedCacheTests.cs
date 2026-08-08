@@ -252,6 +252,35 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         await Assert.That(await Cache.GetAsync("cancel-remove")).IsNotNull();
     }
 
+    [Test]
+    public async Task RemoveAsync_WrappedClient_CancellationStopsTheWait()
+    {
+        var keys = new BlockingUnlinkKeyCommands(Client.Keys);
+        var wrappedClient = new ScriptInterceptingClient(Client, (_, send) => send(), keys);
+        await using var cache = new RespireDistributedCache(wrappedClient);
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+
+        var cancelled = false;
+        try
+        {
+            await cache.RemoveAsync("cancel-wrapped-remove", cts.Token).WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        catch (OperationCanceledException)
+        {
+            cancelled = true;
+        }
+        catch (TimeoutException)
+        {
+            Assert.Fail("Wrapped removal did not honor cancellation.");
+        }
+        finally
+        {
+            keys.Complete();
+        }
+
+        await Assert.That(cancelled).IsTrue();
+    }
+
     // The next tests exercise the correction a delayed set triggers (a send that reached Redis
     // only after a stall — lazy first connect, reconnect — arms a TTL computed before the delay).
     // The delay itself cannot be reproduced through the public API, so they execute the
@@ -1038,7 +1067,8 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
     /// </summary>
     private sealed class ScriptInterceptingClient(
         RespireClient inner,
-        Func<int, Func<ValueTask<RespireResult>>, ValueTask<RespireResult>> onScript) : IRespireClient
+        Func<int, Func<ValueTask<RespireResult>>, ValueTask<RespireResult>> onScript,
+        IKeyCommands? keys = null) : IRespireClient
     {
         private int _scriptCalls;
 
@@ -1072,7 +1102,7 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         }
 
         public IStringCommands Strings => inner.Strings;
-        public IKeyCommands Keys => inner.Keys;
+        public IKeyCommands Keys => keys ?? inner.Keys;
         public IHashCommands Hashes => inner.Hashes;
         public IListCommands Lists => inner.Lists;
         public ISetCommands Sets => inner.Sets;
@@ -1143,5 +1173,48 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
 
         // The test owns the wrapped client's lifetime.
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class BlockingUnlinkKeyCommands(IKeyCommands inner) : IKeyCommands
+    {
+        private readonly TaskCompletionSource<long> _unlink =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void Complete() => _unlink.TrySetResult(0);
+
+        public ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys) => inner.DeleteAsync(keys);
+        public ValueTask<long> UnlinkAsync(params ReadOnlySpan<RespireKey> keys) => new(_unlink.Task);
+
+        public ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default)
+            => inner.ExistsAsync(key, cancellationToken);
+
+        public ValueTask<bool> ExpireAsync(
+            RespireKey key, TimeSpan expiry, CancellationToken cancellationToken = default)
+            => inner.ExpireAsync(key, expiry, cancellationToken);
+
+        public ValueTask<bool> ExpireAtAsync(
+            RespireKey key, DateTimeOffset expireAt, CancellationToken cancellationToken = default)
+            => inner.ExpireAtAsync(key, expireAt, cancellationToken);
+
+        public ValueTask<bool> PersistAsync(RespireKey key, CancellationToken cancellationToken = default)
+            => inner.PersistAsync(key, cancellationToken);
+
+        public ValueTask<RespireExpiry> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
+            => inner.ExpiryAsync(key, cancellationToken);
+
+        public ValueTask<string> TypeAsync(RespireKey key, CancellationToken cancellationToken = default)
+            => inner.TypeAsync(key, cancellationToken);
+
+        public ValueTask RenameAsync(
+            RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default)
+            => inner.RenameAsync(key, newKey, cancellationToken);
+
+        public ValueTask<long> TouchAsync(params ReadOnlySpan<RespireKey> keys) => inner.TouchAsync(keys);
+
+        public IAsyncEnumerable<string> ScanAsync(
+            string? match = null,
+            int pageSize = 250,
+            CancellationToken cancellationToken = default)
+            => inner.ScanAsync(match, pageSize, cancellationToken);
     }
 }
