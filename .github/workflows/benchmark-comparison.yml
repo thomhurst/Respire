@@ -111,7 +111,9 @@ jobs:
   publish-to-docs:
     name: Publish benchmark documentation
     needs: comparison-benchmarks
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.filter == '*')
     runs-on: ubuntu-latest
 
     permissions:
@@ -125,6 +127,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
 
       - name: Download benchmark artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -154,6 +158,8 @@ jobs:
             exit 0
           fi
           git commit -m "docs: update benchmark results"
+          git fetch origin main
+          git rebase origin/main
           git push origin HEAD:main
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
