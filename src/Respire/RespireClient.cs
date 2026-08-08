@@ -102,12 +102,15 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     /// <summary>Sends PING and returns the measured round-trip time. Redis: PING.</summary>
-    public async ValueTask<TimeSpan> PingAsync(CancellationToken cancellationToken = default)
+    public ValueTask<TimeSpan> PingAsync(CancellationToken cancellationToken = default)
     {
         var start = Stopwatch.GetTimestamp();
-        var response = await SendAsync("PING", new RawCommand(RespCommands.Ping), cancellationToken).ConfigureAwait(false);
-        response.Dispose();
-        return Stopwatch.GetElapsedTime(start);
+        return ConvertResponseAsync(
+            "PING",
+            new RawCommand(RespCommands.Ping),
+            cancellationToken,
+            start,
+            static (long timestamp, in RespValue _) => Stopwatch.GetElapsedTime(timestamp));
     }
 
     // Raw escape hatch
@@ -345,10 +348,7 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     /// <summary>The central send path: lazy connect, optional command timeout, telemetry, error translation.</summary>
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    internal async ValueTask<RespValue> SendAsync<TCommand>(
+    internal ValueTask<RespValue> SendAsync<TCommand>(
         string operation,
         TCommand command,
         CancellationToken cancellationToken)
@@ -356,8 +356,26 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        if (!core.Multiplexer.IsInitialized)
+        {
+            return SendAfterConnectAsync(operation, command, cancellationToken);
+        }
 
+        var connection = core.Multiplexer.GetConnection();
+        return SendOnConnectionAsync(operation, connection, command, cancellationToken);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<RespValue> SendAfterConnectAsync<TCommand>(
+        string operation,
+        TCommand command,
+        CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var core = _core;
+        await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         var connection = core.Multiplexer.GetConnection();
         return await SendOnConnectionAsync(operation, connection, command, cancellationToken)
             .ConfigureAwait(false);
@@ -380,41 +398,42 @@ public sealed partial class RespireClient : IRespireClient
             .ConfigureAwait(false);
     }
 
-    private async ValueTask<RespValue> SendOnConnectionCoreAsync<TCommand>(
+    private ValueTask<RespValue> SendOnConnectionCoreAsync<TCommand>(
         string operation,
         RespireConnection connection,
         TCommand command,
         CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
-        var core = _core;
-        RespValue response;
-        if (core.Options.CommandTimeout is { } timeout)
+        if (_core.Options.CommandTimeout is not { } timeout)
         {
-            using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutSource.CancelAfter(timeout);
-            try
-            {
-                response = await connection.SendAsync(in command, timeoutSource.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                throw new RespireTimeoutException(operation, timeout);
-            }
-        }
-        else
-        {
-            response = await connection.SendAsync(in command, cancellationToken).ConfigureAwait(false);
+            return connection.SendCheckedAsync(in command, cancellationToken);
         }
 
-        if (response.IsError)
-        {
-            var error = ResponseReader.ServerError(in response);
-            response.Dispose();
-            throw error;
-        }
+        return SendWithTimeoutAsync(operation, connection, command, cancellationToken, timeout);
+    }
 
-        return response;
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private static async ValueTask<RespValue> SendWithTimeoutAsync<TCommand>(
+        string operation,
+        RespireConnection connection,
+        TCommand command,
+        CancellationToken cancellationToken,
+        TimeSpan timeout)
+        where TCommand : struct, IRespCommand
+    {
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(timeout);
+        try
+        {
+            return await connection.SendCheckedAsync(in command, timeoutSource.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new RespireTimeoutException(operation, timeout);
+        }
     }
 
     private ValueTask<RespValue> SendOnConnectionAsync<TCommand>(
@@ -957,41 +976,56 @@ public sealed partial class RespireClient : IRespireClient
 
     // Typed send helpers — one per reply shape, shared by every facet.
 
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    internal async ValueTask<long> IntegerAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    private ValueTask<TResult> ConvertAsync<TCommand, TResult>(
+        string operation,
+        TCommand command,
+        CancellationToken ct,
+        ResponseConverter<RespireClient, TResult> converter,
+        bool transferOwnership = false)
+        where TCommand : struct, IRespCommand
+        => ConvertResponseAsync(operation, command, ct, this, converter, transferOwnership);
+
+    private ValueTask<TResult> ConvertResponseAsync<TCommand, TState, TResult>(
+        string operation,
+        TCommand command,
+        CancellationToken ct,
+        TState state,
+        ResponseConverter<TState, TResult> converter,
+        bool transferOwnership = false)
         where TCommand : struct, IRespCommand
     {
-        var value = await SendAsync(operation, command, ct).ConfigureAwait(false);
-        var result = ResponseReader.Integer(in value);
-        value.Dispose();
-        return result;
+        var core = _core;
+        ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (core.Options.CommandTimeout is null
+            && !RespireTelemetry.IsEnabled
+            && core.Multiplexer.IsInitialized)
+        {
+            var connection = core.Multiplexer.GetConnection();
+            return connection.SendConvertedAsync(
+                in command, state, converter, transferOwnership, ct);
+        }
+
+        return PooledResponseSource<TState, TResult>.Create(
+            SendAsync(operation, command, ct), state, converter, transferOwnership);
     }
 
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    internal async ValueTask<bool> FlagAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<long> IntegerAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
-    {
-        var value = await SendAsync(operation, command, ct).ConfigureAwait(false);
-        var result = ResponseReader.Flag(in value);
-        value.Dispose();
-        return result;
-    }
+        => ConvertAsync(
+            operation, command, ct,
+            static (RespireClient _, in RespValue value) => ResponseReader.Integer(in value));
 
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    internal async ValueTask<bool> OkOrNullAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<bool> FlagAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
-    {
-        var value = await SendAsync(operation, command, ct).ConfigureAwait(false);
-        var result = ResponseReader.OkOrNull(in value);
-        value.Dispose();
-        return result;
-    }
+        => ConvertAsync(
+            operation, command, ct,
+            static (RespireClient _, in RespValue value) => ResponseReader.Flag(in value));
+
+    internal ValueTask<bool> OkOrNullAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+        where TCommand : struct, IRespCommand
+        => ConvertAsync(
+            operation, command, ct,
+            static (RespireClient _, in RespValue value) => ResponseReader.OkOrNull(in value));
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
@@ -1010,123 +1044,70 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    internal async ValueTask<string> StringAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<string> StringAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
-    {
-        var value = await SendAsync(operation, command, ct).ConfigureAwait(false);
-        var result = ResponseReader.String(in value);
-        value.Dispose();
-        return result;
-    }
+        => ConvertAsync(
+            operation, command, ct,
+            static (RespireClient _, in RespValue value) => ResponseReader.String(in value));
 
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    internal async ValueTask<string?> StringOrNullAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<string?> StringOrNullAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
-    {
-        var value = await SendAsync(operation, command, ct).ConfigureAwait(false);
-        var result = ResponseReader.StringOrNull(in value);
-        value.Dispose();
-        return result;
-    }
+        => ConvertAsync(
+            operation, command, ct,
+            static (RespireClient _, in RespValue value) => ResponseReader.StringOrNull(in value));
 
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    internal async ValueTask<byte[]?> BytesOrNullAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<byte[]?> BytesOrNullAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
-    {
-        var value = await SendAsync(operation, command, ct).ConfigureAwait(false);
-        var result = ResponseReader.BytesOrNull(in value);
-        value.Dispose();
-        return result;
-    }
+        => ConvertAsync(
+            operation, command, ct,
+            static (RespireClient _, in RespValue value) => ResponseReader.BytesOrNull(in value));
 
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    internal async ValueTask<double> DoubleAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<double> DoubleAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
-    {
-        var value = await SendAsync(operation, command, ct).ConfigureAwait(false);
-        var result = ResponseReader.Double(in value);
-        value.Dispose();
-        return result;
-    }
+        => ConvertAsync(
+            operation, command, ct,
+            static (RespireClient _, in RespValue value) => ResponseReader.Double(in value));
 
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    internal async ValueTask<double?> DoubleOrNullAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<double?> DoubleOrNullAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
-    {
-        var value = await SendAsync(operation, command, ct).ConfigureAwait(false);
-        var result = ResponseReader.DoubleOrNull(in value);
-        value.Dispose();
-        return result;
-    }
+        => ConvertAsync(
+            operation, command, ct,
+            static (RespireClient _, in RespValue value) => ResponseReader.DoubleOrNull(in value));
 
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    internal async ValueTask<long?> IntegerOrNullAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<long?> IntegerOrNullAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
-    {
-        var value = await SendAsync(operation, command, ct).ConfigureAwait(false);
-        var result = ResponseReader.IntegerOrNull(in value);
-        value.Dispose();
-        return result;
-    }
+        => ConvertAsync(
+            operation, command, ct,
+            static (RespireClient _, in RespValue value) => ResponseReader.IntegerOrNull(in value));
 
-    internal async ValueTask<string[]> StringArrayAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<string[]> StringArrayAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
-    {
-        var value = await SendAsync(operation, command, ct).ConfigureAwait(false);
-        var result = ResponseReader.StringArray(in value);
-        value.Dispose();
-        return result;
-    }
+        => ConvertAsync(
+            operation, command, ct,
+            static (RespireClient _, in RespValue value) => ResponseReader.StringArray(in value));
 
-    internal async ValueTask<string?[]> NullableStringArrayAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<string?[]> NullableStringArrayAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
-    {
-        var value = await SendAsync(operation, command, ct).ConfigureAwait(false);
-        var result = ResponseReader.NullableStringArray(in value);
-        value.Dispose();
-        return result;
-    }
+        => ConvertAsync(
+            operation, command, ct,
+            static (RespireClient _, in RespValue value) => ResponseReader.NullableStringArray(in value));
 
-    internal async ValueTask<Dictionary<string, string>> StringMapAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<Dictionary<string, string>> StringMapAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
-    {
-        var value = await SendAsync(operation, command, ct).ConfigureAwait(false);
-        var result = ResponseReader.StringMap(in value);
-        value.Dispose();
-        return result;
-    }
+        => ConvertAsync(
+            operation, command, ct,
+            static (RespireClient _, in RespValue value) => ResponseReader.StringMap(in value));
 
-    internal async ValueTask<T?> DeserializeAsync<T, TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<T?> DeserializeAsync<T, TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
-    {
-        var value = await SendAsync(operation, command, ct).ConfigureAwait(false);
-        try
-        {
-            return DeserializeBorrowed<T>(in value);
-        }
-        finally
-        {
-            value.Dispose();
-        }
-    }
+        => ConvertAsync<TCommand, T?>(
+            operation, command, ct,
+            static (RespireClient client, in RespValue value) => client.DeserializeBorrowed<T>(in value));
 
-    internal async ValueTask<RespireLease> LeaseAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+    internal ValueTask<RespireLease> LeaseAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
-    {
-        var value = await SendAsync(operation, command, ct).ConfigureAwait(false);
-        return new RespireLease(in value);
-    }
+        => ConvertAsync(
+            operation, command, ct,
+            static (RespireClient _, in RespValue value) => new RespireLease(in value),
+            transferOwnership: true);
 }

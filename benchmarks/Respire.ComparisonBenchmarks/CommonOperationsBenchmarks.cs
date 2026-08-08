@@ -22,6 +22,7 @@ namespace Respire.ComparisonBenchmarks;
 public class CommonOperationsBenchmarks
 {
     private const int ConcurrentOps = 50;
+    private const int SteadyStateOps = 100;
 
     private IContainer? _redisContainer;
     private RespireClient _respire = null!;
@@ -31,6 +32,8 @@ public class CommonOperationsBenchmarks
     private readonly string _smallValue = "Hello, World!";
     private readonly string _1KBValue = new('X', 1024);
     private readonly string _10KBValue = new('Y', 10240);
+    private readonly Task<RedisValue>[] _stackExchangeConcurrent = new Task<RedisValue>[ConcurrentOps];
+    private readonly ValueTask<string?>[] _respireConcurrent = new ValueTask<string?>[ConcurrentOps];
 
     [GlobalSetup]
     public async Task Setup()
@@ -80,10 +83,10 @@ public class CommonOperationsBenchmarks
     // PING
 
     [Benchmark(Baseline = true), BenchmarkCategory("PING")]
-    public async Task<TimeSpan> StackExchange_Ping() => await _stackExchangeDb.PingAsync();
+    public Task<TimeSpan> StackExchange_Ping() => _stackExchangeDb.PingAsync();
 
     [Benchmark, BenchmarkCategory("PING")]
-    public async Task<TimeSpan> Respire_Ping() => await _respire.PingAsync();
+    public ValueTask<TimeSpan> Respire_Ping() => _respire.PingAsync();
 
     // GET (value read as a string, as a typical caller would)
 
@@ -91,43 +94,118 @@ public class CommonOperationsBenchmarks
     public async Task<string?> StackExchange_Get() => await _stackExchangeDb.StringGetAsync("seeded:string");
 
     [Benchmark, BenchmarkCategory("GET")]
-    public async Task<string?> Respire_Get() => await _respire.GetStringAsync("seeded:string");
+    public ValueTask<string?> Respire_Get() => _respire.GetStringAsync("seeded:string");
 
     // SET
 
     [Benchmark(Baseline = true), BenchmarkCategory("SET 13B")]
-    public async Task<bool> StackExchange_Set_Small() => await _stackExchangeDb.StringSetAsync("bench:set", _smallValue);
+    public Task<bool> StackExchange_Set_Small() => _stackExchangeDb.StringSetAsync("bench:set", _smallValue);
 
     [Benchmark, BenchmarkCategory("SET 13B")]
-    public async Task Respire_Set_Small() => await _respire.SetAsync("bench:set", _smallValue);
+    public ValueTask<bool> Respire_Set_Small() => _respire.SetAsync("bench:set", _smallValue);
 
     [Benchmark(Baseline = true), BenchmarkCategory("SET 1KB")]
-    public async Task<bool> StackExchange_Set_1KB() => await _stackExchangeDb.StringSetAsync("bench:set1kb", _1KBValue);
+    public Task<bool> StackExchange_Set_1KB() => _stackExchangeDb.StringSetAsync("bench:set1kb", _1KBValue);
 
     [Benchmark, BenchmarkCategory("SET 1KB")]
-    public async Task Respire_Set_1KB() => await _respire.SetAsync("bench:set1kb", _1KBValue);
+    public ValueTask<bool> Respire_Set_1KB() => _respire.SetAsync("bench:set1kb", _1KBValue);
 
     [Benchmark(Baseline = true), BenchmarkCategory("SET 10KB")]
-    public async Task<bool> StackExchange_Set_10KB() => await _stackExchangeDb.StringSetAsync("bench:set10kb", _10KBValue);
+    public Task<bool> StackExchange_Set_10KB() => _stackExchangeDb.StringSetAsync("bench:set10kb", _10KBValue);
 
     [Benchmark, BenchmarkCategory("SET 10KB")]
-    public async Task Respire_Set_10KB() => await _respire.SetAsync("bench:set10kb", _10KBValue);
+    public ValueTask<bool> Respire_Set_10KB() => _respire.SetAsync("bench:set10kb", _10KBValue);
+
+    // Batched sequential operations amortize BenchmarkDotNet's async invocation adapter,
+    // exposing each client's steady-state allocation rather than benchmark harness overhead.
+
+    [Benchmark(Baseline = true, OperationsPerInvoke = SteadyStateOps), BenchmarkCategory("PING x100 sequential")]
+    public async Task<TimeSpan> StackExchange_Ping_SteadyState()
+    {
+        var result = default(TimeSpan);
+        for (var i = 0; i < SteadyStateOps; i++)
+        {
+            result = await _stackExchangeDb.PingAsync();
+        }
+
+        return result;
+    }
+
+    [Benchmark(OperationsPerInvoke = SteadyStateOps), BenchmarkCategory("PING x100 sequential")]
+    public async Task<TimeSpan> Respire_Ping_SteadyState()
+    {
+        var result = default(TimeSpan);
+        for (var i = 0; i < SteadyStateOps; i++)
+        {
+            result = await _respire.PingAsync();
+        }
+
+        return result;
+    }
+
+    [Benchmark(Baseline = true, OperationsPerInvoke = SteadyStateOps), BenchmarkCategory("GET x100 sequential")]
+    public async Task<string?> StackExchange_Get_SteadyState()
+    {
+        string? result = null;
+        for (var i = 0; i < SteadyStateOps; i++)
+        {
+            result = await _stackExchangeDb.StringGetAsync("seeded:string");
+        }
+
+        return result;
+    }
+
+    [Benchmark(OperationsPerInvoke = SteadyStateOps), BenchmarkCategory("GET x100 sequential")]
+    public async Task<string?> Respire_Get_SteadyState()
+    {
+        string? result = null;
+        for (var i = 0; i < SteadyStateOps; i++)
+        {
+            result = await _respire.GetStringAsync("seeded:string");
+        }
+
+        return result;
+    }
+
+    [Benchmark(Baseline = true, OperationsPerInvoke = SteadyStateOps), BenchmarkCategory("SET x100 sequential")]
+    public async Task<bool> StackExchange_Set_SteadyState()
+    {
+        var result = false;
+        for (var i = 0; i < SteadyStateOps; i++)
+        {
+            result = await _stackExchangeDb.StringSetAsync("bench:set", _smallValue);
+        }
+
+        return result;
+    }
+
+    [Benchmark(OperationsPerInvoke = SteadyStateOps), BenchmarkCategory("SET x100 sequential")]
+    public async Task<bool> Respire_Set_SteadyState()
+    {
+        var result = false;
+        for (var i = 0; i < SteadyStateOps; i++)
+        {
+            result = await _respire.SetAsync("bench:set", _smallValue);
+        }
+
+        return result;
+    }
 
     // INCR
 
     [Benchmark(Baseline = true), BenchmarkCategory("INCR")]
-    public async Task<long> StackExchange_Incr() => await _stackExchangeDb.StringIncrementAsync("bench:counter");
+    public Task<long> StackExchange_Incr() => _stackExchangeDb.StringIncrementAsync("bench:counter");
 
     [Benchmark, BenchmarkCategory("INCR")]
-    public async Task<long> Respire_Incr() => await _respire.IncrementAsync("bench:counter");
+    public ValueTask<long> Respire_Incr() => _respire.IncrementAsync("bench:counter");
 
     // EXISTS
 
     [Benchmark(Baseline = true), BenchmarkCategory("EXISTS")]
-    public async Task<bool> StackExchange_Exists() => await _stackExchangeDb.KeyExistsAsync("seeded:string");
+    public Task<bool> StackExchange_Exists() => _stackExchangeDb.KeyExistsAsync("seeded:string");
 
     [Benchmark, BenchmarkCategory("EXISTS")]
-    public async Task<bool> Respire_Exists() => await _respire.ExistsAsync("seeded:string");
+    public ValueTask<bool> Respire_Exists() => _respire.ExistsAsync("seeded:string");
 
     // SET + DEL (paired so the key always exists when deleted)
 
@@ -148,16 +226,16 @@ public class CommonOperationsBenchmarks
     // HSET / HGET
 
     [Benchmark(Baseline = true), BenchmarkCategory("HSET")]
-    public async Task<bool> StackExchange_HSet() => await _stackExchangeDb.HashSetAsync("bench:hash", "field", _smallValue);
+    public Task<bool> StackExchange_HSet() => _stackExchangeDb.HashSetAsync("bench:hash", "field", _smallValue);
 
     [Benchmark, BenchmarkCategory("HSET")]
-    public async Task<bool> Respire_HSet() => await _respire.Hashes.SetAsync("bench:hash", "field", _smallValue);
+    public ValueTask<bool> Respire_HSet() => _respire.Hashes.SetAsync("bench:hash", "field", _smallValue);
 
     [Benchmark(Baseline = true), BenchmarkCategory("HGET")]
     public async Task<string?> StackExchange_HGet() => await _stackExchangeDb.HashGetAsync("seeded:hash", "field");
 
     [Benchmark, BenchmarkCategory("HGET")]
-    public async Task<string?> Respire_HGet() => await _respire.Hashes.GetStringAsync("seeded:hash", "field");
+    public ValueTask<string?> Respire_HGet() => _respire.Hashes.GetStringAsync("seeded:hash", "field");
 
     // LPUSH + LPOP (paired so the list stays a constant size)
 
@@ -178,42 +256,46 @@ public class CommonOperationsBenchmarks
     // SADD (same member every time, so set size stays constant)
 
     [Benchmark(Baseline = true), BenchmarkCategory("SADD")]
-    public async Task<bool> StackExchange_SAdd() => await _stackExchangeDb.SetAddAsync("seeded:set", "member");
+    public Task<bool> StackExchange_SAdd() => _stackExchangeDb.SetAddAsync("seeded:set", "member");
 
     [Benchmark, BenchmarkCategory("SADD")]
-    public async Task<long> Respire_SAdd() => await _respire.Sets.AddAsync("seeded:set", "member");
+    public ValueTask<long> Respire_SAdd() => _respire.Sets.AddAsync("seeded:set", "member");
 
     // SISMEMBER
 
     [Benchmark(Baseline = true), BenchmarkCategory("SISMEMBER")]
-    public async Task<bool> StackExchange_SIsMember() => await _stackExchangeDb.SetContainsAsync("seeded:set", "member");
+    public Task<bool> StackExchange_SIsMember() => _stackExchangeDb.SetContainsAsync("seeded:set", "member");
 
     [Benchmark, BenchmarkCategory("SISMEMBER")]
-    public async Task<bool> Respire_SIsMember() => await _respire.Sets.ContainsAsync("seeded:set", "member");
+    public ValueTask<bool> Respire_SIsMember() => _respire.Sets.ContainsAsync("seeded:set", "member");
 
     // Concurrent GETs — 50 overlapping requests per invocation; reported per operation
 
     [Benchmark(Baseline = true, OperationsPerInvoke = ConcurrentOps), BenchmarkCategory("GET x50 concurrent")]
     public async Task StackExchange_Get_Concurrent()
     {
-        var tasks = new Task[ConcurrentOps];
         for (var i = 0; i < ConcurrentOps; i++)
         {
-            tasks[i] = _stackExchangeDb.StringGetAsync("seeded:string");
+            _stackExchangeConcurrent[i] = _stackExchangeDb.StringGetAsync("seeded:string");
         }
 
-        await Task.WhenAll(tasks);
+        for (var i = 0; i < _stackExchangeConcurrent.Length; i++)
+        {
+            await _stackExchangeConcurrent[i];
+        }
     }
 
     [Benchmark(OperationsPerInvoke = ConcurrentOps), BenchmarkCategory("GET x50 concurrent")]
     public async Task Respire_Get_Concurrent()
     {
-        var tasks = new Task[ConcurrentOps];
         for (var i = 0; i < ConcurrentOps; i++)
         {
-            tasks[i] = _respire.GetStringAsync("seeded:string").AsTask();
+            _respireConcurrent[i] = _respire.GetStringAsync("seeded:string");
         }
 
-        await Task.WhenAll(tasks);
+        for (var i = 0; i < _respireConcurrent.Length; i++)
+        {
+            await _respireConcurrent[i];
+        }
     }
 }
