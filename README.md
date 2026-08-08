@@ -159,6 +159,16 @@ See [API design](docs/API_DESIGN.md) for the full surface, design decisions, wir
 and roadmap. Reproducible comparisons with StackExchange.Redis live in
 [`benchmarks/`](benchmarks/).
 
+## Documentation
+
+Read the [Respire documentation](https://thomhurst.github.io/Respire/) or run it locally:
+
+```bash
+cd website
+npm install
+npm start
+```
+
 ## Build and test
 
 ```bash

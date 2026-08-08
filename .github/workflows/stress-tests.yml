@@ -5,6 +5,11 @@ on:
     - cron: '0 2 * * 0' # Weekly Sunday 2 AM UTC: all scenarios, both clients, defaults below
   workflow_dispatch:
     inputs:
+      full_run:
+        description: 'Run the complete comparison and publish it to the documentation'
+        required: false
+        default: false
+        type: boolean
       duration_minutes:
         description: 'Measured minutes per scenario/client pass (runtime ≈ passes × duration; all scenarios + both clients = 14 passes)'
         required: false
@@ -94,6 +99,22 @@ jobs:
       - name: Build stress tests
         run: dotnet build tools/Respire.StressTests -c Release
 
+      - name: Resolve test scope
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          FULL_RUN: ${{ github.event.inputs.full_run || 'false' }}
+          REQUESTED_SCENARIO: ${{ github.event.inputs.scenario || 'all' }}
+          REQUESTED_CLIENT: ${{ github.event.inputs.client || 'all' }}
+        run: |
+          if [ "$EVENT_NAME" = "schedule" ] || [ "$FULL_RUN" = "true" ]; then
+            echo "scenario=all" >> "$GITHUB_OUTPUT"
+            echo "client=all" >> "$GITHUB_OUTPUT"
+          else
+            echo "scenario=$REQUESTED_SCENARIO" >> "$GITHUB_OUTPUT"
+            echo "client=$REQUESTED_CLIENT" >> "$GITHUB_OUTPUT"
+          fi
+
       # Inputs flow through env vars, not string interpolation into the script,
       # to avoid script injection via crafted input values.
       - name: Run stress tests
@@ -102,8 +123,8 @@ jobs:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
           STRESS_DURATION_MINUTES: ${{ github.event.inputs.duration_minutes || '3' }}
-          STRESS_SCENARIO: ${{ github.event.inputs.scenario || 'all' }}
-          STRESS_CLIENT: ${{ github.event.inputs.client || 'all' }}
+          STRESS_SCENARIO: ${{ steps.scope.outputs.scenario }}
+          STRESS_CLIENT: ${{ steps.scope.outputs.client }}
           STRESS_CONCURRENCY: ${{ github.event.inputs.concurrency || '50' }}
           STRESS_VALUE_SIZE: ${{ github.event.inputs.value_size_bytes || '1024' }}
           STRESS_FRAMEWORK: ${{ github.event.inputs.framework || 'net9.0' }}
@@ -133,3 +154,64 @@ jobs:
           name: stress-results-${{ github.event.inputs.framework || 'net9.0' }}
           path: tools/Respire.StressTests/results/
           retention-days: 90
+
+  publish-to-docs:
+    name: Publish stress-test documentation
+    needs: stress
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' || github.event.inputs.full_run == 'true')
+    runs-on: ubuntu-latest
+
+    permissions:
+      actions: write
+      contents: write
+
+    concurrency:
+      group: performance-docs-publish
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+
+      - name: Download stress-test results
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: stress-results-*
+          path: stress-results
+
+      - name: Generate stress-test documentation
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 .github/scripts/stress_docs.py \
+            --results-dir stress-results \
+            --commit "${{ github.sha }}" \
+            --generated-at "$(date -u +'%Y-%m-%d %H:%M UTC')" \
+            --run-url "$RUN_URL" \
+            --output website/docs/stress-tests.md
+
+      - name: Commit stress-test documentation
+        id: publish
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add website/docs/stress-tests.md
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git commit -m "docs: update stress-test results"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy updated documentation
+        if: steps.publish.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run docs.yml --ref main

@@ -1,6 +1,16 @@
 name: Respire vs StackExchange.Redis Benchmarks
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'benchmarks/Respire.ComparisonBenchmarks/**'
+      - '.github/scripts/benchmark_docs.py'
+      - '.github/workflows/benchmark-comparison.yml'
+  schedule:
+    - cron: '0 3 * * 0'
   workflow_dispatch:
     inputs:
       filter:
@@ -49,10 +59,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup .NET SDKs
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: |
             8.0.x
@@ -92,8 +102,69 @@ jobs:
 
       - name: Upload benchmark artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: comparison-benchmarks-${{ matrix.framework }}
           path: benchmarks/Respire.ComparisonBenchmarks/BenchmarkDotNet.Artifacts/
           retention-days: 90
+
+  publish-to-docs:
+    name: Publish benchmark documentation
+    needs: comparison-benchmarks
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.filter == '*')
+    runs-on: ubuntu-latest
+
+    permissions:
+      actions: write
+      contents: write
+
+    concurrency:
+      group: performance-docs-publish
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+
+      - name: Download benchmark artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: comparison-benchmarks-*
+          path: benchmark-results
+
+      - name: Generate benchmark documentation
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 .github/scripts/benchmark_docs.py \
+            --results-dir benchmark-results \
+            --commit "${{ github.sha }}" \
+            --generated-at "$(date -u +'%Y-%m-%d %H:%M UTC')" \
+            --run-url "$RUN_URL" \
+            --output website/docs/benchmarks.md
+
+      - name: Commit benchmark documentation
+        id: publish
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add website/docs/benchmarks.md
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git commit -m "docs: update benchmark results"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy updated documentation
+        if: steps.publish.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run docs.yml --ref main
