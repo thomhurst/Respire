@@ -30,7 +30,7 @@ byte[]? bytes = await redis.GetBytesAsync("payload");
 Order? order = await redis.GetAsync<Order>("order:42");
 ```
 
-A missing key returns `null`. Numeric and condition commands return `long`, `double`, or `bool` as appropriate.
+A missing key returns `null` from string, byte-array, reference-type, and explicitly nullable reads. `GetAsync<T>` returns `default(T)` for a non-nullable value type, so a missing `GetAsync<int>` result is `0`. Numeric and condition commands return `long`, `double`, or `bool` as appropriate.
 
 ## Object serialization
 

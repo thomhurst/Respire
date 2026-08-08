@@ -57,7 +57,7 @@ await redis.SetAsync("user:ada", new User("Ada", 7));
 User? user = await redis.GetAsync<User>("user:ada");
 ```
 
-Strings, byte arrays, and primitives bypass the object serializer.
+Typed strings and byte arrays bypass the object serializer. Other values passed to generic typed APIs, including numeric and Boolean primitives, use the configured serializer. See [values and serialization](./fundamentals/values-and-serialization).
 
 ## Explore commands by data type
 
