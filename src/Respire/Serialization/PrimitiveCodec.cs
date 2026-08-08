@@ -74,7 +74,16 @@ internal static class PrimitiveCodec
 
     internal static bool TryDeserialize<T>(ReadOnlySpan<byte> payload, out T? result)
     {
-        switch (TypeCache<T>.Kind)
+        var kind = TypeCache<T>.Kind;
+        if (kind != PrimitiveKind.None
+            && TypeCache<T>.IsNullable
+            && payload.SequenceEqual("null"u8))
+        {
+            result = default;
+            return true;
+        }
+
+        switch (kind)
         {
             case PrimitiveKind.Boolean:
                 result = Return<T, bool>(ParseBoolean(payload));

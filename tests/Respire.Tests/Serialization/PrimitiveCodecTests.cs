@@ -108,6 +108,21 @@ public class PrimitiveCodecTests
     }
 
     [Test]
+    public async Task NullablePrimitives_PreserveEncodedNull()
+    {
+        var serializer = new CountingSerializer();
+        await using var client = CreateClient(serializer);
+        var message = new RespireMessage("values", pattern: null, "null"u8.ToArray(), serializer);
+
+        var deserialized = client.DeserializeBorrowed<int?>(Bulk("null"));
+        var messageValue = message.As<bool?>();
+
+        await Assert.That(deserialized).IsEqualTo((int?)null);
+        await Assert.That(messageValue).IsEqualTo((bool?)null);
+        await Assert.That(serializer.DeserializeCalls).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task NonPrimitiveValues_StillUseConfiguredSerializer()
     {
         var serializer = new CountingSerializer();

@@ -28,4 +28,16 @@ public class PrimitiveSerializationWireTests
         await Assert.That(count).IsEqualTo(42);
         await Assert.That(enabled).IsTrue();
     }
+
+    [Test]
+    public async Task NullablePrimitives_PreserveJsonNullEncoding()
+    {
+        await using var server = new FakeRespServer("$4\r\nnull\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var result = await client.GetAsync<int?>("count");
+
+        await Assert.That(server.ReceivedCommands[0]).IsEqualTo("GET count");
+        await Assert.That(result).IsEqualTo((int?)null);
+    }
 }
