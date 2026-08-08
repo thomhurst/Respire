@@ -149,6 +149,12 @@ atomically in the same round trip.
 - Custom `IRespireSerializer` support with a System.Text.Json default
 - `IRespireClient` and per-feature interfaces for straightforward testing
 
+Redis telemetry follows OpenTelemetry database semantic conventions. `db.namespace` reports
+the database index configured when the connection was established; raw `SELECT` commands are
+not tracked. Query text is not collected because arbitrary Redis command values cannot be
+reliably sanitized. Operation latency uses the stable `db.client.operation.duration` histogram
+in seconds; pipelines and transactions are recorded as single operations.
+
 See [API design](docs/API_DESIGN.md) for the full surface, design decisions, wire architecture,
 and roadmap. Reproducible comparisons with StackExchange.Redis live in
 [`benchmarks/`](benchmarks/).

@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
@@ -42,6 +43,8 @@ public sealed class RespireConnection : IAsyncDisposable
     private readonly InflightRing _inflight;
     private readonly PendingResponsePool _sourcePool;
     private readonly int _receiveBufferSize;
+    private readonly string? _networkPeerAddress;
+    private readonly int? _networkPeerPort;
     private readonly ILogger? _logger;
     private readonly RespirePushHandler? _pushHandler;
     private readonly Task _receiveTask;
@@ -57,6 +60,8 @@ public sealed class RespireConnection : IAsyncDisposable
     public string Host { get; }
     public int Port { get; }
     public bool IsConnected => !Volatile.Read(ref _dead);
+    internal string? NetworkPeerAddress => _networkPeerAddress;
+    internal int? NetworkPeerPort => _networkPeerPort;
 
     /// <summary>
     /// Completes when the connection dies for any reason (fault, remote close, disposal). Never
@@ -73,6 +78,13 @@ public sealed class RespireConnection : IAsyncDisposable
     private RespireConnection(Socket socket, string host, int port, RespireConnectionOptions options, ILogger? logger)
     {
         _socket = socket;
+        if (socket.RemoteEndPoint is IPEndPoint remoteEndpoint)
+        {
+            var address = remoteEndpoint.Address;
+            _networkPeerAddress = (address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address).ToString();
+            _networkPeerPort = remoteEndpoint.Port;
+        }
+
         Host = host;
         Port = port;
         _logger = logger;

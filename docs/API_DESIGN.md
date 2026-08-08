@@ -344,12 +344,11 @@ concatenates). Also the natural seam for a future `WithLocalCache(...)` view.
 
 ## 14. Observability
 
-- `ActivitySource("Respire")` — span per command, OTel db semantic conventions
-  (`db.system = redis`, `db.operation.name = HGET`, endpoint attrs). Keys excluded by
-  default (PII); opt-in via options.
-- `Meter("Respire")` — `respire.commands` counter (tagged by command/status),
-  `respire.command.duration` histogram, `respire.queue.depth`,
-  `respire.connections.active` gauges.
+- `ActivitySource("Respire")` — span per logical operation using OTel Redis semantic
+  conventions (`db.system.name = redis`, `db.namespace`, `db.operation.name`, endpoint and
+  error attrs). Query text stays excluded because arbitrary Redis command values cannot be
+  reliably sanitized. Pipelines and transactions emit one span with `db.operation.batch.size`.
+- `Meter("Respire")` — stable `db.client.operation.duration` histogram in seconds.
 - `Respire.Extensions.OpenTelemetry`: `AddRespireInstrumentation()` one-liners.
 
 ## 15. Errors

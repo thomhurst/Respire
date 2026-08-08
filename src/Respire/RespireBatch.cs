@@ -95,12 +95,22 @@ public sealed class RespireBatch
         }
 
         _sent = true;
+        var core = _client.Core;
+        var telemetry = RespireTelemetry.StartBatchOperation(
+            "PIPELINE",
+            _ops,
+            static op => op.Operation,
+            core.Multiplexer.Host,
+            core.Multiplexer.Port,
+            core.Options.Database,
+            out var telemetryOperation);
         if (_ops.Count == 0)
         {
+            telemetry.Complete(core, telemetryOperation, batchSize: 0);
             return;
         }
 
-        RespireConnection connection;
+        RespireConnection? connection = null;
         try
         {
             connection = await _client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
@@ -114,6 +124,11 @@ public sealed class RespireBatch
                 op.Fail(ex);
             }
 
+            telemetry.Complete(
+                core,
+                telemetryOperation,
+                error: ex,
+                batchSize: _ops.Count == 1 ? null : _ops.Count);
             throw;
         }
 
@@ -124,13 +139,19 @@ public sealed class RespireBatch
         timeoutSource?.CancelAfter(timeout!.Value);
         var effectiveToken = timeoutSource?.Token ?? cancellationToken;
 
-        var tasks = new Task[_ops.Count];
+        var tasks = new Task<Exception?>[_ops.Count];
         for (var i = 0; i < _ops.Count; i++)
         {
             tasks[i] = _ops[i].RunAsync(_client, connection, effectiveToken, cancellationToken, timeout);
         }
 
-        await Task.WhenAll(tasks).ConfigureAwait(false);
+        var errors = await Task.WhenAll(tasks).ConfigureAwait(false);
+        telemetry.Complete(
+            core,
+            telemetryOperation,
+            error: errors.FirstOrDefault(static error => error is not null),
+            connection: connection,
+            batchSize: _ops.Count == 1 ? null : _ops.Count);
     }
 
     private RespirePending<T> Add<TCommand, T>(string operation, in TCommand command, Func<RespireClient, RespValue, T> convert)
@@ -148,7 +169,11 @@ public sealed class RespireBatch
 
     private abstract class Op
     {
-        public abstract Task RunAsync(
+        protected Op(string operation) => Operation = operation;
+
+        public string Operation { get; }
+
+        public abstract Task<Exception?> RunAsync(
             RespireClient client, RespireConnection connection, CancellationToken effectiveToken,
             CancellationToken callerToken, TimeSpan? timeout);
 
@@ -156,12 +181,12 @@ public sealed class RespireBatch
     }
 
     private sealed class Op<TCommand, T>(
-        string operation, TCommand command, RespirePending<T> pending, Func<RespireClient, RespValue, T> convert) : Op
+        string operation, TCommand command, RespirePending<T> pending, Func<RespireClient, RespValue, T> convert) : Op(operation)
         where TCommand : struct, IRespCommand
     {
         public override void Fail(Exception error) => pending.Fail(error);
 
-        public override async Task RunAsync(
+        public override async Task<Exception?> RunAsync(
             RespireClient client, RespireConnection connection, CancellationToken effectiveToken,
             CancellationToken callerToken, TimeSpan? timeout)
         {
@@ -173,25 +198,38 @@ public sealed class RespireBatch
                     var error = ResponseReader.ServerError(in value);
                     value.Dispose();
                     pending.Fail(error);
-                    return;
+                    return error;
                 }
 
                 try
                 {
-                    pending.Succeed(convert(client, value));
+                    try
+                    {
+                        pending.Succeed(convert(client, value));
+                    }
+                    catch (Exception ex)
+                    {
+                        // Conversion failed after Redis completed successfully; not a DB error.
+                        pending.Fail(ex);
+                    }
                 }
                 finally
                 {
                     value.Dispose();
                 }
+
+                return null;
             }
             catch (OperationCanceledException) when (timeout is { } expired && !callerToken.IsCancellationRequested)
             {
-                pending.Fail(new RespireTimeoutException(operation, expired));
+                var error = new RespireTimeoutException(Operation, expired);
+                pending.Fail(error);
+                return error;
             }
             catch (Exception ex)
             {
                 pending.Fail(ex);
+                return ex;
             }
         }
     }
