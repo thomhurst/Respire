@@ -274,15 +274,16 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
             result.Dispose();
         }
-        catch (Exception ex) when (ex is OperationCanceledException or RespireTimeoutException)
+        catch (Exception ex) when (
+            ex is OperationCanceledException or RespireTimeoutException or RespireConnectionException)
         {
-            // Neither a cancelled wait nor a command timeout cancels the send — a queued set
-            // can still reach Redis, and if that send was delayed it stores a TTL computed
-            // before the delay. With no reply to measure the delay against, correct
+            // An abandoned wait or lost connection does not prove the send was rejected — a
+            // queued set can still reach Redis, and if that send was delayed it stores a TTL
+            // computed before the delay. With no reply to measure the delay against, correct
             // unconditionally: a correction that beats a still-queued set no-ops on the
-            // ownership check. If its wait also times out, the exact original Redis client ID
-            // is fenced before correction retries, so latent bytes cannot overtake the final
-            // pass. Mock/decorator corrections remain best-effort because no ID is available.
+            // ownership check. When the original Redis client ID was captured, it is fenced
+            // before correction retries so latent bytes cannot overtake the final pass.
+            // Untracked and mock/decorator corrections remain best-effort.
             if (absoluteExpiration is { } cancelledDeadline)
             {
                 try
@@ -515,12 +516,14 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                     GetAndRefreshScript, [key], args, token).ConfigureAwait(false);
             }
         }
-        catch (Exception ex) when (ex is OperationCanceledException or RespireTimeoutException)
+        catch (Exception ex) when (
+            ex is OperationCanceledException or RespireTimeoutException or RespireConnectionException)
         {
-            // Same hazard as the set path: the abandoned wait (cancelled or timed out) leaves
-            // the script queued, and a delayed send would re-arm the sliding TTL from a stale
-            // "now". The real client must complete its exact-connection safety barrier;
-            // mock/decorator corrections remain best-effort as in SetCoreAsync.
+            // Same hazard as the set path: an abandoned or failed reply wait can leave the
+            // script's execution uncertain, and a delayed send would re-arm the sliding TTL
+            // from a stale "now". The real client completes its exact-connection safety
+            // barrier when an ID was captured; untracked and mock/decorator corrections remain
+            // best-effort as in SetCoreAsync.
             try
             {
                 await CapRefreshedTtlAsync(key, originalServerClientId).ConfigureAwait(false);
