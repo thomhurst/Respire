@@ -533,9 +533,14 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             if (placementElapsed >= leaseTtl / 2)
             {
                 // The reply consumed a material part of this lease. No delete has been sent,
-                // so retry with enough authority for the latency already observed.
-                leaseTtl = GrowWrappedRemovalLease(leaseTtl, placementElapsed);
-                continue;
+                // so retry with more authority when possible. At the safety cap, attempt the
+                // leased delete instead of repeating an identical placement until timeout.
+                var grownLeaseTtl = GrowWrappedRemovalLease(leaseTtl, placementElapsed);
+                if (grownLeaseTtl > leaseTtl)
+                {
+                    leaseTtl = grownLeaseTtl;
+                    continue;
+                }
             }
 
             Task<RespireResult>? removal = null;

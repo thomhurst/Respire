@@ -314,6 +314,26 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         await Assert.That(await Cache.GetAsync("slow-wrapped-remove")).IsNull();
     }
 
+    [Test]
+    public async Task RemoveAsync_WrappedClient_AttemptsRemovalAtLeaseCap()
+    {
+        await Cache.SetAsync("slow-lease-placement", [1], new DistributedCacheEntryOptions());
+        var slowClient = new ScriptInterceptingClient(
+            Client,
+            (_, send) => send(),
+            setDelay: TimeSpan.FromMilliseconds(500));
+        await using var cache = new RespireDistributedCache(slowClient)
+        {
+            WrappedRemovalTimeout = TimeSpan.FromSeconds(3),
+        };
+
+        await cache.RemoveAsync("slow-lease-placement").WaitAsync(TimeSpan.FromSeconds(5));
+
+        await Assert.That(slowClient.SetCalls).IsEqualTo(2);
+        await Assert.That(slowClient.ScriptCalls).IsEqualTo(1);
+        await Assert.That(await Cache.GetAsync("slow-lease-placement")).IsNull();
+    }
+
     // The next tests exercise the correction a delayed set triggers (a send that reached Redis
     // only after a stall — lazy first connect, reconnect — arms a TTL computed before the delay).
     // The delay itself cannot be reproduced through the public API, so they execute the
@@ -1256,11 +1276,14 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         RespireClient inner,
         Func<int, Func<ValueTask<RespireResult>>, ValueTask<RespireResult>> onScript,
         IKeyCommands? keys = null,
-        bool ignoreScriptCancellation = false) : IRespireClient
+        bool ignoreScriptCancellation = false,
+        TimeSpan? setDelay = null) : IRespireClient
     {
         private int _scriptCalls;
+        private int _setCalls;
 
         public int ScriptCalls => _scriptCalls;
+        public int SetCalls => _setCalls;
 
         public IScriptCommands Scripts => new InterceptedScripts(this, inner.Scripts);
 
@@ -1311,15 +1334,30 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         public ValueTask<byte[]?> GetBytesAsync(RespireKey key, CancellationToken cancellationToken = default)
             => inner.GetBytesAsync(key, cancellationToken);
 
-        public ValueTask<bool> SetAsync(
+        public async ValueTask<bool> SetAsync(
             RespireKey key, RespireValue value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always,
             bool keepTtl = false, CancellationToken cancellationToken = default)
-            => inner.SetAsync(key, value, expiry, when, keepTtl, cancellationToken);
+        {
+            await DelaySetAsync(cancellationToken);
+            return await inner.SetAsync(key, value, expiry, when, keepTtl, cancellationToken);
+        }
 
-        public ValueTask<bool> SetAsync<T>(
+        public async ValueTask<bool> SetAsync<T>(
             RespireKey key, T value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always,
             bool keepTtl = false, CancellationToken cancellationToken = default)
-            => inner.SetAsync(key, value, expiry, when, keepTtl, cancellationToken);
+        {
+            await DelaySetAsync(cancellationToken);
+            return await inner.SetAsync(key, value, expiry, when, keepTtl, cancellationToken);
+        }
+
+        private async ValueTask DelaySetAsync(CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _setCalls);
+            if (setDelay is { } delay)
+            {
+                await Task.Delay(delay, cancellationToken);
+            }
+        }
 
         public ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys) => inner.DeleteAsync(keys);
 
