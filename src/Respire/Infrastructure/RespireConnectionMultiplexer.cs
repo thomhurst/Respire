@@ -573,9 +573,10 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     private async Task ReconnectAsync(int slot)
     {
+        RespireConnection? replacement = null;
         try
         {
-            var replacement = await RespireConnection.ConnectAsync(Host, Port, _options, _logger).ConfigureAwait(false);
+            replacement = await RespireConnection.ConnectAsync(Host, Port, _options, _logger).ConfigureAwait(false);
             if (Volatile.Read(ref _trackServerClientIds) != 0)
             {
                 await replacement.EnsureServerClientIdAsync().ConfigureAwait(false);
@@ -584,10 +585,13 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             if (Volatile.Read(ref _disposed) != 0)
             {
                 await replacement.DisposeAsync().ConfigureAwait(false);
+                replacement = null;
                 return;
             }
 
             var old = Interlocked.Exchange(ref _connections[slot], replacement);
+            var publishedReplacement = replacement;
+            replacement = null;
             RetireConnection(old);
             _logger?.LogInformation("Replaced dead connection {Slot} to {Host}:{Port}", slot, Host, Port);
             if (old is not null)
@@ -603,7 +607,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             if (Volatile.Read(ref _disposed) != 0)
             {
                 Interlocked.Exchange(ref _connections[slot], old);
-                await replacement.DisposeAsync().ConfigureAwait(false);
+                await publishedReplacement.DisposeAsync().ConfigureAwait(false);
             }
             else
             {
@@ -612,6 +616,18 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
         catch (Exception ex)
         {
+            try
+            {
+                if (replacement is not null)
+                {
+                    await replacement.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+            catch (Exception disposeException)
+            {
+                _logger?.LogWarning(disposeException, "Failed to dispose rejected replacement connection to {Host}:{Port}", Host, Port);
+            }
+
             _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; will retry on next use", Host, Port);
         }
         finally

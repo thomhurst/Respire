@@ -265,11 +265,7 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
             removalResult.TrySetResult(result.AsInteger());
             return result;
         }, keys, ignoreScriptCancellation: true);
-        await using var cache = new RespireDistributedCache(wrappedClient)
-        {
-            WrappedRemovalLeaseTtl = TimeSpan.FromMilliseconds(100),
-            WrappedRemovalLeaseExpiryMargin = TimeSpan.FromMilliseconds(100),
-        };
+        await using var cache = new RespireDistributedCache(wrappedClient);
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
         var cancelled = false;
@@ -690,6 +686,64 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         await cache.SetAsync("tracked-default", [1], new DistributedCacheEntryOptions());
 
         await Assert.That(client.Core.Multiplexer.HasReliableCorrectionOrdering).IsTrue();
+    }
+
+    [Test]
+    public async Task Reconnect_ClientIdFailure_DoesNotLeakReplacementConnections()
+    {
+        var username = $"cache-reconnect-{Guid.NewGuid():N}";
+        var clientName = $"respire-reconnect-{Guid.NewGuid():N}";
+        const string password = "cache-test-password";
+        (await Client.ExecuteAsync(
+            "ACL", "SETUSER", username, "reset", "on", $">{password}", "~*", "+@all")).Dispose();
+
+        RespireClient? restrictedClient = null;
+        try
+        {
+            var options = RespireOptions.Parse(fixture.ConnectionString) with
+            {
+                Username = username,
+                Password = password,
+                ClientName = clientName,
+                Connections = 1,
+            };
+            restrictedClient = await RespireClient.ConnectAsync(options);
+            await restrictedClient.EnsureReliableCorrectionOrderingAsync();
+
+            // Replacements authenticate and complete their handshake, then fail CLIENT ID.
+            // None is published, so each failed candidate must close its own socket.
+            (await Client.ExecuteAsync("ACL", "SETUSER", username, "-client|id")).Dispose();
+            var connection = await restrictedClient.AcquireConnectionAsync(CancellationToken.None);
+            await connection.DisposeAsync();
+
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                try
+                {
+                    await restrictedClient.PingAsync();
+                }
+                catch (RespireConnectionException)
+                {
+                }
+
+                await Task.Delay(200);
+            }
+
+            using var list = await Client.ExecuteAsync("CLIENT", "LIST");
+            var leaked = list.AsString()
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Count(line => line.Contains($"name={clientName}", StringComparison.Ordinal));
+            await Assert.That(leaked).IsEqualTo(0);
+        }
+        finally
+        {
+            if (restrictedClient is not null)
+            {
+                await restrictedClient.DisposeAsync();
+            }
+
+            (await Client.ExecuteAsync("ACL", "DELUSER", username)).Dispose();
+        }
     }
 
     [Test]

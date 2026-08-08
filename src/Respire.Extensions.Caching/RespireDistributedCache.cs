@@ -27,11 +27,13 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     // land in the background. Mutable so tests can shrink the bound.
     internal TimeSpan CorrectionWaitBound = TimeSpan.FromSeconds(10);
 
-    // A non-RespireClient wrapper exposes only token-less key deletion. Give its removal script
-    // temporary authority instead, so cancellation can be surfaced safely after revocation or
-    // server-side expiry. Mutable so tests can shrink the safety window.
-    internal TimeSpan WrappedRemovalLeaseTtl = TimeSpan.FromSeconds(30);
-    internal TimeSpan WrappedRemovalLeaseExpiryMargin = TimeSpan.FromSeconds(1);
+    // A non-RespireClient wrapper exposes only token-less key deletion. Give each removal attempt
+    // brief temporary authority, so cancellation can be surfaced promptly after revocation or
+    // server-side expiry. Slow attempts retry with fresh leases until the separate operation
+    // timeout. Mutable so tests can shrink the safety window.
+    internal TimeSpan WrappedRemovalLeaseTtl = TimeSpan.FromMilliseconds(250);
+    internal TimeSpan WrappedRemovalLeaseExpiryMargin = TimeSpan.FromMilliseconds(50);
+    internal TimeSpan WrappedRemovalTimeout = TimeSpan.FromSeconds(30);
 
     // ARGV: [1] absolute expiration (UTC ticks, -1 none), [2] sliding expiration (ticks, -1 none),
     // [3] relative expiry (ms, -1 none), [4] payload. PERSIST clears a leftover TTL when an
@@ -473,9 +475,10 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         // Deletion carries no identity to fence on in the shared hash layout, so an UNLINK left
         // executable after an abandoned wait could later delete a replacement the caller wrote
         // after observing the failure. The guarded send solves all three hazards: the wait stays
-        // bounded (caller token and CommandTimeout are honored, or the lease TTL supplies the
-        // default bound, and the failure path is also bounded by that TTL); abandoning it
-        // discards the dedicated connection so a still-queued command dies with the socket; and
+        // bounded (caller token and CommandTimeout are honored, or a finite operation timeout
+        // supplies the default bound, and the failure path is bounded by one brief lease);
+        // abandoning it discards the dedicated connection so a still-queued command dies with
+        // the socket; and
         // the delete itself is leased — it only runs while a TTL'd lease key placed beforehand
         // is still alive, and no failure surfaces until that lease is revoked or has certainly
         // expired, so a copy already flushed to the server cannot delete anything written after
@@ -494,14 +497,14 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     private async Task UnlinkWrappedGuardedAsync(string key, CancellationToken cancellationToken)
     {
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutSource.CancelAfter(WrappedRemovalLeaseTtl);
+        timeoutSource.CancelAfter(WrappedRemovalTimeout);
         try
         {
             await UnlinkWrappedLeasedAsync(key, timeoutSource.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new RespireTimeoutException("UNLINK", WrappedRemovalLeaseTtl);
+            throw new RespireTimeoutException("UNLINK", WrappedRemovalTimeout);
         }
     }
 
