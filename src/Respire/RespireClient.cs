@@ -329,6 +329,18 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
 
+        var connection = core.Multiplexer.GetConnection();
+        return await SendOnConnectionAsync(operation, connection, command, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<RespValue> SendOnConnectionAsync<TCommand>(
+        string operation,
+        RespireConnection connection,
+        TCommand command,
+        CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var core = _core;
         using var activity = RespireTelemetry.StartActivity(operation, core.Multiplexer.Host, core.Multiplexer.Port);
         var start = RespireTelemetry.TimestampIfEnabled();
         try
@@ -340,7 +352,7 @@ public sealed partial class RespireClient : IRespireClient
                 timeoutSource.CancelAfter(timeout);
                 try
                 {
-                    response = await core.Multiplexer.SendAsync(in command, timeoutSource.Token).ConfigureAwait(false);
+                    response = await connection.SendAsync(in command, timeoutSource.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
@@ -349,7 +361,7 @@ public sealed partial class RespireClient : IRespireClient
             }
             else
             {
-                response = await core.Multiplexer.SendAsync(in command, cancellationToken).ConfigureAwait(false);
+                response = await connection.SendAsync(in command, cancellationToken).ConfigureAwait(false);
             }
 
             if (response.IsError)
@@ -459,7 +471,7 @@ public sealed partial class RespireClient : IRespireClient
         {
             // No cache command is sent until identity setup completes, so timing this stage out
             // leaves no cache mutation to correct.
-            throw new RespireTimeoutException("CLIENT ID", timeout);
+            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout);
         }
     }
 
@@ -470,6 +482,115 @@ public sealed partial class RespireClient : IRespireClient
     /// </summary>
     internal ValueTask FenceRetiredCorrectionConnectionsAsync()
         => _core.Multiplexer.FenceRetiredConnectionsAsync(CancellationToken.None);
+
+    internal readonly record struct TrackedScriptExecution(
+        long ServerClientId,
+        ValueTask<RespireResult> Response);
+
+    /// <summary>
+    /// Starts a cache script on a known multiplexed connection. The caller keeps the Redis
+    /// client ID even when the reply wait fails, so it can establish a server-side barrier for
+    /// that exact command before surfacing the failure.
+    /// </summary>
+    internal TrackedScriptExecution StartTrackedScriptExecution(
+        RespireScript script,
+        RespireKey[] keys,
+        RespireValue[] args,
+        CancellationToken cancellationToken)
+    {
+        var core = _core;
+        ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (!core.Multiplexer.HasReliableCorrectionOrdering)
+        {
+            throw new InvalidOperationException(
+                "Reliable correction ordering must be initialized before a tracked script starts.");
+        }
+
+        var connection = core.Multiplexer.GetConnection();
+        var serverClientId = connection.ServerClientId;
+        if (serverClientId <= 0)
+        {
+            throw new InvalidOperationException("Tracked cache connection has no Redis client ID.");
+        }
+
+        return new TrackedScriptExecution(
+            serverClientId,
+            ExecuteScriptOnConnectionAsync(connection, script, BuildScriptTail(keys, args), cancellationToken));
+    }
+
+    private async ValueTask<RespireResult> ExecuteScriptOnConnectionAsync(
+        RespireConnection connection,
+        RespireScript script,
+        RespireValue[] tail,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var reply = await SendOnConnectionAsync(
+                "EVALSHA", connection, new Cmd2N(Verbs.EvalSha, script.Sha1, tail[0], tail[1..]), cancellationToken)
+                .ConfigureAwait(false);
+            return new RespireResult(in reply);
+        }
+        catch (RespireServerException ex) when (ex.Code == "NOSCRIPT")
+        {
+            var reply = await SendOnConnectionAsync(
+                "EVAL", connection, new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]), cancellationToken)
+                .ConfigureAwait(false);
+            return new RespireResult(in reply);
+        }
+    }
+
+    /// <summary>
+    /// Kills one multiplexed Redis client through a separate control connection and waits for
+    /// the server acknowledgement. The acknowledged kill is an ordering barrier: no command
+    /// from the target client can execute afterward.
+    /// </summary>
+    internal async ValueTask FenceCorrectionConnectionAsync(long serverClientId)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(serverClientId);
+        var core = _core;
+        ObjectDisposedException.ThrowIf(core.Disposed, this);
+
+        var control = await core.DedicatedPool.RentAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            var reply = await control.SendAsync(
+                new ClientKillIdCommand(serverClientId), CancellationToken.None).ConfigureAwait(false);
+            if (reply.IsError)
+            {
+                var error = ResponseReader.ServerError(in reply);
+                reply.Dispose();
+                throw error;
+            }
+
+            reply.Dispose();
+        }
+        finally
+        {
+            core.DedicatedPool.Return(control);
+        }
+
+        await core.Multiplexer.RetireConnectionAsync(serverClientId).ConfigureAwait(false);
+    }
+
+    internal RespireValue[] BuildScriptTail(RespireKey[]? keys, RespireValue[]? args)
+    {
+        var keyCount = keys?.Length ?? 0;
+        var argCount = args?.Length ?? 0;
+        var tail = new RespireValue[1 + keyCount + argCount];
+        tail[0] = keyCount;
+        for (var i = 0; i < keyCount; i++)
+        {
+            tail[1 + i] = Key(in keys![i]);
+        }
+
+        for (var i = 0; i < argCount; i++)
+        {
+            tail[1 + keyCount + i] = args![i];
+        }
+
+        return tail;
+    }
 
     // The removal script: delete only while this removal's lease key is still alive. The lease
     // is placed — and its reply awaited — before this script is ever sent, and it carries a

@@ -249,6 +249,24 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
                 if (ready)
                 {
+                    var connection = GetConnection();
+                    try
+                    {
+                        await ValidateClientKillPermissionAsync(connection, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (IsConnectionLoss(ex) && Volatile.Read(ref _disposed) == 0)
+                    {
+                        RetireConnection(connection);
+                        var slot = FindSlot(connection);
+                        if (slot >= 0)
+                        {
+                            ScheduleReconnect(slot);
+                        }
+
+                        await Task.Delay(25, cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
+
                     _correctionOrderingReady = true;
                     return;
                 }
@@ -260,6 +278,24 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         {
             _correctionIdentityGate.Release();
         }
+    }
+
+    private static async ValueTask ValidateClientKillPermissionAsync(
+        RespireConnection connection,
+        CancellationToken cancellationToken)
+    {
+        // Target this connection's valid ID but explicitly exclude the caller. Redis performs
+        // CLIENT KILL ACL validation, then returns 0 without disconnecting anything.
+        var reply = await connection.SendAsync(
+            new ClientKillIdCommand(connection.ServerClientId, skipMe: true), cancellationToken).ConfigureAwait(false);
+        if (reply.IsError)
+        {
+            var error = new RespireServerException(reply.GetErrorMessage());
+            reply.Dispose();
+            throw error;
+        }
+
+        reply.Dispose();
     }
 
     /// <summary>
@@ -425,6 +461,26 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
+    internal async ValueTask RetireConnectionAsync(long serverClientId)
+    {
+        for (var slot = 0; slot < _connections.Length; slot++)
+        {
+            var connection = Volatile.Read(ref _connections[slot]);
+            if (connection?.ServerClientId != serverClientId)
+            {
+                continue;
+            }
+
+            await connection.DisposeAsync().ConfigureAwait(false);
+            if (ReferenceEquals(connection, Volatile.Read(ref _connections[slot])))
+            {
+                ScheduleReconnect(slot);
+            }
+
+            return;
+        }
+    }
+
     private async ValueTask<RespireConnection> GetHealthyConnectionAsync(CancellationToken cancellationToken)
     {
         while (true)
@@ -451,6 +507,19 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     private static bool IsConnectionLoss(Exception exception)
         => exception is RespireConnectionException or ObjectDisposedException;
+
+    private int FindSlot(RespireConnection connection)
+    {
+        for (var slot = 0; slot < _connections.Length; slot++)
+        {
+            if (ReferenceEquals(connection, Volatile.Read(ref _connections[slot])))
+            {
+                return slot;
+            }
+        }
+
+        return -1;
+    }
 
     /// <summary>Runs a MULTI/EXEC block on one connection; see <see cref="RespireConnection.SendTransactionAsync"/>.</summary>
     public ValueTask<RespValue> SendTransactionAsync(

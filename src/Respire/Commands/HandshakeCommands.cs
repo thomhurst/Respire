@@ -61,13 +61,25 @@ internal readonly struct ClientIdCommand : IRespCommand
         => writer.WriteRaw("*2\r\n$6\r\nCLIENT\r\n$2\r\nID\r\n"u8);
 }
 
-/// <summary>CLIENT KILL ID id.</summary>
-internal readonly struct ClientKillIdCommand(long id) : IRespCommand
+/// <summary>CLIENT KILL ID id [SKIPME yes].</summary>
+internal readonly struct ClientKillIdCommand(long id, bool skipMe = false) : IRespCommand
 {
     public void Write(ref RespWriter writer)
     {
-        writer.WriteRaw("*4\r\n$6\r\nCLIENT\r\n$4\r\nKILL\r\n$2\r\nID\r\n"u8);
+        if (skipMe)
+        {
+            writer.WriteRaw("*6\r\n$6\r\nCLIENT\r\n$4\r\nKILL\r\n$2\r\nID\r\n"u8);
+        }
+        else
+        {
+            writer.WriteRaw("*4\r\n$6\r\nCLIENT\r\n$4\r\nKILL\r\n$2\r\nID\r\n"u8);
+        }
+
         writer.WriteBulkInteger(id);
+        if (skipMe)
+        {
+            writer.WriteRaw("$6\r\nSKIPME\r\n$3\r\nyes\r\n"u8);
+        }
     }
 }
 

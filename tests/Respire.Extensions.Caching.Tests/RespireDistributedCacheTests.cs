@@ -462,7 +462,7 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         // Keep the test's 50ms timeout scoped to the cache command under test. Reliable
         // corrections lazily capture CLIENT ID once per connection; prime that setup before
         // deliberately stalling Redis.
-        await client.EnsureReliableCorrectionOrderingAsync();
+        await client.Core.Multiplexer.EnsureReliableCorrectionOrderingAsync();
         return client;
     }
 
@@ -491,7 +491,7 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         }
 
         await Assert.That(failure).IsNotNull();
-        await Assert.That(failure!.CommandName).IsEqualTo("CLIENT ID");
+        await Assert.That(failure!.CommandName).IsEqualTo("CLIENT ID / CLIENT KILL");
         await Assert.That(Stopwatch.GetElapsedTime(started)).IsLessThan(TimeSpan.FromSeconds(1));
 
         await stallObserved;
@@ -516,13 +516,63 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         {
             await pending.WaitAsync(TimeSpan.FromSeconds(2));
         }
+        catch (TimeoutException)
+        {
+            Assert.Fail("Disposal did not terminate the pending CLIENT ID operation.");
+        }
         catch (Exception ex)
         {
             failure = ex;
         }
 
         await Assert.That(failure).IsNotNull();
+        await Assert.That(failure is RespireConnectionException or ObjectDisposedException).IsTrue();
         await stallObserved;
+    }
+
+    [Test]
+    public async Task ClientIdSetup_FailsWhenClientKillIsDeniedByAcl()
+    {
+        var username = $"cache-no-kill-{Guid.NewGuid():N}";
+        const string password = "cache-test-password";
+        (await Client.ExecuteAsync(
+            "ACL", "SETUSER", username, "reset", "on", $">{password}", "~*", "+@all", "-client|kill")).Dispose();
+
+        RespireClient? restrictedClient = null;
+        try
+        {
+            var options = RespireOptions.Parse(fixture.ConnectionString) with
+            {
+                Username = username,
+                Password = password,
+            };
+            restrictedClient = await RespireClient.ConnectAsync(options);
+            await using var restrictedCache = new RespireDistributedCache(restrictedClient);
+
+            RespireServerException? failure = null;
+            try
+            {
+                await restrictedCache.SetAsync(
+                    "acl-permission", [1], new DistributedCacheEntryOptions());
+            }
+            catch (RespireServerException ex)
+            {
+                failure = ex;
+            }
+
+            await Assert.That(failure).IsNotNull();
+            await Assert.That(failure!.Code).IsEqualTo("NOPERM");
+            await Assert.That(await Cache.GetAsync("acl-permission")).IsNull();
+        }
+        finally
+        {
+            if (restrictedClient is not null)
+            {
+                await restrictedClient.DisposeAsync();
+            }
+
+            (await Client.ExecuteAsync("ACL", "DELUSER", username)).Dispose();
+        }
     }
 
     [Test]
@@ -774,6 +824,44 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
             .WaitAsync(TimeSpan.FromSeconds(10));
 
         await Assert.That(client.IsConnected).IsTrue();
+    }
+
+    [Test]
+    public async Task Set_CorrectionTimeoutFencesExactOriginalConnection()
+    {
+        await Client.Scripts.LoadAsync(RespireDistributedCache.SetScript);
+        await using var timeoutClient = await ConnectTimeoutClientAsync();
+        await using var timeoutCache = new RespireDistributedCache(timeoutClient)
+        {
+            CorrectionWaitBound = TimeSpan.FromMilliseconds(100),
+        };
+        var originalClientId = (await timeoutClient.AcquireConnectionAsync(CancellationToken.None)).ServerClientId;
+
+        var stallObserved = StallServerAsync("0.5");
+        await Task.Delay(100);
+
+        RespireTimeoutException? failure = null;
+        try
+        {
+            await timeoutCache.SetAsync(
+                "fenced-original",
+                [1],
+                new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5) })
+                .WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        catch (RespireTimeoutException ex)
+        {
+            failure = ex;
+        }
+        catch (TimeoutException)
+        {
+            Assert.Fail("Exact-connection fencing did not complete within 10 seconds.");
+        }
+
+        await stallObserved;
+        await Assert.That(failure).IsNotNull();
+        var replacementClientId = (await timeoutClient.AcquireConnectionAsync(CancellationToken.None)).ServerClientId;
+        await Assert.That(replacementClientId).IsNotEqualTo(originalClientId);
     }
 
     [Test]

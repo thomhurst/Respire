@@ -53,7 +53,7 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(script);
-        var tail = BuildTail(keys, args);
+        var tail = client.BuildScriptTail(keys, args);
         try
         {
             var reply = await client.SendAsync(
@@ -76,23 +76,4 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         return client.StringAsync("SCRIPT", new Cmd1(Verbs.ScriptLoad, script.Source), cancellationToken);
     }
 
-    /// <summary>[numkeys, key…, arg…]</summary>
-    private RespireValue[] BuildTail(RespireKey[]? keys, RespireValue[]? args)
-    {
-        var keyCount = keys?.Length ?? 0;
-        var argCount = args?.Length ?? 0;
-        var tail = new RespireValue[1 + keyCount + argCount];
-        tail[0] = keyCount;
-        for (var i = 0; i < keyCount; i++)
-        {
-            tail[1 + i] = client.Key(in keys![i]);
-        }
-
-        for (var i = 0; i < argCount; i++)
-        {
-            tail[1 + keyCount + i] = args![i];
-        }
-
-        return tail;
-    }
 }

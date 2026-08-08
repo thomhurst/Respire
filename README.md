@@ -178,6 +178,11 @@ other's entries — swapping in Respire needs no cache flush. Unlike the Microso
 implementation, a read of a sliding-expiration entry re-arms its TTL atomically in the same
 round trip via a Lua script.
 
+Redis ACL users for these caching packages must allow the commands used by the cache scripts and
+their timeout-safety barriers: `EVALSHA`, `EVAL`, `SET`, `UNLINK`, `HSET`, `HMGET`, `PTTL`,
+`PEXPIRE`, `PERSIST`, `EXISTS`, `CLIENT ID`, and `CLIENT KILL`. Initialization fails before
+sending a cache command when `CLIENT KILL` is denied.
+
 ## Design
 
 The full API design — principles, per-facet surface, conventions, rejected alternatives, and
