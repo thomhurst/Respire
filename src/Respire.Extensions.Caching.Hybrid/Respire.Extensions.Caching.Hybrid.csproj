@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Respire.Extensions.Caching\Respire.Extensions.Caching.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Latest 9.x line, matching the Microsoft.Extensions 9.x versions used elsewhere. -->
+    <PackageReference Include="Microsoft.Extensions.Caching.Hybrid" Version="9.10.0" />
+  </ItemGroup>
+
+</Project>

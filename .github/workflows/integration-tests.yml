@@ -73,6 +73,19 @@ jobs:
         env:
           # Ensure Docker is available for Testcontainers
           DOCKER_HOST: unix:///var/run/docker.sock
+
+      - name: Run Caching Tests
+        run: |
+          dotnet run --project tests/Respire.Extensions.Caching.Tests/Respire.Extensions.Caching.Tests.csproj \
+            -c Release \
+            -f ${{ matrix.framework }} \
+            --no-build
+          dotnet run --project tests/Respire.Extensions.Caching.Hybrid.Tests/Respire.Extensions.Caching.Hybrid.Tests.csproj \
+            -c Release \
+            -f ${{ matrix.framework }} \
+            --no-build
+        env:
+          DOCKER_HOST: unix:///var/run/docker.sock
       
       # Test reports and coverage are not available with dotnet run
       # TUnit will handle its own output formatting
