@@ -6,7 +6,6 @@ using TUnit.Assertions;
 namespace Respire.IntegrationTests;
 
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-[NotInParallel("redis-integration")]
 public class EdgeCaseTests
 {
     private readonly RedisTestContainer _fixture;
@@ -22,8 +21,8 @@ public class EdgeCaseTests
     [Before(HookType.Test)]
     public async Task InitializeAsync()
     {
-        _respireClient = await RespireClient.ConnectAsync($"{_fixture.Host}:{_fixture.Port}");
-        _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.ConnectionString);
+        _respireClient = await RespireClient.ConnectAsync(_fixture.ConnectionString);
+        _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.StackExchangeConnectionString);
         _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase();
         await _stackExchangeDb.ExecuteAsync("FLUSHDB");
     }

@@ -6,7 +6,6 @@ using TUnit.Assertions;
 namespace Respire.IntegrationTests;
 
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-[NotInParallel("redis-integration")]
 public class DataTypeInteroperabilityTests
 {
     private readonly RedisTestContainer _fixture;
@@ -22,8 +21,8 @@ public class DataTypeInteroperabilityTests
     [Before(HookType.Test)]
     public async Task InitializeAsync()
     {
-        _respireClient = await RespireClient.ConnectAsync($"{_fixture.Host}:{_fixture.Port}");
-        _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.ConnectionString);
+        _respireClient = await RespireClient.ConnectAsync(_fixture.ConnectionString);
+        _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(_fixture.StackExchangeConnectionString);
         _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase();
         await _stackExchangeDb.ExecuteAsync("FLUSHDB");
     }
@@ -251,8 +250,8 @@ public class DataTypeInteroperabilityTests
         await _respireClient.SetAsync("pattern:b:2", "value4");
 
         // Use StackExchange to scan keys
-        var server = _stackExchangeMultiplexer.GetServer(_fixture.ConnectionString);
-        var keys = server.Keys(pattern: "pattern:a:*").ToList();
+        var server = _stackExchangeMultiplexer.GetServer(_fixture.Host, _fixture.Port);
+        var keys = server.Keys(database: _fixture.Database, pattern: "pattern:a:*").ToList();
         keys.Should().HaveCount(2);
 
         // Delete pattern with StackExchange

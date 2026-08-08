@@ -4,7 +4,6 @@ using TUnit.Core;
 namespace Respire.IntegrationTests;
 
 [ClassDataSource<SecuredRedisTestContainer>(Shared = SharedType.PerTestSession)]
-[NotInParallel("redis-integration")]
 public class AuthenticationTests(SecuredRedisTestContainer fixture)
 {
     [Test]

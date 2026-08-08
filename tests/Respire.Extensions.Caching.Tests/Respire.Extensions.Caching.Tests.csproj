@@ -14,7 +14,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="TUnit" Version="0.57.1" />
+        <PackageReference Include="TUnit" Version="1.64.0" />
         <PackageReference Include="Testcontainers.Redis" Version="4.7.0" />
         <!-- The Microsoft implementation, used to prove the wire layouts are interchangeable. -->
         <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="9.0.8" />

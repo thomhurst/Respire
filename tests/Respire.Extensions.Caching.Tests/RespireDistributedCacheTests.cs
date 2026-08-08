@@ -9,7 +9,6 @@ using TUnit.Core;
 namespace Respire.Extensions.Caching.Tests;
 
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-[NotInParallel("redis-integration")]
 public class RespireDistributedCacheTests(RedisTestContainer fixture)
 {
     private RespireClient? _client;
@@ -552,6 +551,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         => Task.Run(async () => (await Client.ExecuteAsync("EVAL", StallScriptSource, "0", seconds)).Dispose());
 
     [Test]
+    [NotInParallel]
     public async Task FirstCommand_ClientIdSetupHonorsCommandTimeout()
     {
         await using var timeoutClient = await RespireClient.ConnectAsync(
@@ -581,6 +581,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [NotInParallel]
     public async Task ClientIdSetup_DisposalTerminatesPendingOperation()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
@@ -803,6 +804,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [NotInParallel]
     public async Task Remove_TimedOutWait_FailsBounded_AndTheLatentUnlinkCannotDeleteAReplacement()
     {
         await Cache.SetAsync("timeout-remove", [1], new DistributedCacheEntryOptions());
@@ -844,6 +846,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [NotInParallel]
     public async Task Remove_WithoutConfiguredTimeout_IsBoundedByLeaseTtl()
     {
         await Cache.SetAsync("default-timeout-remove", [1], new DistributedCacheEntryOptions());
@@ -934,6 +937,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [NotInParallel]
     public async Task Set_TimedOutWait_StillStoresTheQueuedEntry()
     {
         // Preload so the timed-out EVALSHA cannot fall into an unobserved NOSCRIPT.
@@ -967,6 +971,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [NotInParallel]
     public async Task Set_TimedOutWithoutExpiration_CannotOverwriteReplacementAfterFailure()
     {
         await Client.Scripts.LoadAsync(RespireDistributedCache.SetScript);
@@ -1003,6 +1008,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [NotInParallel]
     public async Task Get_TimedOutWait_CorrectsWithoutExtendingTheTtl()
     {
         await Cache.SetAsync("timeout-get", [1], new DistributedCacheEntryOptions
@@ -1039,6 +1045,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [NotInParallel]
     public async Task Set_TimedOutWait_CorrectionChasesTheStall_UntilTheRemainderIsFresh()
     {
         await Client.Scripts.LoadAsync(RespireDistributedCache.SetScript);
@@ -1166,6 +1173,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [NotInParallel]
     public async Task Set_CorrectionTimeoutFencesExactOriginalConnection()
     {
         await Client.Scripts.LoadAsync(RespireDistributedCache.SetScript);

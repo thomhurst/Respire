@@ -38,6 +38,6 @@ public class PrimitiveSerializationWireTests
         var result = await client.GetAsync<int?>("count");
 
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("GET count");
-        await Assert.That(result).IsEqualTo((int?)null);
+        await Assert.That(result).IsNull();
     }
 }

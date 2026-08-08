@@ -142,8 +142,8 @@ public class PrimitiveCodecTests
         var deserialized = client.DeserializeBorrowed<int?>(Bulk(" null "));
         var messageValue = message.As<bool?>();
 
-        await Assert.That(deserialized).IsEqualTo((int?)null);
-        await Assert.That(messageValue).IsEqualTo((bool?)null);
+        await Assert.That(deserialized).IsNull();
+        await Assert.That(messageValue).IsNull();
         await Assert.That(serializer.DeserializeCalls).IsEqualTo(0);
     }
 

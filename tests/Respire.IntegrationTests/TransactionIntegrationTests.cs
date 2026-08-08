@@ -4,7 +4,6 @@ using TUnit.Core;
 namespace Respire.IntegrationTests;
 
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-[NotInParallel("redis-integration")]
 public class TransactionIntegrationTests
 {
     private readonly RedisTestContainer _fixture;
@@ -18,7 +17,7 @@ public class TransactionIntegrationTests
     [Before(HookType.Test)]
     public async Task InitializeAsync()
     {
-        _client = await RespireClient.ConnectAsync($"{_fixture.Host}:{_fixture.Port}");
+        _client = await RespireClient.ConnectAsync(_fixture.ConnectionString);
     }
 
     [After(HookType.Test)]
@@ -135,7 +134,7 @@ public class TransactionIntegrationTests
         var setPending = transaction.SetAsync("tx:watched", "from-transaction");
 
         // Another client writes the watched key between WATCH and EXEC, voiding the transaction.
-        await using (var interloper = await RespireClient.ConnectAsync($"{_fixture.Host}:{_fixture.Port}"))
+        await using (var interloper = await RespireClient.ConnectAsync(_fixture.ConnectionString))
         {
             await interloper.SetAsync("tx:watched", "from-interloper");
         }

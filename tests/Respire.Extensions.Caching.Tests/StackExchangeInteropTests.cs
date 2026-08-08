@@ -14,7 +14,6 @@ namespace Respire.Extensions.Caching.Tests;
 /// seconds granularity.
 /// </summary>
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-[NotInParallel("redis-integration")]
 public class StackExchangeInteropTests(RedisTestContainer fixture)
 {
     private const string InstanceName = "interop:";
@@ -31,7 +30,7 @@ public class StackExchangeInteropTests(RedisTestContainer fixture)
         _respireCache = new RespireDistributedCache(_client, new RespireCacheOptions { InstanceName = InstanceName });
         _microsoftCache = new RedisCache(new RedisCacheOptions
         {
-            Configuration = fixture.ConnectionString,
+            Configuration = fixture.StackExchangeConnectionString,
             InstanceName = InstanceName,
         });
     }

@@ -7,7 +7,6 @@ using TUnit.Core;
 namespace Respire.Extensions.Caching.Tests;
 
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-[NotInParallel("redis-integration")]
 public class ServiceCollectionTests(RedisTestContainer fixture)
 {
     [Test]

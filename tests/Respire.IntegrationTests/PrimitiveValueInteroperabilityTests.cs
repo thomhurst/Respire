@@ -7,7 +7,6 @@ using TUnit.Core;
 namespace Respire.IntegrationTests;
 
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
-[NotInParallel("redis-integration")]
 public class PrimitiveValueInteroperabilityTests(RedisTestContainer fixture)
 {
     private RespireClient _respireClient = null!;
@@ -17,8 +16,8 @@ public class PrimitiveValueInteroperabilityTests(RedisTestContainer fixture)
     [Before(Test)]
     public async Task InitializeAsync()
     {
-        _respireClient = await RespireClient.ConnectAsync($"{fixture.Host}:{fixture.Port}");
-        _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(fixture.ConnectionString);
+        _respireClient = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        _stackExchangeMultiplexer = await ConnectionMultiplexer.ConnectAsync(fixture.StackExchangeConnectionString);
         _stackExchangeDb = _stackExchangeMultiplexer.GetDatabase();
         await _stackExchangeDb.ExecuteAsync("FLUSHDB");
     }
