@@ -622,8 +622,10 @@ public sealed class RespireConnection : IAsyncDisposable
                 var progressing = true;
                 while (progressing && start < end)
                 {
-                    if (RespParser.TryPeekBulkHeader(buffer.AsSpan(0, end), start, out var bulkType, out var bulkLength, out var headerEnd)
-                        && bulkLength >= DirectFillThreshold)
+                    var bufferedData = buffer.AsSpan(0, end);
+                    var hasBulkHeader = RespParser.TryPeekBulkHeader(
+                        bufferedData, start, out var bulkType, out var bulkLength, out var headerEnd);
+                    if (hasBulkHeader && bulkLength >= DirectFillThreshold)
                     {
                         if (bulkLength > MaxResponseSize)
                         {
@@ -635,7 +637,9 @@ public sealed class RespireConnection : IAsyncDisposable
                     }
 
                     var pos = start;
-                    var status = RespParser.TryParseValue(buffer.AsSpan(0, end), ref pos, out var value);
+                    var status = hasBulkHeader
+                        ? RespParser.TryParseBulkValue(bufferedData, ref pos, bulkType, bulkLength, headerEnd, out var value)
+                        : RespParser.TryParseValue(bufferedData, ref pos, out value);
                     switch (status)
                     {
                         case RespParseStatus.Done:
