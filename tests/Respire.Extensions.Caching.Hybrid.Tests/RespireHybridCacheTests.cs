@@ -78,6 +78,10 @@ public class RespireHybridCacheTests(RedisTestFixture fixture)
         {
             var cacheA = providerA.GetRequiredService<HybridCache>();
             await cacheA.GetOrCreateAsync("l2-backed", _ => ValueTask.FromResult("from provider A"));
+
+            // HybridCache can publish the factory result to its caller before its best-effort
+            // L2 write finishes. Keep the provider alive until that write reaches Redis.
+            await Assert.That(await WaitForRedisKeyAsync(InstanceName + "l2-backed")).IsTrue();
         }
 
         // The entry landed in Redis under the configured instance prefix.
@@ -92,6 +96,21 @@ public class RespireHybridCacheTests(RedisTestFixture fixture)
             _ => throw new InvalidOperationException("Factory ran — the value was not served from L2."));
 
         await Assert.That(value).IsEqualTo("from provider A");
+    }
+
+    private async Task<bool> WaitForRedisKeyAsync(string key)
+    {
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            if (await _client.ExistsAsync(key))
+            {
+                return true;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(50));
+        }
+
+        return false;
     }
 
     [Test]

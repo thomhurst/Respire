@@ -374,19 +374,24 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 }
             }
 
-            if (fatal is not null)
-            {
-                ExceptionDispatchInfo.Capture(fatal).Throw();
-            }
-
             if (!retry && _retiredServerClientIds.IsEmpty)
             {
+                if (fatal is not null)
+                {
+                    ExceptionDispatchInfo.Capture(fatal).Throw();
+                }
+
                 return;
             }
 
             // Any failed copy may have left bytes executable on Redis. CLIENT KILL is the
-            // ordering barrier; the next loop then sends a fresh correction after that barrier.
+            // ordering barrier. Establish it before surfacing an unrelated fatal reply; the
+            // dead slot may be the one that carried the original command.
             await FenceRetiredConnectionsAsync(cancellationToken).ConfigureAwait(false);
+            if (fatal is not null)
+            {
+                ExceptionDispatchInfo.Capture(fatal).Throw();
+            }
         }
 
         async Task<Exception?> DrainAsync(RespireConnection connection, ValueTask<RespValue> send)

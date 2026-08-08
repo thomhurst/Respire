@@ -180,8 +180,10 @@ round trip via a Lua script.
 
 Redis ACL users for these caching packages must allow the commands used by the cache scripts and
 their timeout-safety barriers: `EVALSHA`, `EVAL`, `SET`, `UNLINK`, `HSET`, `HMGET`, `PTTL`,
-`PEXPIRE`, `PERSIST`, `EXISTS`, `CLIENT ID`, and `CLIENT KILL`. Initialization fails before
-sending a cache command when `CLIENT KILL` is denied.
+`PEXPIRE`, `PERSIST`, and `EXISTS`. Calls that can abandon a reply wait—because
+`RespireOptions.CommandTimeout` is configured or a cancellable token is supplied—also require
+`CLIENT ID` and `CLIENT KILL`; their safety setup fails before sending the cache command when
+either command is denied.
 
 ## Design
 

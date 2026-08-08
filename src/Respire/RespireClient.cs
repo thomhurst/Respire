@@ -438,8 +438,11 @@ public sealed partial class RespireClient : IRespireClient
         return _core.Multiplexer.GetConnection();
     }
 
-    // Wire-level primitives for the caching package (see InternalsVisibleTo). Both honor this
-    // view's key prefix.
+    // Wire-level primitives for the caching package (see InternalsVisibleTo). Keyed operations
+    // honor this view's key prefix.
+
+    internal bool RequiresReliableCorrectionOrdering(CancellationToken cancellationToken)
+        => cancellationToken.CanBeCanceled || _core.Options.CommandTimeout is not null;
 
     /// <summary>
     /// Captures Redis client IDs before any cache command can become latent. A correction can
@@ -474,14 +477,6 @@ public sealed partial class RespireClient : IRespireClient
             throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout);
         }
     }
-
-    /// <summary>
-    /// Waits only for server-side CLIENT KILL barriers already owed by a correction. Unlike
-    /// correction reply draining, this safety boundary must complete before the original
-    /// cancellation or timeout can be surfaced.
-    /// </summary>
-    internal ValueTask FenceRetiredCorrectionConnectionsAsync()
-        => _core.Multiplexer.FenceRetiredConnectionsAsync(CancellationToken.None);
 
     internal readonly record struct TrackedScriptExecution(
         long ServerClientId,
@@ -622,9 +617,10 @@ public sealed partial class RespireClient : IRespireClient
     private static readonly TimeSpan LeaseExpiryMargin = TimeSpan.FromSeconds(1);
 
     /// <summary>
-    /// Removal on a dedicated pooled connection, with the wait bounded by both the caller's
-    /// token and <see cref="RespireOptions.CommandTimeout"/>. Abandoning the wait discards the
-    /// dedicated connection, killing the command when it is still queued client-side — but
+    /// Removal on a dedicated pooled connection, with the wait bounded by the caller's token
+    /// and either <see cref="RespireOptions.CommandTimeout"/> or the lease TTL when no command
+    /// timeout is configured. Abandoning the wait discards the dedicated connection, killing
+    /// the command when it is still queued client-side — but
     /// bytes already flushed can execute server-side after the failure is reported, and a plain
     /// UNLINK landing late would delete a replacement the caller wrote in response to that
     /// failure. So removal is leased (<see cref="LeasedUnlinkScript"/>): the delete only runs
@@ -639,22 +635,16 @@ public sealed partial class RespireClient : IRespireClient
     /// </summary>
     internal async ValueTask UnlinkGuardedAsync(RespireKey key, CancellationToken cancellationToken)
     {
-        if (_core.Options.CommandTimeout is { } timeout)
+        var timeout = _core.Options.CommandTimeout ?? RemovalLeaseTtl;
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(timeout);
+        try
         {
-            using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutSource.CancelAfter(timeout);
-            try
-            {
-                await UnlinkLeasedAsync(key, timeoutSource.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                throw new RespireTimeoutException("UNLINK", timeout);
-            }
+            await UnlinkLeasedAsync(key, timeoutSource.Token).ConfigureAwait(false);
         }
-        else
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            await UnlinkLeasedAsync(key, cancellationToken).ConfigureAwait(false);
+            throw new RespireTimeoutException("UNLINK", timeout);
         }
     }
 

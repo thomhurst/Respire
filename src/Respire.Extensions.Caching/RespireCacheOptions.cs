@@ -6,7 +6,7 @@ namespace Respire.Extensions.Caching;
 public sealed class RespireCacheOptions : IOptions<RespireCacheOptions>
 {
     /// <summary>
-    /// Connection string for a cache-owned client ("host:port,…", see
+    /// Connection string for a cache-owned client ("host:port", see
     /// <see cref="RespireOptions.Parse"/>). Leave null to use the container's registered
     /// <see cref="IRespireClient"/> instead (e.g. from AddRespire).
     /// </summary>

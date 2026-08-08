@@ -442,7 +442,7 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
 
     // The next tests pin down how the cache behaves when RespireOptions.CommandTimeout abandons
     // a wait whose command is still queued. The server is stalled deterministically with a Lua
-    // busy-loop (ARGV[1] seconds), so a 50ms command timeout always fires first while the queued
+    // busy-loop (ARGV[1] seconds), so a 200ms command timeout always fires first while the queued
     // command still executes once the stall ends.
 
     private const string StallScriptSource = """
@@ -457,9 +457,9 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
     private async Task<RespireClient> ConnectTimeoutClientAsync()
     {
         var client = await RespireClient.ConnectAsync(
-            RespireOptions.Parse(fixture.ConnectionString) with { CommandTimeout = TimeSpan.FromMilliseconds(50) });
+            RespireOptions.Parse(fixture.ConnectionString) with { CommandTimeout = TimeSpan.FromMilliseconds(200) });
 
-        // Keep the test's 50ms timeout scoped to the cache command under test. Reliable
+        // Keep the test's 200ms timeout scoped to the cache command under test. Reliable
         // corrections lazily capture CLIENT ID once per connection; prime that setup before
         // deliberately stalling Redis.
         await client.Core.Multiplexer.EnsureReliableCorrectionOrderingAsync();
@@ -545,6 +545,7 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
             {
                 Username = username,
                 Password = password,
+                CommandTimeout = TimeSpan.FromSeconds(1),
             };
             restrictedClient = await RespireClient.ConnectAsync(options);
             await using var restrictedCache = new RespireDistributedCache(restrictedClient);
@@ -563,6 +564,43 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
             await Assert.That(failure).IsNotNull();
             await Assert.That(failure!.Code).IsEqualTo("NOPERM");
             await Assert.That(await Cache.GetAsync("acl-permission")).IsNull();
+        }
+        finally
+        {
+            if (restrictedClient is not null)
+            {
+                await restrictedClient.DisposeAsync();
+            }
+
+            (await Client.ExecuteAsync("ACL", "DELUSER", username)).Dispose();
+        }
+    }
+
+    [Test]
+    public async Task NonCancelableAccess_DoesNotRequireClientAclCommands()
+    {
+        var username = $"cache-no-client-{Guid.NewGuid():N}";
+        const string password = "cache-test-password";
+        (await Client.ExecuteAsync(
+            "ACL", "SETUSER", username, "reset", "on", $">{password}", "~*", "+@all", "-client")).Dispose();
+
+        RespireClient? restrictedClient = null;
+        try
+        {
+            var options = RespireOptions.Parse(fixture.ConnectionString) with
+            {
+                Username = username,
+                Password = password,
+            };
+            restrictedClient = await RespireClient.ConnectAsync(options);
+            await using var restrictedCache = new RespireDistributedCache(restrictedClient);
+
+            await restrictedCache.SetAsync(
+                "no-client-permission", [1], new DistributedCacheEntryOptions());
+            var value = await restrictedCache.GetAsync("no-client-permission");
+
+            await Assert.That(value).IsNotNull();
+            await Assert.That(value!.SequenceEqual(new byte[] { 1 })).IsTrue();
         }
         finally
         {
@@ -614,6 +652,35 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         var survivor = await Cache.GetAsync("timeout-remove");
         await Assert.That(survivor).IsNotNull();
         await Assert.That(survivor!.SequenceEqual(new byte[] { 2 })).IsTrue();
+    }
+
+    [Test]
+    public async Task Remove_WithoutConfiguredTimeout_IsBoundedByLeaseTtl()
+    {
+        await Cache.SetAsync("default-timeout-remove", [1], new DistributedCacheEntryOptions());
+        Client.RemovalLeaseTtl = TimeSpan.FromMilliseconds(100);
+
+        var stallObserved = StallServerAsync("0.5");
+        await Task.Delay(100);
+
+        RespireTimeoutException? failure = null;
+        try
+        {
+            await Cache.RemoveAsync("default-timeout-remove").WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (RespireTimeoutException ex)
+        {
+            failure = ex;
+        }
+        catch (TimeoutException)
+        {
+            Assert.Fail("Default removal bound did not terminate the operation.");
+        }
+
+        await stallObserved;
+        await Assert.That(failure).IsNotNull();
+        await Assert.That(failure!.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(100));
+        await Assert.That(await Cache.GetAsync("default-timeout-remove")).IsNotNull();
     }
 
     [Test]
@@ -708,6 +775,42 @@ public class RespireDistributedCacheTests(RedisTestFixture fixture)
         var pttl = await PttlAsync("timeout-set");
         await Assert.That(pttl).IsGreaterThan(0);
         await Assert.That(pttl).IsLessThanOrEqualTo((long)TimeSpan.FromMinutes(5).TotalMilliseconds);
+    }
+
+    [Test]
+    public async Task Set_TimedOutWithoutExpiration_CannotOverwriteReplacementAfterFailure()
+    {
+        await Client.Scripts.LoadAsync(RespireDistributedCache.SetScript);
+        await using var timeoutClient = await ConnectTimeoutClientAsync();
+        await using var timeoutCache = new RespireDistributedCache(timeoutClient);
+
+        var stallObserved = StallServerAsync("0.5");
+        await Task.Delay(100);
+
+        RespireTimeoutException? failure = null;
+        try
+        {
+            await timeoutCache.SetAsync(
+                "fenced-no-expiration", [1], new DistributedCacheEntryOptions())
+                .WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (RespireTimeoutException ex)
+        {
+            failure = ex;
+        }
+        catch (TimeoutException)
+        {
+            Assert.Fail("Exact-connection fencing did not complete within 5 seconds.");
+        }
+
+        await Assert.That(failure).IsNotNull();
+        await Cache.SetAsync("fenced-no-expiration", [2], new DistributedCacheEntryOptions());
+        await stallObserved;
+        await Task.Delay(100);
+
+        var survivor = await Cache.GetAsync("fenced-no-expiration");
+        await Assert.That(survivor).IsNotNull();
+        await Assert.That(survivor!.SequenceEqual(new byte[] { 2 })).IsTrue();
     }
 
     [Test]

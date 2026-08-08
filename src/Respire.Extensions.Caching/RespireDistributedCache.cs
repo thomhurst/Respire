@@ -241,9 +241,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         ArgumentNullException.ThrowIfNull(options);
         token.ThrowIfCancellationRequested();
 
-        if (_wireClient is { } reliableWire)
+        RespireClient? trackedWire = null;
+        if (_wireClient is { } reliableWire && reliableWire.RequiresReliableCorrectionOrdering(token))
         {
             await reliableWire.EnsureReliableCorrectionOrderingAsync(token).ConfigureAwait(false);
+            trackedWire = reliableWire;
         }
 
         var now = DateTimeOffset.UtcNow;
@@ -259,7 +261,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 GetExpirationMilliseconds(now, absoluteExpiration, options),
                 value,
             };
-            if (_wireClient is { } trackedWire)
+            if (trackedWire is not null)
             {
                 var execution = trackedWire.StartTrackedScriptExecution(SetScript, [key], args, token);
                 originalServerClientId = execution.ServerClientId;
@@ -292,6 +294,12 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                     originalServerClientId == 0 && correctionFailure is not RespireServerException)
                 {
                 }
+            }
+            else if (trackedWire is not null && originalServerClientId > 0)
+            {
+                // No TTL needs correction, but the write itself still must not land after the
+                // caller observes failure and writes a replacement.
+                await trackedWire.FenceCorrectionConnectionAsync(originalServerClientId).ConfigureAwait(false);
             }
 
             throw;
@@ -354,8 +362,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     /// When the original command's Redis client ID is known, an overdue pass kills and retires
     /// that exact connection before retrying on its replacement. Otherwise the queued
     /// shrink-only pass — safe whenever it lands — finishes in the background.
-    /// Requires the wire client; a mocked client falls back to a single round-robin send and
-    /// keeps only its weaker ordering.
+    /// A correction chasing an abandoned wait requires the wire client for ordering; after an
+    /// observed reply, or with a mocked client, one ordinary send is sufficient.
     /// </summary>
     private async ValueTask RunCorrectionAsync(
         RespireScript script,
@@ -364,33 +372,27 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         long originalServerClientId = 0)
     {
         var previous = TimeSpan.MaxValue;
+        var requiresOrdering = originalServerClientId > 0;
         while (true)
         {
             var sent = DateTimeOffset.UtcNow;
-            var pass = RunCorrectionPassAsync(script, key, args());
+            var pass = RunCorrectionPassAsync(script, key, args(), requiresOrdering);
             try
             {
                 await pass.WaitAsync(CorrectionWaitBound).ConfigureAwait(false);
             }
             catch (TimeoutException)
             {
-                // Reply draining may be abandoned, but a CLIENT KILL barrier may not: without
-                // its server acknowledgement, bytes flushed on a locally dead socket could
-                // still execute after the original failure is surfaced. The multiplexer
-                // serializes concurrent fence attempts, so this also joins a barrier the pass
-                // already started. With no retired sockets it returns immediately.
-                if (_wireClient is { } wire)
+                // Reply draining may be abandoned, but the exact original CLIENT KILL barrier
+                // may not: without its server acknowledgement, flushed bytes could still
+                // execute after the original failure is surfaced.
+                if (_wireClient is { } wire && originalServerClientId > 0)
                 {
-                    if (originalServerClientId > 0)
-                    {
-                        await wire.FenceCorrectionConnectionAsync(originalServerClientId).ConfigureAwait(false);
-                        originalServerClientId = 0;
-                        _ = ObservePassAsync(pass);
-                        previous = TimeSpan.MaxValue;
-                        continue;
-                    }
-
-                    await wire.FenceRetiredCorrectionConnectionsAsync().ConfigureAwait(false);
+                    await wire.FenceCorrectionConnectionAsync(originalServerClientId).ConfigureAwait(false);
+                    originalServerClientId = 0;
+                    _ = ObservePassAsync(pass);
+                    previous = TimeSpan.MaxValue;
+                    continue;
                 }
 
                 // The pass stays queued and is shrink-only, idempotent, and ownership-guarded,
@@ -398,6 +400,15 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 // queue more copies behind it.
                 _ = ObservePassAsync(pass);
                 return;
+            }
+
+            // A completed broadcast proves its copy on the original connection ran after the
+            // abandoned command (or that connection was fenced). Later freshness-only passes
+            // need one ordinary send and must not kill a connection unnecessarily.
+            if (requiresOrdering)
+            {
+                requiresOrdering = false;
+                originalServerClientId = 0;
             }
 
             var roundTrip = DateTimeOffset.UtcNow - sent;
@@ -410,9 +421,13 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         }
     }
 
-    private async Task RunCorrectionPassAsync(RespireScript script, string key, RespireValue[] args)
+    private async Task RunCorrectionPassAsync(
+        RespireScript script,
+        string key,
+        RespireValue[] args,
+        bool requiresOrdering)
     {
-        if (_wireClient is { } wire)
+        if (requiresOrdering && _wireClient is { } wire)
         {
             await wire.ExecuteOnAllConnectionsAsync(script, [key], args).ConfigureAwait(false);
         }
@@ -431,8 +446,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         }
         catch
         {
-            // An abandoned pass that fails means its connection died and killed whatever it
-            // was chasing — nothing left to correct.
+            // Detached correction is best-effort; observe any late fault so it cannot become an
+            // unhandled task exception.
         }
     }
 
@@ -455,8 +470,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         // Deletion carries no identity to fence on in the shared hash layout, so an UNLINK left
         // executable after an abandoned wait could later delete a replacement the caller wrote
         // after observing the failure. The guarded send solves all three hazards: the wait stays
-        // bounded (caller token and CommandTimeout are honored, and the failure path is bounded
-        // by the lease TTL, so a wedged server cannot hang removal forever); abandoning it
+        // bounded (caller token and CommandTimeout are honored, or the lease TTL supplies the
+        // default bound, and the failure path is also bounded by that TTL); abandoning it
         // discards the dedicated connection so a still-queued command dies with the socket; and
         // the delete itself is leased — it only runs while a TTL'd lease key placed beforehand
         // is still alive, and no failure surfaces until that lease is revoked or has certainly
@@ -475,9 +490,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
     private async ValueTask<RespireResult> RunGetScriptAsync(string key, bool returnData, CancellationToken token)
     {
-        if (_wireClient is { } reliableWire)
+        RespireClient? trackedWire = null;
+        if (_wireClient is { } reliableWire && reliableWire.RequiresReliableCorrectionOrdering(token))
         {
             await reliableWire.EnsureReliableCorrectionOrderingAsync(token).ConfigureAwait(false);
+            trackedWire = reliableWire;
         }
 
         var now = DateTimeOffset.UtcNow;
@@ -486,7 +503,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         try
         {
             var args = new RespireValue[] { returnData ? "1" : "0", now.UtcTicks };
-            if (_wireClient is { } trackedWire)
+            if (trackedWire is not null)
             {
                 var execution = trackedWire.StartTrackedScriptExecution(GetAndRefreshScript, [key], args, token);
                 originalServerClientId = execution.ServerClientId;
