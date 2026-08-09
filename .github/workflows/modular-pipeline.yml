@@ -32,7 +32,7 @@ jobs:
       
       - name: Run Pipeline
         # Directory.Build.props multi-targets every project, so a framework must be picked.
-        run: dotnet run -c Release -f net8.0
+        run: dotnet run -c Release -f net10.0
         working-directory: "Respire.Pipeline"
         env:
           DOTNET_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Development' }}
