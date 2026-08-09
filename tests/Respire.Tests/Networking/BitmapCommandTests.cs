@@ -7,6 +7,19 @@ namespace Respire.Tests.Networking;
 public class BitmapCommandTests
 {
     [Test]
+    public async Task BitOpCommand_RoutesByDestinationKey()
+    {
+        var command = new BitOpCommand(
+            RespireCommands.Bitmap.BITOP.Verb,
+            "AND",
+            "destination-key",
+            ["source-key"]);
+
+        await Assert.That(command.TryGetClusterSlot(out var slot)).IsTrue();
+        await Assert.That(slot).IsEqualTo(Respire.Internal.ClusterHash.GetSlot("destination-key"));
+    }
+
+    [Test]
     public async Task BitFieldCommand_RoutesByKey()
     {
         var command = new BitFieldCommand(

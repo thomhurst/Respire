@@ -19,6 +19,11 @@ public class CommandRoutingBenchmarks
         RespireCommands.Bitmap.BITFIELD.Verb,
         "benchmark-key",
         [BitFieldOperation.Get("u8", "0")]);
+    private readonly BitOpCommand _bitOpCommand = new(
+        RespireCommands.Bitmap.BITOP.Verb,
+        "AND",
+        "key",
+        ["source-key"]);
     private readonly GeoAddCommand _geoAddCommand = new(
         RespireCommands.Geo.GEOADD.Verb,
         "benchmark-key",
@@ -55,6 +60,9 @@ public class CommandRoutingBenchmarks
 
     [Benchmark]
     public bool BitFieldRouting() => TryGetSlot(_bitFieldCommand);
+
+    [Benchmark]
+    public bool BitOpRouting() => TryGetSlot(_bitOpCommand);
 
     [Benchmark]
     public bool GeoAddRouting() => TryGetSlot(_geoAddCommand);
