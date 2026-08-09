@@ -122,7 +122,7 @@ public class ProtocolBenchmarks
 
     [Benchmark(Description = "Write PING command")]
     [BenchmarkCategory("Writing")]
-    public int PreCompiledPing() => RespCommands.Ping.Length;
+    public int PreCompiledPing() => WriteCommand(new RawCommand(RespCommands.Ping));
 
     private int WriteCommand<TCommand>(TCommand command)
         where TCommand : struct, IRespCommand

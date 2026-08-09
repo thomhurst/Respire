@@ -141,10 +141,7 @@ public class PipelineBenchmarks
     // Memory allocation comparison benchmarks
 
     [Benchmark]
-    public void PreEncodedCommands_Ping()
-    {
-        _ = RespCommands.Ping.AsSpan();
-    }
+    public int PreEncodedCommands_Ping() => RespCommands.Ping.AsSpan().Length;
 
     [Benchmark]
     public byte[] ManualCommandBuilding_Ping()
