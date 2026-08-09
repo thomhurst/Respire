@@ -302,6 +302,25 @@ public class RespireConnectionTests
     }
 
     [Test]
+    public async Task ResponseWatchdog_DoesNotAbortIntentionallyBlockingConnection()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        server.DelayReply(0, 250);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            ResponseTimeout = TimeSpan.FromMilliseconds(50),
+        });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var response = await client.SendBlockingAsync(
+            "PING", new RawCommand(FakeRespServer.PingFrame), timeout.Token);
+
+        await Assert.That(response.AsString()).IsEqualTo("PONG");
+        response.Dispose();
+    }
+
+    [Test]
     public async Task SendAfterDeath_ThrowsConnectionException()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
