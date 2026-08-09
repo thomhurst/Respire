@@ -86,9 +86,10 @@ public sealed class RespireBatch
     /// (server errors, <see cref="RespireOptions.CommandTimeout"/> expiry) fault that command's
     /// pending, not this call; failing to obtain a connection at all faults every pending and
     /// rethrows.
-    /// In cluster mode, commands dispatch independently rather than sharing one flush. Commands
-    /// on different slots may run out of order, and an acquisition failure faults only its own
-    /// pending; this method completes normally after recording the first error in telemetry.
+    /// In cluster mode, commands are grouped by slot and each group shares one connection so its
+    /// commands retain queue order. Different slot groups may run out of order, and an acquisition
+    /// failure faults only its group; this method completes normally after recording the first
+    /// error in telemetry.
     /// </summary>
     public async ValueTask SendAsync(CancellationToken cancellationToken = default)
     {
@@ -115,10 +116,26 @@ public sealed class RespireBatch
 
         if (core.Cluster is not null)
         {
-            var clusterTasks = new Task<Exception?>[_ops.Count];
-            for (var i = 0; i < _ops.Count; i++)
+            var groups = new List<(int? Slot, List<Op> Operations)>();
+            var groupIndexes = new Dictionary<int, int>();
+            foreach (var op in _ops)
             {
-                clusterTasks[i] = _ops[i].RunClusterAsync(_client, cancellationToken);
+                var groupKey = op.TryGetClusterSlot(out var slot) ? slot + 1 : 0;
+                if (!groupIndexes.TryGetValue(groupKey, out var groupIndex))
+                {
+                    groupIndex = groups.Count;
+                    groupIndexes.Add(groupKey, groupIndex);
+                    groups.Add((groupKey == 0 ? null : slot, []));
+                }
+
+                groups[groupIndex].Operations.Add(op);
+            }
+
+            var clusterTasks = new Task<Exception?>[groups.Count];
+            for (var i = 0; i < groups.Count; i++)
+            {
+                clusterTasks[i] = RunClusterGroupAsync(
+                    groups[i].Slot, groups[i].Operations, cancellationToken);
             }
 
             var clusterErrors = await Task.WhenAll(clusterTasks).ConfigureAwait(false);
@@ -174,6 +191,52 @@ public sealed class RespireBatch
             batchSize: _ops.Count == 1 ? null : _ops.Count);
     }
 
+    private async Task<Exception?> RunClusterGroupAsync(
+        int? slot,
+        List<Op> operations,
+        CancellationToken cancellationToken)
+    {
+        RespireConnection connection;
+        try
+        {
+            connection = await _client.AcquireConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            foreach (var operation in operations)
+            {
+                operation.Fail(ex);
+            }
+
+            return ex;
+        }
+
+        var sends = new ValueTask<RespValue>[operations.Count];
+        // Start every send in queue order before awaiting responses to retain pipelining.
+        for (var i = 0; i < operations.Count; i++)
+        {
+            try
+            {
+                sends[i] = operations[i].StartClusterSend(_client, connection, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                sends[i] = ValueTask.FromException<RespValue>(ex);
+            }
+        }
+
+        Exception? firstError = null;
+        for (var i = 0; i < operations.Count; i++)
+        {
+            var error = await operations[i].CompleteClusterSendAsync(
+                    _client, sends[i], cancellationToken)
+                .ConfigureAwait(false);
+            firstError ??= error;
+        }
+
+        return firstError;
+    }
+
     private RespirePending<T> Add<TCommand, T>(string operation, in TCommand command, Func<RespireClient, RespValue, T> convert)
         where TCommand : struct, IRespCommand
     {
@@ -197,8 +260,17 @@ public sealed class RespireBatch
             RespireClient client, RespireConnection connection, CancellationToken effectiveToken,
             CancellationToken callerToken, TimeSpan? timeout);
 
-        public abstract Task<Exception?> RunClusterAsync(
-            RespireClient client, CancellationToken cancellationToken);
+        public abstract bool TryGetClusterSlot(out int slot);
+
+        public abstract ValueTask<RespValue> StartClusterSend(
+            RespireClient client,
+            RespireConnection connection,
+            CancellationToken cancellationToken);
+
+        public abstract Task<Exception?> CompleteClusterSendAsync(
+            RespireClient client,
+            ValueTask<RespValue> send,
+            CancellationToken cancellationToken);
 
         public abstract void Fail(Exception error);
     }
@@ -209,26 +281,32 @@ public sealed class RespireBatch
     {
         public override void Fail(Exception error) => pending.Fail(error);
 
-        public override async Task<Exception?> RunClusterAsync(
-            RespireClient client, CancellationToken cancellationToken)
+        public override bool TryGetClusterSlot(out int slot) => command.TryGetClusterSlot(out slot);
+
+        public override ValueTask<RespValue> StartClusterSend(
+            RespireClient client,
+            RespireConnection connection,
+            CancellationToken cancellationToken)
+            => client.SendOnConnectionAsync(Operation, connection, command, cancellationToken);
+
+        public override async Task<Exception?> CompleteClusterSendAsync(
+            RespireClient client,
+            ValueTask<RespValue> send,
+            CancellationToken cancellationToken)
         {
             try
             {
-                var value = await client.SendAsync(Operation, command, cancellationToken).ConfigureAwait(false);
+                RespValue value;
                 try
                 {
-                    pending.Succeed(convert(client, value));
+                    value = await send.ConfigureAwait(false);
                 }
-                catch (Exception ex)
+                catch (RespireServerException error) when (ClusterRouter.IsRedirect(error))
                 {
-                    pending.Fail(ex);
-                }
-                finally
-                {
-                    value.Dispose();
+                    value = await client.SendAsync(Operation, command, cancellationToken).ConfigureAwait(false);
                 }
 
-                return null;
+                return Complete(client, value);
             }
             catch (Exception ex)
             {
@@ -244,32 +322,7 @@ public sealed class RespireBatch
             try
             {
                 var value = await connection.SendAsync(in command, effectiveToken).ConfigureAwait(false);
-                if (value.IsError)
-                {
-                    var error = ResponseReader.ServerError(in value);
-                    value.Dispose();
-                    pending.Fail(error);
-                    return error;
-                }
-
-                try
-                {
-                    try
-                    {
-                        pending.Succeed(convert(client, value));
-                    }
-                    catch (Exception ex)
-                    {
-                        // Conversion failed after Redis completed successfully; not a DB error.
-                        pending.Fail(ex);
-                    }
-                }
-                finally
-                {
-                    value.Dispose();
-                }
-
-                return null;
+                return Complete(client, value);
             }
             catch (OperationCanceledException) when (timeout is { } expired && !callerToken.IsCancellationRequested)
             {
@@ -281,6 +334,35 @@ public sealed class RespireBatch
             {
                 pending.Fail(ex);
                 return ex;
+            }
+        }
+
+        private Exception? Complete(RespireClient client, RespValue value)
+        {
+            try
+            {
+                if (value.IsError)
+                {
+                    var error = ResponseReader.ServerError(in value);
+                    pending.Fail(error);
+                    return error;
+                }
+
+                try
+                {
+                    pending.Succeed(convert(client, value));
+                    return null;
+                }
+                catch (Exception ex)
+                {
+                    // Conversion failed after Redis completed successfully; not a DB error.
+                    pending.Fail(ex);
+                    return ex;
+                }
+            }
+            finally
+            {
+                value.Dispose();
             }
         }
     }
