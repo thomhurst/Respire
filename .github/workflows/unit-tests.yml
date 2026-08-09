@@ -27,9 +27,9 @@ jobs:
     runs-on: ubuntu-latest
     
     strategy:
+      fail-fast: false
       matrix:
         framework: [net8.0, net10.0]
-        fail-fast: false
     
     steps:
       - name: Checkout code
