@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.Logging;
 using Respire.Commands;
@@ -16,6 +18,7 @@ namespace Respire.Infrastructure;
 public sealed class RespireConnectionMultiplexer : IAsyncDisposable
 {
     private readonly RespireConnection?[] _connections;
+    private readonly int _connectionMask;
     private readonly int[] _reconnecting;
     private readonly RespireConnectionOptions _options;
     private readonly ILogger? _logger;
@@ -73,6 +76,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         _options = options;
         _logger = logger;
         _connections = new RespireConnection?[connectionCount];
+        _connectionMask = BitOperations.IsPow2((uint)connectionCount) ? connectionCount - 1 : -1;
         _reconnecting = new int[connectionCount];
     }
 
@@ -167,7 +171,10 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     }
 
     /// <summary>Returns the next healthy connection, scheduling replacement of any dead ones seen.</summary>
-    public RespireConnection GetConnection() => GetConnection(Interlocked.Increment(ref _next));
+    public RespireConnection GetConnection()
+        => _connections.Length == 1
+            ? GetSingleConnection()
+            : GetConnection(Interlocked.Increment(ref _next));
 
     /// <summary>
     /// Returns a stable healthy connection for an affinity value, probing replacements in a
@@ -187,7 +194,10 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         var count = _connections.Length;
         for (var i = 0; i < count; i++)
         {
-            var slot = (int)((startIndex + (uint)i) % (uint)count);
+            var offset = startIndex + (uint)i;
+            var slot = _connectionMask >= 0
+                ? (int)(offset & (uint)_connectionMask)
+                : (int)(offset % (uint)count);
             var connection = Volatile.Read(ref _connections[slot]);
             if (connection is { IsConnected: true })
             {
@@ -197,6 +207,26 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             ScheduleReconnect(slot);
         }
 
+        throw new RespireConnectionException($"No healthy connections to {Host}:{Port}.");
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private RespireConnection GetSingleConnection()
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (!_connected)
+        {
+            throw new RespireConnectionException(
+                $"Not connected to {Host}:{Port} — call {nameof(EnsureConnectedAsync)} first.");
+        }
+
+        var connection = Volatile.Read(ref _connections[0]);
+        if (connection is { IsConnected: true })
+        {
+            return connection;
+        }
+
+        ScheduleReconnect(0);
         throw new RespireConnectionException($"No healthy connections to {Host}:{Port}.");
     }
 
