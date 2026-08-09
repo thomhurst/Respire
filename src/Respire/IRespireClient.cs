@@ -73,12 +73,45 @@ public interface IRespireClient : IAsyncDisposable
     ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args);
 
     ValueTask<RespireResult> ExecuteAsync(
+        RespireCommand command, RespireCommandFlags flags, params RespireValue[] args);
+
+    ValueTask<RespireResult> ExecuteAsync(
         RespireCommand command, RespireValue[] args, CancellationToken cancellationToken);
+
+    ValueTask<RespireResult> ExecuteAsync(
+        RespireCommand command,
+        RespireValue[] args,
+        RespireCommandFlags flags,
+        CancellationToken cancellationToken);
 
     ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args);
 
     ValueTask<RespireResult> ExecuteAsync(
+        string command, RespireCommandFlags flags, params RespireValue[] args);
+
+    ValueTask<RespireResult> ExecuteAsync(
+        string command,
+        RespireValue[] args,
+        RespireCommandFlags flags,
+        CancellationToken cancellationToken);
+
+    ValueTask<RespireResult> ExecuteAsync(
         RespireCommandInterpolatedStringHandler command, CancellationToken cancellationToken = default);
+
+    ValueTask<RespireResult> ExecuteAsync(
+        RespireCommandInterpolatedStringHandler command,
+        RespireCommandFlags flags,
+        CancellationToken cancellationToken = default);
+
+    ValueTask ExecuteFireAndForgetAsync(RespireCommand command, params RespireValue[] args);
+
+    ValueTask ExecuteFireAndForgetAsync(
+        RespireCommand command, RespireValue[] args, CancellationToken cancellationToken);
+
+    ValueTask ExecuteFireAndForgetAsync(string command, params RespireValue[] args);
+
+    ValueTask ExecuteFireAndForgetAsync(
+        string command, RespireValue[] args, CancellationToken cancellationToken);
 
     /// <summary>A view that prepends a prefix to every key; shares this client's connections.</summary>
     IRespireClient WithKeyPrefix(string prefix);

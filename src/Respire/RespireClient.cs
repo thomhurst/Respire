@@ -126,7 +126,14 @@ public sealed partial class RespireClient : IRespireClient
     /// words are pre-encoded once and never split or allocated per call. The result is a lease.
     /// </summary>
     public ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args)
-        => ExecuteCatalogAsync(command, args, CancellationToken.None);
+        => ExecuteCatalogAsync(command, args, RespireCommandFlags.None, CancellationToken.None);
+
+    /// <summary>
+    /// Sends a command from <see cref="RespireCommands"/> with command policy flags.
+    /// </summary>
+    public ValueTask<RespireResult> ExecuteAsync(
+        RespireCommand command, RespireCommandFlags flags, params RespireValue[] args)
+        => ExecuteCatalogAsync(command, args, flags, CancellationToken.None);
 
     /// <summary>
     /// Sends a catalog command with cancellation. Blocking descriptors use a dedicated pooled
@@ -134,10 +141,235 @@ public sealed partial class RespireClient : IRespireClient
     /// </summary>
     public ValueTask<RespireResult> ExecuteAsync(
         RespireCommand command, RespireValue[] args, CancellationToken cancellationToken)
-        => ExecuteCatalogAsync(command, args, cancellationToken);
+        => ExecuteCatalogAsync(command, args, RespireCommandFlags.None, cancellationToken);
+
+    /// <summary>
+    /// Sends a catalog command with command policy flags and cancellation.
+    /// </summary>
+    public ValueTask<RespireResult> ExecuteAsync(
+        RespireCommand command,
+        RespireValue[] args,
+        RespireCommandFlags flags,
+        CancellationToken cancellationToken)
+        => ExecuteCatalogAsync(command, args, flags, cancellationToken);
+
+    /// <summary>
+    /// Queues a catalog command and discards its reply once it arrives.
+    /// </summary>
+    public ValueTask ExecuteFireAndForgetAsync(RespireCommand command, params RespireValue[] args)
+        => ExecuteCatalogFireAndForgetAsync(command, args, CancellationToken.None);
+
+    /// <summary>
+    /// Queues a catalog command and discards its reply once it arrives.
+    /// </summary>
+    public ValueTask ExecuteFireAndForgetAsync(
+        RespireCommand command, RespireValue[] args, CancellationToken cancellationToken)
+        => ExecuteCatalogFireAndForgetAsync(command, args, cancellationToken);
 
     private async ValueTask<RespireResult> ExecuteCatalogAsync(
-        RespireCommand command, RespireValue[] args, CancellationToken cancellationToken)
+        RespireCommand command,
+        RespireValue[] args,
+        RespireCommandFlags flags,
+        CancellationToken cancellationToken)
+    {
+        ValidateResultFlags(flags);
+        ValidateCatalogCommand(command);
+
+        var storedProcedureName = StoredProcedureName(command.Name, args);
+        var commandValue = new CatalogCommand(command, args);
+        RespValue response;
+        if (_core.Cluster is { } cluster
+            && DynamicCommandRouting.IsClusterWideMutation(command.Name, args))
+        {
+            response = await SendClusterWideAsync(
+                    command.Name, cluster, commandValue, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        else if (command.IsBlocking(args))
+        {
+            response = await SendBlockingAsync(
+                    command.Name,
+                    commandValue,
+                    cancellationToken,
+                    noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect))
+                .ConfigureAwait(false);
+        }
+        else if (storedProcedureName is null)
+        {
+            response = await SendAsync(command.Name, commandValue, cancellationToken, flags).ConfigureAwait(false);
+        }
+        else
+        {
+            response = await SendStoredProcedureAsync(
+                    command.Name, commandValue, cancellationToken, storedProcedureName, flags)
+                .ConfigureAwait(false);
+        }
+
+        return new RespireResult(in response);
+    }
+
+    private async ValueTask ExecuteCatalogFireAndForgetAsync(
+        RespireCommand command,
+        RespireValue[] args,
+        CancellationToken cancellationToken)
+    {
+        ValidateCatalogCommand(command);
+        if (command.IsBlocking(args))
+        {
+            throw new NotSupportedException(
+                $"{command.Name} can block and cannot run through ExecuteFireAndForgetAsync.");
+        }
+
+        var commandValue = new CatalogCommand(command, args);
+        if (_core.Cluster is { } cluster
+            && DynamicCommandRouting.IsClusterWideMutation(command.Name, args))
+        {
+            await SendClusterWideFireAndForgetAsync(
+                    cluster, commandValue, cancellationToken)
+                .ConfigureAwait(false);
+            return;
+        }
+
+        await SendFireAndForgetAsync(commandValue, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Sends any command. The command may contain spaces ("CONFIG GET"); each arg is exactly one
+    /// argument. The result is a lease — dispose it.
+    /// </summary>
+    public ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args)
+        => ExecuteRawAsync(command, args, RespireCommandFlags.None, CancellationToken.None);
+
+    /// <summary>
+    /// Sends any command with command policy flags.
+    /// </summary>
+    public ValueTask<RespireResult> ExecuteAsync(
+        string command, RespireCommandFlags flags, params RespireValue[] args)
+        => ExecuteRawAsync(command, args, flags, CancellationToken.None);
+
+    /// <summary>
+    /// Sends any command with command policy flags and cancellation.
+    /// </summary>
+    public ValueTask<RespireResult> ExecuteAsync(
+        string command,
+        RespireValue[] args,
+        RespireCommandFlags flags,
+        CancellationToken cancellationToken)
+        => ExecuteRawAsync(command, args, flags, cancellationToken);
+
+    /// <summary>
+    /// Queues any command and discards its reply once it arrives.
+    /// </summary>
+    public ValueTask ExecuteFireAndForgetAsync(string command, params RespireValue[] args)
+        => ExecuteRawFireAndForgetAsync(command, args, CancellationToken.None);
+
+    /// <summary>
+    /// Queues any command and discards its reply once it arrives.
+    /// </summary>
+    public ValueTask ExecuteFireAndForgetAsync(
+        string command, RespireValue[] args, CancellationToken cancellationToken)
+        => ExecuteRawFireAndForgetAsync(command, args, cancellationToken);
+
+    private async ValueTask<RespireResult> ExecuteRawAsync(
+        string command,
+        RespireValue[] args,
+        RespireCommandFlags flags,
+        CancellationToken cancellationToken)
+    {
+        ValidateResultFlags(flags);
+        var (operation, storedProcedureName, commandValue) = CreateRawCommand(command, args);
+        RespValue response;
+        if (_core.Cluster is { } cluster
+            && DynamicCommandRouting.IsClusterWideMutation(operation, args))
+        {
+            response = await SendClusterWideAsync(
+                    operation, cluster, commandValue, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        else if (storedProcedureName is null)
+        {
+            response = await SendAsync(operation, commandValue, cancellationToken, flags).ConfigureAwait(false);
+        }
+        else
+        {
+            response = await SendStoredProcedureAsync(
+                    operation, commandValue, cancellationToken, storedProcedureName, flags)
+                .ConfigureAwait(false);
+        }
+
+        return new RespireResult(in response);
+    }
+
+    private async ValueTask ExecuteRawFireAndForgetAsync(
+        string command,
+        RespireValue[] args,
+        CancellationToken cancellationToken)
+    {
+        var (operation, _, commandValue) = CreateRawCommand(command, args);
+        if (_core.Cluster is { } cluster
+            && DynamicCommandRouting.IsClusterWideMutation(operation, args))
+        {
+            await SendClusterWideFireAndForgetAsync(
+                    cluster, commandValue, cancellationToken)
+                .ConfigureAwait(false);
+            return;
+        }
+
+        await SendFireAndForgetAsync(commandValue, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Sends a command written as an interpolated string — <c>ExecuteAsync($"SET {key} {value} EX {60}")</c>.
+    /// Literal text splits on spaces; every interpolation hole is exactly one argument and is
+    /// never re-tokenized, so values containing spaces are safe.
+    /// </summary>
+    public ValueTask<RespireResult> ExecuteAsync(
+        RespireCommandInterpolatedStringHandler command,
+        CancellationToken cancellationToken = default)
+        => ExecuteInterpolatedAsync(command, RespireCommandFlags.None, cancellationToken);
+
+    /// <summary>
+    /// Sends an interpolated raw command with command policy flags.
+    /// </summary>
+    public ValueTask<RespireResult> ExecuteAsync(
+        RespireCommandInterpolatedStringHandler command,
+        RespireCommandFlags flags,
+        CancellationToken cancellationToken = default)
+        => ExecuteInterpolatedAsync(command, flags, cancellationToken);
+
+    private async ValueTask<RespireResult> ExecuteInterpolatedAsync(
+        RespireCommandInterpolatedStringHandler command,
+        RespireCommandFlags flags,
+        CancellationToken cancellationToken)
+    {
+        ValidateResultFlags(flags);
+        var (operation, tokens) = command.Build();
+        var storedProcedureName = StoredProcedureName(operation, tokens.AsSpan(1));
+        var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, firstArgumentIndex: 1);
+        var commandValue = new DynamicCommand(tokens, routingKeyIndex);
+        RespValue response;
+        if (_core.Cluster is { } cluster
+            && DynamicCommandRouting.IsClusterWideMutation(operation, tokens.AsSpan(1)))
+        {
+            response = await SendClusterWideAsync(
+                    operation, cluster, commandValue, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        else if (storedProcedureName is null)
+        {
+            response = await SendAsync(operation, commandValue, cancellationToken, flags).ConfigureAwait(false);
+        }
+        else
+        {
+            response = await SendStoredProcedureAsync(
+                    operation, commandValue, cancellationToken, storedProcedureName, flags)
+                .ConfigureAwait(false);
+        }
+
+        return new RespireResult(in response);
+    }
+
+    private void ValidateCatalogCommand(RespireCommand command)
     {
         if (string.IsNullOrEmpty(command.Name))
         {
@@ -157,39 +389,30 @@ public sealed partial class RespireClient : IRespireClient
                 $"{command.Name} requires connection affinity and cannot run through ExecuteAsync. " +
                 "Use RespireOptions, CreateTransaction, or the subscription APIs instead.");
         }
-
-        var storedProcedureName = StoredProcedureName(command.Name, args);
-        var commandValue = new CatalogCommand(command, args);
-        RespValue response;
-        if (_core.Cluster is { } cluster
-            && DynamicCommandRouting.IsClusterWideMutation(command.Name, args))
-        {
-            response = await SendClusterWideAsync(
-                    command.Name, cluster, commandValue, cancellationToken)
-                .ConfigureAwait(false);
-        }
-        else if (command.IsBlocking(args))
-        {
-            response = await SendBlockingAsync(command.Name, commandValue, cancellationToken).ConfigureAwait(false);
-        }
-        else if (storedProcedureName is null)
-        {
-            response = await SendAsync(command.Name, commandValue, cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            response = await SendStoredProcedureAsync(
-                command.Name, commandValue, cancellationToken, storedProcedureName).ConfigureAwait(false);
-        }
-
-        return new RespireResult(in response);
     }
 
-    /// <summary>
-    /// Sends any command. The command may contain spaces ("CONFIG GET"); each arg is exactly one
-    /// argument. The result is a lease — dispose it.
-    /// </summary>
-    public async ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args)
+    private static void ValidateResultFlags(RespireCommandFlags flags)
+    {
+        if (HasFlag(flags, RespireCommandFlags.FireAndForget))
+        {
+            throw new ArgumentException(
+                $"{nameof(RespireCommandFlags.FireAndForget)} commands do not return a {nameof(RespireResult)}. " +
+                $"Use {nameof(ExecuteFireAndForgetAsync)} instead.",
+                nameof(flags));
+        }
+
+        if ((flags & ~RespireCommandFlags.NoRedirect) != 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(flags), flags, "Unsupported command flags.");
+        }
+    }
+
+    private static bool HasFlag(RespireCommandFlags flags, RespireCommandFlags flag)
+        => (flags & flag) != 0;
+
+    private static (string Operation, string? StoredProcedureName, DynamicCommand Command) CreateRawCommand(
+        string command,
+        RespireValue[] args)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(command);
         var words = command.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -203,62 +426,7 @@ public sealed partial class RespireClient : IRespireClient
         var operation = RawOperationName(words);
         var storedProcedureName = words.Length == 1 ? StoredProcedureName(operation, args) : null;
         var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, words.Length);
-        var commandValue = new DynamicCommand(tokens, routingKeyIndex);
-        RespValue response;
-        if (_core.Cluster is { } cluster
-            && DynamicCommandRouting.IsClusterWideMutation(operation, args))
-        {
-            response = await SendClusterWideAsync(
-                    operation, cluster, commandValue, CancellationToken.None)
-                .ConfigureAwait(false);
-        }
-        else if (storedProcedureName is null)
-        {
-            response = await SendAsync(operation, commandValue, CancellationToken.None).ConfigureAwait(false);
-        }
-        else
-        {
-            response = await SendStoredProcedureAsync(
-                    operation, commandValue, CancellationToken.None, storedProcedureName)
-                .ConfigureAwait(false);
-        }
-
-        return new RespireResult(in response);
-    }
-
-    /// <summary>
-    /// Sends a command written as an interpolated string — <c>ExecuteAsync($"SET {key} {value} EX {60}")</c>.
-    /// Literal text splits on spaces; every interpolation hole is exactly one argument and is
-    /// never re-tokenized, so values containing spaces are safe.
-    /// </summary>
-    public async ValueTask<RespireResult> ExecuteAsync(
-        RespireCommandInterpolatedStringHandler command,
-        CancellationToken cancellationToken = default)
-    {
-        var (operation, tokens) = command.Build();
-        var storedProcedureName = StoredProcedureName(operation, tokens.AsSpan(1));
-        var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, firstArgumentIndex: 1);
-        var commandValue = new DynamicCommand(tokens, routingKeyIndex);
-        RespValue response;
-        if (_core.Cluster is { } cluster
-            && DynamicCommandRouting.IsClusterWideMutation(operation, tokens.AsSpan(1)))
-        {
-            response = await SendClusterWideAsync(
-                    operation, cluster, commandValue, cancellationToken)
-                .ConfigureAwait(false);
-        }
-        else if (storedProcedureName is null)
-        {
-            response = await SendAsync(operation, commandValue, cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            response = await SendStoredProcedureAsync(
-                    operation, commandValue, cancellationToken, storedProcedureName)
-                .ConfigureAwait(false);
-        }
-
-        return new RespireResult(in response);
+        return (operation, storedProcedureName, new DynamicCommand(tokens, routingKeyIndex));
     }
 
     private static string? StoredProcedureName(string operation, ReadOnlySpan<RespireValue> arguments)
@@ -469,12 +637,25 @@ public sealed partial class RespireClient : IRespireClient
         TCommand command,
         CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
+        => SendAsync(operation, command, cancellationToken, RespireCommandFlags.None);
+
+    private ValueTask<RespValue> SendAsync<TCommand>(
+        string operation,
+        TCommand command,
+        CancellationToken cancellationToken,
+        RespireCommandFlags flags)
+        where TCommand : struct, IRespCommand
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         if (core.Cluster is { } cluster)
         {
-            return SendClusterAsync(operation, cluster, command, cancellationToken);
+            return SendClusterAsync(
+                operation,
+                cluster,
+                command,
+                cancellationToken,
+                noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect));
         }
 
         if (!core.Multiplexer.IsInitialized)
@@ -506,7 +687,8 @@ public sealed partial class RespireClient : IRespireClient
         string operation,
         TCommand command,
         CancellationToken cancellationToken,
-        string storedProcedureName)
+        string storedProcedureName,
+        RespireCommandFlags flags = RespireCommandFlags.None)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -514,7 +696,12 @@ public sealed partial class RespireClient : IRespireClient
         if (core.Cluster is { } cluster)
         {
             return await SendClusterAsync(
-                    operation, cluster, command, cancellationToken, storedProcedureName)
+                    operation,
+                    cluster,
+                    command,
+                    cancellationToken,
+                    storedProcedureName,
+                    HasFlag(flags, RespireCommandFlags.NoRedirect))
                 .ConfigureAwait(false);
         }
 
@@ -534,7 +721,8 @@ public sealed partial class RespireClient : IRespireClient
         ClusterRouter cluster,
         TCommand command,
         CancellationToken cancellationToken,
-        string? storedProcedureName = null)
+        string? storedProcedureName = null,
+        bool noRedirect = false)
         where TCommand : struct, IRespCommand
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
@@ -549,7 +737,7 @@ public sealed partial class RespireClient : IRespireClient
                     .ConfigureAwait(false);
             }
             catch (RespireServerException error)
-                when (attempt < ClusterRouter.RedirectLimit && ClusterRouter.IsRedirect(error))
+                when (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.IsRedirect(error))
             {
                 connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken)
                     .ConfigureAwait(false);
@@ -602,6 +790,60 @@ public sealed partial class RespireClient : IRespireClient
             }
 
             throw;
+        }
+    }
+
+    private ValueTask SendFireAndForgetAsync<TCommand>(TCommand command, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var core = _core;
+        ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (core.Cluster is { } cluster)
+        {
+            return SendFireAndForgetClusterAsync(cluster, command, cancellationToken);
+        }
+
+        if (!core.Multiplexer.IsInitialized)
+        {
+            return SendFireAndForgetAfterConnectAsync(command, cancellationToken);
+        }
+
+        var connection = core.Multiplexer.GetConnection();
+        return connection.SendFireAndForgetAsync(in command, cancellationToken);
+    }
+
+    private async ValueTask SendFireAndForgetAfterConnectAsync<TCommand>(
+        TCommand command,
+        CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var core = _core;
+        await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        var connection = core.Multiplexer.GetConnection();
+        await connection.SendFireAndForgetAsync(in command, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask SendFireAndForgetClusterAsync<TCommand>(
+        ClusterRouter cluster,
+        TCommand command,
+        CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
+        var connection = await cluster.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
+        await connection.SendFireAndForgetAsync(in command, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask SendClusterWideFireAndForgetAsync<TCommand>(
+        ClusterRouter cluster,
+        TCommand command,
+        CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var connections = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var connection in connections)
+        {
+            await connection.SendFireAndForgetAsync(in command, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -703,7 +945,8 @@ public sealed partial class RespireClient : IRespireClient
         string operation,
         TCommand command,
         CancellationToken cancellationToken,
-        string? storedProcedureName = null)
+        string? storedProcedureName = null,
+        bool noRedirect = false)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -711,7 +954,7 @@ public sealed partial class RespireClient : IRespireClient
         if (core.Cluster is { } cluster)
         {
             return await SendBlockingClusterAsync(
-                    operation, cluster, command, cancellationToken, storedProcedureName)
+                    operation, cluster, command, cancellationToken, storedProcedureName, noRedirect)
                 .ConfigureAwait(false);
         }
 
@@ -758,7 +1001,8 @@ public sealed partial class RespireClient : IRespireClient
         ClusterRouter cluster,
         TCommand command,
         CancellationToken cancellationToken,
-        string? storedProcedureName)
+        string? storedProcedureName,
+        bool noRedirect)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -796,7 +1040,7 @@ public sealed partial class RespireClient : IRespireClient
                 {
                     var error = ResponseReader.ServerError(in response);
                     response.Dispose();
-                    if (attempt < ClusterRouter.RedirectLimit && ClusterRouter.IsRedirect(error))
+                    if (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.IsRedirect(error))
                     {
                         var redirectedPool = await cluster.GetRedirectDedicatedPoolAsync(
                                 error, connection, cancellationToken)

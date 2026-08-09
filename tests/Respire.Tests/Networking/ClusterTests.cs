@@ -68,6 +68,55 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task CatalogNoRedirect_SurfacesMovedRedirect()
+    {
+        await using var target = new FakeRespServer("$5\r\nvalue\r\n"u8.ToArray());
+        var slot = ClusterHash.GetSlot("key");
+        await using var seed = new FakeRespServer(
+            "*0\r\n"u8.ToArray(),
+            Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        var error = await Assert.That(async () =>
+                await client.ExecuteAsync(
+                    RespireCommands.String.GET,
+                    RespireCommandFlags.NoRedirect,
+                    "key"))
+            .Throws<RespireServerException>();
+
+        await Assert.That(error!.Code).IsEqualTo("MOVED");
+        await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS", "GET key"]);
+        await Assert.That(target.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task RawNoRedirect_SurfacesMovedRedirect()
+    {
+        await using var target = new FakeRespServer("$5\r\nvalue\r\n"u8.ToArray());
+        var slot = ClusterHash.GetSlot("key");
+        await using var seed = new FakeRespServer(
+            "*0\r\n"u8.ToArray(),
+            Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        var error = await Assert.That(async () =>
+                await client.ExecuteAsync("GET", RespireCommandFlags.NoRedirect, "key"))
+            .Throws<RespireServerException>();
+
+        await Assert.That(error!.Code).IsEqualTo("MOVED");
+        await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS", "GET key"]);
+        await Assert.That(target.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
     public async Task AskRedirect_SendsAskingOnTargetWithoutCachingSlot()
     {
         await using var target = new FakeRespServer(

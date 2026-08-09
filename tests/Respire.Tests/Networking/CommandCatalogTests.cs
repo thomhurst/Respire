@@ -148,6 +148,52 @@ public class CommandCatalogTests
     }
 
     [Test]
+    public async Task RawFireAndForget_CompletesWithoutPendingResultAndDiscardsReply()
+    {
+        await using var server = new FakeRespServer(
+            FakeRespServer.OkReply,
+            FakeRespServer.PongReply)
+        {
+            MinimumCommandsBeforeReply = 2,
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await client.ExecuteFireAndForgetAsync("SET", "key", "value")
+            .AsTask()
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitForCommandsAsync(server, 1);
+        using var response = await client.ExecuteAsync("PING")
+            .AsTask()
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        await Assert.That(response.AsString()).IsEqualTo("PONG");
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(["SET key value", "PING"]);
+    }
+
+    [Test]
+    public async Task CatalogFireAndForget_CompletesWithoutPendingResultAndDiscardsReply()
+    {
+        await using var server = new FakeRespServer(
+            FakeRespServer.OkReply,
+            FakeRespServer.PongReply)
+        {
+            MinimumCommandsBeforeReply = 2,
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await client.ExecuteFireAndForgetAsync(RespireCommands.String.SET, "catalog-key", "value")
+            .AsTask()
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitForCommandsAsync(server, 1);
+        using var response = await client.ExecuteAsync(RespireCommands.Connection.PING)
+            .AsTask()
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        await Assert.That(response.AsString()).IsEqualTo("PONG");
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(["SET catalog-key value", "PING"]);
+    }
+
+    [Test]
     public async Task CatalogCommand_PropagatesServerErrors()
     {
         await using var server = new FakeRespServer("-ERR catalog failure\r\n"u8.ToArray());
@@ -156,5 +202,14 @@ public class CommandCatalogTests
         await Assert.That(async () => await client.ExecuteAsync(RespireCommands.String.GETEX, "key"))
             .Throws<RespireServerException>()
             .WithMessage("ERR catalog failure");
+    }
+
+    private static async Task WaitForCommandsAsync(FakeRespServer server, int count)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen < count)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
     }
 }
