@@ -42,7 +42,8 @@ public class PubSubTests
         await using var server = new FakeRespServer(SubscribeConfirmation);
         await using var client = CreateLazyClient(server.Port);
 
-        await using var subscription = client.Subscribe("ch");
+        var channel = new string("ch".AsSpan());
+        await using var subscription = client.Subscribe(channel);
         var enumerator = subscription.GetAsyncEnumerator();
         var moveTask = enumerator.MoveNextAsync();
 
@@ -53,6 +54,7 @@ public class PubSubTests
 
         await Assert.That(await moveTask.AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
         await Assert.That(enumerator.Current.Channel).IsEqualTo("ch");
+        await Assert.That(ReferenceEquals(enumerator.Current.Channel, channel)).IsTrue();
         await Assert.That(enumerator.Current.Text).IsEqualTo("hello");
         await enumerator.DisposeAsync();
     }
