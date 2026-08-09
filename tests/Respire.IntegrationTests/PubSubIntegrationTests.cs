@@ -139,6 +139,59 @@ public class PubSubIntegrationTests
         (await firstMessage2.WaitAsync(TimeSpan.FromSeconds(5))).Text.Should().Be("to-everyone");
     }
 
+    [Test]
+    public async Task SubscriberConnectionDeath_ReconnectsResubscribesAndReportsState()
+    {
+        var channel = IsolatedChannel("it:reconnect");
+        var clientName = $"respire-pubsub-{Guid.NewGuid():N}";
+        await using var resilientClient = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(_fixture.ConnectionString) with { ClientName = clientName });
+        var states = new List<RespireConnectionState>();
+        var connected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        resilientClient.ConnectionStateChanged += state =>
+        {
+            lock (states)
+            {
+                states.Add(state);
+            }
+
+            if (state == RespireConnectionState.Connected)
+            {
+                connected.TrySetResult();
+            }
+        };
+
+        await using var subscription = resilientClient.Subscribe(channel);
+        var firstMessage = ReadFirstAsync(subscription);
+        await PublishUntilReceiversAsync(channel, "before-disconnect", 1);
+        (await firstMessage.WaitAsync(TimeSpan.FromSeconds(5))).Text.Should().Be("before-disconnect");
+
+        using var clientList = await _client.ExecuteAsync("CLIENT", "LIST");
+        var subscriberLine = clientList.AsString()
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Single(line => line.Contains($"name={clientName}", StringComparison.Ordinal)
+                && line.Contains("cmd=subscribe", StringComparison.Ordinal));
+        var subscriberId = subscriberLine.Split(' ')
+            .Single(field => field.StartsWith("id=", StringComparison.Ordinal))[3..];
+
+        using (var killed = await _client.ExecuteAsync("CLIENT", "KILL", "ID", subscriberId))
+        {
+            killed.AsInteger().Should().Be(1);
+        }
+
+        var reconnectedMessage = ReadFirstAsync(subscription);
+        await PublishUntilReceiversAsync(channel, "after-reconnect", 1);
+
+        (await reconnectedMessage.WaitAsync(TimeSpan.FromSeconds(5))).Text.Should().Be("after-reconnect");
+        await connected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        lock (states)
+        {
+            states.Should().ContainInOrder(
+                RespireConnectionState.Reconnecting,
+                RespireConnectionState.Connected);
+        }
+    }
+
     /// <summary>Starts consuming the subscription and completes with the first message received.</summary>
     private static Task<RespireMessage> ReadFirstAsync(RespireSubscription subscription)
         => Task.Run(async () =>

@@ -16,10 +16,14 @@ namespace Respire.Internal;
 internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
 {
     private readonly object _gate = new();
+    private readonly object _reconnectStateGate = new();
+    private readonly Queue<RespireConnectionState> _pendingReconnectStates = [];
     private readonly Utf8RouteDictionary<List<RespireSubscription>>[] _routes =
         [new(), new(), new()];
     private readonly SemaphoreSlim _connectionGate = new(1, 1);
     private RespireConnection? _connection;
+    private long _reconnectGeneration;
+    private bool _publishingReconnectState;
     private volatile bool _disposed;
 
     public RespireSubscription CreateSubscription(SubscriptionKind kind, string[] names)
@@ -288,6 +292,24 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             return;
         }
 
+        long reconnectGeneration;
+        bool publishState;
+        lock (_reconnectStateGate)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            reconnectGeneration = ++_reconnectGeneration;
+            publishState = QueueReconnectStateLocked(RespireConnectionState.Reconnecting);
+        }
+
+        if (publishState)
+        {
+            PublishReconnectStates();
+        }
+
         var delay = TimeSpan.FromMilliseconds(250);
         while (!_disposed)
         {
@@ -318,6 +340,25 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                         .ConfigureAwait(false);
                 }
 
+                // A replacement can itself fail while this watcher is resubscribing. Its watcher
+                // then owns the newer reconnect generation; this stale watcher must not announce
+                // Connected after that newer Reconnecting notification.
+                publishState = false;
+                lock (_reconnectStateGate)
+                {
+                    if (reconnectGeneration == _reconnectGeneration
+                        && ReferenceEquals(Volatile.Read(ref _connection), replacement)
+                        && replacement.IsConnected)
+                    {
+                        publishState = QueueReconnectStateLocked(RespireConnectionState.Connected);
+                    }
+                }
+
+                if (publishState)
+                {
+                    PublishReconnectStates();
+                }
+
                 return;
             }
             catch (ObjectDisposedException)
@@ -330,6 +371,36 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                 await Task.Delay(delay).ConfigureAwait(false);
                 delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 5000));
             }
+        }
+    }
+
+    private bool QueueReconnectStateLocked(RespireConnectionState state)
+    {
+        _pendingReconnectStates.Enqueue(state);
+        if (_publishingReconnectState)
+        {
+            return false;
+        }
+
+        _publishingReconnectState = true;
+        return true;
+    }
+
+    private void PublishReconnectStates()
+    {
+        while (true)
+        {
+            RespireConnectionState state;
+            lock (_reconnectStateGate)
+            {
+                if (!_pendingReconnectStates.TryDequeue(out state))
+                {
+                    _publishingReconnectState = false;
+                    return;
+                }
+            }
+
+            core.NotifySubscriptionStateChanged(state);
         }
     }
 
@@ -396,12 +467,16 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (_disposed)
+        lock (_reconnectStateGate)
         {
-            return;
-        }
+            if (_disposed)
+            {
+                return;
+            }
 
-        _disposed = true;
+            _disposed = true;
+            _pendingReconnectStates.Clear();
+        }
 
         List<RespireSubscription> subscriptions = [];
         lock (_gate)

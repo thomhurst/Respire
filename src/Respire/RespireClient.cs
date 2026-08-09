@@ -76,8 +76,8 @@ public sealed partial class RespireClient : IRespireClient
     /// <summary>Raised when a dead connection is noticed and again when its replacement lands.</summary>
     public event Action<RespireConnectionState>? ConnectionStateChanged
     {
-        add => _core.Multiplexer.StateChanged += value;
-        remove => _core.Multiplexer.StateChanged -= value;
+        add => _core.ConnectionStateChanged += value;
+        remove => _core.ConnectionStateChanged -= value;
     }
 
     public IStringCommands Strings { get; }
