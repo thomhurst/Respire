@@ -15,6 +15,7 @@ on:
     paths:
       - 'src/**'
       - 'tests/Respire.Tests/**'
+      - '.github/workflows/unit-tests.yml'
 
 env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
