@@ -53,6 +53,11 @@ on:
         options:
           - net10.0
           - net8.0
+      dedicated_io:
+        description: 'Run the Respire client with dedicated blocking IO threads (RespireOptions.DedicatedIoThreads)'
+        required: false
+        default: false
+        type: boolean
 
 env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
@@ -128,6 +133,7 @@ jobs:
           STRESS_CONCURRENCY: ${{ github.event.inputs.concurrency || '50' }}
           STRESS_VALUE_SIZE: ${{ github.event.inputs.value_size_bytes || '1024' }}
           STRESS_FRAMEWORK: ${{ github.event.inputs.framework || 'net10.0' }}
+          RESPIRE_DEDICATED_IO: ${{ github.event.inputs.dedicated_io == 'true' && '1' || '0' }}
         run: |
           dotnet run -c Release -f "$STRESS_FRAMEWORK" --no-build -- \
             --duration "$STRESS_DURATION_MINUTES" \
