@@ -81,6 +81,43 @@ public interface IStringCommands
 
     /// <summary>Sets many keys in one atomic round trip. Redis: MSET.</summary>
     ValueTask SetManyAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
+
+    /// <summary>
+    /// Atomically sets many keys with a shared TTL using PX milliseconds. Use
+    /// <see cref="RespireCommands.String.MSETEX"/> directly for second-precision EX/EXAT forms.
+    /// Redis: MSETEX.
+    /// </summary>
+    ValueTask<bool> SetManyExpireAsync(TimeSpan expiry, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
+
+    /// <summary>Atomically sets many keys with NX/XX and a shared TTL using PX milliseconds. Redis: MSETEX.</summary>
+    ValueTask<bool> SetManyExpireAsync(
+        TimeSpan expiry, SetWhen when, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
+
+    /// <summary>Atomically sets many keys with a shared PXAT Unix-millisecond expiry. Redis: MSETEX.</summary>
+    ValueTask<bool> SetManyExpireAtAsync(
+        DateTimeOffset expireAt, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
+
+    /// <summary>Atomically sets many keys with NX/XX and a shared PXAT Unix-millisecond expiry. Redis: MSETEX.</summary>
+    ValueTask<bool> SetManyExpireAtAsync(
+        DateTimeOffset expireAt, SetWhen when, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
+
+    /// <summary>Atomically sets many keys while retaining existing TTLs. Redis: MSETEX KEEPTTL.</summary>
+    ValueTask<bool> SetManyKeepExpiryAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
+
+    /// <summary>Atomically sets many keys with NX/XX while retaining existing TTLs. Redis: MSETEX KEEPTTL.</summary>
+    ValueTask<bool> SetManyKeepExpiryAsync(
+        SetWhen when, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
+
+    /// <summary>
+    /// Returns the longest common subsequence. Use <see cref="RespireCommands.String.LCS"/> directly
+    /// for the IDX range-reporting shape. Redis: LCS.
+    /// </summary>
+    ValueTask<string> LongestCommonSubsequenceAsync(
+        RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken = default);
+
+    /// <summary>Returns the length of the longest common subsequence. Redis: LCS LEN.</summary>
+    ValueTask<long> LongestCommonSubsequenceLengthAsync(
+        RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken = default);
 }
 
 internal sealed class StringCommands(RespireClient client) : IStringCommands
@@ -153,5 +190,95 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         }
 
         return client.OkAsync("MSET", new CmdN(Verbs.MSet, args), CancellationToken.None);
+    }
+
+    public ValueTask<bool> SetManyExpireAsync(
+        TimeSpan expiry, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+        => SetManyExpireAsync(expiry, SetWhen.Always, pairs);
+
+    public ValueTask<bool> SetManyExpireAsync(
+        TimeSpan expiry, SetWhen when, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+        => SetManyExpireCore("PX", (long)expiry.TotalMilliseconds, hasValue: true, when, pairs);
+
+    public ValueTask<bool> SetManyExpireAtAsync(
+        DateTimeOffset expireAt, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+        => SetManyExpireAtAsync(expireAt, SetWhen.Always, pairs);
+
+    public ValueTask<bool> SetManyExpireAtAsync(
+        DateTimeOffset expireAt, SetWhen when, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+        => SetManyExpireCore("PXAT", expireAt.ToUnixTimeMilliseconds(), hasValue: true, when, pairs);
+
+    public ValueTask<bool> SetManyKeepExpiryAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+        => SetManyKeepExpiryAsync(SetWhen.Always, pairs);
+
+    public ValueTask<bool> SetManyKeepExpiryAsync(
+        SetWhen when, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+        => SetManyExpireCore("KEEPTTL", optionValue: 0, hasValue: false, when, pairs);
+
+    public ValueTask<string> LongestCommonSubsequenceAsync(
+        RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken = default)
+        => client.StringAsync(
+            "LCS",
+            new Cmd2(RespireCommands.String.LCS.Verb, client.Key(in firstKey), client.Key(in secondKey)),
+            cancellationToken);
+
+    public ValueTask<long> LongestCommonSubsequenceLengthAsync(
+        RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken = default)
+        => client.IntegerAsync(
+            "LCS",
+            new Cmd3(RespireCommands.String.LCS.Verb, client.Key(in firstKey), client.Key(in secondKey), "LEN"),
+            cancellationToken);
+
+    private ValueTask<bool> SetManyExpireCore(
+        string option,
+        long optionValue,
+        bool hasValue,
+        SetWhen when,
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+    {
+        ValidatePairs(pairs);
+        var condition = StringSetWhenToken(when);
+        var args = new RespireValue[
+            1 + pairs.Length * 2 + (condition is null ? 0 : 1) + 1 + (hasValue ? 1 : 0)];
+        var index = 0;
+        args[index++] = pairs.Length;
+        for (var i = 0; i < pairs.Length; i++)
+        {
+            args[index++] = client.Key(in pairs[i].Key);
+            args[index++] = pairs[i].Value;
+        }
+
+        if (condition is not null)
+        {
+            args[index++] = condition;
+        }
+
+        args[index++] = option;
+        if (hasValue)
+        {
+            args[index++] = optionValue;
+        }
+
+        return client.FlagAsync(
+            "MSETEX",
+            new MSetExCommand(RespireCommands.String.MSETEX.Verb, args),
+            CancellationToken.None);
+    }
+
+    private static string? StringSetWhenToken(SetWhen when)
+        => when switch
+        {
+            SetWhen.Always => null,
+            SetWhen.NotExists => "NX",
+            SetWhen.Exists => "XX",
+            _ => throw new ArgumentOutOfRangeException(nameof(when), when, null),
+        };
+
+    private static void ValidatePairs(ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+    {
+        if (pairs.Length == 0)
+        {
+            throw new ArgumentException("At least one key/value pair is required.", nameof(pairs));
+        }
     }
 }

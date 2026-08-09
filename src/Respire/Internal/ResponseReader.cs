@@ -103,6 +103,40 @@ internal static class ResponseReader
         return result;
     }
 
+    public static HashFieldExpiry[] HashFieldExpiryArray(in RespValue value)
+    {
+        var elements = value.AsArray();
+        if (elements.Length == 0)
+        {
+            return [];
+        }
+
+        var result = new HashFieldExpiry[elements.Length];
+        for (var i = 0; i < elements.Length; i++)
+        {
+            result[i] = HashFieldExpiry.FromHpttl(elements[i].AsInteger());
+        }
+
+        return result;
+    }
+
+    public static HashFieldExpiryResult[] HashFieldExpiryResultArray(in RespValue value)
+    {
+        var elements = value.AsArray();
+        if (elements.Length == 0)
+        {
+            return [];
+        }
+
+        var result = new HashFieldExpiryResult[elements.Length];
+        for (var i = 0; i < elements.Length; i++)
+        {
+            result[i] = (HashFieldExpiryResult)elements[i].AsInteger();
+        }
+
+        return result;
+    }
+
     /// <summary>Flattened key,value,key,value pairs (HGETALL, CONFIG GET) into a dictionary.</summary>
     public static Dictionary<string, string> StringMap(in RespValue value)
     {
