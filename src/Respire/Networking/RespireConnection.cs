@@ -248,12 +248,21 @@ public sealed class RespireConnection : IAsyncDisposable
             try
             {
                 var reply = await pendingReply.ConfigureAwait(false);
-                if (failure is null && reply.IsError)
+                try
                 {
-                    failure = CreateHandshakeException(in reply, step);
+                    if (failure is null && reply.IsError)
+                    {
+                        failure = CreateHandshakeException(in reply, step);
+                    }
+                    else if (failure is null && step == "HELLO")
+                    {
+                        ValidateHelloProtocol(in reply);
+                    }
                 }
-
-                reply.Dispose();
+                finally
+                {
+                    reply.Dispose();
+                }
             }
             catch (Exception ex)
             {
@@ -271,6 +280,26 @@ public sealed class RespireConnection : IAsyncDisposable
 
     private RespireConnectionException CreateHandshakeException(in RespValue reply, string step)
         => new($"{step} failed for {Host}:{Port}: {reply.GetErrorMessage()}");
+
+    private void ValidateHelloProtocol(in RespValue reply)
+    {
+        if (reply.Type == RespDataType.Map)
+        {
+            var fields = reply.AsArray();
+            for (var i = 0; i + 1 < fields.Length; i += 2)
+            {
+                if (fields[i].AsSpan().SequenceEqual("proto"u8)
+                    && fields[i + 1].Type == RespDataType.Integer
+                    && fields[i + 1].AsInteger() == 3)
+                {
+                    return;
+                }
+            }
+        }
+
+        throw new RespireConnectionException(
+            $"HELLO 3 failed for {Host}:{Port}: server did not confirm RESP3 (expected map field 'proto' = 3).");
+    }
 
     /// <summary>
     /// Captures Redis's connection ID. Corrections use it to kill a locally dead connection on
