@@ -63,8 +63,8 @@ redis.ConnectionStateChanged += state =>
 
 Respire reconnects failed connections in the background. Pub/sub subscriptions reconnect and resubscribe automatically.
 
-:::note Current transport limits
+:::note TLS
 
-Only plain `redis://` endpoints are supported. `rediss://` throws `NotSupportedException`; TLS is on the [roadmap](../roadmap).
+Use `rediss://` to enable TLS. Portless `redis://` and `rediss://` URIs both use Redis's standard port, `6379`; specify an explicit port when your provider uses another one.
 
 :::
