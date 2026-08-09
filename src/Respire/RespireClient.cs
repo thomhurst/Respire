@@ -503,7 +503,8 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             connection = await core.DedicatedPool.RentAsync(cancellationToken).ConfigureAwait(false);
-            var response = await connection.SendAsync(in command, cancellationToken).ConfigureAwait(false);
+            var response = await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken)
+                .ConfigureAwait(false);
             core.DedicatedPool.Return(connection);
             returned = true;
             if (response.IsError)

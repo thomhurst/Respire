@@ -28,7 +28,7 @@ internal sealed class ClientCore : IAsyncDisposable
         Multiplexer = RespireConnectionMultiplexer.Create(
             endpoint.Host, endpoint.Port, options.Connections, connectionOptions, Logger);
         DedicatedPool = new DedicatedConnectionPool(
-            endpoint.Host, endpoint.Port, connectionOptions with { ResponseTimeout = null }, Logger);
+            endpoint.Host, endpoint.Port, connectionOptions, Logger);
     }
 
     public SubscriptionHub Hub

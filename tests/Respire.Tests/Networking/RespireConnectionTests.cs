@@ -321,6 +321,25 @@ public class RespireConnectionTests
     }
 
     [Test]
+    public async Task ResponseWatchdog_StillAppliesToNonBlockingDedicatedConnection()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        server.DelayReply(0, 250);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            ResponseTimeout = TimeSpan.FromMilliseconds(50),
+        });
+        var connection = await client.Core.DedicatedPool.RentAsync(CancellationToken.None);
+
+        await Assert.That(async () =>
+                await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
+            .ThrowsExactly<RespireConnectionException>();
+
+        await client.Core.DedicatedPool.DiscardAsync(connection);
+    }
+
+    [Test]
     public async Task SendAfterDeath_ThrowsConnectionException()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);

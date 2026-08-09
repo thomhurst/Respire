@@ -72,6 +72,7 @@ public sealed class RespireConnection : IAsyncDisposable
     private long _sentReplyCount;
     private long _receivedReplyCount;
     private long _receiveDeadlineTimestamp;
+    private int _responseTimeoutSuppressions;
     private Exception? _abortReason;
 
     public string Host { get; }
@@ -327,6 +328,22 @@ public sealed class RespireConnection : IAsyncDisposable
     public ValueTask<RespValue> SendAsync<TCommand>(in TCommand command, CancellationToken cancellationToken = default)
         where TCommand : struct, IRespCommand
         => SendCoreAsync(in command, discardRepliesBefore: 0, throwOnError: false, cancellationToken);
+
+    /// <summary>Sends an intentionally blocking command without applying the receive watchdog.</summary>
+    internal async ValueTask<RespValue> SendWithoutResponseTimeoutAsync<TCommand>(
+        TCommand command, CancellationToken cancellationToken = default)
+        where TCommand : struct, IRespCommand
+    {
+        Interlocked.Increment(ref _responseTimeoutSuppressions);
+        try
+        {
+            return await SendAsync(in command, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _responseTimeoutSuppressions);
+        }
+    }
 
     /// <summary>Sends a command and translates a RESP error reply when its result is consumed.</summary>
     internal ValueTask<RespValue> SendCheckedAsync<TCommand>(
@@ -1048,6 +1065,12 @@ public sealed class RespireConnection : IAsyncDisposable
         {
             while (true)
             {
+                if (Volatile.Read(ref _responseTimeoutSuppressions) != 0)
+                {
+                    await Task.Delay(timeout, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
                 var deadlineStart = Volatile.Read(ref _receiveDeadlineTimestamp);
                 if (deadlineStart == 0)
                 {
@@ -1065,7 +1088,8 @@ public sealed class RespireConnection : IAsyncDisposable
                 lock (_receiveDeadlineGate)
                 {
                     if (deadlineStart != _receiveDeadlineTimestamp
-                        || _sentReplyCount <= _receivedReplyCount)
+                        || _sentReplyCount <= _receivedReplyCount
+                        || Volatile.Read(ref _responseTimeoutSuppressions) != 0)
                     {
                         continue;
                     }
