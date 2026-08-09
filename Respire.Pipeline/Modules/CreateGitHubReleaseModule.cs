@@ -2,8 +2,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ModularPipelines.Attributes;
 using ModularPipelines.Context;
-using ModularPipelines.Git.Options;
-using ModularPipelines.Git.Extensions;
 using ModularPipelines.Modules;
 using Respire.Pipeline.Settings;
 
@@ -28,19 +26,15 @@ public class CreateGitHubReleaseModule : Module<string>
             return "Skipped - No GitHub token";
         }
 
-        var version = Environment.GetEnvironmentVariable("KEVA_VERSION") ?? "1.0.0-dev";
+        var version = NugetVersionGeneratorModule.GetGeneratedVersion();
         _ = await context.GetModule<PackagePathsParserModule>();
         
         context.Logger.LogInformation("Creating GitHub release for version {Version}", version);
-        
-        // TODO: Fix Git commands - ModularPipelines API needs updating
-        // var branch = await context.Git().Commands.Branch(...)
-        // var commitHash = await context.Git().Commands.RevParse(...)
-        
-        var gitInfo = new 
+
+        var gitInfo = new
         {
-            BranchName = "main",
-            CommitHash = "unknown"
+            BranchName = Environment.GetEnvironmentVariable(NugetVersionGeneratorModule.BranchEnvironmentVariable) ?? "unknown",
+            CommitHash = Environment.GetEnvironmentVariable(NugetVersionGeneratorModule.CommitEnvironmentVariable) ?? "unknown"
         };
         
         var releaseNotes = GenerateReleaseNotes(version, gitInfo);

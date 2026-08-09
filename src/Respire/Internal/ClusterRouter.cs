@@ -13,6 +13,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
     private readonly RespireEndpoint[] _seeds;
     private readonly RespireConnectionMultiplexer _primary;
     private readonly Dictionary<RespireEndpoint, RespireConnectionMultiplexer> _nodes = [];
+    private readonly Dictionary<RespireConnectionMultiplexer, Action<int, RespireConnectionState>> _nodeStateHandlers = [];
     private readonly Dictionary<RespireEndpoint, DedicatedConnectionPool> _dedicatedPools = [];
     private readonly object _nodesGate = new();
     private readonly RespireConnectionMultiplexer?[] _slots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
@@ -28,11 +29,11 @@ internal sealed class ClusterRouter : IAsyncDisposable
             : options.Endpoints.ToArray();
         _primary = primary;
         _nodes.Add(options.PrimaryEndpoint, primary);
-        primary.StateChanged += OnNodeStateChanged;
+        ObserveNode(primary);
     }
 
     internal bool IsConnected => Volatile.Read(ref _seed)?.IsConnected == true;
-    internal event Action<RespireConnectionState>? StateChanged;
+    internal event Action<RespireConnectionMultiplexer, int, RespireConnectionState>? SlotStateChanged;
 
     internal bool IsSlotConnected(int slot)
         => Volatile.Read(ref _slots[slot])?.IsConnected == true;
@@ -373,10 +374,18 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 _options.Connections,
                 _options.ToConnectionOptions(),
                 _options.CreateLogger($"Respire.Cluster.{endpoint.Host}:{endpoint.Port}"));
-            node.StateChanged += OnNodeStateChanged;
+            ObserveNode(node);
             _nodes.Add(endpoint, node);
             return node;
         }
+    }
+
+    private void ObserveNode(RespireConnectionMultiplexer node)
+    {
+        Action<int, RespireConnectionState> handler =
+            (slot, state) => SlotStateChanged?.Invoke(node, slot, state);
+        _nodeStateHandlers.Add(node, handler);
+        node.SlotStateChanged += handler;
     }
 
     private async ValueTask<RespireConnection> EnableCorrectionOrderingAsync(
@@ -396,8 +405,6 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
         return node.GetConnection();
     }
-
-    private void OnNodeStateChanged(RespireConnectionState state) => StateChanged?.Invoke(state);
 
     private DedicatedConnectionPool GetOrCreateDedicatedPool(RespireEndpoint endpoint)
     {
@@ -530,7 +537,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
         foreach (var node in nodes)
         {
-            node.StateChanged -= OnNodeStateChanged;
+            node.SlotStateChanged -= _nodeStateHandlers[node];
             if (!ReferenceEquals(node, _primary))
             {
                 await node.DisposeAsync().ConfigureAwait(false);

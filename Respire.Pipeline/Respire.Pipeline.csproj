@@ -9,7 +9,10 @@
 
   <ItemGroup>
     <PackageReference Include="ModularPipelines.DotNet" />
-    <PackageReference Include="ModularPipelines.Git" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Respire.Pipeline.Tests" />
   </ItemGroup>
 
 </Project>
