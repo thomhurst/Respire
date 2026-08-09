@@ -144,6 +144,13 @@ public sealed partial class RespireClient : IRespireClient
             throw new ArgumentException("Command must be an entry from RespireCommands.", nameof(command));
         }
 
+        if (_keyPrefix is not null)
+        {
+            throw new NotSupportedException(
+                "Catalog commands cannot run through a key-prefixed view because descriptors do not identify key arguments. " +
+                "Use the typed command facets instead.");
+        }
+
         if (command.Behavior == RespireCommandBehavior.ConnectionScoped)
         {
             throw new NotSupportedException(

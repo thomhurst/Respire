@@ -137,6 +137,9 @@ using var encoding = await redis.ExecuteAsync(
     RespireCommands.Key.OBJECT_ENCODING, "user:1");
 ```
 
+Catalog descriptors do not encode key positions, so catalog execution is rejected on
+`WithKeyPrefix` views; use the typed facets there to preserve key isolation.
+
 The string and interpolated overloads remain available for experimental or server-specific
 commands. Interpolated values are encoded as single arguments, so spaces stay safe.
 

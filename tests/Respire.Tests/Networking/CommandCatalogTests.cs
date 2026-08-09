@@ -117,6 +117,18 @@ public class CommandCatalogTests
     }
 
     [Test]
+    public async Task CatalogCommands_OnKeyPrefixedViews_AreRejectedBeforeSending()
+    {
+        await using var server = new FakeRespServer();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var tenant = client.WithKeyPrefix("tenant:42:");
+
+        await Assert.That(async () => await tenant.ExecuteAsync(RespireCommands.String.GET, "settings"))
+            .Throws<NotSupportedException>();
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
     public async Task CatalogCommand_PreservesArgumentsAsSingleTokens()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
