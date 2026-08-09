@@ -1,3 +1,4 @@
+using System.Text;
 using FluentAssertions;
 using TUnit.Core;
 
@@ -70,7 +71,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
             GeoSearchOrigin.FromMember("london"),
             GeoSearchShape.Circle(400, GeoUnit.Kilometers),
             new GeoSearchOptions { Sort = GeoSortOrder.Ascending, IncludeDistance = true });
-        results.Select(static result => result.Member).Should().Equal("london", "paris");
+        results.Select(static result => Encoding.UTF8.GetString(result.Member)).Should().Equal("london", "paris");
         results[0].Distance.Should().BeApproximately(0, 0.001);
 
         (await client.Geo.SearchStoreAsync(
