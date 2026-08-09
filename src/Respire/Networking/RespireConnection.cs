@@ -423,9 +423,10 @@ public sealed class RespireConnection : IAsyncDisposable
     {
         var source = ConvertedPendingResponseSource<TState, TResult>.Rent(state, converter, transferOwnership);
         bool enqueued;
+        bool startedBatch;
         try
         {
-            enqueued = TryEnqueue(in command, source);
+            enqueued = TryEnqueue(in command, source, out startedBatch);
         }
         catch
         {
@@ -436,7 +437,7 @@ public sealed class RespireConnection : IAsyncDisposable
         if (enqueued)
         {
             source.RegisterCancellation(cancellationToken);
-            ScheduleFlush();
+            ScheduleFlush(startedBatch);
             return source.Task;
         }
 
@@ -515,10 +516,11 @@ public sealed class RespireConnection : IAsyncDisposable
         var source = TransactionPendingResponseSource.Rent(replyCount, firstQueueReply);
 
         bool enqueued;
+        bool startedBatch;
         try
         {
             enqueued = TryEnqueue(
-                in command, source, repliesBeforeFinal, retainRepliesBefore: true);
+                in command, source, out startedBatch, repliesBeforeFinal, retainRepliesBefore: true);
         }
         catch
         {
@@ -533,7 +535,7 @@ public sealed class RespireConnection : IAsyncDisposable
         }
 
         source.RegisterCancellation(cancellationToken);
-        ScheduleFlush();
+        ScheduleFlush(startedBatch);
         return source.Task;
     }
 
@@ -543,9 +545,10 @@ public sealed class RespireConnection : IAsyncDisposable
     {
         var source = _sourcePool.Rent(throwOnError);
         bool enqueued;
+        bool startedBatch;
         try
         {
-            enqueued = TryEnqueue(in command, source, discardRepliesBefore);
+            enqueued = TryEnqueue(in command, source, out startedBatch, discardRepliesBefore);
         }
         catch
         {
@@ -556,7 +559,7 @@ public sealed class RespireConnection : IAsyncDisposable
         if (enqueued)
         {
             source.RegisterCancellation(cancellationToken);
-            ScheduleFlush();
+            ScheduleFlush(startedBatch);
             return source.Task;
         }
 
@@ -570,9 +573,9 @@ public sealed class RespireConnection : IAsyncDisposable
     public ValueTask SendFireAndForgetAsync<TCommand>(in TCommand command, CancellationToken cancellationToken = default)
         where TCommand : struct, IRespCommand
     {
-        if (TryEnqueue(in command, InflightRing.DiscardSentinel))
+        if (TryEnqueue(in command, InflightRing.DiscardSentinel, out var startedBatch))
         {
-            ScheduleFlush();
+            ScheduleFlush(startedBatch);
             return ValueTask.CompletedTask;
         }
 
@@ -611,10 +614,13 @@ public sealed class RespireConnection : IAsyncDisposable
     private bool TryEnqueue<TCommand>(
         in TCommand command,
         PendingResponse source,
+        out bool startedBatch,
         int discardRepliesBefore = 0,
         bool retainRepliesBefore = false)
         where TCommand : struct, IRespCommand
     {
+        startedBatch = false;
+
         // Racy pre-check; the authoritative one runs under the gate below. This keeps the
         // ring-full retry loop from re-serializing the frame on every attempt.
         if (_inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
@@ -626,7 +632,7 @@ public sealed class RespireConnection : IAsyncDisposable
         {
             _directPathBudget--;
             return TryEnqueueDirect(
-                in command, source, discardRepliesBefore, retainRepliesBefore);
+                in command, source, out startedBatch, discardRepliesBefore, retainRepliesBefore);
         }
 
         var scratch = _serializeScratch ??= new WriteBuffer(ScratchInitialSize);
@@ -649,6 +655,11 @@ public sealed class RespireConnection : IAsyncDisposable
                     return false;
                 }
 
+                // Inline wake-up is worth it only on an otherwise idle connection: nothing
+                // buffered and nothing awaiting a reply. With responses still in flight the
+                // flush loop is already cycling, and stealing the producer thread for the
+                // send costs more than the dispatch it saves.
+                startedBatch = _activeBuffer.Count == 0 && _inflight.Count == 0;
                 _activeBuffer.Append(frame);
                 if (_responseTimeout is not null)
                 {
@@ -685,10 +696,12 @@ public sealed class RespireConnection : IAsyncDisposable
     private bool TryEnqueueDirect<TCommand>(
         in TCommand command,
         PendingResponse source,
+        out bool startedBatch,
         int discardRepliesBefore,
         bool retainRepliesBefore)
         where TCommand : struct, IRespCommand
     {
+        startedBatch = false;
         lock (_writeGate)
         {
             if (_dead)
@@ -702,6 +715,7 @@ public sealed class RespireConnection : IAsyncDisposable
             }
 
             var mark = _activeBuffer.Count;
+            startedBatch = mark == 0 && _inflight.Count == 0;
             try
             {
                 var writer = new RespWriter(_activeBuffer);
@@ -740,9 +754,9 @@ public sealed class RespireConnection : IAsyncDisposable
         TCommand command, PendingResponseSource source, int discardRepliesBefore, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
-        await WaitForInflightCapacityAsync(command, source, discardRepliesBefore, cancellationToken).ConfigureAwait(false);
+        var startedBatch = await WaitForInflightCapacityAsync(command, source, discardRepliesBefore, cancellationToken).ConfigureAwait(false);
         source.RegisterCancellation(cancellationToken);
-        ScheduleFlush();
+        ScheduleFlush(startedBatch);
         return await source.Task.ConfigureAwait(false);
     }
 
@@ -757,6 +771,7 @@ public sealed class RespireConnection : IAsyncDisposable
         CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
+        bool startedBatch;
         try
         {
             while (true)
@@ -764,12 +779,12 @@ public sealed class RespireConnection : IAsyncDisposable
                 cancellationToken.ThrowIfCancellationRequested();
                 var capacityAvailable = _capacitySignal.WaitAsync(cancellationToken);
                 if (TryEnqueue(
-                    in command, source, repliesBeforeFinal, retainRepliesBefore: true))
+                    in command, source, out startedBatch, repliesBeforeFinal, retainRepliesBefore: true))
                 {
                     break;
                 }
 
-                ScheduleFlush();
+                ScheduleFlush(startedBatch: false);
                 await capacityAvailable.ConfigureAwait(false);
             }
         }
@@ -780,7 +795,7 @@ public sealed class RespireConnection : IAsyncDisposable
         }
 
         source.RegisterCancellation(cancellationToken);
-        ScheduleFlush();
+        ScheduleFlush(startedBatch);
         return await source.Task.ConfigureAwait(false);
     }
 
@@ -793,9 +808,9 @@ public sealed class RespireConnection : IAsyncDisposable
         CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
-        await WaitForInflightCapacityAsync(command, source, 0, cancellationToken).ConfigureAwait(false);
+        var startedBatch = await WaitForInflightCapacityAsync(command, source, 0, cancellationToken).ConfigureAwait(false);
         source.RegisterCancellation(cancellationToken);
-        ScheduleFlush();
+        ScheduleFlush(startedBatch);
         return await source.Task.ConfigureAwait(false);
     }
 
@@ -805,12 +820,15 @@ public sealed class RespireConnection : IAsyncDisposable
     private async ValueTask SendFireAndForgetSlowAsync<TCommand>(TCommand command, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
-        await WaitForInflightCapacityAsync(command, InflightRing.DiscardSentinel, 0, cancellationToken).ConfigureAwait(false);
-        ScheduleFlush();
+        var startedBatch = await WaitForInflightCapacityAsync(command, InflightRing.DiscardSentinel, 0, cancellationToken).ConfigureAwait(false);
+        ScheduleFlush(startedBatch);
     }
 
-    /// <summary>In-flight ring full: flush, then park until the receive loop frees capacity.</summary>
-    private async ValueTask WaitForInflightCapacityAsync<TCommand>(
+    /// <summary>
+    /// In-flight ring full: flush, then park until the receive loop frees capacity. Returns
+    /// whether the eventual enqueue started a new write batch.
+    /// </summary>
+    private async ValueTask<bool> WaitForInflightCapacityAsync<TCommand>(
         TCommand command, PendingResponse source, int discardRepliesBefore, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
@@ -823,12 +841,12 @@ public sealed class RespireConnection : IAsyncDisposable
 
                 // Arm before retrying so a concurrent dequeue cannot pulse between the
                 // failed enqueue and waiter registration.
-                if (TryEnqueue(in command, source, discardRepliesBefore))
+                if (TryEnqueue(in command, source, out var startedBatch, discardRepliesBefore))
                 {
-                    return;
+                    return startedBatch;
                 }
 
-                ScheduleFlush();
+                ScheduleFlush(startedBatch: false);
                 await capacityAvailable.ConfigureAwait(false);
             }
         }
@@ -858,17 +876,35 @@ public sealed class RespireConnection : IAsyncDisposable
         }
     }
 
-    private void ScheduleFlush() => _flushSignal.Signal();
+    /// <summary>
+    /// Wakes the flush loop. A command written to an otherwise idle connection wakes it
+    /// inline so the send begins without a thread-pool hop; when other commands are buffered
+    /// or awaiting replies the wake dispatches asynchronously — the flush loop is already
+    /// cycling, and capturing producer threads would not deepen batches.
+    /// </summary>
+    private void ScheduleFlush(bool startedBatch) => _flushSignal.Signal(preferInline: startedBatch);
+
+    /// <summary>
+    /// Caps how many consecutive batches the flush loop sends without ever suspending before
+    /// it forces a yield to the thread pool. <see cref="AsyncFlushSignal"/> resumes the loop
+    /// inline on the signaling thread, and on platforms where socket sends complete
+    /// synchronously that thread could otherwise be captured for as long as producers keep
+    /// the buffer non-empty.
+    /// </summary>
+    private const int MaxSynchronousBatchesBeforeYield = 8;
 
     /// <summary>
     /// The connection's single persistent sender. Parks on <see cref="_flushSignal"/> between
     /// batches instead of spawning a Task per flush, then drains whatever has coalesced into
-    /// the active buffer — many pipelined commands per syscall.
+    /// the active buffer — many pipelined commands per syscall. Waking is inline: the first
+    /// command into an empty buffer runs this loop on its own thread up to the first true
+    /// suspension, so the send syscall starts without a thread-pool hop.
     /// </summary>
     private async Task FlushLoopAsync()
     {
         try
         {
+            var synchronousBatches = 0;
             while (true)
             {
                 await _flushSignal.WaitAsync().ConfigureAwait(false);
@@ -902,18 +938,41 @@ public sealed class RespireConnection : IAsyncDisposable
                     {
                         while (memory.Length > 0)
                         {
-                            var sent = await _socket.SendAsync(memory, SocketFlags.None).ConfigureAwait(false);
+                            var pending = _socket.SendAsync(memory, SocketFlags.None);
+                            int sent;
+                            if (pending.IsCompletedSuccessfully)
+                            {
+                                sent = pending.Result;
+                            }
+                            else
+                            {
+                                synchronousBatches = -1;
+                                sent = await pending.ConfigureAwait(false);
+                            }
+
                             memory = memory[sent..];
                         }
                     }
                     else
                     {
-                        await _tlsStream.WriteAsync(memory).ConfigureAwait(false);
+                        var pending = _tlsStream.WriteAsync(memory);
+                        if (!pending.IsCompletedSuccessfully)
+                        {
+                            synchronousBatches = -1;
+                        }
+
+                        await pending.ConfigureAwait(false);
                     }
 
                     MarkRepliesSent(sendingReplyCount);
 
                     sending.Reset();
+
+                    if (++synchronousBatches >= MaxSynchronousBatchesBeforeYield)
+                    {
+                        synchronousBatches = 0;
+                        await Task.Yield();
+                    }
                 }
             }
         }
