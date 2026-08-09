@@ -275,8 +275,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             RespireEndpoint endpoint;
             if (core.Cluster is { } cluster)
             {
-                await cluster.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-                endpoint = cluster.SeedEndpoint;
+                endpoint = await cluster.GetPubSubEndpointAsync(cancellationToken).ConfigureAwait(false);
             }
             else
             {

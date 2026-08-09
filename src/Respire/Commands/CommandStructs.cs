@@ -241,6 +241,74 @@ internal readonly struct DynamicCommand(RespireValue[] tokens, int routingKeyInd
     }
 }
 
+internal static class DynamicCommandRouting
+{
+    internal static int GetRoutingKeyIndex(
+        string operation,
+        RespireValue[] tokens,
+        int firstArgumentIndex)
+    {
+        if ((uint)firstArgumentIndex >= (uint)tokens.Length)
+        {
+            return -1;
+        }
+
+        return operation switch
+        {
+            "EVAL" or "EVALSHA" or "FCALL" or "FCALL_RO" =>
+                HasKeys(tokens, firstArgumentIndex + 1) ? firstArgumentIndex + 2 : -1,
+            "BITOP" => firstArgumentIndex + 1,
+            "BLMPOP" or "BZMPOP" =>
+                HasKeys(tokens, firstArgumentIndex + 1) ? firstArgumentIndex + 2 : -1,
+            "LMPOP" or "ZMPOP" or "SINTERCARD" or "ZDIFF" or "ZINTER" or "ZINTERCARD" or "ZUNION" =>
+                HasKeys(tokens, firstArgumentIndex) ? firstArgumentIndex + 1 : -1,
+            "MIGRATE" => MigrateKeyIndex(tokens, firstArgumentIndex),
+            "OBJECT" or "MEMORY" or "XGROUP" or "XINFO" =>
+                firstArgumentIndex == 1 ? firstArgumentIndex + 1 : firstArgumentIndex,
+            "XREAD" or "XREADGROUP" => IndexAfter(tokens, firstArgumentIndex, "STREAMS"),
+            "ACL" or "ASKING" or "AUTH" or "BGSAVE" or "BGREWRITEAOF" or "CLIENT" or "CLUSTER" or
+            "COMMAND" or "CONFIG" or "CONFIG GET" or "CONFIG SET" or "DBSIZE" or "DISCARD" or "ECHO" or
+            "EXEC" or "FAILOVER" or "FLUSHALL" or "FLUSHDB" or "FUNCTION" or "HELLO" or "INFO" or
+            "KEYS" or "LASTSAVE" or "LATENCY" or "LOLWUT" or "MODULE" or "MONITOR" or "MULTI" or
+            "PING" or "PSUBSCRIBE" or "PUBSUB" or "PUNSUBSCRIBE" or "QUIT" or "RANDOMKEY" or
+            "READONLY" or "READWRITE" or "REPLICAOF" or "RESET" or "ROLE" or "SAVE" or "SCAN" or
+            "SCRIPT" or "SCRIPT LOAD" or "SELECT" or "SHUTDOWN" or "SLOWLOG" or "SUBSCRIBE" or
+            "SUNSUBSCRIBE" or "SWAPDB" or "SYNC" or "TIME" or "UNSUBSCRIBE" or "UNWATCH" or "WAIT" or
+            "WAITAOF" => -1,
+            _ => firstArgumentIndex,
+        };
+    }
+
+    private static bool HasKeys(RespireValue[] tokens, int keyCountIndex)
+        => (uint)keyCountIndex < (uint)tokens.Length
+           && tokens[keyCountIndex].TryGetInt64(out var count)
+           && count > 0;
+
+    private static int MigrateKeyIndex(RespireValue[] tokens, int firstArgumentIndex)
+    {
+        var keyIndex = firstArgumentIndex + 2;
+        if ((uint)keyIndex < (uint)tokens.Length && !tokens[keyIndex].IsEmpty)
+        {
+            return keyIndex;
+        }
+
+        return IndexAfter(tokens, firstArgumentIndex + 3, "KEYS");
+    }
+
+    private static int IndexAfter(RespireValue[] tokens, int startIndex, string marker)
+    {
+        for (var index = startIndex; index + 1 < tokens.Length; index++)
+        {
+            if (tokens[index].EqualsAsciiIgnoreCase(marker))
+            {
+                return index + 1;
+            }
+        }
+
+        return -1;
+    }
+}
+
 /// <summary>
 /// INCR/DECR key when the delta is 1 (the two-token form StackExchange.Redis sends), INCRBY/DECRBY
 /// key delta otherwise. The wire-form choice lives here so the facet, batch, and transaction layers

@@ -20,8 +20,10 @@ internal sealed class ClusterRouter : IAsyncDisposable
     private readonly Dictionary<RespireEndpoint, DedicatedConnectionPool> _dedicatedPools = [];
     private readonly object _nodesGate = new();
     private readonly RespireConnectionMultiplexer?[] _slots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
+    private RespireConnectionMultiplexer[] _masters = [];
     private readonly SemaphoreSlim _seedGate = new(1, 1);
     private RespireConnectionMultiplexer? _seed;
+    private int _hasCompleteTopology;
     private int _disposed;
 
     internal ClusterRouter(RespireOptions options, RespireConnectionMultiplexer primary)
@@ -103,7 +105,11 @@ internal sealed class ClusterRouter : IAsyncDisposable
             }
             catch (Exception) when (!cancellationToken.IsCancellationRequested)
             {
-                Interlocked.CompareExchange(ref _slots[cachedSlot], null, cachedNode);
+                if (ReferenceEquals(
+                        Interlocked.CompareExchange(ref _slots[cachedSlot], null, cachedNode), cachedNode))
+                {
+                    Volatile.Write(ref _hasCompleteTopology, 0);
+                }
                 // Refresh through the seeds below when the cached owner is unavailable.
             }
         }
@@ -167,7 +173,11 @@ internal sealed class ClusterRouter : IAsyncDisposable
             }
             catch (Exception) when (!cancellationToken.IsCancellationRequested)
             {
-                Interlocked.CompareExchange(ref _slots[cachedSlot], null, cachedNode);
+                if (ReferenceEquals(
+                        Interlocked.CompareExchange(ref _slots[cachedSlot], null, cachedNode), cachedNode))
+                {
+                    Volatile.Write(ref _hasCompleteTopology, 0);
+                }
                 // Refresh through the seeds below when the cached owner is unavailable.
             }
         }
@@ -341,6 +351,52 @@ internal sealed class ClusterRouter : IAsyncDisposable
         return connections;
     }
 
+    internal ValueTask<RespireConnectionMultiplexer[]> GetKnownMastersAsync(
+        CancellationToken cancellationToken)
+    {
+        if (!HasCompleteTopology())
+        {
+            return RefreshKnownMastersAsync(cancellationToken);
+        }
+
+        var masters = Volatile.Read(ref _masters);
+        foreach (var master in masters)
+        {
+            if (!master.IsConnected)
+            {
+                return ConnectKnownMastersAsync(masters, cancellationToken);
+            }
+        }
+
+        return new ValueTask<RespireConnectionMultiplexer[]>(masters);
+    }
+
+    private async ValueTask<RespireConnectionMultiplexer[]> ConnectKnownMastersAsync(
+        RespireConnectionMultiplexer[] masters,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            foreach (var master in masters)
+            {
+                await master.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            return masters;
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            return await RefreshKnownMastersAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask<RespireConnectionMultiplexer[]> RefreshKnownMastersAsync(
+        CancellationToken cancellationToken)
+    {
+        _ = await GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
+        return Volatile.Read(ref _masters);
+    }
+
     private async ValueTask<bool> TryRefreshTopologyAsync(
         RespireConnectionMultiplexer node,
         CancellationToken cancellationToken)
@@ -357,27 +413,34 @@ internal sealed class ClusterRouter : IAsyncDisposable
         }
     }
 
-    private bool HasCompleteTopology()
+    internal async ValueTask<RespireEndpoint> GetPubSubEndpointAsync(
+        CancellationToken cancellationToken)
     {
-        for (var slot = 0; slot < _slots.Length; slot++)
+        foreach (var master in Volatile.Read(ref _masters))
         {
-            if (Volatile.Read(ref _slots[slot]) is null)
+            try
             {
-                return false;
+                await master.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                return new RespireEndpoint(master.Host, master.Port);
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Try another discovered master before falling back to configured seeds.
             }
         }
 
-        return true;
+        await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        return SeedEndpoint;
     }
+
+    private bool HasCompleteTopology()
+        => Volatile.Read(ref _hasCompleteTopology) != 0;
 
     private void AddKnownMasters(HashSet<RespireConnectionMultiplexer> masters)
     {
-        for (var slot = 0; slot < _slots.Length; slot++)
+        foreach (var node in Volatile.Read(ref _masters))
         {
-            if (Volatile.Read(ref _slots[slot]) is { } node)
-            {
-                masters.Add(node);
-            }
+            masters.Add(node);
         }
     }
 
@@ -423,6 +486,14 @@ internal sealed class ClusterRouter : IAsyncDisposable
         {
             ObserveNode(node);
             Volatile.Write(ref _slots[slot], node);
+            var masters = Volatile.Read(ref _masters);
+            if (Array.IndexOf(masters, node) < 0)
+            {
+                var expanded = new RespireConnectionMultiplexer[masters.Length + 1];
+                masters.CopyTo(expanded, 0);
+                expanded[^1] = node;
+                Volatile.Write(ref _masters, expanded);
+            }
         }
     }
 
@@ -433,10 +504,16 @@ internal sealed class ClusterRouter : IAsyncDisposable
         List<RespireConnectionMultiplexer>? retiredNodes = null;
         lock (_nodesGate)
         {
+            var complete = true;
             for (var slot = 0; slot < refreshedSlots.Length; slot++)
             {
-                Volatile.Write(ref _slots[slot], refreshedSlots[slot]);
+                var node = refreshedSlots[slot];
+                Volatile.Write(ref _slots[slot], node);
+                complete &= node is not null;
             }
+
+            Volatile.Write(ref _masters, [.. activeNodes]);
+            Volatile.Write(ref _hasCompleteTopology, complete ? 1 : 0);
 
             foreach (var node in _nodeStateHandlers.Keys)
             {

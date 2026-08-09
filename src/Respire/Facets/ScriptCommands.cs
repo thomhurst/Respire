@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using Respire.Commands;
@@ -96,9 +97,21 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         return await client.ExecuteScriptAsync(script, tail, cancellationToken).ConfigureAwait(false);
     }
 
-    public async ValueTask<string> LoadAsync(RespireScript script, CancellationToken cancellationToken = default)
+    public ValueTask<string> LoadAsync(RespireScript script, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(script);
+        if (client.Core.Cluster is { } cluster)
+        {
+            return LoadClusterAsync(cluster, script, cancellationToken);
+        }
+
+        return LoadSingleAsync(script, cancellationToken);
+    }
+
+    private async ValueTask<string> LoadSingleAsync(
+        RespireScript script,
+        CancellationToken cancellationToken)
+    {
         var reply = await client.SendAsync(
             "SCRIPT LOAD", new Cmd1(Verbs.ScriptLoad, script.Source), cancellationToken).ConfigureAwait(false);
         var result = ResponseReader.String(in reply);
@@ -106,4 +119,30 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         return result;
     }
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<string> LoadClusterAsync(
+        ClusterRouter cluster,
+        RespireScript script,
+        CancellationToken cancellationToken)
+    {
+        var masters = await cluster.GetKnownMastersAsync(cancellationToken).ConfigureAwait(false);
+        string? result = null;
+        foreach (var master in masters)
+        {
+            var reply = await client.SendOnConnectionAsync(
+                    "SCRIPT LOAD", master.GetConnection(), new Cmd1(Verbs.ScriptLoad, script.Source), cancellationToken)
+                .ConfigureAwait(false);
+            try
+            {
+                var loadedSha1 = ResponseReader.String(in reply);
+                result ??= loadedSha1;
+            }
+            finally
+            {
+                reply.Dispose();
+            }
+        }
+
+        return result ?? script.Sha1;
+    }
 }

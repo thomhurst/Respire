@@ -143,6 +143,51 @@ public readonly struct RespireValue
         return false;
     }
 
+    internal bool TryGetInt64(out long value)
+    {
+        switch (_kind)
+        {
+            case Kind.Integer:
+                value = _number;
+                return true;
+            case Kind.UnsignedInteger when _number >= 0:
+                value = _number;
+                return true;
+            case Kind.String:
+                return long.TryParse(
+                    _string.AsSpan(),
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out value);
+            case Kind.Bytes:
+                return Utf8Parser.TryParse(_bytes.Span, out value, out var consumed)
+                    && consumed == _bytes.Length;
+            case Kind.Boolean:
+                value = _number;
+                return true;
+            default:
+                value = 0;
+                return false;
+        }
+    }
+
+    internal bool EqualsAsciiIgnoreCase(string value)
+        => _kind switch
+        {
+            Kind.String => string.Equals(_string, value, StringComparison.OrdinalIgnoreCase),
+            Kind.Bytes => Ascii.EqualsIgnoreCase(_bytes.Span, value.AsSpan()),
+            _ => false,
+        };
+
+    internal bool IsEmpty
+        => _kind switch
+        {
+            Kind.Null => true,
+            Kind.String => _string!.Length == 0,
+            Kind.Bytes => _bytes.IsEmpty,
+            _ => false,
+        };
+
     public override string ToString()
         => _kind switch
         {

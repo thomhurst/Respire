@@ -123,6 +123,20 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task RawCommandRouting_UsesCommandSpecificKeyPositions()
+    {
+        var objectTokens = new RespireValue[] { "OBJECT", "ENCODING", "object-key" };
+        var evalTokens = new RespireValue[] { "EVAL", "return redis.call('GET', KEYS[1])", 1, "eval-key" };
+        var xreadTokens = new RespireValue[] { "XREAD", "COUNT", 1, "STREAMS"u8.ToArray(), "stream-key", "0" };
+        var infoTokens = new RespireValue[] { "INFO", "memory" };
+
+        await Assert.That(RawSlot("OBJECT", objectTokens, 1)).IsEqualTo(ClusterHash.GetSlot("object-key"));
+        await Assert.That(RawSlot("EVAL", evalTokens, 1)).IsEqualTo(ClusterHash.GetSlot("eval-key"));
+        await Assert.That(RawSlot("XREAD", xreadTokens, 1)).IsEqualTo(ClusterHash.GetSlot("stream-key"));
+        await Assert.That(RawSlot("INFO", infoTokens, 1)).IsNull();
+    }
+
+    [Test]
     public async Task Batch_RoutesCommandsAcrossNodes()
     {
         await using var firstNode = new FakeRespServer("$3\r\none\r\n"u8.ToArray());
@@ -561,6 +575,51 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task PubSubEndpoint_FallsBackToDiscoveredMaster()
+    {
+        await using var master = new FakeRespServer(FakeRespServer.PongReply);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{master.Port}\r\n");
+        var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            ConnectTimeout = TimeSpan.FromMilliseconds(100),
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        await seed.DisposeAsync();
+
+        var endpoint = await client.Core.Cluster!.GetPubSubEndpointAsync(CancellationToken.None);
+
+        await Assert.That(endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", master.Port));
+    }
+
+    [Test]
+    public async Task ScriptLoad_VisitsEveryMaster()
+    {
+        var script = RespireScript.Create("return 1");
+        var response = Encoding.ASCII.GetBytes($"$40\r\n{script.Sha1}\r\n");
+        await using var firstNode = new FakeRespServer(response);
+        await using var secondNode = new FakeRespServer(response);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*2\r\n" +
+            $"*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{firstNode.Port}\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{secondNode.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        var sha1 = await client.Scripts.LoadAsync(script);
+
+        await Assert.That(sha1).IsEqualTo(script.Sha1);
+        await Assert.That(firstNode.ReceivedCommands).IsEquivalentTo(["SCRIPT LOAD return 1"]);
+        await Assert.That(secondNode.ReceivedCommands).IsEquivalentTo(["SCRIPT LOAD return 1"]);
+    }
+
+    [Test]
     public async Task ClusterWideServerCommands_VisitEveryMaster()
     {
         await using var firstNode = new FakeRespServer(
@@ -692,4 +751,12 @@ public class ClusterTests
     private static bool TryGetSlot<TCommand>(TCommand command, out int slot)
         where TCommand : struct, IRespCommand
         => command.TryGetClusterSlot(out slot);
+
+    private static int? RawSlot(string operation, RespireValue[] tokens, int firstArgumentIndex)
+    {
+        var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(
+            operation, tokens, firstArgumentIndex);
+        var command = new DynamicCommand(tokens, routingKeyIndex);
+        return command.TryGetClusterSlot(out var slot) ? slot : null;
+    }
 }

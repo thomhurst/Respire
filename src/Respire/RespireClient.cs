@@ -132,7 +132,8 @@ public sealed partial class RespireClient : IRespireClient
         args.CopyTo(tokens, words.Length);
         var operation = RawOperationName(words);
         var storedProcedureName = words.Length == 1 ? StoredProcedureName(operation, args) : null;
-        var commandValue = new DynamicCommand(tokens, words.Length);
+        var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, words.Length);
+        var commandValue = new DynamicCommand(tokens, routingKeyIndex);
         var response = await (storedProcedureName is null
                 ? SendAsync(operation, commandValue, CancellationToken.None)
                 : SendStoredProcedureAsync(operation, commandValue, CancellationToken.None, storedProcedureName))
@@ -151,7 +152,8 @@ public sealed partial class RespireClient : IRespireClient
     {
         var (operation, tokens) = command.Build();
         var storedProcedureName = StoredProcedureName(operation, tokens.AsSpan(1));
-        var commandValue = new DynamicCommand(tokens, routingKeyIndex: 1);
+        var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, firstArgumentIndex: 1);
+        var commandValue = new DynamicCommand(tokens, routingKeyIndex);
         var response = await (storedProcedureName is null
                 ? SendAsync(operation, commandValue, cancellationToken)
                 : SendStoredProcedureAsync(operation, commandValue, cancellationToken, storedProcedureName))
