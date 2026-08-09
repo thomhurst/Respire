@@ -27,6 +27,13 @@ Configure the pipeline through `appsettings.json`:
     "Token": "your-github-token",
     "Repository": "Respire",
     "Owner": "your-github-username"
+  },
+  "Versioning": {
+    "BaseVersion": "0.1.0",
+    "ReleaseBranches": [
+      "main",
+      "master"
+    ]
   }
 }
 ```
@@ -48,6 +55,7 @@ You can also use environment variables:
 - `NuGet__ApiKey`: NuGet API key
 - `GitHub__Token`: GitHub personal access token
 - `GitHub__Owner`: GitHub repository owner
+- `Versioning__BaseVersion`: fallback base version when no version tag exists
 
 ## Usage
 
@@ -109,20 +117,22 @@ This will:
 
 The pipeline uses ModularPipelines with the following packages:
 - `ModularPipelines.DotNet`: .NET CLI integration
-- `ModularPipelines.Git`: Git information and operations
 
 ## Versioning Strategy
 
 The pipeline generates versions automatically:
 
-- **Main/Master Branch**: `1.0.0` (clean releases)
-- **Feature Branches**: `1.0.0-feature-branch-abc1234` (pre-release)
-- **No Git Info**: `1.0.0-dev` (fallback)
+- **Main/Master Branch**: `0.1.266` from base version plus commit height
+- **Feature Branches**: `0.1.266-ci.feature-branch.266.abc12345`
+- **No Generated Version**: `0.1.0` fallback
 
 Version is based on:
-- Base version: `1.0.0`
-- Branch name (sanitized)
-- Short commit hash (7 characters)
+- Latest version tag, or `Versioning:BaseVersion` when no tag exists
+- Commit height since the latest version tag
+- Branch name and short commit hash for CI branch packages
+- Optional commit message markers: `+semver:major`, `+semver:minor`, `+semver:patch`, and `+semver:none`
+
+If no `+semver:` marker is present, the pipeline applies a patch increment. The highest marker in the commit range wins.
 
 ## Customization
 
@@ -139,10 +149,10 @@ You can customize the pipeline by:
 info: Building Respire solution...
 info: Running unit tests...
 info: Running performance benchmarks...
-info: Generated version: 1.0.0-feature-optimization-a1b2c3d
+info: Generated version: 0.1.266-ci.feature-optimization.266.a1b2c3d4
 info: Packing NuGet packages...
 info: Found 2 package files:
-info:   - Respire.1.0.0-feature-optimization-a1b2c3d.nupkg (245,760 bytes)
-info:   - Respire.Extensions.DependencyInjection.1.0.0-feature-optimization-a1b2c3d.nupkg (12,345 bytes)
+info:   - Respire.0.1.266-ci.feature-optimization.266.a1b2c3d4.nupkg (245,760 bytes)
+info:   - Respire.Extensions.DependencyInjection.0.1.266-ci.feature-optimization.266.a1b2c3d4.nupkg (12,345 bytes)
 info: Completed copying 2 packages to local NuGet
 ```

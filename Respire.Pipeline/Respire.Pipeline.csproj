@@ -9,7 +9,6 @@
 
   <ItemGroup>
     <PackageReference Include="ModularPipelines.DotNet" />
-    <PackageReference Include="ModularPipelines.Git" />
   </ItemGroup>
 
 </Project>
