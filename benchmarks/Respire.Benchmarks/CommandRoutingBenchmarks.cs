@@ -64,6 +64,9 @@ public class ClusterOwnershipBenchmarks
         _router.SetSlotOwner(0, _newOwner);
     }
 
+    [Benchmark]
+    public bool CheckConnectivity() => _router.IsConnected;
+
     [GlobalCleanup]
     public void Cleanup()
     {

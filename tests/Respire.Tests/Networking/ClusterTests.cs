@@ -405,11 +405,12 @@ public class ClusterTests
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         await seed.DisposeAsync();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (client.IsConnected)
+        while (client.Core.Multiplexer.IsConnected)
         {
             await Task.Delay(10, timeout.Token);
         }
 
+        await Assert.That(client.IsConnected).IsTrue();
         await Assert.That(await client.GetStringAsync("key", timeout.Token)).IsEqualTo("second");
         await Assert.That(target.ReceivedCommands).Count().IsEqualTo(2);
     }
@@ -658,7 +659,7 @@ public class ClusterTests
         });
         await seed.DisposeAsync();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (client.IsConnected)
+        while (client.Core.Multiplexer.IsConnected)
         {
             await Task.Delay(10, timeout.Token);
         }

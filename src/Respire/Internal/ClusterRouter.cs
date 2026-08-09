@@ -38,7 +38,26 @@ internal sealed class ClusterRouter : IAsyncDisposable
         ObserveNode(primary);
     }
 
-    internal bool IsConnected => Volatile.Read(ref _seed)?.IsConnected == true;
+    internal bool IsConnected
+    {
+        get
+        {
+            if (Volatile.Read(ref _seed)?.IsConnected == true)
+            {
+                return true;
+            }
+
+            foreach (var master in Volatile.Read(ref _masters))
+            {
+                if (master.IsConnected)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
     internal event Action<RespireConnectionMultiplexer, int, RespireConnectionState>? SlotStateChanged;
     internal event Action<RespireConnectionMultiplexer>? NodeRetired;
 
