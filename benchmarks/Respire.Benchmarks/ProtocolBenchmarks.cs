@@ -1,5 +1,7 @@
 using System.Text;
 using BenchmarkDotNet.Attributes;
+using Respire.Commands;
+using Respire.Networking;
 using Respire.Protocol;
 
 namespace Respire.Benchmarks;
@@ -15,6 +17,7 @@ public class ProtocolBenchmarks
     private byte[] _largeArrayData = null!;
     private byte[] _nestedArrayData = null!;
     private byte[] _mixedTypesData = null!;
+    private readonly WriteBuffer _commandBuffer = new(512);
 
     [GlobalSetup]
     public void Setup()
@@ -103,23 +106,33 @@ public class ProtocolBenchmarks
 
     // ===== COMMAND BUILDING BENCHMARKS =====
 
-    [Benchmark(Description = "Build GET command (span)")]
+    [Benchmark(Description = "Write GET command")]
     [BenchmarkCategory("Writing")]
     public int BuildGetCommand()
     {
-        Span<byte> buffer = stackalloc byte[256];
-        return RespCommands.BuildGetCommand(buffer, "mykey");
+        return WriteCommand(new Cmd1(Verbs.Get, "mykey"));
     }
 
-    [Benchmark(Description = "Build SET command (span)")]
+    [Benchmark(Description = "Write SET command")]
     [BenchmarkCategory("Writing")]
     public int BuildSetCommand()
     {
-        Span<byte> buffer = stackalloc byte[512];
-        return RespCommands.BuildSetCommand(buffer, "mykey", "myvalue");
+        return WriteCommand(new Cmd2(Verbs.Set, "mykey", "myvalue"));
     }
 
-    [Benchmark(Description = "Pre-compiled PING")]
+    [Benchmark(Description = "Write PING command")]
     [BenchmarkCategory("Writing")]
     public int PreCompiledPing() => RespCommands.Ping.Length;
+
+    private int WriteCommand<TCommand>(TCommand command)
+        where TCommand : struct, IRespCommand
+    {
+        _commandBuffer.Reset();
+        var writer = new RespWriter(_commandBuffer);
+        command.Write(ref writer);
+        return _commandBuffer.Count;
+    }
+
+    [GlobalCleanup]
+    public void Cleanup() => _commandBuffer.Release();
 }

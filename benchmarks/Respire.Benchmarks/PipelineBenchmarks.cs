@@ -1,5 +1,7 @@
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Jobs;
+using Respire.Commands;
+using Respire.Networking;
 using Respire.Protocol;
 
 namespace Respire.Benchmarks;
@@ -17,6 +19,7 @@ public class PipelineBenchmarks
     private static readonly byte[] IntegerData = ":12345\r\n"u8.ToArray();
 
     private RespireClient _client = null!;
+    private readonly WriteBuffer _commandBuffer = new(512);
     private const string TestKey = "benchmark_key";
     private const string TestValue = "benchmark_value_with_some_length_to_it";
 
@@ -41,6 +44,8 @@ public class PipelineBenchmarks
         {
             await _client.DisposeAsync();
         }
+
+        _commandBuffer.Release();
     }
 
     // Command building benchmarks
@@ -48,15 +53,13 @@ public class PipelineBenchmarks
     [Benchmark]
     public int PreCompiledCommands_BuildGetCommand()
     {
-        Span<byte> buffer = stackalloc byte[256];
-        return RespCommands.BuildGetCommand(buffer, TestKey);
+        return WriteCommand(new Cmd1(Verbs.Get, TestKey));
     }
 
     [Benchmark]
     public int PreCompiledCommands_BuildSetCommand()
     {
-        Span<byte> buffer = stackalloc byte[512];
-        return RespCommands.BuildSetCommand(buffer, TestKey, TestValue);
+        return WriteCommand(new Cmd2(Verbs.Set, TestKey, TestValue));
     }
 
     // Wire parser benchmarks
@@ -138,10 +141,9 @@ public class PipelineBenchmarks
     // Memory allocation comparison benchmarks
 
     [Benchmark]
-    public void RespCommands_PreCompiledPing()
+    public void PreEncodedCommands_Ping()
     {
-        var pingCommand = RespCommands.Ping;
-        var _ = pingCommand.AsSpan();
+        _ = RespCommands.Ping.AsSpan();
     }
 
     [Benchmark]
@@ -153,9 +155,7 @@ public class PipelineBenchmarks
     [Benchmark]
     public void ZeroAllocCommandBuilding_Get()
     {
-        Span<byte> buffer = stackalloc byte[128];
-        var length = RespCommands.BuildGetCommand(buffer, "test");
-        var command = buffer[..length];
+        WriteCommand(new Cmd1(Verbs.Get, "test"));
     }
 
     [Benchmark]
@@ -164,6 +164,15 @@ public class PipelineBenchmarks
         var key = "test";
         var command = $"*2\r\n$3\r\nGET\r\n${key.Length}\r\n{key}\r\n";
         return System.Text.Encoding.UTF8.GetBytes(command);
+    }
+
+    private int WriteCommand<TCommand>(TCommand command)
+        where TCommand : struct, IRespCommand
+    {
+        _commandBuffer.Reset();
+        var writer = new RespWriter(_commandBuffer);
+        command.Write(ref writer);
+        return _commandBuffer.Count;
     }
 }
 
