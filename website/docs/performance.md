@@ -20,6 +20,24 @@ await Task.WhenAll(
 
 No batching mode is needed for this concurrent case.
 
+## Connection count tuning
+
+One multiplexed connection is the default because it gives the write loop the deepest batches
+and usually the best throughput. If profiling shows that large concurrent responses saturate
+one socket or receive loop, benchmark two connections against your workload:
+
+```csharp
+var redis = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = { new RespireEndpoint("localhost", 6379) },
+    Connections = 2,
+});
+```
+
+More connections are not automatically faster: they divide commands into smaller batches and
+add scheduling overhead. Increase this setting only when measurements show one connection is
+the bottleneck.
+
 ## When explicit batches help
 
 Use `CreateBatch` when the application discovers commands sequentially but wants one explicit flush. See [batches and transactions](./guides/batches-and-transactions).
