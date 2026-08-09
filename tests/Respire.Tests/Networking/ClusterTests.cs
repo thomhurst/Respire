@@ -239,6 +239,36 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task Batch_PreservesSameSlotOrderAcrossConnections()
+    {
+        var slot = ClusterHash.GetSlot("key");
+        await using var target = new FakeRespServer(
+            2, FakeRespServer.OkReply, "$5\r\nvalue\r\n"u8.ToArray());
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
+        await using var seed = new FakeRespServer(2, topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Connections = 2,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        var batch = client.CreateBatch();
+        var set = batch.SetAsync("key", "value");
+        var get = batch.GetStringAsync("key");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        await batch.SendAsync(timeout.Token);
+
+        await Assert.That(target.ReceivedCommands).Count().IsEqualTo(2);
+        await Assert.That(target.ReceivedCommands[0]).IsEqualTo("SET key value");
+        await Assert.That(target.ReceivedCommands[1]).IsEqualTo("GET key");
+        await Assert.That(target.ReceivedConnectionIds[0]).IsEqualTo(target.ReceivedConnectionIds[1]);
+        await Assert.That(set.Result).IsTrue();
+        await Assert.That(get.Result).IsEqualTo("value");
+    }
+
+    [Test]
     public async Task Transaction_RoutesToItsSingleHashSlot()
     {
         await using var target = new FakeRespServer(
@@ -945,6 +975,49 @@ public class ClusterTests
             "FUNCTION DELETE library",
             "FUNCTION FLUSH",
             "FUNCTION RESTORE payload",
+        };
+        await Assert.That(firstNode.ReceivedCommands).IsEquivalentTo(expected);
+        await Assert.That(secondNode.ReceivedCommands).IsEquivalentTo(expected);
+    }
+
+    [Test]
+    public async Task ScriptCacheMutations_VisitEveryMaster()
+    {
+        await using var firstNode = new FakeRespServer(
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply);
+        await using var secondNode = new FakeRespServer(
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*2\r\n" +
+            $"*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{firstNode.Port}\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{secondNode.Port}\r\n");
+        await using var seed = new FakeRespServer(topology, topology, topology, topology, topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        using var catalogLoad = await client.ExecuteAsync(
+            RespireCommands.Scripting.SCRIPT_LOAD, "return 1");
+        using var rawFlush = await client.ExecuteAsync("SCRIPT FLUSH");
+        RespireValue loadSubcommand = "LOAD";
+        RespireValue secondScript = "return 2";
+        using var interpolatedLoad = await client.ExecuteAsync($"SCRIPT {loadSubcommand} {secondScript}");
+        using var catalogFlush = await client.ExecuteAsync(RespireCommands.Scripting.SCRIPT_FLUSH);
+
+        var expected = new[]
+        {
+            "SCRIPT LOAD return 1",
+            "SCRIPT FLUSH",
+            "SCRIPT LOAD return 2",
+            "SCRIPT FLUSH",
         };
         await Assert.That(firstNode.ReceivedCommands).IsEquivalentTo(expected);
         await Assert.That(secondNode.ReceivedCommands).IsEquivalentTo(expected);

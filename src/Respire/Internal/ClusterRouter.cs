@@ -126,7 +126,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             try
             {
                 await cachedNode.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-                return cachedNode.GetConnection();
+                return cachedNode.GetConnection(cachedSlot);
             }
             catch (Exception) when (!cancellationToken.IsCancellationRequested)
             {
@@ -139,14 +139,14 @@ internal sealed class ClusterRouter : IAsyncDisposable
             && await TryRefreshSlotThroughKnownMastersAsync(refreshSlot, cancellationToken).ConfigureAwait(false)
                 is { } refreshedNode)
         {
-            return refreshedNode.GetConnection();
+            return refreshedNode.GetConnection(refreshSlot);
         }
 
         await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         var node = slot is { } value ? Volatile.Read(ref _slots[value]) : null;
         node ??= Volatile.Read(ref _seed)!;
         await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-        return node.GetConnection();
+        return slot is { } affinity ? node.GetConnection(affinity) : node.GetConnection();
     }
 
     internal async ValueTask<RespireConnection> GetRedirectConnectionAsync(
@@ -167,7 +167,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             SetSlotOwner(slot, node);
         }
 
-        return node.GetConnection();
+        return node.GetConnection(slot);
     }
 
     internal async ValueTask<RespireConnection> GetTrackedConnectionAsync(

@@ -25,6 +25,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly TaskCompletionSource<Socket> _clientSocket = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly List<string> _receivedCommands = [];
+    private readonly List<int> _receivedConnectionIds = [];
     private int _commandsSeen;
     private int _disposed;
 
@@ -44,6 +45,17 @@ internal sealed class FakeRespServer : IAsyncDisposable
             lock (_receivedCommands)
             {
                 return _receivedCommands.ToArray();
+            }
+        }
+    }
+
+    public IReadOnlyList<int> ReceivedConnectionIds
+    {
+        get
+        {
+            lock (_receivedCommands)
+            {
+                return _receivedConnectionIds.ToArray();
             }
         }
     }
@@ -96,7 +108,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
                 var socket = await _listener.AcceptSocketAsync(_cts.Token);
                 socket.NoDelay = true;
                 _clientSocket.TrySetResult(socket);
-                connections.Add(HandleConnectionAsync(socket));
+                connections.Add(HandleConnectionAsync(socket, i));
             }
         }
         catch (OperationCanceledException) when (_cts.IsCancellationRequested)
@@ -107,7 +119,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
         await Task.WhenAll(connections);
     }
 
-    private async Task HandleConnectionAsync(Socket socket)
+    private async Task HandleConnectionAsync(Socket socket, int connectionId)
     {
         using (socket)
         {
@@ -129,7 +141,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
                 var pos = 0;
                 while (RespParser.TryParseValue(buffer.AsSpan(0, end), ref pos, out var command) == RespParseStatus.Done)
                 {
-                    RecordCommand(in command);
+                    RecordCommand(in command, connectionId);
                     command.Dispose();
                     Interlocked.Increment(ref _commandsSeen);
                     if (_replyDelays.TryGetValue(replyIndex, out var delay))
@@ -157,7 +169,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
         }
     }
 
-    private void RecordCommand(in RespValue command)
+    private void RecordCommand(in RespValue command, int connectionId)
     {
         var elements = command.AsArray();
         var builder = new StringBuilder();
@@ -174,6 +186,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
         lock (_receivedCommands)
         {
             _receivedCommands.Add(builder.ToString());
+            _receivedConnectionIds.Add(connectionId);
         }
     }
 

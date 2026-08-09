@@ -290,7 +290,7 @@ internal static class DynamicCommandRouting
             ? -1
             : GetRoutingKeyIndex(operation, args, 0);
 
-    internal static bool IsClusterWideFunctionMutation(
+    internal static bool IsClusterWideMutation(
         string operation,
         ReadOnlySpan<RespireValue> arguments)
     {
@@ -300,8 +300,19 @@ internal static class DynamicCommandRouting
         }
 
         const string prefix = "FUNCTION ";
-        return operation.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
-               && IsFunctionMutation(operation.AsSpan(prefix.Length));
+        if (operation.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return IsFunctionMutation(operation.AsSpan(prefix.Length));
+        }
+
+        if (operation.Equals("SCRIPT", StringComparison.OrdinalIgnoreCase))
+        {
+            return arguments.Length > 0 && IsScriptMutation(arguments[0]);
+        }
+
+        const string scriptPrefix = "SCRIPT ";
+        return operation.StartsWith(scriptPrefix, StringComparison.OrdinalIgnoreCase)
+               && IsScriptMutation(operation.AsSpan(scriptPrefix.Length));
     }
 
     private static bool IsFunctionMutation(RespireValue subcommand)
@@ -315,6 +326,14 @@ internal static class DynamicCommandRouting
            || subcommand.Equals("DELETE", StringComparison.OrdinalIgnoreCase)
            || subcommand.Equals("FLUSH", StringComparison.OrdinalIgnoreCase)
            || subcommand.Equals("RESTORE", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsScriptMutation(RespireValue subcommand)
+        => subcommand.EqualsAsciiIgnoreCase("LOAD")
+           || subcommand.EqualsAsciiIgnoreCase("FLUSH");
+
+    private static bool IsScriptMutation(ReadOnlySpan<char> subcommand)
+        => subcommand.Equals("LOAD", StringComparison.OrdinalIgnoreCase)
+           || subcommand.Equals("FLUSH", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsUnkeyedCatalogSubcommand(string operation)
     {

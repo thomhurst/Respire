@@ -162,7 +162,7 @@ public sealed partial class RespireClient : IRespireClient
         var commandValue = new CatalogCommand(command, args);
         RespValue response;
         if (_core.Cluster is { } cluster
-            && DynamicCommandRouting.IsClusterWideFunctionMutation(command.Name, args))
+            && DynamicCommandRouting.IsClusterWideMutation(command.Name, args))
         {
             response = await SendClusterWideAsync(
                     command.Name, cluster, commandValue, cancellationToken)
@@ -206,7 +206,7 @@ public sealed partial class RespireClient : IRespireClient
         var commandValue = new DynamicCommand(tokens, routingKeyIndex);
         RespValue response;
         if (_core.Cluster is { } cluster
-            && DynamicCommandRouting.IsClusterWideFunctionMutation(operation, args))
+            && DynamicCommandRouting.IsClusterWideMutation(operation, args))
         {
             response = await SendClusterWideAsync(
                     operation, cluster, commandValue, CancellationToken.None)
@@ -241,7 +241,7 @@ public sealed partial class RespireClient : IRespireClient
         var commandValue = new DynamicCommand(tokens, routingKeyIndex);
         RespValue response;
         if (_core.Cluster is { } cluster
-            && DynamicCommandRouting.IsClusterWideFunctionMutation(operation, tokens.AsSpan(1)))
+            && DynamicCommandRouting.IsClusterWideMutation(operation, tokens.AsSpan(1)))
         {
             response = await SendClusterWideAsync(
                     operation, cluster, commandValue, cancellationToken)
@@ -290,6 +290,7 @@ public sealed partial class RespireClient : IRespireClient
             "FUNCTION" when candidate.Equals("FLUSH", StringComparison.OrdinalIgnoreCase) => "FLUSH",
             "FUNCTION" when candidate.Equals("LOAD", StringComparison.OrdinalIgnoreCase) => "LOAD",
             "FUNCTION" when candidate.Equals("RESTORE", StringComparison.OrdinalIgnoreCase) => "RESTORE",
+            "SCRIPT" when candidate.Equals("FLUSH", StringComparison.OrdinalIgnoreCase) => "FLUSH",
             "SCRIPT" when candidate.Equals("LOAD", StringComparison.OrdinalIgnoreCase) => "LOAD",
             "XGROUP" when candidate.Equals("CREATE", StringComparison.OrdinalIgnoreCase) => "CREATE",
             _ => null,
