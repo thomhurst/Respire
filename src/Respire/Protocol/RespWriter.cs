@@ -44,7 +44,15 @@ public ref struct RespWriter
         var byteCount = Encoding.UTF8.GetByteCount(value);
         WritePrefixedLine(RespConstants.BulkStringPrefix, byteCount);
         var span = _buffer.GetSpan(byteCount + 2);
-        Encoding.UTF8.GetBytes(value, span);
+        if (byteCount == value.Length)
+        {
+            Ascii.FromUtf16(value, span, out _);
+        }
+        else
+        {
+            Encoding.UTF8.GetBytes(value, span);
+        }
+
         span[byteCount] = RespConstants.CarriageReturn;
         span[byteCount + 1] = RespConstants.LineFeed;
         _buffer.Advance(byteCount + 2);
