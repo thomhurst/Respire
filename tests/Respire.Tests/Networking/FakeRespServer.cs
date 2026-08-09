@@ -26,6 +26,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
     private readonly TaskCompletionSource<Socket> _clientSocket = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly List<string> _receivedCommands = [];
     private int _commandsSeen;
+    private int _disposed;
 
     public int Port { get; }
     public int CommandsSeen => Volatile.Read(ref _commandsSeen);
@@ -139,7 +140,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
                     pendingReplies.Add(replyIndex++);
                 }
 
-                if (CommandsSeen >= MinimumCommandsBeforeReply)
+                if (pendingReplies.Count >= MinimumCommandsBeforeReply)
                 {
                     foreach (var pendingReply in pendingReplies)
                     {
@@ -178,6 +179,11 @@ internal sealed class FakeRespServer : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
         _cts.Cancel();
         _listener.Stop();
         try

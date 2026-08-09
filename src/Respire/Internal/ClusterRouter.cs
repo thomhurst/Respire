@@ -95,6 +95,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             }
             catch (Exception) when (!cancellationToken.IsCancellationRequested)
             {
+                Interlocked.CompareExchange(ref _slots[cachedSlot], null, cachedNode);
                 // Refresh through the seeds below when the cached owner is unavailable.
             }
         }
@@ -139,6 +140,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             }
             catch (Exception) when (!cancellationToken.IsCancellationRequested)
             {
+                Interlocked.CompareExchange(ref _slots[cachedSlot], null, cachedNode);
                 // Refresh through the seeds below when the cached owner is unavailable.
             }
         }

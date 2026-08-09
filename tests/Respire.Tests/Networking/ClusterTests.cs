@@ -259,6 +259,44 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task FailedCachedSlotOwner_FallsBackToHealthySeed()
+    {
+        await using var target = new FakeRespServer("$5\r\nvalue\r\n"u8.ToArray());
+        var slot = ClusterHash.GetSlot("key");
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
+        await using var seed = new FakeRespServer(
+            topology,
+            "$8\r\nfallback\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            ConnectTimeout = TimeSpan.FromMilliseconds(250),
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        await target.DisposeAsync();
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        string? value = null;
+        while (value is null)
+        {
+            try
+            {
+                value = await client.GetStringAsync("key", timeout.Token);
+            }
+            catch (RespireConnectionException)
+            {
+                await Task.Delay(10, timeout.Token);
+            }
+        }
+
+        await Assert.That(value).IsEqualTo("fallback");
+        await Assert.That(seed.ReceivedCommands[^1]).IsEqualTo("GET key");
+    }
+
+    [Test]
     public async Task Scan_TraversesEveryKnownMaster()
     {
         await using var firstNode = new FakeRespServer(
