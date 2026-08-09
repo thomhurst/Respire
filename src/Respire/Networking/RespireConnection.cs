@@ -54,6 +54,7 @@ public sealed class RespireConnection : IAsyncDisposable
     private readonly Task _receiveTask;
     private readonly Task _flushTask;
     private readonly AsyncFlushSignal _flushSignal = new();
+    private readonly AsyncCapacitySignal _capacitySignal = new();
 
     private WriteBuffer _activeBuffer;
     private WriteBuffer _spareBuffer;
@@ -588,7 +589,7 @@ public sealed class RespireConnection : IAsyncDisposable
         ScheduleFlush();
     }
 
-    /// <summary>In-flight ring full: flush and yield until enough slots open.</summary>
+    /// <summary>In-flight ring full: flush, then park until the receive loop frees capacity.</summary>
     private async ValueTask WaitForInflightCapacityAsync<TCommand>(
         TCommand command, PendingResponse source, int discardRepliesBefore, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
@@ -598,13 +599,17 @@ public sealed class RespireConnection : IAsyncDisposable
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                ScheduleFlush();
-                await Task.Yield();
+                var capacityAvailable = _capacitySignal.WaitAsync(cancellationToken);
 
+                // Arm before retrying so a concurrent dequeue cannot pulse between the
+                // failed enqueue and waiter registration.
                 if (TryEnqueue(in command, source, discardRepliesBefore))
                 {
                     return;
                 }
+
+                ScheduleFlush();
+                await capacityAvailable.ConfigureAwait(false);
             }
         }
         catch
@@ -872,6 +877,8 @@ public sealed class RespireConnection : IAsyncDisposable
             throw new RespireProtocolException($"Unsolicited response from {Host}:{Port} with no command in flight.");
         }
 
+        _capacitySignal.Signal();
+
         if (ReferenceEquals(source, InflightRing.DiscardSentinel))
         {
             value.Dispose();
@@ -1035,6 +1042,8 @@ public sealed class RespireConnection : IAsyncDisposable
             source.ReleaseRef();
             failed++;
         }
+
+        _capacitySignal.Signal();
 
         if (failed > 0)
         {
