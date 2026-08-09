@@ -11,7 +11,15 @@ internal sealed class Utf8RouteDictionary<TValue>
 
 #if NET9_0_OR_GREATER
     private readonly Dictionary<Utf8RouteKey, Entry> _byUtf8 = new(Utf8RouteKeyComparer.Instance);
+    private readonly Dictionary<Utf8RouteKey, Entry>.AlternateLookup<ReadOnlySpan<byte>> _utf8Lookup;
 #endif
+
+    public Utf8RouteDictionary()
+    {
+#if NET9_0_OR_GREATER
+        _utf8Lookup = _byUtf8.GetAlternateLookup<ReadOnlySpan<byte>>();
+#endif
+    }
 
     public IEnumerable<string> Names => _byName.Keys;
     public IEnumerable<TValue> Values => _byName.Values.Select(static entry => entry.Value);
@@ -31,7 +39,7 @@ internal sealed class Utf8RouteDictionary<TValue>
     public bool TryGetValue(ReadOnlySpan<byte> utf8Name, out string name, out TValue value)
     {
 #if NET9_0_OR_GREATER
-        if (_byUtf8.GetAlternateLookup<ReadOnlySpan<byte>>().TryGetValue(utf8Name, out var entry))
+        if (_utf8Lookup.TryGetValue(utf8Name, out var entry))
 #else
         var decoded = Encoding.UTF8.GetString(utf8Name);
         if (_byName.TryGetValue(decoded, out var entry))
@@ -49,11 +57,41 @@ internal sealed class Utf8RouteDictionary<TValue>
 
     public void Add(string name, TValue value)
     {
+        ValidateUtf16(name);
         var entry = new Entry(name, value);
         _byName.Add(name, entry);
 #if NET9_0_OR_GREATER
-        _byUtf8.Add(entry.Utf8Key, entry);
+        try
+        {
+            _byUtf8.Add(entry.Utf8Key, entry);
+        }
+        catch
+        {
+            _byName.Remove(name);
+            throw;
+        }
 #endif
+    }
+
+    private static void ValidateUtf16(string name)
+    {
+        for (var i = 0; i < name.Length; i++)
+        {
+            if (char.IsHighSurrogate(name[i]))
+            {
+                if (++i < name.Length && char.IsLowSurrogate(name[i]))
+                {
+                    continue;
+                }
+
+                throw new ArgumentException("Route names must contain valid UTF-16.", nameof(name));
+            }
+
+            if (char.IsLowSurrogate(name[i]))
+            {
+                throw new ArgumentException("Route names must contain valid UTF-16.", nameof(name));
+            }
+        }
     }
 
     public bool Remove(string name)

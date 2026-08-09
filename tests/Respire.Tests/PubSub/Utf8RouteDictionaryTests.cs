@@ -33,6 +33,21 @@ public class Utf8RouteDictionaryTests
         await Assert.That(routes.TryGetValue("channel", out _)).IsFalse();
     }
 
+    [Test]
+    public async Task Add_MalformedUtf16IsRejectedWithoutMutatingIndexes()
+    {
+        var routes = new Utf8RouteDictionary<int>();
+        routes.Add("valid", 42);
+
+        await Assert.That(() => routes.Add("\uD800", 1)).Throws<ArgumentException>();
+        await Assert.That(() => routes.Add("\uD801", 2)).Throws<ArgumentException>();
+
+        await Assert.That(routes.Names).IsEquivalentTo(["valid"]);
+        await Assert.That(routes.TryGetValue("valid"u8, out var name, out var value)).IsTrue();
+        await Assert.That(name).IsEqualTo("valid");
+        await Assert.That(value).IsEqualTo(42);
+    }
+
 #if NET9_0_OR_GREATER
     [Test]
     public async Task Utf8Lookup_DoesNotAllocate()
