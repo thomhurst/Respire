@@ -1,8 +1,8 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using ModularPipelines;
 using ModularPipelines.Extensions;
-using ModularPipelines.Host;
 using Respire.Pipeline.Modules;
 using Respire.Pipeline.Modules.LocalMachine;
 using Respire.Pipeline.Settings;
@@ -11,30 +11,28 @@ public class Program
 {
     public static async Task Main(string[] args)
     {
-        await PipelineHostBuilder.Create()
-            .ConfigureAppConfiguration((_, builder) =>
-            {
-                builder.AddJsonFile("appsettings.json", optional: true)
-                    .AddUserSecrets<Program>()
-                    .AddEnvironmentVariables();
-            })
-            .ConfigureServices((context, collection) =>
-            {
-                collection.Configure<NuGetSettings>(context.Configuration.GetSection("NuGet"))
-                    .Configure<GitHubSettings>(context.Configuration.GetSection("GitHub"));
+        var builder = Pipeline.CreateBuilder(args);
 
-                if (context.HostingEnvironment.IsDevelopment())
-                {
-                    collection.AddModule<CreateLocalNugetFolderModule>()
-                        .AddModule<AddLocalNugetSourceModule>()
-                        .AddModule<UploadPackagesToLocalNuGetModule>();
-                }
-                else
-                {
-                    collection.AddModule<UploadPackagesToNugetModule>()
-                        .AddModule<CreateGitHubReleaseModule>();
-                }
-            })
+        builder.Configuration.AddJsonFile("appsettings.json", optional: true)
+            .AddUserSecrets<Program>()
+            .AddEnvironmentVariables();
+
+        builder.Services.Configure<NuGetSettings>(builder.Configuration.GetSection("NuGet"))
+            .Configure<GitHubSettings>(builder.Configuration.GetSection("GitHub"));
+
+        if (builder.Environment.IsDevelopment())
+        {
+            builder.Services.AddModule<CreateLocalNugetFolderModule>()
+                .AddModule<AddLocalNugetSourceModule>()
+                .AddModule<UploadPackagesToLocalNuGetModule>();
+        }
+        else
+        {
+            builder.Services.AddModule<UploadPackagesToNugetModule>()
+                .AddModule<CreateGitHubReleaseModule>();
+        }
+
+        await builder
             .AddModule<RunUnitTestsModule>()
             .AddModule<RunBenchmarkModule>() 
             .AddModule<NugetVersionGeneratorModule>()

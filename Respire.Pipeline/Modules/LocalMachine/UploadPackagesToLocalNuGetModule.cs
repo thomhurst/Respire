@@ -10,24 +10,26 @@ namespace Respire.Pipeline.Modules.LocalMachine;
 [DependsOn<CreateLocalNugetFolderModule>]
 public class UploadPackagesToLocalNuGetModule : Module<int>
 {
-    protected override async Task<int> ExecuteAsync(IPipelineContext context, CancellationToken cancellationToken)
+    protected override async Task<int> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
-        var packageFiles = await GetModule<PackagePathsParserModule>();
-        var localNugetFolder = await GetModule<CreateLocalNugetFolderModule>();
+        var packageFiles = await context.GetModule<PackagePathsParserModule>();
+        var localNugetFolder = await context.GetModule<CreateLocalNugetFolderModule>();
+        var packages = packageFiles.ValueOrDefault ?? Array.Empty<FileInfo>();
+        var localNugetDirectory = localNugetFolder.ValueOrDefault ?? throw new InvalidOperationException("Local NuGet folder was not created");
         
-        if (packageFiles.Value?.Length == 0)
+        if (packages.Length == 0)
         {
             context.Logger.LogWarning("No packages found to copy to local NuGet");
             return 0;
         }
 
-        context.Logger.LogInformation("Copying {Count} packages to local NuGet folder", packageFiles.Value!.Length);
+        context.Logger.LogInformation("Copying {Count} packages to local NuGet folder", packages.Length);
         
         var copiedCount = 0;
         
-        foreach (var packageFile in packageFiles.Value!)
+        foreach (var packageFile in packages)
         {
-            var destinationPath = Path.Combine(localNugetFolder.Value!.FullName, packageFile.Name);
+            var destinationPath = Path.Combine(localNugetDirectory.FullName, packageFile.Name);
             
             try
             {

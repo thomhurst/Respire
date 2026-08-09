@@ -4,7 +4,6 @@ using ModularPipelines.Attributes;
 using ModularPipelines.Context;
 using ModularPipelines.DotNet.Extensions;
 using ModularPipelines.DotNet.Options;
-using ModularPipelines.Enums;
 using ModularPipelines.Models;
 using ModularPipelines.Modules;
 
@@ -13,11 +12,18 @@ namespace Respire.Pipeline.Modules;
 [DependsOn<RunBenchmarkModule>]
 public class PackProjectsModule : Module<CommandResult[]>
 {
-    protected override async Task<CommandResult[]> ExecuteAsync(IPipelineContext context, CancellationToken cancellationToken)
+    private readonly IConfiguration _configuration;
+
+    public PackProjectsModule(IConfiguration configuration)
+    {
+        _configuration = configuration;
+    }
+
+    protected override async Task<CommandResult[]?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         context.Logger.LogInformation("Packing NuGet packages...");
 
-        var packageProjects = context.Configuration.GetSection("PackageProjects").Get<string[]>() ?? new[]
+        var packageProjects = _configuration.GetSection("PackageProjects").Get<string[]>() ?? new[]
         {
             "../src/Respire/Respire.csproj",
             "../src/Respire.Extensions.DependencyInjection/Respire.Extensions.DependencyInjection.csproj"
@@ -31,9 +37,9 @@ public class PackProjectsModule : Module<CommandResult[]>
             var result = await context.DotNet().Pack(new DotNetPackOptions
             {
                 ProjectSolution = project,
-                Configuration = Configuration.Release,
+                Configuration = "Release",
                 NoBuild = true,
-                OutputDirectory = "../artifacts/packages",
+                Output = "../artifacts/packages",
                 Properties = new[]
                 {
                     new KeyValue("Version", version),
@@ -41,7 +47,7 @@ public class PackProjectsModule : Module<CommandResult[]>
                     new KeyValue("AssemblyVersion", version.Split('-')[0]), // Remove pre-release suffix for assembly version
                     new KeyValue("FileVersion", version.Split('-')[0])
                 }
-            }, cancellationToken);
+            }, cancellationToken: cancellationToken);
             
             results.Add(result);
         }

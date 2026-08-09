@@ -4,7 +4,6 @@ using ModularPipelines.Attributes;
 using ModularPipelines.Context;
 using ModularPipelines.DotNet.Extensions;
 using ModularPipelines.DotNet.Options;
-using ModularPipelines.Enums;
 using ModularPipelines.Models;
 using ModularPipelines.Modules;
 
@@ -13,11 +12,18 @@ namespace Respire.Pipeline.Modules;
 [DependsOn<RunUnitTestsModule>]
 public class RunBenchmarkModule : Module<CommandResult[]>
 {
-    protected override async Task<CommandResult[]> ExecuteAsync(IPipelineContext context, CancellationToken cancellationToken)
+    private readonly IConfiguration _configuration;
+
+    public RunBenchmarkModule(IConfiguration configuration)
+    {
+        _configuration = configuration;
+    }
+
+    protected override async Task<CommandResult[]?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         context.Logger.LogInformation("Running performance benchmarks...");
 
-        var benchmarkProjects = context.Configuration.GetSection("BenchmarkProjects").Get<string[]>() ?? new[]
+        var benchmarkProjects = _configuration.GetSection("BenchmarkProjects").Get<string[]>() ?? new[]
         {
             "../benchmarks/Respire.Benchmarks/Respire.Benchmarks.csproj"
         };
@@ -31,9 +37,9 @@ public class RunBenchmarkModule : Module<CommandResult[]>
                 var result = await context.DotNet().Run(new DotNetRunOptions
                 {
                     Project = project,
-                    Configuration = Configuration.Release,
+                    Configuration = "Release",
                     NoBuild = true
-                }, cancellationToken);
+                }, cancellationToken: cancellationToken);
                 
                 results.Add(result);
             }

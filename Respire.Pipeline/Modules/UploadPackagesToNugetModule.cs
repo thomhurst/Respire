@@ -20,11 +20,12 @@ public class UploadPackagesToNugetModule : Module<CommandResult[]>
         _nugetSettings = nugetSettings;
     }
 
-    protected override async Task<CommandResult[]> ExecuteAsync(IPipelineContext context, CancellationToken cancellationToken)
+    protected override async Task<CommandResult[]?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
-        var packageFiles = await GetModule<PackagePathsParserModule>();
+        var packageFiles = await context.GetModule<PackagePathsParserModule>();
+        var packages = packageFiles.ValueOrDefault ?? Array.Empty<FileInfo>();
         
-        if (packageFiles.Value?.Length == 0)
+        if (packages.Length == 0)
         {
             context.Logger.LogWarning("No packages found to upload");
             return Array.Empty<CommandResult>();
@@ -36,11 +37,11 @@ public class UploadPackagesToNugetModule : Module<CommandResult[]>
             throw new InvalidOperationException("NuGet API key is required for package upload");
         }
 
-        context.Logger.LogInformation("Uploading {Count} packages to NuGet.org", packageFiles.Value!.Length);
+        context.Logger.LogInformation("Uploading {Count} packages to NuGet.org", packages.Length);
         
         var results = new List<CommandResult>();
 
-        foreach (var packageFile in packageFiles.Value!)
+        foreach (var packageFile in packages)
         {
             context.Logger.LogInformation("Uploading {PackageName}...", packageFile.Name);
             
@@ -50,7 +51,7 @@ public class UploadPackagesToNugetModule : Module<CommandResult[]>
                 Source = "https://api.nuget.org/v3/index.json",
                 ApiKey = _nugetSettings.Value.ApiKey,
                 SkipDuplicate = true
-            }, cancellationToken);
+            }, cancellationToken: cancellationToken);
             
             results.Add(result);
         }

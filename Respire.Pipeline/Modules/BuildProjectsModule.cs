@@ -3,7 +3,6 @@ using ModularPipelines.Attributes;
 using ModularPipelines.Context;
 using ModularPipelines.DotNet.Extensions;
 using ModularPipelines.DotNet.Options;
-using ModularPipelines.Enums;
 using ModularPipelines.Models;
 using ModularPipelines.Modules;
 
@@ -12,15 +11,15 @@ namespace Respire.Pipeline.Modules;
 [DependsOn<NugetVersionGeneratorModule>]
 public class BuildProjectsModule : Module<CommandResult>
 {
-    protected override async Task<CommandResult> ExecuteAsync(IPipelineContext context, CancellationToken cancellationToken)
+    protected override async Task<CommandResult?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         context.Logger.LogInformation("Building Respire solution...");
         
         return await context.DotNet().Build(new DotNetBuildOptions
         {
-            ProjectSolution = "../Respire.sln",
-            Configuration = Configuration.Release,
+            ProjectSolution = "../Respire.slnx",
+            Configuration = "Release",
             NoRestore = false
-        }, cancellationToken);
+        }, cancellationToken: cancellationToken);
     }
 }
