@@ -14,13 +14,13 @@ public class CommandCatalogTests
     {
         var commands = RespireCommands.All.ToArray();
 
-        await Assert.That(commands.Length).IsEqualTo(621);
+        await Assert.That(commands.Length).IsEqualTo(622);
         await Assert.That(commands.Select(static command => command.Name).Distinct(StringComparer.Ordinal).Count())
             .IsEqualTo(commands.Length);
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.Redis)))
             .IsEqualTo(597);
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.Valkey)))
-            .IsEqualTo(463);
+            .IsEqualTo(464);
     }
 
     [Test]
@@ -85,11 +85,12 @@ public class CommandCatalogTests
         });
         await Assert.That(connectionScoped).IsEquivalentTo(new[]
         {
-            "ASKING", "AUTH", "CLIENT", "CLIENT CACHING", "CLIENT NO-EVICT", "CLIENT NO-TOUCH", "CLIENT REPLY",
-            "CLIENT SETINFO", "CLIENT SETNAME", "CLIENT TRACKING", "DISCARD", "EXEC", "HELLO", "MONITOR",
-            "MULTI", "PSUBSCRIBE", "PSYNC", "PUNSUBSCRIBE", "QUIT", "READONLY", "READWRITE", "REPLCONF",
-            "RESET", "SCRIPT", "SCRIPT DEBUG", "SELECT", "SSUBSCRIBE", "SUBSCRIBE", "SUNSUBSCRIBE", "SYNC",
-            "UNSUBSCRIBE", "UNWATCH", "WAIT", "WAITAOF", "WATCH",
+            "ASKING", "AUTH", "CLIENT", "CLIENT CACHING", "CLIENT CAPA", "CLIENT IMPORT-SOURCE",
+            "CLIENT MAINT_NOTIFICATIONS", "CLIENT NO-EVICT", "CLIENT NO-TOUCH", "CLIENT REPLY", "CLIENT SETINFO",
+            "CLIENT SETNAME", "CLIENT TRACKING", "DISCARD", "EXEC", "HELLO", "MONITOR", "MULTI", "PSUBSCRIBE",
+            "PSYNC", "PUNSUBSCRIBE", "QUIT", "READONLY", "READWRITE", "REPLCONF", "RESET", "SCRIPT",
+            "SCRIPT DEBUG", "SELECT", "SSUBSCRIBE", "SUBSCRIBE", "SUNSUBSCRIBE", "SYNC", "UNSUBSCRIBE",
+            "UNWATCH", "WAIT", "WAITAOF", "WATCH",
         });
         await Assert.That(RespireCommands.Stream.XREAD.IsBlocking(["STREAMS", "source", "0"]))
             .IsFalse();

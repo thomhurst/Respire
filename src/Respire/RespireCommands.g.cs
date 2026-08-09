@@ -287,6 +287,9 @@ public static class RespireCommands
         /// <summary><c>CLIENT LIST</c>.</summary>
         public static readonly RespireCommand CLIENT_LIST = new("CLIENT LIST", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
+        /// <summary><c>CLIENT MAINT_NOTIFICATIONS</c>.</summary>
+        public static readonly RespireCommand CLIENT_MAINT_NOTIFICATIONS = new("CLIENT MAINT_NOTIFICATIONS", RespireCommandSource.Valkey);
+
         /// <summary><c>CLIENT NO-EVICT</c>.</summary>
         public static readonly RespireCommand CLIENT_NO_EVICT = new("CLIENT NO-EVICT", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
@@ -2074,6 +2077,7 @@ public static class RespireCommands
         Connection.CLIENT_INFO,
         Connection.CLIENT_KILL,
         Connection.CLIENT_LIST,
+        Connection.CLIENT_MAINT_NOTIFICATIONS,
         Connection.CLIENT_NO_EVICT,
         Connection.CLIENT_NO_TOUCH,
         Connection.CLIENT_PAUSE,

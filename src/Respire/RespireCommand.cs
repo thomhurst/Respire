@@ -38,9 +38,9 @@ public readonly struct RespireCommand
 
         "XREAD" or "XREADGROUP" => RespireCommandBehavior.BlockingWhenRequested,
 
-        "ASKING" or "AUTH" or "CLIENT" or "CLIENT CACHING" or "CLIENT MAINT_NOTIFICATIONS" or
-        "CLIENT NO-EVICT" or "CLIENT NO-TOUCH" or "CLIENT REPLY" or "CLIENT SETINFO" or
-        "CLIENT SETNAME" or "CLIENT TRACKING" or "DISCARD" or "EXEC" or "HELLO" or
+        "ASKING" or "AUTH" or "CLIENT" or "CLIENT CACHING" or "CLIENT CAPA" or "CLIENT IMPORT-SOURCE" or
+        "CLIENT MAINT_NOTIFICATIONS" or "CLIENT NO-EVICT" or "CLIENT NO-TOUCH" or "CLIENT REPLY" or
+        "CLIENT SETINFO" or "CLIENT SETNAME" or "CLIENT TRACKING" or "DISCARD" or "EXEC" or "HELLO" or
         "MONITOR" or "MULTI" or "PSUBSCRIBE" or "PSYNC" or "PUNSUBSCRIBE" or "QUIT" or
         "READONLY" or "READWRITE" or "REPLCONF" or "RESET" or "SCRIPT" or "SCRIPT DEBUG" or "SELECT" or
         "SSUBSCRIBE" or "SUBSCRIBE" or "SUNSUBSCRIBE" or "SYNC" or "UNSUBSCRIBE" or

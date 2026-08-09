@@ -89,6 +89,9 @@ $commands = [System.Collections.Generic.List[object]]::new()
 $commands.AddRange([object[]] @(Read-CoreCommands $RedisCommandPath 'Redis'))
 $commands.AddRange([object[]] @(Read-CoreCommands $ValkeyCommandPath 'Valkey'))
 
+# Commands documented by a pinned core reference but absent from its JSON metadata.
+Add-Commands $commands 'connection' 'Valkey' 'CLIENT MAINT_NOTIFICATIONS'
+
 # Redis 8 integrated data structures and processing engines.
 Add-Commands $commands 'bloom' 'Redis' 'BF.ADD,BF.CARD,BF.EXISTS,BF.INFO,BF.INSERT,BF.LOADCHUNK,BF.MADD,BF.MEXISTS,BF.RESERVE,BF.SCANDUMP'
 Add-Commands $commands 'cuckoo' 'Redis' 'CF.ADD,CF.ADDNX,CF.COUNT,CF.DEL,CF.EXISTS,CF.INFO,CF.INSERT,CF.INSERTNX,CF.LOADCHUNK,CF.MEXISTS,CF.RESERVE,CF.SCANDUMP'
