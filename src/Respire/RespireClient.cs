@@ -33,6 +33,9 @@ public sealed partial class RespireClient : IRespireClient
         Sets = new SetCommands(this);
         SortedSets = new SortedSetCommands(this);
         Streams = new StreamCommands(this);
+        Bitmaps = new BitmapCommands(this);
+        HyperLogLog = new HyperLogLogCommands(this);
+        Geo = new GeoCommands(this);
         Scripts = new ScriptCommands(this);
         Server = new ServerCommands(this);
     }
@@ -87,6 +90,9 @@ public sealed partial class RespireClient : IRespireClient
     public ISetCommands Sets { get; }
     public ISortedSetCommands SortedSets { get; }
     public IStreamCommands Streams { get; }
+    public IBitmapCommands Bitmaps { get; }
+    public IHyperLogLogCommands HyperLogLog { get; }
+    public IGeoCommands Geo { get; }
     public IScriptCommands Scripts { get; }
     public IServerCommands Server { get; }
 
@@ -114,6 +120,63 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     // Raw escape hatch
+
+    /// <summary>
+    /// Sends a command from <see cref="RespireCommands"/>. Unlike the string overload, command
+    /// words are pre-encoded once and never split or allocated per call. The result is a lease.
+    /// </summary>
+    public ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args)
+        => ExecuteCatalogAsync(command, args, CancellationToken.None);
+
+    /// <summary>
+    /// Sends a catalog command with cancellation. Blocking descriptors use a dedicated pooled
+    /// connection; cancellation abandons that connection without stalling multiplexed traffic.
+    /// </summary>
+    public ValueTask<RespireResult> ExecuteAsync(
+        RespireCommand command, RespireValue[] args, CancellationToken cancellationToken)
+        => ExecuteCatalogAsync(command, args, cancellationToken);
+
+    private async ValueTask<RespireResult> ExecuteCatalogAsync(
+        RespireCommand command, RespireValue[] args, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(command.Name))
+        {
+            throw new ArgumentException("Command must be an entry from RespireCommands.", nameof(command));
+        }
+
+        if (_keyPrefix is not null)
+        {
+            throw new NotSupportedException(
+                "Catalog commands cannot run through a key-prefixed view because descriptors do not identify key arguments. " +
+                "Use the typed command facets instead.");
+        }
+
+        if (command.Behavior == RespireCommandBehavior.ConnectionScoped)
+        {
+            throw new NotSupportedException(
+                $"{command.Name} requires connection affinity and cannot run through ExecuteAsync. " +
+                "Use RespireOptions, CreateTransaction, or the subscription APIs instead.");
+        }
+
+        var storedProcedureName = StoredProcedureName(command.Name, args);
+        var commandValue = new CatalogCommand(command, args);
+        RespValue response;
+        if (command.IsBlocking(args))
+        {
+            response = await SendBlockingAsync(command.Name, commandValue, cancellationToken).ConfigureAwait(false);
+        }
+        else if (storedProcedureName is null)
+        {
+            response = await SendAsync(command.Name, commandValue, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            response = await SendStoredProcedureAsync(
+                command.Name, commandValue, cancellationToken, storedProcedureName).ConfigureAwait(false);
+        }
+
+        return new RespireResult(in response);
+    }
 
     /// <summary>
     /// Sends any command. The command may contain spaces ("CONFIG GET"); each arg is exactly one
@@ -1119,6 +1182,12 @@ public sealed partial class RespireClient : IRespireClient
         => ConvertAsync(
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.NullableStringArray(in value));
+
+    internal ValueTask<long?[]> NullableIntegerArrayAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+        where TCommand : struct, IRespCommand
+        => ConvertResponseAsync(
+            operation, command, ct, this,
+            static (RespireClient _, in RespValue value) => ResponseReader.NullableIntegerArray(in value));
 
     internal ValueTask<Dictionary<string, string>> StringMapAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand

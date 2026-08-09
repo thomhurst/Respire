@@ -5,7 +5,7 @@ description: Work with hashes, lists, sets, sorted sets, and streams.
 
 # Collections and streams
 
-Collection commands are grouped by Redis data type. Method names omit the Redis prefix because the facet supplies the context.
+Collection commands are grouped by Redis data type. Method names omit the Redis prefix because the facet supplies the context. Bitmap, HyperLogLog, and geo operations also have typed facets.
 
 ## Hashes
 
@@ -70,3 +70,22 @@ await foreach (var entry in redis.Streams.ReadGroupAsync(
 ```
 
 Blocking stream reads use the same dedicated-connection mechanism as blocking list operations.
+
+## Bitmaps, HyperLogLogs, and geo indexes
+
+```csharp
+await redis.Bitmaps.SetAsync("active:2026-08-09", userId, true);
+long active = await redis.Bitmaps.CountAsync("active:2026-08-09");
+
+await redis.HyperLogLog.AddAsync("visitors", sessionId);
+long estimate = await redis.HyperLogLog.CountAsync("visitors");
+
+await redis.Geo.AddAsync("cafes", entries:
+    [new GeoEntry(-0.1276, 51.5072, "london")]);
+GeoSearchResult[] nearby = await redis.Geo.SearchAsync(
+    "cafes",
+    GeoSearchOrigin.FromCoordinates(-0.1, 51.5),
+    GeoSearchShape.Circle(10, GeoUnit.Kilometers));
+```
+
+For uncommon operations and modules, use the [complete command catalog](../guides/raw-commands).

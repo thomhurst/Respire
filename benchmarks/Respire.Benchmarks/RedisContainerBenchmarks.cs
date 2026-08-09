@@ -85,6 +85,12 @@ public class RedisContainerBenchmarks
     {
         return await _kevaClient.PingAsync();
     }
+
+    [Benchmark]
+    public async Task Respire_Catalog_Ping()
+    {
+        using var result = await _kevaClient.ExecuteAsync(RespireCommands.Connection.PING);
+    }
     
     [Benchmark]
     public async Task<TimeSpan> StackExchange_Ping()

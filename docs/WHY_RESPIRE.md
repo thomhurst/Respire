@@ -89,7 +89,7 @@ older API styles force on you.
 | `Async` suffix kept | Dropping it | Analyzer ecosystem and reader expectations beat the keystrokes |
 
 The full surface, conventions, and the roadmap (cluster/sentinel, RESP3-first
-internals, client-side caching, source-generated module commands) live in
+internals, and client-side caching) live in
 [API_DESIGN.md](API_DESIGN.md).
 
 ## When *not* to use Respire (yet)
