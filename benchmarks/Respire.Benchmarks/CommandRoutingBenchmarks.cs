@@ -17,6 +17,7 @@ public class CommandRoutingBenchmarks
         RespireCommands.String.GET, ["benchmark-key"]);
     private readonly RespireValue[] _rawTokens = ["SET", "benchmark-key", "value"];
     private readonly RespireValue[] _rawEvalTokens = ["EVAL", "return 1", 1, "benchmark-key"];
+    private readonly RespireValue[] _rawMSetExTokens = ["MSETEX", 1, "benchmark-key", "value"];
     private readonly int _firstArgumentIndex = 1;
 
     [Benchmark(Baseline = true)]
@@ -41,6 +42,10 @@ public class CommandRoutingBenchmarks
     [Benchmark]
     public int RawEvalRouting()
         => DynamicCommandRouting.GetRoutingKeyIndex("EVAL", _rawEvalTokens, _firstArgumentIndex);
+
+    [Benchmark]
+    public int RawMSetExRouting()
+        => DynamicCommandRouting.GetRoutingKeyIndex("MSETEX", _rawMSetExTokens, _firstArgumentIndex);
 
     private static bool TryGetSlot<TCommand>(TCommand command)
         where TCommand : struct, Respire.Protocol.IRespCommand

@@ -260,7 +260,8 @@ internal static class DynamicCommandRouting
             "BITOP" => firstArgumentIndex + 1,
             "BLMPOP" or "BZMPOP" =>
                 HasKeys(tokens, firstArgumentIndex + 1) ? firstArgumentIndex + 2 : -1,
-            "LMPOP" or "ZMPOP" or "SINTERCARD" or "ZDIFF" or "ZINTER" or "ZINTERCARD" or "ZUNION" =>
+            "LMPOP" or "MSETEX" or "ZMPOP" or "SINTERCARD" or
+            "ZDIFF" or "ZINTER" or "ZINTERCARD" or "ZUNION" =>
                 HasKeys(tokens, firstArgumentIndex) ? firstArgumentIndex + 1 : -1,
             "MIGRATE" => MigrateKeyIndex(tokens, firstArgumentIndex),
             "OBJECT" or "MEMORY" or "XGROUP" or "XINFO" =>

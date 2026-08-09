@@ -145,6 +145,7 @@ public class ClusterTests
         var evalReadOnlyTokens = new RespireValue[] { "EVAL_RO", "return redis.call('GET', KEYS[1])", 1, "eval-ro-key" };
         var xreadTokens = new RespireValue[] { "XREAD", "COUNT", 1, "STREAMS"u8.ToArray(), "stream-key", "0" };
         var infoTokens = new RespireValue[] { "INFO", "memory" };
+        var msetexTokens = new RespireValue[] { "MSETEX", 1, "msetex-key", "value" };
         var integerKeyTokens = new RespireValue[] { "GET", 123 };
         var booleanKeyTokens = new RespireValue[] { "GET", true };
 
@@ -155,6 +156,7 @@ public class ClusterTests
         await Assert.That(RawSlot("GET", integerKeyTokens, 1)).IsEqualTo(ClusterHash.GetSlot("123"));
         await Assert.That(RawSlot("GET", booleanKeyTokens, 1)).IsEqualTo(ClusterHash.GetSlot("1"));
         await Assert.That(RawSlot("INFO", infoTokens, 1)).IsNull();
+        await Assert.That(RawSlot("MSETEX", msetexTokens, 1)).IsEqualTo(ClusterHash.GetSlot("msetex-key"));
     }
 
     [Test]
@@ -169,6 +171,8 @@ public class ClusterTests
             .IsNull();
         await Assert.That(CatalogSlot(RespireCommands.Server.ACL_GETUSER, ["default"]))
             .IsNull();
+        await Assert.That(CatalogSlot(RespireCommands.String.MSETEX, [1, "msetex-key", "value"]))
+            .IsEqualTo(ClusterHash.GetSlot("msetex-key"));
     }
 
     [Test]
