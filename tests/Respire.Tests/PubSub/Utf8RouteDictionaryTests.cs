@@ -50,6 +50,15 @@ public class Utf8RouteDictionaryTests
 
 #if NET9_0_OR_GREATER
     [Test]
+    public async Task Hash_UsesPerDictionarySeed()
+    {
+        var first = new Utf8RouteKeyComparer(1);
+        var second = new Utf8RouteKeyComparer(2);
+
+        await Assert.That(first.Hash("notifications"u8)).IsNotEqualTo(second.Hash("notifications"u8));
+    }
+
+    [Test]
     public async Task Utf8Lookup_DoesNotAllocate()
     {
         var routes = new Utf8RouteDictionary<int>();

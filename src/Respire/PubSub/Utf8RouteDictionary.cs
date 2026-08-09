@@ -1,3 +1,7 @@
+#if NET9_0_OR_GREATER
+using System.IO.Hashing;
+using System.Security.Cryptography;
+#endif
 using System.Text;
 
 namespace Respire.Internal;
@@ -140,10 +144,14 @@ internal sealed class Utf8RouteDictionary<TValue>
 #if NET9_0_OR_GREATER
 internal sealed class Utf8RouteKey
 {
-    public Utf8RouteKey(string name)
+    public Utf8RouteKey(string name) : this(name, Utf8RouteKeyComparer.Instance)
+    {
+    }
+
+    internal Utf8RouteKey(string name, Utf8RouteKeyComparer comparer)
     {
         Bytes = Encoding.UTF8.GetBytes(name);
-        HashCode = Utf8RouteKeyComparer.Hash(Bytes);
+        HashCode = comparer.Hash(Bytes);
     }
 
     public byte[] Bytes { get; }
@@ -154,7 +162,12 @@ internal sealed class Utf8RouteKeyComparer :
     IEqualityComparer<Utf8RouteKey>,
     IAlternateEqualityComparer<ReadOnlySpan<byte>, Utf8RouteKey>
 {
-    public static Utf8RouteKeyComparer Instance { get; } = new();
+    public static Utf8RouteKeyComparer Instance { get; } =
+        new(RandomNumberGenerator.GetInt32(1, int.MaxValue));
+
+    private readonly int _seed;
+
+    internal Utf8RouteKeyComparer(int seed) => _seed = seed;
 
     public bool Equals(Utf8RouteKey? x, Utf8RouteKey? y)
         => ReferenceEquals(x, y) || (x is not null && y is not null && x.Bytes.AsSpan().SequenceEqual(y.Bytes));
@@ -167,19 +180,9 @@ internal sealed class Utf8RouteKeyComparer :
     public int GetHashCode(ReadOnlySpan<byte> alternate) => Hash(alternate);
 
     public Utf8RouteKey Create(ReadOnlySpan<byte> alternate)
-        => new(Encoding.UTF8.GetString(alternate));
+        => new(Encoding.UTF8.GetString(alternate), this);
 
-    internal static int Hash(ReadOnlySpan<byte> value)
-    {
-        const uint offsetBasis = 2166136261;
-        const uint prime = 16777619;
-        var hash = offsetBasis;
-        foreach (var item in value)
-        {
-            hash = (hash ^ item) * prime;
-        }
-
-        return unchecked((int)hash);
-    }
+    internal int Hash(ReadOnlySpan<byte> value)
+        => unchecked((int)XxHash32.HashToUInt32(value, _seed));
 }
 #endif
