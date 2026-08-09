@@ -70,6 +70,24 @@ public class HandshakeTests
     }
 
     [Test]
+    public async Task AuthAndClientName_ArePipelinedBeforeFirstReply()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.OkReply)
+        {
+            MinimumCommandsBeforeReply = 2,
+        };
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1", server.Port,
+            new RespireConnectionOptions { Password = "secret", ClientName = "respire-tests" },
+            cancellationToken: timeout.Token);
+
+        await Assert.That(server.ReceivedCommands[0]).IsEqualTo("AUTH secret");
+        await Assert.That(server.ReceivedCommands[1]).IsEqualTo("CLIENT SETNAME respire-tests");
+    }
+
+    [Test]
     public async Task AuthRejected_ConnectThrowsAndNothingElseIsSent()
     {
         await using var server = new FakeRespServer("-ERR invalid password\r\n"u8.ToArray());
@@ -79,6 +97,34 @@ public class HandshakeTests
             .Throws<RespireConnectionException>();
 
         await Assert.That(server.CommandsSeen).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task AuthRejected_LaterProtocolFaultDoesNotReplaceHandshakeError()
+    {
+        await using var server = new FakeRespServer(
+            "-ERR invalid password\r\n"u8.ToArray(),
+            "!malformed\r\n"u8.ToArray())
+        {
+            MinimumCommandsBeforeReply = 2,
+        };
+
+        RespireConnectionException? failure = null;
+        try
+        {
+            await using var _ = await RespireConnection.ConnectAsync(
+                "127.0.0.1",
+                server.Port,
+                new RespireConnectionOptions { Password = "wrong", ClientName = "respire-tests" });
+        }
+        catch (RespireConnectionException ex)
+        {
+            failure = ex;
+        }
+
+        await Assert.That(failure).IsNotNull();
+        await Assert.That(failure!.Message).Contains("AUTH failed");
+        await Assert.That(failure.Message).Contains("invalid password");
     }
 
     [Test]

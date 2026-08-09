@@ -30,7 +30,10 @@ internal sealed class FakeRespServer : IAsyncDisposable
     public int Port { get; }
     public int CommandsSeen => Volatile.Read(ref _commandsSeen);
 
-    /// <summary>Holds replies until this many commands have arrived.</summary>
+    /// <summary>
+    /// Holds scripted replies until this many commands have arrived. Tests use this to prove
+    /// commands were pipelined instead of waiting for each preceding response.
+    /// </summary>
     public int MinimumCommandsBeforeReply { get; set; } = 1;
 
     public IReadOnlyList<string> ReceivedCommands

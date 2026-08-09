@@ -10,7 +10,8 @@ users touch.
 >   multiplexer pool is fixed-size, and the option should say what the code does.
 > - Lazy connect is `RespireClient.Create(...)` (used by the DI package) rather than a
 >   `lazy:` flag on `ConnectAsync`.
-> - TLS (`rediss://`) is not implemented yet and throws `NotSupportedException` — roadmap.
+> - TLS is supported through `rediss://` and `RespireOptions.UseTls`; custom certificate and
+>   authentication settings use `RespireOptions.TlsOptions`.
 > - Raw `ExecuteAsync` throws on *top-level* server errors like the friendly layer (one error
 >   model everywhere); `RespireResult.IsError` still exposes nested error elements.
 > - Watched transactions shipped in v1 as `CreateTransactionAsync(watchKeys)` on a dedicated

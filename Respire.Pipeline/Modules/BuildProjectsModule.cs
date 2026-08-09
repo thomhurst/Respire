@@ -18,7 +18,7 @@ public class BuildProjectsModule : Module<CommandResult>
         
         return await context.DotNet().Build(new DotNetBuildOptions
         {
-            ProjectSolution = "../Respire.sln",
+            ProjectSolution = "../Respire.slnx",
             Configuration = Configuration.Release,
             NoRestore = false
         }, cancellationToken);
