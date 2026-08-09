@@ -137,7 +137,7 @@ internal sealed record GitVersionDetails(
 
         var commitRange = latestVersionTag is null ? "HEAD" : $"{latestVersionTag}..HEAD";
         var commitHeight = await GetCommitHeightAsync(repositoryRoot, commitRange, cancellationToken);
-        var versionIncrement = await GetVersionIncrementAsync(repositoryRoot, commitRange, cancellationToken);
+        var versionIncrement = await GetVersionIncrementAsync(repositoryRoot, commitRange, commitHeight, cancellationToken);
         var coreVersion = baseVersion.Increment(versionIncrement, commitHeight);
         var isReleaseBranch = settings.ReleaseBranches.Contains(branchName, StringComparer.OrdinalIgnoreCase);
         var packageVersion = isReleaseBranch
@@ -151,7 +151,7 @@ internal sealed record GitVersionDetails(
             commitHash,
             shortCommitHash,
             commitHeight,
-            versionIncrement.ToString().ToLowerInvariant());
+            versionIncrement.Increment.ToString().ToLowerInvariant());
     }
 
     private static async Task<int> GetCommitHeightAsync(
@@ -163,13 +163,14 @@ internal sealed record GitVersionDetails(
         return int.Parse(heightText, NumberStyles.None, CultureInfo.InvariantCulture);
     }
 
-    private static async Task<VersionIncrement> GetVersionIncrementAsync(
+    private static async Task<VersionIncrementResult> GetVersionIncrementAsync(
         string repositoryRoot,
         string commitRange,
+        int commitHeight,
         CancellationToken cancellationToken)
     {
-        var commitMessages = await RunGitAsync(repositoryRoot, cancellationToken, "log", "--format=%B%x1e", commitRange);
-        return VersionIncrementExtensions.FromCommitMessages(commitMessages);
+        var commitMessages = await RunGitAsync(repositoryRoot, cancellationToken, "log", "--reverse", "--format=%B%x1e", commitRange);
+        return VersionIncrementResult.FromCommitMessages(commitMessages, commitHeight);
     }
 
     private static async Task<string> GetBranchNameAsync(string repositoryRoot, CancellationToken cancellationToken)
@@ -289,63 +290,23 @@ internal sealed record GitVersionDetails(
         return stdout;
     }
 
-    private enum VersionIncrement
-    {
-        None,
-        Patch,
-        Minor,
-        Major
-    }
-
-    private static class VersionIncrementExtensions
-    {
-        private static readonly Regex IncrementMarkerRegex = new(
-            @"\+semver:\s*(?<increment>major|breaking|minor|feature|patch|fix|none|skip)",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-        public static VersionIncrement FromCommitMessages(string commitMessages)
-        {
-            VersionIncrement? increment = null;
-
-            foreach (Match match in IncrementMarkerRegex.Matches(commitMessages))
-            {
-                var marker = match.Groups["increment"].Value;
-                var candidate = marker.ToLowerInvariant() switch
-                {
-                    "major" or "breaking" => VersionIncrement.Major,
-                    "minor" or "feature" => VersionIncrement.Minor,
-                    "patch" or "fix" => VersionIncrement.Patch,
-                    "none" or "skip" => VersionIncrement.None,
-                    _ => VersionIncrement.Patch
-                };
-
-                if (increment is null || (int)candidate > (int)increment.Value)
-                {
-                    increment = candidate;
-                }
-            }
-
-            return increment ?? VersionIncrement.Patch;
-        }
-    }
-
     private sealed record SemanticVersion(int Major, int Minor, int Patch)
     {
-        public SemanticVersion Increment(VersionIncrement increment, int commitHeight)
+        public SemanticVersion Increment(VersionIncrementResult increment, int commitHeight)
         {
-            return increment switch
+            return increment.Increment switch
             {
                 VersionIncrement.None => this,
                 VersionIncrement.Major => this with
                 {
                     Major = Major + 1,
                     Minor = 0,
-                    Patch = commitHeight
+                    Patch = increment.PatchHeight
                 },
                 VersionIncrement.Minor => this with
                 {
                     Minor = Minor + 1,
-                    Patch = commitHeight
+                    Patch = increment.PatchHeight
                 },
                 _ => this with { Patch = Patch + commitHeight }
             };
@@ -357,5 +318,63 @@ internal sealed record GitVersionDetails(
                 CultureInfo.InvariantCulture,
                 $"{Major}.{Minor}.{Patch}");
         }
+    }
+}
+
+internal enum VersionIncrement
+{
+    None,
+    Patch,
+    Minor,
+    Major
+}
+
+internal sealed record VersionIncrementResult(VersionIncrement Increment, int PatchHeight)
+{
+    private static readonly Regex IncrementMarkerRegex = new(
+        @"\+semver:\s*(?<increment>major|breaking|minor|feature|patch|fix|none|skip)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    public static VersionIncrementResult FromCommitMessages(string commitMessages, int commitHeight)
+    {
+        var commits = commitMessages
+            .Split('\x1e', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        VersionIncrement? selectedIncrement = null;
+        var selectedCommitIndex = -1;
+
+        for (var commitIndex = 0; commitIndex < commits.Length; commitIndex++)
+        {
+            foreach (Match match in IncrementMarkerRegex.Matches(commits[commitIndex]))
+            {
+                var marker = match.Groups["increment"].Value;
+                var candidate = marker.ToLowerInvariant() switch
+                {
+                    "major" or "breaking" => VersionIncrement.Major,
+                    "minor" or "feature" => VersionIncrement.Minor,
+                    "patch" or "fix" => VersionIncrement.Patch,
+                    "none" or "skip" => VersionIncrement.None,
+                    _ => VersionIncrement.Patch
+                };
+
+                if (selectedIncrement is null
+                    || (int)candidate > (int)selectedIncrement.Value
+                    || candidate == selectedIncrement.Value)
+                {
+                    selectedIncrement = candidate;
+                    selectedCommitIndex = commitIndex;
+                }
+            }
+        }
+
+        var increment = selectedIncrement ?? VersionIncrement.Patch;
+        var patchHeight = increment switch
+        {
+            VersionIncrement.Major or VersionIncrement.Minor => Math.Max(commits.Length - selectedCommitIndex - 1, 0),
+            VersionIncrement.None => 0,
+            _ => commitHeight
+        };
+
+        return new VersionIncrementResult(increment, patchHeight);
     }
 }

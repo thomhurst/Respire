@@ -11,4 +11,8 @@
     <PackageReference Include="ModularPipelines.DotNet" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Respire.Pipeline.Tests" />
+  </ItemGroup>
+
 </Project>

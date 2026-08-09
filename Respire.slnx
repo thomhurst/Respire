@@ -21,6 +21,7 @@
     <Project Path="tests/Respire.Extensions.Caching.Hybrid.Tests/Respire.Extensions.Caching.Hybrid.Tests.csproj" />
     <Project Path="tests/Respire.Extensions.Caching.Tests/Respire.Extensions.Caching.Tests.csproj" />
     <Project Path="tests/Respire.IntegrationTests/Respire.IntegrationTests.csproj" />
+    <Project Path="tests/Respire.Pipeline.Tests/Respire.Pipeline.Tests.csproj" />
     <Project Path="tests/Respire.Tests/Respire.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
