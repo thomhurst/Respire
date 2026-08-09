@@ -2,7 +2,6 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <LangVersion>13</LangVersion>
   </PropertyGroup>
 
   <ItemGroup>

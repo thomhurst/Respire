@@ -249,4 +249,4 @@ dotnet test tests/Respire.IntegrationTests # Requires Docker
 
 ## License
 
-MIT
+[MIT](LICENSE)

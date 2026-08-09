@@ -2,10 +2,12 @@
 
   <PropertyGroup>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <LangVersion>preview</LangVersion>
     <AssemblyName>Respire</AssemblyName>
     <RootNamespace>Respire</RootNamespace>
-    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <PackageId>Respire</PackageId>
+    <Title>Respire</Title>
+    <Description>Fast, modern RESP client for Redis, Valkey, KeyDB, and other RESP-compatible servers.</Description>
+    <PackageTags>$(PackageTags);redis-client;valkey-client;keydb-client</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>

@@ -2,10 +2,6 @@
 
     <PropertyGroup>
         <OutputType>Exe</OutputType>
-        <ImplicitUsings>enable</ImplicitUsings>
-        <Nullable>enable</Nullable>
-        <IsPackable>false</IsPackable>
-        <LangVersion>13</LangVersion>
     </PropertyGroup>
 
     <ItemGroup>

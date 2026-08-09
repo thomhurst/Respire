@@ -1,9 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
+    <PackageId>Respire.Extensions.Caching</PackageId>
+    <Title>Respire.Extensions.Caching</Title>
+    <Description>IDistributedCache and IBufferDistributedCache implementations backed by Respire.</Description>
+    <PackageTags>$(PackageTags);distributed-cache;ibufferdistributedcache;extensions-caching</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
