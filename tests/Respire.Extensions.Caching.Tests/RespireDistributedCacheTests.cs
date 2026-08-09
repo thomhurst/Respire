@@ -1410,6 +1410,10 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             => inner.ExecuteAsync(command, args);
 
         public ValueTask<RespireResult> ExecuteAsync(
+            RespireCommand command, RespireValue[] args, CancellationToken cancellationToken)
+            => inner.ExecuteAsync(command, args, cancellationToken);
+
+        public ValueTask<RespireResult> ExecuteAsync(
             RespireCommandInterpolatedStringHandler command, CancellationToken cancellationToken = default)
             => inner.ExecuteAsync(command, cancellationToken);
 

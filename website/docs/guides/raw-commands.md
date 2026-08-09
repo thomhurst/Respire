@@ -30,6 +30,22 @@ The catalog is grouped by feature, so IDE completion can guide discovery: `Bitma
 `Json`, `Key`, `KeyDb`, `List`, `PubSub`, `Scripting`, `Search`, `Sentinel`, `Server`, `Set`,
 `SortedSet`, `Stream`, `String`, `TDigest`, `TimeSeries`, `TopK`, `Transaction`, and `VectorSet`.
 
+Blocking descriptors such as `BLPOP` and an `XREAD` containing `BLOCK` automatically use a
+dedicated pooled connection. Supply a cancellation token with the array overload when the
+server-side timeout can be unbounded:
+
+```csharp
+using RespireResult popped = await redis.ExecuteAsync(
+    RespireCommands.List.BLPOP,
+    ["jobs", 0],
+    cancellationToken);
+```
+
+Descriptors that require or alter connection state—such as `MULTI`, `WAIT`, `SELECT`,
+`SUBSCRIBE`, `AUTH`, and `CLIENT TRACKING`—are rejected by `ExecuteAsync`. Multiplexing cannot
+safely preserve their connection affinity. Use transactions, subscription APIs, or
+`RespireOptions` instead.
+
 ## Dynamic commands
 
 Use a string when targeting an experimental command absent from the audited references.

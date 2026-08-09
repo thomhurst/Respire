@@ -124,6 +124,42 @@ public readonly struct RespireValue
         }
     }
 
+    internal bool EqualsAsciiIgnoreCase(string value)
+    {
+        if (_kind == Kind.String)
+        {
+            return string.Equals(_string, value, StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (_kind != Kind.Bytes || _bytes.Length != value.Length)
+        {
+            return false;
+        }
+
+        var bytes = _bytes.Span;
+        for (var i = 0; i < bytes.Length; i++)
+        {
+            var actual = bytes[i];
+            var expected = value[i];
+            if (actual is >= (byte)'a' and <= (byte)'z')
+            {
+                actual -= (byte)('a' - 'A');
+            }
+
+            if (expected is >= 'a' and <= 'z')
+            {
+                expected -= (char)('a' - 'A');
+            }
+
+            if (actual != expected)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     public override string ToString()
         => _kind switch
         {

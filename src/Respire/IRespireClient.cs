@@ -69,6 +69,9 @@ public interface IRespireClient : IAsyncDisposable
     // Raw escape hatch.
     ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args);
 
+    ValueTask<RespireResult> ExecuteAsync(
+        RespireCommand command, RespireValue[] args, CancellationToken cancellationToken);
+
     ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args);
 
     ValueTask<RespireResult> ExecuteAsync(

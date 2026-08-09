@@ -125,19 +125,49 @@ public sealed partial class RespireClient : IRespireClient
     /// Sends a command from <see cref="RespireCommands"/>. Unlike the string overload, command
     /// words are pre-encoded once and never split or allocated per call. The result is a lease.
     /// </summary>
-    public async ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args)
+    public ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args)
+        => ExecuteCatalogAsync(command, args, CancellationToken.None);
+
+    /// <summary>
+    /// Sends a catalog command with cancellation. Blocking descriptors use a dedicated pooled
+    /// connection; cancellation abandons that connection without stalling multiplexed traffic.
+    /// </summary>
+    public ValueTask<RespireResult> ExecuteAsync(
+        RespireCommand command, RespireValue[] args, CancellationToken cancellationToken)
+        => ExecuteCatalogAsync(command, args, cancellationToken);
+
+    private async ValueTask<RespireResult> ExecuteCatalogAsync(
+        RespireCommand command, RespireValue[] args, CancellationToken cancellationToken)
     {
         if (string.IsNullOrEmpty(command.Name))
         {
             throw new ArgumentException("Command must be an entry from RespireCommands.", nameof(command));
         }
 
+        if (command.Behavior == RespireCommandBehavior.ConnectionScoped)
+        {
+            throw new NotSupportedException(
+                $"{command.Name} requires connection affinity and cannot run through ExecuteAsync. " +
+                "Use RespireOptions, CreateTransaction, or the subscription APIs instead.");
+        }
+
         var storedProcedureName = StoredProcedureName(command.Name, args);
         var commandValue = new CatalogCommand(command, args);
-        var response = await (storedProcedureName is null
-                ? SendAsync(command.Name, commandValue, CancellationToken.None)
-                : SendStoredProcedureAsync(command.Name, commandValue, CancellationToken.None, storedProcedureName))
-            .ConfigureAwait(false);
+        RespValue response;
+        if (command.IsBlocking(args))
+        {
+            response = await SendBlockingAsync(command.Name, commandValue, cancellationToken).ConfigureAwait(false);
+        }
+        else if (storedProcedureName is null)
+        {
+            response = await SendAsync(command.Name, commandValue, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            response = await SendStoredProcedureAsync(
+                command.Name, commandValue, cancellationToken, storedProcedureName).ConfigureAwait(false);
+        }
+
         return new RespireResult(in response);
     }
 

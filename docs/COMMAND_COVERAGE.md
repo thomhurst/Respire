@@ -22,6 +22,10 @@ records provenance; it is not a runtime feature-negotiation guarantee. Server ed
 configuration, loaded modules, permissions, and version still determine whether execution is
 accepted.
 
+Catalog execution routes blocking commands through the dedicated connection pool. Commands that
+change per-connection state remain discoverable but are rejected by `ExecuteAsync`; use Respire's
+transaction/subscription APIs or connection options so affinity stays correct.
+
 ## Regeneration
 
 Clone the tagged Redis and Valkey repositories, then run:

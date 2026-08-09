@@ -87,4 +87,37 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
 
         result.AsInteger().Should().BeGreaterThanOrEqualTo(0);
     }
+
+    [Test]
+    public async Task BlockingCatalogDescriptor_DoesNotStallMultiplexedCommands()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var pop = client.ExecuteAsync(
+            RespireCommands.List.BLPOP, ["catalog:jobs", 0], cancellation.Token).AsTask();
+        await Task.Delay(100, cancellation.Token);
+        await client.Lists.RightPushAsync("catalog:jobs", "work").AsTask().WaitAsync(cancellation.Token);
+        using var result = await pop.WaitAsync(cancellation.Token);
+
+        result.Count.Should().Be(2);
+        result[0].AsString().Should().Be("catalog:jobs");
+        result[1].AsString().Should().Be("work");
+    }
+
+    [Test]
+    public async Task BlockingCatalogDescriptor_CancellationDiscardsDedicatedConnection()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+
+        var execute = async () =>
+        {
+            using var _ = await client.ExecuteAsync(
+                RespireCommands.List.BLPOP, ["catalog:empty", 0], cancellation.Token);
+        };
+
+        await execute.Should().ThrowAsync<OperationCanceledException>();
+        (await client.PingAsync()).Should().BeLessThan(TimeSpan.FromSeconds(1));
+    }
 }

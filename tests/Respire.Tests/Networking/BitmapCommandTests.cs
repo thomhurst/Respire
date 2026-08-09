@@ -60,6 +60,9 @@ public class BitmapCommandTests
 
         await Assert.That(async () => await client.Bitmaps.PositionAsync("bits", true, end: 2))
             .Throws<ArgumentException>();
+        await Assert.That(async () => await client.Bitmaps.PositionAsync(
+            "bits", true, start: 2, unit: BitIndexUnit.Bit))
+            .Throws<ArgumentException>();
         await Assert.That(async () => await client.Bitmaps.OperateAsync(BitOperation.Not, "dest", "a", "b"))
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Bitmaps.FieldReadOnlyAsync("bits", BitFieldOperation.Set("u8", "0", 1)))

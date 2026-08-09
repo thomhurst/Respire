@@ -128,6 +128,16 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
             throw new ArgumentException("End requires start.", nameof(end));
         }
 
+        if (!Enum.IsDefined(unit))
+        {
+            throw new ArgumentOutOfRangeException(nameof(unit));
+        }
+
+        if (start.HasValue && !end.HasValue && unit != BitIndexUnit.Byte)
+        {
+            throw new ArgumentException("Bit indexing requires end because Redis places BYTE|BIT after end.", nameof(unit));
+        }
+
         return (start, end) switch
         {
             (null, _) => client.IntegerAsync(

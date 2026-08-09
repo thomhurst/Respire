@@ -1,3 +1,6 @@
+using Respire.Commands;
+using Respire.Networking;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -21,24 +24,96 @@ public class CommandCatalogTests
     }
 
     [Test]
-    public async Task EveryCatalogCommand_WritesItsExactCommandWords()
+    public async Task EveryCatalogCommand_SerializesItsExactCommandWords()
     {
         var commands = RespireCommands.All.ToArray();
-        await using var server = new FakeRespServer(
-            Enumerable.Repeat(FakeRespServer.OkReply, commands.Length).ToArray());
-        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-
         foreach (var command in commands)
         {
-            using var result = await client.ExecuteAsync(command);
-            await Assert.That(result.AsString()).IsEqualTo("OK");
+            var buffer = new WriteBuffer(64);
+            try
+            {
+                var writer = new RespWriter(buffer);
+                new CatalogCommand(command, []).Write(ref writer);
+                var position = 0;
+                var status = RespParser.TryParseValue(buffer.WrittenMemory.Span, ref position, out var frame);
+                try
+                {
+                    await Assert.That(status).IsEqualTo(RespParseStatus.Done);
+                    await Assert.That(position).IsEqualTo(buffer.Count);
+                    var elements = frame.AsArray();
+                    var actualWords = new string[elements.Length];
+                    for (var index = 0; index < elements.Length; index++)
+                    {
+                        actualWords[index] = elements[index].AsString();
+                    }
+
+                    var words = command.Name.Split(' ');
+                    await Assert.That(actualWords.Length).IsEqualTo(words.Length);
+                    for (var index = 0; index < words.Length; index++)
+                    {
+                        await Assert.That(actualWords[index]).IsEqualTo(words[index]);
+                    }
+                }
+                finally
+                {
+                    frame.Dispose();
+                }
+            }
+            finally
+            {
+                buffer.Release();
+            }
+        }
+    }
+
+    [Test]
+    public async Task Catalog_ClassifiesCommandsThatCannotUseTheMultiplexedPath()
+    {
+        var commands = RespireCommands.All.ToArray();
+        var blocking = commands
+            .Where(static command => command.Behavior == RespireCommandBehavior.Blocking)
+            .Select(static command => command.Name)
+            .ToArray();
+        var connectionScoped = commands
+            .Where(static command => command.Behavior == RespireCommandBehavior.ConnectionScoped)
+            .Select(static command => command.Name)
+            .ToArray();
+
+        await Assert.That(blocking).IsEquivalentTo(new[]
+        {
+            "BLMOVE", "BLMPOP", "BLPOP", "BRPOP", "BRPOPLPUSH", "BZMPOP", "BZPOPMAX", "BZPOPMIN",
+        });
+        await Assert.That(connectionScoped).IsEquivalentTo(new[]
+        {
+            "ASKING", "AUTH", "CLIENT", "CLIENT CACHING", "CLIENT NO-EVICT", "CLIENT NO-TOUCH", "CLIENT REPLY",
+            "CLIENT SETINFO", "CLIENT SETNAME", "CLIENT TRACKING", "DISCARD", "EXEC", "HELLO", "MONITOR",
+            "MULTI", "PSUBSCRIBE", "PSYNC", "PUNSUBSCRIBE", "QUIT", "READONLY", "READWRITE", "REPLCONF",
+            "RESET", "SCRIPT DEBUG", "SELECT", "SSUBSCRIBE", "SUBSCRIBE", "SUNSUBSCRIBE", "SYNC",
+            "UNSUBSCRIBE", "UNWATCH", "WAIT", "WAITAOF", "WATCH",
+        });
+        await Assert.That(RespireCommands.Stream.XREAD.IsBlocking(["STREAMS", "source", "0"]))
+            .IsFalse();
+        await Assert.That(RespireCommands.Stream.XREAD.IsBlocking(["block", 1000, "STREAMS", "source", "0"]))
+            .IsTrue();
+        await Assert.That(RespireCommands.Stream.XREADGROUP.IsBlocking(
+                ["GROUP", "workers", "consumer", "BLOCK"u8.ToArray(), 1000, "STREAMS", "source", ">"]))
+            .IsTrue();
+    }
+
+    [Test]
+    public async Task ConnectionScopedCatalogCommands_AreRejectedBeforeSending()
+    {
+        await using var server = new FakeRespServer();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        foreach (var command in RespireCommands.All.ToArray().Where(
+                     static command => command.Behavior == RespireCommandBehavior.ConnectionScoped))
+        {
+            await Assert.That(async () => await client.ExecuteAsync(command))
+                .Throws<NotSupportedException>();
         }
 
-        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(commands.Length);
-        for (var i = 0; i < commands.Length; i++)
-        {
-            await Assert.That(server.ReceivedCommands[i]).IsEqualTo(commands[i].Name);
-        }
+        await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 
     [Test]
