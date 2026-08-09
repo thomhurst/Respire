@@ -146,4 +146,22 @@ public class TransactionIntegrationTests
         readAborted.Should().Throw<InvalidOperationException>();
         (await _client.GetStringAsync("tx:watched")).Should().Be("from-interloper");
     }
+
+    [Test]
+    public async Task WatchedTransaction_WatchedKeyUnchanged_CommitsAndReturnsResults()
+    {
+        await _client.SetAsync("tx:watched:success", "initial");
+
+        await using var transaction = await _client.CreateTransactionAsync(
+            new RespireKey[] { "tx:watched:success" });
+        var setPending = transaction.SetAsync("tx:watched:success", "committed");
+        var getPending = transaction.GetStringAsync("tx:watched:success");
+
+        var committed = await transaction.CommitAsync();
+
+        committed.Should().BeTrue();
+        setPending.Result.Should().BeTrue();
+        getPending.Result.Should().Be("committed");
+        (await _client.GetStringAsync("tx:watched:success")).Should().Be("committed");
+    }
 }
