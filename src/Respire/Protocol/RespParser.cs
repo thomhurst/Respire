@@ -10,18 +10,18 @@ namespace Respire.Protocol;
 /// resulting <see cref="RespValue"/>.
 /// </summary>
 /// <remarks>
-/// The parser is restartable: on <see cref="RespParseStatus.NeedMoreData"/> the caller receives
-/// more bytes and calls again from the same start position; any partially built aggregate
-/// storage is released before returning. The connection handles oversized top-level bulk
-/// strings itself (receiving straight into the pooled payload array) via
-/// <see cref="TryPeekBulkHeader"/>, so the buffer only ever needs to hold one complete
-/// non-bulk value or a small bulk value.
+/// The stateless API is restartable: on <see cref="RespParseStatus.NeedMoreData"/> the caller
+/// receives more bytes and calls again from the same start position; any partially built
+/// aggregate storage is released before returning. The connection uses a reusable
+/// <see cref="RespParseState"/> to retain aggregate progress and direct-fill large bulk values
+/// at any nesting depth.
 /// </remarks>
 public enum RespParseStatus : byte
 {
     Done,
     NeedMoreData,
     InvalidData,
+    NeedDirectFill,
 }
 
 public static class RespParser
@@ -69,10 +69,9 @@ public static class RespParser
 
     /// <summary>
     /// Peeks a bulk-string-family header ("$&lt;len&gt;\r\n", "=&lt;len&gt;\r\n", "!&lt;len&gt;\r\n") at
-    /// <paramref name="pos"/> without consuming it. Used by the connection to decide whether to
-    /// receive a large payload directly into pooled storage instead of growing the parse buffer.
+    /// <paramref name="pos"/> without consuming it.
     /// </summary>
-    public static bool TryPeekBulkHeader(
+    internal static bool TryPeekBulkHeader(
         ReadOnlySpan<byte> buffer, int pos, out RespDataType type, out long payloadLength, out int headerEnd)
     {
         type = default;
@@ -151,7 +150,7 @@ public static class RespParser
         return RespParseStatus.Done;
     }
 
-    private static RespParseStatus TryParseCore(ReadOnlySpan<byte> buffer, ref int cursor, out RespValue value)
+    internal static RespParseStatus TryParseCore(ReadOnlySpan<byte> buffer, ref int cursor, out RespValue value)
     {
         value = default;
         var typeByte = buffer[cursor];
@@ -378,7 +377,7 @@ public static class RespParser
     private static readonly ReadOnlyMemory<byte> InternedPong = "PONG"u8.ToArray();
     private static readonly ReadOnlyMemory<byte> InternedQueued = "QUEUED"u8.ToArray();
 
-    private static RespValue CopyToPooled(RespDataType type, ReadOnlySpan<byte> payload)
+    internal static RespValue CopyToPooled(RespDataType type, ReadOnlySpan<byte> payload)
     {
         if (payload.IsEmpty)
         {
@@ -411,7 +410,7 @@ public static class RespParser
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool TryReadLine(ReadOnlySpan<byte> buffer, ref int pos, out ReadOnlySpan<byte> line)
+    internal static bool TryReadLine(ReadOnlySpan<byte> buffer, ref int pos, out ReadOnlySpan<byte> line)
     {
         var index = buffer[pos..].IndexOf("\r\n"u8);
         if (index < 0)
@@ -426,6 +425,6 @@ public static class RespParser
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool TryParseInt64(ReadOnlySpan<byte> line, out long value)
+    internal static bool TryParseInt64(ReadOnlySpan<byte> line, out long value)
         => Utf8Parser.TryParse(line, out value, out var consumed) && consumed == line.Length;
 }

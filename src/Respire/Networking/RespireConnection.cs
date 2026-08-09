@@ -610,8 +610,10 @@ public sealed class RespireConnection : IAsyncDisposable
     private async Task ReceiveLoopAsync()
     {
         var buffer = RespirePools.ResponsePayloads.Rent(_receiveBufferSize);
+        var parser = new RespParseState(DirectFillThreshold);
         var start = 0;
         var end = 0;
+        long responseBytes = 0;
         Exception? fault = null;
 
         try
@@ -623,28 +625,87 @@ public sealed class RespireConnection : IAsyncDisposable
                 while (progressing && start < end)
                 {
                     var bufferedData = buffer.AsSpan(0, end);
-                    var hasBulkHeader = RespParser.TryPeekBulkHeader(
-                        bufferedData, start, out var bulkType, out var bulkLength, out var headerEnd);
-                    if (hasBulkHeader && bulkLength >= DirectFillThreshold)
+                    var previousStart = start;
+                    RespParseStatus status;
+                    RespValue value;
+                    RespDirectFillRequest directFill = default;
+                    if (parser.IsIdle)
                     {
-                        if (bulkLength > MaxResponseSize)
+                        var hasBulkHeader = RespParser.TryPeekBulkHeader(
+                            bufferedData, start, out var bulkType, out var bulkLength, out var headerEnd);
+                        if (hasBulkHeader && bulkLength >= DirectFillThreshold)
                         {
-                            throw new RespireProtocolException($"Response of {bulkLength} bytes exceeds the {MaxResponseSize} byte limit.");
-                        }
+                            if (bulkLength > int.MaxValue - 2)
+                            {
+                                throw new RespireProtocolException(
+                                    $"Response exceeds the {MaxResponseSize} byte limit.");
+                            }
 
-                        (start, end) = await ReceiveLargeBulkAsync(buffer, headerEnd, end, bulkType, (int)bulkLength).ConfigureAwait(false);
-                        continue;
+                            start = headerEnd;
+                            value = default;
+                            directFill = new RespDirectFillRequest(bulkType, (int)bulkLength);
+                            status = RespParseStatus.NeedDirectFill;
+                        }
+                        else
+                        {
+                            var pos = start;
+                            status = hasBulkHeader
+                                ? RespParser.TryParseBulkValue(
+                                    bufferedData, ref pos, bulkType, bulkLength, headerEnd, out value)
+                                : RespParser.TryParseValue(bufferedData, ref pos, out value);
+                            if (status == RespParseStatus.Done)
+                            {
+                                start = pos;
+                            }
+                            else if (status == RespParseStatus.NeedMoreData && hasBulkHeader)
+                            {
+                                start = headerEnd;
+                                parser.PrepareBulk(bulkType, (int)bulkLength);
+                            }
+                            else if (status == RespParseStatus.NeedMoreData)
+                            {
+                                status = parser.TryParseResumable(
+                                    bufferedData, ref start, out value, out directFill);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        status = parser.TryParseResumable(
+                            bufferedData, ref start, out value, out directFill);
                     }
 
-                    var pos = start;
-                    var status = hasBulkHeader
-                        ? RespParser.TryParseBulkValue(bufferedData, ref pos, bulkType, bulkLength, headerEnd, out var value)
-                        : RespParser.TryParseValue(bufferedData, ref pos, out value);
+                    responseBytes += start - previousStart;
+                    if (responseBytes > MaxResponseSize)
+                    {
+                        throw new RespireProtocolException($"Response exceeds the {MaxResponseSize} byte limit.");
+                    }
+
                     switch (status)
                     {
                         case RespParseStatus.Done:
-                            start = pos;
+                            responseBytes = 0;
                             CompleteResponse(in value);
+                            break;
+                        case RespParseStatus.NeedDirectFill:
+                            if (responseBytes + directFill.PayloadLength + 2 > MaxResponseSize)
+                            {
+                                throw new RespireProtocolException(
+                                    $"Response exceeds the {MaxResponseSize} byte limit.");
+                            }
+
+                            var filled = await ReceiveLargeBulkAsync(
+                                    buffer, start, end, directFill.Type, directFill.PayloadLength)
+                                .ConfigureAwait(false);
+                            start = filled.Start;
+                            end = filled.End;
+                            responseBytes += directFill.PayloadLength + 2L;
+                            if (parser.SupplyDirectFill(in filled.Value, out value))
+                            {
+                                responseBytes = 0;
+                                CompleteResponse(in value);
+                            }
+
                             break;
                         case RespParseStatus.InvalidData:
                             throw new RespireProtocolException($"Malformed RESP data from {Host}:{Port} (leading byte 0x{buffer[start]:X2}).");
@@ -699,6 +760,7 @@ public sealed class RespireConnection : IAsyncDisposable
         }
         finally
         {
+            parser.Dispose();
             RespirePools.ResponsePayloads.Return(buffer);
             Abort();
             FailAllPending(fault ?? new RespireConnectionException($"Connection to {Host}:{Port} closed."));
@@ -707,12 +769,13 @@ public sealed class RespireConnection : IAsyncDisposable
 
     /// <summary>
     /// Receives a large bulk payload straight into its pooled array — one user-space copy for
-    /// the part already buffered, zero for the remainder. Returns the new (start, end) cursors.
+    /// the part already buffered, zero for the remainder. Returns the new cursors and value;
+    /// the resumable parser decides whether it completes a top-level or nested aggregate.
     /// </summary>
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
-    private async ValueTask<(int Start, int End)> ReceiveLargeBulkAsync(
+    private async ValueTask<(int Start, int End, RespValue Value)> ReceiveLargeBulkAsync(
         byte[] buffer, int start, int end, RespDataType type, int payloadLength)
     {
         var payload = RespirePools.ResponsePayloads.Rent(payloadLength);
@@ -767,8 +830,7 @@ public sealed class RespireConnection : IAsyncDisposable
 
             var value = RespValue.PooledString(type, payload, payloadLength);
             payload = null;
-            CompleteResponse(in value);
-            return (start, end);
+            return (start, end, value);
         }
         finally
         {
