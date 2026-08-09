@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -211,6 +212,27 @@ public class RespireConnectionTests
             .ThrowsExactly<RespireConnectionException>();
         await Assert.That(exception!.Message).Contains("received no data");
         await Assert.That(connection.IsConnected).IsFalse();
+    }
+
+    [Test]
+    public async Task ResponseWatchdog_UsesRemainingDeadlineInsteadOfPollingPeriod()
+    {
+        var timeout = TimeSpan.FromMilliseconds(500);
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        server.DelayReply(0, 2000);
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1",
+            server.Port,
+            new RespireConnectionOptions { ResponseTimeout = timeout });
+
+        // Start just after the watchdog's first idle wait. A timeout-sized periodic poll would
+        // miss the first deadline and take almost two timeout periods to abort.
+        await Task.Delay(TimeSpan.FromMilliseconds(600));
+        var stopwatch = Stopwatch.StartNew();
+        var response = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+
+        await Assert.That(async () => await response).ThrowsExactly<RespireConnectionException>();
+        await Assert.That(stopwatch.Elapsed < TimeSpan.FromMilliseconds(750)).IsTrue();
     }
 
     [Test]

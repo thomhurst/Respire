@@ -58,10 +58,13 @@ public sealed class RespireConnection : IAsyncDisposable
 
     private WriteBuffer _activeBuffer;
     private WriteBuffer _spareBuffer;
+    private int _activeReplyCount;
     private bool _dead;
     private int _disposed;
     private long _serverClientId;
-    private long _lastReceiveTimestamp;
+    private long _sentReplyCount;
+    private long _receivedReplyCount;
+    private long _receiveDeadlineTimestamp;
     private Exception? _abortReason;
 
     public string Host { get; }
@@ -102,7 +105,6 @@ public sealed class RespireConnection : IAsyncDisposable
         _activeBuffer = new WriteBuffer(options.WriteBufferSize);
         _spareBuffer = new WriteBuffer(options.WriteBufferSize);
         _responseTimeout = options.ResponseTimeout;
-        _lastReceiveTimestamp = Stopwatch.GetTimestamp();
         _receiveTask = Task.Run(ReceiveLoopAsync);
         _flushTask = Task.Run(FlushLoopAsync);
         if (_responseTimeout is { } responseTimeout)
@@ -424,10 +426,9 @@ public sealed class RespireConnection : IAsyncDisposable
                 }
 
                 _activeBuffer.Append(frame);
-
-                if (_inflight.Count == 0)
+                if (_responseTimeout is not null)
                 {
-                    ResetReceiveDeadline();
+                    _activeReplyCount += discardRepliesBefore + 1;
                 }
 
                 for (var i = 0; i < discardRepliesBefore; i++)
@@ -489,9 +490,9 @@ public sealed class RespireConnection : IAsyncDisposable
                 _directPathBudget = DirectPathBudgetAfterLargeFrame;
             }
 
-            if (_inflight.Count == 0)
+            if (_responseTimeout is not null)
             {
-                ResetReceiveDeadline();
+                _activeReplyCount += discardRepliesBefore + 1;
             }
 
             for (var i = 0; i < discardRepliesBefore; i++)
@@ -598,6 +599,7 @@ public sealed class RespireConnection : IAsyncDisposable
                 while (true)
                 {
                     WriteBuffer sending;
+                    int sendingReplyCount;
                     lock (_writeGate)
                     {
                         if (_dead)
@@ -613,6 +615,8 @@ public sealed class RespireConnection : IAsyncDisposable
                         sending = _activeBuffer;
                         _activeBuffer = _spareBuffer;
                         _spareBuffer = sending;
+                        sendingReplyCount = _activeReplyCount;
+                        _activeReplyCount = 0;
                     }
 
                     // Never cancelled: a partial RESP frame on the wire is unrecoverable.
@@ -622,6 +626,8 @@ public sealed class RespireConnection : IAsyncDisposable
                         var sent = await _socket.SendAsync(memory, SocketFlags.None).ConfigureAwait(false);
                         memory = memory[sent..];
                     }
+
+                    MarkRepliesSent(sendingReplyCount);
 
                     sending.Reset();
                 }
@@ -824,6 +830,15 @@ public sealed class RespireConnection : IAsyncDisposable
             throw new RespireProtocolException($"Unsolicited response from {Host}:{Port} with no command in flight.");
         }
 
+        if (_responseTimeout is not null)
+        {
+            var received = Interlocked.Increment(ref _receivedReplyCount);
+            if (received >= Volatile.Read(ref _sentReplyCount))
+            {
+                Volatile.Write(ref _receiveDeadlineTimestamp, 0);
+            }
+        }
+
         if (ReferenceEquals(source, InflightRing.DiscardSentinel))
         {
             value.Dispose();
@@ -930,13 +945,26 @@ public sealed class RespireConnection : IAsyncDisposable
     /// </summary>
     private async Task WatchReceiveAsync(TimeSpan timeout, CancellationToken cancellationToken)
     {
-        using var timer = new PeriodicTimer(timeout);
         try
         {
-            while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+            while (true)
             {
-                if (_inflight.Count == 0
-                    || Stopwatch.GetElapsedTime(Volatile.Read(ref _lastReceiveTimestamp)) < timeout)
+                var deadlineStart = Volatile.Read(ref _receiveDeadlineTimestamp);
+                if (deadlineStart == 0)
+                {
+                    await Task.Delay(timeout, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                var elapsed = Stopwatch.GetElapsedTime(deadlineStart);
+                if (elapsed < timeout)
+                {
+                    await Task.Delay(timeout - elapsed, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                if (deadlineStart != Volatile.Read(ref _receiveDeadlineTimestamp)
+                    || Volatile.Read(ref _sentReplyCount) <= Volatile.Read(ref _receivedReplyCount))
                 {
                     continue;
                 }
@@ -955,9 +983,28 @@ public sealed class RespireConnection : IAsyncDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void ResetReceiveDeadline()
     {
-        if (_responseTimeout is not null)
+        if (_responseTimeout is not null
+            && Volatile.Read(ref _sentReplyCount) > Volatile.Read(ref _receivedReplyCount))
         {
-            Volatile.Write(ref _lastReceiveTimestamp, Stopwatch.GetTimestamp());
+            Volatile.Write(ref _receiveDeadlineTimestamp, Stopwatch.GetTimestamp());
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void MarkRepliesSent(int count)
+    {
+        if (_responseTimeout is null || count == 0)
+        {
+            return;
+        }
+
+        var sent = Interlocked.Add(ref _sentReplyCount, count);
+        if (sent > Volatile.Read(ref _receivedReplyCount))
+        {
+            Interlocked.CompareExchange(
+                ref _receiveDeadlineTimestamp,
+                Stopwatch.GetTimestamp(),
+                comparand: 0);
         }
     }
 
