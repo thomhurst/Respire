@@ -92,6 +92,26 @@ public class HandshakeTests
     }
 
     [Test]
+    public async Task Resp3_WrongNegotiatedProtocol_ConnectThrows()
+    {
+        await using var server = new FakeRespServer("%1\r\n$5\r\nproto\r\n:2\r\n"u8.ToArray());
+
+        await Assert.That(async () => await RespireConnection.ConnectAsync(
+                "127.0.0.1", server.Port, new RespireConnectionOptions { UseResp3 = true }))
+            .Throws<RespireConnectionException>();
+    }
+
+    [Test]
+    public async Task Resp3_MissingProtocolField_ConnectThrows()
+    {
+        await using var server = new FakeRespServer("%1\r\n$6\r\nserver\r\n$5\r\nredis\r\n"u8.ToArray());
+
+        await Assert.That(async () => await RespireConnection.ConnectAsync(
+                "127.0.0.1", server.Port, new RespireConnectionOptions { UseResp3 = true }))
+            .Throws<RespireConnectionException>();
+    }
+
+    [Test]
     public async Task NoOptions_NoHandshakeCommandsSent()
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);

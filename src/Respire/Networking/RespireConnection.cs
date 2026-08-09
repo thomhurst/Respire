@@ -161,7 +161,14 @@ public sealed class RespireConnection : IAsyncDisposable
             var reply = await SendAsync(
                 new Commands.HelloCommand(options.Username, options.Password), cancellationToken).ConfigureAwait(false);
             ThrowIfHandshakeFailed(in reply, "HELLO");
-            reply.Dispose();
+            try
+            {
+                ValidateHelloProtocol(in reply);
+            }
+            finally
+            {
+                reply.Dispose();
+            }
         }
         else if (options.Password is not null)
         {
@@ -196,6 +203,26 @@ public sealed class RespireConnection : IAsyncDisposable
             reply.Dispose();
             throw new RespireConnectionException($"{step} failed for {Host}:{Port}: {message}");
         }
+    }
+
+    private void ValidateHelloProtocol(in RespValue reply)
+    {
+        if (reply.Type == RespDataType.Map)
+        {
+            var fields = reply.AsArray();
+            for (var i = 0; i + 1 < fields.Length; i += 2)
+            {
+                if (fields[i].AsSpan().SequenceEqual("proto"u8)
+                    && fields[i + 1].Type == RespDataType.Integer
+                    && fields[i + 1].AsInteger() == 3)
+                {
+                    return;
+                }
+            }
+        }
+
+        throw new RespireConnectionException(
+            $"HELLO 3 failed for {Host}:{Port}: server did not confirm RESP3 (expected map field 'proto' = 3).");
     }
 
     /// <summary>
