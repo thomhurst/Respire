@@ -79,6 +79,12 @@ public sealed record RespireOptions
     public SslClientAuthenticationOptions? TlsOptions { get; init; }
 
     /// <summary>
+    /// Aborts a connection when commands are awaiting replies and no bytes arrive within this
+    /// period. Null (default) disables the receive watchdog.
+    /// </summary>
+    public TimeSpan? ResponseTimeout { get; init; }
+
+    /// <summary>
     /// Client-side cap on how long a command waits for its response. Null (default) disables the
     /// cap. Expiry of the cap throws <see cref="RespireTimeoutException"/>; the command may still
     /// execute server-side. Does not apply to intentionally blocking calls (BLPOP-style waits).
@@ -122,6 +128,7 @@ public sealed record RespireOptions
         => new()
         {
             ConnectTimeout = ConnectTimeout,
+            ResponseTimeout = ResponseTimeout,
             UseTls = UseTls,
             TlsOptions = TlsOptions,
             Username = Username,
@@ -139,6 +146,7 @@ public sealed record RespireOptions
     /// Parses a connection string: "host", "host:port", or a
     /// <c>redis://[user[:password]@]host[:port][/database]</c> URI. Recognized query parameters:
     /// <c>clientName</c>, <c>connections</c>, <c>connectTimeoutMs</c>, <c>commandTimeoutMs</c>,
+    /// <c>responseTimeoutMs</c>,
     /// <c>protocol</c> (2 or 3), <c>db</c>. Use <c>rediss://</c> to enable TLS.
     /// </summary>
     public static RespireOptions Parse(string connectionString)
@@ -185,6 +193,7 @@ public sealed record RespireOptions
         var connections = 0;
         TimeSpan connectTimeout = TimeSpan.FromSeconds(10);
         TimeSpan? commandTimeout = null;
+        TimeSpan? responseTimeout = null;
         var protocol = RespProtocol.Resp2;
 
         foreach (var pair in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
@@ -205,6 +214,9 @@ public sealed record RespireOptions
                     break;
                 case "commandtimeoutms":
                     commandTimeout = TimeSpan.FromMilliseconds(int.Parse(value, CultureInfo.InvariantCulture));
+                    break;
+                case "responsetimeoutms":
+                    responseTimeout = TimeSpan.FromMilliseconds(int.Parse(value, CultureInfo.InvariantCulture));
                     break;
                 case "protocol":
                     protocol = value == "3" ? RespProtocol.Resp3 : RespProtocol.Resp2;
@@ -228,6 +240,7 @@ public sealed record RespireOptions
             ConnectTimeout = connectTimeout,
             UseTls = useTls,
             CommandTimeout = commandTimeout,
+            ResponseTimeout = responseTimeout,
             Protocol = protocol,
         };
     }

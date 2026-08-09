@@ -31,12 +31,13 @@ internal sealed class ClientCore : IAsyncDisposable
         Options = options;
         Logger = options.CreateLogger("Respire.RespireClient");
         var endpoint = options.PrimaryEndpoint;
+        var connectionOptions = options.ToConnectionOptions();
         Multiplexer = RespireConnectionMultiplexer.Create(
-            endpoint.Host, endpoint.Port, options.Connections, options.ToConnectionOptions(), Logger);
+            endpoint.Host, endpoint.Port, options.Connections, connectionOptions, Logger);
         _commandSlotsReconnecting = new bool[Multiplexer.ConnectionCount];
         Multiplexer.SlotStateChanged += NotifyCommandStateChanged;
         DedicatedPool = new DedicatedConnectionPool(
-            endpoint.Host, endpoint.Port, options.ToConnectionOptions(), Logger);
+            endpoint.Host, endpoint.Port, connectionOptions, Logger);
     }
 
     public event Action<RespireConnectionState>? ConnectionStateChanged;
