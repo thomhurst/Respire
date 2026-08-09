@@ -1,5 +1,6 @@
 using Respire.Commands;
 using Respire.Protocol;
+using System.Globalization;
 
 namespace Respire;
 
@@ -69,7 +70,39 @@ public readonly struct BitFieldOperation
     {
         ArgumentException.ThrowIfNullOrEmpty(encoding);
         ArgumentException.ThrowIfNullOrEmpty(offset);
+
+        if (!TryParseEncoding(encoding))
+        {
+            throw new ArgumentException("Encoding must be i1-i64 or u1-u63.", nameof(encoding));
+        }
+
+        ReadOnlySpan<char> numericOffset = offset;
+        if (numericOffset[0] == '#')
+        {
+            numericOffset = numericOffset[1..];
+        }
+
+        if (!long.TryParse(numericOffset, NumberStyles.None, CultureInfo.InvariantCulture, out _))
+        {
+            throw new ArgumentException("Offset must be a non-negative integer, optionally prefixed with '#'.", nameof(offset));
+        }
+
         return new(command, encoding, offset, value, null);
+    }
+
+    private static bool TryParseEncoding(string encoding)
+    {
+        if (encoding.Length is < 2 or > 3 || encoding[0] is not ('i' or 'u'))
+        {
+            return false;
+        }
+
+        if (!int.TryParse(encoding.AsSpan(1), NumberStyles.None, CultureInfo.InvariantCulture, out var width))
+        {
+            return false;
+        }
+
+        return encoding[0] == 'i' ? width is >= 1 and <= 64 : width is >= 1 and <= 63;
     }
 }
 

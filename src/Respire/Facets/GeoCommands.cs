@@ -77,15 +77,23 @@ public readonly struct GeoSearchShape
 
     public static GeoSearchShape Circle(double radius, GeoUnit unit = GeoUnit.Meters)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(radius);
+        ValidatePositiveFinite(radius, nameof(radius));
         return new(radius, 0, 0, unit);
     }
 
     public static GeoSearchShape Box(double width, double height, GeoUnit unit = GeoUnit.Meters)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
+        ValidatePositiveFinite(width, nameof(width));
+        ValidatePositiveFinite(height, nameof(height));
         return new(0, width, height, unit);
+    }
+
+    internal static void ValidatePositiveFinite(double value, string parameterName)
+    {
+        if (value <= 0 || !double.IsFinite(value))
+        {
+            throw new ArgumentOutOfRangeException(parameterName, value, "Value must be positive and finite.");
+        }
     }
 }
 
@@ -292,12 +300,12 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
 
         if (shape.IsRadius)
         {
-            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(shape.Radius);
+            GeoSearchShape.ValidatePositiveFinite(shape.Radius, nameof(shape));
         }
         else
         {
-            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(shape.Width);
-            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(shape.Height);
+            GeoSearchShape.ValidatePositiveFinite(shape.Width, nameof(shape));
+            GeoSearchShape.ValidatePositiveFinite(shape.Height, nameof(shape));
         }
 
         _ = Unit(shape.Unit);
@@ -314,6 +322,11 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
         if (options.Any && options.Count is null)
         {
             throw new ArgumentException("Any requires Count.", nameof(options));
+        }
+
+        if (options.Any && options.Sort != GeoSortOrder.Unsorted)
+        {
+            throw new ArgumentException("Any cannot be combined with sorting.", nameof(options));
         }
     }
 

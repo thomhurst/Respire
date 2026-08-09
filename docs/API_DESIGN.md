@@ -290,16 +290,16 @@ One method, one mental model. This is a headline capability — spec it early, m
 
 ```csharp
 // Complete generated catalog — discoverable and pre-encoded
-RespireResult r = await redis.ExecuteAsync(
+using RespireResult catalogResult = await redis.ExecuteAsync(
     RespireCommands.Key.OBJECT_ENCODING, "user:1");
 
 // Explicit args — RespireValue params, no string-splitting surprises
-RespireResult r = await redis.ExecuteAsync("OBJECT", "ENCODING", "user:1");
+using RespireResult rawResult = await redis.ExecuteAsync("OBJECT", "ENCODING", "user:1");
 
 // Interpolated-string handler: literal text splits on whitespace into args,
 // each hole is exactly one argument (never re-tokenized), written straight
 // into the RESP frame — zero intermediate strings
-RespireResult r = await redis.ExecuteAsync($"SET {key} {payload} EX {60}");
+using RespireResult interpolatedResult = await redis.ExecuteAsync($"SET {key} {payload} EX {60}");
 ```
 
 `RespireResult` is the one public protocol-shaped type: `Kind`, `AsString()`,

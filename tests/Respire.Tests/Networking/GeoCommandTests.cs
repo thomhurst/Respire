@@ -30,7 +30,6 @@ public class GeoCommandTests
 
         var options = new GeoSearchOptions
         {
-            Sort = GeoSortOrder.Ascending,
             Count = 2,
             Any = true,
             IncludeDistance = true,
@@ -54,7 +53,7 @@ public class GeoCommandTests
             "GEODIST places cafe park km",
             "GEOHASH places cafe missing",
             "GEOPOS places cafe missing",
-            "GEOSEARCH places FROMMEMBER cafe BYRADIUS 10 km ASC COUNT 2 ANY WITHDIST WITHHASH WITHCOORD",
+            "GEOSEARCH places FROMMEMBER cafe BYRADIUS 10 km COUNT 2 ANY WITHDIST WITHHASH WITHCOORD",
             "GEOSEARCHSTORE nearby places FROMLONLAT 1.5 2.5 BYBOX 10 20 mi DESC COUNT 3 STOREDIST",
         });
     }
@@ -68,6 +67,10 @@ public class GeoCommandTests
         await Assert.That(async () => await client.Geo.SearchAsync(
             "places", GeoSearchOrigin.FromMember("cafe"), GeoSearchShape.Circle(1),
             new GeoSearchOptions { Any = true })).Throws<ArgumentException>();
+        await Assert.That(async () => await client.Geo.SearchAsync(
+            "places", GeoSearchOrigin.FromMember("cafe"), GeoSearchShape.Circle(1),
+            new GeoSearchOptions { Count = 1, Any = true, Sort = GeoSortOrder.Ascending }))
+            .Throws<ArgumentException>();
         await Assert.That(async () => await client.Geo.SearchStoreAsync(
             "dest", "places", GeoSearchOrigin.FromMember("cafe"), GeoSearchShape.Circle(1),
             new GeoSearchOptions { IncludeDistance = true })).Throws<ArgumentException>();
@@ -80,6 +83,20 @@ public class GeoCommandTests
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Geo.SearchAsync(
             "places", GeoSearchOrigin.FromMember("cafe"), default))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.Geo.SearchAsync(
+            "places", GeoSearchOrigin.FromMember("cafe"), GeoSearchShape.Circle(double.NaN)))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.Geo.SearchAsync(
+            "places", GeoSearchOrigin.FromMember("cafe"), GeoSearchShape.Circle(double.PositiveInfinity)))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.Geo.SearchStoreAsync(
+            "dest", "places", GeoSearchOrigin.FromMember("cafe"),
+            GeoSearchShape.Box(double.NaN, 1)))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.Geo.SearchStoreAsync(
+            "dest", "places", GeoSearchOrigin.FromMember("cafe"),
+            GeoSearchShape.Box(1, double.PositiveInfinity)))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }

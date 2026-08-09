@@ -19,7 +19,7 @@ public class BitmapCommandTests
             ":10\r\n"u8.ToArray(),
             ":4\r\n"u8.ToArray(),
             "*4\r\n:1\r\n:2\r\n$-1\r\n:3\r\n"u8.ToArray(),
-            "*1\r\n:7\r\n"u8.ToArray());
+            "*4\r\n:7\r\n:8\r\n:9\r\n:10\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         await Assert.That(await client.Bitmaps.GetAsync("bits", 4)).IsTrue();
@@ -35,9 +35,15 @@ public class BitmapCommandTests
             BitFieldOperation.Get("u8", "0"),
             BitFieldOperation.SetOverflow(BitFieldOverflow.Fail),
             BitFieldOperation.Increment("i8", "#1", 2),
-            BitFieldOperation.Set("u4", "12", 3))).IsEquivalentTo(new long?[] { 1, 2, null, 3 });
-        await Assert.That(await client.Bitmaps.FieldReadOnlyAsync("bits", BitFieldOperation.Get("u8", "0")))
-            .IsEquivalentTo(new long?[] { 7 });
+            BitFieldOperation.Set("u4", "12", 3))).IsEquivalentTo(
+                new long?[] { 1, 2, null, 3 }, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+        await Assert.That(await client.Bitmaps.FieldReadOnlyAsync(
+            "bits",
+            BitFieldOperation.Get("i1", "0"),
+            BitFieldOperation.Get("i64", "1"),
+            BitFieldOperation.Get("u1", "#2"),
+            BitFieldOperation.Get("u63", "#9223372036854775807")))
+            .IsEquivalentTo(new long?[] { 7, 8, 9, 10 }, TUnit.Assertions.Enums.CollectionOrdering.Matching);
 
         await AssertCommands(server.ReceivedCommands,
             "GETBIT bits 4",
@@ -49,7 +55,7 @@ public class BitmapCommandTests
             "BITPOS bits 1 2 8 BIT",
             "BITOP XOR dest one two",
             "BITFIELD bits GET u8 0 OVERFLOW FAIL INCRBY i8 #1 2 SET u4 12 3",
-            "BITFIELD_RO bits GET u8 0");
+            "BITFIELD_RO bits GET i1 0 GET i64 1 GET u1 #2 GET u63 #9223372036854775807");
     }
 
     [Test]
@@ -75,6 +81,19 @@ public class BitmapCommandTests
             .Throws<ArgumentException>();
         await Assert.That(() => BitFieldOperation.SetOverflow((BitFieldOverflow)42))
             .Throws<ArgumentOutOfRangeException>();
+
+        foreach (var encoding in new[] { "i0", "i65", "u0", "u64", "x8", "i", "i1x" })
+        {
+            await Assert.That(() => BitFieldOperation.Get(encoding, "0"))
+                .Throws<ArgumentException>();
+        }
+
+        foreach (var offset in new[] { "-1", "#-1", "#", "+1", "1.5", "value" })
+        {
+            await Assert.That(() => BitFieldOperation.Get("u8", offset))
+                .Throws<ArgumentException>();
+        }
+
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 
