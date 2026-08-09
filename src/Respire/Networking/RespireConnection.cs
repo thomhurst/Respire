@@ -156,47 +156,55 @@ public sealed class RespireConnection : IAsyncDisposable
     /// </summary>
     private async Task HandshakeAsync(RespireConnectionOptions options, CancellationToken cancellationToken)
     {
+        List<(string Step, ValueTask<RespValue> Reply)>? pending = null;
         if (options.UseResp3)
         {
-            var reply = await SendAsync(
-                new Commands.HelloCommand(options.Username, options.Password), cancellationToken).ConfigureAwait(false);
-            ThrowIfHandshakeFailed(in reply, "HELLO");
-            reply.Dispose();
+            (pending ??= new(3)).Add(("HELLO", SendAsync(
+                new Commands.HelloCommand(options.Username, options.Password), cancellationToken)));
         }
         else if (options.Password is not null)
         {
-            var reply = await SendAsync(
-                new Commands.AuthCommand(options.Username, options.Password), cancellationToken).ConfigureAwait(false);
-            ThrowIfHandshakeFailed(in reply, "AUTH");
-            reply.Dispose();
+            (pending ??= new(3)).Add(("AUTH", SendAsync(
+                new Commands.AuthCommand(options.Username, options.Password), cancellationToken)));
         }
 
         if (options.ClientName is not null)
         {
-            var reply = await SendAsync(
-                new Commands.ClientSetNameCommand(options.ClientName), cancellationToken).ConfigureAwait(false);
-            ThrowIfHandshakeFailed(in reply, "CLIENT SETNAME");
-            reply.Dispose();
+            (pending ??= new(3)).Add(("CLIENT SETNAME", SendAsync(
+                new Commands.ClientSetNameCommand(options.ClientName), cancellationToken)));
         }
 
         if (options.Database != 0)
         {
-            var reply = await SendAsync(
-                new Commands.SelectCommand(options.Database), cancellationToken).ConfigureAwait(false);
-            ThrowIfHandshakeFailed(in reply, "SELECT");
+            (pending ??= new(3)).Add(("SELECT", SendAsync(
+                new Commands.SelectCommand(options.Database), cancellationToken)));
+        }
+
+        if (pending is null)
+        {
+            return;
+        }
+
+        RespireConnectionException? failure = null;
+        foreach (var (step, pendingReply) in pending)
+        {
+            var reply = await pendingReply.ConfigureAwait(false);
+            if (failure is null && reply.IsError)
+            {
+                failure = CreateHandshakeException(in reply, step);
+            }
+
             reply.Dispose();
+        }
+
+        if (failure is not null)
+        {
+            throw failure;
         }
     }
 
-    private void ThrowIfHandshakeFailed(in RespValue reply, string step)
-    {
-        if (reply.IsError)
-        {
-            var message = reply.GetErrorMessage();
-            reply.Dispose();
-            throw new RespireConnectionException($"{step} failed for {Host}:{Port}: {message}");
-        }
-    }
+    private RespireConnectionException CreateHandshakeException(in RespValue reply, string step)
+        => new($"{step} failed for {Host}:{Port}: {reply.GetErrorMessage()}");
 
     /// <summary>
     /// Captures Redis's connection ID. Corrections use it to kill a locally dead connection on
