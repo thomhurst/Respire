@@ -482,30 +482,6 @@ public sealed class RespireConnection : IAsyncDisposable
             cancellationToken);
     }
 
-    /// <summary>Sends ASKING + MULTI + commands + EXEC as one indivisible append.</summary>
-    internal ValueTask<RespValue> SendPrefixedTransactionAsync<TPrefix>(
-        in TPrefix prefix,
-        ReadOnlyMemory<byte> serializedCommands,
-        int commandCount,
-        CancellationToken cancellationToken = default)
-        where TPrefix : struct, IRespCommand
-    {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(commandCount);
-        var slotsNeeded = commandCount + 3;
-        if (slotsNeeded > _inflight.Capacity)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(commandCount),
-                $"A prefixed transaction with {commandCount} commands needs {slotsNeeded} in-flight slots, but this connection allows {_inflight.Capacity}.");
-        }
-
-        return SendTransactionCoreAsync(
-            new PrefixedCommand<TPrefix, TransactionCommand>(prefix, new TransactionCommand(serializedCommands)),
-            repliesBeforeFinal: commandCount + 2,
-            firstQueueReply: 2,
-            cancellationToken);
-    }
-
     private ValueTask<RespValue> SendTransactionCoreAsync<TCommand>(
         in TCommand command,
         int repliesBeforeFinal,

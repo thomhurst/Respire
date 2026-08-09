@@ -107,8 +107,15 @@ internal sealed class ClusterRouter : IAsyncDisposable
             catch (Exception) when (!cancellationToken.IsCancellationRequested)
             {
                 ClearSlotOwner(cachedSlot, cachedNode);
-                // Refresh through the seeds below when the cached owner is unavailable.
+                // Refresh through another discovered master before falling back to seeds.
             }
+        }
+
+        if (slot is { } refreshSlot
+            && await TryRefreshSlotThroughKnownMastersAsync(refreshSlot, cancellationToken).ConfigureAwait(false)
+                is { } refreshedNode)
+        {
+            return refreshedNode.GetConnection();
         }
 
         await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
@@ -171,8 +178,15 @@ internal sealed class ClusterRouter : IAsyncDisposable
             catch (Exception) when (!cancellationToken.IsCancellationRequested)
             {
                 ClearSlotOwner(cachedSlot, cachedNode);
-                // Refresh through the seeds below when the cached owner is unavailable.
+                // Refresh through another discovered master before falling back to seeds.
             }
+        }
+
+        if (slot is { } refreshSlot
+            && await TryRefreshSlotThroughKnownMastersAsync(refreshSlot, cancellationToken).ConfigureAwait(false)
+                is { } refreshedNode)
+        {
+            return GetOrCreateDedicatedPool(new RespireEndpoint(refreshedNode.Host, refreshedNode.Port));
         }
 
         await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
@@ -278,14 +292,6 @@ internal sealed class ClusterRouter : IAsyncDisposable
         CancellationToken cancellationToken)
         where TCommand : struct, Respire.Protocol.IRespCommand
         => connection.SendPrefixedAsync(in Asking, in command, throwOnError: false, cancellationToken);
-
-    internal static ValueTask<Respire.Protocol.RespValue> SendAskingTransactionAsync(
-        RespireConnection connection,
-        ReadOnlyMemory<byte> serializedCommands,
-        int commandCount,
-        CancellationToken cancellationToken)
-        => connection.SendPrefixedTransactionAsync(
-            in Asking, serializedCommands, commandCount, cancellationToken);
 
     internal async ValueTask<RespireConnection[]> GetMasterConnectionsAsync(CancellationToken cancellationToken)
     {
@@ -404,6 +410,38 @@ internal sealed class ClusterRouter : IAsyncDisposable
         {
             return false;
         }
+    }
+
+    private async ValueTask<RespireConnectionMultiplexer?> TryRefreshSlotThroughKnownMastersAsync(
+        int slot,
+        CancellationToken cancellationToken)
+    {
+        foreach (var master in Volatile.Read(ref _masters))
+        {
+            if (!await TryRefreshTopologyAsync(master, cancellationToken).ConfigureAwait(false))
+            {
+                continue;
+            }
+
+            var owner = Volatile.Read(ref _slots[slot]);
+            if (owner is null)
+            {
+                continue;
+            }
+
+            try
+            {
+                await owner.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                Volatile.Write(ref _seed, master);
+                return owner;
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                ClearSlotOwner(slot, owner);
+            }
+        }
+
+        return null;
     }
 
     internal async ValueTask<RespireEndpoint> GetPubSubEndpointAsync(

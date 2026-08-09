@@ -227,6 +227,32 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task Transaction_RejectsAskRedirectDuringSlotMigration()
+    {
+        await using var target = new FakeRespServer();
+        var slot = ClusterHash.GetSlot("{account}name");
+        await using var seed = new FakeRespServer(
+            "*0\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{target.Port}\r\n"),
+            "-EXECABORT Transaction discarded because of previous errors.\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        var transaction = client.CreateTransaction();
+        _ = transaction.SetAsync("{account}name", "Ada");
+
+        var error = await Assert.That(async () => await transaction.CommitAsync())
+            .Throws<RespireConnectionException>();
+
+        await Assert.That(error!.Message).Contains("cannot follow ASK redirects");
+        await Assert.That(target.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
     public async Task Transaction_RejectsKeysFromDifferentHashSlots()
     {
         await using var client = RespireClient.Create(new RespireOptions { Cluster = true });
@@ -382,6 +408,44 @@ public class ClusterTests
 
         await Assert.That(await client.GetStringAsync("key", timeout.Token)).IsEqualTo("second");
         await Assert.That(target.ReceivedCommands).Count().IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task FailedCachedSlotOwner_RefreshesThroughDiscoveredMasterWhenSeedUnavailable()
+    {
+        var slot = ClusterHash.GetSlot("key");
+        await using var target = new FakeRespServer("$5\r\nvalue\r\n"u8.ToArray());
+        var refreshedTopology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
+        await using var master = new FakeRespServer(refreshedTopology);
+        var failedOwner = new FakeRespServer();
+
+        var initialTopology = Encoding.ASCII.GetBytes(
+            $"*3\r\n" +
+            $"*3\r\n:0\r\n:{slot - 1}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{master.Port}\r\n" +
+            $"*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{failedOwner.Port}\r\n" +
+            $"*3\r\n:{slot + 1}\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{master.Port}\r\n");
+        var seed = new FakeRespServer(initialTopology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            ConnectTimeout = TimeSpan.FromMilliseconds(100),
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        await seed.DisposeAsync();
+        await failedOwner.DisposeAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (client.Core.Cluster!.IsSlotConnected(slot))
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
+        var value = await client.GetStringAsync("key", timeout.Token);
+
+        await Assert.That(value).IsEqualTo("value");
+        await Assert.That(master.ReceivedCommands[0]).IsEqualTo("CLUSTER SLOTS");
+        await Assert.That(target.ReceivedCommands[0]).IsEqualTo("GET key");
     }
 
     [Test]
