@@ -161,7 +161,14 @@ public sealed partial class RespireClient : IRespireClient
         var storedProcedureName = StoredProcedureName(command.Name, args);
         var commandValue = new CatalogCommand(command, args);
         RespValue response;
-        if (command.IsBlocking(args))
+        if (_core.Cluster is { } cluster
+            && DynamicCommandRouting.IsClusterWideFunctionMutation(command.Name, args))
+        {
+            response = await SendClusterWideAsync(
+                    command.Name, cluster, commandValue, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        else if (command.IsBlocking(args))
         {
             response = await SendBlockingAsync(command.Name, commandValue, cancellationToken).ConfigureAwait(false);
         }
@@ -197,10 +204,25 @@ public sealed partial class RespireClient : IRespireClient
         var storedProcedureName = words.Length == 1 ? StoredProcedureName(operation, args) : null;
         var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, words.Length);
         var commandValue = new DynamicCommand(tokens, routingKeyIndex);
-        var response = await (storedProcedureName is null
-                ? SendAsync(operation, commandValue, CancellationToken.None)
-                : SendStoredProcedureAsync(operation, commandValue, CancellationToken.None, storedProcedureName))
-            .ConfigureAwait(false);
+        RespValue response;
+        if (_core.Cluster is { } cluster
+            && DynamicCommandRouting.IsClusterWideFunctionMutation(operation, args))
+        {
+            response = await SendClusterWideAsync(
+                    operation, cluster, commandValue, CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        else if (storedProcedureName is null)
+        {
+            response = await SendAsync(operation, commandValue, CancellationToken.None).ConfigureAwait(false);
+        }
+        else
+        {
+            response = await SendStoredProcedureAsync(
+                    operation, commandValue, CancellationToken.None, storedProcedureName)
+                .ConfigureAwait(false);
+        }
+
         return new RespireResult(in response);
     }
 
@@ -217,10 +239,25 @@ public sealed partial class RespireClient : IRespireClient
         var storedProcedureName = StoredProcedureName(operation, tokens.AsSpan(1));
         var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, firstArgumentIndex: 1);
         var commandValue = new DynamicCommand(tokens, routingKeyIndex);
-        var response = await (storedProcedureName is null
-                ? SendAsync(operation, commandValue, cancellationToken)
-                : SendStoredProcedureAsync(operation, commandValue, cancellationToken, storedProcedureName))
-            .ConfigureAwait(false);
+        RespValue response;
+        if (_core.Cluster is { } cluster
+            && DynamicCommandRouting.IsClusterWideFunctionMutation(operation, tokens.AsSpan(1)))
+        {
+            response = await SendClusterWideAsync(
+                    operation, cluster, commandValue, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        else if (storedProcedureName is null)
+        {
+            response = await SendAsync(operation, commandValue, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            response = await SendStoredProcedureAsync(
+                    operation, commandValue, cancellationToken, storedProcedureName)
+                .ConfigureAwait(false);
+        }
+
         return new RespireResult(in response);
     }
 
@@ -249,6 +286,10 @@ public sealed partial class RespireClient : IRespireClient
         {
             "CONFIG" when candidate.Equals("GET", StringComparison.OrdinalIgnoreCase) => "GET",
             "CONFIG" when candidate.Equals("SET", StringComparison.OrdinalIgnoreCase) => "SET",
+            "FUNCTION" when candidate.Equals("DELETE", StringComparison.OrdinalIgnoreCase) => "DELETE",
+            "FUNCTION" when candidate.Equals("FLUSH", StringComparison.OrdinalIgnoreCase) => "FLUSH",
+            "FUNCTION" when candidate.Equals("LOAD", StringComparison.OrdinalIgnoreCase) => "LOAD",
+            "FUNCTION" when candidate.Equals("RESTORE", StringComparison.OrdinalIgnoreCase) => "RESTORE",
             "SCRIPT" when candidate.Equals("LOAD", StringComparison.OrdinalIgnoreCase) => "LOAD",
             "XGROUP" when candidate.Equals("CREATE", StringComparison.OrdinalIgnoreCase) => "CREATE",
             _ => null,
@@ -513,6 +554,53 @@ public sealed partial class RespireClient : IRespireClient
                     .ConfigureAwait(false);
                 sendAsking = error.Code == "ASK";
             }
+        }
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<RespValue> SendClusterWideAsync<TCommand>(
+        string operation,
+        ClusterRouter cluster,
+        TCommand command,
+        CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var connections = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
+        var retainedReply = default(RespValue);
+        var hasRetainedReply = false;
+        try
+        {
+            foreach (var connection in connections)
+            {
+                var reply = await SendOnConnectionAsync(
+                        operation, connection, command, cancellationToken)
+                    .ConfigureAwait(false);
+                if (!hasRetainedReply)
+                {
+                    retainedReply = reply;
+                    hasRetainedReply = true;
+                }
+                else
+                {
+                    reply.Dispose();
+                }
+            }
+
+            return hasRetainedReply
+                ? retainedReply
+                : throw new RespireConnectionException(
+                    $"{operation} did not reach any Redis Cluster master.");
+        }
+        catch
+        {
+            if (hasRetainedReply)
+            {
+                retainedReply.Dispose();
+            }
+
+            throw;
         }
     }
 

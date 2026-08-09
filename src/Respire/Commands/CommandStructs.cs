@@ -290,6 +290,32 @@ internal static class DynamicCommandRouting
             ? -1
             : GetRoutingKeyIndex(operation, args, 0);
 
+    internal static bool IsClusterWideFunctionMutation(
+        string operation,
+        ReadOnlySpan<RespireValue> arguments)
+    {
+        if (operation.Equals("FUNCTION", StringComparison.OrdinalIgnoreCase))
+        {
+            return arguments.Length > 0 && IsFunctionMutation(arguments[0]);
+        }
+
+        const string prefix = "FUNCTION ";
+        return operation.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+               && IsFunctionMutation(operation.AsSpan(prefix.Length));
+    }
+
+    private static bool IsFunctionMutation(RespireValue subcommand)
+        => subcommand.EqualsAsciiIgnoreCase("LOAD")
+           || subcommand.EqualsAsciiIgnoreCase("DELETE")
+           || subcommand.EqualsAsciiIgnoreCase("FLUSH")
+           || subcommand.EqualsAsciiIgnoreCase("RESTORE");
+
+    private static bool IsFunctionMutation(ReadOnlySpan<char> subcommand)
+        => subcommand.Equals("LOAD", StringComparison.OrdinalIgnoreCase)
+           || subcommand.Equals("DELETE", StringComparison.OrdinalIgnoreCase)
+           || subcommand.Equals("FLUSH", StringComparison.OrdinalIgnoreCase)
+           || subcommand.Equals("RESTORE", StringComparison.OrdinalIgnoreCase);
+
     private static bool IsUnkeyedCatalogSubcommand(string operation)
     {
         if (operation.Length < 4)

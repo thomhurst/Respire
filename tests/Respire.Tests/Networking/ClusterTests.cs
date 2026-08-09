@@ -872,6 +872,49 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task FunctionLibraryMutations_VisitEveryMaster()
+    {
+        await using var firstNode = new FakeRespServer(
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply);
+        await using var secondNode = new FakeRespServer(
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*2\r\n" +
+            $"*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{firstNode.Port}\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{secondNode.Port}\r\n");
+        await using var seed = new FakeRespServer(topology, topology, topology, topology, topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        using var load = await client.ExecuteAsync(
+            RespireCommands.Scripting.FUNCTION_LOAD, "#!lua name=library");
+        using var delete = await client.ExecuteAsync("FUNCTION DELETE", "library");
+        RespireValue flushSubcommand = "FLUSH";
+        using var flush = await client.ExecuteAsync($"FUNCTION {flushSubcommand}");
+        using var restore = await client.ExecuteAsync(
+            RespireCommands.Scripting.FUNCTION, ["RESTORE", "payload"], CancellationToken.None);
+
+        var expected = new[]
+        {
+            "FUNCTION LOAD #!lua name=library",
+            "FUNCTION DELETE library",
+            "FUNCTION FLUSH",
+            "FUNCTION RESTORE payload",
+        };
+        await Assert.That(firstNode.ReceivedCommands).IsEquivalentTo(expected);
+        await Assert.That(secondNode.ReceivedCommands).IsEquivalentTo(expected);
+    }
+
+    [Test]
     public async Task BlockingServerError_ReturnsHealthyConnectionToNodePool()
     {
         await using var target = new FakeRespServer(
