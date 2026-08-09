@@ -284,7 +284,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         }
 
         var reconnectGeneration = Interlocked.Increment(ref _reconnectGeneration);
-        core.Multiplexer.NotifyStateChanged(RespireConnectionState.Reconnecting);
+        core.NotifySubscriptionStateChanged(RespireConnectionState.Reconnecting);
         var delay = TimeSpan.FromMilliseconds(250);
         while (!_disposed)
         {
@@ -313,7 +313,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                     && ReferenceEquals(Volatile.Read(ref _connection), replacement)
                     && replacement.IsConnected)
                 {
-                    core.Multiplexer.NotifyStateChanged(RespireConnectionState.Connected);
+                    core.NotifySubscriptionStateChanged(RespireConnectionState.Connected);
                 }
 
                 return;
