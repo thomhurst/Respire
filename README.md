@@ -116,6 +116,27 @@ do
 while (!applied);
 ```
 
+### Distributed locks
+
+Use a unique token for each attempted owner. Release and extend compare that token on the server
+before changing the key.
+
+```csharp
+var token = Guid.NewGuid().ToString("N");
+
+if (await redis.Locks.TakeAsync("locks:report", token, TimeSpan.FromSeconds(30)))
+{
+    try
+    {
+        await RunReportAsync();
+    }
+    finally
+    {
+        await redis.Locks.ReleaseAsync("locks:report", token);
+    }
+}
+```
+
 ### Redis Cluster
 
 Enable cluster routing and provide one or more seed nodes. Respire loads `CLUSTER SLOTS`, follows
