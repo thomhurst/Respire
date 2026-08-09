@@ -46,6 +46,32 @@ await using var redis = RespireClient.Create(options);
 
 The first command triggers connection. Dependency-injection registration uses this lazy behavior so Redis availability does not block host startup.
 
+## Redis Sentinel
+
+Set `ServiceName` to resolve the current primary from one or more Sentinel endpoints before
+connecting:
+
+```csharp
+await using var redis = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = { new RespireEndpoint("sentinel-1", 26379) },
+    ServiceName = "mymaster",
+    Password = configuration["Redis:Password"],
+    SentinelPassword = configuration["Redis:SentinelPassword"],
+});
+```
+
+URI connections use `serviceName`, `sentinelUser`, and `sentinelPassword` query parameters:
+
+```csharp
+await using var redis = await RespireClient.ConnectAsync(
+    "redis://:redis-password@sentinel-1?serviceName=mymaster&sentinelPassword=sentinel-password");
+```
+
+Sentinel currently requires `ConnectAsync` because discovery is a network operation that must run
+before Redis connections exist. Lazy `Create` and automatic Sentinel re-discovery during failover
+are planned follow-up work.
+
 ## Cancellation and timeouts
 
 Commands with a `CancellationToken` abandon the wait when cancelled; cancellation cannot guarantee the server did not execute a command already written to the socket. Some variadic `params ReadOnlySpan<T>` overloads do not accept cancellation.

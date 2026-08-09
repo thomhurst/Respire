@@ -18,7 +18,9 @@ string? greeting = await redis.GetStringAsync("greeting");
 
 :::warning Pre-release
 
-Respire's public API may change. Cluster and Sentinel support, and RESP3 client-side caching are not implemented yet. See the [roadmap](./roadmap).
+Respire's public API may change. Cluster routing and Sentinel primary discovery are available;
+automatic Sentinel failover and RESP3 client-side caching remain roadmap items. See the
+[roadmap](./roadmap).
 
 :::
 

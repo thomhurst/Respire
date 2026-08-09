@@ -16,6 +16,7 @@ Respire is pre-release. Its core RESP2 client, typed command surface, pipelining
 - Blocking list and stream commands on dedicated pooled connections
 - Batches, transactions, and optimistic concurrency with `WATCH`
 - Pub/sub, pattern subscriptions, and Redis 7 sharded pub/sub
+- Redis Sentinel primary discovery at connection time
 - Typed JSON serialization and custom `IRespireSerializer`
 - Raw and interpolated command execution
 - Automatic reconnect and pub/sub resubscription
@@ -26,8 +27,8 @@ Respire is pre-release. Its core RESP2 client, typed command surface, pipelining
 
 | Capability | Current behavior |
 | --- | --- |
-| Redis Cluster | Single endpoint only |
-| Redis Sentinel | Not supported |
+| Redis Cluster gaps | Cluster routing is supported; `WATCH` transactions and sharded pub/sub remain unavailable in cluster mode |
+| Automatic Sentinel failover | Sentinel primary discovery is supported by `ConnectAsync`; lazy discovery and automatic re-discovery during failover are not supported |
 | RESP3-first internals | Protocol option exists; broader adoption remains planned |
 | Client-side caching | Tracking and invalidation not shipped |
 

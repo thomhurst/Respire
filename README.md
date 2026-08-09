@@ -15,7 +15,7 @@ await redis.SetAsync("user:1", new User("Ada", 36));
 User? user = await redis.GetAsync<User>("user:1");
 ```
 
-> **Status:** Respire is pre-release, so its API may still change. Sentinel support and
+> **Status:** Respire is pre-release, so its API may still change. Automatic Sentinel failover and
 > RESP3 client-side caching are on the [roadmap](docs/API_DESIGN.md#18-roadmap-designed-for-not-v1).
 
 ## Why Respire?
@@ -212,6 +212,7 @@ atomically in the same round trip.
 - Lua scripts with automatic `EVALSHA` to `EVAL` fallback
 - Streams and consumer groups with per-entry acknowledgement
 - Key-prefixed client views for multi-tenant applications
+- Redis Sentinel primary discovery when connecting
 - Sharded pub/sub for Redis 7
 - Automatic reconnect and pub/sub resubscribe
 - OpenTelemetry spans and metrics through `ActivitySource` and `Meter`, both named `Respire`

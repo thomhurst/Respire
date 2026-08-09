@@ -1,0 +1,84 @@
+using System.Text;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+
+namespace Respire.Tests.Networking;
+
+public class SentinelTests
+{
+    [Test]
+    public async Task ConnectionString_ParsesSentinelOptions()
+    {
+        var options = RespireOptions.Parse(
+            "redis://sentinel.example?serviceName=mymaster&sentinelUser=sentinel&sentinelPassword=secret");
+
+        await Assert.That(options.PrimaryEndpoint).IsEqualTo(new RespireEndpoint("sentinel.example", 26379));
+        await Assert.That(options.ServiceName).IsEqualTo("mymaster");
+        await Assert.That(options.SentinelUsername).IsEqualTo("sentinel");
+        await Assert.That(options.SentinelPassword).IsEqualTo("secret");
+    }
+
+    [Test]
+    public async Task ConnectAsync_DiscoversPrimaryFromSentinel()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.PongReply);
+        await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port));
+
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", sentinel.Port) },
+            ServiceName = "mymaster",
+            ConnectTimeout = TimeSpan.FromSeconds(1),
+        });
+
+        _ = await client.PingAsync();
+
+        await Assert.That(sentinel.ReceivedCommands).IsEquivalentTo(
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["PING"]);
+    }
+
+    [Test]
+    public async Task ConnectAsync_UsesSentinelCredentialsForDiscovery()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.PongReply);
+        await using var sentinel = new FakeRespServer(
+            FakeRespServer.OkReply,
+            PrimaryReply(primary.Port));
+
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", sentinel.Port) },
+            ServiceName = "mymaster",
+            Username = "redis-user",
+            Password = "redis-secret",
+            SentinelUsername = "sentinel-user",
+            SentinelPassword = "sentinel-secret",
+            ConnectTimeout = TimeSpan.FromSeconds(1),
+        });
+
+        _ = await client.PingAsync();
+
+        await Assert.That(sentinel.ReceivedCommands).IsEquivalentTo(
+        [
+            "AUTH sentinel-user sentinel-secret",
+            "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster",
+        ]);
+    }
+
+    [Test]
+    public async Task Create_RejectsSentinelBecauseDiscoveryIsNetworked()
+    {
+        var error = Assert.Throws<NotSupportedException>(() => RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", 26379) },
+            ServiceName = "mymaster",
+        }));
+
+        await Assert.That(error.Message).Contains("ConnectAsync");
+    }
+
+    private static byte[] PrimaryReply(int port)
+        => Encoding.ASCII.GetBytes($"*2\r\n$9\r\n127.0.0.1\r\n${port.ToString().Length}\r\n{port}\r\n");
+}

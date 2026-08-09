@@ -211,6 +211,9 @@ internal static class Verbs
     public static readonly Verb ConfigGet = new(-1, "CONFIG", "GET");
     public static readonly Verb ConfigSet = new(-1, "CONFIG", "SET");
 
+    // Sentinel
+    public static readonly Verb SentinelGetMasterAddressByName = new(-1, "SENTINEL", "GET-MASTER-ADDR-BY-NAME");
+
     // Pub/sub
     public static readonly Verb Publish = new("PUBLISH");
     public static readonly Verb SPublish = new("SPUBLISH");
