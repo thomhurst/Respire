@@ -18,4 +18,8 @@ public class CommandInputBenchmarks
     [Benchmark]
     public GeoSearchOrigin CreateGeoSearchOrigin()
         => GeoSearchOrigin.FromCoordinates(-0.1, 51.5);
+
+    [Benchmark]
+    public int ClassifyCatalogCommand()
+        => (int)new RespireCommand("BLMOVEM", RespireCommandSource.Valkey).Behavior;
 }

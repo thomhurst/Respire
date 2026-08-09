@@ -81,7 +81,7 @@ public class CommandCatalogTests
 
         await Assert.That(blocking).IsEquivalentTo(new[]
         {
-            "BLMOVE", "BLMPOP", "BLPOP", "BRPOP", "BRPOPLPUSH", "BZMPOP", "BZPOPMAX", "BZPOPMIN",
+            "BLMOVE", "BLMOVEM", "BLMPOP", "BLPOP", "BRPOP", "BRPOPLPUSH", "BZMPOP", "BZPOPMAX", "BZPOPMIN",
         });
         await Assert.That(connectionScoped).IsEquivalentTo(new[]
         {

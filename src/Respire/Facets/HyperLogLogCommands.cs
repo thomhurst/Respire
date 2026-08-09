@@ -17,17 +17,10 @@ public interface IHyperLogLogCommands
 internal sealed class HyperLogLogCommands(RespireClient client) : IHyperLogLogCommands
 {
     public ValueTask<bool> AddAsync(RespireKey key, params ReadOnlySpan<RespireValue> values)
-    {
-        if (values.IsEmpty)
-        {
-            throw new ArgumentException("At least one value is required.", nameof(values));
-        }
-
-        return client.FlagAsync(
+        => client.FlagAsync(
             "PFADD",
             new Cmd1N(RespireCommands.HyperLogLog.PFADD.Verb, client.Key(in key), values.ToArray()),
             CancellationToken.None);
-    }
 
     public ValueTask<long> CountAsync(params ReadOnlySpan<RespireKey> keys)
     {

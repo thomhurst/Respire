@@ -33,7 +33,7 @@ public readonly struct RespireCommand
 
     private static RespireCommandBehavior Classify(string name) => name switch
     {
-        "BLMOVE" or "BLMPOP" or "BLPOP" or "BRPOP" or "BRPOPLPUSH" or
+        "BLMOVE" or "BLMOVEM" or "BLMPOP" or "BLPOP" or "BRPOP" or "BRPOPLPUSH" or
         "BZMPOP" or "BZPOPMAX" or "BZPOPMIN" => RespireCommandBehavior.Blocking,
 
         "XREAD" or "XREADGROUP" => RespireCommandBehavior.BlockingWhenRequested,
