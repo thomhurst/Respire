@@ -21,9 +21,9 @@ internal abstract class PendingResponse
     private int _refs;
 
     /// <summary>Called after rent, before source is published anywhere.</summary>
-    internal void PrepareForUse() => _refs = 2;
+    internal void PrepareForUse(int receiveReferences = 1) => _refs = receiveReferences + 1;
 
-    public bool TrySetResult(in RespValue result)
+    public virtual bool TrySetResult(in RespValue result)
     {
         if (Interlocked.CompareExchange(ref _completed, 1, 0) != 0)
         {
@@ -93,6 +93,120 @@ internal abstract class PendingResponse
     protected abstract void SetExceptionCore(Exception exception);
 
     protected abstract void ResetAndReturn();
+}
+
+/// <summary>
+/// One pooled completion for every reply in a MULTI/EXEC sequence. Intermediate replies are
+/// drained in place; the first queue error replaces EXEC's reply so cluster redirects survive
+/// a following EXECABORT without allocating one task source per queued command.
+/// </summary>
+internal sealed class TransactionPendingResponseSource : PendingResponse, IValueTaskSource<RespValue>
+{
+    private const int MaxPoolSize = 4096;
+    private static readonly LockFreeStack<TransactionPendingResponseSource> Pool = new(MaxPoolSize);
+
+    private ManualResetValueTaskSourceCore<RespValue> _core = new() { RunContinuationsAsynchronously = true };
+    private RespValue _queueError;
+    private int _replyCount;
+    private int _firstQueueReply;
+    private int _replyIndex;
+    private bool _hasQueueError;
+
+    private TransactionPendingResponseSource()
+    {
+    }
+
+    internal ValueTask<RespValue> Task => new(this, _core.Version);
+
+    internal static TransactionPendingResponseSource Rent(int replyCount, int firstQueueReply)
+    {
+        if (!Pool.TryPop(out var source))
+        {
+            source = new TransactionPendingResponseSource();
+        }
+
+        source._replyCount = replyCount;
+        source._firstQueueReply = firstQueueReply;
+        source.PrepareForUse(replyCount);
+        return source;
+    }
+
+    public override bool TrySetResult(in RespValue result)
+    {
+        var index = _replyIndex++;
+        if (index < _replyCount - 1)
+        {
+            if (index >= _firstQueueReply && result.IsError && !_hasQueueError)
+            {
+                _queueError = result;
+                _hasQueueError = true;
+            }
+            else
+            {
+                result.Dispose();
+            }
+
+            return true;
+        }
+
+        var completion = result;
+        if (_hasQueueError)
+        {
+            result.Dispose();
+            completion = _queueError;
+            _queueError = default;
+            _hasQueueError = false;
+        }
+
+        if (!base.TrySetResult(in completion))
+        {
+            completion.Dispose();
+        }
+
+        // This source owns intermediate disposal and final cancellation races.
+        return true;
+    }
+
+    protected override void SetResultCore(in RespValue result) => _core.SetResult(result);
+
+    protected override void SetExceptionCore(Exception exception) => _core.SetException(exception);
+
+    RespValue IValueTaskSource<RespValue>.GetResult(short token)
+    {
+        try
+        {
+            return _core.GetResult(token);
+        }
+        finally
+        {
+            ReleaseCallerRef();
+        }
+    }
+
+    ValueTaskSourceStatus IValueTaskSource<RespValue>.GetStatus(short token) => _core.GetStatus(token);
+
+    void IValueTaskSource<RespValue>.OnCompleted(
+        Action<object?> continuation,
+        object? state,
+        short token,
+        ValueTaskSourceOnCompletedFlags flags)
+        => _core.OnCompleted(continuation, state, token, flags);
+
+    protected override void ResetAndReturn()
+    {
+        if (_hasQueueError)
+        {
+            _queueError.Dispose();
+        }
+
+        _queueError = default;
+        _replyCount = 0;
+        _firstQueueReply = 0;
+        _replyIndex = 0;
+        _hasQueueError = false;
+        _core.Reset();
+        Pool.TryPush(this);
+    }
 }
 
 /// <summary>Poolable raw RESP response source.</summary>

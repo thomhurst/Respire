@@ -361,6 +361,9 @@ internal readonly struct GeoSearchCommand(
     Verb verb, RespireValue source, GeoSearchOrigin origin, GeoSearchShape shape,
     GeoSearchOptions options, RespireValue? destination, bool storeDistance) : IRespCommand
 {
+    public bool TryGetClusterSlot(out int slot)
+        => (destination ?? source).TryGetClusterSlot(out slot);
+
     public void Write(ref RespWriter writer)
     {
         var argumentCount = (destination.HasValue ? 1 : 0)
@@ -439,6 +442,8 @@ internal readonly struct GeoSearchCommand(
 internal readonly struct GeoAddCommand(
     Verb verb, RespireValue key, GeoAddCondition condition, bool changed, GeoEntry[] entries) : IRespCommand
 {
+    public bool TryGetClusterSlot(out int slot) => key.TryGetClusterSlot(out slot);
+
     public void Write(ref RespWriter writer)
     {
         var optionCount = (condition == GeoAddCondition.Always ? 0 : 1) + (changed ? 1 : 0);

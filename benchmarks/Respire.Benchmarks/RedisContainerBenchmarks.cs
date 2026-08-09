@@ -85,12 +85,6 @@ public class RedisContainerBenchmarks
     {
         return await _kevaClient.PingAsync();
     }
-
-    [Benchmark]
-    public async Task Respire_Catalog_Ping()
-    {
-        using var result = await _kevaClient.ExecuteAsync(RespireCommands.Connection.PING);
-    }
     
     [Benchmark]
     public async Task<TimeSpan> StackExchange_Ping()
@@ -231,5 +225,14 @@ public class RedisContainerBenchmarks
     public async Task<long> StackExchange_Incr()
     {
         return await _stackExchangeDb.StringIncrementAsync("counter");
+    }
+
+    [Benchmark]
+    public async Task<bool> Respire_Transaction_2()
+    {
+        var transaction = _kevaClient.CreateTransaction();
+        _ = transaction.SetAsync("transaction_key", "value");
+        _ = transaction.IncrementAsync("transaction_counter");
+        return await transaction.CommitAsync();
     }
 }

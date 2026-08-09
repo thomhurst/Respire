@@ -92,4 +92,15 @@ public ref struct RespWriter
 public interface IRespCommand
 {
     void Write(ref RespWriter writer);
+
+    /// <summary>
+    /// Supplies a Redis Cluster hash slot when the command has a routing key. Custom commands
+    /// may override this using <see cref="RespireKey.ClusterSlot"/>; the default lets a cluster
+    /// node redirect commands whose key is unknown.
+    /// </summary>
+    bool TryGetClusterSlot(out int slot)
+    {
+        slot = 0;
+        return false;
+    }
 }

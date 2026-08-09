@@ -314,6 +314,21 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     }
 
     [Test]
+    public async Task RemoveAsync_WrappedClient_CoLocatesLeaseWithCacheKey()
+    {
+        const string key = "wrapped-remove";
+        var prefixedClient = (RespireClient)Client.WithKeyPrefix("tenant:");
+        var wrappedClient = new ScriptInterceptingClient(prefixedClient, (_, send) => send());
+        await using var cache = new RespireDistributedCache(wrappedClient);
+        await cache.SetAsync(key, [1], new DistributedCacheEntryOptions());
+
+        await cache.RemoveAsync(key);
+
+        await Assert.That(prefixedClient.ResolveKey(wrappedClient.LastSetKey).ClusterSlot)
+            .IsEqualTo(wrappedClient.ResolveKey(key).ClusterSlot);
+    }
+
+    [Test]
     public async Task RemoveAsync_WrappedClient_AttemptsRemovalAtLeaseCap()
     {
         await Cache.SetAsync("slow-lease-placement", [1], new DistributedCacheEntryOptions());
@@ -1289,9 +1304,11 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     {
         private int _scriptCalls;
         private int _setCalls;
+        private RespireKey _lastSetKey;
 
         public int ScriptCalls => _scriptCalls;
         public int SetCalls => _setCalls;
+        public RespireKey LastSetKey => _lastSetKey;
 
         public IScriptCommands Scripts => new InterceptedScripts(this, inner.Scripts);
 
@@ -1349,6 +1366,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             RespireKey key, RespireValue value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always,
             bool keepTtl = false, CancellationToken cancellationToken = default)
         {
+            _lastSetKey = key;
             await DelaySetAsync(cancellationToken);
             return await inner.SetAsync(key, value, expiry, when, keepTtl, cancellationToken);
         }
@@ -1357,6 +1375,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             RespireKey key, T value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always,
             bool keepTtl = false, CancellationToken cancellationToken = default)
         {
+            _lastSetKey = key;
             await DelaySetAsync(cancellationToken);
             return await inner.SetAsync(key, value, expiry, when, keepTtl, cancellationToken);
         }
@@ -1418,6 +1437,8 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             => inner.ExecuteAsync(command, cancellationToken);
 
         public IRespireClient WithKeyPrefix(string prefix) => inner.WithKeyPrefix(prefix);
+
+        public RespireKey ResolveKey(RespireKey key) => inner.ResolveKey(key);
 
         // The test owns the wrapped client's lifetime.
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;

@@ -65,6 +65,26 @@ public class ClientCoreTests
     }
 
     [Test]
+    public async Task ClusterRecovery_WaitsForEveryReconnectingNode()
+    {
+        await using var core = new ClientCore(new RespireOptions { Cluster = true });
+        var secondNode = core.Cluster!.GetMultiplexer(new RespireEndpoint("127.0.0.1", 6380));
+        var states = new List<RespireConnectionState>();
+        core.ConnectionStateChanged += states.Add;
+
+        core.NotifyCommandStateChanged(core.Multiplexer, 0, RespireConnectionState.Reconnecting);
+        core.NotifyCommandStateChanged(secondNode, 0, RespireConnectionState.Reconnecting);
+        core.NotifyCommandStateChanged(core.Multiplexer, 0, RespireConnectionState.Connected);
+
+        await Assert.That(states).IsEquivalentTo([RespireConnectionState.Reconnecting]);
+
+        core.NotifyCommandStateChanged(secondNode, 0, RespireConnectionState.Connected);
+
+        await Assert.That(states).IsEquivalentTo(
+            [RespireConnectionState.Reconnecting, RespireConnectionState.Connected]);
+    }
+
+    [Test]
     public async Task ConcurrentTransitions_ArePublishedInAggregateOrder()
     {
         await using var core = new ClientCore(new RespireOptions());

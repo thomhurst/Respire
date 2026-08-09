@@ -199,8 +199,11 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
 
         return client.IntegerAsync(
             "BITOP",
-            new Cmd2N(
-                RespireCommands.Bitmap.BITOP.Verb, Operation(operation), client.Key(in destination), client.MapKeys(sourceKeys)),
+            new BitOpCommand(
+                RespireCommands.Bitmap.BITOP.Verb,
+                Operation(operation),
+                client.Key(in destination),
+                client.MapKeys(sourceKeys)),
             CancellationToken.None);
     }
 
@@ -256,8 +259,31 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
     };
 }
 
+internal readonly struct BitOpCommand(
+    Verb verb,
+    RespireValue operation,
+    RespireValue destination,
+    RespireValue[] sourceKeys) : IRespCommand
+{
+    public bool TryGetClusterSlot(out int slot) => destination.TryGetClusterSlot(out slot);
+
+    public void Write(ref RespWriter writer)
+    {
+        writer.WriteArrayHeader(verb.Tokens + 2 + sourceKeys.Length);
+        writer.WriteRaw(verb.Bulk);
+        operation.WriteTo(ref writer);
+        destination.WriteTo(ref writer);
+        foreach (var sourceKey in sourceKeys)
+        {
+            sourceKey.WriteTo(ref writer);
+        }
+    }
+}
+
 internal readonly struct BitFieldCommand(Verb verb, RespireValue key, BitFieldOperation[] operations) : IRespCommand
 {
+    public bool TryGetClusterSlot(out int slot) => key.TryGetClusterSlot(out slot);
+
     public void Write(ref RespWriter writer)
     {
         var tokenCount = 1;

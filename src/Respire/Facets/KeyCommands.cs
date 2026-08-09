@@ -41,7 +41,8 @@ public interface IKeyCommands
 
     /// <summary>
     /// Iterates keys incrementally without blocking the server; the cursor is handled
-    /// internally. Redis: SCAN.
+    /// internally. In cluster mode, every known master is scanned with its own cursor.
+    /// Redis: SCAN.
     /// </summary>
     IAsyncEnumerable<string> ScanAsync(string? match = null, int pageSize = 250, CancellationToken cancellationToken = default);
 }
@@ -90,35 +91,61 @@ internal sealed class KeyCommands(RespireClient client) : IKeyCommands
         var prefix = client.KeyPrefix;
         var effectiveMatch = prefix is null ? match : EscapeGlob(prefix) + (match ?? "*");
 
-        var cursor = "0";
-        do
+        if (client.Core.Cluster is { } cluster)
         {
-            var args = effectiveMatch is null
-                ? new RespireValue[] { cursor, "COUNT", pageSize }
-                : new RespireValue[] { cursor, "MATCH", effectiveMatch, "COUNT", pageSize };
-            var reply = await client.SendAsync("SCAN", new CmdN(Verbs.Scan, args), cancellationToken).ConfigureAwait(false);
-
-            string[] page;
-            var elements = reply.AsArray();
-            cursor = elements[0].AsString();
-            page = ResponseReader.StringArray(in elements[1]);
-            reply.Dispose();
-
-            foreach (var key in page)
+            var masters = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
+            foreach (var master in masters)
             {
-                if (prefix is null)
+                await foreach (var key in ScanNodeAsync(master, cancellationToken).ConfigureAwait(false))
                 {
                     yield return key;
                 }
-                else if (key.StartsWith(prefix, StringComparison.Ordinal))
-                {
-                    yield return key[prefix.Length..];
-                }
-
-                // Keys outside the literal prefix never leave a prefixed view.
             }
+
+            yield break;
         }
-        while (cursor != "0");
+
+        await foreach (var key in ScanNodeAsync(connection: null, cancellationToken).ConfigureAwait(false))
+        {
+            yield return key;
+        }
+
+        async IAsyncEnumerable<string> ScanNodeAsync(
+            Respire.Networking.RespireConnection? connection,
+            [EnumeratorCancellation] CancellationToken token)
+        {
+            var cursor = "0";
+            do
+            {
+                var args = effectiveMatch is null
+                    ? new RespireValue[] { cursor, "COUNT", pageSize }
+                    : new RespireValue[] { cursor, "MATCH", effectiveMatch, "COUNT", pageSize };
+                var command = new CmdN(Verbs.Scan, args);
+                var reply = connection is null
+                    ? await client.SendAsync("SCAN", command, token).ConfigureAwait(false)
+                    : await client.SendOnConnectionAsync("SCAN", connection, command, token).ConfigureAwait(false);
+
+                var elements = reply.AsArray();
+                cursor = elements[0].AsString();
+                var page = ResponseReader.StringArray(in elements[1]);
+                reply.Dispose();
+
+                foreach (var key in page)
+                {
+                    if (prefix is null)
+                    {
+                        yield return key;
+                    }
+                    else if (key.StartsWith(prefix, StringComparison.Ordinal))
+                    {
+                        yield return key[prefix.Length..];
+                    }
+
+                    // Keys outside the literal prefix never leave a prefixed view.
+                }
+            }
+            while (cursor != "0");
+        }
     }
 
     /// <summary>Escapes Redis glob metacharacters so the text matches itself literally.</summary>

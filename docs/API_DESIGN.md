@@ -400,8 +400,8 @@ public sealed class CartService([FromKeyedServices("cache")] IRespireClient redi
    prerequisite for the next two.
 2. **Client-side caching**: `redis.WithLocalCache(options)` view using CLIENT TRACKING
    invalidation pushes. Killer feature; the view seam (§12) already accommodates it.
-3. **Cluster & Sentinel**: same public surface; `Endpoints` gains seeds, MOVED/ASK handled
-   internally. Facet design keeps multi-key commands visible for slot validation.
+3. **Sentinel**: automatic primary discovery and failover. Redis Cluster already uses
+   `Endpoints` as seeds and handles `CLUSTER SLOTS`, MOVED, ASK, and hash-slot validation.
 4. **Source-generated custom commands** (Refit-style) for modules (RedisJSON, Search):
 
 ```csharp

@@ -52,7 +52,7 @@ public sealed partial class RespireClient : IRespireClient
         var client = Create(options);
         try
         {
-            await client._core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            await client._core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -74,7 +74,7 @@ public sealed partial class RespireClient : IRespireClient
 
     public RespireEndpoint Endpoint => new(_core.Multiplexer.Host, _core.Multiplexer.Port);
 
-    public bool IsConnected => _core.Multiplexer.IsConnected;
+    public bool IsConnected => _core.Cluster?.IsConnected ?? _core.Multiplexer.IsConnected;
 
     /// <summary>Raised when a dead connection is noticed and again when its replacement lands.</summary>
     public event Action<RespireConnectionState>? ConnectionStateChanged
@@ -161,7 +161,14 @@ public sealed partial class RespireClient : IRespireClient
         var storedProcedureName = StoredProcedureName(command.Name, args);
         var commandValue = new CatalogCommand(command, args);
         RespValue response;
-        if (command.IsBlocking(args))
+        if (_core.Cluster is { } cluster
+            && DynamicCommandRouting.IsClusterWideMutation(command.Name, args))
+        {
+            response = await SendClusterWideAsync(
+                    command.Name, cluster, commandValue, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        else if (command.IsBlocking(args))
         {
             response = await SendBlockingAsync(command.Name, commandValue, cancellationToken).ConfigureAwait(false);
         }
@@ -195,11 +202,27 @@ public sealed partial class RespireClient : IRespireClient
         args.CopyTo(tokens, words.Length);
         var operation = RawOperationName(words);
         var storedProcedureName = words.Length == 1 ? StoredProcedureName(operation, args) : null;
-        var commandValue = new DynamicCommand(tokens);
-        var response = await (storedProcedureName is null
-                ? SendAsync(operation, commandValue, CancellationToken.None)
-                : SendStoredProcedureAsync(operation, commandValue, CancellationToken.None, storedProcedureName))
-            .ConfigureAwait(false);
+        var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, words.Length);
+        var commandValue = new DynamicCommand(tokens, routingKeyIndex);
+        RespValue response;
+        if (_core.Cluster is { } cluster
+            && DynamicCommandRouting.IsClusterWideMutation(operation, args))
+        {
+            response = await SendClusterWideAsync(
+                    operation, cluster, commandValue, CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        else if (storedProcedureName is null)
+        {
+            response = await SendAsync(operation, commandValue, CancellationToken.None).ConfigureAwait(false);
+        }
+        else
+        {
+            response = await SendStoredProcedureAsync(
+                    operation, commandValue, CancellationToken.None, storedProcedureName)
+                .ConfigureAwait(false);
+        }
+
         return new RespireResult(in response);
     }
 
@@ -214,11 +237,27 @@ public sealed partial class RespireClient : IRespireClient
     {
         var (operation, tokens) = command.Build();
         var storedProcedureName = StoredProcedureName(operation, tokens.AsSpan(1));
-        var commandValue = new DynamicCommand(tokens);
-        var response = await (storedProcedureName is null
-                ? SendAsync(operation, commandValue, cancellationToken)
-                : SendStoredProcedureAsync(operation, commandValue, cancellationToken, storedProcedureName))
-            .ConfigureAwait(false);
+        var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, firstArgumentIndex: 1);
+        var commandValue = new DynamicCommand(tokens, routingKeyIndex);
+        RespValue response;
+        if (_core.Cluster is { } cluster
+            && DynamicCommandRouting.IsClusterWideMutation(operation, tokens.AsSpan(1)))
+        {
+            response = await SendClusterWideAsync(
+                    operation, cluster, commandValue, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        else if (storedProcedureName is null)
+        {
+            response = await SendAsync(operation, commandValue, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            response = await SendStoredProcedureAsync(
+                    operation, commandValue, cancellationToken, storedProcedureName)
+                .ConfigureAwait(false);
+        }
+
         return new RespireResult(in response);
     }
 
@@ -247,6 +286,11 @@ public sealed partial class RespireClient : IRespireClient
         {
             "CONFIG" when candidate.Equals("GET", StringComparison.OrdinalIgnoreCase) => "GET",
             "CONFIG" when candidate.Equals("SET", StringComparison.OrdinalIgnoreCase) => "SET",
+            "FUNCTION" when candidate.Equals("DELETE", StringComparison.OrdinalIgnoreCase) => "DELETE",
+            "FUNCTION" when candidate.Equals("FLUSH", StringComparison.OrdinalIgnoreCase) => "FLUSH",
+            "FUNCTION" when candidate.Equals("LOAD", StringComparison.OrdinalIgnoreCase) => "LOAD",
+            "FUNCTION" when candidate.Equals("RESTORE", StringComparison.OrdinalIgnoreCase) => "RESTORE",
+            "SCRIPT" when candidate.Equals("FLUSH", StringComparison.OrdinalIgnoreCase) => "FLUSH",
             "SCRIPT" when candidate.Equals("LOAD", StringComparison.OrdinalIgnoreCase) => "LOAD",
             "XGROUP" when candidate.Equals("CREATE", StringComparison.OrdinalIgnoreCase) => "CREATE",
             _ => null,
@@ -307,6 +351,12 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         ObjectDisposedException.ThrowIf(_core.Disposed, this);
+        if (_core.Cluster is not null)
+        {
+            throw new NotSupportedException(
+                "WATCH transactions are not supported in Redis Cluster mode. " +
+                "Use a same-slot Lua script for atomic read-modify-write operations.");
+        }
 
         // Rented from the tracked dedicated pool (not raw-connected) so client disposal can
         // see and abort this connection even if it opens mid-disposal.
@@ -339,9 +389,12 @@ public sealed partial class RespireClient : IRespireClient
 
     internal string? KeyPrefix => _keyPrefix;
 
+    public RespireKey ResolveKey(RespireKey key)
+        => _keyPrefix is null ? key : key.Prepend(_keyPrefix);
+
     /// <summary>Resolves a user key to a command argument, applying this view's key prefix.</summary>
     internal RespireValue Key(in RespireKey key)
-        => _keyPrefix is null ? key.AsValue() : key.Prepend(_keyPrefix).AsValue();
+        => ResolveKey(key).AsValue();
 
     internal RespireValue[] MapKeys(ReadOnlySpan<RespireKey> keys)
     {
@@ -419,6 +472,11 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (core.Cluster is { } cluster)
+        {
+            return SendClusterAsync(operation, cluster, command, cancellationToken);
+        }
+
         if (!core.Multiplexer.IsInitialized)
         {
             return SendAfterConnectAsync(operation, command, cancellationToken);
@@ -438,7 +496,7 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
     {
         var core = _core;
-        await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         var connection = core.Multiplexer.GetConnection();
         return await SendOnConnectionAsync(operation, connection, command, cancellationToken)
             .ConfigureAwait(false);
@@ -453,6 +511,13 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (core.Cluster is { } cluster)
+        {
+            return await SendClusterAsync(
+                    operation, cluster, command, cancellationToken, storedProcedureName)
+                .ConfigureAwait(false);
+        }
+
         await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
 
         var connection = core.Multiplexer.GetConnection();
@@ -461,19 +526,101 @@ public sealed partial class RespireClient : IRespireClient
             .ConfigureAwait(false);
     }
 
-    private ValueTask<RespValue> SendOnConnectionCoreAsync<TCommand>(
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<RespValue> SendClusterAsync<TCommand>(
         string operation,
-        RespireConnection connection,
+        ClusterRouter cluster,
+        TCommand command,
+        CancellationToken cancellationToken,
+        string? storedProcedureName = null)
+        where TCommand : struct, IRespCommand
+    {
+        var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
+        var connection = await cluster.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
+        var sendAsking = false;
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await SendOnConnectionAsync(
+                        operation, connection, command, cancellationToken, storedProcedureName, sendAsking)
+                    .ConfigureAwait(false);
+            }
+            catch (RespireServerException error)
+                when (attempt < ClusterRouter.RedirectLimit && ClusterRouter.IsRedirect(error))
+            {
+                connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken)
+                    .ConfigureAwait(false);
+                sendAsking = error.Code == "ASK";
+            }
+        }
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<RespValue> SendClusterWideAsync<TCommand>(
+        string operation,
+        ClusterRouter cluster,
         TCommand command,
         CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
+        var connections = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
+        var retainedReply = default(RespValue);
+        var hasRetainedReply = false;
+        try
+        {
+            foreach (var connection in connections)
+            {
+                var reply = await SendOnConnectionAsync(
+                        operation, connection, command, cancellationToken)
+                    .ConfigureAwait(false);
+                if (!hasRetainedReply)
+                {
+                    retainedReply = reply;
+                    hasRetainedReply = true;
+                }
+                else
+                {
+                    reply.Dispose();
+                }
+            }
+
+            return hasRetainedReply
+                ? retainedReply
+                : throw new RespireConnectionException(
+                    $"{operation} did not reach any Redis Cluster master.");
+        }
+        catch
+        {
+            if (hasRetainedReply)
+            {
+                retainedReply.Dispose();
+            }
+
+            throw;
+        }
+    }
+
+    private ValueTask<RespValue> SendOnConnectionCoreAsync<TCommand>(
+        string operation,
+        RespireConnection connection,
+        TCommand command,
+        CancellationToken cancellationToken,
+        bool sendAsking = false)
+        where TCommand : struct, IRespCommand
+    {
         if (_core.Options.CommandTimeout is not { } timeout)
         {
-            return connection.SendCheckedAsync(in command, cancellationToken);
+            return sendAsking
+                ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken)
+                : connection.SendCheckedAsync(in command, cancellationToken);
         }
 
-        return SendWithTimeoutAsync(operation, connection, command, cancellationToken, timeout);
+        return SendWithTimeoutAsync(operation, connection, command, cancellationToken, timeout, sendAsking);
     }
 
 #if NET
@@ -484,14 +631,18 @@ public sealed partial class RespireClient : IRespireClient
         RespireConnection connection,
         TCommand command,
         CancellationToken cancellationToken,
-        TimeSpan timeout)
+        TimeSpan timeout,
+        bool sendAsking)
         where TCommand : struct, IRespCommand
     {
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutSource.CancelAfter(timeout);
         try
         {
-            return await connection.SendCheckedAsync(in command, timeoutSource.Token).ConfigureAwait(false);
+            return await (sendAsking
+                    ? ClusterRouter.SendAskingAsync(connection, in command, timeoutSource.Token)
+                    : connection.SendCheckedAsync(in command, timeoutSource.Token))
+                .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -499,36 +650,39 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
-    private ValueTask<RespValue> SendOnConnectionAsync<TCommand>(
+    internal ValueTask<RespValue> SendOnConnectionAsync<TCommand>(
         string operation,
         RespireConnection connection,
         TCommand command,
         CancellationToken cancellationToken,
-        string? storedProcedureName = null)
+        string? storedProcedureName = null,
+        bool sendAsking = false)
         where TCommand : struct, IRespCommand
         => RespireTelemetry.IsEnabled
             ? SendOnConnectionInstrumentedAsync(
-                operation, connection, command, cancellationToken, storedProcedureName)
-            : SendOnConnectionCoreAsync(operation, connection, command, cancellationToken);
+                operation, connection, command, cancellationToken, storedProcedureName, sendAsking)
+            : SendOnConnectionCoreAsync(operation, connection, command, cancellationToken, sendAsking);
 
     private async ValueTask<RespValue> SendOnConnectionInstrumentedAsync<TCommand>(
         string operation,
         RespireConnection connection,
         TCommand command,
         CancellationToken cancellationToken,
-        string? storedProcedureName)
+        string? storedProcedureName,
+        bool sendAsking)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
         var telemetry = RespireTelemetry.StartOperation(
             operation,
-            core.Multiplexer.Host,
-            core.Multiplexer.Port,
+            connection.Host,
+            connection.Port,
             core.Options.Database,
             storedProcedureName: storedProcedureName);
         try
         {
-            var response = await SendOnConnectionCoreAsync(operation, connection, command, cancellationToken)
+            var response = await SendOnConnectionCoreAsync(
+                    operation, connection, command, cancellationToken, sendAsking)
                 .ConfigureAwait(false);
             telemetry.Complete(core, operation, storedProcedureName, connection: connection);
             return response;
@@ -554,6 +708,12 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (core.Cluster is { } cluster)
+        {
+            return await SendBlockingClusterAsync(
+                    operation, cluster, command, cancellationToken, storedProcedureName)
+                .ConfigureAwait(false);
+        }
 
         var telemetry = RespireTelemetry.StartOperation(
             operation,
@@ -593,9 +753,96 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
-    internal async ValueTask<RespireConnection> AcquireConnectionAsync(CancellationToken cancellationToken)
+    private async ValueTask<RespValue> SendBlockingClusterAsync<TCommand>(
+        string operation,
+        ClusterRouter cluster,
+        TCommand command,
+        CancellationToken cancellationToken,
+        string? storedProcedureName)
+        where TCommand : struct, IRespCommand
+    {
+        var core = _core;
+        var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
+        var pool = await cluster.GetDedicatedPoolAsync(slot, cancellationToken).ConfigureAwait(false);
+        RespireTelemetry.OperationScope telemetry = default;
+        var telemetryStarted = false;
+        var sendAsking = false;
+
+        for (var attempt = 0; ; attempt++)
+        {
+            RespireConnection? connection = null;
+            var returned = false;
+            try
+            {
+                connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
+                if (!telemetryStarted)
+                {
+                    telemetry = RespireTelemetry.StartOperation(
+                        operation,
+                        connection.Host,
+                        connection.Port,
+                        core.Options.Database,
+                        storedProcedureName: storedProcedureName);
+                    telemetryStarted = true;
+                }
+
+                var response = await (sendAsking
+                        ? ClusterRouter.SendBlockingAskingUncheckedAsync(
+                            connection, in command, cancellationToken)
+                        : connection.SendWithoutResponseTimeoutAsync(command, cancellationToken))
+                    .ConfigureAwait(false);
+                sendAsking = false;
+                if (response.IsError)
+                {
+                    var error = ResponseReader.ServerError(in response);
+                    response.Dispose();
+                    if (attempt < ClusterRouter.RedirectLimit && ClusterRouter.IsRedirect(error))
+                    {
+                        var redirectedPool = await cluster.GetRedirectDedicatedPoolAsync(
+                                error, connection, cancellationToken)
+                            .ConfigureAwait(false);
+                        pool.Return(connection);
+                        returned = true;
+                        pool = redirectedPool;
+                        sendAsking = error.Code == "ASK";
+                        continue;
+                    }
+
+                    pool.Return(connection);
+                    returned = true;
+                    throw error;
+                }
+
+                pool.Return(connection);
+                returned = true;
+                telemetry.Complete(core, operation, storedProcedureName, connection: connection);
+                return response;
+            }
+            catch (Exception ex)
+            {
+                telemetry.Complete(core, operation, storedProcedureName, ex, connection);
+                if (connection is not null && !returned)
+                {
+                    await pool.DiscardAsync(connection).ConfigureAwait(false);
+                }
+
+                throw;
+            }
+        }
+    }
+
+    internal ValueTask<RespireConnection> AcquireConnectionAsync(CancellationToken cancellationToken)
+        => AcquireConnectionAsync(slot: null, cancellationToken);
+
+    internal async ValueTask<RespireConnection> AcquireConnectionAsync(
+        int? slot, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_core.Disposed, this);
+        if (_core.Cluster is { } cluster)
+        {
+            return await cluster.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
+        }
+
         await _core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         return _core.Multiplexer.GetConnection();
     }
@@ -608,6 +855,13 @@ public sealed partial class RespireClient : IRespireClient
 
     internal async ValueTask<bool> TryEnsureReliableCorrectionOrderingAsync()
     {
+        if (_core.Cluster is not null)
+        {
+            // The keyed tracked send initializes CLIENT ID on its routed node. Initializing
+            // only the seed here would provide no ordering guarantee for that node.
+            return true;
+        }
+
         var multiplexer = _core.Multiplexer;
         if (multiplexer.IsReliableCorrectionOrderingUnavailable)
         {
@@ -637,6 +891,12 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (core.Cluster is not null)
+        {
+            // Deferred until the key selects a node in StartTrackedScriptExecutionAsync.
+            return;
+        }
+
         if (core.Multiplexer.HasReliableCorrectionOrdering)
         {
             return;
@@ -662,9 +922,26 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
-    internal readonly record struct TrackedScriptExecution(
+    internal readonly record struct TrackedConnectionIdentity(
+        RespireEndpoint Endpoint,
         long ServerClientId,
-        ValueTask<RespireResult> Response);
+        bool RequiresAsking = false);
+
+    internal sealed class TrackedScriptExecution
+    {
+        internal TrackedScriptExecution(
+            RespireConnection connection, TrackedConnectionIdentity connectionIdentity)
+        {
+            Connection = connection;
+            ConnectionIdentity = connectionIdentity;
+        }
+
+        internal RespireConnection Connection { get; set; }
+
+        internal TrackedConnectionIdentity ConnectionIdentity { get; set; }
+
+        internal ValueTask<RespireResult> Response { get; set; }
+    }
 
     internal async ValueTask<RespireResult> ExecuteScriptAsync(
         RespireScript script,
@@ -673,6 +950,30 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (core.Cluster is { } cluster)
+        {
+            var arguments = tail[1..];
+            RespValue clusterReply;
+            try
+            {
+                clusterReply = await SendClusterAsync(
+                        "EVALSHA", cluster,
+                        new Cmd2N(Verbs.EvalSha, script.Sha1, tail[0], arguments),
+                        cancellationToken, script.Sha1)
+                    .ConfigureAwait(false);
+            }
+            catch (RespireServerException ex) when (ex.Code == "NOSCRIPT")
+            {
+                clusterReply = await SendClusterAsync(
+                        "EVAL", cluster,
+                        new Cmd2N(Verbs.Eval, script.Source, tail[0], arguments),
+                        cancellationToken, script.Sha1)
+                    .ConfigureAwait(false);
+            }
+
+            return new RespireResult(in clusterReply);
+        }
+
         var telemetry = RespireTelemetry.StartOperation(
             "EVALSHA",
             core.Multiplexer.Host,
@@ -701,7 +1002,7 @@ public sealed partial class RespireClient : IRespireClient
     /// client ID even when the reply wait fails, so it can establish a server-side barrier for
     /// that exact command before surfacing the failure.
     /// </summary>
-    internal TrackedScriptExecution StartTrackedScriptExecution(
+    internal async ValueTask<TrackedScriptExecution> StartTrackedScriptExecutionAsync(
         RespireScript script,
         RespireKey[] keys,
         RespireValue[] args,
@@ -709,22 +1010,164 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        if (!core.Multiplexer.HasReliableCorrectionOrdering)
+        var requiresIdentity = RequiresReliableCorrectionOrdering(cancellationToken);
+        var tail = BuildScriptTail(keys, args);
+
+        RespireConnection connection;
+        if (core.Cluster is { } cluster)
         {
-            throw new InvalidOperationException(
-                "Reliable correction ordering must be initialized before a tracked script starts.");
+            var command = new Cmd2N(Verbs.EvalSha, script.Sha1, tail[0], tail[1..]);
+            var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
+            connection = await GetTrackedClusterConnectionAsync(
+                    cluster, slot, requiresIdentity, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        else
+        {
+            if (!core.Multiplexer.HasReliableCorrectionOrdering)
+            {
+                throw new InvalidOperationException(
+                    "Reliable correction ordering must be initialized before a tracked script starts.");
+            }
+
+            connection = core.Multiplexer.GetConnection();
         }
 
-        var connection = core.Multiplexer.GetConnection();
-        var serverClientId = connection.ServerClientId;
-        if (serverClientId <= 0)
+        var identity = GetTrackedConnectionIdentity(
+            connection, core.Cluster?.HasReliableCorrectionOrdering(connection) ?? true);
+        var execution = new TrackedScriptExecution(connection, identity);
+        execution.Response = core.Cluster is { } router
+            ? ExecuteTrackedClusterScriptAsync(
+                execution, router, connection, script, tail, requiresIdentity, cancellationToken)
+            : ExecuteScriptOnConnectionAsync(connection, script, tail, cancellationToken);
+        return execution;
+    }
+
+    private async ValueTask<RespireConnection> GetTrackedClusterConnectionAsync(
+        ClusterRouter cluster,
+        int? slot,
+        bool requireIdentity,
+        CancellationToken cancellationToken)
+    {
+        if (_core.Options.CommandTimeout is not { } timeout)
         {
-            throw new InvalidOperationException("Tracked cache connection has no Redis client ID.");
+            return await cluster.GetTrackedConnectionAsync(slot, requireIdentity, cancellationToken)
+                .ConfigureAwait(false);
         }
 
-        return new TrackedScriptExecution(
-            serverClientId,
-            ExecuteScriptOnConnectionAsync(connection, script, BuildScriptTail(keys, args), cancellationToken));
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(timeout);
+        try
+        {
+            return await cluster.GetTrackedConnectionAsync(slot, requireIdentity, timeoutSource.Token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout);
+        }
+    }
+
+    private async ValueTask<RespireConnection> GetTrackedRedirectConnectionAsync(
+        ClusterRouter cluster,
+        RespireServerException error,
+        RespireConnection source,
+        bool requireIdentity,
+        CancellationToken cancellationToken)
+    {
+        if (_core.Options.CommandTimeout is not { } timeout)
+        {
+            return await cluster.GetTrackedRedirectConnectionAsync(
+                    error, source, requireIdentity, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(timeout);
+        try
+        {
+            return await cluster.GetTrackedRedirectConnectionAsync(
+                    error, source, requireIdentity, timeoutSource.Token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout);
+        }
+    }
+
+    private static TrackedConnectionIdentity GetTrackedConnectionIdentity(
+        RespireConnection connection,
+        bool reliable,
+        bool requiresAsking = false)
+        => reliable && connection.ServerClientId > 0
+            ? new TrackedConnectionIdentity(
+                new RespireEndpoint(connection.Host, connection.Port),
+                connection.ServerClientId,
+                requiresAsking)
+            : default;
+
+    private async ValueTask<RespireResult> ExecuteTrackedClusterScriptAsync(
+        TrackedScriptExecution execution,
+        ClusterRouter cluster,
+        RespireConnection connection,
+        RespireScript script,
+        RespireValue[] tail,
+        bool requiresIdentity,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await ExecuteTrackedClusterCommandAsync(
+                    execution, cluster, connection, "EVALSHA", Verbs.EvalSha, script.Sha1, script.Sha1, tail,
+                    requiresIdentity, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (RespireServerException ex) when (ex.Code == "NOSCRIPT")
+        {
+            return await ExecuteTrackedClusterCommandAsync(
+                    execution, cluster, execution.Connection, "EVAL", Verbs.Eval, script.Source, script.Sha1, tail,
+                    requiresIdentity, cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask<RespireResult> ExecuteTrackedClusterCommandAsync(
+        TrackedScriptExecution execution,
+        ClusterRouter cluster,
+        RespireConnection initialConnection,
+        string operation,
+        Verb verb,
+        RespireValue body,
+        string storedProcedureName,
+        RespireValue[] tail,
+        bool requiresIdentity,
+        CancellationToken cancellationToken)
+    {
+        var connection = initialConnection;
+        var sendAsking = execution.ConnectionIdentity.RequiresAsking;
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                var reply = await SendOnConnectionAsync(
+                        operation, connection, new Cmd2N(verb, body, tail[0], tail[1..]),
+                        cancellationToken, storedProcedureName, sendAsking)
+                    .ConfigureAwait(false);
+                return new RespireResult(in reply);
+            }
+            catch (RespireServerException error)
+                when (attempt < ClusterRouter.RedirectLimit && ClusterRouter.IsRedirect(error))
+            {
+                connection = await GetTrackedRedirectConnectionAsync(
+                        cluster, error, connection, requiresIdentity, cancellationToken)
+                    .ConfigureAwait(false);
+                sendAsking = error.Code == "ASK";
+                execution.Connection = connection;
+                execution.ConnectionIdentity = GetTrackedConnectionIdentity(
+                    connection, cluster.HasReliableCorrectionOrdering(connection), sendAsking);
+            }
+        }
     }
 
     private async ValueTask<RespireResult> ExecuteScriptOnConnectionAsync(
@@ -736,8 +1179,8 @@ public sealed partial class RespireClient : IRespireClient
         var core = _core;
         var telemetry = RespireTelemetry.StartOperation(
             "EVALSHA",
-            core.Multiplexer.Host,
-            core.Multiplexer.Port,
+            connection.Host,
+            connection.Port,
             core.Options.Database,
             storedProcedureName: script.Sha1);
         try
@@ -781,17 +1224,20 @@ public sealed partial class RespireClient : IRespireClient
     /// the server acknowledgement. The acknowledged kill is an ordering barrier: no command
     /// from the target client can execute afterward.
     /// </summary>
-    internal async ValueTask FenceCorrectionConnectionAsync(long serverClientId)
+    internal async ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(serverClientId);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(identity.ServerClientId);
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
 
-        var control = await core.DedicatedPool.RentAsync(CancellationToken.None).ConfigureAwait(false);
+        var pool = core.Cluster is { } cluster
+            ? cluster.GetDedicatedPool(identity.Endpoint)
+            : core.DedicatedPool;
+        var control = await pool.RentAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
             var reply = await control.SendAsync(
-                new ClientKillIdCommand(serverClientId), CancellationToken.None).ConfigureAwait(false);
+                new ClientKillIdCommand(identity.ServerClientId), CancellationToken.None).ConfigureAwait(false);
             if (reply.IsError)
             {
                 var error = ResponseReader.ServerError(in reply);
@@ -803,10 +1249,17 @@ public sealed partial class RespireClient : IRespireClient
         }
         finally
         {
-            core.DedicatedPool.Return(control);
+            pool.Return(control);
         }
 
-        await core.Multiplexer.RetireConnectionAsync(serverClientId).ConfigureAwait(false);
+        if (core.Cluster is { } router)
+        {
+            await router.RetireConnectionAsync(identity.Endpoint, identity.ServerClientId).ConfigureAwait(false);
+        }
+        else
+        {
+            await core.Multiplexer.RetireConnectionAsync(identity.ServerClientId).ConfigureAwait(false);
+        }
     }
 
     internal RespireValue[] BuildScriptTail(RespireKey[]? keys, RespireValue[]? args)
@@ -893,8 +1346,17 @@ public sealed partial class RespireClient : IRespireClient
     {
         while (true)
         {
-            RespireKey leaseKey = "respire-rm-lease:" + Guid.NewGuid().ToString("N");
-            var lease = Key(in leaseKey);
+            var redisKey = Key(in key);
+            RespireValue lease;
+            if (_core.Cluster is not null && redisKey.TryGetClusterSlot(out var slot))
+            {
+                lease = CreateClusterRemovalLeaseKey(slot).AsValue();
+            }
+            else
+            {
+                RespireKey leaseKey = "respire-rm-lease:" + Guid.NewGuid().ToString("N");
+                lease = Key(in leaseKey);
+            }
 
             // The lease must be on the server before the removal script is sent — its reply is
             // the proof. A failure here (including an abandoned wait) leaves nothing latent:
@@ -902,7 +1364,7 @@ public sealed partial class RespireClient : IRespireClient
             await PlaceLeaseAsync(lease, cancellationToken).ConfigureAwait(false);
             var leaseStart = Stopwatch.GetTimestamp();
 
-            var command = new Cmd2N(Verbs.Eval, LeasedUnlinkScript.Source, 2, [Key(in key), lease]);
+            var command = new Cmd2N(Verbs.Eval, LeasedUnlinkScript.Source, 2, [redisKey, lease]);
             RespValue value;
             try
             {
@@ -931,18 +1393,20 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
+    internal static RespireKey CreateClusterRemovalLeaseKey(int slot)
+    {
+        var bytes = new byte[20];
+        bytes[0] = (byte)'{';
+        ClusterHash.WriteRemovalLeaseTag(slot, bytes.AsSpan(1, 2));
+        bytes[3] = (byte)'}';
+        Guid.NewGuid().TryWriteBytes(bytes.AsSpan(4));
+        return new RespireKey(bytes);
+    }
+
     private async ValueTask PlaceLeaseAsync(RespireValue lease, CancellationToken cancellationToken)
     {
         var command = new Cmd4(Verbs.Set, lease, 1, "PX", (long)RemovalLeaseTtl.TotalMilliseconds);
-        await _core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-        var reply = await _core.Multiplexer.SendAsync(in command, cancellationToken).ConfigureAwait(false);
-        if (reply.IsError)
-        {
-            var error = ResponseReader.ServerError(in reply);
-            reply.Dispose();
-            throw error;
-        }
-
+        var reply = await SendAsync("SET", command, cancellationToken).ConfigureAwait(false);
         reply.Dispose();
     }
 
@@ -952,9 +1416,9 @@ public sealed partial class RespireClient : IRespireClient
     /// <see cref="LeaseExpiryMargin"/>) has been waited out, after which the server has
     /// certainly expired it. The revocation is uncancelable (no caller token, no
     /// <see cref="RespireOptions.CommandTimeout"/> — once owed it must not be abandonable) and
-    /// its wait is bounded by the lease remainder, past which expiry has done its job anyway; a
-    /// timed-out revocation stays queued (multiplexed sends are never cancelled) and is
-    /// observed in the background so a late fault is not unhandled.
+    /// its wait is bounded by the lease remainder, past which expiry has done its job anyway.
+    /// A shorter command timeout can advance the expiry fallback; a caller-side timeout leaves
+    /// the multiplexed send queued and observed in the background so a late fault is handled.
     /// </summary>
     private async ValueTask MakeLatentRemovalHarmlessAsync(RespireValue lease, long leaseStart)
     {
@@ -988,15 +1452,7 @@ public sealed partial class RespireClient : IRespireClient
 
     private async Task RevokeLeaseAsync(Cmd1 command)
     {
-        await _core.Multiplexer.EnsureConnectedAsync(CancellationToken.None).ConfigureAwait(false);
-        var reply = await _core.Multiplexer.SendAsync(in command, CancellationToken.None).ConfigureAwait(false);
-        if (reply.IsError)
-        {
-            var error = ResponseReader.ServerError(in reply);
-            reply.Dispose();
-            throw error;
-        }
-
+        var reply = await SendAsync("UNLINK", command, CancellationToken.None).ConfigureAwait(false);
         reply.Dispose();
     }
 
@@ -1014,7 +1470,7 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     /// <summary>
-    /// Executes a script on every connection via
+    /// Executes a script on every connection of the original command's cluster node via
     /// <see cref="Infrastructure.RespireConnectionMultiplexer.SendToAllConnectionsAsync{TCommand}"/> — the copy
     /// sharing a connection with an earlier still-buffered command executes after it, so the
     /// script must be idempotent and safe out of order elsewhere. Locally dead connections are
@@ -1022,7 +1478,11 @@ public sealed partial class RespireClient : IRespireClient
     /// probing: the callers are rare correction paths) and no caller token or command timeout —
     /// a correction, once owed, must not be abandonable.
     /// </summary>
-    internal async ValueTask ExecuteOnAllConnectionsAsync(RespireScript script, RespireKey[] keys, RespireValue[] args)
+    internal async ValueTask ExecuteOnAllConnectionsAsync(
+        RespireScript script,
+        RespireKey[] keys,
+        RespireValue[] args,
+        TrackedConnectionIdentity connectionIdentity = default)
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
@@ -1034,8 +1494,13 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         args.CopyTo(tail, 1 + keys.Length);
-        await core.Multiplexer.SendToAllConnectionsAsync(
-            new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]), CancellationToken.None).ConfigureAwait(false);
+        var multiplexer = core.Cluster is { } cluster && connectionIdentity.Endpoint.Host is not null
+            ? cluster.GetMultiplexer(connectionIdentity.Endpoint)
+            : core.Multiplexer;
+        await multiplexer.SendToAllConnectionsAsync(
+            new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]),
+            connectionIdentity.RequiresAsking,
+            CancellationToken.None).ConfigureAwait(false);
     }
 
     // Typed send helpers — one per reply shape, shared by every facet.
@@ -1062,6 +1527,7 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         if (core.Options.CommandTimeout is null
             && !RespireTelemetry.IsEnabled
+            && core.Cluster is null
             && core.Multiplexer.IsInitialized)
         {
             var connection = core.Multiplexer.GetConnection();

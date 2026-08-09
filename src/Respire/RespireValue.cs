@@ -1,6 +1,8 @@
 using System.Buffers.Text;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text;
+using Respire.Internal;
 using Respire.Protocol;
 
 namespace Respire;
@@ -124,6 +126,81 @@ public readonly struct RespireValue
         }
     }
 
+    internal bool TryGetClusterSlot(out int slot)
+    {
+        if (_kind == Kind.String)
+        {
+            slot = ClusterHash.GetSlot(_string!);
+            return true;
+        }
+
+        if (_kind == Kind.Bytes)
+        {
+            slot = ClusterHash.GetSlot(_bytes.Span);
+            return true;
+        }
+
+        slot = GetScalarClusterSlot();
+        return true;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private int GetScalarClusterSlot()
+    {
+        switch (_kind)
+        {
+            case Kind.Integer:
+                Span<byte> integerDigits = stackalloc byte[20];
+                Utf8Formatter.TryFormat(_number, integerDigits, out var integerWritten);
+                return ClusterHash.GetSlot(integerDigits[..integerWritten]);
+            case Kind.UnsignedInteger:
+                Span<byte> unsignedDigits = stackalloc byte[20];
+                Utf8Formatter.TryFormat(unchecked((ulong)_number), unsignedDigits, out var unsignedWritten);
+                return ClusterHash.GetSlot(unsignedDigits[..unsignedWritten]);
+            case Kind.Single:
+                Span<byte> singleDigits = stackalloc byte[16];
+                Utf8Formatter.TryFormat(
+                    BitConverter.Int32BitsToSingle((int)_number), singleDigits, out var singleWritten);
+                return ClusterHash.GetSlot(singleDigits[..singleWritten]);
+            case Kind.Double:
+                Span<byte> doubleDigits = stackalloc byte[32];
+                Utf8Formatter.TryFormat(BitConverter.Int64BitsToDouble(_number), doubleDigits, out var doubleWritten);
+                return ClusterHash.GetSlot(doubleDigits[..doubleWritten]);
+            case Kind.Boolean:
+                return ClusterHash.GetSlot(_number != 0 ? "1"u8 : "0"u8);
+            default:
+                return ClusterHash.GetSlot(ReadOnlySpan<byte>.Empty);
+        }
+    }
+
+    internal bool TryGetInt64(out long value)
+    {
+        switch (_kind)
+        {
+            case Kind.Integer:
+                value = _number;
+                return true;
+            case Kind.UnsignedInteger when _number >= 0:
+                value = _number;
+                return true;
+            case Kind.String:
+                return long.TryParse(
+                    _string.AsSpan(),
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out value);
+            case Kind.Bytes:
+                return Utf8Parser.TryParse(_bytes.Span, out value, out var consumed)
+                    && consumed == _bytes.Length;
+            case Kind.Boolean:
+                value = _number;
+                return true;
+            default:
+                value = 0;
+                return false;
+        }
+    }
+
     internal bool EqualsAsciiIgnoreCase(string value)
     {
         if (_kind == Kind.String)
@@ -159,6 +236,15 @@ public readonly struct RespireValue
 
         return true;
     }
+
+    internal bool IsEmpty
+        => _kind switch
+        {
+            Kind.Null => true,
+            Kind.String => _string!.Length == 0,
+            Kind.Bytes => _bytes.IsEmpty,
+            _ => false,
+        };
 
     public override string ToString()
         => _kind switch

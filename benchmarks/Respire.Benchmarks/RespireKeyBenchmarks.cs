@@ -15,4 +15,15 @@ public class RespireKeyBenchmarks
 
     [Benchmark]
     public int ByteHashCode() => _bytesKey.GetHashCode();
+
+    [Benchmark]
+    public int ClusterSlot() => _stringKey.ClusterSlot;
+
+    [Benchmark(Baseline = true)]
+    public RespireKey StringRemovalLeaseKey()
+        => "respire-rm-lease:" + Guid.NewGuid().ToString("N");
+
+    [Benchmark]
+    public RespireKey ClusterRemovalLeaseKey()
+        => RespireClient.CreateClusterRemovalLeaseKey(_stringKey.ClusterSlot);
 }

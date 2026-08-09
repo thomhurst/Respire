@@ -11,11 +11,22 @@ internal readonly struct Verb
 {
     public readonly byte[] Bulk;
     public readonly int Tokens;
+    public readonly int RoutingKeyIndex;
 
-    public Verb(string command)
+    public Verb(string command) : this(0, command)
+    {
+    }
+
+    public Verb(int routingKeyIndex, params string[] words)
+        : this(routingKeyIndex, string.Join(' ', words))
+    {
+    }
+
+    private Verb(int routingKeyIndex, string command)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(command);
 
+        RoutingKeyIndex = routingKeyIndex;
         Tokens = 0;
         var encodedLength = 0;
         var start = 0;
@@ -95,6 +106,8 @@ internal readonly struct Verb
 
 internal static class Verbs
 {
+    public static readonly Verb ClusterSlots = new(-1, "CLUSTER", "SLOTS");
+
     // Strings
     public static readonly Verb Get = new("GET");
     public static readonly Verb Set = new("SET");
@@ -183,20 +196,20 @@ internal static class Verbs
     public static readonly Verb XRange = new("XRANGE");
     public static readonly Verb XAck = new("XACK");
     public static readonly Verb XGroupCreate = new("XGROUP CREATE");
-    public static readonly Verb XReadGroup = new("XREADGROUP");
+    public static readonly Verb XReadGroup = new(8, "XREADGROUP");
 
     // Scripts
-    public static readonly Verb Eval = new("EVAL");
-    public static readonly Verb EvalSha = new("EVALSHA");
-    public static readonly Verb ScriptLoad = new("SCRIPT LOAD");
+    public static readonly Verb Eval = new(2, "EVAL");
+    public static readonly Verb EvalSha = new(2, "EVALSHA");
+    public static readonly Verb ScriptLoad = new(-1, "SCRIPT", "LOAD");
 
     // Transactions
     public static readonly Verb Watch = new("WATCH");
 
     // Server
-    public static readonly Verb Info = new("INFO");
-    public static readonly Verb ConfigGet = new("CONFIG GET");
-    public static readonly Verb ConfigSet = new("CONFIG SET");
+    public static readonly Verb Info = new(-1, "INFO");
+    public static readonly Verb ConfigGet = new(-1, "CONFIG", "GET");
+    public static readonly Verb ConfigSet = new(-1, "CONFIG", "SET");
 
     // Pub/sub
     public static readonly Verb Publish = new("PUBLISH");

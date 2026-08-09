@@ -256,7 +256,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
         var now = DateTimeOffset.UtcNow;
         var absoluteExpiration = GetAbsoluteExpiration(now, options);
-        var originalServerClientId = 0L;
+        RespireClient.TrackedConnectionIdentity originalConnection = default;
+        RespireClient.TrackedScriptExecution? trackedExecution = null;
         try
         {
             RespireResult result;
@@ -269,9 +270,9 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             };
             if (trackedWire is not null)
             {
-                var execution = trackedWire.StartTrackedScriptExecution(SetScript, [key], args, token);
-                originalServerClientId = execution.ServerClientId;
-                result = await execution.Response.ConfigureAwait(false);
+                trackedExecution = await trackedWire.StartTrackedScriptExecutionAsync(SetScript, [key], args, token)
+                    .ConfigureAwait(false);
+                result = await trackedExecution.Response.ConfigureAwait(false);
             }
             else
             {
@@ -283,6 +284,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         catch (Exception ex) when (
             ex is OperationCanceledException or RespireTimeoutException or RespireConnectionException)
         {
+            originalConnection = trackedExecution?.ConnectionIdentity ?? default;
             // An abandoned wait or lost connection does not prove the send was rejected — a
             // queued set can still reach Redis, and if that send was delayed it stores a TTL
             // computed before the delay. With no reply to measure the delay against, correct
@@ -295,18 +297,18 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 try
                 {
                     await CapDelayedTtlAsync(
-                        key, cancelledDeadline, options, originalServerClientId).ConfigureAwait(false);
+                        key, cancelledDeadline, options, originalConnection).ConfigureAwait(false);
                 }
                 catch (RespireException correctionFailure) when (
-                    originalServerClientId == 0 && correctionFailure is not RespireServerException)
+                    originalConnection.ServerClientId == 0 && correctionFailure is not RespireServerException)
                 {
                 }
             }
-            else if (trackedWire is not null && originalServerClientId > 0)
+            else if (trackedWire is not null && originalConnection.ServerClientId > 0)
             {
                 // No TTL needs correction, but the write itself still must not land after the
                 // caller observes failure and writes a replacement.
-                await trackedWire.FenceCorrectionConnectionAsync(originalServerClientId).ConfigureAwait(false);
+                await trackedWire.FenceCorrectionConnectionAsync(originalConnection).ConfigureAwait(false);
             }
 
             throw;
@@ -333,7 +335,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         string key,
         DateTimeOffset absolute,
         DistributedCacheEntryOptions options,
-        long originalServerClientId = 0)
+        RespireClient.TrackedConnectionIdentity originalConnection = default)
         => RunCorrectionAsync(
             CapTtlScript,
             key,
@@ -343,7 +345,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 options.SlidingExpiration?.Ticks ?? NotPresent,
                 GetExpirationMilliseconds(DateTimeOffset.UtcNow, absolute, options),
             ],
-            originalServerClientId);
+            originalConnection);
 
     /// <summary>
     /// Runs a shrink-only correction script. Corrections chase a command whose reply was never
@@ -376,14 +378,14 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         RespireScript script,
         string key,
         Func<RespireValue[]> args,
-        long originalServerClientId = 0)
+        RespireClient.TrackedConnectionIdentity originalConnection = default)
     {
         var previous = TimeSpan.MaxValue;
-        var requiresOrdering = originalServerClientId > 0;
+        var requiresOrdering = originalConnection.ServerClientId > 0;
         while (true)
         {
             var sent = DateTimeOffset.UtcNow;
-            var pass = RunCorrectionPassAsync(script, key, args(), requiresOrdering);
+            var pass = RunCorrectionPassAsync(script, key, args(), requiresOrdering, originalConnection);
             try
             {
                 await pass.WaitAsync(CorrectionWaitBound).ConfigureAwait(false);
@@ -393,10 +395,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 // Reply draining may be abandoned, but the exact original CLIENT KILL barrier
                 // may not: without its server acknowledgement, flushed bytes could still
                 // execute after the original failure is surfaced.
-                if (_wireClient is { } wire && originalServerClientId > 0)
+                if (_wireClient is { } wire && originalConnection.ServerClientId > 0)
                 {
-                    await wire.FenceCorrectionConnectionAsync(originalServerClientId).ConfigureAwait(false);
-                    originalServerClientId = 0;
+                    await wire.FenceCorrectionConnectionAsync(originalConnection).ConfigureAwait(false);
+                    originalConnection = new RespireClient.TrackedConnectionIdentity(
+                        originalConnection.Endpoint, ServerClientId: 0);
                     _ = ObservePassAsync(pass);
                     previous = TimeSpan.MaxValue;
                     continue;
@@ -415,7 +418,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             if (requiresOrdering)
             {
                 requiresOrdering = false;
-                originalServerClientId = 0;
+                originalConnection = default;
             }
 
             var roundTrip = DateTimeOffset.UtcNow - sent;
@@ -432,11 +435,12 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         RespireScript script,
         string key,
         RespireValue[] args,
-        bool requiresOrdering)
+        bool requiresOrdering,
+        RespireClient.TrackedConnectionIdentity originalConnection)
     {
         if (requiresOrdering && _wireClient is { } wire)
         {
-            await wire.ExecuteOnAllConnectionsAsync(script, [key], args).ConfigureAwait(false);
+            await wire.ExecuteOnAllConnectionsAsync(script, [key], args, originalConnection).ConfigureAwait(false);
         }
         else
         {
@@ -515,7 +519,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         var leaseTtl = WrappedRemovalMinimumLeaseTtl;
         while (true)
         {
-            RespireKey lease = "respire-rm-lease:" + Guid.NewGuid().ToString("N");
+            var effectiveKey = _client.ResolveKey(key);
+            var lease = RespireClient.CreateClusterRemovalLeaseKey(effectiveKey.ClusterSlot);
 
             // If this wait is abandoned, only an unused expiring lease can land late; the
             // deletion script is not sent until placement is confirmed.
@@ -655,15 +660,17 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
         var now = DateTimeOffset.UtcNow;
         RespireResult result;
-        var originalServerClientId = 0L;
+        RespireClient.TrackedConnectionIdentity originalConnection = default;
+        RespireClient.TrackedScriptExecution? trackedExecution = null;
         try
         {
             var args = new RespireValue[] { returnData ? "1" : "0", now.UtcTicks };
             if (trackedWire is not null)
             {
-                var execution = trackedWire.StartTrackedScriptExecution(GetAndRefreshScript, [key], args, token);
-                originalServerClientId = execution.ServerClientId;
-                result = await execution.Response.ConfigureAwait(false);
+                trackedExecution = await trackedWire.StartTrackedScriptExecutionAsync(
+                        GetAndRefreshScript, [key], args, token)
+                    .ConfigureAwait(false);
+                result = await trackedExecution.Response.ConfigureAwait(false);
             }
             else
             {
@@ -674,6 +681,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         catch (Exception ex) when (
             ex is OperationCanceledException or RespireTimeoutException or RespireConnectionException)
         {
+            originalConnection = trackedExecution?.ConnectionIdentity ?? default;
             // Same hazard as the set path: an abandoned or failed reply wait can leave the
             // script's execution uncertain, and a delayed send would re-arm the sliding TTL
             // from a stale "now". The real client completes its exact-connection safety
@@ -681,10 +689,10 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             // best-effort as in SetCoreAsync.
             try
             {
-                await CapRefreshedTtlAsync(key, originalServerClientId).ConfigureAwait(false);
+                await CapRefreshedTtlAsync(key, originalConnection).ConfigureAwait(false);
             }
             catch (RespireException correctionFailure) when (
-                originalServerClientId == 0 && correctionFailure is not RespireServerException)
+                originalConnection.ServerClientId == 0 && correctionFailure is not RespireServerException)
             {
             }
 
@@ -731,12 +739,14 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             : null;
     }
 
-    private ValueTask CapRefreshedTtlAsync(string key, long originalServerClientId = 0)
+    private ValueTask CapRefreshedTtlAsync(
+        string key,
+        RespireClient.TrackedConnectionIdentity originalConnection = default)
         => RunCorrectionAsync(
             CapRefreshedTtlScript,
             key,
             () => [DateTimeOffset.UtcNow.UtcTicks],
-            originalServerClientId);
+            originalConnection);
 
     private static DateTimeOffset? GetAbsoluteExpiration(DateTimeOffset now, DistributedCacheEntryOptions options)
     {

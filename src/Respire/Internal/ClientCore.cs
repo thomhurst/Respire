@@ -13,9 +13,8 @@ internal sealed class ClientCore : IAsyncDisposable
     private readonly object _hubGate = new();
     private readonly object _stateGate = new();
     private readonly Queue<RespireConnectionState> _pendingStates = [];
-    private readonly bool[] _commandSlotsReconnecting;
+    private readonly HashSet<(RespireConnectionMultiplexer Node, int Slot)> _reconnectingCommandSlots = [];
     private SubscriptionHub? _hub;
-    private int _commandReconnectCount;
     private bool _subscriptionReconnecting;
     private bool _publishingState;
     private RespireConnectionState _publishedState = RespireConnectionState.Connected;
@@ -24,21 +23,40 @@ internal sealed class ClientCore : IAsyncDisposable
     public readonly RespireOptions Options;
     public readonly ILogger? Logger;
     public readonly DedicatedConnectionPool DedicatedPool;
+    public readonly ClusterRouter? Cluster;
     public volatile bool Disposed;
 
     public ClientCore(RespireOptions options)
     {
+        if (options.Cluster && options.Database != 0)
+        {
+            throw new ArgumentException("Redis Cluster supports database 0 only.", nameof(options));
+        }
+
         Options = options;
         Logger = options.CreateLogger("Respire.RespireClient");
         var endpoint = options.PrimaryEndpoint;
         var connectionOptions = options.ToConnectionOptions();
         Multiplexer = RespireConnectionMultiplexer.Create(
             endpoint.Host, endpoint.Port, options.Connections, connectionOptions, Logger);
-        _commandSlotsReconnecting = new bool[Multiplexer.ConnectionCount];
-        Multiplexer.SlotStateChanged += NotifyCommandStateChanged;
         DedicatedPool = new DedicatedConnectionPool(
             endpoint.Host, endpoint.Port, connectionOptions, Logger);
+        Cluster = options.Cluster ? new ClusterRouter(options, Multiplexer) : null;
+        if (Cluster is { } cluster)
+        {
+            cluster.SlotStateChanged += NotifyCommandStateChanged;
+            cluster.NodeRetired += NotifyCommandNodeRetired;
+        }
+        else
+        {
+            Multiplexer.SlotStateChanged += NotifyCommandStateChanged;
+        }
     }
+
+    public ValueTask EnsureConnectedAsync(CancellationToken cancellationToken)
+        => Cluster is { } cluster
+            ? cluster.EnsureConnectedAsync(cancellationToken)
+            : Multiplexer.EnsureConnectedAsync(cancellationToken);
 
     public event Action<RespireConnectionState>? ConnectionStateChanged;
 
@@ -54,14 +72,24 @@ internal sealed class ClientCore : IAsyncDisposable
     }
 
     internal void NotifyCommandStateChanged(int slot, RespireConnectionState state)
+        => NotifyCommandStateChanged(Multiplexer, slot, state);
+
+    internal void NotifyCommandStateChanged(
+        RespireConnectionMultiplexer node,
+        int slot,
+        RespireConnectionState state)
     {
         lock (_stateGate)
         {
+            var commandSlot = (node, slot);
             var reconnecting = state == RespireConnectionState.Reconnecting;
-            if (_commandSlotsReconnecting[slot] != reconnecting)
+            if (reconnecting)
             {
-                _commandSlotsReconnecting[slot] = reconnecting;
-                _commandReconnectCount += reconnecting ? 1 : -1;
+                _reconnectingCommandSlots.Add(commandSlot);
+            }
+            else
+            {
+                _reconnectingCommandSlots.Remove(commandSlot);
             }
 
             QueueAggregateStateLocked();
@@ -70,9 +98,21 @@ internal sealed class ClientCore : IAsyncDisposable
         PublishQueuedStates();
     }
 
+    internal void NotifyCommandNodeRetired(RespireConnectionMultiplexer node)
+    {
+        lock (_stateGate)
+        {
+            _reconnectingCommandSlots.RemoveWhere(
+                commandSlot => ReferenceEquals(commandSlot.Node, node));
+            QueueAggregateStateLocked();
+        }
+
+        PublishQueuedStates();
+    }
+
     private void QueueAggregateStateLocked()
     {
-        var aggregate = _commandReconnectCount == 0 && !_subscriptionReconnecting
+        var aggregate = _reconnectingCommandSlots.Count == 0 && !_subscriptionReconnecting
             ? RespireConnectionState.Connected
             : RespireConnectionState.Reconnecting;
         if (aggregate == _publishedState)
@@ -162,7 +202,17 @@ internal sealed class ClientCore : IAsyncDisposable
         }
 
         await DedicatedPool.DisposeAsync().ConfigureAwait(false);
-        Multiplexer.SlotStateChanged -= NotifyCommandStateChanged;
+        if (Cluster is { } cluster)
+        {
+            cluster.SlotStateChanged -= NotifyCommandStateChanged;
+            cluster.NodeRetired -= NotifyCommandNodeRetired;
+            await cluster.DisposeAsync().ConfigureAwait(false);
+        }
+        else
+        {
+            Multiplexer.SlotStateChanged -= NotifyCommandStateChanged;
+        }
+
         await Multiplexer.DisposeAsync().ConfigureAwait(false);
     }
 }

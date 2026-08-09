@@ -21,6 +21,11 @@ public readonly struct RespireKey : IEquatable<RespireKey>
 
     public bool IsEmpty => _string is null or "" && _bytes.IsEmpty;
 
+    /// <summary>The Redis Cluster hash slot for this key, including {...} hash-tag semantics.</summary>
+    public int ClusterSlot => _string is not null
+        ? Internal.ClusterHash.GetSlot(_string)
+        : Internal.ClusterHash.GetSlot(_bytes.Span);
+
     public static implicit operator RespireKey(string key) => new(key);
 
     public static implicit operator RespireKey(byte[] key) => new(key.AsMemory());

@@ -9,6 +9,40 @@ namespace Respire.Tests.Networking;
 public class GeoCommandTests
 {
     [Test]
+    public async Task CustomGeoCommands_RouteByTheirFirstKey()
+    {
+        var add = new GeoAddCommand(
+            RespireCommands.Geo.GEOADD.Verb,
+            "geo-key",
+            GeoAddCondition.Always,
+            changed: false,
+            []);
+        var search = new GeoSearchCommand(
+            RespireCommands.Geo.GEOSEARCH.Verb,
+            "source-key",
+            GeoSearchOrigin.FromCoordinates(0, 0),
+            GeoSearchShape.Circle(1),
+            default,
+            destination: null,
+            storeDistance: false);
+        var store = new GeoSearchCommand(
+            RespireCommands.Geo.GEOSEARCHSTORE.Verb,
+            "source-key",
+            GeoSearchOrigin.FromCoordinates(0, 0),
+            GeoSearchShape.Circle(1),
+            default,
+            destination: "destination-key",
+            storeDistance: false);
+
+        await Assert.That(add.TryGetClusterSlot(out var addSlot)).IsTrue();
+        await Assert.That(addSlot).IsEqualTo(Respire.Internal.ClusterHash.GetSlot("geo-key"));
+        await Assert.That(search.TryGetClusterSlot(out var searchSlot)).IsTrue();
+        await Assert.That(searchSlot).IsEqualTo(Respire.Internal.ClusterHash.GetSlot("source-key"));
+        await Assert.That(store.TryGetClusterSlot(out var storeSlot)).IsTrue();
+        await Assert.That(storeSlot).IsEqualTo(Respire.Internal.ClusterHash.GetSlot("destination-key"));
+    }
+
+    [Test]
     public async Task GeoSearchOrigin_PreservesBinaryAndEmptyMembers()
     {
         var binary = SerializeOriginMember(new byte[] { 0xff, 0x00 });
