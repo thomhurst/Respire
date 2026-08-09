@@ -174,7 +174,7 @@ npm start
 ## Build and test
 
 ```bash
-dotnet build Respire.sln
+dotnet build Respire.slnx
 dotnet test tests/Respire.Tests
 dotnet test tests/Respire.IntegrationTests # Requires Docker
 ```
