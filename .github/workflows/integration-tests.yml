@@ -108,7 +108,7 @@ jobs:
       - name: Comment PR with test results (if PR)
         if: github.event_name == 'pull_request' && always()
         continue-on-error: true
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             let comment = `## 🧪 Integration Test Results (${{ matrix.framework }})\n\n`;
