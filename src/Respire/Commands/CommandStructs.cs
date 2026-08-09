@@ -22,7 +22,8 @@ internal readonly struct Cmd(Verb verb) : IRespCommand
 
 internal readonly struct Cmd1(Verb verb, RespireValue a1) : IRespCommand
 {
-    public bool TryGetClusterSlot(out int slot) => a1.TryGetClusterSlot(out slot);
+    public bool TryGetClusterSlot(out int slot)
+        => CommandRouting.TryGetClusterSlot(verb, 0, a1, out slot);
 
     public void Write(ref RespWriter writer)
     {
@@ -34,7 +35,9 @@ internal readonly struct Cmd1(Verb verb, RespireValue a1) : IRespCommand
 
 internal readonly struct Cmd2(Verb verb, RespireValue a1, RespireValue a2) : IRespCommand
 {
-    public bool TryGetClusterSlot(out int slot) => a1.TryGetClusterSlot(out slot);
+    public bool TryGetClusterSlot(out int slot)
+        => CommandRouting.TryGetClusterSlot(verb, 0, a1, out slot)
+            || CommandRouting.TryGetClusterSlot(verb, 1, a2, out slot);
 
     public void Write(ref RespWriter writer)
     {
@@ -47,7 +50,10 @@ internal readonly struct Cmd2(Verb verb, RespireValue a1, RespireValue a2) : IRe
 
 internal readonly struct Cmd3(Verb verb, RespireValue a1, RespireValue a2, RespireValue a3) : IRespCommand
 {
-    public bool TryGetClusterSlot(out int slot) => a1.TryGetClusterSlot(out slot);
+    public bool TryGetClusterSlot(out int slot)
+        => CommandRouting.TryGetClusterSlot(verb, 0, a1, out slot)
+            || CommandRouting.TryGetClusterSlot(verb, 1, a2, out slot)
+            || CommandRouting.TryGetClusterSlot(verb, 2, a3, out slot);
 
     public void Write(ref RespWriter writer)
     {
@@ -61,7 +67,11 @@ internal readonly struct Cmd3(Verb verb, RespireValue a1, RespireValue a2, Respi
 
 internal readonly struct Cmd4(Verb verb, RespireValue a1, RespireValue a2, RespireValue a3, RespireValue a4) : IRespCommand
 {
-    public bool TryGetClusterSlot(out int slot) => a1.TryGetClusterSlot(out slot);
+    public bool TryGetClusterSlot(out int slot)
+        => CommandRouting.TryGetClusterSlot(verb, 0, a1, out slot)
+            || CommandRouting.TryGetClusterSlot(verb, 1, a2, out slot)
+            || CommandRouting.TryGetClusterSlot(verb, 2, a3, out slot)
+            || CommandRouting.TryGetClusterSlot(verb, 3, a4, out slot);
 
     public void Write(ref RespWriter writer)
     {
@@ -76,7 +86,12 @@ internal readonly struct Cmd4(Verb verb, RespireValue a1, RespireValue a2, Respi
 
 internal readonly struct Cmd5(Verb verb, RespireValue a1, RespireValue a2, RespireValue a3, RespireValue a4, RespireValue a5) : IRespCommand
 {
-    public bool TryGetClusterSlot(out int slot) => a1.TryGetClusterSlot(out slot);
+    public bool TryGetClusterSlot(out int slot)
+        => CommandRouting.TryGetClusterSlot(verb, 0, a1, out slot)
+            || CommandRouting.TryGetClusterSlot(verb, 1, a2, out slot)
+            || CommandRouting.TryGetClusterSlot(verb, 2, a3, out slot)
+            || CommandRouting.TryGetClusterSlot(verb, 3, a4, out slot)
+            || CommandRouting.TryGetClusterSlot(verb, 4, a5, out slot);
 
     public void Write(ref RespWriter writer)
     {
@@ -118,7 +133,21 @@ internal readonly struct CmdN(Verb verb, RespireValue[] args) : IRespCommand
 /// <summary>VERB fixed rest… (e.g. SADD key member…).</summary>
 internal readonly struct Cmd1N(Verb verb, RespireValue a1, RespireValue[] rest) : IRespCommand
 {
-    public bool TryGetClusterSlot(out int slot) => a1.TryGetClusterSlot(out slot);
+    public bool TryGetClusterSlot(out int slot)
+    {
+        if (verb.RoutingKeyIndex == 0)
+        {
+            return a1.TryGetClusterSlot(out slot);
+        }
+
+        if ((uint)(verb.RoutingKeyIndex - 1) < (uint)rest.Length)
+        {
+            return rest[verb.RoutingKeyIndex - 1].TryGetClusterSlot(out slot);
+        }
+
+        slot = 0;
+        return false;
+    }
 
     public void Write(ref RespWriter writer)
     {
@@ -129,6 +158,24 @@ internal readonly struct Cmd1N(Verb verb, RespireValue a1, RespireValue[] rest) 
         {
             arg.WriteTo(ref writer);
         }
+    }
+}
+
+internal static class CommandRouting
+{
+    internal static bool TryGetClusterSlot(
+        Verb verb,
+        int argumentIndex,
+        RespireValue argument,
+        out int slot)
+    {
+        if (verb.RoutingKeyIndex == argumentIndex)
+        {
+            return argument.TryGetClusterSlot(out slot);
+        }
+
+        slot = 0;
+        return false;
     }
 }
 

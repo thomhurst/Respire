@@ -71,7 +71,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 {
                     await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
                     Volatile.Write(ref _seed, node);
-                    await TryLoadSlotsAsync(node, cancellationToken).ConfigureAwait(false);
+                    _ = await TryLoadSlotsAsync(node, cancellationToken).ConfigureAwait(false);
                     return;
                 }
                 catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
@@ -307,7 +307,13 @@ internal sealed class ClusterRouter : IAsyncDisposable
         if (!refreshed)
         {
             await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-            await TryLoadSlotsAsync(Volatile.Read(ref _seed)!, cancellationToken).ConfigureAwait(false);
+            var loaded = await TryLoadSlotsAsync(
+                Volatile.Read(ref _seed)!, cancellationToken).ConfigureAwait(false);
+            if (!loaded || !HasCompleteTopology())
+            {
+                throw new RespireConnectionException(
+                    "Unable to load a complete Redis Cluster topology for a cluster-wide command.");
+            }
         }
 
         masters.Clear();
@@ -338,13 +344,26 @@ internal sealed class ClusterRouter : IAsyncDisposable
         try
         {
             await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-            await TryLoadSlotsAsync(node, cancellationToken).ConfigureAwait(false);
-            return true;
+            return await TryLoadSlotsAsync(node, cancellationToken).ConfigureAwait(false)
+                && HasCompleteTopology();
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
             return false;
         }
+    }
+
+    private bool HasCompleteTopology()
+    {
+        for (var slot = 0; slot < _slots.Length; slot++)
+        {
+            if (Volatile.Read(ref _slots[slot]) is null)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private void AddKnownMasters(HashSet<RespireConnectionMultiplexer> masters)
@@ -426,7 +445,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
         }
     }
 
-    private async ValueTask TryLoadSlotsAsync(
+    private async ValueTask<bool> TryLoadSlotsAsync(
         RespireConnectionMultiplexer seed,
         CancellationToken cancellationToken)
     {
@@ -440,7 +459,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             {
                 if (reply.IsError)
                 {
-                    return;
+                    return false;
                 }
 
                 var refreshedSlots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
@@ -502,6 +521,8 @@ internal sealed class ClusterRouter : IAsyncDisposable
                         Volatile.Write(ref _slots[slot], refreshedSlots[slot]);
                     }
                 }
+
+                return discoveredRange;
             }
             finally
             {
@@ -512,6 +533,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
         {
             // ACLs and Redis-compatible servers may hide CLUSTER SLOTS. MOVED/ASK learning
             // remains sufficient for correctness, so topology discovery is opportunistic.
+            return false;
         }
     }
 

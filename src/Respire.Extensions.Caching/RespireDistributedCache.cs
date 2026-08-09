@@ -519,8 +519,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         var leaseTtl = WrappedRemovalMinimumLeaseTtl;
         while (true)
         {
-            RespireKey cacheKey = key;
-            var lease = RespireClient.CreateClusterRemovalLeaseKey(cacheKey.ClusterSlot);
+            var effectiveKey = _client.ResolveKey(key);
+            var lease = RespireClient.CreateClusterRemovalLeaseKey(effectiveKey.ClusterSlot);
 
             // If this wait is abandoned, only an unused expiring lease can land late; the
             // deletion script is not sent until placement is confirmed.

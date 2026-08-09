@@ -128,15 +128,15 @@ internal static class Verbs
     // Scripts
     public static readonly Verb Eval = new(2, "EVAL");
     public static readonly Verb EvalSha = new(2, "EVALSHA");
-    public static readonly Verb ScriptLoad = new("SCRIPT", "LOAD");
+    public static readonly Verb ScriptLoad = new(-1, "SCRIPT", "LOAD");
 
     // Transactions
     public static readonly Verb Watch = new("WATCH");
 
     // Server
-    public static readonly Verb Info = new("INFO");
-    public static readonly Verb ConfigGet = new("CONFIG", "GET");
-    public static readonly Verb ConfigSet = new("CONFIG", "SET");
+    public static readonly Verb Info = new(-1, "INFO");
+    public static readonly Verb ConfigGet = new(-1, "CONFIG", "GET");
+    public static readonly Verb ConfigSet = new(-1, "CONFIG", "SET");
 
     // Pub/sub
     public static readonly Verb Publish = new("PUBLISH");

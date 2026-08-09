@@ -316,15 +316,16 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     [Test]
     public async Task RemoveAsync_WrappedClient_CoLocatesLeaseWithCacheKey()
     {
-        const string key = "{account}wrapped-remove";
-        await Cache.SetAsync(key, [1], new DistributedCacheEntryOptions());
-        var wrappedClient = new ScriptInterceptingClient(Client, (_, send) => send());
+        const string key = "wrapped-remove";
+        var prefixedClient = (RespireClient)Client.WithKeyPrefix("tenant:");
+        var wrappedClient = new ScriptInterceptingClient(prefixedClient, (_, send) => send());
         await using var cache = new RespireDistributedCache(wrappedClient);
+        await cache.SetAsync(key, [1], new DistributedCacheEntryOptions());
 
         await cache.RemoveAsync(key);
 
         await Assert.That(wrappedClient.LastSetKey.ClusterSlot)
-            .IsEqualTo(new RespireKey(key).ClusterSlot);
+            .IsEqualTo(wrappedClient.ResolveKey(key).ClusterSlot);
     }
 
     [Test]
@@ -1426,6 +1427,8 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             => inner.ExecuteAsync(command, cancellationToken);
 
         public IRespireClient WithKeyPrefix(string prefix) => inner.WithKeyPrefix(prefix);
+
+        public RespireKey ResolveKey(RespireKey key) => inner.ResolveKey(key);
 
         // The test owns the wrapped client's lifetime.
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;

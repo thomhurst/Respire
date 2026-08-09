@@ -63,6 +63,9 @@ public interface IRespireClient : IAsyncDisposable
     RespireTransaction CreateTransaction();
     ValueTask<RespireTransaction> CreateTransactionAsync(RespireKey[] watchKeys, CancellationToken cancellationToken = default);
 
+    /// <summary>Returns the effective Redis key after this client applies any key transformation.</summary>
+    RespireKey ResolveKey(RespireKey key);
+
     // Raw escape hatch.
     ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args);
 

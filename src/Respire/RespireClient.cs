@@ -282,9 +282,12 @@ public sealed partial class RespireClient : IRespireClient
 
     internal string? KeyPrefix => _keyPrefix;
 
+    public RespireKey ResolveKey(RespireKey key)
+        => _keyPrefix is null ? key : key.Prepend(_keyPrefix);
+
     /// <summary>Resolves a user key to a command argument, applying this view's key prefix.</summary>
     internal RespireValue Key(in RespireKey key)
-        => _keyPrefix is null ? key.AsValue() : key.Prepend(_keyPrefix).AsValue();
+        => ResolveKey(key).AsValue();
 
     internal RespireValue[] MapKeys(ReadOnlySpan<RespireKey> keys)
     {

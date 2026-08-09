@@ -619,6 +619,29 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task ArgumentBearingServerCommands_RemainUnkeyed()
+    {
+        await Assert.That(TryGetSlot(new Cmd1(Verbs.Info, "memory"), out _)).IsFalse();
+        await Assert.That(TryGetSlot(new Cmd2(Verbs.ConfigSet, "timeout", 1), out _)).IsFalse();
+        await Assert.That(TryGetSlot(new Cmd1(Verbs.ScriptLoad, "return 1"), out _)).IsFalse();
+    }
+
+    [Test]
+    public async Task ClusterWideCommands_RejectUnavailableTopology()
+    {
+        await using var seed = new FakeRespServer("-NOPERM cluster slots denied\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        await Assert.That(async () => await client.Server.DatabaseSizeAsync())
+            .Throws<RespireConnectionException>();
+        await Assert.That(seed.ReceivedCommands).DoesNotContain("DBSIZE");
+    }
+
+    [Test]
     public async Task ClusterMode_RejectsNonZeroDatabase()
     {
         var error = Assert.Throws<ArgumentException>(() => RespireClient.Create(new RespireOptions
