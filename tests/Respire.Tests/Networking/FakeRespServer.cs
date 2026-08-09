@@ -25,10 +25,17 @@ internal sealed class FakeRespServer : IAsyncDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly TaskCompletionSource<Socket> _clientSocket = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly List<string> _receivedCommands = [];
+    private readonly List<int> _pendingReplies = [];
     private int _commandsSeen;
 
     public int Port { get; }
     public int CommandsSeen => Volatile.Read(ref _commandsSeen);
+
+    /// <summary>
+    /// Holds scripted replies until this many commands have arrived. Tests use this to prove
+    /// commands were pipelined instead of waiting for each preceding response.
+    /// </summary>
+    public int MinimumCommandsBeforeReply { get; set; } = 1;
 
     public IReadOnlyList<string> ReceivedCommands
     {
@@ -106,8 +113,18 @@ internal sealed class FakeRespServer : IAsyncDisposable
                         await Task.Delay(delay, _cts.Token);
                     }
 
-                    var reply = _replies[Math.Min(replyIndex++, _replies.Length - 1)];
-                    await socket.SendAsync(reply, SocketFlags.None, _cts.Token);
+                    _pendingReplies.Add(replyIndex++);
+                }
+
+                if (CommandsSeen >= MinimumCommandsBeforeReply)
+                {
+                    foreach (var pendingReply in _pendingReplies)
+                    {
+                        var reply = _replies[Math.Min(pendingReply, _replies.Length - 1)];
+                        await socket.SendAsync(reply, SocketFlags.None, _cts.Token);
+                    }
+
+                    _pendingReplies.Clear();
                 }
 
                 Buffer.BlockCopy(buffer, pos, buffer, 0, end - pos);
