@@ -255,7 +255,7 @@ internal static class DynamicCommandRouting
 
         return operation switch
         {
-            "EVAL" or "EVALSHA" or "FCALL" or "FCALL_RO" =>
+            "EVAL" or "EVAL_RO" or "EVALSHA" or "EVALSHA_RO" or "FCALL" or "FCALL_RO" =>
                 HasKeys(tokens, firstArgumentIndex + 1) ? firstArgumentIndex + 2 : -1,
             "BITOP" => firstArgumentIndex + 1,
             "BLMPOP" or "BZMPOP" =>

@@ -21,6 +21,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
     private readonly object _nodesGate = new();
     private readonly RespireConnectionMultiplexer?[] _slots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
     private RespireConnectionMultiplexer[] _masters = [];
+    private int[] _masterSlotCounts = [];
     private readonly SemaphoreSlim _seedGate = new(1, 1);
     private RespireConnectionMultiplexer? _seed;
     private int _hasCompleteTopology;
@@ -105,11 +106,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             }
             catch (Exception) when (!cancellationToken.IsCancellationRequested)
             {
-                if (ReferenceEquals(
-                        Interlocked.CompareExchange(ref _slots[cachedSlot], null, cachedNode), cachedNode))
-                {
-                    Volatile.Write(ref _hasCompleteTopology, 0);
-                }
+                ClearSlotOwner(cachedSlot, cachedNode);
                 // Refresh through the seeds below when the cached owner is unavailable.
             }
         }
@@ -173,11 +170,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             }
             catch (Exception) when (!cancellationToken.IsCancellationRequested)
             {
-                if (ReferenceEquals(
-                        Interlocked.CompareExchange(ref _slots[cachedSlot], null, cachedNode), cachedNode))
-                {
-                    Volatile.Write(ref _hasCompleteTopology, 0);
-                }
+                ClearSlotOwner(cachedSlot, cachedNode);
                 // Refresh through the seeds below when the cached owner is unavailable.
             }
         }
@@ -480,21 +473,100 @@ internal sealed class ClusterRouter : IAsyncDisposable
         node.SlotStateChanged += handler;
     }
 
-    private void SetSlotOwner(int slot, RespireConnectionMultiplexer node)
+    internal void SetSlotOwner(int slot, RespireConnectionMultiplexer node)
     {
+        RespireConnectionMultiplexer? retiredNode = null;
         lock (_nodesGate)
         {
             ObserveNode(node);
-            Volatile.Write(ref _slots[slot], node);
-            var masters = Volatile.Read(ref _masters);
-            if (Array.IndexOf(masters, node) < 0)
+            var previous = Volatile.Read(ref _slots[slot]);
+            if (ReferenceEquals(previous, node))
             {
-                var expanded = new RespireConnectionMultiplexer[masters.Length + 1];
-                masters.CopyTo(expanded, 0);
-                expanded[^1] = node;
-                Volatile.Write(ref _masters, expanded);
+                return;
+            }
+
+            Volatile.Write(ref _slots[slot], node);
+            AddSlot(node);
+            if (previous is not null && RemoveSlot(previous))
+            {
+                retiredNode = previous;
             }
         }
+
+        if (retiredNode is not null)
+        {
+            NodeRetired?.Invoke(retiredNode);
+        }
+    }
+
+    private void ClearSlotOwner(int slot, RespireConnectionMultiplexer node)
+    {
+        RespireConnectionMultiplexer? retiredNode = null;
+        lock (_nodesGate)
+        {
+            if (!ReferenceEquals(Volatile.Read(ref _slots[slot]), node))
+            {
+                return;
+            }
+
+            Volatile.Write(ref _slots[slot], null);
+            Volatile.Write(ref _hasCompleteTopology, 0);
+            if (RemoveSlot(node))
+            {
+                retiredNode = node;
+            }
+        }
+
+        if (retiredNode is not null)
+        {
+            NodeRetired?.Invoke(retiredNode);
+        }
+    }
+
+    private void AddSlot(RespireConnectionMultiplexer node)
+    {
+        var masters = Volatile.Read(ref _masters);
+        var index = Array.IndexOf(masters, node);
+        if (index >= 0)
+        {
+            _masterSlotCounts[index]++;
+            return;
+        }
+
+        var expanded = new RespireConnectionMultiplexer[masters.Length + 1];
+        var expandedCounts = new int[expanded.Length];
+        masters.CopyTo(expanded, 0);
+        _masterSlotCounts.CopyTo(expandedCounts, 0);
+        expanded[^1] = node;
+        expandedCounts[^1] = 1;
+        _masterSlotCounts = expandedCounts;
+        Volatile.Write(ref _masters, expanded);
+    }
+
+    private bool RemoveSlot(RespireConnectionMultiplexer node)
+    {
+        var masters = Volatile.Read(ref _masters);
+        var index = Array.IndexOf(masters, node);
+        if (index < 0 || --_masterSlotCounts[index] > 0)
+        {
+            return false;
+        }
+
+        var contracted = new RespireConnectionMultiplexer[masters.Length - 1];
+        var contractedCounts = new int[contracted.Length];
+        masters.AsSpan(0, index).CopyTo(contracted);
+        masters.AsSpan(index + 1).CopyTo(contracted.AsSpan(index));
+        _masterSlotCounts.AsSpan(0, index).CopyTo(contractedCounts);
+        _masterSlotCounts.AsSpan(index + 1).CopyTo(contractedCounts.AsSpan(index));
+        _masterSlotCounts = contractedCounts;
+        Volatile.Write(ref _masters, contracted);
+
+        if (_nodeStateHandlers.Remove(node, out var handler))
+        {
+            node.SlotStateChanged -= handler;
+        }
+
+        return true;
     }
 
     private void ReplaceSlotOwners(
@@ -504,15 +576,22 @@ internal sealed class ClusterRouter : IAsyncDisposable
         List<RespireConnectionMultiplexer>? retiredNodes = null;
         lock (_nodesGate)
         {
+            var masters = activeNodes.ToArray();
+            var masterSlotCounts = new int[masters.Length];
             var complete = true;
             for (var slot = 0; slot < refreshedSlots.Length; slot++)
             {
                 var node = refreshedSlots[slot];
                 Volatile.Write(ref _slots[slot], node);
                 complete &= node is not null;
+                if (node is not null)
+                {
+                    masterSlotCounts[Array.IndexOf(masters, node)]++;
+                }
             }
 
-            Volatile.Write(ref _masters, [.. activeNodes]);
+            _masterSlotCounts = masterSlotCounts;
+            Volatile.Write(ref _masters, masters);
             Volatile.Write(ref _hasCompleteTopology, complete ? 1 : 0);
 
             foreach (var node in _nodeStateHandlers.Keys)

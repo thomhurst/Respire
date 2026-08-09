@@ -127,11 +127,13 @@ public class ClusterTests
     {
         var objectTokens = new RespireValue[] { "OBJECT", "ENCODING", "object-key" };
         var evalTokens = new RespireValue[] { "EVAL", "return redis.call('GET', KEYS[1])", 1, "eval-key" };
+        var evalReadOnlyTokens = new RespireValue[] { "EVAL_RO", "return redis.call('GET', KEYS[1])", 1, "eval-ro-key" };
         var xreadTokens = new RespireValue[] { "XREAD", "COUNT", 1, "STREAMS"u8.ToArray(), "stream-key", "0" };
         var infoTokens = new RespireValue[] { "INFO", "memory" };
 
         await Assert.That(RawSlot("OBJECT", objectTokens, 1)).IsEqualTo(ClusterHash.GetSlot("object-key"));
         await Assert.That(RawSlot("EVAL", evalTokens, 1)).IsEqualTo(ClusterHash.GetSlot("eval-key"));
+        await Assert.That(RawSlot("EVAL_RO", evalReadOnlyTokens, 1)).IsEqualTo(ClusterHash.GetSlot("eval-ro-key"));
         await Assert.That(RawSlot("XREAD", xreadTokens, 1)).IsEqualTo(ClusterHash.GetSlot("stream-key"));
         await Assert.That(RawSlot("INFO", infoTokens, 1)).IsNull();
     }
@@ -495,6 +497,36 @@ public class ClusterTests
         core.NotifyCommandStateChanged(retiredMultiplexer, 0, RespireConnectionState.Reconnecting);
 
         _ = await core.Cluster.GetMasterConnectionsAsync(CancellationToken.None);
+
+        await Assert.That(states).IsEquivalentTo(
+            [RespireConnectionState.Reconnecting, RespireConnectionState.Connected]);
+    }
+
+    [Test]
+    public async Task MovedFinalSlot_ClearsReconnectStateForRetiredMaster()
+    {
+        await using var currentNode = new FakeRespServer(FakeRespServer.PongReply);
+        await using var retiredNode = new FakeRespServer(FakeRespServer.PongReply);
+        var slot = ClusterHash.GetSlot("retired-key");
+        var topology = Encoding.ASCII.GetBytes(
+            $"*2\r\n" +
+            $"*3\r\n:0\r\n:{slot - 1}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{currentNode.Port}\r\n" +
+            $"*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{retiredNode.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        var core = client.Core;
+        var cluster = core.Cluster!;
+        var retiredMultiplexer = cluster.GetMultiplexer(new RespireEndpoint("127.0.0.1", retiredNode.Port));
+        var currentMultiplexer = cluster.GetMultiplexer(new RespireEndpoint("127.0.0.1", currentNode.Port));
+        var states = new List<RespireConnectionState>();
+        core.ConnectionStateChanged += states.Add;
+        core.NotifyCommandStateChanged(retiredMultiplexer, 0, RespireConnectionState.Reconnecting);
+
+        cluster.SetSlotOwner(slot, currentMultiplexer);
 
         await Assert.That(states).IsEquivalentTo(
             [RespireConnectionState.Reconnecting, RespireConnectionState.Connected]);

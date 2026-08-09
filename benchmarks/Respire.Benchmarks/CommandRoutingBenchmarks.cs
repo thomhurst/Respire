@@ -1,5 +1,7 @@
 using BenchmarkDotNet.Attributes;
 using Respire.Commands;
+using Respire.Infrastructure;
+using Respire.Internal;
 
 namespace Respire.Benchmarks;
 
@@ -30,4 +32,39 @@ public class CommandRoutingBenchmarks
     [Benchmark]
     public int RawEvalRouting()
         => DynamicCommandRouting.GetRoutingKeyIndex("EVAL", _rawEvalTokens, _firstArgumentIndex);
+}
+
+[MemoryDiagnoser]
+[SimpleJob(warmupCount: 3, iterationCount: 8)]
+public class ClusterOwnershipBenchmarks
+{
+    private ClusterRouter _router = null!;
+    private RespireConnectionMultiplexer _oldOwner = null!;
+    private RespireConnectionMultiplexer _newOwner = null!;
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        var primary = RespireConnectionMultiplexer.Create("localhost", 6379);
+        _oldOwner = RespireConnectionMultiplexer.Create("localhost", 6380);
+        _newOwner = RespireConnectionMultiplexer.Create("localhost", 6381);
+        _router = new ClusterRouter(new RespireOptions { Cluster = true }, primary);
+        _router.SetSlotOwner(1, _oldOwner);
+        _router.SetSlotOwner(2, _newOwner);
+    }
+
+    [Benchmark]
+    public void MoveRoutedSlot()
+    {
+        _router.SetSlotOwner(0, _oldOwner);
+        _router.SetSlotOwner(0, _newOwner);
+    }
+
+    [GlobalCleanup]
+    public void Cleanup()
+    {
+        _router.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        _oldOwner.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        _newOwner.DisposeAsync().AsTask().GetAwaiter().GetResult();
+    }
 }
