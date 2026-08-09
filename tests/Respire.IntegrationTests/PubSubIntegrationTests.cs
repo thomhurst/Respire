@@ -56,6 +56,22 @@ public class PubSubIntegrationTests
     }
 
     [Test]
+    public async Task ShardedPublishSubscribe_Roundtrip()
+    {
+        var channel = IsolatedChannel("it:shard");
+        await using var subscription = _client.SubscribeSharded(channel);
+        var firstMessage = ReadFirstAsync(subscription);
+
+        var receivers = await PublishUntilReceiversAsync(channel, "sharded-payload", 1, sharded: true);
+
+        receivers.Should().Be(1);
+        var message = await firstMessage.WaitAsync(TimeSpan.FromSeconds(5));
+        message.Channel.Should().Be(channel);
+        message.Pattern.Should().BeNull();
+        message.Text.Should().Be("sharded-payload");
+    }
+
+    [Test]
     public async Task Unsubscribe_StopsDelivery()
     {
         var channel = IsolatedChannel("it:bye");
@@ -142,12 +158,15 @@ public class PubSubIntegrationTests
     /// SUBSCRIBE is sent when enumeration starts, so publish in a loop until the server reports
     /// the expected receiver count — PUBLISH's return value is the readiness signal.
     /// </summary>
-    private async Task<long> PublishUntilReceiversAsync(string channel, string payload, long expectedReceivers)
+    private async Task<long> PublishUntilReceiversAsync(
+        string channel, string payload, long expectedReceivers, bool sharded = false)
     {
         long receivers = -1;
         for (var attempt = 0; attempt < 100; attempt++)
         {
-            receivers = await _client.PublishAsync(channel, payload);
+            receivers = sharded
+                ? await _client.PublishShardedAsync(channel, payload)
+                : await _client.PublishAsync(channel, payload);
             if (receivers == expectedReceivers)
             {
                 return receivers;
