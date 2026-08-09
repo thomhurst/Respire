@@ -385,7 +385,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         while (true)
         {
             var sent = DateTimeOffset.UtcNow;
-            var pass = RunCorrectionPassAsync(script, key, args(), requiresOrdering);
+            var pass = RunCorrectionPassAsync(script, key, args(), requiresOrdering, originalConnection);
             try
             {
                 await pass.WaitAsync(CorrectionWaitBound).ConfigureAwait(false);
@@ -398,7 +398,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
                 if (_wireClient is { } wire && originalConnection.ServerClientId > 0)
                 {
                     await wire.FenceCorrectionConnectionAsync(originalConnection).ConfigureAwait(false);
-                    originalConnection = default;
+                    originalConnection = new RespireClient.TrackedConnectionIdentity(
+                        originalConnection.Endpoint, ServerClientId: 0);
                     _ = ObservePassAsync(pass);
                     previous = TimeSpan.MaxValue;
                     continue;
@@ -434,11 +435,12 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         RespireScript script,
         string key,
         RespireValue[] args,
-        bool requiresOrdering)
+        bool requiresOrdering,
+        RespireClient.TrackedConnectionIdentity originalConnection)
     {
         if (requiresOrdering && _wireClient is { } wire)
         {
-            await wire.ExecuteOnAllConnectionsAsync(script, [key], args).ConfigureAwait(false);
+            await wire.ExecuteOnAllConnectionsAsync(script, [key], args, originalConnection).ConfigureAwait(false);
         }
         else
         {

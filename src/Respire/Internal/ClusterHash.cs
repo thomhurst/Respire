@@ -7,6 +7,7 @@ internal static class ClusterHash
 {
     internal const int SlotCount = 16_384;
     private const int StackallocThreshold = 256;
+    private const int RemovalLeaseTagLength = 2;
     private static readonly ushort[] Crc16Table = CreateCrc16Table();
 
     internal static int GetSlot(string key)
@@ -86,6 +87,17 @@ internal static class ClusterHash
         return crc & (SlotCount - 1);
     }
 
+    internal static void WriteRemovalLeaseTag(int slot, Span<byte> destination)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(slot);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(slot, SlotCount);
+        ArgumentOutOfRangeException.ThrowIfLessThan(destination.Length, RemovalLeaseTagLength);
+
+        var tag = RemovalLeaseTags.BySlot[slot];
+        destination[0] = (byte)(tag >> 8);
+        destination[1] = (byte)tag;
+    }
+
     private static ushort Update(ushort crc, byte value)
         => (ushort)((crc << 8) ^ Crc16Table[((crc >> 8) ^ value) & 0xff]);
 
@@ -104,5 +116,41 @@ internal static class ClusterHash
         }
 
         return table;
+    }
+
+    private static class RemovalLeaseTags
+    {
+        internal static readonly ushort[] BySlot = Create();
+
+        private static ushort[] Create()
+        {
+            var tags = new ushort[SlotCount];
+            Array.Fill(tags, ushort.MaxValue);
+            var remaining = SlotCount;
+            Span<byte> candidateBytes = stackalloc byte[RemovalLeaseTagLength];
+            for (var candidate = 0; candidate < ushort.MaxValue && remaining > 0; candidate++)
+            {
+                candidateBytes[0] = (byte)(candidate >> 8);
+                candidateBytes[1] = (byte)candidate;
+                if (candidateBytes.Contains((byte)'}'))
+                {
+                    continue;
+                }
+
+                var slot = GetCrcSlot(candidateBytes);
+                if (tags[slot] == ushort.MaxValue)
+                {
+                    tags[slot] = (ushort)candidate;
+                    remaining--;
+                }
+            }
+
+            if (remaining != 0)
+            {
+                throw new InvalidOperationException("Unable to generate a binary hash tag for every Redis Cluster slot.");
+            }
+
+            return tags;
+        }
     }
 }

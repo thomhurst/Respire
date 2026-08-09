@@ -24,6 +24,25 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task RemovalLeaseKey_UsesRequestedHashSlot()
+    {
+        var keys = new RespireKey[]
+        {
+            "plain",
+            "{account}cache",
+            "{}odd}key",
+            "£ sterling",
+            new byte[] { 0, (byte)'}', 255 },
+        };
+
+        foreach (var key in keys)
+        {
+            var lease = RespireClient.CreateClusterRemovalLeaseKey(key.ClusterSlot);
+            await Assert.That(lease.ClusterSlot).IsEqualTo(key.ClusterSlot);
+        }
+    }
+
+    [Test]
     public async Task MovedRedirect_IsFollowedAndSlotIsCached()
     {
         await using var target = new FakeRespServer("$5\r\nvalue\r\n"u8.ToArray());
@@ -242,6 +261,59 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task TrackedCorrectionBroadcast_UsesOwningNodeMultiplexer()
+    {
+        var slot = ClusterHash.GetSlot("cache-key");
+        await using var target = new FakeRespServer(
+            ":42\r\n"u8.ToArray(),
+            ":0\r\n"u8.ToArray(),
+            "$5\r\nvalue\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray());
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        var script = RespireScript.Create("return redis.call('GET', KEYS[1])");
+        var execution = await client.StartTrackedScriptExecutionAsync(
+            script, ["cache-key"], [], CancellationToken.None);
+        using var result = await execution.Response;
+
+        await client.ExecuteOnAllConnectionsAsync(
+            script, ["cache-key"], [], execution.ConnectionIdentity);
+
+        await Assert.That(target.ReceivedCommands[^1]).StartsWith("EVAL ");
+        await Assert.That(seed.ReceivedCommands).Count().IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task GuardedUnlink_RoutesLeaseAndScriptToKeyOwner()
+    {
+        const string prefix = "{}broken{";
+        const string key = "cache-key";
+        var slot = ClusterHash.GetSlot(prefix + key);
+        await using var target = new FakeRespServer(2, ":1\r\n"u8.ToArray());
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        await using var owner = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        var client = (RespireClient)owner.WithKeyPrefix(prefix);
+
+        await client.UnlinkGuardedAsync(key, CancellationToken.None);
+
+        await Assert.That(target.ReceivedCommands).Contains(command => command.StartsWith("SET "));
+        await Assert.That(target.ReceivedCommands).Contains(command => command.StartsWith("EVAL "));
+        await Assert.That(seed.ReceivedCommands).Count().IsEqualTo(1);
+    }
+
+    [Test]
     public async Task Connect_TriesLaterSeedWhenFirstIsUnavailable()
     {
         await using var target = new FakeRespServer("$5\r\nvalue\r\n"u8.ToArray());
@@ -355,6 +427,35 @@ public class ClusterTests
         await Assert.That(keys).IsEquivalentTo(["one", "two"]);
         await Assert.That(firstNode.ReceivedCommands[0]).IsEqualTo("SCAN 0 COUNT 250");
         await Assert.That(secondNode.ReceivedCommands[0]).IsEqualTo("SCAN 0 COUNT 250");
+    }
+
+    [Test]
+    public async Task Scan_RefreshesTopologyBeforeVisitingCachedMasters()
+    {
+        await using var currentNode = new FakeRespServer(
+            "*2\r\n$1\r\n0\r\n*1\r\n$7\r\ncurrent\r\n"u8.ToArray());
+        var staleTopology = Encoding.ASCII.GetBytes(
+            $"*2\r\n" +
+            "*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:1\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{currentNode.Port}\r\n");
+        var currentTopology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{currentNode.Port}\r\n");
+        await using var seed = new FakeRespServer(staleTopology, currentTopology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            ConnectTimeout = TimeSpan.FromMilliseconds(100),
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        var keys = new List<string>();
+
+        await foreach (var key in client.Keys.ScanAsync())
+        {
+            keys.Add(key);
+        }
+
+        await Assert.That(keys).IsEquivalentTo(["current"]);
+        await Assert.That(currentNode.ReceivedCommands[0]).IsEqualTo("SCAN 0 COUNT 250");
     }
 
     [Test]

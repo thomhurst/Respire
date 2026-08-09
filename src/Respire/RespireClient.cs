@@ -1202,8 +1202,17 @@ public sealed partial class RespireClient : IRespireClient
     {
         while (true)
         {
-            RespireKey leaseKey = "respire-rm-lease:" + Guid.NewGuid().ToString("N");
-            var lease = Key(in leaseKey);
+            var redisKey = Key(in key);
+            RespireValue lease;
+            if (_core.Cluster is not null && redisKey.TryGetClusterSlot(out var slot))
+            {
+                lease = CreateClusterRemovalLeaseKey(slot).AsValue();
+            }
+            else
+            {
+                RespireKey leaseKey = "respire-rm-lease:" + Guid.NewGuid().ToString("N");
+                lease = Key(in leaseKey);
+            }
 
             // The lease must be on the server before the removal script is sent — its reply is
             // the proof. A failure here (including an abandoned wait) leaves nothing latent:
@@ -1211,7 +1220,7 @@ public sealed partial class RespireClient : IRespireClient
             await PlaceLeaseAsync(lease, cancellationToken).ConfigureAwait(false);
             var leaseStart = Stopwatch.GetTimestamp();
 
-            var command = new Cmd2N(Verbs.Eval, LeasedUnlinkScript.Source, 2, [Key(in key), lease]);
+            var command = new Cmd2N(Verbs.Eval, LeasedUnlinkScript.Source, 2, [redisKey, lease]);
             RespValue value;
             try
             {
@@ -1240,18 +1249,20 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
+    internal static RespireKey CreateClusterRemovalLeaseKey(int slot)
+    {
+        var bytes = new byte[20];
+        bytes[0] = (byte)'{';
+        ClusterHash.WriteRemovalLeaseTag(slot, bytes.AsSpan(1, 2));
+        bytes[3] = (byte)'}';
+        Guid.NewGuid().TryWriteBytes(bytes.AsSpan(4));
+        return new RespireKey(bytes);
+    }
+
     private async ValueTask PlaceLeaseAsync(RespireValue lease, CancellationToken cancellationToken)
     {
         var command = new Cmd4(Verbs.Set, lease, 1, "PX", (long)RemovalLeaseTtl.TotalMilliseconds);
-        await _core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-        var reply = await _core.Multiplexer.SendAsync(in command, cancellationToken).ConfigureAwait(false);
-        if (reply.IsError)
-        {
-            var error = ResponseReader.ServerError(in reply);
-            reply.Dispose();
-            throw error;
-        }
-
+        var reply = await SendAsync("SET", command, cancellationToken).ConfigureAwait(false);
         reply.Dispose();
     }
 
@@ -1261,9 +1272,9 @@ public sealed partial class RespireClient : IRespireClient
     /// <see cref="LeaseExpiryMargin"/>) has been waited out, after which the server has
     /// certainly expired it. The revocation is uncancelable (no caller token, no
     /// <see cref="RespireOptions.CommandTimeout"/> — once owed it must not be abandonable) and
-    /// its wait is bounded by the lease remainder, past which expiry has done its job anyway; a
-    /// timed-out revocation stays queued (multiplexed sends are never cancelled) and is
-    /// observed in the background so a late fault is not unhandled.
+    /// its wait is bounded by the lease remainder, past which expiry has done its job anyway.
+    /// A shorter command timeout can advance the expiry fallback; a caller-side timeout leaves
+    /// the multiplexed send queued and observed in the background so a late fault is handled.
     /// </summary>
     private async ValueTask MakeLatentRemovalHarmlessAsync(RespireValue lease, long leaseStart)
     {
@@ -1297,15 +1308,7 @@ public sealed partial class RespireClient : IRespireClient
 
     private async Task RevokeLeaseAsync(Cmd1 command)
     {
-        await _core.Multiplexer.EnsureConnectedAsync(CancellationToken.None).ConfigureAwait(false);
-        var reply = await _core.Multiplexer.SendAsync(in command, CancellationToken.None).ConfigureAwait(false);
-        if (reply.IsError)
-        {
-            var error = ResponseReader.ServerError(in reply);
-            reply.Dispose();
-            throw error;
-        }
-
+        var reply = await SendAsync("UNLINK", command, CancellationToken.None).ConfigureAwait(false);
         reply.Dispose();
     }
 
@@ -1323,7 +1326,7 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     /// <summary>
-    /// Executes a script on every connection via
+    /// Executes a script on every connection of the original command's cluster node via
     /// <see cref="Infrastructure.RespireConnectionMultiplexer.SendToAllConnectionsAsync{TCommand}"/> — the copy
     /// sharing a connection with an earlier still-buffered command executes after it, so the
     /// script must be idempotent and safe out of order elsewhere. Locally dead connections are
@@ -1331,7 +1334,11 @@ public sealed partial class RespireClient : IRespireClient
     /// probing: the callers are rare correction paths) and no caller token or command timeout —
     /// a correction, once owed, must not be abandonable.
     /// </summary>
-    internal async ValueTask ExecuteOnAllConnectionsAsync(RespireScript script, RespireKey[] keys, RespireValue[] args)
+    internal async ValueTask ExecuteOnAllConnectionsAsync(
+        RespireScript script,
+        RespireKey[] keys,
+        RespireValue[] args,
+        TrackedConnectionIdentity connectionIdentity = default)
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
@@ -1343,7 +1350,10 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         args.CopyTo(tail, 1 + keys.Length);
-        await core.Multiplexer.SendToAllConnectionsAsync(
+        var multiplexer = core.Cluster is { } cluster && connectionIdentity.Endpoint.Host is not null
+            ? cluster.GetMultiplexer(connectionIdentity.Endpoint)
+            : core.Multiplexer;
+        await multiplexer.SendToAllConnectionsAsync(
             new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]), CancellationToken.None).ConfigureAwait(false);
     }
 

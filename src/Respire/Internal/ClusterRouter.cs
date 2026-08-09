@@ -200,6 +200,9 @@ internal sealed class ClusterRouter : IAsyncDisposable
     internal ValueTask RetireConnectionAsync(RespireEndpoint endpoint, long serverClientId)
         => GetOrCreateNode(endpoint).RetireConnectionAsync(serverClientId);
 
+    internal RespireConnectionMultiplexer GetMultiplexer(RespireEndpoint endpoint)
+        => GetOrCreateNode(endpoint);
+
     internal bool HasReliableCorrectionOrdering(RespireConnection connection)
         => GetOrCreateNode(new RespireEndpoint(connection.Host, connection.Port))
             .HasReliableCorrectionOrdering;
@@ -278,29 +281,39 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
     internal async ValueTask<RespireConnection[]> GetMasterConnectionsAsync(CancellationToken cancellationToken)
     {
+        await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        await TryLoadSlotsAsync(Volatile.Read(ref _seed)!, cancellationToken).ConfigureAwait(false);
+
         var masters = new HashSet<RespireConnectionMultiplexer>(ReferenceEqualityComparer.Instance);
         AddKnownMasters(masters);
-
         if (masters.Count == 0)
         {
-            await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-            AddKnownMasters(masters);
+            masters.Add(Volatile.Read(ref _seed)!);
+        }
 
-            if (masters.Count == 0)
+        var connections = new List<RespireConnection>(masters.Count);
+        foreach (var master in masters)
+        {
+            try
             {
-                masters.Add(Volatile.Read(ref _seed)!);
+                await master.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                connections.Add(master.GetConnection());
+            }
+            catch (RespireConnectionException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // A topology refresh can race a failover. A stale owner must not prevent SCAN
+                // from visiting the healthy masters that remain.
             }
         }
 
-        var connections = new RespireConnection[masters.Count];
-        var index = 0;
-        foreach (var master in masters)
+        if (connections.Count == 0)
         {
-            await master.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-            connections[index++] = master.GetConnection();
+            var seed = Volatile.Read(ref _seed)!;
+            await seed.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            connections.Add(seed.GetConnection());
         }
 
-        return connections;
+        return connections.ToArray();
     }
 
     private void AddKnownMasters(HashSet<RespireConnectionMultiplexer> masters)
@@ -393,6 +406,8 @@ internal sealed class ClusterRouter : IAsyncDisposable
                     return;
                 }
 
+                var refreshedSlots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
+                var discoveredRange = false;
                 foreach (ref readonly var range in reply.AsArray())
                 {
                     var values = range.AsArray();
@@ -437,7 +452,17 @@ internal sealed class ClusterRouter : IAsyncDisposable
                         string.IsNullOrEmpty(host) ? seed.Host : host, (int)port));
                     for (var slot = (int)start; slot <= end; slot++)
                     {
-                        Volatile.Write(ref _slots[slot], node);
+                        refreshedSlots[slot] = node;
+                    }
+
+                    discoveredRange = true;
+                }
+
+                if (discoveredRange)
+                {
+                    for (var slot = 0; slot < refreshedSlots.Length; slot++)
+                    {
+                        Volatile.Write(ref _slots[slot], refreshedSlots[slot]);
                     }
                 }
             }
