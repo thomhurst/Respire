@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Security.Cryptography;
 using System.Text;
 using Respire.Commands;
@@ -12,6 +13,9 @@ namespace Respire;
 /// </summary>
 public sealed class RespireScript
 {
+    private const int StackallocThreshold = 256;
+    private const string HexDigits = "0123456789abcdef";
+
     private RespireScript(string source, string sha1)
     {
         Source = source;
@@ -25,8 +29,42 @@ public sealed class RespireScript
     public static RespireScript Create(string source)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(source);
-        var sha = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(source)));
-        return new RespireScript(source, sha.ToLowerInvariant());
+        var byteCount = Encoding.UTF8.GetByteCount(source);
+        byte[]? rented = null;
+        var utf8 = byteCount <= StackallocThreshold
+            ? stackalloc byte[byteCount]
+            : (rented = ArrayPool<byte>.Shared.Rent(byteCount));
+
+        try
+        {
+            if (byteCount == source.Length)
+            {
+                Ascii.FromUtf16(source, utf8, out _);
+            }
+            else
+            {
+                Encoding.UTF8.GetBytes(source, utf8);
+            }
+
+            Span<byte> hash = stackalloc byte[SHA1.HashSizeInBytes];
+            SHA1.HashData(utf8[..byteCount], hash);
+
+            Span<char> hex = stackalloc char[SHA1.HashSizeInBytes * 2];
+            for (var i = 0; i < hash.Length; i++)
+            {
+                hex[i * 2] = HexDigits[hash[i] >> 4];
+                hex[i * 2 + 1] = HexDigits[hash[i] & 0xF];
+            }
+
+            return new RespireScript(source, new string(hex));
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                ArrayPool<byte>.Shared.Return(rented, clearArray: true);
+            }
+        }
     }
 }
 
