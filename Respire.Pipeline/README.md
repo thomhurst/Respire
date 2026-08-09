@@ -53,7 +53,7 @@ dotnet user-secrets set "GitHub:Owner" "your-github-username"
 You can also use environment variables:
 
 - `NuGet__ApiKey`: NuGet API key
-- `GitHub__Token`: GitHub personal access token
+- `GitHub__Token` or `GitHub__AccessToken`: GitHub personal access token
 - `GitHub__Owner`: GitHub repository owner
 - `Versioning__BaseVersion`: fallback base version when no version tag exists
 
@@ -91,7 +91,16 @@ This will:
 3. Run benchmarks  
 4. Create packages
 5. Upload packages to NuGet.org
-6. Create GitHub release
+6. Create a GitHub release for the generated version
+
+The release module runs only after the NuGet upload module succeeds. It uses `ModularPipelines.GitHub`
+and Octokit to ask GitHub for automatically generated release notes between the latest release and
+the new `v{version}` tag, appends install commands for the uploaded NuGet packages, and publishes
+a ready release. Existing releases for the same tag are left untouched.
+
+In GitHub Actions, the modular pipeline only publishes packages and creates releases for a manual
+`workflow_dispatch` run on `main` with `publish-packages` set to `true`. Normal pushes and pull
+requests run in development mode and do not publish packages.
 
 ## Pipeline Modules
 
@@ -117,6 +126,7 @@ This will:
 
 The pipeline uses ModularPipelines with the following packages:
 - `ModularPipelines.DotNet`: .NET CLI integration
+- `ModularPipelines.GitHub`: GitHub Actions environment and Octokit integration
 
 ## Versioning Strategy
 

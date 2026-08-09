@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="ModularPipelines.DotNet" />
+    <PackageReference Include="ModularPipelines.GitHub" />
   </ItemGroup>
 
   <ItemGroup>

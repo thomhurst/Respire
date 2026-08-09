@@ -3,6 +3,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ModularPipelines;
 using ModularPipelines.Extensions;
+using ModularPipelines.GitHub.Extensions;
+using ModularPipelines.GitHub.Options;
 using Respire.Pipeline.Modules;
 using Respire.Pipeline.Modules.LocalMachine;
 using Respire.Pipeline.Settings;
@@ -20,6 +22,14 @@ public class Program
         builder.Services.Configure<NuGetSettings>(builder.Configuration.GetSection("NuGet"))
             .Configure<GitHubSettings>(builder.Configuration.GetSection("GitHub"))
             .Configure<GitVersioningSettings>(builder.Configuration.GetSection("Versioning"));
+
+        builder.Services.Configure<GitHubOptions>(options =>
+        {
+            options.AccessToken = builder.Configuration["GitHub:AccessToken"]
+                ?? builder.Configuration["GitHub:Token"];
+        });
+
+        builder.Services.RegisterGitHubContext();
 
         if (builder.Environment.IsDevelopment())
         {
