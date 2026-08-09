@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.Logging;
 using Respire.Internal;
 using Respire.Protocol;
@@ -185,21 +186,30 @@ public sealed class RespireConnection : IAsyncDisposable
             return;
         }
 
-        RespireConnectionException? failure = null;
+        Exception? failure = null;
         foreach (var (step, pendingReply) in pending)
         {
-            var reply = await pendingReply.ConfigureAwait(false);
-            if (failure is null && reply.IsError)
+            try
             {
-                failure = CreateHandshakeException(in reply, step);
-            }
+                var reply = await pendingReply.ConfigureAwait(false);
+                if (failure is null && reply.IsError)
+                {
+                    failure = CreateHandshakeException(in reply, step);
+                }
 
-            reply.Dispose();
+                reply.Dispose();
+            }
+            catch (Exception ex)
+            {
+                // Observe every pipelined reply, but preserve the first failure. A later transport
+                // fault must not replace the useful AUTH/HELLO error that caused the handshake to fail.
+                failure ??= ex;
+            }
         }
 
         if (failure is not null)
         {
-            throw failure;
+            ExceptionDispatchInfo.Capture(failure).Throw();
         }
     }
 

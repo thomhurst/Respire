@@ -100,6 +100,34 @@ public class HandshakeTests
     }
 
     [Test]
+    public async Task AuthRejected_LaterProtocolFaultDoesNotReplaceHandshakeError()
+    {
+        await using var server = new FakeRespServer(
+            "-ERR invalid password\r\n"u8.ToArray(),
+            "!malformed\r\n"u8.ToArray())
+        {
+            MinimumCommandsBeforeReply = 2,
+        };
+
+        RespireConnectionException? failure = null;
+        try
+        {
+            await using var _ = await RespireConnection.ConnectAsync(
+                "127.0.0.1",
+                server.Port,
+                new RespireConnectionOptions { Password = "wrong", ClientName = "respire-tests" });
+        }
+        catch (RespireConnectionException ex)
+        {
+            failure = ex;
+        }
+
+        await Assert.That(failure).IsNotNull();
+        await Assert.That(failure!.Message).Contains("AUTH failed");
+        await Assert.That(failure.Message).Contains("invalid password");
+    }
+
+    [Test]
     public async Task HelloRejected_ConnectThrows()
     {
         await using var server = new FakeRespServer("-ERR unknown command 'HELLO'\r\n"u8.ToArray());
