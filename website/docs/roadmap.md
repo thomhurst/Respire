@@ -18,13 +18,13 @@ Respire is pre-release. Its core RESP2 client, typed command surface, pipelining
 - Typed JSON serialization and custom `IRespireSerializer`
 - Raw and interpolated command execution
 - Automatic reconnect and pub/sub resubscription
+- TLS connections through `rediss://` or `RespireOptions.UseTls`
 - Dependency injection, distributed caching, `HybridCache`, and OpenTelemetry
 
 ## Not implemented yet
 
 | Capability | Current behavior |
 | --- | --- |
-| TLS (`rediss://`) | Throws `NotSupportedException` |
 | Redis Cluster | Single endpoint only |
 | Redis Sentinel | Not supported |
 | RESP3-first internals | Protocol option exists; broader adoption remains planned |
