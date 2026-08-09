@@ -13,6 +13,8 @@ public class CommandRoutingBenchmarks
     private readonly RespireValue _scalarKey = 123456789;
     private readonly Cmd1 _keyedCommand = new(Verbs.Get, "benchmark-key");
     private readonly Cmd1 _unkeyedCommand = new(Verbs.Info, "memory");
+    private readonly CatalogCommand _catalogCommand = new(
+        RespireCommands.String.GET, ["benchmark-key"]);
     private readonly RespireValue[] _rawTokens = ["SET", "benchmark-key", "value"];
     private readonly RespireValue[] _rawEvalTokens = ["EVAL", "return 1", 1, "benchmark-key"];
     private readonly int _firstArgumentIndex = 1;
@@ -30,12 +32,19 @@ public class CommandRoutingBenchmarks
     public bool MetadataUnkeyedRouting() => _unkeyedCommand.TryGetClusterSlot(out _);
 
     [Benchmark]
+    public bool CatalogKeyRouting() => TryGetSlot(_catalogCommand);
+
+    [Benchmark]
     public int RawCommandRouting()
         => DynamicCommandRouting.GetRoutingKeyIndex("SET", _rawTokens, _firstArgumentIndex);
 
     [Benchmark]
     public int RawEvalRouting()
         => DynamicCommandRouting.GetRoutingKeyIndex("EVAL", _rawEvalTokens, _firstArgumentIndex);
+
+    private static bool TryGetSlot<TCommand>(TCommand command)
+        where TCommand : struct, Respire.Protocol.IRespCommand
+        => command.TryGetClusterSlot(out _);
 }
 
 [MemoryDiagnoser]

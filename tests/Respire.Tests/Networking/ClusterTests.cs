@@ -87,6 +87,15 @@ public class ClusterTests
             Cluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
+        var reconnecting = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += state =>
+        {
+            if (state == RespireConnectionState.Reconnecting)
+            {
+                reconnecting.TrySetResult();
+            }
+        };
 
         var value = await client.GetStringAsync("key");
         var second = await client.GetStringAsync("key");
@@ -98,6 +107,10 @@ public class ClusterTests
         await Assert.That(target.ReceivedCommands[1]).IsEqualTo("GET key");
         await Assert.That(target.ReceivedCommands[2]).IsEqualTo("ASKING");
         await Assert.That(target.ReceivedCommands[3]).IsEqualTo("GET key");
+
+        await target.DisposeAsync();
+        var completed = await Task.WhenAny(reconnecting.Task, Task.Delay(500));
+        await Assert.That(completed).IsNotEqualTo(reconnecting.Task);
     }
 
     [Test]
@@ -142,6 +155,54 @@ public class ClusterTests
         await Assert.That(RawSlot("GET", integerKeyTokens, 1)).IsEqualTo(ClusterHash.GetSlot("123"));
         await Assert.That(RawSlot("GET", booleanKeyTokens, 1)).IsEqualTo(ClusterHash.GetSlot("1"));
         await Assert.That(RawSlot("INFO", infoTokens, 1)).IsNull();
+    }
+
+    [Test]
+    public async Task CatalogCommandRouting_UsesDescriptorNameAndArguments()
+    {
+        await Assert.That(CatalogSlot(RespireCommands.String.GET, ["catalog-key"]))
+            .IsEqualTo(ClusterHash.GetSlot("catalog-key"));
+        await Assert.That(CatalogSlot(
+                RespireCommands.Scripting.EVAL, ["return redis.call('GET', KEYS[1])", 1, "eval-key"]))
+            .IsEqualTo(ClusterHash.GetSlot("eval-key"));
+        await Assert.That(CatalogSlot(RespireCommands.Server.INFO, ["memory"]))
+            .IsNull();
+        await Assert.That(CatalogSlot(RespireCommands.Server.ACL_GETUSER, ["default"]))
+            .IsNull();
+    }
+
+    [Test]
+    public async Task CatalogCommand_UsesCachedOwnerWhenSeedIsUnavailable()
+    {
+        await using var target = new FakeRespServer(
+            "$5\r\nvalue\r\n"u8.ToArray(),
+            "$6\r\nsecond\r\n"u8.ToArray());
+        var slot = ClusterHash.GetSlot("key");
+        var seed = new FakeRespServer(
+            "*0\r\n"u8.ToArray(),
+            Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            ConnectTimeout = TestConnectTimeout,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        using var first = await client.ExecuteAsync(RespireCommands.String.GET, "key");
+        await seed.DisposeAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (client.Core.Multiplexer.IsConnected)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
+        using var second = await client.ExecuteAsync(
+            RespireCommands.String.GET, ["key"], timeout.Token);
+
+        await Assert.That(first.AsString()).IsEqualTo("value");
+        await Assert.That(second.AsString()).IsEqualTo("second");
+        await Assert.That(seed.ReceivedCommands).Count().IsEqualTo(2);
+        await Assert.That(target.ReceivedCommands).IsEquivalentTo(["GET key", "GET key"]);
     }
 
     [Test]
@@ -386,6 +447,34 @@ public class ClusterTests
         await Assert.That(value).IsEqualTo("value");
         await Assert.That(seed.ReceivedCommands[0]).IsEqualTo("CLUSTER SLOTS");
         await Assert.That(target.ReceivedCommands[0]).IsEqualTo("GET key");
+    }
+
+    [Test]
+    public async Task UnkeyedCommand_UsesDiscoveredMasterWhenSeedIsUnavailable()
+    {
+        await using var master = new FakeRespServer(
+            "$5\r\nvalue\r\n"u8.ToArray(),
+            FakeRespServer.PongReply);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{master.Port}\r\n");
+        var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            ConnectTimeout = TestConnectTimeout,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        await seed.DisposeAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (client.Core.Multiplexer.IsConnected)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
+        _ = await client.PingAsync(timeout.Token);
+        await Assert.That(master.ReceivedCommands).IsEquivalentTo(["GET key", "PING"]);
     }
 
     [Test]
@@ -889,6 +978,12 @@ public class ClusterTests
         var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(
             operation, tokens, firstArgumentIndex);
         var command = new DynamicCommand(tokens, routingKeyIndex);
+        return command.TryGetClusterSlot(out var slot) ? slot : null;
+    }
+
+    private static int? CatalogSlot(RespireCommand descriptor, RespireValue[] args)
+    {
+        var command = new CatalogCommand(descriptor, args);
         return command.TryGetClusterSlot(out var slot) ? slot : null;
     }
 }

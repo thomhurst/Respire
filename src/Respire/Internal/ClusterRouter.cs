@@ -116,6 +116,11 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
     internal async ValueTask<RespireConnection> GetConnectionAsync(int? slot, CancellationToken cancellationToken)
     {
+        if (slot is null && TryGetConnectedNode() is { } connectedNode)
+        {
+            return connectedNode.GetConnection();
+        }
+
         if (slot is { } cachedSlot && Volatile.Read(ref _slots[cachedSlot]) is { } cachedNode)
         {
             try
@@ -154,7 +159,8 @@ internal sealed class ClusterRouter : IAsyncDisposable
             throw error;
         }
 
-        var node = GetOrCreateNode(endpoint);
+        var observe = error.Code != "ASK";
+        var node = GetOrCreateNode(endpoint, observe);
         await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         if (error.Code == "MOVED")
         {
@@ -179,7 +185,8 @@ internal sealed class ClusterRouter : IAsyncDisposable
         CancellationToken cancellationToken)
     {
         var connection = await GetRedirectConnectionAsync(error, source, cancellationToken).ConfigureAwait(false);
-        return await EnableCorrectionOrderingAsync(connection, requireIdentity, cancellationToken)
+        return await EnableCorrectionOrderingAsync(
+                connection, requireIdentity, cancellationToken, observe: error.Code != "ASK")
             .ConfigureAwait(false);
     }
 
@@ -225,7 +232,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             throw error;
         }
 
-        var node = GetOrCreateNode(endpoint);
+        var node = GetOrCreateNode(endpoint, observe: error.Code != "ASK");
         await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         if (error.Code == "MOVED")
         {
@@ -245,7 +252,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
         => GetOrCreateNode(endpoint);
 
     internal bool HasReliableCorrectionOrdering(RespireConnection connection)
-        => GetOrCreateNode(new RespireEndpoint(connection.Host, connection.Port))
+        => GetOrCreateNode(new RespireEndpoint(connection.Host, connection.Port), observe: false)
             .HasReliableCorrectionOrdering;
 
     internal static bool IsRedirect(RespireServerException error)
@@ -494,14 +501,36 @@ internal sealed class ClusterRouter : IAsyncDisposable
         }
     }
 
-    private RespireConnectionMultiplexer GetOrCreateNode(RespireEndpoint endpoint)
+    private RespireConnectionMultiplexer? TryGetConnectedNode()
+    {
+        if (Volatile.Read(ref _seed) is { IsConnected: true } seed)
+        {
+            return seed;
+        }
+
+        foreach (var master in Volatile.Read(ref _masters))
+        {
+            if (master.IsConnected)
+            {
+                return master;
+            }
+        }
+
+        return null;
+    }
+
+    private RespireConnectionMultiplexer GetOrCreateNode(RespireEndpoint endpoint, bool observe = true)
     {
         lock (_nodesGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             if (_nodes.TryGetValue(endpoint, out var existing))
             {
-                ObserveNode(existing);
+                if (observe)
+                {
+                    ObserveNode(existing);
+                }
+
                 return existing;
             }
 
@@ -511,7 +540,11 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 _options.Connections,
                 _options.ToConnectionOptions(),
                 _options.CreateLogger($"Respire.Cluster.{endpoint.Host}:{endpoint.Port}"));
-            ObserveNode(node);
+            if (observe)
+            {
+                ObserveNode(node);
+            }
+
             _nodes.Add(endpoint, node);
             return node;
         }
@@ -683,9 +716,10 @@ internal sealed class ClusterRouter : IAsyncDisposable
     private async ValueTask<RespireConnection> EnableCorrectionOrderingAsync(
         RespireConnection connection,
         bool required,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool observe = true)
     {
-        var node = GetOrCreateNode(new RespireEndpoint(connection.Host, connection.Port));
+        var node = GetOrCreateNode(new RespireEndpoint(connection.Host, connection.Port), observe);
         try
         {
             await node.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);

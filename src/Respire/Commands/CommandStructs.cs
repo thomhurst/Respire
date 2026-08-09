@@ -284,6 +284,35 @@ internal static class DynamicCommandRouting
            && tokens[keyCountIndex].TryGetInt64(out var count)
            && count > 0;
 
+    internal static int GetCatalogRoutingKeyIndex(string operation, RespireValue[] args)
+        => IsUnkeyedCatalogSubcommand(operation)
+            ? -1
+            : GetRoutingKeyIndex(operation, args, 0);
+
+    private static bool IsUnkeyedCatalogSubcommand(string operation)
+    {
+        if (operation.Length < 4)
+        {
+            return false;
+        }
+
+        return operation[0] switch
+        {
+            'A' => operation.StartsWith("ACL ", StringComparison.Ordinal),
+            'C' => operation.StartsWith("CLIENT ", StringComparison.Ordinal)
+                   || operation.StartsWith("CLUSTER ", StringComparison.Ordinal)
+                   || operation.StartsWith("COMMAND ", StringComparison.Ordinal)
+                   || operation.StartsWith("CONFIG ", StringComparison.Ordinal),
+            'F' => operation.StartsWith("FUNCTION ", StringComparison.Ordinal),
+            'L' => operation.StartsWith("LATENCY ", StringComparison.Ordinal),
+            'M' => operation.StartsWith("MODULE ", StringComparison.Ordinal),
+            'P' => operation.StartsWith("PUBSUB ", StringComparison.Ordinal),
+            'S' => operation.StartsWith("SCRIPT ", StringComparison.Ordinal)
+                   || operation.StartsWith("SLOWLOG ", StringComparison.Ordinal),
+            _ => false,
+        };
+    }
+
     private static int MigrateKeyIndex(RespireValue[] tokens, int firstArgumentIndex)
     {
         var keyIndex = firstArgumentIndex + 2;
@@ -312,6 +341,18 @@ internal static class DynamicCommandRouting
 /// <summary>A pre-encoded catalog command followed by caller-supplied arguments.</summary>
 internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] args) : IRespCommand
 {
+    public bool TryGetClusterSlot(out int slot)
+    {
+        var routingKeyIndex = DynamicCommandRouting.GetCatalogRoutingKeyIndex(command.Name, args);
+        if ((uint)routingKeyIndex < (uint)args.Length)
+        {
+            return args[routingKeyIndex].TryGetClusterSlot(out slot);
+        }
+
+        slot = 0;
+        return false;
+    }
+
     public void Write(ref RespWriter writer)
     {
         writer.WriteArrayHeader(command.Verb.Tokens + args.Length);
