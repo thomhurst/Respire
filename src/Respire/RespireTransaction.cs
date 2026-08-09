@@ -23,6 +23,8 @@ public sealed class RespireTransaction : IAsyncDisposable
     private readonly RespireConnection? _watchConnection;
     private readonly WriteBuffer _buffer = new(1024);
     private readonly List<TxOp> _ops = [];
+    private int _clusterSlot;
+    private bool _hasClusterSlot;
     private bool _completed;
 
     internal RespireTransaction(RespireClient client, RespireConnection? watchConnection)
@@ -217,7 +219,9 @@ public sealed class RespireTransaction : IAsyncDisposable
 
         async ValueTask<RespValue> SendAsync(CancellationToken token)
         {
-            connection ??= await _client.AcquireConnectionAsync(token).ConfigureAwait(false);
+            connection ??= await _client.AcquireConnectionAsync(
+                    _hasClusterSlot ? _clusterSlot : null, token)
+                .ConfigureAwait(false);
             return await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, token).ConfigureAwait(false);
         }
     }
@@ -250,6 +254,19 @@ public sealed class RespireTransaction : IAsyncDisposable
         where TCommand : struct, IRespCommand
     {
         ThrowIfCompleted();
+        if (_client.Core.Cluster is not null && command.TryGetClusterSlot(out var slot))
+        {
+            if (_hasClusterSlot && _clusterSlot != slot)
+            {
+                throw new InvalidOperationException(
+                    "Redis Cluster transactions require every key to use the same hash slot. " +
+                    "Use matching {...} hash tags for related keys.");
+            }
+
+            _clusterSlot = slot;
+            _hasClusterSlot = true;
+        }
+
         var writer = new RespWriter(_buffer);
         command.Write(ref writer);
         var pending = new RespirePending<T>();

@@ -11,9 +11,15 @@ internal readonly struct Verb
 {
     public readonly byte[] Bulk;
     public readonly int Tokens;
+    public readonly int RoutingKeyIndex;
 
-    public Verb(params string[] words)
+    public Verb(params string[] words) : this(0, words)
     {
+    }
+
+    public Verb(int routingKeyIndex, params string[] words)
+    {
+        RoutingKeyIndex = routingKeyIndex;
         Tokens = words.Length;
         var builder = new StringBuilder();
         foreach (var word in words)
@@ -27,6 +33,8 @@ internal readonly struct Verb
 
 internal static class Verbs
 {
+    public static readonly Verb ClusterSlots = new(-1, "CLUSTER", "SLOTS");
+
     // Strings
     public static readonly Verb Get = new("GET");
     public static readonly Verb Set = new("SET");
@@ -115,11 +123,11 @@ internal static class Verbs
     public static readonly Verb XRange = new("XRANGE");
     public static readonly Verb XAck = new("XACK");
     public static readonly Verb XGroupCreate = new("XGROUP", "CREATE");
-    public static readonly Verb XReadGroup = new("XREADGROUP");
+    public static readonly Verb XReadGroup = new(7, "XREADGROUP");
 
     // Scripts
-    public static readonly Verb Eval = new("EVAL");
-    public static readonly Verb EvalSha = new("EVALSHA");
+    public static readonly Verb Eval = new(2, "EVAL");
+    public static readonly Verb EvalSha = new(2, "EVALSHA");
     public static readonly Verb ScriptLoad = new("SCRIPT", "LOAD");
 
     // Transactions

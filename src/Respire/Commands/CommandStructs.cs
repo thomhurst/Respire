@@ -16,6 +16,8 @@ internal readonly struct Cmd(Verb verb) : IRespCommand
 
 internal readonly struct Cmd1(Verb verb, RespireValue a1) : IRespCommand
 {
+    public bool TryGetClusterSlot(out int slot) => a1.TryGetClusterSlot(out slot);
+
     public void Write(ref RespWriter writer)
     {
         writer.WriteArrayHeader(verb.Tokens + 1);
@@ -26,6 +28,8 @@ internal readonly struct Cmd1(Verb verb, RespireValue a1) : IRespCommand
 
 internal readonly struct Cmd2(Verb verb, RespireValue a1, RespireValue a2) : IRespCommand
 {
+    public bool TryGetClusterSlot(out int slot) => a1.TryGetClusterSlot(out slot);
+
     public void Write(ref RespWriter writer)
     {
         writer.WriteArrayHeader(verb.Tokens + 2);
@@ -37,6 +41,8 @@ internal readonly struct Cmd2(Verb verb, RespireValue a1, RespireValue a2) : IRe
 
 internal readonly struct Cmd3(Verb verb, RespireValue a1, RespireValue a2, RespireValue a3) : IRespCommand
 {
+    public bool TryGetClusterSlot(out int slot) => a1.TryGetClusterSlot(out slot);
+
     public void Write(ref RespWriter writer)
     {
         writer.WriteArrayHeader(verb.Tokens + 3);
@@ -49,6 +55,8 @@ internal readonly struct Cmd3(Verb verb, RespireValue a1, RespireValue a2, Respi
 
 internal readonly struct Cmd4(Verb verb, RespireValue a1, RespireValue a2, RespireValue a3, RespireValue a4) : IRespCommand
 {
+    public bool TryGetClusterSlot(out int slot) => a1.TryGetClusterSlot(out slot);
+
     public void Write(ref RespWriter writer)
     {
         writer.WriteArrayHeader(verb.Tokens + 4);
@@ -62,6 +70,8 @@ internal readonly struct Cmd4(Verb verb, RespireValue a1, RespireValue a2, Respi
 
 internal readonly struct Cmd5(Verb verb, RespireValue a1, RespireValue a2, RespireValue a3, RespireValue a4, RespireValue a5) : IRespCommand
 {
+    public bool TryGetClusterSlot(out int slot) => a1.TryGetClusterSlot(out slot);
+
     public void Write(ref RespWriter writer)
     {
         writer.WriteArrayHeader(verb.Tokens + 5);
@@ -77,6 +87,17 @@ internal readonly struct Cmd5(Verb verb, RespireValue a1, RespireValue a2, Respi
 /// <summary>VERB args… — fully dynamic argument list.</summary>
 internal readonly struct CmdN(Verb verb, RespireValue[] args) : IRespCommand
 {
+    public bool TryGetClusterSlot(out int slot)
+    {
+        if ((uint)verb.RoutingKeyIndex < (uint)args.Length)
+        {
+            return args[verb.RoutingKeyIndex].TryGetClusterSlot(out slot);
+        }
+
+        slot = 0;
+        return false;
+    }
+
     public void Write(ref RespWriter writer)
     {
         writer.WriteArrayHeader(verb.Tokens + args.Length);
@@ -91,6 +112,8 @@ internal readonly struct CmdN(Verb verb, RespireValue[] args) : IRespCommand
 /// <summary>VERB fixed rest… (e.g. SADD key member…).</summary>
 internal readonly struct Cmd1N(Verb verb, RespireValue a1, RespireValue[] rest) : IRespCommand
 {
+    public bool TryGetClusterSlot(out int slot) => a1.TryGetClusterSlot(out slot);
+
     public void Write(ref RespWriter writer)
     {
         writer.WriteArrayHeader(verb.Tokens + 1 + rest.Length);
@@ -106,6 +129,28 @@ internal readonly struct Cmd1N(Verb verb, RespireValue a1, RespireValue[] rest) 
 /// <summary>VERB a1 a2 rest… (e.g. XACK key group id…).</summary>
 internal readonly struct Cmd2N(Verb verb, RespireValue a1, RespireValue a2, RespireValue[] rest) : IRespCommand
 {
+    public bool TryGetClusterSlot(out int slot)
+    {
+        var index = verb.RoutingKeyIndex;
+        if (index == 0)
+        {
+            return a1.TryGetClusterSlot(out slot);
+        }
+
+        if (index == 1)
+        {
+            return a2.TryGetClusterSlot(out slot);
+        }
+
+        if ((uint)(index - 2) < (uint)rest.Length)
+        {
+            return rest[index - 2].TryGetClusterSlot(out slot);
+        }
+
+        slot = 0;
+        return false;
+    }
+
     public void Write(ref RespWriter writer)
     {
         writer.WriteArrayHeader(verb.Tokens + 2 + rest.Length);
@@ -120,8 +165,19 @@ internal readonly struct Cmd2N(Verb verb, RespireValue a1, RespireValue a2, Resp
 }
 
 /// <summary>An entire command whose tokens (verb included) are caller-supplied — the raw escape hatch.</summary>
-internal readonly struct DynamicCommand(RespireValue[] tokens) : IRespCommand
+internal readonly struct DynamicCommand(RespireValue[] tokens, int routingKeyIndex) : IRespCommand
 {
+    public bool TryGetClusterSlot(out int slot)
+    {
+        if ((uint)routingKeyIndex < (uint)tokens.Length)
+        {
+            return tokens[routingKeyIndex].TryGetClusterSlot(out slot);
+        }
+
+        slot = 0;
+        return false;
+    }
+
     public void Write(ref RespWriter writer)
     {
         writer.WriteArrayHeader(tokens.Length);
@@ -139,6 +195,8 @@ internal readonly struct DynamicCommand(RespireValue[] tokens) : IRespCommand
 /// </summary>
 internal readonly struct IncrementCommand(Verb one, Verb by, RespireValue key, long delta) : IRespCommand
 {
+    public bool TryGetClusterSlot(out int slot) => key.TryGetClusterSlot(out slot);
+
     public void Write(ref RespWriter writer)
     {
         if (delta == 1)
@@ -161,6 +219,8 @@ internal readonly struct IncrementCommand(Verb one, Verb by, RespireValue key, l
 internal readonly struct SetCommand(
     RespireValue key, RespireValue value, TimeSpan? expiry, SetWhen when, bool keepTtl, bool returnOld) : IRespCommand
 {
+    public bool TryGetClusterSlot(out int slot) => key.TryGetClusterSlot(out slot);
+
     public void Write(ref RespWriter writer)
     {
         var count = 3

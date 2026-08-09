@@ -52,8 +52,16 @@ public enum SubscriptionOverflow
 /// </summary>
 public sealed record RespireOptions
 {
-    /// <summary>Servers to connect to. The first endpoint is used; multi-endpoint (cluster/sentinel) is roadmap.</summary>
+    /// <summary>
+    /// Servers to connect to. In cluster mode these are seed nodes; otherwise the first endpoint is used.
+    /// </summary>
     public IList<RespireEndpoint> Endpoints { get; init; } = [];
+
+    /// <summary>
+    /// Enables Redis Cluster routing. MOVED and ASK redirects are followed automatically and
+    /// learned hash slots are routed directly on later commands.
+    /// </summary>
+    public bool Cluster { get; init; }
 
     /// <summary>ACL username. Defaults to Redis's "default" user when only a password is set.</summary>
     public string? Username { get; init; }
@@ -130,7 +138,8 @@ public sealed record RespireOptions
     /// Parses a connection string: "host", "host:port", or a
     /// <c>redis://[user[:password]@]host[:port][/database]</c> URI. Recognized query parameters:
     /// <c>clientName</c>, <c>connections</c>, <c>connectTimeoutMs</c>, <c>commandTimeoutMs</c>,
-    /// <c>protocol</c> (2 or 3), <c>db</c>. <c>rediss://</c> (TLS) is not supported yet.
+    /// <c>protocol</c> (2 or 3), <c>db</c>, <c>cluster</c> (true or false).
+    /// <c>rediss://</c> (TLS) is not supported yet.
     /// </summary>
     public static RespireOptions Parse(string connectionString)
     {
@@ -181,6 +190,7 @@ public sealed record RespireOptions
         TimeSpan connectTimeout = TimeSpan.FromSeconds(10);
         TimeSpan? commandTimeout = null;
         var protocol = RespProtocol.Resp2;
+        var cluster = false;
 
         foreach (var pair in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
         {
@@ -207,6 +217,9 @@ public sealed record RespireOptions
                 case "db":
                     database = int.Parse(value, CultureInfo.InvariantCulture);
                     break;
+                case "cluster":
+                    cluster = bool.Parse(value);
+                    break;
                 default:
                     throw new ArgumentException($"Unknown connection string parameter '{name}'.", nameof(connectionString));
             }
@@ -223,6 +236,7 @@ public sealed record RespireOptions
             ConnectTimeout = connectTimeout,
             CommandTimeout = commandTimeout,
             Protocol = protocol,
+            Cluster = cluster,
         };
     }
 }

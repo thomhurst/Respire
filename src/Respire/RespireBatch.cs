@@ -110,6 +110,23 @@ public sealed class RespireBatch
             return;
         }
 
+        if (core.Cluster is not null)
+        {
+            var clusterTasks = new Task<Exception?>[_ops.Count];
+            for (var i = 0; i < _ops.Count; i++)
+            {
+                clusterTasks[i] = _ops[i].RunClusterAsync(_client, cancellationToken);
+            }
+
+            var clusterErrors = await Task.WhenAll(clusterTasks).ConfigureAwait(false);
+            telemetry.Complete(
+                core,
+                telemetryOperation,
+                error: clusterErrors.FirstOrDefault(static error => error is not null),
+                batchSize: _ops.Count == 1 ? null : _ops.Count);
+            return;
+        }
+
         RespireConnection? connection = null;
         try
         {
@@ -177,6 +194,9 @@ public sealed class RespireBatch
             RespireClient client, RespireConnection connection, CancellationToken effectiveToken,
             CancellationToken callerToken, TimeSpan? timeout);
 
+        public abstract Task<Exception?> RunClusterAsync(
+            RespireClient client, CancellationToken cancellationToken);
+
         public abstract void Fail(Exception error);
     }
 
@@ -185,6 +205,34 @@ public sealed class RespireBatch
         where TCommand : struct, IRespCommand
     {
         public override void Fail(Exception error) => pending.Fail(error);
+
+        public override async Task<Exception?> RunClusterAsync(
+            RespireClient client, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var value = await client.SendAsync(Operation, command, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    pending.Succeed(convert(client, value));
+                }
+                catch (Exception ex)
+                {
+                    pending.Fail(ex);
+                }
+                finally
+                {
+                    value.Dispose();
+                }
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                pending.Fail(ex);
+                return ex;
+            }
+        }
 
         public override async Task<Exception?> RunAsync(
             RespireClient client, RespireConnection connection, CancellationToken effectiveToken,

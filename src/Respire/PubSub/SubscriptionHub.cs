@@ -23,6 +23,13 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
     public RespireSubscription CreateSubscription(SubscriptionKind kind, string[] names)
     {
         ArgumentNullException.ThrowIfNull(names);
+        if (kind == SubscriptionKind.Sharded && core.Cluster is not null)
+        {
+            throw new NotSupportedException(
+                "Sharded pub/sub across Redis Cluster nodes is not supported yet. " +
+                "Regular SUBSCRIBE and PSUBSCRIBE remain cluster-wide.");
+        }
+
         if (names.Length == 0)
         {
             throw new ArgumentException("At least one channel is required.", nameof(names));
@@ -216,7 +223,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
     {
         var telemetry = instrument
             ? RespireTelemetry.StartOperation(
-                operation, core.Multiplexer.Host, core.Multiplexer.Port, core.Options.Database)
+                operation, connection.Host, connection.Port, core.Options.Database)
             : default;
         try
         {
@@ -255,9 +262,20 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             }
 
             var previous = _connection;
+            RespireEndpoint endpoint;
+            if (core.Cluster is { } cluster)
+            {
+                await cluster.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                endpoint = cluster.SeedEndpoint;
+            }
+            else
+            {
+                endpoint = core.Options.PrimaryEndpoint;
+            }
+
             var options = core.Options.ToConnectionOptions(OnPush);
             var connection = await RespireConnection.ConnectAsync(
-                core.Multiplexer.Host, core.Multiplexer.Port, options, core.Logger, cancellationToken).ConfigureAwait(false);
+                endpoint.Host, endpoint.Port, options, core.Logger, cancellationToken).ConfigureAwait(false);
             _connection = connection;
             _ = WatchConnectionAsync(connection);
             if (previous is not null)

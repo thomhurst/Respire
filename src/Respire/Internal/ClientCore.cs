@@ -17,6 +17,7 @@ internal sealed class ClientCore : IAsyncDisposable
     public readonly RespireOptions Options;
     public readonly ILogger? Logger;
     public readonly DedicatedConnectionPool DedicatedPool;
+    public readonly ClusterRouter? Cluster;
     public volatile bool Disposed;
 
     public ClientCore(RespireOptions options)
@@ -28,7 +29,13 @@ internal sealed class ClientCore : IAsyncDisposable
             endpoint.Host, endpoint.Port, options.Connections, options.ToConnectionOptions(), Logger);
         DedicatedPool = new DedicatedConnectionPool(
             endpoint.Host, endpoint.Port, options.ToConnectionOptions(), Logger);
+        Cluster = options.Cluster ? new ClusterRouter(options, Multiplexer) : null;
     }
+
+    public ValueTask EnsureConnectedAsync(CancellationToken cancellationToken)
+        => Cluster is { } cluster
+            ? cluster.EnsureConnectedAsync(cancellationToken)
+            : Multiplexer.EnsureConnectedAsync(cancellationToken);
 
     public SubscriptionHub Hub
     {
@@ -70,6 +77,11 @@ internal sealed class ClientCore : IAsyncDisposable
         }
 
         await DedicatedPool.DisposeAsync().ConfigureAwait(false);
+        if (Cluster is { } cluster)
+        {
+            await cluster.DisposeAsync().ConfigureAwait(false);
+        }
+
         await Multiplexer.DisposeAsync().ConfigureAwait(false);
     }
 }

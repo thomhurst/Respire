@@ -1,6 +1,7 @@
 using System.Buffers.Text;
 using System.Globalization;
 using System.Text;
+using Respire.Internal;
 using Respire.Protocol;
 
 namespace Respire;
@@ -122,6 +123,24 @@ public readonly struct RespireValue
                 writer.WriteBulkString([]);
                 break;
         }
+    }
+
+    internal bool TryGetClusterSlot(out int slot)
+    {
+        if (_kind == Kind.String)
+        {
+            slot = ClusterHash.GetSlot(_string!);
+            return true;
+        }
+
+        if (_kind == Kind.Bytes)
+        {
+            slot = ClusterHash.GetSlot(_bytes.Span);
+            return true;
+        }
+
+        slot = 0;
+        return false;
     }
 
     public override string ToString()

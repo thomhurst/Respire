@@ -15,4 +15,7 @@ public class RespireKeyBenchmarks
 
     [Benchmark]
     public int ByteHashCode() => _bytesKey.GetHashCode();
+
+    [Benchmark]
+    public int ClusterSlot() => _stringKey.ClusterSlot;
 }

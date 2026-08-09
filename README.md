@@ -15,7 +15,7 @@ await redis.SetAsync("user:1", new User("Ada", 36));
 User? user = await redis.GetAsync<User>("user:1");
 ```
 
-> **Status:** Respire is pre-release, so its API may still change. TLS, cluster support, and
+> **Status:** Respire is pre-release, so its API may still change. TLS, Sentinel support, and
 > RESP3 client-side caching are on the [roadmap](docs/API_DESIGN.md#18-roadmap-designed-for-not-v1).
 
 ## Why Respire?
@@ -83,6 +83,30 @@ bool committed = await transaction.CommitAsync();
 ```
 
 Use `CreateTransactionAsync(["balance"])` when you need optimistic concurrency with `WATCH`.
+
+### Redis Cluster
+
+Enable cluster routing and provide one or more seed nodes. Respire loads `CLUSTER SLOTS`, follows
+`MOVED`/`ASK` redirects, and caches learned routes. Batches may span nodes; transactions must keep
+all keys in one slot, so use Redis hash tags for related keys. `WATCH` transactions are not
+supported in cluster mode—use a same-slot Lua script instead.
+
+```csharp
+await using var cluster = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Cluster = true,
+    Endpoints =
+    {
+        new("redis-1", 6379),
+        new("redis-2", 6379),
+    },
+});
+
+await cluster.SetAsync("{account:42}:name", "Ada");
+await cluster.SetAsync("{account:42}:balance", 100);
+```
+
+A single seed can also be enabled with `redis://redis-1?cluster=true`.
 
 ### Zero-copy reads and custom commands
 
