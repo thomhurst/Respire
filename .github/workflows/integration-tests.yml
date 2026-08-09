@@ -209,7 +209,7 @@ jobs:
           echo "- Struct commands with pre-compiled RESP prefixes" >> $GITHUB_STEP_SUMMARY
       
       - name: Upload Allocation Results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: allocation-benchmarks
