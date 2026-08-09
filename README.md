@@ -61,18 +61,22 @@ await foreach (var message in subscription.WithCancellation(token))
 {
     Console.WriteLine($"{message.Channel}: {message.Text}");
 }
+```
 
-// Redis 7 sharded pub/sub uses SSUBSCRIBE and SPUBLISH.
+Redis 7 sharded pub/sub uses `SSUBSCRIBE` and `SPUBLISH`. Run this as a separate consumer:
+
+```csharp
 await using var shard = redis.SubscribeSharded("orders:europe");
-await using var shardMessages = shard.GetAsyncEnumerator();
+await using var shardMessages = shard.GetAsyncEnumerator(token);
 var nextMessage = shardMessages.MoveNextAsync().AsTask(); // Starts SSUBSCRIBE.
 
-while (await redis.PublishShardedAsync("orders:europe", "ready") == 0)
+while (!nextMessage.IsCompleted)
 {
-    await Task.Delay(10, token);
+    await redis.PublishShardedAsync("orders:europe", "ready", token);
+    await Task.WhenAny(nextMessage, Task.Delay(10, token));
 }
 
-if (await nextMessage)
+if (await nextMessage.WaitAsync(token))
 {
     Console.WriteLine(shardMessages.Current.Text);
 }
