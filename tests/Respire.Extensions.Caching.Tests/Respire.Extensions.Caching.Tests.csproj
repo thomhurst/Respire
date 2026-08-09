@@ -15,7 +15,7 @@
 
     <ItemGroup>
         <PackageReference Include="TUnit" Version="1.64.0" />
-        <PackageReference Include="Testcontainers.Redis" Version="4.7.0" />
+        <PackageReference Include="Testcontainers.Redis" Version="4.13.0" />
     </ItemGroup>
 
     <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
