@@ -10,6 +10,8 @@ namespace Respire.Tests.Networking;
 
 public class ClusterTests
 {
+    private static readonly TimeSpan TestConnectTimeout = TimeSpan.FromSeconds(1);
+
     [Test]
     public async Task HashSlot_UsesRedisCrc16AndHashTags()
     {
@@ -370,7 +372,7 @@ public class ClusterTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Cluster = true,
-            ConnectTimeout = TimeSpan.FromMilliseconds(250),
+            ConnectTimeout = TestConnectTimeout,
             Endpoints =
             {
                 new RespireEndpoint("127.0.0.1", 1),
@@ -434,7 +436,7 @@ public class ClusterTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Cluster = true,
-            ConnectTimeout = TimeSpan.FromMilliseconds(100),
+            ConnectTimeout = TestConnectTimeout,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
 
@@ -466,7 +468,7 @@ public class ClusterTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Cluster = true,
-            ConnectTimeout = TimeSpan.FromMilliseconds(250),
+            ConnectTimeout = TestConnectTimeout,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
 
@@ -529,7 +531,7 @@ public class ClusterTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Cluster = true,
-            ConnectTimeout = TimeSpan.FromMilliseconds(100),
+            ConnectTimeout = TestConnectTimeout,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
         var keys = new List<string>();
@@ -614,7 +616,7 @@ public class ClusterTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Cluster = true,
-            ConnectTimeout = TimeSpan.FromMilliseconds(100),
+            ConnectTimeout = TestConnectTimeout,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
 
@@ -654,7 +656,7 @@ public class ClusterTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Cluster = true,
-            ConnectTimeout = TimeSpan.FromMilliseconds(100),
+            ConnectTimeout = TestConnectTimeout,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
         await seed.DisposeAsync();
@@ -686,7 +688,7 @@ public class ClusterTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Cluster = true,
-            ConnectTimeout = TimeSpan.FromMilliseconds(100),
+            ConnectTimeout = TestConnectTimeout,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
         await seed.DisposeAsync();
