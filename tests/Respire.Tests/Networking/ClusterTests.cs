@@ -556,7 +556,7 @@ public class ClusterTests
             {
             }
         }
-        catch
+        catch (Exception exception) when (exception is RespireConnectionException or OperationCanceledException)
         {
             failed = true;
         }

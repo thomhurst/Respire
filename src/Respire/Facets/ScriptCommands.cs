@@ -143,6 +143,7 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
             }
         }
 
-        return result ?? script.Sha1;
+        return result ?? throw new RespireConnectionException(
+            "SCRIPT LOAD did not reach any Redis Cluster master.");
     }
 }

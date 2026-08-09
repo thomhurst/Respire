@@ -324,7 +324,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
 
         await cache.RemoveAsync(key);
 
-        await Assert.That(wrappedClient.LastSetKey.ClusterSlot)
+        await Assert.That(prefixedClient.ResolveKey(wrappedClient.LastSetKey).ClusterSlot)
             .IsEqualTo(wrappedClient.ResolveKey(key).ClusterSlot);
     }
 
