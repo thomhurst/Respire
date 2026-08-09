@@ -53,6 +53,35 @@ public class RespireConnectionTests
     }
 
     [Test]
+    public async Task RingFull_Backpressure_WaitsForCapacity()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        server.DelayReply(0, 500);
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1", server.Port, new RespireConnectionOptions { MaxInflightCommands = 2 });
+
+        var first = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        var second = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen == 0)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
+        var third = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        await Task.Delay(100, timeout.Token);
+
+        await Assert.That(third.IsCompleted).IsFalse();
+
+        var responses = await Task.WhenAll(first, second, third);
+        foreach (var response in responses)
+        {
+            response.Dispose();
+        }
+    }
+
+    [Test]
     public async Task ConvertedPipelinedCommands_CompleteInFifoOrder()
     {
         const int batchSize = 50;
