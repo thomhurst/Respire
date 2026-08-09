@@ -19,6 +19,20 @@ public class CommandRoutingBenchmarks
         RespireCommands.Bitmap.BITFIELD.Verb,
         "benchmark-key",
         [BitFieldOperation.Get("u8", "0")]);
+    private readonly GeoAddCommand _geoAddCommand = new(
+        RespireCommands.Geo.GEOADD.Verb,
+        "benchmark-key",
+        GeoAddCondition.Always,
+        changed: false,
+        []);
+    private readonly GeoSearchCommand _geoSearchCommand = new(
+        RespireCommands.Geo.GEOSEARCH.Verb,
+        "benchmark-key",
+        GeoSearchOrigin.FromCoordinates(0, 0),
+        GeoSearchShape.Circle(1),
+        default,
+        destination: null,
+        storeDistance: false);
     private readonly RespireValue[] _rawTokens = ["SET", "benchmark-key", "value"];
     private readonly RespireValue[] _rawEvalTokens = ["EVAL", "return 1", 1, "benchmark-key"];
     private readonly RespireValue[] _rawMSetExTokens = ["MSETEX", 1, "benchmark-key", "value"];
@@ -41,6 +55,12 @@ public class CommandRoutingBenchmarks
 
     [Benchmark]
     public bool BitFieldRouting() => TryGetSlot(_bitFieldCommand);
+
+    [Benchmark]
+    public bool GeoAddRouting() => TryGetSlot(_geoAddCommand);
+
+    [Benchmark]
+    public bool GeoSearchRouting() => TryGetSlot(_geoSearchCommand);
 
     [Benchmark]
     public int RawCommandRouting()
