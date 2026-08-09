@@ -6,11 +6,11 @@ Respire exposes commands in two layers:
 - `RespireCommands` descriptors for the complete audited command surface. These preserve exact
   RESP command words and return `RespireResult` for server-specific reply shapes.
 
-The generated catalog contains 622 unique descriptors:
+The generated catalog contains 623 unique descriptors:
 
 | Reference | Version audited | Descriptors |
 | --- | --- | ---: |
-| Redis command metadata | 8.10.0 | 597 |
+| Redis command metadata | 8.10.0 | 598 |
 | Valkey command metadata | 9.1.1 | 464 |
 | Redis integrated modules | Redis 8.10 documentation | Included above |
 | Valkey optional Bloom, JSON, and Search modules | Valkey 9.1 documentation | Included above |

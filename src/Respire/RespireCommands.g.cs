@@ -618,6 +618,9 @@ public static class RespireCommands
         /// <summary><c>JSON.NUMMULTBY</c>.</summary>
         public static readonly RespireCommand JSON_NUMMULTBY = new("JSON.NUMMULTBY", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
+        /// <summary><c>JSON.NUMPOWBY</c>.</summary>
+        public static readonly RespireCommand JSON_NUMPOWBY = new("JSON.NUMPOWBY", RespireCommandSource.Redis);
+
         /// <summary><c>JSON.OBJKEYS</c>.</summary>
         public static readonly RespireCommand JSON_OBJKEYS = new("JSON.OBJKEYS", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
@@ -2178,6 +2181,7 @@ public static class RespireCommands
         Json.JSON_MSET,
         Json.JSON_NUMINCRBY,
         Json.JSON_NUMMULTBY,
+        Json.JSON_NUMPOWBY,
         Json.JSON_OBJKEYS,
         Json.JSON_OBJLEN,
         Json.JSON_RESP,
