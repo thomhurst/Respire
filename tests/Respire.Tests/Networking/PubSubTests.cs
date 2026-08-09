@@ -26,6 +26,18 @@ public class PubSubTests
     private static RespireClient CreateLazyClient(int port)
         => RespireClient.Create(new RespireOptions { Endpoints = { new RespireEndpoint("127.0.0.1", port) } });
 
+    [Test]
+    public async Task MalformedLaterName_DoesNotRegisterEarlierRoute()
+    {
+        await using var server = new FakeRespServer(SubscribeConfirmation);
+        await using var client = CreateLazyClient(server.Port);
+        await using var subscription = client.Subscribe("valid", "\uD800");
+        await using var enumerator = subscription.GetAsyncEnumerator();
+
+        await Assert.That(async () => await enumerator.MoveNextAsync()).Throws<ArgumentException>();
+        await Assert.That(server.CommandsSeen).IsEqualTo(0);
+    }
+
     private static async Task WaitForCommandsAsync(FakeRespServer server, int count)
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -42,7 +54,8 @@ public class PubSubTests
         await using var server = new FakeRespServer(SubscribeConfirmation);
         await using var client = CreateLazyClient(server.Port);
 
-        await using var subscription = client.Subscribe("ch");
+        var channel = new string("ch".AsSpan());
+        await using var subscription = client.Subscribe(channel);
         var enumerator = subscription.GetAsyncEnumerator();
         var moveTask = enumerator.MoveNextAsync();
 
@@ -53,6 +66,7 @@ public class PubSubTests
 
         await Assert.That(await moveTask.AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
         await Assert.That(enumerator.Current.Channel).IsEqualTo("ch");
+        await Assert.That(ReferenceEquals(enumerator.Current.Channel, channel)).IsTrue();
         await Assert.That(enumerator.Current.Text).IsEqualTo("hello");
         await enumerator.DisposeAsync();
     }

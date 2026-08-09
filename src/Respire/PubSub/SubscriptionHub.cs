@@ -1,3 +1,4 @@
+using System.Text;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Respire.Commands;
@@ -15,7 +16,8 @@ namespace Respire.Internal;
 internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
 {
     private readonly object _gate = new();
-    private readonly Dictionary<(SubscriptionKind Kind, string Name), List<RespireSubscription>> _routes = [];
+    private readonly Utf8RouteDictionary<List<RespireSubscription>>[] _routes =
+        [new(), new(), new()];
     private readonly SemaphoreSlim _connectionGate = new(1, 1);
     private RespireConnection? _connection;
     private volatile bool _disposed;
@@ -63,18 +65,20 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                 // subscriptions under this same lock, so an activation that loses the race must
                 // not register routes (and subscribe server-side) on a disposed hub.
                 ObjectDisposedException.ThrowIf(_disposed, this);
+                var routes = Routes(subscription.Kind);
+                routed = true;
                 foreach (var name in subscription.Names)
                 {
-                    if (!_routes.TryGetValue((subscription.Kind, name), out var list))
+                    if (!routes.TryGetValue(name, out var list))
                     {
-                        _routes[(subscription.Kind, name)] = list = [];
+                        list = [];
+                        routes.Add(name, list);
                     }
 
                     list.Add(subscription);
                 }
             }
 
-            routed = true;
             foreach (var name in subscription.Names)
             {
                 await SendControlAsync(
@@ -99,14 +103,15 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             {
                 lock (_gate)
                 {
+                    var routes = Routes(subscription.Kind);
                     foreach (var name in subscription.Names)
                     {
-                        if (_routes.TryGetValue((subscription.Kind, name), out var list))
+                        if (routes.TryGetValue(name, out var list))
                         {
                             list.Remove(subscription);
                             if (list.Count == 0)
                             {
-                                _routes.Remove((subscription.Kind, name));
+                                routes.Remove(name);
                             }
                         }
                     }
@@ -131,14 +136,15 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         var releasedRoutes = new List<(SubscriptionKind Kind, string Name)>();
         lock (_gate)
         {
+            var routes = Routes(subscription.Kind);
             foreach (var name in subscription.Names)
             {
-                if (_routes.TryGetValue((subscription.Kind, name), out var list))
+                if (routes.TryGetValue(name, out var list))
                 {
                     list.Remove(subscription);
                     if (list.Count == 0)
                     {
-                        _routes.Remove((subscription.Kind, name));
+                        routes.Remove(name);
                     }
                 }
 
@@ -148,7 +154,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                 // than "this call removed the last entry") makes the rollback cover that
                 // ordering too. A redundant UNSUBSCRIBE is harmless; a missing one leaks a
                 // server-side subscription.
-                if (!_routes.ContainsKey((subscription.Kind, name)))
+                if (!routes.ContainsKey(name))
                 {
                     releasedRoutes.Add((subscription.Kind, name));
                 }
@@ -292,7 +298,16 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                 (SubscriptionKind Kind, string Name)[] routes;
                 lock (_gate)
                 {
-                    routes = [.. _routes.Keys];
+                    var snapshot = new List<(SubscriptionKind Kind, string Name)>();
+                    for (var i = 0; i < _routes.Length; i++)
+                    {
+                        foreach (var name in _routes[i].Names)
+                        {
+                            snapshot.Add(((SubscriptionKind)i, name));
+                        }
+                    }
+
+                    routes = [.. snapshot];
                 }
 
                 foreach (var (kind, name) in routes)
@@ -330,28 +345,33 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         var frameKind = elements[0].AsSpan();
         if (frameKind.SequenceEqual("message"u8))
         {
-            Deliver(SubscriptionKind.Channel, routeName: elements[1].AsString(), channel: elements[1].AsString(),
-                pattern: null, payload: elements[2].AsSpan().ToArray());
+            Deliver(SubscriptionKind.Channel, elements[1].AsSpan(), elements[1].AsSpan(),
+                isPattern: false, elements[2].AsSpan());
         }
         else if (frameKind.SequenceEqual("smessage"u8))
         {
-            Deliver(SubscriptionKind.Sharded, routeName: elements[1].AsString(), channel: elements[1].AsString(),
-                pattern: null, payload: elements[2].AsSpan().ToArray());
+            Deliver(SubscriptionKind.Sharded, elements[1].AsSpan(), elements[1].AsSpan(),
+                isPattern: false, elements[2].AsSpan());
         }
         else if (frameKind.SequenceEqual("pmessage"u8) && elements.Length >= 4)
         {
-            var pattern = elements[1].AsString();
-            Deliver(SubscriptionKind.Pattern, routeName: pattern, channel: elements[2].AsString(),
-                pattern: pattern, payload: elements[3].AsSpan().ToArray());
+            Deliver(SubscriptionKind.Pattern, elements[1].AsSpan(), elements[2].AsSpan(),
+                isPattern: true, elements[3].AsSpan());
         }
     }
 
-    private void Deliver(SubscriptionKind kind, string routeName, string channel, string? pattern, byte[] payload)
+    private void Deliver(
+        SubscriptionKind kind,
+        ReadOnlySpan<byte> routeName,
+        ReadOnlySpan<byte> channel,
+        bool isPattern,
+        ReadOnlySpan<byte> payload)
     {
         RespireSubscription[] targets;
+        string cachedRouteName;
         lock (_gate)
         {
-            if (!_routes.TryGetValue((kind, routeName), out var list))
+            if (!Routes(kind).TryGetValue(routeName, out cachedRouteName, out var list))
             {
                 return;
             }
@@ -359,7 +379,14 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             targets = [.. list];
         }
 
-        var message = new RespireMessage(channel, pattern, payload, core.Options.Serializer);
+        var channelName = isPattern
+            ? Encoding.UTF8.GetString(channel)
+            : cachedRouteName;
+        var message = new RespireMessage(
+            channelName,
+            isPattern ? cachedRouteName : null,
+            payload.ToArray(),
+            core.Options.Serializer);
         foreach (var target in targets)
         {
             // Bounded with DropOldest/DropWrite — TryWrite applies the overflow policy.
@@ -379,12 +406,15 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         List<RespireSubscription> subscriptions = [];
         lock (_gate)
         {
-            foreach (var list in _routes.Values)
+            foreach (var routes in _routes)
             {
-                subscriptions.AddRange(list);
-            }
+                foreach (var list in routes.Values)
+                {
+                    subscriptions.AddRange(list);
+                }
 
-            _routes.Clear();
+                routes.Clear();
+            }
         }
 
         foreach (var subscription in subscriptions)
@@ -409,4 +439,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             _connectionGate.Dispose();
         }
     }
+
+    private Utf8RouteDictionary<List<RespireSubscription>> Routes(SubscriptionKind kind)
+        => _routes[(int)kind];
 }
