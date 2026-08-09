@@ -4,7 +4,6 @@ using ModularPipelines.Attributes;
 using ModularPipelines.Context;
 using ModularPipelines.DotNet.Extensions;
 using ModularPipelines.DotNet.Options;
-using ModularPipelines.Enums;
 using ModularPipelines.Models;
 using ModularPipelines.Modules;
 
@@ -13,11 +12,18 @@ namespace Respire.Pipeline.Modules;
 [DependsOn<BuildProjectsModule>]
 public class RunUnitTestsModule : Module<CommandResult[]>
 {
-    protected override async Task<CommandResult[]> ExecuteAsync(IPipelineContext context, CancellationToken cancellationToken)
+    private readonly IConfiguration _configuration;
+
+    public RunUnitTestsModule(IConfiguration configuration)
+    {
+        _configuration = configuration;
+    }
+
+    protected override async Task<CommandResult[]?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         context.Logger.LogInformation("Running unit tests...");
 
-        var testProjects = context.Configuration.GetSection("TestProjects").Get<string[]>() ?? new[]
+        var testProjects = _configuration.GetSection("TestProjects").Get<string[]>() ?? new[]
         {
             "../tests/Respire.Tests/Respire.Tests.csproj"
         };
@@ -28,11 +34,10 @@ public class RunUnitTestsModule : Module<CommandResult[]>
         {
             var result = await context.DotNet().Test(new DotNetTestOptions
             {
-                ProjectSolutionDirectoryDllExe = project,
-                Configuration = Configuration.Release,
-                NoBuild = true,
-                Verbosity = "normal"
-            }, cancellationToken);
+                Project = project,
+                Configuration = "Release",
+                NoBuild = true
+            }, cancellationToken: cancellationToken);
             
             results.Add(result);
         }

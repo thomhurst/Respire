@@ -20,7 +20,7 @@ public class CreateGitHubReleaseModule : Module<string>
         _gitHubSettings = gitHubSettings;
     }
 
-    protected override async Task<string> ExecuteAsync(IPipelineContext context, CancellationToken cancellationToken)
+    protected override async Task<string?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(_gitHubSettings.Value.Token))
         {
@@ -29,7 +29,7 @@ public class CreateGitHubReleaseModule : Module<string>
         }
 
         var version = Environment.GetEnvironmentVariable("KEVA_VERSION") ?? "1.0.0-dev";
-        var packageFiles = await GetModule<PackagePathsParserModule>();
+        _ = await context.GetModule<PackagePathsParserModule>();
         
         context.Logger.LogInformation("Creating GitHub release for version {Version}", version);
         

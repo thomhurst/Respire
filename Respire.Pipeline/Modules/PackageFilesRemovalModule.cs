@@ -6,7 +6,7 @@ namespace Respire.Pipeline.Modules;
 
 public class PackageFilesRemovalModule : Module
 {
-    protected override async Task<IDictionary<string, object>> ExecuteAsync(IPipelineContext context, CancellationToken cancellationToken)
+    protected override Task ExecuteModuleAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         context.Logger.LogInformation("Cleaning up old package files...");
         
@@ -38,6 +38,6 @@ public class PackageFilesRemovalModule : Module
             context.Logger.LogInformation("Created packages directory: {Directory}", packagesDirectory.FullName);
         }
         
-        return new Dictionary<string, object>();
+        return Task.CompletedTask;
     }
 }
