@@ -282,6 +282,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             return;
         }
 
+        core.Multiplexer.NotifyStateChanged(RespireConnectionState.Reconnecting);
         var delay = TimeSpan.FromMilliseconds(250);
         while (!_disposed)
         {
@@ -303,6 +304,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                         .ConfigureAwait(false);
                 }
 
+                core.Multiplexer.NotifyStateChanged(RespireConnectionState.Connected);
                 return;
             }
             catch (ObjectDisposedException)

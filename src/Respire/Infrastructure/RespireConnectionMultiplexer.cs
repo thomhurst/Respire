@@ -41,7 +41,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     /// <summary>The options every connection (and any subscriber) is built from.</summary>
     public RespireConnectionOptions Options => _options;
 
-    /// <summary>Raised when a dead connection is noticed and when its replacement lands.</summary>
+    /// <summary>Raised when any client-owned connection is reconnecting or restored.</summary>
     public event Action<RespireConnectionState>? StateChanged;
 
     public bool IsConnected
@@ -653,7 +653,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
-    private void NotifyStateChanged(RespireConnectionState state)
+    internal void NotifyStateChanged(RespireConnectionState state)
     {
         try
         {
