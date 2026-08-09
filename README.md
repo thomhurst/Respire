@@ -64,7 +64,18 @@ await foreach (var message in subscription.WithCancellation(token))
 
 // Redis 7 sharded pub/sub uses SSUBSCRIBE and SPUBLISH.
 await using var shard = redis.SubscribeSharded("orders:europe");
-await redis.PublishShardedAsync("orders:europe", "ready");
+await using var shardMessages = shard.GetAsyncEnumerator();
+var nextMessage = shardMessages.MoveNextAsync().AsTask(); // Starts SSUBSCRIBE.
+
+while (await redis.PublishShardedAsync("orders:europe", "ready") == 0)
+{
+    await Task.Delay(10, token);
+}
+
+if (await nextMessage)
+{
+    Console.WriteLine(shardMessages.Current.Text);
+}
 ```
 
 ### Batches and transactions
