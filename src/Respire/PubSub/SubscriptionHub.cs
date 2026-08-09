@@ -287,6 +287,11 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         long reconnectGeneration;
         lock (_reconnectStateGate)
         {
+            if (_disposed)
+            {
+                return;
+            }
+
             reconnectGeneration = ++_reconnectGeneration;
             core.NotifySubscriptionStateChanged(RespireConnectionState.Reconnecting);
         }
@@ -390,12 +395,17 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (_disposed)
+        lock (_reconnectStateGate)
         {
-            return;
-        }
+            if (_disposed)
+            {
+                return;
+            }
 
-        _disposed = true;
+            // Synchronizes with reconnect state publication: after this lock is released no
+            // watcher can emit Reconnecting or Connected for the disposed hub.
+            _disposed = true;
+        }
 
         List<RespireSubscription> subscriptions = [];
         lock (_gate)
