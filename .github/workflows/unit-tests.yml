@@ -15,6 +15,7 @@ on:
     paths:
       - 'src/**'
       - 'tests/Respire.Tests/**'
+      - '.github/workflows/unit-tests.yml'
 
 env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
@@ -50,15 +51,16 @@ jobs:
       
       - name: Run Unit Tests
         run: |
-          dotnet test tests/Respire.Tests/Respire.Tests.csproj \
+          dotnet run --project tests/Respire.Tests/Respire.Tests.csproj \
             -c Release \
             -f ${{ matrix.framework }} \
-            --no-build \
-            --verbosity normal \
-            --logger trx \
-            --results-directory TestResults \
-            --collect:"XPlat Code Coverage" \
-            --settings coverlet.runsettings
+            --no-build -- \
+            --results-directory "$GITHUB_WORKSPACE/TestResults" \
+            --report-trx \
+            --report-trx-filename "Respire.Tests-${{ matrix.framework }}.trx" \
+            --coverage \
+            --coverage-output coverage.cobertura.xml \
+            --coverage-output-format cobertura
       
       - name: Generate Code Coverage Report
         if: always()
@@ -111,7 +113,7 @@ jobs:
         if: matrix.framework == 'net10.0'
         uses: codecov/codecov-action@v7
         with:
-          file: CoverageReport/Cobertura.xml
+          files: CoverageReport/Cobertura.xml
           flags: unittests
           name: unit-tests
           fail_ci_if_error: false
