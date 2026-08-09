@@ -137,7 +137,7 @@ public sealed class RespireConnection : IAsyncDisposable
             if (options.UseTls)
             {
                 tlsStream = new SslStream(new NetworkStream(socket, ownsSocket: false));
-                var tlsOptions = options.TlsOptions ?? new SslClientAuthenticationOptions { TargetHost = host };
+                var tlsOptions = CreateTlsOptions(options.TlsOptions, host);
                 await tlsStream.AuthenticateAsClientAsync(tlsOptions, timeoutCts.Token).ConfigureAwait(false);
             }
         }
@@ -161,6 +161,48 @@ public sealed class RespireConnection : IAsyncDisposable
         }
 
         return connection;
+    }
+
+    private static SslClientAuthenticationOptions CreateTlsOptions(
+        SslClientAuthenticationOptions? configured,
+        string host)
+    {
+        if (configured is null)
+        {
+            return new SslClientAuthenticationOptions { TargetHost = host };
+        }
+
+        if (!string.IsNullOrWhiteSpace(configured.TargetHost))
+        {
+            return configured;
+        }
+
+        // Do not mutate a caller-owned options instance: one instance can configure several
+        // concurrent connections, including connections to different cluster nodes.
+        var copy = new SslClientAuthenticationOptions
+        {
+            AllowRenegotiation = configured.AllowRenegotiation,
+            AllowTlsResume = configured.AllowTlsResume,
+            ApplicationProtocols = configured.ApplicationProtocols,
+            CertificateChainPolicy = configured.CertificateChainPolicy,
+            CertificateRevocationCheckMode = configured.CertificateRevocationCheckMode,
+            CipherSuitesPolicy = configured.CipherSuitesPolicy,
+            ClientCertificateContext = configured.ClientCertificateContext,
+            ClientCertificates = configured.ClientCertificates,
+            EnabledSslProtocols = configured.EnabledSslProtocols,
+            EncryptionPolicy = configured.EncryptionPolicy,
+            LocalCertificateSelectionCallback = configured.LocalCertificateSelectionCallback,
+            RemoteCertificateValidationCallback = configured.RemoteCertificateValidationCallback,
+            TargetHost = host,
+        };
+#if NET10_0_OR_GREATER
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsWindows())
+        {
+            copy.AllowRsaPkcs1Padding = configured.AllowRsaPkcs1Padding;
+            copy.AllowRsaPssPadding = configured.AllowRsaPssPadding;
+        }
+#endif
+        return copy;
     }
 
     /// <summary>

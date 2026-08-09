@@ -219,7 +219,7 @@ public sealed record RespireOptions
 
         return new RespireOptions
         {
-            Endpoints = { new RespireEndpoint(uri.Host, uri.IsDefaultPort ? (useTls ? 6380 : 6379) : uri.Port) },
+            Endpoints = { new RespireEndpoint(uri.Host, uri.IsDefaultPort ? 6379 : uri.Port) },
             Username = username,
             Password = password,
             ClientName = clientName,

@@ -23,6 +23,15 @@ public class TlsTests
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var server = RunTlsServerAsync(listener, certificate);
 
+        SslPolicyErrors? certificateErrors = null;
+        var tlsOptions = new SslClientAuthenticationOptions
+        {
+            RemoteCertificateValidationCallback = (_, _, _, errors) =>
+            {
+                certificateErrors = errors;
+                return true;
+            },
+        };
         RespireConnection connection;
         try
         {
@@ -32,11 +41,7 @@ public class TlsTests
                 new RespireConnectionOptions
                 {
                     UseTls = true,
-                    TlsOptions = new SslClientAuthenticationOptions
-                    {
-                        TargetHost = "localhost",
-                        RemoteCertificateValidationCallback = static (_, _, _, _) => true,
-                    },
+                    TlsOptions = tlsOptions,
                 });
         }
         catch
@@ -50,6 +55,8 @@ public class TlsTests
             var response = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
 
             await Assert.That(response.AsString()).IsEqualTo("PONG");
+            await Assert.That(certificateErrors!.Value.HasFlag(SslPolicyErrors.RemoteCertificateNameMismatch)).IsFalse();
+            await Assert.That(tlsOptions.TargetHost).IsNull();
             response.Dispose();
         }
         await server.WaitAsync(TimeSpan.FromSeconds(5));
@@ -57,12 +64,12 @@ public class TlsTests
     }
 
     [Test]
-    public async Task RedissConnectionString_EnablesTlsAndUsesTlsDefaultPort()
+    public async Task RedissConnectionString_EnablesTlsAndUsesRedisDefaultPort()
     {
         var options = RespireOptions.Parse("rediss://cache.example");
 
         await Assert.That(options.UseTls).IsTrue();
-        await Assert.That(options.PrimaryEndpoint).IsEqualTo(new RespireEndpoint("cache.example", 6380));
+        await Assert.That(options.PrimaryEndpoint).IsEqualTo(new RespireEndpoint("cache.example", 6379));
     }
 
     private static async Task RunTlsServerAsync(TcpListener listener, X509Certificate2 certificate)
