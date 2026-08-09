@@ -36,7 +36,7 @@ public readonly struct RespireCommand
         "BLMOVE" or "BLMOVEM" or "BLMPOP" or "BLPOP" or "BRPOP" or "BRPOPLPUSH" or
         "BZMPOP" or "BZPOPMAX" or "BZPOPMIN" => RespireCommandBehavior.Blocking,
 
-        "XREAD" or "XREADGROUP" => RespireCommandBehavior.BlockingWhenRequested,
+        "TS.READ" or "XREAD" or "XREADGROUP" => RespireCommandBehavior.BlockingWhenRequested,
 
         "ASKING" or "AUTH" or "CLIENT" or "CLIENT CACHING" or "CLIENT CAPA" or "CLIENT GETNAME" or
         "CLIENT GETREDIR" or "CLIENT ID" or "CLIENT IMPORT-SOURCE" or "CLIENT INFO" or

@@ -100,6 +100,10 @@ public class CommandCatalogTests
         await Assert.That(RespireCommands.Stream.XREADGROUP.IsBlocking(
                 ["GROUP", "workers", "consumer", "BLOCK"u8.ToArray(), 1000, "STREAMS", "source", ">"]))
             .IsTrue();
+        await Assert.That(RespireCommands.TimeSeries.TS_READ.IsBlocking(["FILTER", "sensor=1"]))
+            .IsFalse();
+        await Assert.That(RespireCommands.TimeSeries.TS_READ.IsBlocking(["BLOCK", 0, "FILTER", "sensor=1"]))
+            .IsTrue();
     }
 
     [Test]

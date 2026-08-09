@@ -1,3 +1,4 @@
+using System.Text;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Jobs;
 
@@ -22,4 +23,17 @@ public class CommandInputBenchmarks
     [Benchmark]
     public int ClassifyCatalogCommand()
         => (int)new RespireCommand("BLMOVEM", RespireCommandSource.Valkey).Behavior;
+}
+
+[MemoryDiagnoser]
+[ShortRunJob]
+public class GeoResultMemberBenchmarks
+{
+    private readonly byte[] _member = "benchmark-member"u8.ToArray();
+
+    [Benchmark(Baseline = true)]
+    public string DecodeMemberAsString() => Encoding.UTF8.GetString(_member);
+
+    [Benchmark]
+    public byte[] CopyMemberBytes() => _member.AsSpan().ToArray();
 }

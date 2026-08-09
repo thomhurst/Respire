@@ -31,7 +31,7 @@ public readonly record struct GeoEntry(double Longitude, double Latitude, Respir
 public readonly record struct GeoPosition(double Longitude, double Latitude);
 
 public readonly record struct GeoSearchResult(
-    string Member,
+    byte[] Member,
     double? Distance = null,
     long? Hash = null,
     GeoPosition? Position = null);
@@ -259,7 +259,7 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
         {
             if (!detailed)
             {
-                results[i] = new GeoSearchResult(values[i].AsString());
+                results[i] = new GeoSearchResult(values[i].AsSpan().ToArray());
                 continue;
             }
 
@@ -275,7 +275,7 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
                     ResponseReader.Double(in coordinates[0]), ResponseReader.Double(in coordinates[1]));
             }
 
-            results[i] = new GeoSearchResult(item[0].AsString(), distance, hash, position);
+            results[i] = new GeoSearchResult(item[0].AsSpan().ToArray(), distance, hash, position);
         }
 
         return results;
