@@ -1015,6 +1015,33 @@ public sealed partial class RespireClient : IRespireClient
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.Integer(in value));
 
+    internal ValueTask<long> IntegerValuesAsync(
+        string operation, Verb verb, RespireValue first, ReadOnlySpan<RespireValue> rest)
+        => rest.Length switch
+        {
+            0 => IntegerAsync(operation, new Cmd1(verb, first), CancellationToken.None),
+            1 => IntegerAsync(operation, new Cmd2(verb, first, rest[0]), CancellationToken.None),
+            2 => IntegerAsync(operation, new Cmd3(verb, first, rest[0], rest[1]), CancellationToken.None),
+            3 => IntegerAsync(operation, new Cmd4(verb, first, rest[0], rest[1], rest[2]), CancellationToken.None),
+            4 => IntegerAsync(operation, new Cmd5(verb, first, rest[0], rest[1], rest[2], rest[3]), CancellationToken.None),
+            _ => IntegerAsync(operation, new Cmd1N(verb, first, MapValues(rest)), CancellationToken.None),
+        };
+
+    internal ValueTask<long> IntegerKeysAsync(string operation, Verb verb, ReadOnlySpan<RespireKey> keys)
+        => keys.Length switch
+        {
+            0 => IntegerAsync(operation, new CmdN(verb, []), CancellationToken.None),
+            1 => IntegerAsync(operation, new Cmd1(verb, Key(in keys[0])), CancellationToken.None),
+            2 => IntegerAsync(operation, new Cmd2(verb, Key(in keys[0]), Key(in keys[1])), CancellationToken.None),
+            3 => IntegerAsync(
+                operation, new Cmd3(verb, Key(in keys[0]), Key(in keys[1]), Key(in keys[2])), CancellationToken.None),
+            4 => IntegerAsync(
+                operation,
+                new Cmd4(verb, Key(in keys[0]), Key(in keys[1]), Key(in keys[2]), Key(in keys[3])),
+                CancellationToken.None),
+            _ => IntegerAsync(operation, new CmdN(verb, MapKeys(keys)), CancellationToken.None),
+        };
+
     internal ValueTask<bool> FlagAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync(

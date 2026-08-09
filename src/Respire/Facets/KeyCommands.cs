@@ -49,10 +49,10 @@ public interface IKeyCommands
 internal sealed class KeyCommands(RespireClient client) : IKeyCommands
 {
     public ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys)
-        => client.IntegerAsync("DEL", new CmdN(Verbs.Del, client.MapKeys(keys)), CancellationToken.None);
+        => client.IntegerKeysAsync("DEL", Verbs.Del, keys);
 
     public ValueTask<long> UnlinkAsync(params ReadOnlySpan<RespireKey> keys)
-        => client.IntegerAsync("UNLINK", new CmdN(Verbs.Unlink, client.MapKeys(keys)), CancellationToken.None);
+        => client.IntegerKeysAsync("UNLINK", Verbs.Unlink, keys);
 
     public ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.FlagAsync("EXISTS", new Cmd1(Verbs.Exists, client.Key(in key)), cancellationToken);
@@ -79,7 +79,7 @@ internal sealed class KeyCommands(RespireClient client) : IKeyCommands
         => client.OkAsync("RENAME", new Cmd2(Verbs.Rename, client.Key(in key), client.Key(in newKey)), cancellationToken);
 
     public ValueTask<long> TouchAsync(params ReadOnlySpan<RespireKey> keys)
-        => client.IntegerAsync("TOUCH", new CmdN(Verbs.Touch, client.MapKeys(keys)), CancellationToken.None);
+        => client.IntegerKeysAsync("TOUCH", Verbs.Touch, keys);
 
     public async IAsyncEnumerable<string> ScanAsync(
         string? match = null, int pageSize = 250, [EnumeratorCancellation] CancellationToken cancellationToken = default)

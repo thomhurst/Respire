@@ -71,8 +71,7 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
         => client.DoubleAsync("ZINCRBY", new Cmd3(Verbs.ZIncrBy, client.Key(in key), by, member), cancellationToken);
 
     public ValueTask<long> RemoveAsync(RespireKey key, params ReadOnlySpan<RespireValue> members)
-        => client.IntegerAsync(
-            "ZREM", new Cmd1N(Verbs.ZRem, client.Key(in key), RespireClient.MapValues(members)), CancellationToken.None);
+        => client.IntegerValuesAsync("ZREM", Verbs.ZRem, client.Key(in key), members);
 
     public ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.IntegerAsync("ZCARD", new Cmd1(Verbs.ZCard, client.Key(in key)), cancellationToken);

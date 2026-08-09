@@ -67,12 +67,10 @@ public interface IListCommands
 internal sealed class ListCommands(RespireClient client) : IListCommands
 {
     public ValueTask<long> LeftPushAsync(RespireKey key, params ReadOnlySpan<RespireValue> values)
-        => client.IntegerAsync(
-            "LPUSH", new Cmd1N(Verbs.LPush, client.Key(in key), RespireClient.MapValues(values)), CancellationToken.None);
+        => client.IntegerValuesAsync("LPUSH", Verbs.LPush, client.Key(in key), values);
 
     public ValueTask<long> RightPushAsync(RespireKey key, params ReadOnlySpan<RespireValue> values)
-        => client.IntegerAsync(
-            "RPUSH", new Cmd1N(Verbs.RPush, client.Key(in key), RespireClient.MapValues(values)), CancellationToken.None);
+        => client.IntegerValuesAsync("RPUSH", Verbs.RPush, client.Key(in key), values);
 
     public ValueTask<string?> LeftPopAsync(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
         => PopAsync(key, waitFor, Verbs.LPop, Verbs.BLPop, "LPOP", "BLPOP", cancellationToken);
