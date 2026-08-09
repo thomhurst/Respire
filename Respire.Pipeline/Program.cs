@@ -3,7 +3,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ModularPipelines;
 using ModularPipelines.Extensions;
-using ModularPipelines.GitHub.Extensions;
 using ModularPipelines.GitHub.Options;
 using Respire.Pipeline.Modules;
 using Respire.Pipeline.Modules.LocalMachine;
@@ -25,11 +24,13 @@ public class Program
 
         builder.Services.Configure<GitHubOptions>(options =>
         {
-            options.AccessToken = builder.Configuration["GitHub:AccessToken"]
-                ?? builder.Configuration["GitHub:Token"];
+            options.AccessToken = new[]
+                {
+                    builder.Configuration["GitHub:AccessToken"],
+                    builder.Configuration["GitHub:Token"]
+                }
+                .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
         });
-
-        builder.Services.RegisterGitHubContext();
 
         if (builder.Environment.IsDevelopment())
         {
