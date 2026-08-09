@@ -41,10 +41,10 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(MSBuildProjectName)' == 'Respire.ComparisonBenchmarks' Or '$(MSBuildProjectName)' == 'Respire.StressTests'">
-    <PackageVersion Include="StackExchange.Redis" Version="3.1.11" />
+    <PackageVersion Include="StackExchange.Redis" Version="3.1.13" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(MSBuildProjectName)' != 'Respire.ComparisonBenchmarks' And '$(MSBuildProjectName)' != 'Respire.StressTests'">
-    <PackageVersion Include="StackExchange.Redis" Version="2.13.17" />
+    <PackageVersion Include="StackExchange.Redis" Version="3.1.13" />
   </ItemGroup>
 </Project>
