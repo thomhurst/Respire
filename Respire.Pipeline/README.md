@@ -123,6 +123,7 @@ The pipeline uses ModularPipelines with the following packages:
 The pipeline generates versions automatically:
 
 - **Main/Master Branch**: `0.1.266` from base version plus commit height
+- **Minor Marker**: `0.2.0` when the latest highest marker is `+semver:minor`
 - **Feature Branches**: `0.1.266-ci.feature-branch.266.abc12345`
 - **No Generated Version**: `0.1.0` fallback
 
@@ -132,7 +133,7 @@ Version is based on:
 - Branch name and short commit hash for CI branch packages
 - Optional commit message markers: `+semver:major`, `+semver:minor`, `+semver:patch`, and `+semver:none`
 
-If no `+semver:` marker is present, the pipeline applies a patch increment. The highest marker in the commit range wins.
+If no `+semver:` marker is present, the pipeline applies a patch increment. The highest marker in the commit range wins. Major and minor markers reset lower version parts; patch is then counted from commits after the selected marker.
 
 ## Customization
 
