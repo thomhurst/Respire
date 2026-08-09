@@ -203,6 +203,24 @@ public class RespireConnectionTests
     }
 
     [Test]
+    public async Task LargeBulkStringNestedInArray_DirectFillRoundTrips()
+    {
+        var payload = new string('n', 256 * 1024);
+        var reply = Encoding.UTF8.GetBytes($"*2\r\n${payload.Length}\r\n{payload}\r\n:7\r\n");
+        await using var server = new FakeRespServer(reply);
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1", server.Port, new RespireConnectionOptions { ReceiveBufferSize = 128 });
+
+        var response = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+        var receivedPayload = response.AsArray()[0].AsString();
+        var receivedInteger = response.AsArray()[1].AsInteger();
+
+        await Assert.That(receivedPayload).IsEqualTo(payload);
+        await Assert.That(receivedInteger).IsEqualTo(7);
+        response.Dispose();
+    }
+
+    [Test]
     public async Task ManyCommands_AreCoalescedAndAllAnswered()
     {
         await using var server = new FakeRespServer("+OK\r\n"u8.ToArray());
