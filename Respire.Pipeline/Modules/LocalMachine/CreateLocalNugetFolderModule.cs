@@ -6,7 +6,7 @@ namespace Respire.Pipeline.Modules.LocalMachine;
 
 public class CreateLocalNugetFolderModule : Module<DirectoryInfo>
 {
-    protected override async Task<DirectoryInfo> ExecuteAsync(IPipelineContext context, CancellationToken cancellationToken)
+    protected override async Task<DirectoryInfo?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         context.Logger.LogInformation("Creating local NuGet folder for development...");
         

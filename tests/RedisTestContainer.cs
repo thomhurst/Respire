@@ -33,7 +33,7 @@ public sealed class RedisTestContainer : IAsyncInitializer, IAsyncDisposable
     }
 
     public string ConnectionString => $"redis://{Host}:{Port}/{Database}";
-    public string StackExchangeConnectionString => $"{Host}:{Port},defaultDatabase={Database}";
+    public string StackExchangeConnectionString => $"{Host}:{Port},defaultDatabase={Database},allowAdmin=true";
     public string Host => Container.Hostname;
     public int Port => Container.GetMappedPublicPort(RedisPort);
 

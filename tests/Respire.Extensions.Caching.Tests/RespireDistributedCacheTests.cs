@@ -314,6 +314,20 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     }
 
     [Test]
+    public async Task RemoveAsync_WrappedClient_CoLocatesLeaseWithCacheKey()
+    {
+        const string key = "{account}wrapped-remove";
+        await Cache.SetAsync(key, [1], new DistributedCacheEntryOptions());
+        var wrappedClient = new ScriptInterceptingClient(Client, (_, send) => send());
+        await using var cache = new RespireDistributedCache(wrappedClient);
+
+        await cache.RemoveAsync(key);
+
+        await Assert.That(wrappedClient.LastSetKey.ClusterSlot)
+            .IsEqualTo(new RespireKey(key).ClusterSlot);
+    }
+
+    [Test]
     public async Task RemoveAsync_WrappedClient_AttemptsRemovalAtLeaseCap()
     {
         await Cache.SetAsync("slow-lease-placement", [1], new DistributedCacheEntryOptions());
@@ -1289,9 +1303,11 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     {
         private int _scriptCalls;
         private int _setCalls;
+        private RespireKey _lastSetKey;
 
         public int ScriptCalls => _scriptCalls;
         public int SetCalls => _setCalls;
+        public RespireKey LastSetKey => _lastSetKey;
 
         public IScriptCommands Scripts => new InterceptedScripts(this, inner.Scripts);
 
@@ -1346,6 +1362,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             RespireKey key, RespireValue value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always,
             bool keepTtl = false, CancellationToken cancellationToken = default)
         {
+            _lastSetKey = key;
             await DelaySetAsync(cancellationToken);
             return await inner.SetAsync(key, value, expiry, when, keepTtl, cancellationToken);
         }
@@ -1354,6 +1371,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             RespireKey key, T value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always,
             bool keepTtl = false, CancellationToken cancellationToken = default)
         {
+            _lastSetKey = key;
             await DelaySetAsync(cancellationToken);
             return await inner.SetAsync(key, value, expiry, when, keepTtl, cancellationToken);
         }

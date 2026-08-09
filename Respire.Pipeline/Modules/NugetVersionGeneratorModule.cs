@@ -8,7 +8,7 @@ namespace Respire.Pipeline.Modules;
 
 public class NugetVersionGeneratorModule : Module<string>
 {
-    protected override async Task<string> ExecuteAsync(IPipelineContext context, CancellationToken cancellationToken)
+    protected override async Task<string?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         context.Logger.LogInformation("Generating version number...");
         

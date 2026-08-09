@@ -63,6 +63,25 @@ await foreach (var message in subscription.WithCancellation(token))
 }
 ```
 
+Redis 7 sharded pub/sub uses `SSUBSCRIBE` and `SPUBLISH`. Run this as a separate consumer:
+
+```csharp
+await using var shard = redis.SubscribeSharded("orders:europe");
+await using var shardMessages = shard.GetAsyncEnumerator(token);
+var nextMessage = shardMessages.MoveNextAsync().AsTask(); // Starts SSUBSCRIBE.
+
+while (!nextMessage.IsCompleted)
+{
+    await redis.PublishShardedAsync("orders:europe", "ready", token);
+    await Task.WhenAny(nextMessage, Task.Delay(10, token));
+}
+
+if (await nextMessage.WaitAsync(token))
+{
+    Console.WriteLine(shardMessages.Current.Text);
+}
+```
+
 ### Batches and transactions
 
 Batch commands share one flush. Transactions use one connection and return typed pending

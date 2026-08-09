@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -40,6 +41,8 @@ public sealed class RespireConnection : IAsyncDisposable
 {
     private const int DirectFillThreshold = 4 * 1024;
     private const int MaxResponseSize = 512 * 1024 * 1024;
+    private static readonly TimeSpan MinWatchdogDelay = TimeSpan.FromMilliseconds(1);
+    private static readonly TimeSpan MaxWatchdogSleep = TimeSpan.FromDays(1);
 
     private readonly Socket _socket;
     private readonly SslStream? _tlsStream;
@@ -53,14 +56,26 @@ public sealed class RespireConnection : IAsyncDisposable
     private readonly RespirePushHandler? _pushHandler;
     private readonly Task _receiveTask;
     private readonly Task _flushTask;
+    private readonly Task? _watchdogTask;
+    private readonly CancellationTokenSource? _watchdogCancellation;
+    private readonly TimeSpan? _responseTimeout;
+    // Sent/received counters and the deadline are one state transition: a reply must not clear
+    // a deadline concurrently armed for a later batch.
+    private readonly object _receiveDeadlineGate = new();
     private readonly AsyncFlushSignal _flushSignal = new();
     private readonly AsyncCapacitySignal _capacitySignal = new();
 
     private WriteBuffer _activeBuffer;
     private WriteBuffer _spareBuffer;
+    private int _activeReplyCount;
     private bool _dead;
     private int _disposed;
     private long _serverClientId;
+    private long _sentReplyCount;
+    private long _receivedReplyCount;
+    private long _receiveDeadlineTimestamp;
+    private int _responseTimeoutSuppressions;
+    private Exception? _abortReason;
 
     public string Host { get; }
     public int Port { get; }
@@ -101,8 +116,18 @@ public sealed class RespireConnection : IAsyncDisposable
         _sourcePool = new PendingResponsePool(options.CompletionSourcePoolSize);
         _activeBuffer = new WriteBuffer(options.WriteBufferSize);
         _spareBuffer = new WriteBuffer(options.WriteBufferSize);
+        _responseTimeout = options.ResponseTimeout;
+        if (_responseTimeout is not null)
+        {
+            _watchdogCancellation = new CancellationTokenSource();
+        }
+
         _receiveTask = Task.Run(ReceiveLoopAsync);
         _flushTask = Task.Run(FlushLoopAsync);
+        if (_responseTimeout is { } responseTimeout)
+        {
+            _watchdogTask = WatchReceiveAsync(responseTimeout, _watchdogCancellation!.Token);
+        }
     }
 
     public static async Task<RespireConnection> ConnectAsync(
@@ -113,6 +138,11 @@ public sealed class RespireConnection : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         options ??= RespireConnectionOptions.Default;
+        if (options.ResponseTimeout is { } invalidTimeout && invalidTimeout < MinWatchdogDelay)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options), "ResponseTimeout must be at least one millisecond.");
+        }
 
         var socket = new Socket(SocketType.Stream, ProtocolType.Tcp)
         {
@@ -248,12 +278,21 @@ public sealed class RespireConnection : IAsyncDisposable
             try
             {
                 var reply = await pendingReply.ConfigureAwait(false);
-                if (failure is null && reply.IsError)
+                try
                 {
-                    failure = CreateHandshakeException(in reply, step);
+                    if (failure is null && reply.IsError)
+                    {
+                        failure = CreateHandshakeException(in reply, step);
+                    }
+                    else if (failure is null && step == "HELLO")
+                    {
+                        ValidateHelloProtocol(in reply);
+                    }
                 }
-
-                reply.Dispose();
+                finally
+                {
+                    reply.Dispose();
+                }
             }
             catch (Exception ex)
             {
@@ -271,6 +310,26 @@ public sealed class RespireConnection : IAsyncDisposable
 
     private RespireConnectionException CreateHandshakeException(in RespValue reply, string step)
         => new($"{step} failed for {Host}:{Port}: {reply.GetErrorMessage()}");
+
+    private void ValidateHelloProtocol(in RespValue reply)
+    {
+        if (reply.Type == RespDataType.Map)
+        {
+            var fields = reply.AsArray();
+            for (var i = 0; i + 1 < fields.Length; i += 2)
+            {
+                if (fields[i].AsSpan().SequenceEqual("proto"u8)
+                    && fields[i + 1].Type == RespDataType.Integer
+                    && fields[i + 1].AsInteger() == 3)
+                {
+                    return;
+                }
+            }
+        }
+
+        throw new RespireConnectionException(
+            $"HELLO 3 failed for {Host}:{Port}: server did not confirm RESP3 (expected map field 'proto' = 3).");
+    }
 
     /// <summary>
     /// Captures Redis's connection ID. Corrections use it to kill a locally dead connection on
@@ -305,6 +364,22 @@ public sealed class RespireConnection : IAsyncDisposable
     public ValueTask<RespValue> SendAsync<TCommand>(in TCommand command, CancellationToken cancellationToken = default)
         where TCommand : struct, IRespCommand
         => SendCoreAsync(in command, discardRepliesBefore: 0, throwOnError: false, cancellationToken);
+
+    /// <summary>Sends an intentionally blocking command without applying the receive watchdog.</summary>
+    internal async ValueTask<RespValue> SendWithoutResponseTimeoutAsync<TCommand>(
+        TCommand command, CancellationToken cancellationToken = default)
+        where TCommand : struct, IRespCommand
+    {
+        Interlocked.Increment(ref _responseTimeoutSuppressions);
+        try
+        {
+            return await SendAsync(in command, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _responseTimeoutSuppressions);
+        }
+    }
 
     /// <summary>Sends a command and translates a RESP error reply when its result is consumed.</summary>
     internal ValueTask<RespValue> SendCheckedAsync<TCommand>(
@@ -577,6 +652,10 @@ public sealed class RespireConnection : IAsyncDisposable
                 }
 
                 _activeBuffer.Append(frame);
+                if (_responseTimeout is not null)
+                {
+                    _activeReplyCount += discardRepliesBefore + 1;
+                }
 
                 for (var i = 0; i < discardRepliesBefore; i++)
                 {
@@ -639,6 +718,11 @@ public sealed class RespireConnection : IAsyncDisposable
             if (_activeBuffer.Count - mark > ScratchRetainLimit)
             {
                 _directPathBudget = DirectPathBudgetAfterLargeFrame;
+            }
+
+            if (_responseTimeout is not null)
+            {
+                _activeReplyCount += discardRepliesBefore + 1;
             }
 
             for (var i = 0; i < discardRepliesBefore; i++)
@@ -794,6 +878,7 @@ public sealed class RespireConnection : IAsyncDisposable
                 while (true)
                 {
                     WriteBuffer sending;
+                    int sendingReplyCount;
                     lock (_writeGate)
                     {
                         if (_dead)
@@ -809,6 +894,8 @@ public sealed class RespireConnection : IAsyncDisposable
                         sending = _activeBuffer;
                         _activeBuffer = _spareBuffer;
                         _spareBuffer = sending;
+                        sendingReplyCount = _activeReplyCount;
+                        _activeReplyCount = 0;
                     }
 
                     // Never cancelled: a partial RESP frame on the wire is unrecoverable.
@@ -826,6 +913,8 @@ public sealed class RespireConnection : IAsyncDisposable
                         await _tlsStream.WriteAsync(memory).ConfigureAwait(false);
                     }
 
+                    MarkRepliesSent(sendingReplyCount);
+
                     sending.Reset();
                 }
             }
@@ -840,8 +929,10 @@ public sealed class RespireConnection : IAsyncDisposable
     private async Task ReceiveLoopAsync()
     {
         var buffer = RespirePools.ResponsePayloads.Rent(_receiveBufferSize);
+        var parser = new RespParseState(DirectFillThreshold);
         var start = 0;
         var end = 0;
+        long responseBytes = 0;
         Exception? fault = null;
 
         try
@@ -853,28 +944,87 @@ public sealed class RespireConnection : IAsyncDisposable
                 while (progressing && start < end)
                 {
                     var bufferedData = buffer.AsSpan(0, end);
-                    var hasBulkHeader = RespParser.TryPeekBulkHeader(
-                        bufferedData, start, out var bulkType, out var bulkLength, out var headerEnd);
-                    if (hasBulkHeader && bulkLength >= DirectFillThreshold)
+                    var previousStart = start;
+                    RespParseStatus status;
+                    RespValue value;
+                    RespDirectFillRequest directFill = default;
+                    if (parser.IsIdle)
                     {
-                        if (bulkLength > MaxResponseSize)
+                        var hasBulkHeader = RespParser.TryPeekBulkHeader(
+                            bufferedData, start, out var bulkType, out var bulkLength, out var headerEnd);
+                        if (hasBulkHeader && bulkLength >= DirectFillThreshold)
                         {
-                            throw new RespireProtocolException($"Response of {bulkLength} bytes exceeds the {MaxResponseSize} byte limit.");
-                        }
+                            if (bulkLength > int.MaxValue - 2)
+                            {
+                                throw new RespireProtocolException(
+                                    $"Response exceeds the {MaxResponseSize} byte limit.");
+                            }
 
-                        (start, end) = await ReceiveLargeBulkAsync(buffer, headerEnd, end, bulkType, (int)bulkLength).ConfigureAwait(false);
-                        continue;
+                            start = headerEnd;
+                            value = default;
+                            directFill = new RespDirectFillRequest(bulkType, (int)bulkLength);
+                            status = RespParseStatus.NeedDirectFill;
+                        }
+                        else
+                        {
+                            var pos = start;
+                            status = hasBulkHeader
+                                ? RespParser.TryParseBulkValue(
+                                    bufferedData, ref pos, bulkType, bulkLength, headerEnd, out value)
+                                : RespParser.TryParseValue(bufferedData, ref pos, out value);
+                            if (status == RespParseStatus.Done)
+                            {
+                                start = pos;
+                            }
+                            else if (status == RespParseStatus.NeedMoreData && hasBulkHeader)
+                            {
+                                start = headerEnd;
+                                parser.PrepareBulk(bulkType, (int)bulkLength);
+                            }
+                            else if (status == RespParseStatus.NeedMoreData)
+                            {
+                                status = parser.TryParseResumable(
+                                    bufferedData, ref start, out value, out directFill);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        status = parser.TryParseResumable(
+                            bufferedData, ref start, out value, out directFill);
                     }
 
-                    var pos = start;
-                    var status = hasBulkHeader
-                        ? RespParser.TryParseBulkValue(bufferedData, ref pos, bulkType, bulkLength, headerEnd, out var value)
-                        : RespParser.TryParseValue(bufferedData, ref pos, out value);
+                    responseBytes += start - previousStart;
+                    if (responseBytes > MaxResponseSize)
+                    {
+                        throw new RespireProtocolException($"Response exceeds the {MaxResponseSize} byte limit.");
+                    }
+
                     switch (status)
                     {
                         case RespParseStatus.Done:
-                            start = pos;
+                            responseBytes = 0;
                             CompleteResponse(in value);
+                            break;
+                        case RespParseStatus.NeedDirectFill:
+                            if (responseBytes + directFill.PayloadLength + 2 > MaxResponseSize)
+                            {
+                                throw new RespireProtocolException(
+                                    $"Response exceeds the {MaxResponseSize} byte limit.");
+                            }
+
+                            var filled = await ReceiveLargeBulkAsync(
+                                    buffer, start, end, directFill.Type, directFill.PayloadLength)
+                                .ConfigureAwait(false);
+                            start = filled.Start;
+                            end = filled.End;
+                            responseBytes += directFill.PayloadLength + 2L;
+                            if (parser.SupplyDirectFill(in filled.Value, out value))
+                            {
+                                responseBytes = 0;
+                                CompleteResponse(in value);
+                            }
+
                             break;
                         case RespParseStatus.InvalidData:
                             throw new RespireProtocolException($"Malformed RESP data from {Host}:{Port} (leading byte 0x{buffer[start]:X2}).");
@@ -920,6 +1070,7 @@ public sealed class RespireConnection : IAsyncDisposable
                     break;
                 }
 
+                ResetReceiveDeadline();
                 end += received;
             }
         }
@@ -929,20 +1080,24 @@ public sealed class RespireConnection : IAsyncDisposable
         }
         finally
         {
+            parser.Dispose();
             RespirePools.ResponsePayloads.Return(buffer);
             Abort();
-            FailAllPending(fault ?? new RespireConnectionException($"Connection to {Host}:{Port} closed."));
+            FailAllPending(Volatile.Read(ref _abortReason)
+                ?? fault
+                ?? new RespireConnectionException($"Connection to {Host}:{Port} closed."));
         }
     }
 
     /// <summary>
     /// Receives a large bulk payload straight into its pooled array — one user-space copy for
-    /// the part already buffered, zero for the remainder. Returns the new (start, end) cursors.
+    /// the part already buffered, zero for the remainder. Returns the new cursors and value;
+    /// the resumable parser decides whether it completes a top-level or nested aggregate.
     /// </summary>
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
-    private async ValueTask<(int Start, int End)> ReceiveLargeBulkAsync(
+    private async ValueTask<(int Start, int End, RespValue Value)> ReceiveLargeBulkAsync(
         byte[] buffer, int start, int end, RespDataType type, int payloadLength)
     {
         var payload = RespirePools.ResponsePayloads.Rent(payloadLength);
@@ -961,6 +1116,7 @@ public sealed class RespireConnection : IAsyncDisposable
                     throw new RespireConnectionException($"Connection to {Host}:{Port} closed mid-frame.");
                 }
 
+                ResetReceiveDeadline();
                 filled += read;
             }
 
@@ -985,6 +1141,7 @@ public sealed class RespireConnection : IAsyncDisposable
                     throw new RespireConnectionException($"Connection to {Host}:{Port} closed mid-frame.");
                 }
 
+                ResetReceiveDeadline();
                 end += read;
             }
 
@@ -997,8 +1154,7 @@ public sealed class RespireConnection : IAsyncDisposable
 
             var value = RespValue.PooledString(type, payload, payloadLength);
             payload = null;
-            CompleteResponse(in value);
-            return (start, end);
+            return (start, end, value);
         }
         finally
         {
@@ -1020,6 +1176,18 @@ public sealed class RespireConnection : IAsyncDisposable
         {
             value.Dispose();
             throw new RespireProtocolException($"Unsolicited response from {Host}:{Port} with no command in flight.");
+        }
+
+        if (_responseTimeout is not null)
+        {
+            lock (_receiveDeadlineGate)
+            {
+                _receivedReplyCount++;
+                if (_receivedReplyCount >= _sentReplyCount)
+                {
+                    _receiveDeadlineTimestamp = 0;
+                }
+            }
         }
 
         _capacitySignal.Signal();
@@ -1146,8 +1314,95 @@ public sealed class RespireConnection : IAsyncDisposable
     /// Marks the connection dead and closes the socket, waking any blocked receive. Idempotent.
     /// The receive loop's exit path fails all in-flight commands — it is the ring's only consumer.
     /// </summary>
-    private void Abort()
+    private async Task WatchReceiveAsync(TimeSpan timeout, CancellationToken cancellationToken)
     {
+        try
+        {
+            while (true)
+            {
+                if (Volatile.Read(ref _responseTimeoutSuppressions) != 0)
+                {
+                    await DelayWatchdogAsync(timeout, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                var deadlineStart = Volatile.Read(ref _receiveDeadlineTimestamp);
+                if (deadlineStart == 0)
+                {
+                    await DelayWatchdogAsync(timeout, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                var elapsed = Stopwatch.GetElapsedTime(deadlineStart);
+                if (elapsed < timeout)
+                {
+                    await DelayWatchdogAsync(timeout - elapsed, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                lock (_receiveDeadlineGate)
+                {
+                    if (deadlineStart != _receiveDeadlineTimestamp
+                        || _sentReplyCount <= _receivedReplyCount
+                        || Volatile.Read(ref _responseTimeoutSuppressions) != 0)
+                    {
+                        continue;
+                    }
+
+                    Abort(new RespireConnectionException(
+                        $"Connection to {Host}:{Port} received no data for {timeout} while responses were pending."));
+                }
+
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Normal connection teardown.
+        }
+    }
+
+    private static Task DelayWatchdogAsync(TimeSpan delay, CancellationToken cancellationToken)
+        => Task.Delay(delay > MaxWatchdogSleep ? MaxWatchdogSleep : delay, cancellationToken);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void ResetReceiveDeadline()
+    {
+        if (_responseTimeout is null)
+        {
+            return;
+        }
+
+        lock (_receiveDeadlineGate)
+        {
+            if (_sentReplyCount > _receivedReplyCount)
+            {
+                _receiveDeadlineTimestamp = Stopwatch.GetTimestamp();
+            }
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void MarkRepliesSent(int count)
+    {
+        if (_responseTimeout is null || count == 0)
+        {
+            return;
+        }
+
+        lock (_receiveDeadlineGate)
+        {
+            _sentReplyCount += count;
+            if (_sentReplyCount > _receivedReplyCount && _receiveDeadlineTimestamp == 0)
+            {
+                _receiveDeadlineTimestamp = Stopwatch.GetTimestamp();
+            }
+        }
+    }
+
+    private void Abort(Exception? reason = null)
+    {
+        _watchdogCancellation?.Cancel();
         lock (_writeGate)
         {
             if (_dead)
@@ -1156,6 +1411,7 @@ public sealed class RespireConnection : IAsyncDisposable
             }
 
             _dead = true;
+            _abortReason = reason;
         }
 
         try
@@ -1218,6 +1474,10 @@ public sealed class RespireConnection : IAsyncDisposable
         Abort();
         await _receiveTask.ConfigureAwait(false);
         await _flushTask.ConfigureAwait(false);
+        if (_watchdogTask is not null)
+        {
+            await _watchdogTask.ConfigureAwait(false);
+        }
 
         lock (_writeGate)
         {
@@ -1227,6 +1487,7 @@ public sealed class RespireConnection : IAsyncDisposable
 
         _tlsStream?.Dispose();
         _socket.Dispose();
+        _watchdogCancellation?.Dispose();
         _logger?.LogDebug("Disconnected from {Host}:{Port}", Host, Port);
     }
 }
@@ -1251,6 +1512,12 @@ public sealed record RespireConnectionOptions
 
     /// <summary>Timeout for the initial TCP connect.</summary>
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Aborts the connection when responses are pending and no bytes arrive within this period.
+    /// Null disables the watchdog.
+    /// </summary>
+    public TimeSpan? ResponseTimeout { get; init; }
 
     /// <summary>Wrap the connected socket in TLS before the RESP handshake.</summary>
     public bool UseTls { get; init; }

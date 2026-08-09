@@ -9,7 +9,7 @@ namespace Respire.Pipeline.Modules;
 [DependsOn<PackProjectsModule>]
 public class PackagePathsParserModule : Module<FileInfo[]>
 {
-    protected override async Task<FileInfo[]> ExecuteAsync(IPipelineContext context, CancellationToken cancellationToken)
+    protected override async Task<FileInfo[]?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
         context.Logger.LogInformation("Finding generated package files...");
         

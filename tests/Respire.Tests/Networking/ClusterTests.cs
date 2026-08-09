@@ -491,6 +491,42 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task Scan_RefreshesThroughCachedMasterWhenSeedIsUnavailable()
+    {
+        await using var refreshedFirstNode = new FakeRespServer(
+            "*2\r\n$1\r\n0\r\n*1\r\n$3\r\none\r\n"u8.ToArray());
+        await using var secondNode = new FakeRespServer(
+            "*2\r\n$1\r\n0\r\n*1\r\n$3\r\ntwo\r\n"u8.ToArray());
+        var refreshedTopology = Encoding.ASCII.GetBytes(
+            $"*2\r\n" +
+            $"*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{refreshedFirstNode.Port}\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{secondNode.Port}\r\n");
+        await using var cachedFirstNode = new FakeRespServer(refreshedTopology);
+        var initialTopology = Encoding.ASCII.GetBytes(
+            $"*2\r\n" +
+            $"*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{cachedFirstNode.Port}\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{secondNode.Port}\r\n");
+        await using var seed = new FakeRespServer(initialTopology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            ConnectTimeout = TimeSpan.FromMilliseconds(100),
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        await seed.DisconnectClientAsync();
+        var keys = new List<string>();
+
+        await foreach (var key in client.Keys.ScanAsync())
+        {
+            keys.Add(key);
+        }
+
+        await Assert.That(keys).IsEquivalentTo(["one", "two"]);
+        await Assert.That(cachedFirstNode.ReceivedCommands[0]).IsEqualTo("CLUSTER SLOTS");
+        await Assert.That(refreshedFirstNode.ReceivedCommands[0]).IsEqualTo("SCAN 0 COUNT 250");
+    }
+
+    [Test]
     public async Task ClusterWideServerCommands_VisitEveryMaster()
     {
         await using var firstNode = new FakeRespServer(

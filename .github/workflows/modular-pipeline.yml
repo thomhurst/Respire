@@ -16,6 +16,9 @@ jobs:
   modularpipeline:
     environment: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Pull Requests' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
 
     steps:
       - uses: actions/checkout@v7
@@ -30,13 +33,20 @@ jobs:
             8.0.x
             10.0.x
       
+      - name: NuGet login
+        if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.publish-packages == 'true' }}
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
       - name: Run Pipeline
         # Directory.Build.props multi-targets every project, so a framework must be picked.
-        run: dotnet run -c Release -f net8.0
+        run: dotnet run -c Release -f net10.0
         working-directory: "Respire.Pipeline"
         env:
           DOTNET_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Development' }}
-          NuGet__ApiKey: ${{ github.ref == 'refs/heads/main' && secrets.NuGet__ApiKey || null }}
+          NuGet__ApiKey: ${{ steps.login.outputs.NUGET_API_KEY }}
           PULL_REQUEST_BRANCH: ${{ github.event.pull_request.head.ref }}
           PUBLISH_PACKAGES: ${{ github.event.inputs.publish-packages }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

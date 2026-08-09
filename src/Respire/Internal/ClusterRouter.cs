@@ -281,10 +281,35 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
     internal async ValueTask<RespireConnection[]> GetMasterConnectionsAsync(CancellationToken cancellationToken)
     {
-        await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-        await TryLoadSlotsAsync(Volatile.Read(ref _seed)!, cancellationToken).ConfigureAwait(false);
-
         var masters = new HashSet<RespireConnectionMultiplexer>(ReferenceEqualityComparer.Instance);
+        AddKnownMasters(masters);
+
+        var refreshed = false;
+        if (Volatile.Read(ref _seed) is { IsConnected: true } seed)
+        {
+            refreshed = await TryRefreshTopologyAsync(seed, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (!refreshed)
+        {
+            foreach (var master in masters)
+            {
+                if (await TryRefreshTopologyAsync(master, cancellationToken).ConfigureAwait(false))
+                {
+                    Volatile.Write(ref _seed, master);
+                    refreshed = true;
+                    break;
+                }
+            }
+        }
+
+        if (!refreshed)
+        {
+            await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            await TryLoadSlotsAsync(Volatile.Read(ref _seed)!, cancellationToken).ConfigureAwait(false);
+        }
+
+        masters.Clear();
         AddKnownMasters(masters);
         if (masters.Count == 0)
         {
@@ -303,6 +328,22 @@ internal sealed class ClusterRouter : IAsyncDisposable
         }
 
         return connections;
+    }
+
+    private async ValueTask<bool> TryRefreshTopologyAsync(
+        RespireConnectionMultiplexer node,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            await TryLoadSlotsAsync(node, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
     }
 
     private void AddKnownMasters(HashSet<RespireConnectionMultiplexer> masters)
