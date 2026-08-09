@@ -125,12 +125,12 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         RespireScript script,
         CancellationToken cancellationToken)
     {
-        var masters = await cluster.GetKnownMastersAsync(cancellationToken).ConfigureAwait(false);
+        var masters = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
         string? result = null;
-        foreach (var master in masters)
+        foreach (var connection in masters)
         {
             var reply = await client.SendOnConnectionAsync(
-                    "SCRIPT LOAD", master.GetConnection(), new Cmd1(Verbs.ScriptLoad, script.Source), cancellationToken)
+                    "SCRIPT LOAD", connection, new Cmd1(Verbs.ScriptLoad, script.Source), cancellationToken)
                 .ConfigureAwait(false);
             try
             {

@@ -10,6 +10,7 @@ namespace Respire.Benchmarks;
 public class CommandRoutingBenchmarks
 {
     private readonly RespireValue _key = "benchmark-key";
+    private readonly RespireValue _scalarKey = 123456789;
     private readonly Cmd1 _keyedCommand = new(Verbs.Get, "benchmark-key");
     private readonly Cmd1 _unkeyedCommand = new(Verbs.Info, "memory");
     private readonly RespireValue[] _rawTokens = ["SET", "benchmark-key", "value"];
@@ -18,6 +19,9 @@ public class CommandRoutingBenchmarks
 
     [Benchmark(Baseline = true)]
     public bool DirectKeyRouting() => _key.TryGetClusterSlot(out _);
+
+    [Benchmark]
+    public bool ScalarKeyRouting() => _scalarKey.TryGetClusterSlot(out _);
 
     [Benchmark]
     public bool MetadataKeyRouting() => _keyedCommand.TryGetClusterSlot(out _);

@@ -130,11 +130,15 @@ public class ClusterTests
         var evalReadOnlyTokens = new RespireValue[] { "EVAL_RO", "return redis.call('GET', KEYS[1])", 1, "eval-ro-key" };
         var xreadTokens = new RespireValue[] { "XREAD", "COUNT", 1, "STREAMS"u8.ToArray(), "stream-key", "0" };
         var infoTokens = new RespireValue[] { "INFO", "memory" };
+        var integerKeyTokens = new RespireValue[] { "GET", 123 };
+        var booleanKeyTokens = new RespireValue[] { "GET", true };
 
         await Assert.That(RawSlot("OBJECT", objectTokens, 1)).IsEqualTo(ClusterHash.GetSlot("object-key"));
         await Assert.That(RawSlot("EVAL", evalTokens, 1)).IsEqualTo(ClusterHash.GetSlot("eval-key"));
         await Assert.That(RawSlot("EVAL_RO", evalReadOnlyTokens, 1)).IsEqualTo(ClusterHash.GetSlot("eval-ro-key"));
         await Assert.That(RawSlot("XREAD", xreadTokens, 1)).IsEqualTo(ClusterHash.GetSlot("stream-key"));
+        await Assert.That(RawSlot("GET", integerKeyTokens, 1)).IsEqualTo(ClusterHash.GetSlot("123"));
+        await Assert.That(RawSlot("GET", booleanKeyTokens, 1)).IsEqualTo(ClusterHash.GetSlot("1"));
         await Assert.That(RawSlot("INFO", infoTokens, 1)).IsNull();
     }
 
@@ -714,6 +718,34 @@ public class ClusterTests
         await Assert.That(sha1).IsEqualTo(script.Sha1);
         await Assert.That(firstNode.ReceivedCommands).IsEquivalentTo(["SCRIPT LOAD return 1"]);
         await Assert.That(secondNode.ReceivedCommands).IsEquivalentTo(["SCRIPT LOAD return 1"]);
+    }
+
+    [Test]
+    public async Task ScriptLoad_RefreshesTopologyBeforeVisitingMasters()
+    {
+        var script = RespireScript.Create("return 1");
+        var response = Encoding.ASCII.GetBytes($"$40\r\n{script.Sha1}\r\n");
+        await using var firstNode = new FakeRespServer(response);
+        await using var addedNode = new FakeRespServer(response);
+        var initialTopology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{firstNode.Port}\r\n");
+        var refreshedTopology = Encoding.ASCII.GetBytes(
+            $"*2\r\n" +
+            $"*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{firstNode.Port}\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{addedNode.Port}\r\n");
+        await using var seed = new FakeRespServer(initialTopology, refreshedTopology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        var sha1 = await client.Scripts.LoadAsync(script);
+
+        await Assert.That(sha1).IsEqualTo(script.Sha1);
+        await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS", "CLUSTER SLOTS"]);
+        await Assert.That(firstNode.ReceivedCommands).IsEquivalentTo(["SCRIPT LOAD return 1"]);
+        await Assert.That(addedNode.ReceivedCommands).IsEquivalentTo(["SCRIPT LOAD return 1"]);
     }
 
     [Test]
