@@ -556,7 +556,8 @@ public class ClusterTests
             {
             }
         }
-        catch (Exception exception) when (exception is RespireConnectionException or OperationCanceledException)
+        catch (Exception exception) when (
+            exception is RespireConnectionException or OperationCanceledException or System.Net.Sockets.SocketException)
         {
             failed = true;
         }
