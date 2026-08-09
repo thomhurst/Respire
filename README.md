@@ -82,7 +82,20 @@ transaction.ListRightPushAsync("audit", "withdraw:100");
 bool committed = await transaction.CommitAsync();
 ```
 
-Use `CreateTransactionAsync(["balance"])` when you need optimistic concurrency with `WATCH`.
+Use `CreateTransactionAsync(["balance"])` for optimistic concurrency with `WATCH`. Read the
+current value, queue the conditional update, then retry when `CommitAsync` returns `false`:
+
+```csharp
+bool applied;
+do
+{
+    await using var watched = await redis.CreateTransactionAsync(["balance"]);
+    long current = long.Parse((await redis.GetStringAsync("balance"))!);
+    watched.SetAsync("balance", current - 100);
+    applied = await watched.CommitAsync();
+}
+while (!applied);
+```
 
 ### Zero-copy reads and custom commands
 
