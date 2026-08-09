@@ -8,6 +8,9 @@ internal sealed class ClusterRouter : IAsyncDisposable
 {
     private const int MaxRedirects = 5;
     private static readonly RawCommand Asking = new("*1\r\n$6\r\nASKING\r\n"u8.ToArray());
+    // Slot parsing has no await while this scratch set is live.
+    [ThreadStatic]
+    private static HashSet<RespireConnectionMultiplexer>? t_activeTopologyNodes;
 
     private readonly RespireOptions _options;
     private readonly RespireEndpoint[] _seeds;
@@ -34,6 +37,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
     internal bool IsConnected => Volatile.Read(ref _seed)?.IsConnected == true;
     internal event Action<RespireConnectionMultiplexer, int, RespireConnectionState>? SlotStateChanged;
+    internal event Action<RespireConnectionMultiplexer>? NodeRetired;
 
     internal bool IsSlotConnected(int slot)
         => Volatile.Read(ref _slots[slot])?.IsConnected == true;
@@ -125,7 +129,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
         await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         if (error.Code == "MOVED")
         {
-            Volatile.Write(ref _slots[slot], node);
+            SetSlotOwner(slot, node);
         }
 
         return node.GetConnection();
@@ -189,7 +193,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
         await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         if (error.Code == "MOVED")
         {
-            Volatile.Write(ref _slots[slot], node);
+            SetSlotOwner(slot, node);
         }
 
         return GetOrCreateDedicatedPool(endpoint);
@@ -384,6 +388,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             if (_nodes.TryGetValue(endpoint, out var existing))
             {
+                ObserveNode(existing);
                 return existing;
             }
 
@@ -401,10 +406,65 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
     private void ObserveNode(RespireConnectionMultiplexer node)
     {
+        if (_nodeStateHandlers.ContainsKey(node))
+        {
+            return;
+        }
+
         Action<int, RespireConnectionState> handler =
             (slot, state) => SlotStateChanged?.Invoke(node, slot, state);
         _nodeStateHandlers.Add(node, handler);
         node.SlotStateChanged += handler;
+    }
+
+    private void SetSlotOwner(int slot, RespireConnectionMultiplexer node)
+    {
+        lock (_nodesGate)
+        {
+            ObserveNode(node);
+            Volatile.Write(ref _slots[slot], node);
+        }
+    }
+
+    private void ReplaceSlotOwners(
+        RespireConnectionMultiplexer?[] refreshedSlots,
+        HashSet<RespireConnectionMultiplexer> activeNodes)
+    {
+        List<RespireConnectionMultiplexer>? retiredNodes = null;
+        lock (_nodesGate)
+        {
+            for (var slot = 0; slot < refreshedSlots.Length; slot++)
+            {
+                Volatile.Write(ref _slots[slot], refreshedSlots[slot]);
+            }
+
+            foreach (var node in _nodeStateHandlers.Keys)
+            {
+                if (activeNodes.Contains(node))
+                {
+                    continue;
+                }
+
+                (retiredNodes ??= []).Add(node);
+            }
+
+            if (retiredNodes is not null)
+            {
+                foreach (var node in retiredNodes)
+                {
+                    node.SlotStateChanged -= _nodeStateHandlers[node];
+                    _nodeStateHandlers.Remove(node);
+                }
+            }
+        }
+
+        if (retiredNodes is not null)
+        {
+            foreach (var node in retiredNodes)
+            {
+                NodeRetired?.Invoke(node);
+            }
+        }
     }
 
     private async ValueTask<RespireConnection> EnableCorrectionOrderingAsync(
@@ -463,8 +523,12 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 }
 
                 var refreshedSlots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
+                var ranges = reply.AsArray();
+                var activeNodes = t_activeTopologyNodes ??=
+                    new HashSet<RespireConnectionMultiplexer>(ReferenceEqualityComparer.Instance);
+                activeNodes.Clear();
                 var discoveredRange = false;
-                foreach (ref readonly var range in reply.AsArray())
+                foreach (ref readonly var range in ranges)
                 {
                     var values = range.AsArray();
                     if (values.Length < 3)
@@ -506,6 +570,8 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
                     var node = GetOrCreateNode(new RespireEndpoint(
                         string.IsNullOrEmpty(host) ? seed.Host : host, (int)port));
+                    activeNodes.Add(node);
+
                     for (var slot = (int)start; slot <= end; slot++)
                     {
                         refreshedSlots[slot] = node;
@@ -516,12 +582,10 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
                 if (discoveredRange)
                 {
-                    for (var slot = 0; slot < refreshedSlots.Length; slot++)
-                    {
-                        Volatile.Write(ref _slots[slot], refreshedSlots[slot]);
-                    }
+                    ReplaceSlotOwners(refreshedSlots, activeNodes);
                 }
 
+                activeNodes.Clear();
                 return discoveredRange;
             }
             finally
@@ -545,10 +609,12 @@ internal sealed class ClusterRouter : IAsyncDisposable
         }
 
         RespireConnectionMultiplexer[] nodes;
+        KeyValuePair<RespireConnectionMultiplexer, Action<int, RespireConnectionState>>[] stateHandlers;
         DedicatedConnectionPool[] dedicatedPools;
         lock (_nodesGate)
         {
             nodes = _nodes.Values.ToArray();
+            stateHandlers = _nodeStateHandlers.ToArray();
             dedicatedPools = _dedicatedPools.Values.ToArray();
         }
 
@@ -557,9 +623,13 @@ internal sealed class ClusterRouter : IAsyncDisposable
             await pool.DisposeAsync().ConfigureAwait(false);
         }
 
+        foreach (var (node, handler) in stateHandlers)
+        {
+            node.SlotStateChanged -= handler;
+        }
+
         foreach (var node in nodes)
         {
-            node.SlotStateChanged -= _nodeStateHandlers[node];
             if (!ReferenceEquals(node, _primary))
             {
                 await node.DisposeAsync().ConfigureAwait(false);

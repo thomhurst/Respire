@@ -459,6 +459,34 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task TopologyRefresh_ClearsReconnectStateForRetiredMaster()
+    {
+        await using var currentNode = new FakeRespServer(FakeRespServer.PongReply);
+        await using var retiredNode = new FakeRespServer(FakeRespServer.PongReply);
+        var initialTopology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{retiredNode.Port}\r\n");
+        var refreshedTopology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{currentNode.Port}\r\n");
+        await using var seed = new FakeRespServer(initialTopology, refreshedTopology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        var core = client.Core;
+        var retiredMultiplexer = core.Cluster!.GetMultiplexer(
+            new RespireEndpoint("127.0.0.1", retiredNode.Port));
+        var states = new List<RespireConnectionState>();
+        core.ConnectionStateChanged += states.Add;
+        core.NotifyCommandStateChanged(retiredMultiplexer, 0, RespireConnectionState.Reconnecting);
+
+        _ = await core.Cluster.GetMasterConnectionsAsync(CancellationToken.None);
+
+        await Assert.That(states).IsEquivalentTo(
+            [RespireConnectionState.Reconnecting, RespireConnectionState.Connected]);
+    }
+
+    [Test]
     public async Task Scan_FailsWhenCurrentMasterIsUnavailable()
     {
         await using var currentNode = new FakeRespServer(

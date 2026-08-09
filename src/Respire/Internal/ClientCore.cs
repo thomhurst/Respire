@@ -45,6 +45,7 @@ internal sealed class ClientCore : IAsyncDisposable
         if (Cluster is { } cluster)
         {
             cluster.SlotStateChanged += NotifyCommandStateChanged;
+            cluster.NodeRetired += NotifyCommandNodeRetired;
         }
         else
         {
@@ -91,6 +92,18 @@ internal sealed class ClientCore : IAsyncDisposable
                 _reconnectingCommandSlots.Remove(commandSlot);
             }
 
+            QueueAggregateStateLocked();
+        }
+
+        PublishQueuedStates();
+    }
+
+    internal void NotifyCommandNodeRetired(RespireConnectionMultiplexer node)
+    {
+        lock (_stateGate)
+        {
+            _reconnectingCommandSlots.RemoveWhere(
+                commandSlot => ReferenceEquals(commandSlot.Node, node));
             QueueAggregateStateLocked();
         }
 
@@ -192,6 +205,7 @@ internal sealed class ClientCore : IAsyncDisposable
         if (Cluster is { } cluster)
         {
             cluster.SlotStateChanged -= NotifyCommandStateChanged;
+            cluster.NodeRetired -= NotifyCommandNodeRetired;
             await cluster.DisposeAsync().ConfigureAwait(false);
         }
         else
