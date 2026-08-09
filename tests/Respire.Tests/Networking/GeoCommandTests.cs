@@ -82,6 +82,9 @@ public class GeoCommandTests
             "places", GeoSearchOrigin.FromCoordinates(0, 86), GeoSearchShape.Circle(1)))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Geo.SearchAsync(
+            "places", default, GeoSearchShape.Circle(1)))
+            .Throws<ArgumentException>();
+        await Assert.That(async () => await client.Geo.SearchAsync(
             "places", GeoSearchOrigin.FromMember("cafe"), default))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Geo.SearchAsync(

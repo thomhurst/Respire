@@ -14,4 +14,8 @@ public class CommandInputBenchmarks
     [Benchmark]
     public GeoSearchShape CreateGeoSearchShape()
         => GeoSearchShape.Box(10, 20, GeoUnit.Kilometers);
+
+    [Benchmark]
+    public GeoSearchOrigin CreateGeoSearchOrigin()
+        => GeoSearchOrigin.FromCoordinates(-0.1, 51.5);
 }

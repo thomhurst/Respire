@@ -40,6 +40,7 @@ public readonly struct GeoSearchOrigin
 {
     private GeoSearchOrigin(string? member, double longitude, double latitude)
     {
+        IsInitialized = true;
         Member = member;
         Longitude = longitude;
         Latitude = latitude;
@@ -48,6 +49,7 @@ public readonly struct GeoSearchOrigin
     internal string? Member { get; }
     internal double Longitude { get; }
     internal double Latitude { get; }
+    internal bool IsInitialized { get; }
 
     public static GeoSearchOrigin FromMember(string member)
     {
@@ -293,6 +295,12 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
 
     private static void Validate(GeoSearchOrigin origin, GeoSearchShape shape, GeoSearchOptions options)
     {
+        if (!origin.IsInitialized)
+        {
+            throw new ArgumentException(
+                "Origin must be created with FromMember or FromCoordinates.", nameof(origin));
+        }
+
         if (origin.Member is null)
         {
             ValidateCoordinates(origin.Longitude, origin.Latitude);
