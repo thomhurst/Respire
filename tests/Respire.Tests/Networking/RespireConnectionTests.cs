@@ -340,6 +340,21 @@ public class RespireConnectionTests
     }
 
     [Test]
+    public async Task ResponseWatchdog_ChunksTimeoutsBeyondTaskDelayLimit()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1",
+            server.Port,
+            new RespireConnectionOptions { ResponseTimeout = TimeSpan.FromDays(60) });
+
+        var response = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+
+        await Assert.That(response.AsString()).IsEqualTo("PONG");
+        response.Dispose();
+    }
+
+    [Test]
     public async Task SendAfterDeath_ThrowsConnectionException()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);

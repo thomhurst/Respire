@@ -41,6 +41,7 @@ public sealed class RespireConnection : IAsyncDisposable
 {
     private const int DirectFillThreshold = 4 * 1024;
     private const int MaxResponseSize = 512 * 1024 * 1024;
+    private static readonly TimeSpan MaxWatchdogSleep = TimeSpan.FromDays(1);
 
     private readonly Socket _socket;
     private readonly SslStream? _tlsStream;
@@ -1067,21 +1068,21 @@ public sealed class RespireConnection : IAsyncDisposable
             {
                 if (Volatile.Read(ref _responseTimeoutSuppressions) != 0)
                 {
-                    await Task.Delay(timeout, cancellationToken).ConfigureAwait(false);
+                    await DelayWatchdogAsync(timeout, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
                 var deadlineStart = Volatile.Read(ref _receiveDeadlineTimestamp);
                 if (deadlineStart == 0)
                 {
-                    await Task.Delay(timeout, cancellationToken).ConfigureAwait(false);
+                    await DelayWatchdogAsync(timeout, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
                 var elapsed = Stopwatch.GetElapsedTime(deadlineStart);
                 if (elapsed < timeout)
                 {
-                    await Task.Delay(timeout - elapsed, cancellationToken).ConfigureAwait(false);
+                    await DelayWatchdogAsync(timeout - elapsed, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
@@ -1106,6 +1107,9 @@ public sealed class RespireConnection : IAsyncDisposable
             // Normal connection teardown.
         }
     }
+
+    private static Task DelayWatchdogAsync(TimeSpan delay, CancellationToken cancellationToken)
+        => Task.Delay(delay > MaxWatchdogSleep ? MaxWatchdogSleep : delay, cancellationToken);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void ResetReceiveDeadline()
