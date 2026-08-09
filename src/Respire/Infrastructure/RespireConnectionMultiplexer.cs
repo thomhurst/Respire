@@ -43,6 +43,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     /// <summary>Raised when any client-owned connection is reconnecting or restored.</summary>
     public event Action<RespireConnectionState>? StateChanged;
+    internal event Action<int, RespireConnectionState>? SlotStateChanged;
 
     public bool IsConnected
     {
@@ -585,6 +586,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
 
         NotifyStateChanged(RespireConnectionState.Reconnecting);
+        NotifySlotStateChanged(slot, RespireConnectionState.Reconnecting);
         _ = ReconnectAsync(slot);
     }
 
@@ -629,6 +631,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             else
             {
                 NotifyStateChanged(RespireConnectionState.Connected);
+                NotifySlotStateChanged(slot, RespireConnectionState.Connected);
             }
         }
         catch (Exception ex)
@@ -662,6 +665,18 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         catch (Exception ex)
         {
             _logger?.LogWarning(ex, "Connection state-change handler threw");
+        }
+    }
+
+    private void NotifySlotStateChanged(int slot, RespireConnectionState state)
+    {
+        try
+        {
+            SlotStateChanged?.Invoke(slot, state);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Connection slot state-change handler threw");
         }
     }
 

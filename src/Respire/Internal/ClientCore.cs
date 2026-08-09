@@ -12,9 +12,12 @@ internal sealed class ClientCore : IAsyncDisposable
 {
     private readonly object _hubGate = new();
     private readonly object _stateGate = new();
+    private readonly Queue<RespireConnectionState> _pendingStates = [];
+    private readonly bool[] _commandSlotsReconnecting;
     private SubscriptionHub? _hub;
-    private RespireConnectionState _commandState = RespireConnectionState.Connected;
-    private RespireConnectionState _subscriptionState = RespireConnectionState.Connected;
+    private int _commandReconnectCount;
+    private bool _subscriptionReconnecting;
+    private bool _publishingState;
     private RespireConnectionState _publishedState = RespireConnectionState.Connected;
 
     public readonly RespireConnectionMultiplexer Multiplexer;
@@ -30,7 +33,8 @@ internal sealed class ClientCore : IAsyncDisposable
         var endpoint = options.PrimaryEndpoint;
         Multiplexer = RespireConnectionMultiplexer.Create(
             endpoint.Host, endpoint.Port, options.Connections, options.ToConnectionOptions(), Logger);
-        Multiplexer.StateChanged += OnCommandStateChanged;
+        _commandSlotsReconnecting = new bool[Multiplexer.ConnectionCount];
+        Multiplexer.SlotStateChanged += NotifyCommandStateChanged;
         DedicatedPool = new DedicatedConnectionPool(
             endpoint.Host, endpoint.Port, options.ToConnectionOptions(), Logger);
     }
@@ -38,49 +42,82 @@ internal sealed class ClientCore : IAsyncDisposable
     public event Action<RespireConnectionState>? ConnectionStateChanged;
 
     internal void NotifySubscriptionStateChanged(RespireConnectionState state)
-        => NotifyComponentState(state, isSubscription: true);
-
-    internal void NotifyCommandStateChanged(RespireConnectionState state)
-        => NotifyComponentState(state, isSubscription: false);
-
-    private void OnCommandStateChanged(RespireConnectionState state)
-        => NotifyCommandStateChanged(state);
-
-    private void NotifyComponentState(RespireConnectionState state, bool isSubscription)
     {
-        Action<RespireConnectionState>? handlers;
-        RespireConnectionState aggregate;
         lock (_stateGate)
         {
-            if (isSubscription)
+            _subscriptionReconnecting = state == RespireConnectionState.Reconnecting;
+            QueueAggregateStateLocked();
+        }
+
+        PublishQueuedStates();
+    }
+
+    internal void NotifyCommandStateChanged(int slot, RespireConnectionState state)
+    {
+        lock (_stateGate)
+        {
+            var reconnecting = state == RespireConnectionState.Reconnecting;
+            if (_commandSlotsReconnecting[slot] != reconnecting)
             {
-                _subscriptionState = state;
-            }
-            else
-            {
-                _commandState = state;
+                _commandSlotsReconnecting[slot] = reconnecting;
+                _commandReconnectCount += reconnecting ? 1 : -1;
             }
 
-            aggregate = _commandState == RespireConnectionState.Connected
-                && _subscriptionState == RespireConnectionState.Connected
-                    ? RespireConnectionState.Connected
-                    : RespireConnectionState.Reconnecting;
-            if (aggregate == _publishedState)
+            QueueAggregateStateLocked();
+        }
+
+        PublishQueuedStates();
+    }
+
+    private void QueueAggregateStateLocked()
+    {
+        var aggregate = _commandReconnectCount == 0 && !_subscriptionReconnecting
+            ? RespireConnectionState.Connected
+            : RespireConnectionState.Reconnecting;
+        if (aggregate == _publishedState)
+        {
+            return;
+        }
+
+        _publishedState = aggregate;
+        _pendingStates.Enqueue(aggregate);
+    }
+
+    private void PublishQueuedStates()
+    {
+        lock (_stateGate)
+        {
+            if (_publishingState || _pendingStates.Count == 0)
             {
                 return;
             }
 
-            _publishedState = aggregate;
-            handlers = ConnectionStateChanged;
+            _publishingState = true;
         }
 
-        try
+        while (true)
         {
-            handlers?.Invoke(aggregate);
-        }
-        catch (Exception ex)
-        {
-            Logger?.LogWarning(ex, "Connection state-change handler threw");
+            Action<RespireConnectionState>? handlers;
+            RespireConnectionState state;
+            lock (_stateGate)
+            {
+                if (!_pendingStates.TryDequeue(out state))
+                {
+                    _publishingState = false;
+                    return;
+                }
+
+                handlers = ConnectionStateChanged;
+            }
+
+            try
+            {
+                handlers?.Invoke(state);
+            }
+            catch (Exception ex)
+            {
+                Logger?.LogWarning(ex, "Connection state-change handler threw");
+            }
         }
     }
 
@@ -124,7 +161,7 @@ internal sealed class ClientCore : IAsyncDisposable
         }
 
         await DedicatedPool.DisposeAsync().ConfigureAwait(false);
-        Multiplexer.StateChanged -= OnCommandStateChanged;
+        Multiplexer.SlotStateChanged -= NotifyCommandStateChanged;
         await Multiplexer.DisposeAsync().ConfigureAwait(false);
     }
 }
