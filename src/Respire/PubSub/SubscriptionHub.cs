@@ -16,10 +16,12 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
 {
     private readonly object _gate = new();
     private readonly object _reconnectStateGate = new();
+    private readonly Queue<RespireConnectionState> _pendingReconnectStates = [];
     private readonly Dictionary<(SubscriptionKind Kind, string Name), List<RespireSubscription>> _routes = [];
     private readonly SemaphoreSlim _connectionGate = new(1, 1);
     private RespireConnection? _connection;
     private long _reconnectGeneration;
+    private bool _publishingReconnectState;
     private volatile bool _disposed;
 
     public RespireSubscription CreateSubscription(SubscriptionKind kind, string[] names)
@@ -285,6 +287,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         }
 
         long reconnectGeneration;
+        bool publishState;
         lock (_reconnectStateGate)
         {
             if (_disposed)
@@ -293,8 +296,14 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             }
 
             reconnectGeneration = ++_reconnectGeneration;
-            core.NotifySubscriptionStateChanged(RespireConnectionState.Reconnecting);
+            publishState = QueueReconnectStateLocked(RespireConnectionState.Reconnecting);
         }
+
+        if (publishState)
+        {
+            PublishReconnectStates();
+        }
+
         var delay = TimeSpan.FromMilliseconds(250);
         while (!_disposed)
         {
@@ -319,14 +328,20 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                 // A replacement can itself fail while this watcher is resubscribing. Its watcher
                 // then owns the newer reconnect generation; this stale watcher must not announce
                 // Connected after that newer Reconnecting notification.
+                publishState = false;
                 lock (_reconnectStateGate)
                 {
                     if (reconnectGeneration == _reconnectGeneration
                         && ReferenceEquals(Volatile.Read(ref _connection), replacement)
                         && replacement.IsConnected)
                     {
-                        core.NotifySubscriptionStateChanged(RespireConnectionState.Connected);
+                        publishState = QueueReconnectStateLocked(RespireConnectionState.Connected);
                     }
+                }
+
+                if (publishState)
+                {
+                    PublishReconnectStates();
                 }
 
                 return;
@@ -341,6 +356,36 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                 await Task.Delay(delay).ConfigureAwait(false);
                 delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 5000));
             }
+        }
+    }
+
+    private bool QueueReconnectStateLocked(RespireConnectionState state)
+    {
+        _pendingReconnectStates.Enqueue(state);
+        if (_publishingReconnectState)
+        {
+            return false;
+        }
+
+        _publishingReconnectState = true;
+        return true;
+    }
+
+    private void PublishReconnectStates()
+    {
+        while (true)
+        {
+            RespireConnectionState state;
+            lock (_reconnectStateGate)
+            {
+                if (!_pendingReconnectStates.TryDequeue(out state))
+                {
+                    _publishingReconnectState = false;
+                    return;
+                }
+            }
+
+            core.NotifySubscriptionStateChanged(state);
         }
     }
 
@@ -402,9 +447,8 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                 return;
             }
 
-            // Synchronizes with reconnect state publication: after this lock is released no
-            // watcher can emit Reconnecting or Connected for the disposed hub.
             _disposed = true;
+            _pendingReconnectStates.Clear();
         }
 
         List<RespireSubscription> subscriptions = [];
