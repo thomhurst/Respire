@@ -349,9 +349,9 @@ public sealed class RespireConnection : IAsyncDisposable
     /// <summary>
     /// Sends MULTI + pre-serialized commands + EXEC as one atomic append, so no other
     /// multiplexed command can interleave into the server-side transaction state. MULTI's +OK
-    /// and each +QUEUED reply are consumed and discarded; the returned task completes with
-    /// EXEC's reply — an array of per-command results, or an error (e.g. EXECABORT when a
-    /// command failed to queue).
+    /// and each queue reply are drained; the returned task completes with the first queue
+    /// error when present, otherwise EXEC's reply. Retaining queue errors is required because
+    /// Redis Cluster can report MOVED/ASK there and then return only EXECABORT from EXEC.
     /// </summary>
     public ValueTask<RespValue> SendTransactionAsync(
         ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken = default)
@@ -369,9 +369,9 @@ public sealed class RespireConnection : IAsyncDisposable
                 $"A transaction with {commandCount} commands needs {slotsNeeded} in-flight slots, but this connection allows {_inflight.Capacity} (see {nameof(RespireConnectionOptions)}.{nameof(RespireConnectionOptions.MaxInflightCommands)}).");
         }
 
-        return SendCoreAsync(
-            new TransactionCommand(serializedCommands), discardRepliesBefore: commandCount + 1,
-            throwOnError: false, cancellationToken);
+        return SendTransactionCoreAsync(
+            new TransactionCommand(serializedCommands), repliesBeforeFinal: commandCount + 1,
+            firstQueueReply: 1, cancellationToken);
     }
 
     /// <summary>
@@ -424,11 +424,44 @@ public sealed class RespireConnection : IAsyncDisposable
                 $"A prefixed transaction with {commandCount} commands needs {slotsNeeded} in-flight slots, but this connection allows {_inflight.Capacity}.");
         }
 
-        return SendCoreAsync(
+        return SendTransactionCoreAsync(
             new PrefixedCommand<TPrefix, TransactionCommand>(prefix, new TransactionCommand(serializedCommands)),
-            discardRepliesBefore: commandCount + 2,
-            throwOnError: false,
+            repliesBeforeFinal: commandCount + 2,
+            firstQueueReply: 2,
             cancellationToken);
+    }
+
+    private ValueTask<RespValue> SendTransactionCoreAsync<TCommand>(
+        in TCommand command,
+        int repliesBeforeFinal,
+        int firstQueueReply,
+        CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var replyCount = repliesBeforeFinal + 1;
+        var source = TransactionPendingResponseSource.Rent(replyCount, firstQueueReply);
+
+        bool enqueued;
+        try
+        {
+            enqueued = TryEnqueue(
+                in command, source, repliesBeforeFinal, retainRepliesBefore: true);
+        }
+        catch
+        {
+            ReclaimUnpublished(source, replyCount + 1);
+            throw;
+        }
+
+        if (!enqueued)
+        {
+            return SendTransactionSlowAsync(
+                command, source, repliesBeforeFinal, replyCount, cancellationToken);
+        }
+
+        source.RegisterCancellation(cancellationToken);
+        ScheduleFlush();
+        return source.Task;
     }
 
     private ValueTask<RespValue> SendCoreAsync<TCommand>(
@@ -495,13 +528,18 @@ public sealed class RespireConnection : IAsyncDisposable
     /// <summary>
     /// Appends the command and its pending source atomically: buffer byte order must exactly
     /// match ring order, or every later response on this connection answers the wrong command.
-    /// A transaction reserves <paramref name="discardRepliesBefore"/> discard slots ahead of
-    /// its real source, one per reply that is consumed but not delivered.
+    /// A composite command reserves <paramref name="discardRepliesBefore"/> slots ahead of
+    /// its final reply. Ordinary prefixes discard them; transactions retain them in their
+    /// multi-reply source so queue errors remain observable.
     /// Serialization runs outside the write gate into a per-thread scratch buffer, so
     /// concurrent callers contend only for a memcpy and the ring enqueue — not for UTF-8
     /// encoding their payloads.
     /// </summary>
-    private bool TryEnqueue<TCommand>(in TCommand command, PendingResponse source, int discardRepliesBefore = 0)
+    private bool TryEnqueue<TCommand>(
+        in TCommand command,
+        PendingResponse source,
+        int discardRepliesBefore = 0,
+        bool retainRepliesBefore = false)
         where TCommand : struct, IRespCommand
     {
         // Racy pre-check; the authoritative one runs under the gate below. This keeps the
@@ -514,7 +552,8 @@ public sealed class RespireConnection : IAsyncDisposable
         if (_directPathBudget > 0)
         {
             _directPathBudget--;
-            return TryEnqueueDirect(in command, source, discardRepliesBefore);
+            return TryEnqueueDirect(
+                in command, source, discardRepliesBefore, retainRepliesBefore);
         }
 
         var scratch = _serializeScratch ??= new WriteBuffer(ScratchInitialSize);
@@ -541,7 +580,7 @@ public sealed class RespireConnection : IAsyncDisposable
 
                 for (var i = 0; i < discardRepliesBefore; i++)
                 {
-                    _inflight.TryEnqueue(InflightRing.DiscardSentinel);
+                    _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel);
                 }
 
                 _inflight.TryEnqueue(source);
@@ -566,7 +605,11 @@ public sealed class RespireConnection : IAsyncDisposable
     /// storage persists across commands. Used while the thread's direct-path budget lasts so
     /// large-write workloads reuse the active buffer's growth instead of churning scratch.
     /// </summary>
-    private bool TryEnqueueDirect<TCommand>(in TCommand command, PendingResponse source, int discardRepliesBefore)
+    private bool TryEnqueueDirect<TCommand>(
+        in TCommand command,
+        PendingResponse source,
+        int discardRepliesBefore,
+        bool retainRepliesBefore)
         where TCommand : struct, IRespCommand
     {
         lock (_writeGate)
@@ -600,7 +643,7 @@ public sealed class RespireConnection : IAsyncDisposable
 
             for (var i = 0; i < discardRepliesBefore; i++)
             {
-                _inflight.TryEnqueue(InflightRing.DiscardSentinel);
+                _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel);
             }
 
             _inflight.TryEnqueue(source);
@@ -616,6 +659,44 @@ public sealed class RespireConnection : IAsyncDisposable
         where TCommand : struct, IRespCommand
     {
         await WaitForInflightCapacityAsync(command, source, discardRepliesBefore, cancellationToken).ConfigureAwait(false);
+        source.RegisterCancellation(cancellationToken);
+        ScheduleFlush();
+        return await source.Task.ConfigureAwait(false);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<RespValue> SendTransactionSlowAsync<TCommand>(
+        TCommand command,
+        TransactionPendingResponseSource source,
+        int repliesBeforeFinal,
+        int replyCount,
+        CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        try
+        {
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var capacityAvailable = _capacitySignal.WaitAsync(cancellationToken);
+                if (TryEnqueue(
+                    in command, source, repliesBeforeFinal, retainRepliesBefore: true))
+                {
+                    break;
+                }
+
+                ScheduleFlush();
+                await capacityAvailable.ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            ReclaimUnpublished(source, replyCount + 1);
+            throw;
+        }
+
         source.RegisterCancellation(cancellationToken);
         ScheduleFlush();
         return await source.Task.ConfigureAwait(false);
@@ -684,8 +765,15 @@ public sealed class RespireConnection : IAsyncDisposable
             return;
         }
 
-        source.ReleaseRef();
-        source.ReleaseRef();
+        ReclaimUnpublished(source, referenceCount: 2);
+    }
+
+    private static void ReclaimUnpublished(PendingResponse source, int referenceCount)
+    {
+        for (var i = 0; i < referenceCount; i++)
+        {
+            source.ReleaseRef();
+        }
     }
 
     private void ScheduleFlush() => _flushSignal.Signal();

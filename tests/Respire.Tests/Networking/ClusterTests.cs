@@ -171,8 +171,8 @@ public class ClusterTests
         await using var seed = new FakeRespServer(
             "*0\r\n"u8.ToArray(),
             FakeRespServer.OkReply,
-            "+QUEUED\r\n"u8.ToArray(),
-            Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
+            Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"),
+            "-EXECABORT Transaction discarded because of previous errors.\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Cluster = true,
@@ -201,6 +201,44 @@ public class ClusterTests
         var error = Assert.Throws<InvalidOperationException>(() => transaction.SetAsync("bar", "two"));
 
         await Assert.That(error.Message).Contains("same hash slot");
+    }
+
+    [Test]
+    public async Task TrackedScript_RoutesByKeyAndUpdatesIdentityAfterMoved()
+    {
+        var slot = ClusterHash.GetSlot("cache-key");
+        await using var redirected = new FakeRespServer(
+            ":42\r\n"u8.ToArray(),
+            ":0\r\n"u8.ToArray(),
+            "$5\r\nvalue\r\n"u8.ToArray());
+        await using var initial = new FakeRespServer(
+            ":41\r\n"u8.ToArray(),
+            ":0\r\n"u8.ToArray(),
+            Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{redirected.Port}\r\n"));
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{initial.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        var script = RespireScript.Create("return redis.call('GET', KEYS[1])");
+
+        var execution = await client.StartTrackedScriptExecutionAsync(
+            script, ["cache-key"], [], CancellationToken.None);
+        using var result = await execution.Response;
+
+        await Assert.That(result.AsString()).IsEqualTo("value");
+        await Assert.That(execution.ConnectionIdentity.ServerClientId).IsEqualTo(42);
+        await Assert.That(execution.ConnectionIdentity.Endpoint.Port).IsEqualTo(redirected.Port);
+        await Assert.That(seed.ReceivedCommands).Count().IsEqualTo(1);
+        await Assert.That(initial.ReceivedCommands[0]).IsEqualTo("CLIENT ID");
+        await Assert.That(initial.ReceivedCommands[1]).StartsWith("CLIENT KILL ID 41");
+        await Assert.That(initial.ReceivedCommands[2]).StartsWith("EVALSHA ");
+        await Assert.That(redirected.ReceivedCommands[0]).IsEqualTo("CLIENT ID");
+        await Assert.That(redirected.ReceivedCommands[1]).StartsWith("CLIENT KILL ID 42");
+        await Assert.That(redirected.ReceivedCommands[2]).StartsWith("EVALSHA ");
     }
 
     [Test]
@@ -279,18 +317,12 @@ public class ClusterTests
         await target.DisposeAsync();
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        string? value = null;
-        while (value is null)
+        while (client.Core.Cluster!.IsSlotConnected(slot))
         {
-            try
-            {
-                value = await client.GetStringAsync("key", timeout.Token);
-            }
-            catch (RespireConnectionException)
-            {
-                await Task.Delay(10, timeout.Token);
-            }
+            await Task.Delay(10, timeout.Token);
         }
+
+        var value = await client.GetStringAsync("key", timeout.Token);
 
         await Assert.That(value).IsEqualTo("fallback");
         await Assert.That(seed.ReceivedCommands[^1]).IsEqualTo("GET key");

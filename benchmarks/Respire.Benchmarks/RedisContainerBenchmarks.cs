@@ -226,4 +226,13 @@ public class RedisContainerBenchmarks
     {
         return await _stackExchangeDb.StringIncrementAsync("counter");
     }
+
+    [Benchmark]
+    public async Task<bool> Respire_Transaction_2()
+    {
+        var transaction = _kevaClient.CreateTransaction();
+        _ = transaction.SetAsync("transaction_key", "value");
+        _ = transaction.IncrementAsync("transaction_counter");
+        return await transaction.CommitAsync();
+    }
 }

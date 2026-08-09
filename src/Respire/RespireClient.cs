@@ -716,6 +716,13 @@ public sealed partial class RespireClient : IRespireClient
 
     internal async ValueTask<bool> TryEnsureReliableCorrectionOrderingAsync()
     {
+        if (_core.Cluster is not null)
+        {
+            // The keyed tracked send initializes CLIENT ID on its routed node. Initializing
+            // only the seed here would provide no ordering guarantee for that node.
+            return true;
+        }
+
         var multiplexer = _core.Multiplexer;
         if (multiplexer.IsReliableCorrectionOrderingUnavailable)
         {
@@ -745,6 +752,12 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (core.Cluster is not null)
+        {
+            // Deferred until the key selects a node in StartTrackedScriptExecutionAsync.
+            return;
+        }
+
         if (core.Multiplexer.HasReliableCorrectionOrdering)
         {
             return;
@@ -770,9 +783,25 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
-    internal readonly record struct TrackedScriptExecution(
-        long ServerClientId,
-        ValueTask<RespireResult> Response);
+    internal readonly record struct TrackedConnectionIdentity(
+        RespireEndpoint Endpoint,
+        long ServerClientId);
+
+    internal sealed class TrackedScriptExecution
+    {
+        internal TrackedScriptExecution(
+            RespireConnection connection, TrackedConnectionIdentity connectionIdentity)
+        {
+            Connection = connection;
+            ConnectionIdentity = connectionIdentity;
+        }
+
+        internal RespireConnection Connection { get; set; }
+
+        internal TrackedConnectionIdentity ConnectionIdentity { get; set; }
+
+        internal ValueTask<RespireResult> Response { get; set; }
+    }
 
     internal async ValueTask<RespireResult> ExecuteScriptAsync(
         RespireScript script,
@@ -833,7 +862,7 @@ public sealed partial class RespireClient : IRespireClient
     /// client ID even when the reply wait fails, so it can establish a server-side barrier for
     /// that exact command before surfacing the failure.
     /// </summary>
-    internal TrackedScriptExecution StartTrackedScriptExecution(
+    internal async ValueTask<TrackedScriptExecution> StartTrackedScriptExecutionAsync(
         RespireScript script,
         RespireKey[] keys,
         RespireValue[] args,
@@ -841,22 +870,160 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        if (!core.Multiplexer.HasReliableCorrectionOrdering)
+        var requiresIdentity = RequiresReliableCorrectionOrdering(cancellationToken);
+        var tail = BuildScriptTail(keys, args);
+
+        RespireConnection connection;
+        if (core.Cluster is { } cluster)
         {
-            throw new InvalidOperationException(
-                "Reliable correction ordering must be initialized before a tracked script starts.");
+            var command = new Cmd2N(Verbs.EvalSha, script.Sha1, tail[0], tail[1..]);
+            var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
+            connection = await GetTrackedClusterConnectionAsync(
+                    cluster, slot, requiresIdentity, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        else
+        {
+            if (!core.Multiplexer.HasReliableCorrectionOrdering)
+            {
+                throw new InvalidOperationException(
+                    "Reliable correction ordering must be initialized before a tracked script starts.");
+            }
+
+            connection = core.Multiplexer.GetConnection();
         }
 
-        var connection = core.Multiplexer.GetConnection();
-        var serverClientId = connection.ServerClientId;
-        if (serverClientId <= 0)
+        var identity = GetTrackedConnectionIdentity(
+            connection, core.Cluster?.HasReliableCorrectionOrdering(connection) ?? true);
+        var execution = new TrackedScriptExecution(connection, identity);
+        execution.Response = core.Cluster is { } router
+            ? ExecuteTrackedClusterScriptAsync(
+                execution, router, connection, script, tail, requiresIdentity, cancellationToken)
+            : ExecuteScriptOnConnectionAsync(connection, script, tail, cancellationToken);
+        return execution;
+    }
+
+    private async ValueTask<RespireConnection> GetTrackedClusterConnectionAsync(
+        ClusterRouter cluster,
+        int? slot,
+        bool requireIdentity,
+        CancellationToken cancellationToken)
+    {
+        if (_core.Options.CommandTimeout is not { } timeout)
         {
-            throw new InvalidOperationException("Tracked cache connection has no Redis client ID.");
+            return await cluster.GetTrackedConnectionAsync(slot, requireIdentity, cancellationToken)
+                .ConfigureAwait(false);
         }
 
-        return new TrackedScriptExecution(
-            serverClientId,
-            ExecuteScriptOnConnectionAsync(connection, script, BuildScriptTail(keys, args), cancellationToken));
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(timeout);
+        try
+        {
+            return await cluster.GetTrackedConnectionAsync(slot, requireIdentity, timeoutSource.Token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout);
+        }
+    }
+
+    private async ValueTask<RespireConnection> GetTrackedRedirectConnectionAsync(
+        ClusterRouter cluster,
+        RespireServerException error,
+        RespireConnection source,
+        bool requireIdentity,
+        CancellationToken cancellationToken)
+    {
+        if (_core.Options.CommandTimeout is not { } timeout)
+        {
+            return await cluster.GetTrackedRedirectConnectionAsync(
+                    error, source, requireIdentity, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(timeout);
+        try
+        {
+            return await cluster.GetTrackedRedirectConnectionAsync(
+                    error, source, requireIdentity, timeoutSource.Token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout);
+        }
+    }
+
+    private static TrackedConnectionIdentity GetTrackedConnectionIdentity(
+        RespireConnection connection, bool reliable)
+        => reliable && connection.ServerClientId > 0
+            ? new TrackedConnectionIdentity(
+                new RespireEndpoint(connection.Host, connection.Port), connection.ServerClientId)
+            : default;
+
+    private async ValueTask<RespireResult> ExecuteTrackedClusterScriptAsync(
+        TrackedScriptExecution execution,
+        ClusterRouter cluster,
+        RespireConnection connection,
+        RespireScript script,
+        RespireValue[] tail,
+        bool requiresIdentity,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await ExecuteTrackedClusterCommandAsync(
+                    execution, cluster, connection, "EVALSHA", Verbs.EvalSha, script.Sha1, script.Sha1, tail,
+                    requiresIdentity, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (RespireServerException ex) when (ex.Code == "NOSCRIPT")
+        {
+            return await ExecuteTrackedClusterCommandAsync(
+                    execution, cluster, execution.Connection, "EVAL", Verbs.Eval, script.Source, script.Sha1, tail,
+                    requiresIdentity, cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask<RespireResult> ExecuteTrackedClusterCommandAsync(
+        TrackedScriptExecution execution,
+        ClusterRouter cluster,
+        RespireConnection initialConnection,
+        string operation,
+        Verb verb,
+        RespireValue body,
+        string storedProcedureName,
+        RespireValue[] tail,
+        bool requiresIdentity,
+        CancellationToken cancellationToken)
+    {
+        var connection = initialConnection;
+        var sendAsking = false;
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                var reply = await SendOnConnectionAsync(
+                        operation, connection, new Cmd2N(verb, body, tail[0], tail[1..]),
+                        cancellationToken, storedProcedureName, sendAsking)
+                    .ConfigureAwait(false);
+                return new RespireResult(in reply);
+            }
+            catch (RespireServerException error)
+                when (attempt < ClusterRouter.RedirectLimit && ClusterRouter.IsRedirect(error))
+            {
+                connection = await GetTrackedRedirectConnectionAsync(
+                        cluster, error, connection, requiresIdentity, cancellationToken)
+                    .ConfigureAwait(false);
+                execution.Connection = connection;
+                execution.ConnectionIdentity = GetTrackedConnectionIdentity(
+                    connection, cluster.HasReliableCorrectionOrdering(connection));
+                sendAsking = error.Code == "ASK";
+            }
+        }
     }
 
     private async ValueTask<RespireResult> ExecuteScriptOnConnectionAsync(
@@ -913,17 +1080,20 @@ public sealed partial class RespireClient : IRespireClient
     /// the server acknowledgement. The acknowledged kill is an ordering barrier: no command
     /// from the target client can execute afterward.
     /// </summary>
-    internal async ValueTask FenceCorrectionConnectionAsync(long serverClientId)
+    internal async ValueTask FenceCorrectionConnectionAsync(TrackedConnectionIdentity identity)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(serverClientId);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(identity.ServerClientId);
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
 
-        var control = await core.DedicatedPool.RentAsync(CancellationToken.None).ConfigureAwait(false);
+        var pool = core.Cluster is { } cluster
+            ? cluster.GetDedicatedPool(identity.Endpoint)
+            : core.DedicatedPool;
+        var control = await pool.RentAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
             var reply = await control.SendAsync(
-                new ClientKillIdCommand(serverClientId), CancellationToken.None).ConfigureAwait(false);
+                new ClientKillIdCommand(identity.ServerClientId), CancellationToken.None).ConfigureAwait(false);
             if (reply.IsError)
             {
                 var error = ResponseReader.ServerError(in reply);
@@ -935,10 +1105,17 @@ public sealed partial class RespireClient : IRespireClient
         }
         finally
         {
-            core.DedicatedPool.Return(control);
+            pool.Return(control);
         }
 
-        await core.Multiplexer.RetireConnectionAsync(serverClientId).ConfigureAwait(false);
+        if (core.Cluster is { } router)
+        {
+            await router.RetireConnectionAsync(identity.Endpoint, identity.ServerClientId).ConfigureAwait(false);
+        }
+        else
+        {
+            await core.Multiplexer.RetireConnectionAsync(identity.ServerClientId).ConfigureAwait(false);
+        }
     }
 
     internal RespireValue[] BuildScriptTail(RespireKey[]? keys, RespireValue[]? args)

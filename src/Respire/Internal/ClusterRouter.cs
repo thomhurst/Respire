@@ -34,6 +34,9 @@ internal sealed class ClusterRouter : IAsyncDisposable
     internal bool IsConnected => Volatile.Read(ref _seed)?.IsConnected == true;
     internal event Action<RespireConnectionState>? StateChanged;
 
+    internal bool IsSlotConnected(int slot)
+        => Volatile.Read(ref _slots[slot])?.IsConnected == true;
+
     internal RespireEndpoint SeedEndpoint
     {
         get
@@ -127,6 +130,25 @@ internal sealed class ClusterRouter : IAsyncDisposable
         return node.GetConnection();
     }
 
+    internal async ValueTask<RespireConnection> GetTrackedConnectionAsync(
+        int? slot, bool requireIdentity, CancellationToken cancellationToken)
+    {
+        var connection = await GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
+        return await EnableCorrectionOrderingAsync(connection, requireIdentity, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    internal async ValueTask<RespireConnection> GetTrackedRedirectConnectionAsync(
+        RespireServerException error,
+        RespireConnection source,
+        bool requireIdentity,
+        CancellationToken cancellationToken)
+    {
+        var connection = await GetRedirectConnectionAsync(error, source, cancellationToken).ConfigureAwait(false);
+        return await EnableCorrectionOrderingAsync(connection, requireIdentity, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     internal async ValueTask<DedicatedConnectionPool> GetDedicatedPoolAsync(
         int? slot,
         CancellationToken cancellationToken)
@@ -171,6 +193,16 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
         return GetOrCreateDedicatedPool(endpoint);
     }
+
+    internal DedicatedConnectionPool GetDedicatedPool(RespireEndpoint endpoint)
+        => GetOrCreateDedicatedPool(endpoint);
+
+    internal ValueTask RetireConnectionAsync(RespireEndpoint endpoint, long serverClientId)
+        => GetOrCreateNode(endpoint).RetireConnectionAsync(serverClientId);
+
+    internal bool HasReliableCorrectionOrdering(RespireConnection connection)
+        => GetOrCreateNode(new RespireEndpoint(connection.Host, connection.Port))
+            .HasReliableCorrectionOrdering;
 
     internal static bool IsRedirect(RespireServerException error)
         => error.Code is "MOVED" or "ASK";
@@ -302,6 +334,24 @@ internal sealed class ClusterRouter : IAsyncDisposable
             _nodes.Add(endpoint, node);
             return node;
         }
+    }
+
+    private async ValueTask<RespireConnection> EnableCorrectionOrderingAsync(
+        RespireConnection connection,
+        bool required,
+        CancellationToken cancellationToken)
+    {
+        var node = GetOrCreateNode(new RespireEndpoint(connection.Host, connection.Port));
+        try
+        {
+            await node.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (RespireServerException) when (!required)
+        {
+            // Non-cancellable cache access remains compatible with restricted ACLs.
+        }
+
+        return node.GetConnection();
     }
 
     private void OnNodeStateChanged(RespireConnectionState state) => StateChanged?.Invoke(state);
