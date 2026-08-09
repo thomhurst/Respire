@@ -9,10 +9,10 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="TUnit" Version="1.64.0" />
-        <PackageReference Include="Testcontainers.Redis" Version="4.13.0" />
-        <PackageReference Include="StackExchange.Redis" Version="2.13.17" />
-        <PackageReference Include="FluentAssertions" Version="8.10.0" />
+        <PackageReference Include="TUnit" />
+        <PackageReference Include="Testcontainers.Redis" />
+        <PackageReference Include="StackExchange.Redis" />
+        <PackageReference Include="FluentAssertions" />
     </ItemGroup>
 
     <ItemGroup>

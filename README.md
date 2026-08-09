@@ -15,7 +15,7 @@ await redis.SetAsync("user:1", new User("Ada", 36));
 User? user = await redis.GetAsync<User>("user:1");
 ```
 
-> **Status:** Respire is pre-release, so its API may still change. TLS, cluster support, and
+> **Status:** Respire is pre-release, so its API may still change. Cluster support and
 > RESP3 client-side caching are on the [roadmap](docs/API_DESIGN.md#18-roadmap-designed-for-not-v1).
 
 ## Why Respire?
@@ -63,6 +63,25 @@ await foreach (var message in subscription.WithCancellation(token))
 }
 ```
 
+Redis 7 sharded pub/sub uses `SSUBSCRIBE` and `SPUBLISH`. Run this as a separate consumer:
+
+```csharp
+await using var shard = redis.SubscribeSharded("orders:europe");
+await using var shardMessages = shard.GetAsyncEnumerator(token);
+var nextMessage = shardMessages.MoveNextAsync().AsTask(); // Starts SSUBSCRIBE.
+
+while (!nextMessage.IsCompleted)
+{
+    await redis.PublishShardedAsync("orders:europe", "ready", token);
+    await Task.WhenAny(nextMessage, Task.Delay(10, token));
+}
+
+if (await nextMessage.WaitAsync(token))
+{
+    Console.WriteLine(shardMessages.Current.Text);
+}
+```
+
 ### Batches and transactions
 
 Batch commands share one flush. Transactions use one connection and return typed pending
@@ -82,7 +101,20 @@ transaction.ListRightPushAsync("audit", "withdraw:100");
 bool committed = await transaction.CommitAsync();
 ```
 
-Use `CreateTransactionAsync(["balance"])` when you need optimistic concurrency with `WATCH`.
+Use `CreateTransactionAsync(["balance"])` for optimistic concurrency with `WATCH`. Read the
+current value, queue the conditional update, then retry when `CommitAsync` returns `false`:
+
+```csharp
+bool applied;
+do
+{
+    await using var watched = await redis.CreateTransactionAsync(["balance"]);
+    long current = long.Parse((await redis.GetStringAsync("balance"))!);
+    watched.SetAsync("balance", current - 100);
+    applied = await watched.CommitAsync();
+}
+while (!applied);
+```
 
 ### Zero-copy reads and custom commands
 
@@ -174,7 +206,7 @@ npm start
 ## Build and test
 
 ```bash
-dotnet build Respire.sln
+dotnet build Respire.slnx
 dotnet test tests/Respire.Tests
 dotnet test tests/Respire.IntegrationTests # Requires Docker
 ```

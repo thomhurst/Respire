@@ -53,6 +53,72 @@ public class RespireConnectionTests
     }
 
     [Test]
+    public async Task RingFull_Backpressure_WaitsForCapacity()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        server.DelayReply(0, 500);
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1", server.Port, new RespireConnectionOptions { MaxInflightCommands = 2 });
+
+        var first = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        var second = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen == 0)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
+        var third = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        await Task.Delay(100, timeout.Token);
+
+        await Assert.That(third.IsCompleted).IsFalse();
+
+        var responses = await Task.WhenAll(first, second, third).WaitAsync(timeout.Token);
+        foreach (var response in responses)
+        {
+            response.Dispose();
+        }
+    }
+
+    [Test]
+    public async Task RingFull_ConnectionFailureFaultsCapacityWaiters()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var commandsReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var closeConnection = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var server = Task.Run(async () =>
+        {
+            using var socket = await listener.AcceptSocketAsync();
+            var buffer = new byte[1024];
+            await socket.ReceiveAsync(buffer, SocketFlags.None);
+            commandsReceived.SetResult();
+            await closeConnection.Task;
+        });
+
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1", port, new RespireConnectionOptions { MaxInflightCommands = 2 });
+        var first = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        var second = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        await commandsReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var capacityWaiter = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+
+        await Task.Delay(100);
+        await Assert.That(capacityWaiter.IsCompleted).IsFalse();
+        closeConnection.SetResult();
+
+        var all = Task.WhenAll(first, second, capacityWaiter);
+        await Assert.That(async () => await all.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireConnectionException>();
+        await Assert.That(capacityWaiter.IsFaulted).IsTrue();
+
+        await server;
+        listener.Stop();
+    }
+
+    [Test]
     public async Task ConvertedPipelinedCommands_CompleteInFifoOrder()
     {
         const int batchSize = 50;
@@ -133,6 +199,24 @@ public class RespireConnectionTests
 
         await Assert.That(response.Type).IsEqualTo(RespDataType.BulkString);
         await Assert.That(response.AsString()).IsEqualTo(payload);
+        response.Dispose();
+    }
+
+    [Test]
+    public async Task LargeBulkStringNestedInArray_DirectFillRoundTrips()
+    {
+        var payload = new string('n', 256 * 1024);
+        var reply = Encoding.UTF8.GetBytes($"*2\r\n${payload.Length}\r\n{payload}\r\n:7\r\n");
+        await using var server = new FakeRespServer(reply);
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1", server.Port, new RespireConnectionOptions { ReceiveBufferSize = 128 });
+
+        var response = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+        var receivedPayload = response.AsArray()[0].AsString();
+        var receivedInteger = response.AsArray()[1].AsInteger();
+
+        await Assert.That(receivedPayload).IsEqualTo(payload);
+        await Assert.That(receivedInteger).IsEqualTo(7);
         response.Dispose();
     }
 
