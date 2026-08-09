@@ -229,7 +229,16 @@ public static class RespCommands
         WriteInteger(buffer, ref offset, bytes);
         buffer[offset++] = (byte)'\r';
         buffer[offset++] = (byte)'\n';
-        offset += Encoding.UTF8.GetBytes(value, buffer[offset..]);
+        if (bytes == value.Length)
+        {
+            Ascii.FromUtf16(value, buffer[offset..], out _);
+        }
+        else
+        {
+            Encoding.UTF8.GetBytes(value, buffer[offset..]);
+        }
+
+        offset += bytes;
         buffer[offset++] = (byte)'\r';
         buffer[offset++] = (byte)'\n';
     }
