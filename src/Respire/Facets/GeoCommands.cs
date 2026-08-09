@@ -38,7 +38,7 @@ public readonly record struct GeoSearchResult(
 
 public readonly struct GeoSearchOrigin
 {
-    private GeoSearchOrigin(string? member, double longitude, double latitude)
+    private GeoSearchOrigin(RespireValue? member, double longitude, double latitude)
     {
         IsInitialized = true;
         Member = member;
@@ -46,16 +46,12 @@ public readonly struct GeoSearchOrigin
         Latitude = latitude;
     }
 
-    internal string? Member { get; }
+    internal RespireValue? Member { get; }
     internal double Longitude { get; }
     internal double Latitude { get; }
     internal bool IsInitialized { get; }
 
-    public static GeoSearchOrigin FromMember(string member)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(member);
-        return new(member, 0, 0);
-    }
+    public static GeoSearchOrigin FromMember(RespireValue member) => new(member, 0, 0);
 
     public static GeoSearchOrigin FromCoordinates(double longitude, double latitude)
         => new(null, longitude, latitude);
@@ -388,7 +384,7 @@ internal readonly struct GeoSearchCommand(
         if (origin.Member is { } member)
         {
             writer.WriteBulkString("FROMMEMBER"u8);
-            writer.WriteBulkString(member);
+            member.WriteTo(ref writer);
         }
         else
         {

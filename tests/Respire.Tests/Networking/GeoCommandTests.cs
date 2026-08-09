@@ -1,3 +1,5 @@
+using Respire.Networking;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -6,6 +8,16 @@ namespace Respire.Tests.Networking;
 
 public class GeoCommandTests
 {
+    [Test]
+    public async Task GeoSearchOrigin_PreservesBinaryAndEmptyMembers()
+    {
+        var binary = SerializeOriginMember(new byte[] { 0xff, 0x00 });
+        var empty = SerializeOriginMember(ReadOnlyMemory<byte>.Empty);
+
+        await Assert.That(binary.AsSpan().SequenceEqual(new byte[] { 0xff, 0x00 })).IsTrue();
+        await Assert.That(empty).IsEmpty();
+    }
+
     [Test]
     public async Task EveryGeoCommand_WritesExpectedFrameAndParsesReply()
     {
@@ -102,5 +114,41 @@ public class GeoCommandTests
             GeoSearchShape.Box(1, double.PositiveInfinity)))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    private static byte[] SerializeOriginMember(RespireValue member)
+    {
+        var buffer = new WriteBuffer(128);
+        try
+        {
+            var writer = new RespWriter(buffer);
+            new GeoSearchCommand(
+                RespireCommands.Geo.GEOSEARCH.Verb,
+                "places",
+                GeoSearchOrigin.FromMember(member),
+                GeoSearchShape.Circle(1),
+                default,
+                destination: null,
+                storeDistance: false).Write(ref writer);
+            var position = 0;
+            var status = RespParser.TryParseValue(buffer.WrittenMemory.Span, ref position, out var frame);
+            if (status != RespParseStatus.Done || position != buffer.Count)
+            {
+                throw new InvalidOperationException("Serialized GEOSEARCH command did not parse completely.");
+            }
+
+            try
+            {
+                return frame.AsArray()[3].AsSpan().ToArray();
+            }
+            finally
+            {
+                frame.Dispose();
+            }
+        }
+        finally
+        {
+            buffer.Release();
+        }
     }
 }
