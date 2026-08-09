@@ -196,6 +196,24 @@ public class RespireConnectionTests
     }
 
     [Test]
+    public async Task ResponseWatchdog_NoBytesWhilePending_AbortsConnection()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        server.DelayReply(0, 1000);
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1",
+            server.Port,
+            new RespireConnectionOptions { ResponseTimeout = TimeSpan.FromMilliseconds(100) });
+
+        var response = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+
+        var exception = await Assert.That(async () => await response)
+            .ThrowsExactly<RespireConnectionException>();
+        await Assert.That(exception!.Message).Contains("received no data");
+        await Assert.That(connection.IsConnected).IsFalse();
+    }
+
+    [Test]
     public async Task SendAfterDeath_ThrowsConnectionException()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);

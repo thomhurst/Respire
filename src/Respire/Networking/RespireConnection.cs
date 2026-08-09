@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
@@ -50,6 +51,9 @@ public sealed class RespireConnection : IAsyncDisposable
     private readonly RespirePushHandler? _pushHandler;
     private readonly Task _receiveTask;
     private readonly Task _flushTask;
+    private readonly Task? _watchdogTask;
+    private readonly CancellationTokenSource? _watchdogCancellation;
+    private readonly TimeSpan? _responseTimeout;
     private readonly AsyncFlushSignal _flushSignal = new();
 
     private WriteBuffer _activeBuffer;
@@ -57,6 +61,8 @@ public sealed class RespireConnection : IAsyncDisposable
     private bool _dead;
     private int _disposed;
     private long _serverClientId;
+    private long _lastReceiveTimestamp;
+    private Exception? _abortReason;
 
     public string Host { get; }
     public int Port { get; }
@@ -95,8 +101,15 @@ public sealed class RespireConnection : IAsyncDisposable
         _sourcePool = new PendingResponsePool(options.CompletionSourcePoolSize);
         _activeBuffer = new WriteBuffer(options.WriteBufferSize);
         _spareBuffer = new WriteBuffer(options.WriteBufferSize);
+        _responseTimeout = options.ResponseTimeout;
+        _lastReceiveTimestamp = Stopwatch.GetTimestamp();
         _receiveTask = Task.Run(ReceiveLoopAsync);
         _flushTask = Task.Run(FlushLoopAsync);
+        if (_responseTimeout is { } responseTimeout)
+        {
+            _watchdogCancellation = new CancellationTokenSource();
+            _watchdogTask = WatchReceiveAsync(responseTimeout, _watchdogCancellation.Token);
+        }
     }
 
     public static async Task<RespireConnection> ConnectAsync(
@@ -107,6 +120,10 @@ public sealed class RespireConnection : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         options ??= RespireConnectionOptions.Default;
+        if (options.ResponseTimeout is { } invalidTimeout && invalidTimeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "ResponseTimeout must be positive.");
+        }
 
         var socket = new Socket(SocketType.Stream, ProtocolType.Tcp)
         {
@@ -408,6 +425,11 @@ public sealed class RespireConnection : IAsyncDisposable
 
                 _activeBuffer.Append(frame);
 
+                if (_inflight.Count == 0)
+                {
+                    ResetReceiveDeadline();
+                }
+
                 for (var i = 0; i < discardRepliesBefore; i++)
                 {
                     _inflight.TryEnqueue(InflightRing.DiscardSentinel);
@@ -465,6 +487,11 @@ public sealed class RespireConnection : IAsyncDisposable
             if (_activeBuffer.Count - mark > ScratchRetainLimit)
             {
                 _directPathBudget = DirectPathBudgetAfterLargeFrame;
+            }
+
+            if (_inflight.Count == 0)
+            {
+                ResetReceiveDeadline();
             }
 
             for (var i = 0; i < discardRepliesBefore; i++)
@@ -690,6 +717,7 @@ public sealed class RespireConnection : IAsyncDisposable
                     break;
                 }
 
+                ResetReceiveDeadline();
                 end += received;
             }
         }
@@ -701,7 +729,9 @@ public sealed class RespireConnection : IAsyncDisposable
         {
             RespirePools.ResponsePayloads.Return(buffer);
             Abort();
-            FailAllPending(fault ?? new RespireConnectionException($"Connection to {Host}:{Port} closed."));
+            FailAllPending(Volatile.Read(ref _abortReason)
+                ?? fault
+                ?? new RespireConnectionException($"Connection to {Host}:{Port} closed."));
         }
     }
 
@@ -731,6 +761,7 @@ public sealed class RespireConnection : IAsyncDisposable
                     throw new RespireConnectionException($"Connection to {Host}:{Port} closed mid-frame.");
                 }
 
+                ResetReceiveDeadline();
                 filled += read;
             }
 
@@ -755,6 +786,7 @@ public sealed class RespireConnection : IAsyncDisposable
                     throw new RespireConnectionException($"Connection to {Host}:{Port} closed mid-frame.");
                 }
 
+                ResetReceiveDeadline();
                 end += read;
             }
 
@@ -896,7 +928,40 @@ public sealed class RespireConnection : IAsyncDisposable
     /// Marks the connection dead and closes the socket, waking any blocked receive. Idempotent.
     /// The receive loop's exit path fails all in-flight commands — it is the ring's only consumer.
     /// </summary>
-    private void Abort()
+    private async Task WatchReceiveAsync(TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(timeout);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+            {
+                if (_inflight.Count == 0
+                    || Stopwatch.GetElapsedTime(Volatile.Read(ref _lastReceiveTimestamp)) < timeout)
+                {
+                    continue;
+                }
+
+                Abort(new RespireConnectionException(
+                    $"Connection to {Host}:{Port} received no data for {timeout} while responses were pending."));
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Normal connection teardown.
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void ResetReceiveDeadline()
+    {
+        if (_responseTimeout is not null)
+        {
+            Volatile.Write(ref _lastReceiveTimestamp, Stopwatch.GetTimestamp());
+        }
+    }
+
+    private void Abort(Exception? reason = null)
     {
         lock (_writeGate)
         {
@@ -906,8 +971,10 @@ public sealed class RespireConnection : IAsyncDisposable
             }
 
             _dead = true;
+            _abortReason = reason;
         }
 
+        _watchdogCancellation?.Cancel();
         try
         {
             _socket.Close(0);
@@ -957,6 +1024,10 @@ public sealed class RespireConnection : IAsyncDisposable
         Abort();
         await _receiveTask.ConfigureAwait(false);
         await _flushTask.ConfigureAwait(false);
+        if (_watchdogTask is not null)
+        {
+            await _watchdogTask.ConfigureAwait(false);
+        }
 
         lock (_writeGate)
         {
@@ -965,6 +1036,7 @@ public sealed class RespireConnection : IAsyncDisposable
         }
 
         _socket.Dispose();
+        _watchdogCancellation?.Dispose();
         _logger?.LogDebug("Disconnected from {Host}:{Port}", Host, Port);
     }
 }
@@ -989,6 +1061,12 @@ public sealed record RespireConnectionOptions
 
     /// <summary>Timeout for the initial TCP connect.</summary>
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Aborts the connection when responses are pending and no bytes arrive within this period.
+    /// Null disables the watchdog.
+    /// </summary>
+    public TimeSpan? ResponseTimeout { get; init; }
 
     /// <summary>ACL username for AUTH/HELLO. Defaults to Redis's "default" user when only a password is set.</summary>
     public string? Username { get; init; }
