@@ -1,9 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
+    <PackageId>Respire.Extensions.DependencyInjection</PackageId>
+    <Title>Respire.Extensions.DependencyInjection</Title>
+    <Description>Dependency injection integration for Respire clients in Microsoft.Extensions.DependencyInjection applications.</Description>
+    <PackageTags>$(PackageTags);dependency-injection;hosting;extensions</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>

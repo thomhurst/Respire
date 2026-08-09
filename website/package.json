@@ -1,7 +1,19 @@
 {
   "name": "respire-docs",
   "version": "0.0.0",
+  "description": "Documentation website for Respire.",
   "private": true,
+  "license": "MIT",
+  "homepage": "https://thomhurst.github.io/Respire/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thomhurst/Respire.git",
+    "directory": "website"
+  },
+  "bugs": {
+    "url": "https://github.com/thomhurst/Respire/issues"
+  },
+  "packageManager": "npm@11.13.0",
   "scripts": {
     "start": "docusaurus start",
     "build": "docusaurus build",
@@ -26,6 +38,6 @@
     "development": ["last 3 chrome version", "last 3 firefox version", "last 5 safari version"]
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=24 <25"
   }
 }

@@ -1,9 +1,53 @@
 <Project>
-    <PropertyGroup>
-        <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
-        <ImplicitUsings>enable</ImplicitUsings>
-        <Nullable>enable</Nullable>
-        <!-- The public API uses C# 13 params collections (params ReadOnlySpan<T>). -->
-        <LangVersion>13</LangVersion>
-    </PropertyGroup>
+  <PropertyGroup>
+    <RepositoryRoot>$(MSBuildThisFileDirectory)</RepositoryRoot>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- The public API uses C# 13 params collections (params ReadOnlySpan<T>). -->
+    <LangVersion>13</LangVersion>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true' Or '$(TF_BUILD)' == 'true'">true</ContinuousIntegrationBuild>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode Condition="'$(ContinuousIntegrationBuild)' == 'true'">true</RestoreLockedMode>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <IsRespirePackageProject>false</IsRespirePackageProject>
+    <IsRespirePackageProject Condition="'$(MSBuildProjectName)' == 'Respire' Or '$(MSBuildProjectName)' == 'Respire.Extensions.DependencyInjection' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Caching' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Caching.Hybrid'">true</IsRespirePackageProject>
+    <IsPackable>$(IsRespirePackageProject)</IsPackable>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Respire.Tests' Or '$(MSBuildProjectName)' == 'Respire.IntegrationTests' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Caching.Tests' Or '$(MSBuildProjectName)' == 'Respire.Extensions.Caching.Hybrid.Tests' Or '$(MSBuildProjectName)' == 'Respire.Pipeline.Tests'">
+    <IsTestProject>true</IsTestProject>
+    <!-- Bridge Microsoft.Testing.Platform (TUnit) into `dotnet test` for the pipeline. -->
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(IsRespirePackageProject)' == 'true'">
+    <Authors>Tom Hurst</Authors>
+    <Company>Respire</Company>
+    <Product>Respire</Product>
+    <Copyright>Copyright (c) 2026 Tom Hurst</Copyright>
+    <PackageProjectUrl>https://thomhurst.github.io/Respire/</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/thomhurst/Respire</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <PackageTags>redis;valkey;keydb;resp;cache;caching;client;dotnet</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLanguage>en-US</PackageLanguage>
+    <NeutralLanguage>en-US</NeutralLanguage>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(IsRespirePackageProject)' == 'true'">
+    <None Include="$(RepositoryRoot)README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 </Project>
