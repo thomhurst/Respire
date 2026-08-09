@@ -11,10 +11,11 @@ on:
         description: Publish packages?    
         type: boolean
         required: true
+        default: false
 
 jobs:
   modularpipeline:
-    environment: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Pull Requests' }}
+    environment: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.publish-packages && 'Production' || 'Pull Requests' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -34,7 +35,7 @@ jobs:
             10.0.x
       
       - name: NuGet login
-        if: ${{ github.ref == 'refs/heads/main' && github.event.inputs.publish-packages == 'true' }}
+        if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.publish-packages }}
         uses: NuGet/login@v1
         id: login
         with:
@@ -45,8 +46,8 @@ jobs:
         run: dotnet run -c Release -f net10.0
         working-directory: "Respire.Pipeline"
         env:
-          DOTNET_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Development' }}
+          DOTNET_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.publish-packages && 'Production' || 'Development' }}
           NuGet__ApiKey: ${{ steps.login.outputs.NUGET_API_KEY }}
           PULL_REQUEST_BRANCH: ${{ github.event.pull_request.head.ref }}
-          PUBLISH_PACKAGES: ${{ github.event.inputs.publish-packages }}
+          PUBLISH_PACKAGES: ${{ inputs.publish-packages }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

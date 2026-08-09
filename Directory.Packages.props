@@ -7,6 +7,7 @@
     <PackageVersion Include="BenchmarkDotNet" Version="0.15.8" />
     <PackageVersion Include="FluentAssertions" Version="8.10.0" />
     <PackageVersion Include="ModularPipelines.DotNet" Version="3.2.8" />
+    <PackageVersion Include="ModularPipelines.GitHub" Version="3.2.8" />
     <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="10.0.10" />
     <PackageVersion Include="System.IO.Hashing" Version="10.0.10" />
     <PackageVersion Include="System.IO.Pipelines" Version="10.0.10" />
