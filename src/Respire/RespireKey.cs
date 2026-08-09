@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 using Respire.Protocol;
 
@@ -10,6 +11,7 @@ namespace Respire;
 /// </summary>
 public readonly struct RespireKey : IEquatable<RespireKey>
 {
+    private const int StackallocThreshold = 256;
     private readonly string? _string;
     private readonly ReadOnlyMemory<byte> _bytes;
 
@@ -65,13 +67,82 @@ public readonly struct RespireKey : IEquatable<RespireKey>
             return string.Equals(_string, other._string, StringComparison.Ordinal);
         }
 
-        // Mixed representations compare by UTF-8 content.
-        ReadOnlyMemory<byte> mine = _string is not null ? Encoding.UTF8.GetBytes(_string) : _bytes;
-        ReadOnlyMemory<byte> theirs = other._string is not null ? Encoding.UTF8.GetBytes(other._string) : other._bytes;
-        return mine.Span.SequenceEqual(theirs.Span);
+        if (_string is not null)
+        {
+            return Utf8Equals(_string, other._bytes.Span);
+        }
+
+        return other._string is not null
+            ? Utf8Equals(other._string, _bytes.Span)
+            : _bytes.Span.SequenceEqual(other._bytes.Span);
     }
 
     public override bool Equals(object? obj) => obj is RespireKey other && Equals(other);
 
-    public override int GetHashCode() => StringComparer.Ordinal.GetHashCode(ToString());
+    public override int GetHashCode()
+    {
+        if (_string is not null)
+        {
+            return StringComparer.Ordinal.GetHashCode(_string);
+        }
+
+        var bytes = _bytes.Span;
+        char[]? rented = null;
+        var chars = bytes.Length <= StackallocThreshold
+            ? stackalloc char[bytes.Length]
+            : (rented = ArrayPool<char>.Shared.Rent(bytes.Length));
+
+        try
+        {
+            var status = Ascii.ToUtf16(bytes, chars, out var charsWritten);
+            if (status != OperationStatus.Done)
+            {
+                charsWritten = Encoding.UTF8.GetChars(bytes, chars);
+            }
+
+            return string.GetHashCode(chars[..charsWritten], StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                ArrayPool<char>.Shared.Return(rented, clearArray: true);
+            }
+        }
+    }
+
+    private static bool Utf8Equals(string value, ReadOnlySpan<byte> bytes)
+    {
+        var byteCount = Encoding.UTF8.GetByteCount(value);
+        if (byteCount != bytes.Length)
+        {
+            return false;
+        }
+
+        byte[]? rented = null;
+        var encoded = byteCount <= StackallocThreshold
+            ? stackalloc byte[byteCount]
+            : (rented = ArrayPool<byte>.Shared.Rent(byteCount));
+
+        try
+        {
+            if (byteCount == value.Length)
+            {
+                Ascii.FromUtf16(value, encoded, out _);
+            }
+            else
+            {
+                Encoding.UTF8.GetBytes(value, encoded);
+            }
+
+            return encoded[..byteCount].SequenceEqual(bytes);
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                ArrayPool<byte>.Shared.Return(rented, clearArray: true);
+            }
+        }
+    }
 }
