@@ -20,10 +20,10 @@
 
     <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
         <!-- The Microsoft implementation, used to prove the wire layouts are interchangeable. -->
-        <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="8.0.29" />
-        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+        <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.10" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
         <!-- AddDistributedMemoryCache, for the registration-override test. -->
-        <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="8.0.1" />
+        <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.10" />
     </ItemGroup>
 
     <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">

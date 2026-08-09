@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net.Security;
 using Microsoft.Extensions.Logging;
 using Respire.Networking;
 using Respire.Serialization;
@@ -71,6 +72,12 @@ public sealed record RespireOptions
     /// <summary>Timeout for the initial TCP connect (per connection).</summary>
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(10);
 
+    /// <summary>Use TLS. Enabled automatically for <c>rediss://</c> connection strings.</summary>
+    public bool UseTls { get; init; }
+
+    /// <summary>Optional TLS authentication and certificate-validation settings.</summary>
+    public SslClientAuthenticationOptions? TlsOptions { get; init; }
+
     /// <summary>
     /// Aborts a connection when commands are awaiting replies and no bytes arrive within this
     /// period. Null (default) disables the receive watchdog.
@@ -122,6 +129,8 @@ public sealed record RespireOptions
         {
             ConnectTimeout = ConnectTimeout,
             ResponseTimeout = ResponseTimeout,
+            UseTls = UseTls,
+            TlsOptions = TlsOptions,
             Username = Username,
             Password = Password,
             ClientName = ClientName,
@@ -138,7 +147,7 @@ public sealed record RespireOptions
     /// <c>redis://[user[:password]@]host[:port][/database]</c> URI. Recognized query parameters:
     /// <c>clientName</c>, <c>connections</c>, <c>connectTimeoutMs</c>, <c>commandTimeoutMs</c>,
     /// <c>responseTimeoutMs</c>,
-    /// <c>protocol</c> (2 or 3), <c>db</c>. <c>rediss://</c> (TLS) is not supported yet.
+    /// <c>protocol</c> (2 or 3), <c>db</c>. Use <c>rediss://</c> to enable TLS.
     /// </summary>
     public static RespireOptions Parse(string connectionString)
     {
@@ -150,15 +159,11 @@ public sealed record RespireOptions
         }
 
         var uri = new Uri(connectionString, UriKind.Absolute);
-        if (uri.Scheme.Equals("rediss", StringComparison.OrdinalIgnoreCase))
+        var useTls = uri.Scheme.Equals("rediss", StringComparison.OrdinalIgnoreCase);
+        if (!useTls && !uri.Scheme.Equals("redis", StringComparison.OrdinalIgnoreCase))
         {
-            throw new NotSupportedException(
-                "rediss:// (TLS) is not supported yet — track https://github.com/thomhurst/Respire/issues for progress.");
-        }
-
-        if (!uri.Scheme.Equals("redis", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new ArgumentException($"Unsupported scheme '{uri.Scheme}' — expected redis://.", nameof(connectionString));
+            throw new ArgumentException(
+                $"Unsupported scheme '{uri.Scheme}' — expected redis:// or rediss://.", nameof(connectionString));
         }
 
         string? username = null;
@@ -233,6 +238,7 @@ public sealed record RespireOptions
             Database = database,
             Connections = connections,
             ConnectTimeout = connectTimeout,
+            UseTls = useTls,
             CommandTimeout = commandTimeout,
             ResponseTimeout = responseTimeout,
             Protocol = protocol,
