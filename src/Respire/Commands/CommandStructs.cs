@@ -309,6 +309,20 @@ internal static class DynamicCommandRouting
     }
 }
 
+/// <summary>A pre-encoded catalog command followed by caller-supplied arguments.</summary>
+internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] args) : IRespCommand
+{
+    public void Write(ref RespWriter writer)
+    {
+        writer.WriteArrayHeader(command.Verb.Tokens + args.Length);
+        writer.WriteRaw(command.Verb.Bulk);
+        foreach (var arg in args)
+        {
+            arg.WriteTo(ref writer);
+        }
+    }
+}
+
 /// <summary>
 /// INCR/DECR key when the delta is 1 (the two-token form StackExchange.Redis sends), INCRBY/DECRBY
 /// key delta otherwise. The wire-form choice lives here so the facet, batch, and transaction layers

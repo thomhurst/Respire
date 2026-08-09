@@ -11,7 +11,8 @@ Respire is pre-release. Its core RESP2 client, typed command surface, pipelining
 
 - Redis-style URI and `RespireOptions` connections
 - Multiplexed connection pool with automatic pipelining
-- String, key, hash, list, set, sorted-set, stream, script, and server facets
+- String, key, hash, list, set, sorted-set, stream, bitmap, HyperLogLog, geo, script, and server facets
+- Generated descriptors for every audited Redis, Valkey, module, KeyDB, and Dragonfly command
 - Blocking list and stream commands on dedicated pooled connections
 - Batches, transactions, and optimistic concurrency with `WATCH`
 - Pub/sub, pattern subscriptions, and Redis 7 sharded pub/sub
@@ -29,7 +30,6 @@ Respire is pre-release. Its core RESP2 client, typed command surface, pipelining
 | Redis Sentinel | Not supported |
 | RESP3-first internals | Protocol option exists; broader adoption remains planned |
 | Client-side caching | Tracking and invalidation not shipped |
-| Source-generated module commands | Raw `ExecuteAsync` is the current escape hatch |
 
 If one of these is a hard requirement today, use a mature client such as StackExchange.Redis.
 

@@ -150,13 +150,23 @@ using RespireLease blob = await redis.Strings.GetLeaseAsync("blob:4mb");
 Process(blob.Span);
 ```
 
-Commands without a typed wrapper remain one call away. Interpolated values are encoded as
-single arguments, so spaces and other content are safe:
+Every command in the Redis 8.10 and Valkey 9.1 references is available through the generated,
+discoverable `RespireCommands` catalog. It also includes Redis's integrated JSON, Search,
+probabilistic, time-series, and vector commands, Valkey modules, and documented KeyDB and
+Dragonfly extensions. Command words are pre-encoded once; only arguments are written per call:
 
 ```csharp
-using var reply = await redis.ExecuteAsync($"SET {key} {payload} EX {60}");
-using var encoding = await redis.ExecuteAsync("OBJECT", "ENCODING", "user:1");
+using var document = await redis.ExecuteAsync(
+    RespireCommands.Json.JSON_SET, "user:1", "$", payload);
+using var encoding = await redis.ExecuteAsync(
+    RespireCommands.Key.OBJECT_ENCODING, "user:1");
 ```
+
+Catalog descriptors do not encode key positions, so catalog execution is rejected on
+`WithKeyPrefix` views; use the typed facets there to preserve key isolation.
+
+The string and interpolated overloads remain available for experimental or server-specific
+commands. Interpolated values are encoded as single arguments, so spaces stay safe.
 
 ## App integration
 
@@ -214,8 +224,9 @@ not tracked. Query text is not collected because arbitrary Redis command values 
 reliably sanitized. Operation latency uses the stable `db.client.operation.duration` histogram
 in seconds; pipelines and transactions are recorded as single operations.
 
-See [API design](docs/API_DESIGN.md) for the full surface, design decisions, wire architecture,
-and roadmap. Reproducible comparisons with StackExchange.Redis live in
+See [command coverage](docs/COMMAND_COVERAGE.md) for audited sources and regeneration details,
+and [API design](docs/API_DESIGN.md) for design decisions, wire architecture, and roadmap.
+Reproducible comparisons with StackExchange.Redis live in
 [`benchmarks/`](benchmarks/).
 
 ## Documentation

@@ -86,6 +86,23 @@ internal static class ResponseReader
         return result;
     }
 
+    public static long?[] NullableIntegerArray(in RespValue value)
+    {
+        var elements = value.AsArray();
+        if (elements.Length == 0)
+        {
+            return [];
+        }
+
+        var result = new long?[elements.Length];
+        for (var i = 0; i < elements.Length; i++)
+        {
+            result[i] = elements[i].IsNull ? null : elements[i].AsInteger();
+        }
+
+        return result;
+    }
+
     /// <summary>Flattened key,value,key,value pairs (HGETALL, CONFIG GET) into a dictionary.</summary>
     public static Dictionary<string, string> StringMap(in RespValue value)
     {

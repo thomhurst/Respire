@@ -13,21 +13,94 @@ internal readonly struct Verb
     public readonly int Tokens;
     public readonly int RoutingKeyIndex;
 
-    public Verb(params string[] words) : this(0, words)
+    public Verb(string command) : this(0, command)
     {
     }
 
     public Verb(int routingKeyIndex, params string[] words)
+        : this(routingKeyIndex, string.Join(' ', words))
     {
+    }
+
+    private Verb(int routingKeyIndex, string command)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(command);
+
         RoutingKeyIndex = routingKeyIndex;
-        Tokens = words.Length;
-        var builder = new StringBuilder();
-        foreach (var word in words)
+        Tokens = 0;
+        var encodedLength = 0;
+        var start = 0;
+        while (start < command.Length)
         {
-            builder.Append('$').Append(word.Length).Append("\r\n").Append(word).Append("\r\n");
+            while (start < command.Length && command[start] == ' ')
+            {
+                start++;
+            }
+
+            if (start == command.Length)
+            {
+                break;
+            }
+
+            var end = command.IndexOf(' ', start);
+            if (end < 0)
+            {
+                end = command.Length;
+            }
+
+            var length = end - start;
+            encodedLength += 1 + DecimalDigits(length) + 2 + length + 2;
+            Tokens++;
+            start = end + 1;
         }
 
-        Bulk = Encoding.ASCII.GetBytes(builder.ToString());
+        Bulk = GC.AllocateUninitializedArray<byte>(encodedLength);
+        var destination = Bulk.AsSpan();
+        var offset = 0;
+        start = 0;
+        while (start < command.Length)
+        {
+            while (start < command.Length && command[start] == ' ')
+            {
+                start++;
+            }
+
+            if (start == command.Length)
+            {
+                break;
+            }
+
+            var end = command.IndexOf(' ', start);
+            if (end < 0)
+            {
+                end = command.Length;
+            }
+
+            var length = end - start;
+            destination[offset++] = (byte)'$';
+            offset += WritePositiveInteger(length, destination[offset..]);
+            destination[offset++] = (byte)'\r';
+            destination[offset++] = (byte)'\n';
+            offset += Encoding.ASCII.GetBytes(command.AsSpan(start, length), destination[offset..]);
+            destination[offset++] = (byte)'\r';
+            destination[offset++] = (byte)'\n';
+            start = end + 1;
+        }
+    }
+
+    private static int DecimalDigits(int value)
+        => value < 10 ? 1 : value < 100 ? 2 : value < 1_000 ? 3 : value < 10_000 ? 4 : 5;
+
+    private static int WritePositiveInteger(int value, Span<byte> destination)
+    {
+        var digits = DecimalDigits(value);
+        for (var index = digits - 1; index >= 0; index--)
+        {
+            destination[index] = (byte)('0' + value % 10);
+            value /= 10;
+        }
+
+        return digits;
     }
 }
 
@@ -122,7 +195,7 @@ internal static class Verbs
     public static readonly Verb XLen = new("XLEN");
     public static readonly Verb XRange = new("XRANGE");
     public static readonly Verb XAck = new("XACK");
-    public static readonly Verb XGroupCreate = new("XGROUP", "CREATE");
+    public static readonly Verb XGroupCreate = new("XGROUP CREATE");
     public static readonly Verb XReadGroup = new(8, "XREADGROUP");
 
     // Scripts

@@ -202,12 +202,40 @@ public readonly struct RespireValue
     }
 
     internal bool EqualsAsciiIgnoreCase(string value)
-        => _kind switch
+    {
+        if (_kind == Kind.String)
         {
-            Kind.String => string.Equals(_string, value, StringComparison.OrdinalIgnoreCase),
-            Kind.Bytes => Ascii.EqualsIgnoreCase(_bytes.Span, value.AsSpan()),
-            _ => false,
-        };
+            return string.Equals(_string, value, StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (_kind != Kind.Bytes || _bytes.Length != value.Length)
+        {
+            return false;
+        }
+
+        var bytes = _bytes.Span;
+        for (var i = 0; i < bytes.Length; i++)
+        {
+            var actual = bytes[i];
+            var expected = value[i];
+            if (actual is >= (byte)'a' and <= (byte)'z')
+            {
+                actual -= (byte)('a' - 'A');
+            }
+
+            if (expected is >= 'a' and <= 'z')
+            {
+                expected -= (char)('a' - 'A');
+            }
+
+            if (actual != expected)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     internal bool IsEmpty
         => _kind switch

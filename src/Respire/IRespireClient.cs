@@ -12,7 +12,7 @@ public interface IRespireClient : IAsyncDisposable
 
     event Action<RespireConnectionState>? ConnectionStateChanged;
 
-    // Facets — the full command surface, grouped by data type.
+    // Typed convenience facets, grouped by data type.
     IStringCommands Strings { get; }
     IKeyCommands Keys { get; }
     IHashCommands Hashes { get; }
@@ -20,6 +20,9 @@ public interface IRespireClient : IAsyncDisposable
     ISetCommands Sets { get; }
     ISortedSetCommands SortedSets { get; }
     IStreamCommands Streams { get; }
+    IBitmapCommands Bitmaps { get; }
+    IHyperLogLogCommands HyperLogLog { get; }
+    IGeoCommands Geo { get; }
     IScriptCommands Scripts { get; }
     IServerCommands Server { get; }
 
@@ -67,6 +70,11 @@ public interface IRespireClient : IAsyncDisposable
     RespireKey ResolveKey(RespireKey key) => key;
 
     // Raw escape hatch.
+    ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args);
+
+    ValueTask<RespireResult> ExecuteAsync(
+        RespireCommand command, RespireValue[] args, CancellationToken cancellationToken);
+
     ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args);
 
     ValueTask<RespireResult> ExecuteAsync(
