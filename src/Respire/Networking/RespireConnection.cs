@@ -1,6 +1,8 @@
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.Logging;
 using Respire.Internal;
 using Respire.Protocol;
@@ -40,6 +42,7 @@ public sealed class RespireConnection : IAsyncDisposable
     private const int MaxResponseSize = 512 * 1024 * 1024;
 
     private readonly Socket _socket;
+    private readonly SslStream? _tlsStream;
     private readonly object _writeGate = new();
     private readonly InflightRing _inflight;
     private readonly PendingResponsePool _sourcePool;
@@ -51,6 +54,7 @@ public sealed class RespireConnection : IAsyncDisposable
     private readonly Task _receiveTask;
     private readonly Task _flushTask;
     private readonly AsyncFlushSignal _flushSignal = new();
+    private readonly AsyncCapacitySignal _capacitySignal = new();
 
     private WriteBuffer _activeBuffer;
     private WriteBuffer _spareBuffer;
@@ -76,9 +80,11 @@ public sealed class RespireConnection : IAsyncDisposable
     /// </summary>
     internal long ServerClientId => Volatile.Read(ref _serverClientId);
 
-    private RespireConnection(Socket socket, string host, int port, RespireConnectionOptions options, ILogger? logger)
+    private RespireConnection(
+        Socket socket, SslStream? tlsStream, string host, int port, RespireConnectionOptions options, ILogger? logger)
     {
         _socket = socket;
+        _tlsStream = tlsStream;
         if (socket.RemoteEndPoint is IPEndPoint remoteEndpoint)
         {
             var address = remoteEndpoint.Address;
@@ -123,20 +129,29 @@ public sealed class RespireConnection : IAsyncDisposable
             socket.SendBufferSize = options.SocketSendBufferSize;
         }
 
+        SslStream? tlsStream = null;
         try
         {
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(options.ConnectTimeout);
             await socket.ConnectAsync(host, port, timeoutCts.Token).ConfigureAwait(false);
+
+            if (options.UseTls)
+            {
+                tlsStream = new SslStream(new NetworkStream(socket, ownsSocket: false));
+                var tlsOptions = CreateTlsOptions(options.TlsOptions, host);
+                await tlsStream.AuthenticateAsClientAsync(tlsOptions, timeoutCts.Token).ConfigureAwait(false);
+            }
         }
         catch
         {
+            tlsStream?.Dispose();
             socket.Dispose();
             throw;
         }
 
         logger?.LogDebug("Connected to {Host}:{Port}", host, port);
-        var connection = new RespireConnection(socket, host, port, options, logger);
+        var connection = new RespireConnection(socket, tlsStream, host, port, options, logger);
         try
         {
             await connection.HandshakeAsync(options, cancellationToken).ConfigureAwait(false);
@@ -150,53 +165,112 @@ public sealed class RespireConnection : IAsyncDisposable
         return connection;
     }
 
+    private static SslClientAuthenticationOptions CreateTlsOptions(
+        SslClientAuthenticationOptions? configured,
+        string host)
+    {
+        if (configured is null)
+        {
+            return new SslClientAuthenticationOptions { TargetHost = host };
+        }
+
+        if (!string.IsNullOrWhiteSpace(configured.TargetHost))
+        {
+            return configured;
+        }
+
+        // Do not mutate a caller-owned options instance: one instance can configure several
+        // concurrent connections, including connections to different cluster nodes.
+        var copy = new SslClientAuthenticationOptions
+        {
+            AllowRenegotiation = configured.AllowRenegotiation,
+            AllowTlsResume = configured.AllowTlsResume,
+            ApplicationProtocols = configured.ApplicationProtocols,
+            CertificateChainPolicy = configured.CertificateChainPolicy,
+            CertificateRevocationCheckMode = configured.CertificateRevocationCheckMode,
+            CipherSuitesPolicy = configured.CipherSuitesPolicy,
+            ClientCertificateContext = configured.ClientCertificateContext,
+            ClientCertificates = configured.ClientCertificates,
+            EnabledSslProtocols = configured.EnabledSslProtocols,
+            EncryptionPolicy = configured.EncryptionPolicy,
+            LocalCertificateSelectionCallback = configured.LocalCertificateSelectionCallback,
+            RemoteCertificateValidationCallback = configured.RemoteCertificateValidationCallback,
+            TargetHost = host,
+        };
+#if NET10_0_OR_GREATER
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsWindows())
+        {
+            copy.AllowRsaPkcs1Padding = configured.AllowRsaPkcs1Padding;
+            copy.AllowRsaPssPadding = configured.AllowRsaPssPadding;
+        }
+#endif
+        return copy;
+    }
+
     /// <summary>
     /// Runs HELLO/AUTH/CLIENT SETNAME through the normal send path before the connection is
     /// handed out, so every later command runs on an authenticated, protocol-negotiated stream.
     /// </summary>
     private async Task HandshakeAsync(RespireConnectionOptions options, CancellationToken cancellationToken)
     {
+        List<(string Step, ValueTask<RespValue> Reply)>? pending = null;
         if (options.UseResp3)
         {
-            var reply = await SendAsync(
-                new Commands.HelloCommand(options.Username, options.Password), cancellationToken).ConfigureAwait(false);
-            ThrowIfHandshakeFailed(in reply, "HELLO");
-            reply.Dispose();
+            (pending ??= new(3)).Add(("HELLO", SendAsync(
+                new Commands.HelloCommand(options.Username, options.Password), cancellationToken)));
         }
         else if (options.Password is not null)
         {
-            var reply = await SendAsync(
-                new Commands.AuthCommand(options.Username, options.Password), cancellationToken).ConfigureAwait(false);
-            ThrowIfHandshakeFailed(in reply, "AUTH");
-            reply.Dispose();
+            (pending ??= new(3)).Add(("AUTH", SendAsync(
+                new Commands.AuthCommand(options.Username, options.Password), cancellationToken)));
         }
 
         if (options.ClientName is not null)
         {
-            var reply = await SendAsync(
-                new Commands.ClientSetNameCommand(options.ClientName), cancellationToken).ConfigureAwait(false);
-            ThrowIfHandshakeFailed(in reply, "CLIENT SETNAME");
-            reply.Dispose();
+            (pending ??= new(3)).Add(("CLIENT SETNAME", SendAsync(
+                new Commands.ClientSetNameCommand(options.ClientName), cancellationToken)));
         }
 
         if (options.Database != 0)
         {
-            var reply = await SendAsync(
-                new Commands.SelectCommand(options.Database), cancellationToken).ConfigureAwait(false);
-            ThrowIfHandshakeFailed(in reply, "SELECT");
-            reply.Dispose();
+            (pending ??= new(3)).Add(("SELECT", SendAsync(
+                new Commands.SelectCommand(options.Database), cancellationToken)));
+        }
+
+        if (pending is null)
+        {
+            return;
+        }
+
+        Exception? failure = null;
+        foreach (var (step, pendingReply) in pending)
+        {
+            try
+            {
+                var reply = await pendingReply.ConfigureAwait(false);
+                if (failure is null && reply.IsError)
+                {
+                    failure = CreateHandshakeException(in reply, step);
+                }
+
+                reply.Dispose();
+            }
+            catch (Exception ex)
+            {
+                // Observe every pipelined reply, but preserve the first failure. A later transport
+                // fault must not replace the useful AUTH/HELLO error that caused the handshake to fail.
+                failure ??= ex;
+            }
+        }
+
+        if (failure is not null)
+        {
+            ExceptionDispatchInfo.Capture(failure).Throw();
         }
     }
 
-    private void ThrowIfHandshakeFailed(in RespValue reply, string step)
-    {
-        if (reply.IsError)
-        {
-            var message = reply.GetErrorMessage();
-            reply.Dispose();
-            throw new RespireConnectionException($"{step} failed for {Host}:{Port}: {message}");
-        }
-    }
+    private RespireConnectionException CreateHandshakeException(in RespValue reply, string step)
+        => new($"{step} failed for {Host}:{Port}: {reply.GetErrorMessage()}");
 
     /// <summary>
     /// Captures Redis's connection ID. Corrections use it to kill a locally dead connection on
@@ -515,7 +589,7 @@ public sealed class RespireConnection : IAsyncDisposable
         ScheduleFlush();
     }
 
-    /// <summary>In-flight ring full: flush and yield until enough slots open.</summary>
+    /// <summary>In-flight ring full: flush, then park until the receive loop frees capacity.</summary>
     private async ValueTask WaitForInflightCapacityAsync<TCommand>(
         TCommand command, PendingResponse source, int discardRepliesBefore, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
@@ -525,13 +599,17 @@ public sealed class RespireConnection : IAsyncDisposable
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                ScheduleFlush();
-                await Task.Yield();
+                var capacityAvailable = _capacitySignal.WaitAsync(cancellationToken);
 
+                // Arm before retrying so a concurrent dequeue cannot pulse between the
+                // failed enqueue and waiter registration.
                 if (TryEnqueue(in command, source, discardRepliesBefore))
                 {
                     return;
                 }
+
+                ScheduleFlush();
+                await capacityAvailable.ConfigureAwait(false);
             }
         }
         catch
@@ -590,10 +668,17 @@ public sealed class RespireConnection : IAsyncDisposable
 
                     // Never cancelled: a partial RESP frame on the wire is unrecoverable.
                     var memory = sending.WrittenMemory;
-                    while (memory.Length > 0)
+                    if (_tlsStream is null)
                     {
-                        var sent = await _socket.SendAsync(memory, SocketFlags.None).ConfigureAwait(false);
-                        memory = memory[sent..];
+                        while (memory.Length > 0)
+                        {
+                            var sent = await _socket.SendAsync(memory, SocketFlags.None).ConfigureAwait(false);
+                            memory = memory[sent..];
+                        }
+                    }
+                    else
+                    {
+                        await _tlsStream.WriteAsync(memory).ConfigureAwait(false);
                     }
 
                     sending.Reset();
@@ -744,7 +829,7 @@ public sealed class RespireConnection : IAsyncDisposable
                     }
                 }
 
-                var received = await _socket.ReceiveAsync(buffer.AsMemory(end), SocketFlags.None).ConfigureAwait(false);
+                var received = await ReceiveAsync(buffer.AsMemory(end)).ConfigureAwait(false);
                 if (received == 0)
                 {
                     fault = new RespireConnectionException($"Connection to {Host}:{Port} closed by remote peer.");
@@ -788,7 +873,7 @@ public sealed class RespireConnection : IAsyncDisposable
 
             while (filled < payloadLength)
             {
-                var read = await _socket.ReceiveAsync(payload.AsMemory(filled, payloadLength - filled), SocketFlags.None).ConfigureAwait(false);
+                var read = await ReceiveAsync(payload.AsMemory(filled, payloadLength - filled)).ConfigureAwait(false);
                 if (read == 0)
                 {
                     throw new RespireConnectionException($"Connection to {Host}:{Port} closed mid-frame.");
@@ -812,7 +897,7 @@ public sealed class RespireConnection : IAsyncDisposable
                     start = 0;
                 }
 
-                var read = await _socket.ReceiveAsync(buffer.AsMemory(end), SocketFlags.None).ConfigureAwait(false);
+                var read = await ReceiveAsync(buffer.AsMemory(end)).ConfigureAwait(false);
                 if (read == 0)
                 {
                     throw new RespireConnectionException($"Connection to {Host}:{Port} closed mid-frame.");
@@ -854,6 +939,8 @@ public sealed class RespireConnection : IAsyncDisposable
             throw new RespireProtocolException($"Unsolicited response from {Host}:{Port} with no command in flight.");
         }
 
+        _capacitySignal.Signal();
+
         if (ReferenceEquals(source, InflightRing.DiscardSentinel))
         {
             value.Dispose();
@@ -868,6 +955,12 @@ public sealed class RespireConnection : IAsyncDisposable
 
         source.ReleaseRef();
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private ValueTask<int> ReceiveAsync(Memory<byte> buffer)
+        => _tlsStream is null
+            ? _socket.ReceiveAsync(buffer, SocketFlags.None)
+            : _tlsStream.ReadAsync(buffer);
 
     /// <summary>
     /// Routes out-of-band frames to the push handler. RESP3 delivers them as Push frames; on a
@@ -972,6 +1065,15 @@ public sealed class RespireConnection : IAsyncDisposable
 
         try
         {
+            _tlsStream?.Dispose();
+        }
+        catch
+        {
+            // Already closed or faulted.
+        }
+
+        try
+        {
             _socket.Close(0);
         }
         catch
@@ -1003,6 +1105,8 @@ public sealed class RespireConnection : IAsyncDisposable
             failed++;
         }
 
+        _capacitySignal.Signal();
+
         if (failed > 0)
         {
             _logger?.LogDebug("Failed {Count} in-flight commands on {Host}:{Port}: {Reason}", failed, Host, Port, exception.Message);
@@ -1026,6 +1130,7 @@ public sealed class RespireConnection : IAsyncDisposable
             _spareBuffer.Release();
         }
 
+        _tlsStream?.Dispose();
         _socket.Dispose();
         _logger?.LogDebug("Disconnected from {Host}:{Port}", Host, Port);
     }
@@ -1051,6 +1156,16 @@ public sealed record RespireConnectionOptions
 
     /// <summary>Timeout for the initial TCP connect.</summary>
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>Wrap the connected socket in TLS before the RESP handshake.</summary>
+    public bool UseTls { get; init; }
+
+    /// <summary>
+    /// TLS client settings. When null, the host name is used with platform certificate
+    /// validation defaults. Set <see cref="SslClientAuthenticationOptions.TargetHost"/> when
+    /// supplying custom settings.
+    /// </summary>
+    public SslClientAuthenticationOptions? TlsOptions { get; init; }
 
     /// <summary>ACL username for AUTH/HELLO. Defaults to Redis's "default" user when only a password is set.</summary>
     public string? Username { get; init; }

@@ -88,7 +88,7 @@ older API styles force on you.
 | Throwing server errors | Error-as-value inspection | One error model; `.Code` carries the Redis error class |
 | `Async` suffix kept | Dropping it | Analyzer ecosystem and reader expectations beat the keystrokes |
 
-The full surface, conventions, and the roadmap (TLS, cluster/sentinel, RESP3-first
+The full surface, conventions, and the roadmap (cluster/sentinel, RESP3-first
 internals, client-side caching, source-generated module commands) live in
 [API_DESIGN.md](API_DESIGN.md).
 
@@ -96,7 +96,6 @@ internals, client-side caching, source-generated module commands) live in
 
 Honesty section. Today Respire does not do:
 
-- **TLS** (`rediss://`) — coming; a blocker for most managed Redis offerings, Azure included.
 - **Cluster / Sentinel** — single endpoint only for now.
 - **Client-side caching** (RESP3 tracking) — designed for, not shipped.
 

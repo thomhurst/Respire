@@ -1,0 +1,30 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/Respire.ComparisonBenchmarks/Respire.ComparisonBenchmarks.csproj" />
+  </Folder>
+  <Folder Name="/Samples/">
+    <Project Path="samples/Respire.Samples.Basic/Respire.Samples.Basic.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="benchmarks/Respire.Benchmarks/Respire.Benchmarks.csproj" />
+    <Project Path="src/Respire.Extensions.Caching.Hybrid/Respire.Extensions.Caching.Hybrid.csproj" />
+    <Project Path="src/Respire.Extensions.Caching/Respire.Extensions.Caching.csproj" />
+    <Project Path="src/Respire.Extensions.DependencyInjection/Respire.Extensions.DependencyInjection.csproj" />
+    <Project Path="src/Respire/Respire.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Respire.Extensions.Caching.Hybrid.Tests/Respire.Extensions.Caching.Hybrid.Tests.csproj" />
+    <Project Path="tests/Respire.Extensions.Caching.Tests/Respire.Extensions.Caching.Tests.csproj" />
+    <Project Path="tests/Respire.IntegrationTests/Respire.IntegrationTests.csproj" />
+    <Project Path="tests/Respire.Tests/Respire.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Respire.StressTests/Respire.StressTests.csproj" />
+  </Folder>
+  <Project Path="Respire.Pipeline/Respire.Pipeline.csproj" />
+</Solution>
