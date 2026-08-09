@@ -86,12 +86,6 @@ internal sealed class FakeRespServer : IAsyncDisposable
         await socket.SendAsync(frame, SocketFlags.None);
     }
 
-    public async Task DisconnectClientAsync()
-    {
-        var socket = await _clientSocket.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        socket.Dispose();
-    }
-
     private async Task RunAsync(int maxConnections)
     {
         var connections = new List<Task>(maxConnections);

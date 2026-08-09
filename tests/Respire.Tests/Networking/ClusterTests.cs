@@ -506,17 +506,23 @@ public class ClusterTests
             $"*2\r\n" +
             $"*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{cachedFirstNode.Port}\r\n" +
             $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{secondNode.Port}\r\n");
-        await using var seed = new FakeRespServer(initialTopology);
+        var seed = new FakeRespServer(initialTopology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Cluster = true,
             ConnectTimeout = TimeSpan.FromMilliseconds(100),
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
-        await seed.DisconnectClientAsync();
+        await seed.DisposeAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (client.IsConnected)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
         var keys = new List<string>();
 
-        await foreach (var key in client.Keys.ScanAsync())
+        await foreach (var key in client.Keys.ScanAsync(cancellationToken: timeout.Token))
         {
             keys.Add(key);
         }
