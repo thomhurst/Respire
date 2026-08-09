@@ -131,11 +131,17 @@ public class PubSubIntegrationTests
         await using var resilientClient = await RespireClient.ConnectAsync(
             RespireOptions.Parse(_fixture.ConnectionString) with { ClientName = clientName });
         var states = new List<RespireConnectionState>();
+        var connected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         resilientClient.ConnectionStateChanged += state =>
         {
             lock (states)
             {
                 states.Add(state);
+            }
+
+            if (state == RespireConnectionState.Connected)
+            {
+                connected.TrySetResult();
             }
         };
 
@@ -161,6 +167,7 @@ public class PubSubIntegrationTests
         await PublishUntilReceiversAsync(channel, "after-reconnect", 1);
 
         (await reconnectedMessage.WaitAsync(TimeSpan.FromSeconds(5))).Text.Should().Be("after-reconnect");
+        await connected.Task.WaitAsync(TimeSpan.FromSeconds(5));
         lock (states)
         {
             states.Should().ContainInOrder(

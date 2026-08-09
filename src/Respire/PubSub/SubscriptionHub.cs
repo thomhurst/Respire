@@ -15,6 +15,7 @@ namespace Respire.Internal;
 internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
 {
     private readonly object _gate = new();
+    private readonly object _reconnectStateGate = new();
     private readonly Dictionary<(SubscriptionKind Kind, string Name), List<RespireSubscription>> _routes = [];
     private readonly SemaphoreSlim _connectionGate = new(1, 1);
     private RespireConnection? _connection;
@@ -283,8 +284,12 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             return;
         }
 
-        var reconnectGeneration = Interlocked.Increment(ref _reconnectGeneration);
-        core.NotifySubscriptionStateChanged(RespireConnectionState.Reconnecting);
+        long reconnectGeneration;
+        lock (_reconnectStateGate)
+        {
+            reconnectGeneration = ++_reconnectGeneration;
+            core.NotifySubscriptionStateChanged(RespireConnectionState.Reconnecting);
+        }
         var delay = TimeSpan.FromMilliseconds(250);
         while (!_disposed)
         {
@@ -309,11 +314,14 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                 // A replacement can itself fail while this watcher is resubscribing. Its watcher
                 // then owns the newer reconnect generation; this stale watcher must not announce
                 // Connected after that newer Reconnecting notification.
-                if (reconnectGeneration == Volatile.Read(ref _reconnectGeneration)
-                    && ReferenceEquals(Volatile.Read(ref _connection), replacement)
-                    && replacement.IsConnected)
+                lock (_reconnectStateGate)
                 {
-                    core.NotifySubscriptionStateChanged(RespireConnectionState.Connected);
+                    if (reconnectGeneration == _reconnectGeneration
+                        && ReferenceEquals(Volatile.Read(ref _connection), replacement)
+                        && replacement.IsConnected)
+                    {
+                        core.NotifySubscriptionStateChanged(RespireConnectionState.Connected);
+                    }
                 }
 
                 return;
