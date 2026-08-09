@@ -300,6 +300,63 @@ public sealed class RespireConnection : IAsyncDisposable
             throwOnError: false, cancellationToken);
     }
 
+    /// <summary>
+    /// Appends a one-shot connection prelude and its command under the same write-gate hold.
+    /// The prelude reply is consumed; the returned task completes with the command reply.
+    /// </summary>
+    internal ValueTask<RespValue> SendPrefixedCheckedAsync<TPrefix, TCommand>(
+        in TPrefix prefix,
+        in TCommand command,
+        CancellationToken cancellationToken = default)
+        where TPrefix : struct, IRespCommand
+        where TCommand : struct, IRespCommand
+        => SendPrefixedAsync(in prefix, in command, throwOnError: true, cancellationToken);
+
+    internal ValueTask<RespValue> SendPrefixedAsync<TPrefix, TCommand>(
+        in TPrefix prefix,
+        in TCommand command,
+        bool throwOnError,
+        CancellationToken cancellationToken = default)
+        where TPrefix : struct, IRespCommand
+        where TCommand : struct, IRespCommand
+    {
+        if (_inflight.Capacity < 2)
+        {
+            throw new InvalidOperationException(
+                $"A prefixed command needs 2 in-flight slots, but this connection allows {_inflight.Capacity}.");
+        }
+
+        return SendCoreAsync(
+            new PrefixedCommand<TPrefix, TCommand>(prefix, command),
+            discardRepliesBefore: 1,
+            throwOnError,
+            cancellationToken);
+    }
+
+    /// <summary>Sends ASKING + MULTI + commands + EXEC as one indivisible append.</summary>
+    internal ValueTask<RespValue> SendPrefixedTransactionAsync<TPrefix>(
+        in TPrefix prefix,
+        ReadOnlyMemory<byte> serializedCommands,
+        int commandCount,
+        CancellationToken cancellationToken = default)
+        where TPrefix : struct, IRespCommand
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(commandCount);
+        var slotsNeeded = commandCount + 3;
+        if (slotsNeeded > _inflight.Capacity)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(commandCount),
+                $"A prefixed transaction with {commandCount} commands needs {slotsNeeded} in-flight slots, but this connection allows {_inflight.Capacity}.");
+        }
+
+        return SendCoreAsync(
+            new PrefixedCommand<TPrefix, TransactionCommand>(prefix, new TransactionCommand(serializedCommands)),
+            discardRepliesBefore: commandCount + 2,
+            throwOnError: false,
+            cancellationToken);
+    }
+
     private ValueTask<RespValue> SendCoreAsync<TCommand>(
         in TCommand command, int discardRepliesBefore, bool throwOnError, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
@@ -880,6 +937,18 @@ public sealed class RespireConnection : IAsyncDisposable
             writer.WriteRaw(RespCommands.Multi);
             writer.WriteRaw(serializedCommands.Span);
             writer.WriteRaw(RespCommands.Exec);
+        }
+    }
+
+    /// <summary>Writes two RESP commands as one buffer append.</summary>
+    private readonly struct PrefixedCommand<TPrefix, TCommand>(TPrefix prefix, TCommand command) : IRespCommand
+        where TPrefix : struct, IRespCommand
+        where TCommand : struct, IRespCommand
+    {
+        public void Write(ref RespWriter writer)
+        {
+            prefix.Write(ref writer);
+            command.Write(ref writer);
         }
     }
 

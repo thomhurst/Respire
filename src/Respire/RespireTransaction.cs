@@ -219,10 +219,34 @@ public sealed class RespireTransaction : IAsyncDisposable
 
         async ValueTask<RespValue> SendAsync(CancellationToken token)
         {
-            connection ??= await _client.AcquireConnectionAsync(
-                    _hasClusterSlot ? _clusterSlot : null, token)
-                .ConfigureAwait(false);
-            return await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, token).ConfigureAwait(false);
+            var cluster = core.Cluster;
+            var sendAsking = false;
+            for (var attempt = 0; ; attempt++)
+            {
+                connection ??= await _client.AcquireConnectionAsync(
+                        _hasClusterSlot ? _clusterSlot : null, token)
+                    .ConfigureAwait(false);
+                var reply = await (sendAsking
+                        ? ClusterRouter.SendAskingTransactionAsync(
+                            connection, _buffer.WrittenMemory, _ops.Count, token)
+                        : connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, token))
+                    .ConfigureAwait(false);
+                if (!reply.IsError || cluster is null || attempt >= ClusterRouter.RedirectLimit)
+                {
+                    return reply;
+                }
+
+                var redirect = ResponseReader.ServerError(in reply);
+                if (!ClusterRouter.IsRedirect(redirect))
+                {
+                    return reply;
+                }
+
+                reply.Dispose();
+                connection = await cluster.GetRedirectConnectionAsync(redirect, connection, token)
+                    .ConfigureAwait(false);
+                sendAsking = redirect.Code == "ASK";
+            }
         }
     }
 

@@ -123,7 +123,7 @@ internal static class Verbs
     public static readonly Verb XRange = new("XRANGE");
     public static readonly Verb XAck = new("XACK");
     public static readonly Verb XGroupCreate = new("XGROUP", "CREATE");
-    public static readonly Verb XReadGroup = new(7, "XREADGROUP");
+    public static readonly Verb XReadGroup = new(8, "XREADGROUP");
 
     // Scripts
     public static readonly Verb Eval = new(2, "EVAL");

@@ -7,6 +7,12 @@ namespace Respire.Commands;
 
 internal readonly struct Cmd(Verb verb) : IRespCommand
 {
+    public bool TryGetClusterSlot(out int slot)
+    {
+        slot = 0;
+        return false;
+    }
+
     public void Write(ref RespWriter writer)
     {
         writer.WriteArrayHeader(verb.Tokens);

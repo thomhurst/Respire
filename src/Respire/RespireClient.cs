@@ -449,12 +449,13 @@ public sealed partial class RespireClient : IRespireClient
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
         var connection = await cluster.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
+        var sendAsking = false;
         for (var attempt = 0; ; attempt++)
         {
             try
             {
                 return await SendOnConnectionAsync(
-                        operation, connection, command, cancellationToken, storedProcedureName)
+                        operation, connection, command, cancellationToken, storedProcedureName, sendAsking)
                     .ConfigureAwait(false);
             }
             catch (RespireServerException error)
@@ -462,12 +463,7 @@ public sealed partial class RespireClient : IRespireClient
             {
                 connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken)
                     .ConfigureAwait(false);
-                if (error.Code == "ASK")
-                {
-                    var askingReply = await ClusterRouter.SendAskingAsync(connection, cancellationToken)
-                        .ConfigureAwait(false);
-                    askingReply.Dispose();
-                }
+                sendAsking = error.Code == "ASK";
             }
         }
     }
@@ -476,15 +472,18 @@ public sealed partial class RespireClient : IRespireClient
         string operation,
         RespireConnection connection,
         TCommand command,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool sendAsking = false)
         where TCommand : struct, IRespCommand
     {
         if (_core.Options.CommandTimeout is not { } timeout)
         {
-            return connection.SendCheckedAsync(in command, cancellationToken);
+            return sendAsking
+                ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken)
+                : connection.SendCheckedAsync(in command, cancellationToken);
         }
 
-        return SendWithTimeoutAsync(operation, connection, command, cancellationToken, timeout);
+        return SendWithTimeoutAsync(operation, connection, command, cancellationToken, timeout, sendAsking);
     }
 
 #if NET
@@ -495,14 +494,18 @@ public sealed partial class RespireClient : IRespireClient
         RespireConnection connection,
         TCommand command,
         CancellationToken cancellationToken,
-        TimeSpan timeout)
+        TimeSpan timeout,
+        bool sendAsking)
         where TCommand : struct, IRespCommand
     {
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutSource.CancelAfter(timeout);
         try
         {
-            return await connection.SendCheckedAsync(in command, timeoutSource.Token).ConfigureAwait(false);
+            return await (sendAsking
+                    ? ClusterRouter.SendAskingAsync(connection, in command, timeoutSource.Token)
+                    : connection.SendCheckedAsync(in command, timeoutSource.Token))
+                .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -510,24 +513,26 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
-    private ValueTask<RespValue> SendOnConnectionAsync<TCommand>(
+    internal ValueTask<RespValue> SendOnConnectionAsync<TCommand>(
         string operation,
         RespireConnection connection,
         TCommand command,
         CancellationToken cancellationToken,
-        string? storedProcedureName = null)
+        string? storedProcedureName = null,
+        bool sendAsking = false)
         where TCommand : struct, IRespCommand
         => RespireTelemetry.IsEnabled
             ? SendOnConnectionInstrumentedAsync(
-                operation, connection, command, cancellationToken, storedProcedureName)
-            : SendOnConnectionCoreAsync(operation, connection, command, cancellationToken);
+                operation, connection, command, cancellationToken, storedProcedureName, sendAsking)
+            : SendOnConnectionCoreAsync(operation, connection, command, cancellationToken, sendAsking);
 
     private async ValueTask<RespValue> SendOnConnectionInstrumentedAsync<TCommand>(
         string operation,
         RespireConnection connection,
         TCommand command,
         CancellationToken cancellationToken,
-        string? storedProcedureName)
+        string? storedProcedureName,
+        bool sendAsking)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -539,7 +544,8 @@ public sealed partial class RespireClient : IRespireClient
             storedProcedureName: storedProcedureName);
         try
         {
-            var response = await SendOnConnectionCoreAsync(operation, connection, command, cancellationToken)
+            var response = await SendOnConnectionCoreAsync(
+                    operation, connection, command, cancellationToken, sendAsking)
                 .ConfigureAwait(false);
             telemetry.Complete(core, operation, storedProcedureName, connection: connection);
             return response;
@@ -620,12 +626,8 @@ public sealed partial class RespireClient : IRespireClient
         var core = _core;
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
         var pool = await cluster.GetDedicatedPoolAsync(slot, cancellationToken).ConfigureAwait(false);
-        var telemetry = RespireTelemetry.StartOperation(
-            operation,
-            core.Multiplexer.Host,
-            core.Multiplexer.Port,
-            core.Options.Database,
-            storedProcedureName: storedProcedureName);
+        RespireTelemetry.OperationScope telemetry = default;
+        var telemetryStarted = false;
         var sendAsking = false;
 
         for (var attempt = 0; ; attempt++)
@@ -635,15 +637,22 @@ public sealed partial class RespireClient : IRespireClient
             try
             {
                 connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
-                if (sendAsking)
+                if (!telemetryStarted)
                 {
-                    var askingReply = await ClusterRouter.SendAskingAsync(connection, cancellationToken)
-                        .ConfigureAwait(false);
-                    askingReply.Dispose();
-                    sendAsking = false;
+                    telemetry = RespireTelemetry.StartOperation(
+                        operation,
+                        connection.Host,
+                        connection.Port,
+                        core.Options.Database,
+                        storedProcedureName: storedProcedureName);
+                    telemetryStarted = true;
                 }
 
-                var response = await connection.SendAsync(in command, cancellationToken).ConfigureAwait(false);
+                var response = await (sendAsking
+                        ? ClusterRouter.SendAskingUncheckedAsync(connection, in command, cancellationToken)
+                        : connection.SendAsync(in command, cancellationToken))
+                    .ConfigureAwait(false);
+                sendAsking = false;
                 if (response.IsError)
                 {
                     var error = ResponseReader.ServerError(in response);
@@ -660,6 +669,8 @@ public sealed partial class RespireClient : IRespireClient
                         continue;
                     }
 
+                    pool.Return(connection);
+                    returned = true;
                     throw error;
                 }
 
@@ -772,12 +783,13 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         if (core.Cluster is { } cluster)
         {
+            var arguments = tail[1..];
             RespValue clusterReply;
             try
             {
                 clusterReply = await SendClusterAsync(
                         "EVALSHA", cluster,
-                        new Cmd2N(Verbs.EvalSha, script.Sha1, tail[0], tail[1..]),
+                        new Cmd2N(Verbs.EvalSha, script.Sha1, tail[0], arguments),
                         cancellationToken, script.Sha1)
                     .ConfigureAwait(false);
             }
@@ -785,7 +797,7 @@ public sealed partial class RespireClient : IRespireClient
             {
                 clusterReply = await SendClusterAsync(
                         "EVAL", cluster,
-                        new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]),
+                        new Cmd2N(Verbs.Eval, script.Source, tail[0], arguments),
                         cancellationToken, script.Sha1)
                     .ConfigureAwait(false);
             }

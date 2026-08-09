@@ -86,6 +86,9 @@ public sealed class RespireBatch
     /// (server errors, <see cref="RespireOptions.CommandTimeout"/> expiry) fault that command's
     /// pending, not this call; failing to obtain a connection at all faults every pending and
     /// rethrows.
+    /// In cluster mode, commands dispatch independently rather than sharing one flush. Commands
+    /// on different slots may run out of order, and an acquisition failure faults only its own
+    /// pending; this method completes normally after recording the first error in telemetry.
     /// </summary>
     public async ValueTask SendAsync(CancellationToken cancellationToken = default)
     {

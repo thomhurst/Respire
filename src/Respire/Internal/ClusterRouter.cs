@@ -22,11 +22,6 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
     internal ClusterRouter(RespireOptions options, RespireConnectionMultiplexer primary)
     {
-        if (options.Database != 0)
-        {
-            throw new ArgumentException("Redis Cluster supports database 0 only.", nameof(options));
-        }
-
         _options = options;
         _seeds = options.Endpoints.Count == 0
             ? [new RespireEndpoint("localhost")]
@@ -91,6 +86,19 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
     internal async ValueTask<RespireConnection> GetConnectionAsync(int? slot, CancellationToken cancellationToken)
     {
+        if (slot is { } cachedSlot && Volatile.Read(ref _slots[cachedSlot]) is { } cachedNode)
+        {
+            try
+            {
+                await cachedNode.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                return cachedNode.GetConnection();
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Refresh through the seeds below when the cached owner is unavailable.
+            }
+        }
+
         await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         var node = slot is { } value ? Volatile.Read(ref _slots[value]) : null;
         node ??= Volatile.Read(ref _seed)!;
@@ -122,6 +130,19 @@ internal sealed class ClusterRouter : IAsyncDisposable
         int? slot,
         CancellationToken cancellationToken)
     {
+        if (slot is { } cachedSlot && Volatile.Read(ref _slots[cachedSlot]) is { } cachedNode)
+        {
+            try
+            {
+                await cachedNode.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                return GetOrCreateDedicatedPool(new RespireEndpoint(cachedNode.Host, cachedNode.Port));
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Refresh through the seeds below when the cached owner is unavailable.
+            }
+        }
+
         await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         var node = slot is { } value ? Volatile.Read(ref _slots[value]) : null;
         node ??= Volatile.Read(ref _seed)!;
@@ -199,10 +220,65 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
     internal static int RedirectLimit => MaxRedirects;
 
-    internal static ValueTask<Respire.Protocol.RespValue> SendAskingAsync(
+    internal static ValueTask<Respire.Protocol.RespValue> SendAskingAsync<TCommand>(
         RespireConnection connection,
+        in TCommand command,
         CancellationToken cancellationToken)
-        => connection.SendCheckedAsync(in Asking, cancellationToken);
+        where TCommand : struct, Respire.Protocol.IRespCommand
+        => connection.SendPrefixedCheckedAsync(in Asking, in command, cancellationToken);
+
+    internal static ValueTask<Respire.Protocol.RespValue> SendAskingUncheckedAsync<TCommand>(
+        RespireConnection connection,
+        in TCommand command,
+        CancellationToken cancellationToken)
+        where TCommand : struct, Respire.Protocol.IRespCommand
+        => connection.SendPrefixedAsync(in Asking, in command, throwOnError: false, cancellationToken);
+
+    internal static ValueTask<Respire.Protocol.RespValue> SendAskingTransactionAsync(
+        RespireConnection connection,
+        ReadOnlyMemory<byte> serializedCommands,
+        int commandCount,
+        CancellationToken cancellationToken)
+        => connection.SendPrefixedTransactionAsync(
+            in Asking, serializedCommands, commandCount, cancellationToken);
+
+    internal async ValueTask<RespireConnection[]> GetMasterConnectionsAsync(CancellationToken cancellationToken)
+    {
+        var masters = new HashSet<RespireConnectionMultiplexer>(ReferenceEqualityComparer.Instance);
+        AddKnownMasters(masters);
+
+        if (masters.Count == 0)
+        {
+            await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            AddKnownMasters(masters);
+
+            if (masters.Count == 0)
+            {
+                masters.Add(Volatile.Read(ref _seed)!);
+            }
+        }
+
+        var connections = new RespireConnection[masters.Count];
+        var index = 0;
+        foreach (var master in masters)
+        {
+            await master.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            connections[index++] = master.GetConnection();
+        }
+
+        return connections;
+    }
+
+    private void AddKnownMasters(HashSet<RespireConnectionMultiplexer> masters)
+    {
+        for (var slot = 0; slot < _slots.Length; slot++)
+        {
+            if (Volatile.Read(ref _slots[slot]) is { } node)
+            {
+                masters.Add(node);
+            }
+        }
+    }
 
     private RespireConnectionMultiplexer GetOrCreateNode(RespireEndpoint endpoint)
     {
@@ -353,7 +429,5 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 await node.DisposeAsync().ConfigureAwait(false);
             }
         }
-
-        _seedGate.Dispose();
     }
 }

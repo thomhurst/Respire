@@ -140,6 +140,8 @@ public sealed record RespireOptions
     /// <c>clientName</c>, <c>connections</c>, <c>connectTimeoutMs</c>, <c>commandTimeoutMs</c>,
     /// <c>protocol</c> (2 or 3), <c>db</c>, <c>cluster</c> (true or false).
     /// <c>rediss://</c> (TLS) is not supported yet.
+    /// Connection strings contain one endpoint; configure <see cref="Endpoints"/> directly when
+    /// cluster seed failover requires multiple endpoints.
     /// </summary>
     public static RespireOptions Parse(string connectionString)
     {

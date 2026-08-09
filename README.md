@@ -89,7 +89,8 @@ Use `CreateTransactionAsync(["balance"])` when you need optimistic concurrency w
 Enable cluster routing and provide one or more seed nodes. Respire loads `CLUSTER SLOTS`, follows
 `MOVED`/`ASK` redirects, and caches learned routes. Batches may span nodes; transactions must keep
 all keys in one slot, so use Redis hash tags for related keys. `WATCH` transactions are not
-supported in cluster mode—use a same-slot Lua script instead.
+supported in cluster mode—use a same-slot Lua script instead. Sharded pub/sub is also unavailable
+in cluster mode; `SSUBSCRIBE` subscriptions require a non-cluster client.
 
 ```csharp
 await using var cluster = await RespireClient.ConnectAsync(new RespireOptions

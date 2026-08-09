@@ -30,6 +30,9 @@ internal sealed class FakeRespServer : IAsyncDisposable
     public int Port { get; }
     public int CommandsSeen => Volatile.Read(ref _commandsSeen);
 
+    /// <summary>Holds replies until this many commands have arrived.</summary>
+    public int MinimumCommandsBeforeReply { get; set; } = 1;
+
     public IReadOnlyList<string> ReceivedCommands
     {
         get
@@ -52,13 +55,18 @@ internal sealed class FakeRespServer : IAsyncDisposable
             Connections = 1,
         });
 
-    public FakeRespServer(params byte[][] replies)
+    public FakeRespServer(params byte[][] replies) : this(1, replies)
     {
+    }
+
+    public FakeRespServer(int maxConnections, params byte[][] replies)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConnections);
         _replies = replies;
         _listener = new TcpListener(IPAddress.Loopback, 0);
         _listener.Start();
         Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
-        _acceptTask = Task.Run(RunAsync);
+        _acceptTask = Task.Run(() => RunAsync(maxConnections));
     }
 
     /// <summary>
@@ -74,14 +82,33 @@ internal sealed class FakeRespServer : IAsyncDisposable
         await socket.SendAsync(frame, SocketFlags.None);
     }
 
-    private async Task RunAsync()
+    private async Task RunAsync(int maxConnections)
     {
+        var connections = new List<Task>(maxConnections);
         try
         {
-            using var socket = await _listener.AcceptSocketAsync(_cts.Token);
-            socket.NoDelay = true;
-            _clientSocket.TrySetResult(socket);
+            for (var i = 0; i < maxConnections; i++)
+            {
+                var socket = await _listener.AcceptSocketAsync(_cts.Token);
+                socket.NoDelay = true;
+                _clientSocket.TrySetResult(socket);
+                connections.Add(HandleConnectionAsync(socket));
+            }
+        }
+        catch (OperationCanceledException) when (_cts.IsCancellationRequested)
+        {
+            // Test teardown before every optional connection was opened.
+        }
+
+        await Task.WhenAll(connections);
+    }
+
+    private async Task HandleConnectionAsync(Socket socket)
+    {
+        using (socket)
+        {
             var buffer = new byte[1 << 20];
+            var pendingReplies = new List<int>();
             var end = 0;
             var replyIndex = 0;
 
@@ -106,17 +133,23 @@ internal sealed class FakeRespServer : IAsyncDisposable
                         await Task.Delay(delay, _cts.Token);
                     }
 
-                    var reply = _replies[Math.Min(replyIndex++, _replies.Length - 1)];
-                    await socket.SendAsync(reply, SocketFlags.None, _cts.Token);
+                    pendingReplies.Add(replyIndex++);
+                }
+
+                if (CommandsSeen >= MinimumCommandsBeforeReply)
+                {
+                    foreach (var pendingReply in pendingReplies)
+                    {
+                        var reply = _replies[Math.Min(pendingReply, _replies.Length - 1)];
+                        await socket.SendAsync(reply, SocketFlags.None, _cts.Token);
+                    }
+
+                    pendingReplies.Clear();
                 }
 
                 Buffer.BlockCopy(buffer, pos, buffer, 0, end - pos);
                 end -= pos;
             }
-        }
-        catch
-        {
-            // Test teardown or client-initiated close.
         }
     }
 
