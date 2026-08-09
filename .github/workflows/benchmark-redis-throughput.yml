@@ -203,7 +203,7 @@ jobs:
       
       - name: Upload throughput report as release asset (if tag)
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           files: benchmarks/Respire.Benchmarks/throughput-report.md
           name: Throughput Benchmark Report - ${{ matrix.framework }}
