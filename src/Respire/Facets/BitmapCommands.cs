@@ -258,6 +258,8 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
 
 internal readonly struct BitFieldCommand(Verb verb, RespireValue key, BitFieldOperation[] operations) : IRespCommand
 {
+    public bool TryGetClusterSlot(out int slot) => key.TryGetClusterSlot(out slot);
+
     public void Write(ref RespWriter writer)
     {
         var tokenCount = 1;

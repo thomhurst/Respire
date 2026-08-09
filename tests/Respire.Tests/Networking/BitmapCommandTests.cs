@@ -7,6 +7,18 @@ namespace Respire.Tests.Networking;
 public class BitmapCommandTests
 {
     [Test]
+    public async Task BitFieldCommand_RoutesByKey()
+    {
+        var command = new BitFieldCommand(
+            RespireCommands.Bitmap.BITFIELD.Verb,
+            "bitmap-key",
+            [BitFieldOperation.Get("u8", "0")]);
+
+        await Assert.That(command.TryGetClusterSlot(out var slot)).IsTrue();
+        await Assert.That(slot).IsEqualTo(Respire.Internal.ClusterHash.GetSlot("bitmap-key"));
+    }
+
+    [Test]
     public async Task EveryBitmapCommand_WritesExpectedFrameAndParsesReply()
     {
         await using var server = new FakeRespServer(

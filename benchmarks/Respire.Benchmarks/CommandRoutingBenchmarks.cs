@@ -15,6 +15,10 @@ public class CommandRoutingBenchmarks
     private readonly Cmd1 _unkeyedCommand = new(Verbs.Info, "memory");
     private readonly CatalogCommand _catalogCommand = new(
         RespireCommands.String.GET, ["benchmark-key"]);
+    private readonly BitFieldCommand _bitFieldCommand = new(
+        RespireCommands.Bitmap.BITFIELD.Verb,
+        "benchmark-key",
+        [BitFieldOperation.Get("u8", "0")]);
     private readonly RespireValue[] _rawTokens = ["SET", "benchmark-key", "value"];
     private readonly RespireValue[] _rawEvalTokens = ["EVAL", "return 1", 1, "benchmark-key"];
     private readonly RespireValue[] _rawMSetExTokens = ["MSETEX", 1, "benchmark-key", "value"];
@@ -34,6 +38,9 @@ public class CommandRoutingBenchmarks
 
     [Benchmark]
     public bool CatalogKeyRouting() => TryGetSlot(_catalogCommand);
+
+    [Benchmark]
+    public bool BitFieldRouting() => TryGetSlot(_bitFieldCommand);
 
     [Benchmark]
     public int RawCommandRouting()
