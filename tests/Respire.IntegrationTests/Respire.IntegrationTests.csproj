@@ -10,7 +10,7 @@
 
     <ItemGroup>
         <PackageReference Include="TUnit" Version="1.64.0" />
-        <PackageReference Include="Testcontainers.Redis" Version="4.7.0" />
+        <PackageReference Include="Testcontainers.Redis" Version="4.13.0" />
         <PackageReference Include="StackExchange.Redis" Version="2.13.17" />
         <PackageReference Include="FluentAssertions" Version="8.10.0" />
     </ItemGroup>
