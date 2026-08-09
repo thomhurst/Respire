@@ -403,6 +403,42 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task TrackedCorrectionBroadcast_PreservesAskingAfterAskRedirect()
+    {
+        var slot = ClusterHash.GetSlot("cache-key");
+        await using var target = new FakeRespServer(
+            ":42\r\n"u8.ToArray(),
+            ":0\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            "$5\r\nvalue\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            ":1\r\n"u8.ToArray());
+        await using var initial = new FakeRespServer(
+            ":41\r\n"u8.ToArray(),
+            ":0\r\n"u8.ToArray(),
+            Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{target.Port}\r\n"));
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{initial.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        var script = RespireScript.Create("return redis.call('GET', KEYS[1])");
+        var execution = await client.StartTrackedScriptExecutionAsync(
+            script, ["cache-key"], [], CancellationToken.None);
+        using var result = await execution.Response;
+
+        await client.ExecuteOnAllConnectionsAsync(
+            script, ["cache-key"], [], execution.ConnectionIdentity);
+
+        await Assert.That(execution.ConnectionIdentity.RequiresAsking).IsTrue();
+        await Assert.That(target.ReceivedCommands[^2]).IsEqualTo("ASKING");
+        await Assert.That(target.ReceivedCommands[^1]).StartsWith("EVAL ");
+    }
+
+    [Test]
     public async Task GuardedUnlink_RoutesLeaseAndScriptToKeyOwner()
     {
         const string prefix = "{}broken{";
@@ -942,6 +978,60 @@ public class ClusterTests
         await Assert.That(response.AsString()).IsEqualTo("PONG");
         response.Dispose();
         await Assert.That(target.ReceivedCommands).Count().IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task ClusterBlockingCommand_SuppressesResponseWatchdog()
+    {
+        var slot = ClusterHash.GetSlot("key");
+        await using var target = new FakeRespServer(2, FakeRespServer.PongReply);
+        target.DelayReply(0, 250);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            ResponseTimeout = TimeSpan.FromMilliseconds(50),
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var response = await client.SendBlockingAsync(
+            "BLPOP", new Cmd1(Verbs.BLPop, "key"), timeout.Token);
+
+        await Assert.That(response.AsString()).IsEqualTo("PONG");
+        response.Dispose();
+    }
+
+    [Test]
+    public async Task ClusterBlockingAskRetry_SuppressesResponseWatchdog()
+    {
+        var slot = ClusterHash.GetSlot("key");
+        await using var target = new FakeRespServer(
+            2, FakeRespServer.OkReply, FakeRespServer.PongReply);
+        target.DelayReply(1, 250);
+        await using var initial = new FakeRespServer(
+            2, Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{target.Port}\r\n"));
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{initial.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            ResponseTimeout = TimeSpan.FromMilliseconds(50),
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var response = await client.SendBlockingAsync(
+            "BLPOP", new Cmd1(Verbs.BLPop, "key"), timeout.Token);
+
+        await Assert.That(response.AsString()).IsEqualTo("PONG");
+        response.Dispose();
+        await Assert.That(target.ReceivedCommands).Count().IsEqualTo(2);
+        await Assert.That(target.ReceivedCommands[0]).IsEqualTo("ASKING");
+        await Assert.That(target.ReceivedCommands[1]).IsEqualTo("BLPOP key");
     }
 
     [Test]

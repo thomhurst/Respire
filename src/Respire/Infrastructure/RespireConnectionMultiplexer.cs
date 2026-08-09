@@ -343,9 +343,13 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     /// command must therefore be idempotent and safe to run out of order on the other
     /// connections. A locally dead connection is first killed by its Redis client ID; that
     /// server-side barrier proves its flushed commands cannot execute after the correction.
+    /// When <paramref name="sendAsking"/> is true, each copy is atomically prefixed with ASKING.
     /// A slot dying during the broadcast is fenced and the broadcast retried.
     /// </summary>
-    internal async ValueTask SendToAllConnectionsAsync<TCommand>(TCommand command, CancellationToken cancellationToken = default)
+    internal async ValueTask SendToAllConnectionsAsync<TCommand>(
+        TCommand command,
+        bool sendAsking = false,
+        CancellationToken cancellationToken = default)
         where TCommand : struct, IRespCommand
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -375,7 +379,11 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
                 try
                 {
-                    sends.Add((connection, connection.SendAsync(in command, cancellationToken)));
+                    var send = sendAsking
+                        ? Respire.Internal.ClusterRouter.SendAskingUncheckedAsync(
+                            connection, in command, cancellationToken)
+                        : connection.SendAsync(in command, cancellationToken);
+                    sends.Add((connection, send));
                 }
                 catch (Exception ex) when (IsConnectionLoss(ex))
                 {

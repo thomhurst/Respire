@@ -319,6 +319,14 @@ internal sealed class ClusterRouter : IAsyncDisposable
         where TCommand : struct, Respire.Protocol.IRespCommand
         => connection.SendPrefixedAsync(in Asking, in command, throwOnError: false, cancellationToken);
 
+    internal static ValueTask<Respire.Protocol.RespValue> SendBlockingAskingUncheckedAsync<TCommand>(
+        RespireConnection connection,
+        in TCommand command,
+        CancellationToken cancellationToken)
+        where TCommand : struct, Respire.Protocol.IRespCommand
+        => connection.SendPrefixedWithoutResponseTimeoutAsync(
+            Asking, command, throwOnError: false, cancellationToken);
+
     internal async ValueTask<RespireConnection[]> GetMasterConnectionsAsync(CancellationToken cancellationToken)
     {
         var masters = new HashSet<RespireConnectionMultiplexer>(ReferenceEqualityComparer.Instance);

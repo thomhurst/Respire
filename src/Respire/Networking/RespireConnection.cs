@@ -381,6 +381,28 @@ public sealed class RespireConnection : IAsyncDisposable
         }
     }
 
+    /// <summary>Sends a prefixed blocking command without applying the receive watchdog.</summary>
+    internal async ValueTask<RespValue> SendPrefixedWithoutResponseTimeoutAsync<TPrefix, TCommand>(
+        TPrefix prefix,
+        TCommand command,
+        bool throwOnError,
+        CancellationToken cancellationToken = default)
+        where TPrefix : struct, IRespCommand
+        where TCommand : struct, IRespCommand
+    {
+        Interlocked.Increment(ref _responseTimeoutSuppressions);
+        try
+        {
+            return await SendPrefixedAsync(
+                    in prefix, in command, throwOnError, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _responseTimeoutSuppressions);
+        }
+    }
+
     /// <summary>Sends a command and translates a RESP error reply when its result is consumed.</summary>
     internal ValueTask<RespValue> SendCheckedAsync<TCommand>(
         in TCommand command, CancellationToken cancellationToken = default)

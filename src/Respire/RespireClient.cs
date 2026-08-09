@@ -786,8 +786,9 @@ public sealed partial class RespireClient : IRespireClient
                 }
 
                 var response = await (sendAsking
-                        ? ClusterRouter.SendAskingUncheckedAsync(connection, in command, cancellationToken)
-                        : connection.SendAsync(in command, cancellationToken))
+                        ? ClusterRouter.SendBlockingAskingUncheckedAsync(
+                            connection, in command, cancellationToken)
+                        : connection.SendWithoutResponseTimeoutAsync(command, cancellationToken))
                     .ConfigureAwait(false);
                 sendAsking = false;
                 if (response.IsError)
@@ -922,7 +923,8 @@ public sealed partial class RespireClient : IRespireClient
 
     internal readonly record struct TrackedConnectionIdentity(
         RespireEndpoint Endpoint,
-        long ServerClientId);
+        long ServerClientId,
+        bool RequiresAsking = false);
 
     internal sealed class TrackedScriptExecution
     {
@@ -1094,10 +1096,14 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     private static TrackedConnectionIdentity GetTrackedConnectionIdentity(
-        RespireConnection connection, bool reliable)
+        RespireConnection connection,
+        bool reliable,
+        bool requiresAsking = false)
         => reliable && connection.ServerClientId > 0
             ? new TrackedConnectionIdentity(
-                new RespireEndpoint(connection.Host, connection.Port), connection.ServerClientId)
+                new RespireEndpoint(connection.Host, connection.Port),
+                connection.ServerClientId,
+                requiresAsking)
             : default;
 
     private async ValueTask<RespireResult> ExecuteTrackedClusterScriptAsync(
@@ -1138,7 +1144,7 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken)
     {
         var connection = initialConnection;
-        var sendAsking = false;
+        var sendAsking = execution.ConnectionIdentity.RequiresAsking;
         for (var attempt = 0; ; attempt++)
         {
             try
@@ -1155,10 +1161,10 @@ public sealed partial class RespireClient : IRespireClient
                 connection = await GetTrackedRedirectConnectionAsync(
                         cluster, error, connection, requiresIdentity, cancellationToken)
                     .ConfigureAwait(false);
+                sendAsking = error.Code == "ASK";
                 execution.Connection = connection;
                 execution.ConnectionIdentity = GetTrackedConnectionIdentity(
-                    connection, cluster.HasReliableCorrectionOrdering(connection));
-                sendAsking = error.Code == "ASK";
+                    connection, cluster.HasReliableCorrectionOrdering(connection), sendAsking);
             }
         }
     }
@@ -1491,7 +1497,9 @@ public sealed partial class RespireClient : IRespireClient
             ? cluster.GetMultiplexer(connectionIdentity.Endpoint)
             : core.Multiplexer;
         await multiplexer.SendToAllConnectionsAsync(
-            new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]), CancellationToken.None).ConfigureAwait(false);
+            new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]),
+            connectionIdentity.RequiresAsking,
+            CancellationToken.None).ConfigureAwait(false);
     }
 
     // Typed send helpers — one per reply shape, shared by every facet.
