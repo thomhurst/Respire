@@ -42,7 +42,7 @@ public readonly struct RespireCommand
         "CLIENT NO-EVICT" or "CLIENT NO-TOUCH" or "CLIENT REPLY" or "CLIENT SETINFO" or
         "CLIENT SETNAME" or "CLIENT TRACKING" or "DISCARD" or "EXEC" or "HELLO" or
         "MONITOR" or "MULTI" or "PSUBSCRIBE" or "PSYNC" or "PUNSUBSCRIBE" or "QUIT" or
-        "READONLY" or "READWRITE" or "REPLCONF" or "RESET" or "SCRIPT DEBUG" or "SELECT" or
+        "READONLY" or "READWRITE" or "REPLCONF" or "RESET" or "SCRIPT" or "SCRIPT DEBUG" or "SELECT" or
         "SSUBSCRIBE" or "SUBSCRIBE" or "SUNSUBSCRIBE" or "SYNC" or "UNSUBSCRIBE" or
         "UNWATCH" or "WAIT" or "WAITAOF" or "WATCH" => RespireCommandBehavior.ConnectionScoped,
 

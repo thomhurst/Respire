@@ -88,7 +88,7 @@ public class CommandCatalogTests
             "ASKING", "AUTH", "CLIENT", "CLIENT CACHING", "CLIENT NO-EVICT", "CLIENT NO-TOUCH", "CLIENT REPLY",
             "CLIENT SETINFO", "CLIENT SETNAME", "CLIENT TRACKING", "DISCARD", "EXEC", "HELLO", "MONITOR",
             "MULTI", "PSUBSCRIBE", "PSYNC", "PUNSUBSCRIBE", "QUIT", "READONLY", "READWRITE", "REPLCONF",
-            "RESET", "SCRIPT DEBUG", "SELECT", "SSUBSCRIBE", "SUBSCRIBE", "SUNSUBSCRIBE", "SYNC",
+            "RESET", "SCRIPT", "SCRIPT DEBUG", "SELECT", "SSUBSCRIBE", "SUBSCRIBE", "SUNSUBSCRIBE", "SYNC",
             "UNSUBSCRIBE", "UNWATCH", "WAIT", "WAITAOF", "WATCH",
         });
         await Assert.That(RespireCommands.Stream.XREAD.IsBlocking(["STREAMS", "source", "0"]))
