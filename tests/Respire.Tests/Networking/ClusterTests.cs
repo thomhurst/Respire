@@ -459,6 +459,65 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task Scan_FailsWhenCurrentMasterIsUnavailable()
+    {
+        await using var currentNode = new FakeRespServer(
+            "*2\r\n$1\r\n0\r\n*1\r\n$7\r\ncurrent\r\n"u8.ToArray());
+        var topology = Encoding.ASCII.GetBytes(
+            $"*2\r\n" +
+            "*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:1\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{currentNode.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            ConnectTimeout = TimeSpan.FromMilliseconds(100),
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        var failed = false;
+        try
+        {
+            await foreach (var _ in client.Keys.ScanAsync())
+            {
+            }
+        }
+        catch
+        {
+            failed = true;
+        }
+
+        await Assert.That(failed).IsTrue();
+    }
+
+    [Test]
+    public async Task ClusterWideServerCommands_VisitEveryMaster()
+    {
+        await using var firstNode = new FakeRespServer(
+            ":2\r\n"u8.ToArray(), FakeRespServer.OkReply, FakeRespServer.OkReply);
+        await using var secondNode = new FakeRespServer(
+            ":3\r\n"u8.ToArray(), FakeRespServer.OkReply, FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*2\r\n" +
+            $"*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{firstNode.Port}\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{secondNode.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        await Assert.That(await client.Server.DatabaseSizeAsync()).IsEqualTo(5);
+        await client.Server.FlushDatabaseAsync();
+        await client.Server.FlushAllAsync();
+
+        var expected = new[] { "DBSIZE", "FLUSHDB", "FLUSHALL" };
+        await Assert.That(firstNode.ReceivedCommands).IsEquivalentTo(expected);
+        await Assert.That(secondNode.ReceivedCommands).IsEquivalentTo(expected);
+    }
+
+    [Test]
     public async Task BlockingServerError_ReturnsHealthyConnectionToNodePool()
     {
         await using var target = new FakeRespServer(

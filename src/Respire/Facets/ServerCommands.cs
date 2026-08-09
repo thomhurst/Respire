@@ -1,4 +1,5 @@
 using Respire.Commands;
+using Respire.Internal;
 using Respire.Protocol;
 
 namespace Respire;
@@ -36,13 +37,63 @@ internal sealed class ServerCommands(RespireClient client) : IServerCommands
             : client.StringAsync("INFO", new Cmd1(Verbs.Info, section), cancellationToken);
 
     public ValueTask<long> DatabaseSizeAsync(CancellationToken cancellationToken = default)
-        => client.IntegerAsync("DBSIZE", new RawCommand(RespCommands.DbSize), cancellationToken);
+        => client.Core.Cluster is null
+            ? client.IntegerAsync("DBSIZE", new RawCommand(RespCommands.DbSize), cancellationToken)
+            : DatabaseSizeClusterAsync(cancellationToken);
 
     public ValueTask FlushDatabaseAsync(CancellationToken cancellationToken = default)
-        => client.OkAsync("FLUSHDB", new RawCommand(RespCommands.FlushDb), cancellationToken);
+        => client.Core.Cluster is null
+            ? client.OkAsync("FLUSHDB", new RawCommand(RespCommands.FlushDb), cancellationToken)
+            : FlushClusterAsync("FLUSHDB", RespCommands.FlushDb, cancellationToken);
 
     public ValueTask FlushAllAsync(CancellationToken cancellationToken = default)
-        => client.OkAsync("FLUSHALL", new RawCommand(RespCommands.FlushAll), cancellationToken);
+        => client.Core.Cluster is null
+            ? client.OkAsync("FLUSHALL", new RawCommand(RespCommands.FlushAll), cancellationToken)
+            : FlushClusterAsync("FLUSHALL", RespCommands.FlushAll, cancellationToken);
+
+    private async ValueTask<long> DatabaseSizeClusterAsync(CancellationToken cancellationToken)
+    {
+        var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
+        long total = 0;
+        foreach (var connection in connections)
+        {
+            var reply = await client.SendOnConnectionAsync(
+                    "DBSIZE", connection, new RawCommand(RespCommands.DbSize), cancellationToken)
+                .ConfigureAwait(false);
+            try
+            {
+                total = checked(total + ResponseReader.Integer(in reply));
+            }
+            finally
+            {
+                reply.Dispose();
+            }
+        }
+
+        return total;
+    }
+
+    private async ValueTask FlushClusterAsync(
+        string operation,
+        byte[] command,
+        CancellationToken cancellationToken)
+    {
+        var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var connection in connections)
+        {
+            var reply = await client.SendOnConnectionAsync(
+                    operation, connection, new RawCommand(command), cancellationToken)
+                .ConfigureAwait(false);
+            try
+            {
+                ResponseReader.ExpectOk(in reply);
+            }
+            finally
+            {
+                reply.Dispose();
+            }
+        }
+    }
 
     public async ValueTask<DateTimeOffset> TimeAsync(CancellationToken cancellationToken = default)
     {

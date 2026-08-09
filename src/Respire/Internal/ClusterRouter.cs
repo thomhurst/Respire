@@ -291,29 +291,18 @@ internal sealed class ClusterRouter : IAsyncDisposable
             masters.Add(Volatile.Read(ref _seed)!);
         }
 
-        var connections = new List<RespireConnection>(masters.Count);
+        var connections = new RespireConnection[masters.Count];
+        var index = 0;
         foreach (var master in masters)
         {
-            try
-            {
-                await master.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-                connections.Add(master.GetConnection());
-            }
-            catch (RespireConnectionException) when (!cancellationToken.IsCancellationRequested)
-            {
-                // A topology refresh can race a failover. A stale owner must not prevent SCAN
-                // from visiting the healthy masters that remain.
-            }
+            // TryLoadSlotsAsync replaces stale owners after a successful refresh. Any owner
+            // still present is current; omitting it would make SCAN and cluster-wide server
+            // commands silently return incomplete results.
+            await master.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            connections[index++] = master.GetConnection();
         }
 
-        if (connections.Count == 0)
-        {
-            var seed = Volatile.Read(ref _seed)!;
-            await seed.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-            connections.Add(seed.GetConnection());
-        }
-
-        return connections.ToArray();
+        return connections;
     }
 
     private void AddKnownMasters(HashSet<RespireConnectionMultiplexer> masters)
