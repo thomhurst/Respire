@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -276,6 +277,131 @@ public class RespireConnectionTests
 
         await Assert.That(async () => await task).Throws<RespireConnectionException>();
         await acceptTask;
+        listener.Stop();
+    }
+
+    [Test]
+    public async Task ResponseWatchdog_NoBytesWhilePending_AbortsConnection()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        server.DelayReply(0, 1000);
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1",
+            server.Port,
+            new RespireConnectionOptions { ResponseTimeout = TimeSpan.FromMilliseconds(100) });
+
+        var response = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+
+        var exception = await Assert.That(async () => await response)
+            .ThrowsExactly<RespireConnectionException>();
+        await Assert.That(exception!.Message).Contains("received no data");
+        await Assert.That(connection.IsConnected).IsFalse();
+    }
+
+    [Test]
+    public async Task ResponseWatchdog_UsesRemainingDeadlineInsteadOfPollingPeriod()
+    {
+        var timeout = TimeSpan.FromMilliseconds(500);
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        server.DelayReply(0, 2000);
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1",
+            server.Port,
+            new RespireConnectionOptions { ResponseTimeout = timeout });
+
+        // Start just after the watchdog's first idle wait. A timeout-sized periodic poll would
+        // miss the first deadline and take almost two timeout periods to abort.
+        await Task.Delay(TimeSpan.FromMilliseconds(600));
+        var stopwatch = Stopwatch.StartNew();
+        var response = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+
+        await Assert.That(async () => await response).ThrowsExactly<RespireConnectionException>();
+        await Assert.That(stopwatch.Elapsed < TimeSpan.FromMilliseconds(750)).IsTrue();
+    }
+
+    [Test]
+    public async Task ResponseWatchdog_DoesNotAbortIntentionallyBlockingConnection()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        server.DelayReply(0, 250);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            ResponseTimeout = TimeSpan.FromMilliseconds(50),
+        });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var response = await client.SendBlockingAsync(
+            "PING", new RawCommand(FakeRespServer.PingFrame), timeout.Token);
+
+        await Assert.That(response.AsString()).IsEqualTo("PONG");
+        response.Dispose();
+    }
+
+    [Test]
+    public async Task ResponseWatchdog_StillAppliesToNonBlockingDedicatedConnection()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        server.DelayReply(0, 250);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            ResponseTimeout = TimeSpan.FromMilliseconds(50),
+        });
+        var connection = await client.Core.DedicatedPool.RentAsync(CancellationToken.None);
+
+        await Assert.That(async () =>
+                await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
+            .ThrowsExactly<RespireConnectionException>();
+
+        await client.Core.DedicatedPool.DiscardAsync(connection);
+    }
+
+    [Test]
+    public async Task ResponseWatchdog_ChunksTimeoutsBeyondTaskDelayLimit()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1",
+            server.Port,
+            new RespireConnectionOptions { ResponseTimeout = TimeSpan.FromDays(60) });
+
+        var response = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+
+        await Assert.That(response.AsString()).IsEqualTo("PONG");
+        response.Dispose();
+    }
+
+    [Test]
+    public async Task ResponseWatchdog_RejectsSubMillisecondTimeout()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+
+        await Assert.That(async () => await RespireConnection.ConnectAsync(
+                "127.0.0.1",
+                server.Port,
+                new RespireConnectionOptions { ResponseTimeout = TimeSpan.FromTicks(1) }))
+            .ThrowsExactly<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
+    public async Task ResponseWatchdog_ImmediatePeerCloseDisposesPromptly()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var acceptTask = Task.Run(async () =>
+        {
+            using var socket = await listener.AcceptSocketAsync();
+            socket.Close();
+        });
+        var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1",
+            port,
+            new RespireConnectionOptions { ResponseTimeout = TimeSpan.FromDays(60) });
+        await acceptTask;
+
+        await connection.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         listener.Stop();
     }
 
