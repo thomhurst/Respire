@@ -75,6 +75,9 @@ public sealed record RespireOptions
     /// <summary>Logical database SELECTed during the handshake.</summary>
     public int Database { get; init; }
 
+    /// <summary>Allows high-risk administrative commands such as FLUSHDB, FLUSHALL, and CONFIG SET.</summary>
+    public bool AllowAdmin { get; init; }
+
     public RespProtocol Protocol { get; init; } = RespProtocol.Resp2;
 
     /// <summary>Timeout for the initial TCP connect (per connection).</summary>
@@ -155,7 +158,7 @@ public sealed record RespireOptions
     /// <c>redis://[user[:password]@]host[:port][/database]</c> URI. Recognized query parameters:
     /// <c>clientName</c>, <c>connections</c>, <c>connectTimeoutMs</c>, <c>commandTimeoutMs</c>,
     /// <c>responseTimeoutMs</c>, <c>protocol</c> (2 or 3), <c>db</c>,
-    /// <c>cluster</c> (true or false).
+    /// <c>cluster</c> (true or false), <c>allowAdmin</c> (true or false).
     /// Use <c>rediss://</c> to enable TLS.
     /// Connection strings contain one endpoint; configure <see cref="Endpoints"/> directly when
     /// cluster seed failover requires multiple endpoints.
@@ -207,6 +210,7 @@ public sealed record RespireOptions
         TimeSpan? responseTimeout = null;
         var protocol = RespProtocol.Resp2;
         var cluster = false;
+        var allowAdmin = false;
 
         foreach (var pair in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
         {
@@ -239,6 +243,9 @@ public sealed record RespireOptions
                 case "cluster":
                     cluster = bool.Parse(value);
                     break;
+                case "allowadmin":
+                    allowAdmin = bool.Parse(value);
+                    break;
                 default:
                     throw new ArgumentException($"Unknown connection string parameter '{name}'.", nameof(connectionString));
             }
@@ -258,6 +265,7 @@ public sealed record RespireOptions
             ResponseTimeout = responseTimeout,
             Protocol = protocol,
             Cluster = cluster,
+            AllowAdmin = allowAdmin,
         };
     }
 }
