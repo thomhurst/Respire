@@ -33,6 +33,9 @@ public sealed partial class RespireClient : IRespireClient
         Sets = new SetCommands(this);
         SortedSets = new SortedSetCommands(this);
         Streams = new StreamCommands(this);
+        Bitmaps = new BitmapCommands(this);
+        HyperLogLog = new HyperLogLogCommands(this);
+        Geo = new GeoCommands(this);
         Scripts = new ScriptCommands(this);
         Server = new ServerCommands(this);
     }
@@ -87,6 +90,9 @@ public sealed partial class RespireClient : IRespireClient
     public ISetCommands Sets { get; }
     public ISortedSetCommands SortedSets { get; }
     public IStreamCommands Streams { get; }
+    public IBitmapCommands Bitmaps { get; }
+    public IHyperLogLogCommands HyperLogLog { get; }
+    public IGeoCommands Geo { get; }
     public IScriptCommands Scripts { get; }
     public IServerCommands Server { get; }
 
@@ -114,6 +120,26 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     // Raw escape hatch
+
+    /// <summary>
+    /// Sends a command from <see cref="RespireCommands"/>. Unlike the string overload, command
+    /// words are pre-encoded once and never split or allocated per call. The result is a lease.
+    /// </summary>
+    public async ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args)
+    {
+        if (string.IsNullOrEmpty(command.Name))
+        {
+            throw new ArgumentException("Command must be an entry from RespireCommands.", nameof(command));
+        }
+
+        var storedProcedureName = StoredProcedureName(command.Name, args);
+        var commandValue = new CatalogCommand(command, args);
+        var response = await (storedProcedureName is null
+                ? SendAsync(command.Name, commandValue, CancellationToken.None)
+                : SendStoredProcedureAsync(command.Name, commandValue, CancellationToken.None, storedProcedureName))
+            .ConfigureAwait(false);
+        return new RespireResult(in response);
+    }
 
     /// <summary>
     /// Sends any command. The command may contain spaces ("CONFIG GET"); each arg is exactly one
@@ -1118,6 +1144,12 @@ public sealed partial class RespireClient : IRespireClient
         => ConvertAsync(
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.NullableStringArray(in value));
+
+    internal ValueTask<long?[]> NullableIntegerArrayAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+        where TCommand : struct, IRespCommand
+        => ConvertResponseAsync(
+            operation, command, ct, this,
+            static (RespireClient _, in RespValue value) => ResponseReader.NullableIntegerArray(in value));
 
     internal ValueTask<Dictionary<string, string>> StringMapAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand

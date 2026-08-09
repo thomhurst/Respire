@@ -1331,6 +1331,9 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ISetCommands Sets => inner.Sets;
         public ISortedSetCommands SortedSets => inner.SortedSets;
         public IStreamCommands Streams => inner.Streams;
+        public IBitmapCommands Bitmaps => inner.Bitmaps;
+        public IHyperLogLogCommands HyperLogLog => inner.HyperLogLog;
+        public IGeoCommands Geo => inner.Geo;
         public IServerCommands Server => inner.Server;
 
         public ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken cancellationToken = default)
@@ -1401,6 +1404,9 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             => inner.CreateTransactionAsync(watchKeys, cancellationToken);
 
         public ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args)
+            => inner.ExecuteAsync(command, args);
+
+        public ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args)
             => inner.ExecuteAsync(command, args);
 
         public ValueTask<RespireResult> ExecuteAsync(

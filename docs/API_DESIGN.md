@@ -289,6 +289,10 @@ One method, one mental model. This is a headline capability — spec it early, m
 ## 10. Raw commands and the interpolated escape hatch
 
 ```csharp
+// Complete generated catalog — discoverable and pre-encoded
+RespireResult r = await redis.ExecuteAsync(
+    RespireCommands.Key.OBJECT_ENCODING, "user:1");
+
 // Explicit args — RespireValue params, no string-splitting surprises
 RespireResult r = await redis.ExecuteAsync("OBJECT", "ENCODING", "user:1");
 
@@ -300,7 +304,9 @@ RespireResult r = await redis.ExecuteAsync($"SET {key} {payload} EX {60}");
 
 `RespireResult` is the one public protocol-shaped type: `Kind`, `AsString()`,
 `AsInteger()`, `AsSpan()`, array enumeration, and it is a lease (`using`). It exists only
-on the raw layer.
+on the raw layer. The generated catalog covers every audited Redis and Valkey command plus
+documented module, KeyDB, and Dragonfly commands; string execution remains available for
+experimental server extensions.
 
 ## 11. Scripts and functions
 
@@ -317,7 +323,7 @@ long count = (await redis.Scripts.ExecuteAsync(RateLimit,
 
 - SHA1 computed once at `Create`; `ExecuteAsync` tries EVALSHA, falls back to EVAL on
   NOSCRIPT, transparently.
-- FUNCTION load/call mirrored on the same facet.
+- FUNCTION and FCALL commands are available through `RespireCommands.Scripting`.
 
 ## 12. Key-prefixed views
 
