@@ -45,12 +45,10 @@ public interface ISetCommands
 internal sealed class SetCommands(RespireClient client) : ISetCommands
 {
     public ValueTask<long> AddAsync(RespireKey key, params ReadOnlySpan<RespireValue> members)
-        => client.IntegerAsync(
-            "SADD", new Cmd1N(Verbs.SAdd, client.Key(in key), RespireClient.MapValues(members)), CancellationToken.None);
+        => client.IntegerValuesAsync("SADD", Verbs.SAdd, client.Key(in key), members);
 
     public ValueTask<long> RemoveAsync(RespireKey key, params ReadOnlySpan<RespireValue> members)
-        => client.IntegerAsync(
-            "SREM", new Cmd1N(Verbs.SRem, client.Key(in key), RespireClient.MapValues(members)), CancellationToken.None);
+        => client.IntegerValuesAsync("SREM", Verbs.SRem, client.Key(in key), members);
 
     public ValueTask<bool> ContainsAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken = default)
         => client.FlagAsync("SISMEMBER", new Cmd2(Verbs.SIsMember, client.Key(in key), member), cancellationToken);
