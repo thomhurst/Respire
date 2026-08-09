@@ -10,12 +10,18 @@ internal sealed class RespireStressClient : IStressClient
 
     public static async Task<RespireStressClient> ConnectAsync(string host, int port)
     {
-        // RESPIRE_CONNECTIONS overrides the multiplexed connection count for perf sweeps.
-        var connections = Environment.GetEnvironmentVariable("RESPIRE_CONNECTIONS");
-        var connectionString = string.IsNullOrEmpty(connections)
-            ? $"{host}:{port}"
-            : $"redis://{host}:{port}?connections={connections}";
-        return new(await RespireClient.ConnectAsync(connectionString).ConfigureAwait(false));
+        // RESPIRE_CONNECTIONS overrides the multiplexed connection count and
+        // RESPIRE_DEDICATED_IO=1 switches to dedicated blocking IO threads, for perf sweeps.
+        var options = new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint(host, port) },
+            Connections = int.TryParse(
+                Environment.GetEnvironmentVariable("RESPIRE_CONNECTIONS"), out var connections)
+                ? connections
+                : 0,
+            DedicatedIoThreads = Environment.GetEnvironmentVariable("RESPIRE_DEDICATED_IO") == "1",
+        };
+        return new(await RespireClient.ConnectAsync(options).ConfigureAwait(false));
     }
 
     public string Name => ClientName;

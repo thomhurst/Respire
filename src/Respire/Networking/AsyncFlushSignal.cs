@@ -81,3 +81,44 @@ internal sealed class AsyncFlushSignal : IValueTaskSource
     void IValueTaskSource.OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags)
         => _core.OnCompleted(continuation, state, token, flags);
 }
+
+/// <summary>
+/// Blocking counterpart of <see cref="AsyncFlushSignal"/> for a flush loop that runs on a
+/// dedicated thread: one blocking waiter, many signalers, coalescing. The lock-free signaled
+/// fast path keeps the per-command cost of re-signaling an already-signaled instance to a
+/// single volatile read.
+/// </summary>
+internal sealed class BlockingFlushSignal
+{
+    private readonly object _gate = new();
+    private int _signaled;
+
+    /// <summary>Single consumer only. Blocks until signaled, then consumes the signal.</summary>
+    public void Wait()
+    {
+        lock (_gate)
+        {
+            while (Volatile.Read(ref _signaled) == 0)
+            {
+                Monitor.Wait(_gate);
+            }
+
+            Volatile.Write(ref _signaled, 0);
+        }
+    }
+
+    /// <summary>Any thread. Coalesces: signaling an already-signaled instance is a no-op.</summary>
+    public void Set()
+    {
+        if (Volatile.Read(ref _signaled) == 1)
+        {
+            return;
+        }
+
+        lock (_gate)
+        {
+            Volatile.Write(ref _signaled, 1);
+            Monitor.Pulse(_gate);
+        }
+    }
+}

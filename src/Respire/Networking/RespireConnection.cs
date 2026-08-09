@@ -63,7 +63,9 @@ public sealed class RespireConnection : IAsyncDisposable
     // a deadline concurrently armed for a later batch.
     private readonly object _receiveDeadlineGate = new();
     private readonly AsyncFlushSignal _flushSignal = new();
+    private readonly BlockingFlushSignal? _blockingFlushSignal;
     private readonly AsyncCapacitySignal _capacitySignal = new();
+    private readonly bool _dedicatedIo;
 
     private WriteBuffer _activeBuffer;
     private WriteBuffer _spareBuffer;
@@ -122,8 +124,26 @@ public sealed class RespireConnection : IAsyncDisposable
             _watchdogCancellation = new CancellationTokenSource();
         }
 
-        _receiveTask = Task.Run(ReceiveLoopAsync);
-        _flushTask = Task.Run(FlushLoopAsync);
+        _dedicatedIo = options.UseDedicatedIoThreads;
+        if (_dedicatedIo)
+        {
+            _blockingFlushSignal = new BlockingFlushSignal();
+
+            // The receive loop's awaits all complete synchronously in dedicated mode (the
+            // socket reads block), so the async method runs to completion on this thread.
+            _receiveTask = Task.Factory.StartNew(
+                ReceiveLoopAsync, CancellationToken.None, TaskCreationOptions.LongRunning,
+                TaskScheduler.Default).Unwrap();
+            _flushTask = Task.Factory.StartNew(
+                FlushLoopBlocking, CancellationToken.None, TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
+        }
+        else
+        {
+            _receiveTask = Task.Run(ReceiveLoopAsync);
+            _flushTask = Task.Run(FlushLoopAsync);
+        }
+
         if (_responseTimeout is { } responseTimeout)
         {
             _watchdogTask = WatchReceiveAsync(responseTimeout, _watchdogCancellation!.Token);
@@ -882,7 +902,17 @@ public sealed class RespireConnection : IAsyncDisposable
     /// or awaiting replies the wake dispatches asynchronously — the flush loop is already
     /// cycling, and capturing producer threads would not deepen batches.
     /// </summary>
-    private void ScheduleFlush(bool startedBatch) => _flushSignal.Signal(preferInline: startedBatch);
+    private void ScheduleFlush(bool startedBatch)
+    {
+        if (_dedicatedIo)
+        {
+            _blockingFlushSignal!.Set();
+        }
+        else
+        {
+            _flushSignal.Signal(preferInline: startedBatch);
+        }
+    }
 
     /// <summary>
     /// Caps how many consecutive batches the flush loop sends without ever suspending before
@@ -973,6 +1003,70 @@ public sealed class RespireConnection : IAsyncDisposable
                         synchronousBatches = 0;
                         await Task.Yield();
                     }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogDebug(ex, "Send failed for {Host}:{Port}; aborting connection", Host, Port);
+            Abort();
+        }
+    }
+
+    /// <summary>
+    /// Dedicated-thread counterpart of <see cref="FlushLoopAsync"/>: parks on a blocking
+    /// signal and issues blocking sends, so a batch goes from wake to syscall without ever
+    /// touching the thread pool. Same buffer-swap protocol and failure handling.
+    /// </summary>
+    private void FlushLoopBlocking()
+    {
+        try
+        {
+            while (true)
+            {
+                _blockingFlushSignal!.Wait();
+
+                while (true)
+                {
+                    WriteBuffer sending;
+                    int sendingReplyCount;
+                    lock (_writeGate)
+                    {
+                        if (_dead)
+                        {
+                            return;
+                        }
+
+                        if (_activeBuffer.Count == 0)
+                        {
+                            break;
+                        }
+
+                        sending = _activeBuffer;
+                        _activeBuffer = _spareBuffer;
+                        _spareBuffer = sending;
+                        sendingReplyCount = _activeReplyCount;
+                        _activeReplyCount = 0;
+                    }
+
+                    // Never cancelled: a partial RESP frame on the wire is unrecoverable.
+                    if (_tlsStream is null)
+                    {
+                        var span = sending.WrittenMemory.Span;
+                        while (span.Length > 0)
+                        {
+                            var sent = _socket.Send(span, SocketFlags.None);
+                            span = span[sent..];
+                        }
+                    }
+                    else
+                    {
+                        _tlsStream.Write(sending.WrittenMemory.Span);
+                    }
+
+                    MarkRepliesSent(sendingReplyCount);
+
+                    sending.Reset();
                 }
             }
         }
@@ -1266,9 +1360,21 @@ public sealed class RespireConnection : IAsyncDisposable
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private ValueTask<int> ReceiveAsync(Memory<byte> buffer)
-        => _tlsStream is null
+    {
+        if (_dedicatedIo)
+        {
+            // Blocking read on the dedicated receive thread; the returned ValueTask is always
+            // complete, so the receive loop never leaves its thread.
+            return new ValueTask<int>(
+                _tlsStream is null
+                    ? _socket.Receive(buffer.Span, SocketFlags.None)
+                    : _tlsStream.Read(buffer.Span));
+        }
+
+        return _tlsStream is null
             ? _socket.ReceiveAsync(buffer, SocketFlags.None)
             : _tlsStream.ReadAsync(buffer);
+    }
 
     /// <summary>
     /// Routes out-of-band frames to the push handler. RESP3 delivers them as Push frames; on a
@@ -1491,6 +1597,7 @@ public sealed class RespireConnection : IAsyncDisposable
 
         // Wake the parked flush loop so it can observe the dead flag and exit.
         _flushSignal.Signal();
+        _blockingFlushSignal?.Set();
     }
 
     /// <summary>
@@ -1615,6 +1722,14 @@ public sealed record RespireConnectionOptions
 
     /// <summary>Maximum commands awaiting responses on one connection (rounded up to a power of two).</summary>
     public int MaxInflightCommands { get; init; } = 16 * 1024;
+
+    /// <summary>
+    /// Runs this connection's receive and flush loops on dedicated blocking threads (two per
+    /// connection) instead of async socket IO on the thread pool. Skips the IO-completion
+    /// dispatch machinery entirely; worthwhile only for latency-critical workloads on a small
+    /// number of connections.
+    /// </summary>
+    public bool UseDedicatedIoThreads { get; init; }
 
     /// <summary>Maximum pooled completion sources kept per connection.</summary>
     public int CompletionSourcePoolSize { get; init; } = 4096;

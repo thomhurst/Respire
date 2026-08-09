@@ -127,6 +127,14 @@ public sealed record RespireOptions
     /// <summary>Maximum commands awaiting responses per connection.</summary>
     public int MaxInflightCommands { get; init; } = 16 * 1024;
 
+    /// <summary>
+    /// Runs each connection's receive and flush loops on dedicated blocking threads (two per
+    /// connection) instead of async socket IO on the thread pool. Skips the IO-completion
+    /// dispatch machinery; worthwhile only for latency-critical workloads on a small number
+    /// of connections.
+    /// </summary>
+    public bool DedicatedIoThreads { get; init; }
+
     internal RespireEndpoint PrimaryEndpoint
         => Endpoints.Count > 0 ? Endpoints[0] : new RespireEndpoint("localhost");
 
@@ -147,6 +155,7 @@ public sealed record RespireOptions
             ReceiveBufferSize = ReceiveBufferSize,
             WriteBufferSize = WriteBufferSize,
             MaxInflightCommands = MaxInflightCommands,
+            UseDedicatedIoThreads = DedicatedIoThreads,
             PushHandler = pushHandler,
         };
 
