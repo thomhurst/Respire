@@ -18,6 +18,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
     private readonly Dictionary<(SubscriptionKind Kind, string Name), List<RespireSubscription>> _routes = [];
     private readonly SemaphoreSlim _connectionGate = new(1, 1);
     private RespireConnection? _connection;
+    private long _reconnectGeneration;
     private volatile bool _disposed;
 
     public RespireSubscription CreateSubscription(SubscriptionKind kind, string[] names)
@@ -282,6 +283,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             return;
         }
 
+        var reconnectGeneration = Interlocked.Increment(ref _reconnectGeneration);
         core.Multiplexer.NotifyStateChanged(RespireConnectionState.Reconnecting);
         var delay = TimeSpan.FromMilliseconds(250);
         while (!_disposed)
@@ -304,7 +306,16 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                         .ConfigureAwait(false);
                 }
 
-                core.Multiplexer.NotifyStateChanged(RespireConnectionState.Connected);
+                // A replacement can itself fail while this watcher is resubscribing. Its watcher
+                // then owns the newer reconnect generation; this stale watcher must not announce
+                // Connected after that newer Reconnecting notification.
+                if (reconnectGeneration == Volatile.Read(ref _reconnectGeneration)
+                    && ReferenceEquals(Volatile.Read(ref _connection), replacement)
+                    && replacement.IsConnected)
+                {
+                    core.Multiplexer.NotifyStateChanged(RespireConnectionState.Connected);
+                }
+
                 return;
             }
             catch (ObjectDisposedException)
