@@ -41,6 +41,7 @@ public sealed class RespireConnection : IAsyncDisposable
 {
     private const int DirectFillThreshold = 4 * 1024;
     private const int MaxResponseSize = 512 * 1024 * 1024;
+    private static readonly TimeSpan MinWatchdogDelay = TimeSpan.FromMilliseconds(1);
     private static readonly TimeSpan MaxWatchdogSleep = TimeSpan.FromDays(1);
 
     private readonly Socket _socket;
@@ -116,12 +117,16 @@ public sealed class RespireConnection : IAsyncDisposable
         _activeBuffer = new WriteBuffer(options.WriteBufferSize);
         _spareBuffer = new WriteBuffer(options.WriteBufferSize);
         _responseTimeout = options.ResponseTimeout;
+        if (_responseTimeout is not null)
+        {
+            _watchdogCancellation = new CancellationTokenSource();
+        }
+
         _receiveTask = Task.Run(ReceiveLoopAsync);
         _flushTask = Task.Run(FlushLoopAsync);
         if (_responseTimeout is { } responseTimeout)
         {
-            _watchdogCancellation = new CancellationTokenSource();
-            _watchdogTask = WatchReceiveAsync(responseTimeout, _watchdogCancellation.Token);
+            _watchdogTask = WatchReceiveAsync(responseTimeout, _watchdogCancellation!.Token);
         }
     }
 
@@ -133,9 +138,10 @@ public sealed class RespireConnection : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         options ??= RespireConnectionOptions.Default;
-        if (options.ResponseTimeout is { } invalidTimeout && invalidTimeout <= TimeSpan.Zero)
+        if (options.ResponseTimeout is { } invalidTimeout && invalidTimeout < MinWatchdogDelay)
         {
-            throw new ArgumentOutOfRangeException(nameof(options), "ResponseTimeout must be positive.");
+            throw new ArgumentOutOfRangeException(
+                nameof(options), "ResponseTimeout must be at least one millisecond.");
         }
 
         var socket = new Socket(SocketType.Stream, ProtocolType.Tcp)
@@ -1148,6 +1154,7 @@ public sealed class RespireConnection : IAsyncDisposable
 
     private void Abort(Exception? reason = null)
     {
+        _watchdogCancellation?.Cancel();
         lock (_writeGate)
         {
             if (_dead)
@@ -1159,7 +1166,6 @@ public sealed class RespireConnection : IAsyncDisposable
             _abortReason = reason;
         }
 
-        _watchdogCancellation?.Cancel();
         try
         {
             _tlsStream?.Dispose();

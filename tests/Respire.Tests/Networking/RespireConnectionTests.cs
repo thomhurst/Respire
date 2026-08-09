@@ -355,6 +355,39 @@ public class RespireConnectionTests
     }
 
     [Test]
+    public async Task ResponseWatchdog_RejectsSubMillisecondTimeout()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+
+        await Assert.That(async () => await RespireConnection.ConnectAsync(
+                "127.0.0.1",
+                server.Port,
+                new RespireConnectionOptions { ResponseTimeout = TimeSpan.FromTicks(1) }))
+            .ThrowsExactly<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
+    public async Task ResponseWatchdog_ImmediatePeerCloseDisposesPromptly()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var acceptTask = Task.Run(async () =>
+        {
+            using var socket = await listener.AcceptSocketAsync();
+            socket.Close();
+        });
+        var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1",
+            port,
+            new RespireConnectionOptions { ResponseTimeout = TimeSpan.FromDays(60) });
+        await acceptTask;
+
+        await connection.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        listener.Stop();
+    }
+
+    [Test]
     public async Task SendAfterDeath_ThrowsConnectionException()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
