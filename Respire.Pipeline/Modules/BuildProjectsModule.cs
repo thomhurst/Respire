@@ -19,7 +19,9 @@ public class BuildProjectsModule : Module<CommandResult>
         {
             ProjectSolution = "../Respire.slnx",
             Configuration = "Release",
-            NoRestore = false
+            NoRestore = false,
+            Properties = NugetVersionGeneratorModule.CreateVersionProperties(
+                NugetVersionGeneratorModule.GetGeneratedVersion())
         }, cancellationToken: cancellationToken);
     }
 }

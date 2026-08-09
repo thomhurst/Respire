@@ -29,7 +29,7 @@ public class PackProjectsModule : Module<CommandResult[]>
             "../src/Respire.Extensions.DependencyInjection/Respire.Extensions.DependencyInjection.csproj"
         };
 
-        var version = Environment.GetEnvironmentVariable("KEVA_VERSION") ?? "1.0.0-dev";
+        var version = NugetVersionGeneratorModule.GetGeneratedVersion();
         var results = new List<CommandResult>();
         
         foreach (var project in packageProjects)
@@ -40,13 +40,7 @@ public class PackProjectsModule : Module<CommandResult[]>
                 Configuration = "Release",
                 NoBuild = true,
                 Output = "../artifacts/packages",
-                Properties = new[]
-                {
-                    new KeyValue("Version", version),
-                    new KeyValue("PackageVersion", version),
-                    new KeyValue("AssemblyVersion", version.Split('-')[0]), // Remove pre-release suffix for assembly version
-                    new KeyValue("FileVersion", version.Split('-')[0])
-                }
+                Properties = NugetVersionGeneratorModule.CreateVersionProperties(version)
             }, cancellationToken: cancellationToken);
             
             results.Add(result);

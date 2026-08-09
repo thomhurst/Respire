@@ -18,7 +18,8 @@ public class Program
             .AddEnvironmentVariables();
 
         builder.Services.Configure<NuGetSettings>(builder.Configuration.GetSection("NuGet"))
-            .Configure<GitHubSettings>(builder.Configuration.GetSection("GitHub"));
+            .Configure<GitHubSettings>(builder.Configuration.GetSection("GitHub"))
+            .Configure<GitVersioningSettings>(builder.Configuration.GetSection("Versioning"));
 
         if (builder.Environment.IsDevelopment())
         {
