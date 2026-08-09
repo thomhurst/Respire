@@ -26,6 +26,18 @@ public class PubSubTests
     private static RespireClient CreateLazyClient(int port)
         => RespireClient.Create(new RespireOptions { Endpoints = { new RespireEndpoint("127.0.0.1", port) } });
 
+    [Test]
+    public async Task MalformedLaterName_DoesNotRegisterEarlierRoute()
+    {
+        await using var server = new FakeRespServer(SubscribeConfirmation);
+        await using var client = CreateLazyClient(server.Port);
+        await using var subscription = client.Subscribe("valid", "\uD800");
+        await using var enumerator = subscription.GetAsyncEnumerator();
+
+        await Assert.That(async () => await enumerator.MoveNextAsync()).Throws<ArgumentException>();
+        await Assert.That(server.CommandsSeen).IsEqualTo(0);
+    }
+
     private static async Task WaitForCommandsAsync(FakeRespServer server, int count)
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));

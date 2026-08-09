@@ -66,6 +66,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                 // not register routes (and subscribe server-side) on a disposed hub.
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 var routes = Routes(subscription.Kind);
+                routed = true;
                 foreach (var name in subscription.Names)
                 {
                     if (!routes.TryGetValue(name, out var list))
@@ -78,7 +79,6 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                 }
             }
 
-            routed = true;
             foreach (var name in subscription.Names)
             {
                 await SendControlAsync(
