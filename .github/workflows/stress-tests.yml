@@ -164,8 +164,8 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
-      actions: write
-      contents: write
+      actions: read
+      contents: read
 
     concurrency:
       group: performance-docs-publish
@@ -176,6 +176,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
+          token: ${{ secrets.BENCHMARK_DOCS_PAT }}
 
       - name: Download stress-test results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
@@ -195,23 +196,14 @@ jobs:
             --output website/docs/stress-tests.md
 
       - name: Commit stress-test documentation
-        id: publish
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add website/docs/stress-tests.md
           if git diff --cached --quiet; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git commit -m "docs: update stress-test results"
           git fetch origin main
           git rebase origin/main
           git push origin HEAD:main
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-
-      - name: Deploy updated documentation
-        if: steps.publish.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run docs.yml --ref main
