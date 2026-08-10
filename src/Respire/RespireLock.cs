@@ -23,7 +23,7 @@ public sealed class RespireLock : IAsyncDisposable
     internal RespireLock(ILockCommands locks, RespireKey key, ReadOnlyMemory<byte> token, TimeSpan expiry)
     {
         _locks = locks;
-        Key = key;
+        Key = key.Snapshot();
         Token = token;
         _expiryTicks = expiry.Ticks;
     }

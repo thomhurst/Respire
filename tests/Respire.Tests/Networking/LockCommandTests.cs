@@ -177,6 +177,25 @@ public class LockCommandTests
     }
 
     [Test]
+    public async Task RespireLock_SnapshotsByteBackedKeyForHandleOperations()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var key = "resource"u8.ToArray();
+
+        var mutex = await client.Locks.AcquireAsync(key, TimeSpan.FromSeconds(30));
+        key.AsSpan().Fill((byte)'x');
+        await mutex!.DisposeAsync();
+
+        var token = Encoding.UTF8.GetString(mutex.Token.Span);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        {
+            $"SET resource {token} NX PX 30000",
+            $"EVALSHA {LockCommands.ReleaseScript.Sha1} 1 resource {token}",
+        });
+    }
+
+    [Test]
     public async Task RespireLock_ReleaseAndExtendStopAtTheHandleOnceReleased()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
@@ -243,6 +262,22 @@ public class LockCommandTests
 
         await Assert.That(mutex).IsNull();
         await Assert.That(server.ReceivedCommands.Count).IsGreaterThan(1);
+    }
+
+    [Test]
+    public async Task RespireLock_PollingAcquireUsesShortRemainingBudgetForFinalAttempt()
+    {
+        await using var server = new FakeRespServer("$-1\r\n"u8.ToArray(), FakeRespServer.OkReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var mutex = await client.Locks.AcquireAsync(
+            "resource",
+            TimeSpan.FromSeconds(30),
+            wait: TimeSpan.FromMilliseconds(50),
+            retryEvery: TimeSpan.FromSeconds(1));
+
+        await Assert.That(mutex).IsNotNull();
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
     }
 
     [Test]

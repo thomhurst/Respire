@@ -123,14 +123,16 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands
                 return acquired;
             }
 
-            // Only sleep when a full interval still fits inside the budget, so the last attempt
-            // happens at the deadline rather than after it.
-            if (Stopwatch.GetElapsedTime(start) + retryEvery > wait)
+            var remaining = wait - Stopwatch.GetElapsedTime(start);
+            if (remaining <= TimeSpan.Zero)
             {
                 return null;
             }
 
-            await Task.Delay(retryEvery, cancellationToken).ConfigureAwait(false);
+            await Task.Delay(
+                    remaining < retryEvery ? remaining : retryEvery,
+                    cancellationToken)
+                .ConfigureAwait(false);
         }
     }
 
