@@ -53,7 +53,9 @@ await using var mutex = await redis.Locks.AcquireOrThrowAsync(
 ```
 
 `AcquireAsync` returns an unsuccessful attempt after the budget. `AcquireOrThrowAsync` throws.
-Cancellation interrupts the command, polling delay, or wait independently of contention.
+Cancellation interrupts the response wait, polling delay, or contention wait. It cannot recall a
+command already written to Redis. If cancellation races with acquisition, Redis may acquire the
+lock without returning its handle or generated owner token; the lock then remains until its expiry.
 
 ## Treat the lock as a lease
 
