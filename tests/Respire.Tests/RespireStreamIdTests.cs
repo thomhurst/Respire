@@ -49,6 +49,8 @@ public class RespireStreamIdTests
 
         await Assert.That(() => RespireStreamId.New.CompareTo(id))
             .ThrowsExactly<InvalidOperationException>();
+        await Assert.That(() => RespireStreamId.New.CompareTo(RespireStreamId.New))
+            .ThrowsExactly<InvalidOperationException>();
     }
 
     [Test]
@@ -57,6 +59,8 @@ public class RespireStreamIdTests
         var invalid = new RespireStreamId("not-an-id");
 
         await Assert.That(() => invalid.CompareTo(RespireStreamId.Beginning))
+            .ThrowsExactly<FormatException>();
+        await Assert.That(() => invalid.CompareTo(invalid))
             .ThrowsExactly<FormatException>();
     }
 }

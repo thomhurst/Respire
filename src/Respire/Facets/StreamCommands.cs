@@ -46,11 +46,6 @@ public readonly struct RespireStreamId : IEquatable<RespireStreamId>, IComparabl
     {
         var left = Value;
         var right = other.Value;
-        if (string.Equals(left, right, StringComparison.Ordinal))
-        {
-            return 0;
-        }
-
         var leftParts = ParseComparable(left);
         var rightParts = ParseComparable(right);
 
