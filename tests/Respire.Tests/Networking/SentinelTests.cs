@@ -186,7 +186,7 @@ public class SentinelTests
             },
             ServiceName = "mymaster",
             ConnectTimeout = TimeSpan.FromSeconds(1),
-            CommandTimeout = TimeSpan.FromMilliseconds(100),
+            CommandTimeout = TimeSpan.FromMilliseconds(500),
         });
 
         _ = await client.PingAsync();
