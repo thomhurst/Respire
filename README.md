@@ -251,7 +251,7 @@ using Respire.Serialization;
 var options = new RespireOptions
 {
     Endpoints = { new RespireEndpoint("localhost") },
-    Serializer = new SystemTextJsonSerializer(AppJsonContext.Default),
+    Serializer = SystemTextJsonSerializer.FromContext(AppJsonContext.Default),
 };
 
 await using var redis = await RespireClient.ConnectAsync(options);

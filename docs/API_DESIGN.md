@@ -62,7 +62,7 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
     CommandTimeout = TimeSpan.FromSeconds(2),
     MinConnections = 1,
     MaxConnections = 4,
-    Serializer = new SystemTextJsonSerializer(AppJsonContext.Default),
+    Serializer = SystemTextJsonSerializer.FromContext(AppJsonContext.Default),
     Reconnect = ReconnectPolicy.ExponentialBackoff(
         initial: TimeSpan.FromMilliseconds(100),
         max: TimeSpan.FromSeconds(10)),

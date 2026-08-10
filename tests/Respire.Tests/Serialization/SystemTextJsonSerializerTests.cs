@@ -13,6 +13,14 @@ namespace Respire.Tests.Serialization;
 public class SystemTextJsonSerializerTests
 {
     [Test]
+    public async Task ExplicitNullOptionsRemainSourceCompatible()
+    {
+        var serializer = new SystemTextJsonSerializer(null);
+
+        await Assert.That(serializer).IsNotNull();
+    }
+
+    [Test]
     public async Task SerializerBackedPublicApis_DeclareTrimAndAotRequirements()
     {
         var methods = new[]
@@ -36,7 +44,7 @@ public class SystemTextJsonSerializerTests
     [Test]
     public async Task ContextBackedSerializer_SupportsGenericMembers()
     {
-        var serializer = new SystemTextJsonSerializer(TestJsonContext.Default);
+        var serializer = SystemTextJsonSerializer.FromContext(TestJsonContext.Default);
         var destination = new ArrayBufferWriter<byte>();
 
         serializer.Serialize(destination, new Payload("Ada", 36));
@@ -48,7 +56,7 @@ public class SystemTextJsonSerializerTests
     [Test]
     public async Task ContextBackedSerializer_SupportsTypeBasedMembers()
     {
-        IRespireSerializer serializer = new SystemTextJsonSerializer(TestJsonContext.Default);
+        IRespireSerializer serializer = SystemTextJsonSerializer.FromContext(TestJsonContext.Default);
         var destination = new ArrayBufferWriter<byte>();
         var value = new Payload("Ada", 36);
 
