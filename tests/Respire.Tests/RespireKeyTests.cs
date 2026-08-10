@@ -45,6 +45,20 @@ public class RespireKeyTests
     }
 
     [Test]
+    public async Task UnpairedSurrogateStringsUseTheirEncodedWirePayload()
+    {
+        var first = new RespireKey("\uD800");
+        var second = new RespireKey("\uD801");
+        var replacementBytes = new RespireKey("�"u8.ToArray());
+
+        await Assert.That(first == second).IsTrue();
+        await Assert.That(first == replacementBytes).IsTrue();
+        await Assert.That(second == replacementBytes).IsTrue();
+        await Assert.That(first.GetHashCode()).IsEqualTo(second.GetHashCode());
+        await Assert.That(first.GetHashCode()).IsEqualTo(replacementBytes.GetHashCode());
+    }
+
+    [Test]
     public async Task LongEquivalentRepresentations_AreEqualAndShareHashCode()
     {
         var value = new string('x', 1024) + "£";
