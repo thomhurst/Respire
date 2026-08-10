@@ -109,6 +109,27 @@ public sealed class RespireBatch : IPendingSink
         string operation, in TCommand command, Func<RespireClient, RespValue, T> convert)
         => Add<TCommand, T>(operation, in command, convert);
 
+    RespirePending<T> IPendingSink.Add<TCommand, T>(
+        string operation, in TCommand command, ReadOnlySpan<RespireKey> keys,
+        Func<RespireClient, RespValue, T> convert)
+        => Add<TCommand, T>(operation, in command, convert);
+
+    RespirePending<T> IPendingSink.Add<TCommand, T>(
+        string operation, in TCommand command, RespireKey first, RespireKey second,
+        Func<RespireClient, RespValue, T> convert)
+        => Add<TCommand, T>(operation, in command, convert);
+
+    RespirePending<T> IPendingSink.Add<TCommand, T>(
+        string operation, in TCommand command, RespireKey first, ReadOnlySpan<RespireKey> rest,
+        Func<RespireClient, RespValue, T> convert)
+        => Add<TCommand, T>(operation, in command, convert);
+
+    RespirePending<T> IPendingSink.Add<TCommand, T>(
+        string operation, in TCommand command,
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
+        Func<RespireClient, RespValue, T> convert)
+        => Add<TCommand, T>(operation, in command, convert);
+
     /// <summary>
     /// Sends every queued command in one flush and completes all pendings. Per-command failures
     /// (server errors, <see cref="RespireOptions.CommandTimeout"/> expiry) fault that command's

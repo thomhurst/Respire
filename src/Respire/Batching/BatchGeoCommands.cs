@@ -95,12 +95,12 @@ internal sealed class BatchGeoCommands(IPendingSink sink) : IBatchGeoCommands
     {
         GeoCommands.Validate(origin, shape, options);
         GeoCommands.ValidateSearchStore(options);
-        sink.ValidateClusterKeys(destination, source);
         return sink.Add<GeoSearchCommand, long>(
             "GEOSEARCHSTORE",
             new GeoSearchCommand(
                 RespireCommands.Geo.GEOSEARCHSTORE.Verb, sink.Client.Key(in source), origin, shape, options,
                 sink.Client.Key(in destination), storeDistance),
+            destination, source,
             static (c, v) => ResponseReader.Integer(in v));
     }
 }

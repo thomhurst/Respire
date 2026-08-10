@@ -116,7 +116,7 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
 
     // Multi-key validation is read-only. Add applies the command's representative routing slot
     // only after serialization succeeds, so a rejected command cannot pin the transaction.
-    internal void ValidateClusterKeys(ReadOnlySpan<RespireKey> keys)
+    private void ValidateClusterKeys(ReadOnlySpan<RespireKey> keys)
     {
         if (!TryBeginClusterKeyValidation(out var slot))
         {
@@ -129,7 +129,7 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
         }
     }
 
-    internal void ValidateClusterKeys(RespireKey first, RespireKey second)
+    private void ValidateClusterKeys(RespireKey first, RespireKey second)
     {
         if (!TryBeginClusterKeyValidation(out var slot))
         {
@@ -140,7 +140,7 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
         ValidateClusterKey(in second, ref slot);
     }
 
-    internal void ValidateClusterKeys(RespireKey first, ReadOnlySpan<RespireKey> rest)
+    private void ValidateClusterKeys(RespireKey first, ReadOnlySpan<RespireKey> rest)
     {
         if (!TryBeginClusterKeyValidation(out var slot))
         {
@@ -154,7 +154,7 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
         }
     }
 
-    internal void ValidateClusterKeys(ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+    private void ValidateClusterKeys(ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
     {
         if (!TryBeginClusterKeyValidation(out var slot))
         {
@@ -170,6 +170,39 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
     RespirePending<T> IPendingSink.Add<TCommand, T>(
         string operation, in TCommand command, Func<RespireClient, RespValue, T> convert)
         => Add<TCommand, T>(operation, in command, convert);
+
+    RespirePending<T> IPendingSink.Add<TCommand, T>(
+        string operation, in TCommand command, ReadOnlySpan<RespireKey> keys,
+        Func<RespireClient, RespValue, T> convert)
+    {
+        ValidateClusterKeys(keys);
+        return Add<TCommand, T>(operation, in command, convert);
+    }
+
+    RespirePending<T> IPendingSink.Add<TCommand, T>(
+        string operation, in TCommand command, RespireKey first, RespireKey second,
+        Func<RespireClient, RespValue, T> convert)
+    {
+        ValidateClusterKeys(first, second);
+        return Add<TCommand, T>(operation, in command, convert);
+    }
+
+    RespirePending<T> IPendingSink.Add<TCommand, T>(
+        string operation, in TCommand command, RespireKey first, ReadOnlySpan<RespireKey> rest,
+        Func<RespireClient, RespValue, T> convert)
+    {
+        ValidateClusterKeys(first, rest);
+        return Add<TCommand, T>(operation, in command, convert);
+    }
+
+    RespirePending<T> IPendingSink.Add<TCommand, T>(
+        string operation, in TCommand command,
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
+        Func<RespireClient, RespValue, T> convert)
+    {
+        ValidateClusterKeys(pairs);
+        return Add<TCommand, T>(operation, in command, convert);
+    }
 
     /// <summary>
     /// Executes the transaction. Returns true when EXEC ran (pendings hold their results;
@@ -479,7 +512,7 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
             {
                 pending.Fail(ex);
                 // Conversion failed after Redis completed successfully; not a DB error.
-                return null;
+                return ex;
             }
         }
 

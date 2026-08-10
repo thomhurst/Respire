@@ -156,17 +156,17 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
 
     public RespirePending<string?[]> GetManyAsync(params ReadOnlySpan<RespireKey> keys)
     {
-        sink.ValidateClusterKeys(keys);
         return sink.Add<CmdN, string?[]>(
             "MGET", new CmdN(Verbs.MGet, sink.Client.MapKeys(keys)),
+            keys,
             static (c, v) => ResponseReader.NullableStringArray(in v));
     }
 
     public RespirePending<bool> SetManyAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
     {
-        sink.ValidateClusterKeys(pairs);
         return sink.Add<CmdN, bool>(
             "MSET", new CmdN(Verbs.MSet, StringCommands.SetManyArgs(sink.Client, pairs)),
+            pairs,
             static (c, v) => ResponseReader.Ok(in v));
     }
 
@@ -175,30 +175,30 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
         SetWhen when = SetWhen.Always,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
     {
-        sink.ValidateClusterKeys(pairs);
         return sink.Add<MSetExCommand, bool>(
             "MSETEX",
             new MSetExCommand(
                 RespireCommands.String.MSETEX.Verb,
                 StringCommands.SetManyExpireArgs(sink.Client, expiry, when, pairs)),
+            pairs,
             static (c, v) => ResponseReader.Flag(in v));
     }
 
     public RespirePending<string> LongestCommonSubsequenceAsync(RespireKey firstKey, RespireKey secondKey)
     {
-        sink.ValidateClusterKeys(firstKey, secondKey);
         return sink.Add<Cmd2, string>(
             "LCS",
             new Cmd2(RespireCommands.String.LCS.Verb, sink.Client.Key(in firstKey), sink.Client.Key(in secondKey)),
+            firstKey, secondKey,
             static (c, v) => ResponseReader.String(in v));
     }
 
     public RespirePending<long> LongestCommonSubsequenceLengthAsync(RespireKey firstKey, RespireKey secondKey)
     {
-        sink.ValidateClusterKeys(firstKey, secondKey);
         return sink.Add<Cmd3, long>(
             "LCS",
             new Cmd3(RespireCommands.String.LCS.Verb, sink.Client.Key(in firstKey), sink.Client.Key(in secondKey), "LEN"),
+            firstKey, secondKey,
             static (c, v) => ResponseReader.Integer(in v));
     }
 

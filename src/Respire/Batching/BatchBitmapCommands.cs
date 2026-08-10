@@ -91,7 +91,6 @@ internal sealed class BatchBitmapCommands(IPendingSink sink) : IBatchBitmapComma
         BitOperation operation, RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys)
     {
         BitmapCommands.ValidateOperate(operation, sourceKeys);
-        sink.ValidateClusterKeys(destination, sourceKeys);
         return sink.Add<BitOpCommand, long>(
             "BITOP",
             new BitOpCommand(
@@ -99,6 +98,7 @@ internal sealed class BatchBitmapCommands(IPendingSink sink) : IBatchBitmapComma
                 BitmapCommands.Operation(operation),
                 sink.Client.Key(in destination),
                 sink.Client.MapKeys(sourceKeys)),
+            destination, sourceKeys,
             static (c, v) => ResponseReader.Integer(in v));
     }
 
