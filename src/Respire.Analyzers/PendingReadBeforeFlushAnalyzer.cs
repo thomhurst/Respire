@@ -66,6 +66,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             compilationStart.RegisterSyntaxNodeAction(
                 nodeContext => AnalyzeResultAccess(nodeContext, known), SyntaxKind.SimpleMemberAccessExpression);
             compilationStart.RegisterSyntaxNodeAction(
+                nodeContext => AnalyzeResultBinding(nodeContext, known), SyntaxKind.MemberBindingExpression);
+            compilationStart.RegisterSyntaxNodeAction(
                 nodeContext => AnalyzeAwait(nodeContext, known), SyntaxKind.AwaitExpression);
         });
     }
@@ -90,6 +92,21 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         }
 
         AnalyzeRead(context, read: member, pending: member.Expression, known);
+    }
+
+    private static void AnalyzeResultBinding(SyntaxNodeAnalysisContext context, KnownTypes known)
+    {
+        var binding = (MemberBindingExpressionSyntax)context.Node;
+        if (binding.Name.Identifier.ValueText != ResultPropertyName
+            || IsInsideNameOf(context, binding)
+            || context.SemanticModel.GetSymbolInfo(binding, context.CancellationToken).Symbol is not IPropertySymbol property
+            || !SymbolEqualityComparer.Default.Equals(property.ContainingType.OriginalDefinition, known.Pending)
+            || binding.FirstAncestorOrSelf<ConditionalAccessExpressionSyntax>() is not { } conditional)
+        {
+            return;
+        }
+
+        AnalyzeRead(context, read: conditional, pending: conditional.Expression, known);
     }
 
     private static bool IsInsideNameOf(SyntaxNodeAnalysisContext context, SyntaxNode node)
@@ -211,6 +228,9 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, reference):
                     break;
 
+                case ConditionalAccessExpressionSyntax conditional when ScopeWalker.IsSame(conditional.Expression, reference):
+                    break;
+
                 case AwaitExpressionSyntax awaitExpression when ScopeWalker.IsSame(awaitExpression.Expression, reference):
                     break;
 
@@ -260,7 +280,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         InvocationExpressionSyntax invocation,
         SyntaxNode read)
     {
-        if (GetDirectAwait(invocation) is { } directAwait && directAwait.SpanStart < read.SpanStart)
+        if (GetAwaitExpression(invocation) is { } directAwait && directAwait.SpanStart < read.SpanStart)
         {
             return true;
         }
@@ -274,7 +294,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         foreach (var reference in ScopeWalker.FindReferences(
                      scope, flush, context.SemanticModel, context.CancellationToken))
         {
-            if (GetDirectAwait(reference) is { } awaitExpression && awaitExpression.SpanStart < read.SpanStart)
+            if (GetAwaitExpression(reference) is { } awaitExpression && awaitExpression.SpanStart < read.SpanStart)
             {
                 return true;
             }
@@ -283,17 +303,32 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         return false;
     }
 
-    private static AwaitExpressionSyntax? GetDirectAwait(ExpressionSyntax expression)
+    private static AwaitExpressionSyntax? GetAwaitExpression(ExpressionSyntax expression)
     {
-        while (expression.Parent is ParenthesizedExpressionSyntax parenthesized)
+        while (true)
         {
-            expression = parenthesized;
-        }
+            if (expression.Parent is ParenthesizedExpressionSyntax parenthesized)
+            {
+                expression = parenthesized;
+                continue;
+            }
 
-        return expression.Parent is AwaitExpressionSyntax awaitExpression
-               && ScopeWalker.IsSame(awaitExpression.Expression, expression)
-            ? awaitExpression
-            : null;
+            if (expression.Parent is MemberAccessExpressionSyntax
+                {
+                    Name.Identifier.ValueText: "ConfigureAwait",
+                    Parent: InvocationExpressionSyntax configureAwait,
+                } member
+                && ScopeWalker.IsSame(member.Expression, expression))
+            {
+                expression = configureAwait;
+                continue;
+            }
+
+            return expression.Parent is AwaitExpressionSyntax awaitExpression
+                   && ScopeWalker.IsSame(awaitExpression.Expression, expression)
+                ? awaitExpression
+                : null;
+        }
     }
 
     private sealed class KnownTypes(INamedTypeSymbol pending, INamedTypeSymbol? batch, INamedTypeSymbol? transaction)

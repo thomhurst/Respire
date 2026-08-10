@@ -123,7 +123,9 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             {
                 // result.AsString(), result.Type, result.Dispose()
                 case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, reference):
-                    if (member.Name.Identifier.ValueText == nameof(IDisposable.Dispose))
+                    if (member.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
+                        && member.Parent is InvocationExpressionSyntax invocation
+                        && ScopeWalker.IsSame(invocation.Expression, member))
                     {
                         return true;
                     }
@@ -137,7 +139,9 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 // result?.Dispose()
                 case ConditionalAccessExpressionSyntax conditional when ScopeWalker.IsSame(conditional.Expression, reference):
                     if (conditional.WhenNotNull.DescendantNodesAndSelf().OfType<MemberBindingExpressionSyntax>()
-                        .Any(binding => binding.Name.Identifier.ValueText == nameof(IDisposable.Dispose)))
+                        .Any(binding => binding.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
+                                        && binding.Parent is InvocationExpressionSyntax invocation
+                                        && ScopeWalker.IsSame(invocation.Expression, binding)))
                     {
                         return true;
                     }
