@@ -88,10 +88,10 @@ public class DistributedLockTests(RedisTestContainer fixture)
     [Test]
     public async Task Extend_ProlongsTheKeyTtl()
     {
-        await using var mutex = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(2));
+        await using var mutex = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(30));
 
         var beforeExtend = await Db.KeyTimeToLiveAsync(Key);
-        await Assert.That(beforeExtend!.Value.TotalMilliseconds).IsLessThanOrEqualTo(2000);
+        await Assert.That(beforeExtend!.Value.TotalMilliseconds).IsLessThanOrEqualTo(30_000);
 
         await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(60))).IsTrue();
 
