@@ -72,7 +72,7 @@ public class PrimitiveCodecTests
         ReadOnlyMemory<byte> memory = new byte[] { 0, 1, 254, 255 };
 
         _ = client.SerializeRawCompatible(memory);
-        await Assert.That(client.SerializeRawCompatible('A').ToString()).IsEqualTo("65");
+        await Assert.That(client.SerializeRawCompatible('A').ToString()).IsEqualTo("A");
         await Assert.That(client.SerializeRawCompatible(float.NaN).ToString()).IsEqualTo("NaN");
         await Assert.That(client.SerializeRawCompatible(float.PositiveInfinity).ToString()).IsEqualTo("Infinity");
         await Assert.That(client.SerializeRawCompatible(float.NegativeInfinity).ToString()).IsEqualTo("-Infinity");

@@ -103,8 +103,8 @@ public readonly struct RespireValue : IEquatable<RespireValue>
     public static implicit operator RespireValue(TimeSpan value)
         => new(value.ToString("c", CultureInfo.InvariantCulture));
 
-    /// <summary>Converts one UTF-16 code unit using its unsigned integer value.</summary>
-    public static implicit operator RespireValue(char value) => new(Kind.Integer, number: value);
+    /// <summary>Converts one UTF-16 code unit to a one-character string.</summary>
+    public static implicit operator RespireValue(char value) => new(value.ToString());
 
     /// <summary>Converts a signed 64-bit integer to a command argument.</summary>
     public static implicit operator RespireValue(long value) => new(Kind.Integer, number: value);

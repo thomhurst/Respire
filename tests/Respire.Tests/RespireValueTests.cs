@@ -92,7 +92,7 @@ public class RespireValueTests
         await Assert.That(guidValue.ToString()).IsEqualTo(guid.ToString("D"));
         await Assert.That(instantValue.ToString()).IsEqualTo(instant.ToString("O", CultureInfo.InvariantCulture));
         await Assert.That(durationValue.ToString()).IsEqualTo(duration.ToString("c", CultureInfo.InvariantCulture));
-        await Assert.That(characterValue.ToString()).IsEqualTo(((ushort)'£').ToString());
+        await Assert.That(characterValue.ToString()).IsEqualTo("£");
     }
 
     [Test]
