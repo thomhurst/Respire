@@ -680,4 +680,45 @@ public class PendingReadBeforeFlushAnalyzerTests
             };
         }
         """);
+
+    [Test]
+    public async Task NullForgivingBatchPassedToHelper_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        #nullable enable
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                RespireBatch? batch = client.CreateBatch();
+                var pending = batch!.GetStringAsync("key");
+                await FlushAsync(batch!);
+                Console.WriteLine(pending.Result);
+            }
+
+            private static async Task FlushAsync(RespireBatch batch) => await batch.SendAsync();
+        }
+        """);
+
+    [Test]
+    public async Task WhenAllFlushBeforeRead_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                await Task.WhenAll(batch.SendAsync().AsTask());
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
 }

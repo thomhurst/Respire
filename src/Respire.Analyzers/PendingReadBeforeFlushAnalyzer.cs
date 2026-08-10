@@ -252,9 +252,17 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 return true;
             }
 
-            switch (reference.Parent)
+            ExpressionSyntax use = reference;
+            while (use.Parent is PostfixUnaryExpressionSyntax suppression
+                   && suppression.IsKind(SyntaxKind.SuppressNullableWarningExpression)
+                   && ScopeWalker.IsSame(suppression.Operand, use))
             {
-                case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, reference):
+                use = suppression;
+            }
+
+            switch (use.Parent)
+            {
+                case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, use):
                     if (member.Parent is not InvocationExpressionSyntax
                         && context.SemanticModel.GetSymbolInfo(member, context.CancellationToken).Symbol is IMethodSymbol)
                     {
@@ -270,19 +278,14 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
                     break;
 
-                case ConditionalAccessExpressionSyntax conditional when ScopeWalker.IsSame(conditional.Expression, reference):
+                case ConditionalAccessExpressionSyntax conditional when ScopeWalker.IsSame(conditional.Expression, use):
                     break;
 
-                case AwaitExpressionSyntax awaitExpression when ScopeWalker.IsSame(awaitExpression.Expression, reference):
-                    break;
-
-                case PostfixUnaryExpressionSyntax suppression
-                    when suppression.IsKind(SyntaxKind.SuppressNullableWarningExpression)
-                         && ScopeWalker.IsSame(suppression.Operand, reference):
+                case AwaitExpressionSyntax awaitExpression when ScopeWalker.IsSame(awaitExpression.Expression, use):
                     break;
 
                 case AssignmentExpressionSyntax assignment
-                    when ScopeWalker.IsSame(assignment.Left, reference)
+                    when ScopeWalker.IsSame(assignment.Left, use)
                          && (allowReassignment
                              || allowedAssignment is not null && ScopeWalker.IsSame(assignment, allowedAssignment)):
                     break;
@@ -351,7 +354,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         InvocationExpressionSyntax invocation,
         SyntaxNode read)
     {
-        if (GetAwaitExpression(invocation) is { } directAwait
+        if (GetAwaitExpression(context, invocation) is { } directAwait
             && ScopeWalker.Dominates(context.SemanticModel, scope, directAwait, read, context.CancellationToken))
         {
             return true;
@@ -365,7 +368,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         foreach (var reference in ScopeWalker.FindReferences(
                      scope, flush, context.SemanticModel, context.CancellationToken))
         {
-            if (GetAwaitExpression(reference) is { } awaitExpression
+            if (GetAwaitExpression(context, reference) is { } awaitExpression
                 && !IsReassignedBeforeAwait(context, scope, flush, invocation, awaitExpression)
                 && ScopeWalker.Dominates(context.SemanticModel, scope, awaitExpression, read, context.CancellationToken))
             {
@@ -402,13 +405,26 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             .Any(reference => reference.Parent is AssignmentExpressionSyntax assignment
                               && assignment.Left.Span.Contains(reference.Span));
 
-    private static AwaitExpressionSyntax? GetAwaitExpression(ExpressionSyntax expression)
+    private static AwaitExpressionSyntax? GetAwaitExpression(
+        SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
     {
-        expression = GetOutermostAwaitableExpression(expression);
-        return expression.Parent is AwaitExpressionSyntax awaitExpression
-               && ScopeWalker.IsSame(awaitExpression.Expression, expression)
-            ? awaitExpression
-            : null;
+        while (true)
+        {
+            expression = GetOutermostAwaitableExpression(expression);
+            if (expression.Parent is ArgumentSyntax { Parent.Parent: InvocationExpressionSyntax combinator }
+                && context.SemanticModel.GetSymbolInfo(combinator, context.CancellationToken).Symbol
+                    is IMethodSymbol { Name: nameof(Task.WhenAll) } method
+                && method.ContainingType.ToDisplayString() == typeof(Task).FullName)
+            {
+                expression = combinator;
+                continue;
+            }
+
+            return expression.Parent is AwaitExpressionSyntax awaitExpression
+                   && ScopeWalker.IsSame(awaitExpression.Expression, expression)
+                ? awaitExpression
+                : null;
+        }
     }
 
     private static ExpressionSyntax GetOutermostAwaitableExpression(ExpressionSyntax expression)
