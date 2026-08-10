@@ -25,6 +25,22 @@ public interface IBatchListCommands
     /// <summary>Pops from the tail; null when the list is empty. Redis: RPOP.</summary>
     RespirePending<string?> RightPop(RespireKey key);
 
+    /// <summary>Removes and returns up to <paramref name="count"/> elements from the head. Redis: LPOP.</summary>
+    RespirePending<string[]> LeftPop(RespireKey key, long count);
+
+    /// <summary>Removes and returns up to <paramref name="count"/> elements from the tail. Redis: RPOP.</summary>
+    RespirePending<string[]> RightPop(RespireKey key, long count);
+
+    /// <summary>Removes and deserializes up to <paramref name="count"/> elements from the head. Redis: LPOP.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    RespirePending<T[]> LeftPop<T>(RespireKey key, long count);
+
+    /// <summary>Removes and deserializes up to <paramref name="count"/> elements from the tail. Redis: RPOP.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    RespirePending<T[]> RightPop<T>(RespireKey key, long count);
+
     /// <summary>
     /// Atomically moves an element between lists and returns it; null when the source is empty.
     /// Redis: LMOVE.
@@ -77,6 +93,40 @@ internal sealed class BatchListCommands(IPendingSink sink) : IBatchListCommands
         => sink.Add<Cmd1, string?>(
             "RPOP", new Cmd1(Verbs.RPop, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.StringOrNull(in v));
+
+    public RespirePending<string[]> LeftPop(RespireKey key, long count)
+        => Pop(key, count, Verbs.LPop, "LPOP");
+
+    public RespirePending<string[]> RightPop(RespireKey key, long count)
+        => Pop(key, count, Verbs.RPop, "RPOP");
+
+    private RespirePending<string[]> Pop(RespireKey key, long count, Verb verb, string operation)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        return sink.Add<Cmd2, string[]>(
+            operation, new Cmd2(verb, sink.Client.Key(in key), count),
+            static (c, v) => ResponseReader.StringArray(in v));
+    }
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public RespirePending<T[]> LeftPop<T>(RespireKey key, long count)
+        => Pop<T>(key, count, Verbs.LPop, "LPOP");
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public RespirePending<T[]> RightPop<T>(RespireKey key, long count)
+        => Pop<T>(key, count, Verbs.RPop, "RPOP");
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    private RespirePending<T[]> Pop<T>(RespireKey key, long count, Verb verb, string operation)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        return sink.Add<Cmd2, T[]>(
+            operation, new Cmd2(verb, sink.Client.Key(in key), count),
+            static (c, v) => c.DeserializeArray<T>(in v));
+    }
 
     public RespirePending<string?> Move(
         RespireKey source, RespireKey destination, ListSide from = ListSide.Left, ListSide to = ListSide.Right)
