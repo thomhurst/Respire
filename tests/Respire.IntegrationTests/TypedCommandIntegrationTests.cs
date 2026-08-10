@@ -26,7 +26,8 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         (await client.Strings.GetStringAsync(copy)).Should().Be("two");
 
         var keys = new List<string>();
-        await foreach (var key in client.Keys.ScanAsync(prefix + "*", countHint: 1, type: "string"))
+        await foreach (var key in client.Keys.ScanAsync(
+            prefix + "*", countHint: 1, type: RespireKeyType.String))
         {
             keys.Add(key);
         }

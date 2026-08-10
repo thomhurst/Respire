@@ -95,7 +95,7 @@ bool copied = await redis.Keys.CopyAsync("template", "working-copy", replace: tr
 await foreach (string key in redis.Keys.ScanAsync(
     match: "session:*",
     countHint: 500,
-    type: "hash",
+    type: RespireKeyType.Hash,
     cancellationToken: stoppingToken))
 {
     await InspectAsync(key);
