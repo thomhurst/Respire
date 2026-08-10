@@ -92,7 +92,7 @@ public sealed class RespireClient : IRespireClient, IAsyncDisposable
     ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken ct = default);
     ValueTask<T?>      GetAsync<T>(RespireKey key, CancellationToken ct = default);
     ValueTask<bool>    SetAsync(RespireKey key, RespireValue value,
-                                RespireTtl expiry = default,   // none | In | At | Keep
+                                RespireExpiry expiry = default,   // none | In | At | Keep
                                 SetWhen when = SetWhen.Always,
                                 CancellationToken ct = default);
     ValueTask<bool>    SetAsync<T>(RespireKey key, T value, /* same options */);
@@ -162,7 +162,7 @@ internal type; results surface as plain .NET types.)
 | integer | `long` | n/a |
 | ok/condition | `bool` | `false` |
 | double (RESP3) | `double` | n/a |
-| TTL | `RespireExpiry` (readonly struct: `KeyExists`, `HasExpiry`, `TimeToLive`) | `KeyExists == false` |
+| TTL | `RespireTtl` (readonly struct: `Exists`, `HasExpiry`, `TimeToLive`) | `Exists == false` |
 
 `GetAsync<T>` / `SetAsync<T>` run through `RespireOptions.Serializer`
 (`IRespireSerializer`: `Serialize<T>(T, IBufferWriter<byte>)` /

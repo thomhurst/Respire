@@ -22,20 +22,20 @@ public sealed partial class RespireClient
     public ValueTask<byte[]?> GetBytesAsync(RespireKey key, CancellationToken cancellationToken = default)
         => Strings.GetBytesAsync(key, cancellationToken);
 
-    /// <inheritdoc cref="IStringCommands.SetAsync(RespireKey, RespireValue, RespireTtl, SetWhen, CancellationToken)"/>
+    /// <inheritdoc cref="IStringCommands.SetAsync(RespireKey, RespireValue, RespireExpiry, SetWhen, CancellationToken)"/>
     public ValueTask<bool> SetAsync(
         RespireKey key,
         RespireValue value,
-        RespireTtl expiry = default,
+        RespireExpiry expiry = default,
         SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default)
         => Strings.SetAsync(key, value, expiry, when, cancellationToken);
 
-    /// <inheritdoc cref="IStringCommands.SetAsync{T}(RespireKey, T, RespireTtl, SetWhen, CancellationToken)"/>
+    /// <inheritdoc cref="IStringCommands.SetAsync{T}(RespireKey, T, RespireExpiry, SetWhen, CancellationToken)"/>
     public ValueTask<bool> SetAsync<T>(
         RespireKey key,
         T value,
-        RespireTtl expiry = default,
+        RespireExpiry expiry = default,
         SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default)
         => Strings.SetAsync(key, value, expiry, when, cancellationToken);

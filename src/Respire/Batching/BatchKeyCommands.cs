@@ -31,7 +31,7 @@ public interface IBatchKeyCommands
     /// <summary>
     /// The key's expiry state — distinguishes missing key, no expiry, and remaining TTL. Redis: PTTL.
     /// </summary>
-    RespirePending<RespireExpiry> ExpiryAsync(RespireKey key);
+    RespirePending<RespireTtl> ExpiryAsync(RespireKey key);
 
     /// <summary>The key's Redis type name ("string", "hash", …, or "none"). Redis: TYPE.</summary>
     RespirePending<string> TypeAsync(RespireKey key);
@@ -71,10 +71,10 @@ internal sealed class BatchKeyCommands(IPendingSink sink) : IBatchKeyCommands
             "PERSIST", new Cmd1(Verbs.Persist, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.Flag(in v));
 
-    public RespirePending<RespireExpiry> ExpiryAsync(RespireKey key)
-        => sink.Add<Cmd1, RespireExpiry>(
+    public RespirePending<RespireTtl> ExpiryAsync(RespireKey key)
+        => sink.Add<Cmd1, RespireTtl>(
             "PTTL", new Cmd1(Verbs.Pttl, sink.Client.Key(in key)),
-            static (c, v) => RespireExpiry.FromPttl(ResponseReader.Integer(in v)));
+            static (c, v) => RespireTtl.FromRedisMilliseconds(ResponseReader.Integer(in v)));
 
     public RespirePending<string> TypeAsync(RespireKey key)
         => sink.Add<Cmd1, string>(

@@ -116,7 +116,7 @@ internal static class ResponseReader
         return result;
     }
 
-    public static HashFieldExpiry[] HashFieldExpiryArray(in RespValue value)
+    public static RespireTtl[] TtlArray(in RespValue value)
     {
         var elements = value.AsArray();
         if (elements.Length == 0)
@@ -124,10 +124,10 @@ internal static class ResponseReader
             return [];
         }
 
-        var result = new HashFieldExpiry[elements.Length];
+        var result = new RespireTtl[elements.Length];
         for (var i = 0; i < elements.Length; i++)
         {
-            result[i] = HashFieldExpiry.FromHpttl(elements[i].AsInteger());
+            result[i] = RespireTtl.FromRedisMilliseconds(elements[i].AsInteger());
         }
 
         return result;

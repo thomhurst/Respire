@@ -54,7 +54,7 @@ public class MultiItemCancellationOverloadTests
 
         await Assert.That(missing).IsEmpty();
 
-        // Guards the guard: RespireTtl intentionally collapses six expiry-specific overloads
+        // Guards the guard: RespireExpiry intentionally collapses six expiry-specific overloads
         // into one, leaving 49 params-span commands in the combined surface.
         await Assert.That(covered).IsGreaterThanOrEqualTo(49);
     }
@@ -134,7 +134,7 @@ public class MultiItemCancellationOverloadTests
         _ = client.Strings.SetManyAsync(pairs, token);
         _ = client.Strings.SetManyAsync(expiry, SetWhen.NotExists, pairs, token);
         _ = client.Strings.SetManyAsync(expireAt, SetWhen.Exists, pairs, token);
-        _ = client.Strings.SetManyAsync(RespireTtl.Keep, SetWhen.Exists, pairs, token);
+        _ = client.Strings.SetManyAsync(RespireExpiry.Keep, SetWhen.Exists, pairs, token);
 
         _ = client.Hashes.SetAsync("h", fieldValues, token);
         _ = client.Hashes.GetManyAsync("h", fields, token);
@@ -270,7 +270,7 @@ public class MultiItemCancellationOverloadTests
         public ValueTask<bool> PersistAsync(RespireKey key, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
-        public ValueTask<RespireExpiry> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
+        public ValueTask<RespireTtl> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
         public ValueTask<string> TypeAsync(RespireKey key, CancellationToken cancellationToken = default)

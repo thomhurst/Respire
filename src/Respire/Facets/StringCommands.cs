@@ -49,7 +49,7 @@ public interface IStringCommands
     ValueTask<bool> SetAsync(
         RespireKey key,
         RespireValue value,
-        RespireTtl expiry = default,
+        RespireExpiry expiry = default,
         SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default);
 
@@ -57,7 +57,7 @@ public interface IStringCommands
     ValueTask<bool> SetAsync<T>(
         RespireKey key,
         T value,
-        RespireTtl expiry = default,
+        RespireExpiry expiry = default,
         SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default);
 
@@ -104,13 +104,13 @@ public interface IStringCommands
     /// Redis: MSETEX.
     /// </summary>
     ValueTask<bool> SetManyAsync(
-        RespireTtl expiry,
+        RespireExpiry expiry,
         SetWhen when = SetWhen.Always,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
 
     /// <summary>Atomically sets many keys with a shared expiry and optional NX/XX condition. Redis: MSETEX.</summary>
     ValueTask<bool> SetManyAsync(
-        RespireTtl expiry,
+        RespireExpiry expiry,
         SetWhen when,
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
         CancellationToken cancellationToken);
@@ -145,13 +145,13 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         => client.LeaseAsync("GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken);
 
     public ValueTask<bool> SetAsync(
-        RespireKey key, RespireValue value, RespireTtl expiry = default, SetWhen when = SetWhen.Always,
+        RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default)
         => client.OkOrNullAsync(
             "SET", new SetCommand(client.Key(in key), value, expiry, when, returnOld: false), cancellationToken);
 
     public ValueTask<bool> SetAsync<T>(
-        RespireKey key, T value, RespireTtl expiry = default, SetWhen when = SetWhen.Always,
+        RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default)
         => client.OkOrNullAsync(
             "SET", new SetCommand(client.Key(in key), client.Serialize(value), expiry, when, returnOld: false),
@@ -159,7 +159,7 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
 
     public ValueTask<string?> GetSetAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken = default)
         => client.StringOrNullAsync(
-            "SET", new SetCommand(client.Key(in key), value, RespireTtl.None, SetWhen.Always, returnOld: true),
+            "SET", new SetCommand(client.Key(in key), value, RespireExpiry.None, SetWhen.Always, returnOld: true),
             cancellationToken);
 
     public ValueTask<string?> GetDeleteAsync(RespireKey key, CancellationToken cancellationToken = default)
@@ -202,12 +202,12 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
             "MSET", new CmdN(Verbs.MSet, SetManyArgs(client, pairs)), cancellationToken);
 
     public ValueTask<bool> SetManyAsync(
-        RespireTtl expiry, SetWhen when = SetWhen.Always,
+        RespireExpiry expiry, SetWhen when = SetWhen.Always,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
         => SetManyAsync(expiry, when, pairs, CancellationToken.None);
 
     public ValueTask<bool> SetManyAsync(
-        RespireTtl expiry,
+        RespireExpiry expiry,
         SetWhen when,
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
         CancellationToken cancellationToken)
@@ -249,7 +249,7 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
     /// <summary>MSETEX numkeys key value… [NX|XX] expiry — shared with the deferred facet.</summary>
     internal static RespireValue[] SetManyExpireArgs(
         RespireClient client,
-        RespireTtl expiry,
+        RespireExpiry expiry,
         SetWhen when,
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
     {

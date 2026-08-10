@@ -1,34 +1,118 @@
 namespace Respire;
 
-/// <summary>
-/// The expiry state of a key, distinguishing "key does not exist" from "key exists without an
-/// expiry" — the two negative answers Redis folds into TTL's -2/-1 sentinels.
-/// </summary>
-public readonly struct RespireExpiry
+/// <summary>Which expiry form a <see cref="RespireExpiry"/> carries.</summary>
+internal enum RespireExpiryKind : byte
 {
-    private RespireExpiry(bool keyExists, TimeSpan? timeToLive)
+    /// <summary>No expiry option is sent.</summary>
+    None,
+
+    /// <summary>A relative time to live in milliseconds (PX).</summary>
+    Relative,
+
+    /// <summary>An absolute Unix-millisecond instant (PXAT).</summary>
+    Absolute,
+
+    /// <summary>Retain the key's existing TTL (KEEPTTL).</summary>
+    Keep,
+}
+
+/// <summary>
+/// The expiry to apply to a write: none, a relative TTL, an absolute instant, or "keep whatever
+/// TTL the key already has". One parameter replaces the old <c>TimeSpan? expiry</c> plus
+/// <c>bool keepTtl</c> pair, so conflicting combinations cannot be expressed.
+/// </summary>
+/// <remarks>
+/// This is the expiry <i>input</i> type. <see cref="RespireTtl"/> is the expiry Redis
+/// <i>reports</i> for a key (the PTTL result). Converts implicitly from <see cref="TimeSpan"/> and
+/// <see cref="DateTimeOffset"/>, so <c>expiry: TimeSpan.FromMinutes(5)</c> still reads the same.
+/// Absolute and relative forms are both sent at millisecond precision (PXAT/PX).
+/// </remarks>
+public readonly struct RespireExpiry : IEquatable<RespireExpiry>
+{
+    private readonly long _value;
+    private readonly RespireExpiryKind _kind;
+
+    private RespireExpiry(RespireExpiryKind kind, long value)
     {
-        KeyExists = keyExists;
-        TimeToLive = timeToLive;
+        _kind = kind;
+        _value = value;
     }
 
-    /// <summary>Whether the key exists at all.</summary>
-    public bool KeyExists { get; }
+    /// <summary>No expiry option — Redis applies its default (SET clears any existing TTL). The default value.</summary>
+    public static readonly RespireExpiry None = default;
 
-    /// <summary>Whether the key exists and has an expiry set.</summary>
-    public bool HasExpiry => TimeToLive.HasValue;
+    /// <summary>Retains the TTL the key already has. Redis: KEEPTTL.</summary>
+    public static readonly RespireExpiry Keep = new(RespireExpiryKind.Keep, 0);
 
-    /// <summary>Remaining time to live, or null when the key is missing or has no expiry.</summary>
-    public TimeSpan? TimeToLive { get; }
+    /// <summary>Expires the key <paramref name="timeToLive"/> from now. Redis: PX milliseconds.</summary>
+    public static RespireExpiry In(TimeSpan timeToLive)
+        => new(RespireExpiryKind.Relative, (long)timeToLive.TotalMilliseconds);
 
-    internal static RespireExpiry FromPttl(long milliseconds)
-        => milliseconds switch
+    /// <summary>Expires the key at <paramref name="instant"/>. Redis: PXAT Unix milliseconds.</summary>
+    public static RespireExpiry At(DateTimeOffset instant)
+        => new(RespireExpiryKind.Absolute, instant.ToUnixTimeMilliseconds());
+
+    /// <summary>Whether no expiry option is sent — true for <see cref="None"/> and <c>default</c>.</summary>
+    public bool IsNone => _kind == RespireExpiryKind.None;
+
+    /// <summary>Whether this is <see cref="Keep"/>.</summary>
+    public bool IsKeep => _kind == RespireExpiryKind.Keep;
+
+    /// <summary>The relative time to live, or null when this is not a relative expiry.</summary>
+    public TimeSpan? TimeToLive
+        => _kind == RespireExpiryKind.Relative ? TimeSpan.FromMilliseconds(_value) : null;
+
+    /// <summary>The absolute expiry instant, or null when this is not an absolute expiry.</summary>
+    public DateTimeOffset? ExpiresAt
+        => _kind == RespireExpiryKind.Absolute ? DateTimeOffset.FromUnixTimeMilliseconds(_value) : null;
+
+    /// <summary>Converts a relative TTL. Redis: PX milliseconds.</summary>
+    public static implicit operator RespireExpiry(TimeSpan timeToLive) => In(timeToLive);
+
+    /// <summary>Converts a relative TTL, mapping null to <see cref="None"/>.</summary>
+    public static implicit operator RespireExpiry(TimeSpan? timeToLive)
+        => timeToLive is { } value ? In(value) : None;
+
+    /// <summary>Converts an absolute expiry instant. Redis: PXAT Unix milliseconds.</summary>
+    public static implicit operator RespireExpiry(DateTimeOffset instant) => At(instant);
+
+    public static bool operator ==(RespireExpiry left, RespireExpiry right) => left.Equals(right);
+
+    public static bool operator !=(RespireExpiry left, RespireExpiry right) => !left.Equals(right);
+
+    /// <summary>The number of command tokens this expiry contributes: 0 for none, 1 for KEEPTTL, 2 otherwise.</summary>
+    internal int TokenCount
+        => _kind switch
         {
-            -2 => new RespireExpiry(keyExists: false, timeToLive: null),
-            -1 => new RespireExpiry(keyExists: true, timeToLive: null),
-            _ => new RespireExpiry(keyExists: true, timeToLive: TimeSpan.FromMilliseconds(milliseconds)),
+            RespireExpiryKind.None => 0,
+            RespireExpiryKind.Keep => 1,
+            _ => 2,
         };
 
+    internal bool TryGetRelativeMilliseconds(out long milliseconds)
+    {
+        milliseconds = _value;
+        return _kind == RespireExpiryKind.Relative;
+    }
+
+    internal bool TryGetAbsoluteUnixMilliseconds(out long unixMilliseconds)
+    {
+        unixMilliseconds = _value;
+        return _kind == RespireExpiryKind.Absolute;
+    }
+
+    public bool Equals(RespireExpiry other) => _kind == other._kind && _value == other._value;
+
+    public override bool Equals(object? obj) => obj is RespireExpiry other && Equals(other);
+
+    public override int GetHashCode() => HashCode.Combine((byte)_kind, _value);
+
     public override string ToString()
-        => !KeyExists ? "(missing key)" : TimeToLive is { } ttl ? ttl.ToString() : "(no expiry)";
+        => _kind switch
+        {
+            RespireExpiryKind.Relative => TimeSpan.FromMilliseconds(_value).ToString(),
+            RespireExpiryKind.Absolute => DateTimeOffset.FromUnixTimeMilliseconds(_value).ToString("O"),
+            RespireExpiryKind.Keep => "(keep)",
+            _ => "(none)",
+        };
 }

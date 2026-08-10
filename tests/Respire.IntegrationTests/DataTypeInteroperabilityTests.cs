@@ -186,7 +186,7 @@ public class DataTypeInteroperabilityTests
 
         // Check TTL with Respire
         var ttl1 = await _respireClient.Keys.ExpiryAsync(expKey1);
-        ttl1.KeyExists.Should().BeTrue();
+        ttl1.Exists.Should().BeTrue();
         ttl1.HasExpiry.Should().BeTrue();
         ttl1.TimeToLive!.Value.TotalSeconds.Should().BeInRange(5, 10);
 
@@ -196,7 +196,7 @@ public class DataTypeInteroperabilityTests
 
         // Verify with Respire
         var ttl2 = await _respireClient.Keys.ExpiryAsync(expKey2);
-        ttl2.KeyExists.Should().BeTrue();
+        ttl2.Exists.Should().BeTrue();
         ttl2.HasExpiry.Should().BeTrue();
         ttl2.TimeToLive!.Value.TotalSeconds.Should().BeInRange(10, 15);
     }

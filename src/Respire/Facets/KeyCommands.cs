@@ -34,7 +34,7 @@ public interface IKeyCommands
     /// <summary>
     /// The key's expiry state — distinguishes missing key, no expiry, and remaining TTL. Redis: PTTL.
     /// </summary>
-    ValueTask<RespireExpiry> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default);
+    ValueTask<RespireTtl> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>The key's Redis type name ("string", "hash", …, or "none"). Redis: TYPE.</summary>
     ValueTask<string> TypeAsync(RespireKey key, CancellationToken cancellationToken = default);
@@ -84,8 +84,8 @@ internal sealed class KeyCommands(RespireClient client) : IKeyCommands
     public ValueTask<bool> PersistAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.FlagAsync("PERSIST", new Cmd1(Verbs.Persist, client.Key(in key)), cancellationToken);
 
-    public async ValueTask<RespireExpiry> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
-        => RespireExpiry.FromPttl(
+    public async ValueTask<RespireTtl> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
+        => RespireTtl.FromRedisMilliseconds(
             await client.IntegerAsync("PTTL", new Cmd1(Verbs.Pttl, client.Key(in key)), cancellationToken).ConfigureAwait(false));
 
     public ValueTask<string> TypeAsync(RespireKey key, CancellationToken cancellationToken = default)

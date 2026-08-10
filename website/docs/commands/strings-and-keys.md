@@ -29,16 +29,16 @@ bool created = await redis.SetAsync(
 
 ## Expiry
 
-`RespireTtl` is the single expiry argument: nothing, a relative TTL, an absolute instant, or "keep the TTL the key already has". A `TimeSpan` or `DateTimeOffset` converts implicitly.
+`RespireExpiry` is the single expiry argument: nothing, a relative TTL, an absolute instant, or "keep the TTL the key already has". A `TimeSpan` or `DateTimeOffset` converts implicitly.
 
 ```csharp
 await redis.SetAsync("session:42", token);                                  // no TTL (clears any existing one)
 await redis.SetAsync("session:42", token, TimeSpan.FromMinutes(30));        // PX
-await redis.SetAsync("session:42", token, RespireTtl.At(midnight));         // PXAT
-await redis.SetAsync("session:42", token, RespireTtl.Keep);                 // KEEPTTL
+await redis.SetAsync("session:42", token, RespireExpiry.At(midnight));         // PXAT
+await redis.SetAsync("session:42", token, RespireExpiry.Keep);                 // KEEPTTL
 ```
 
-`RespireTtl` is the expiry you *send*; `RespireExpiry` (returned by `Keys.ExpiryAsync`) is the expiry Redis *reports*.
+`RespireExpiry` is the expiry you *send*; `RespireTtl` (returned by `Keys.ExpiryAsync`) is the expiry Redis *reports*.
 
 ## Bulk operations
 
@@ -69,7 +69,7 @@ long removed = await redis.DeleteAsync(keys, cancellationToken);
 
 ```csharp
 await redis.ExpireAsync("session:42", TimeSpan.FromMinutes(30));
-RespireExpiry ttl = await redis.Keys.ExpiryAsync("session:42");
+RespireTtl ttl = await redis.Keys.ExpiryAsync("session:42");
 
 await redis.Keys.PersistAsync("session:42");
 await redis.Keys.ExpireAtAsync("report", DateTimeOffset.UtcNow.AddDays(1));

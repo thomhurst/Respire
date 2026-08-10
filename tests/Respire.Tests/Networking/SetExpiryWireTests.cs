@@ -5,7 +5,7 @@ using TUnit.Core;
 namespace Respire.Tests.Networking;
 
 /// <summary>
-/// Wire-format tests for the <see cref="RespireTtl"/> expiry union: relative goes out as PX,
+/// Wire-format tests for the <see cref="RespireExpiry"/> expiry union: relative goes out as PX,
 /// absolute as PXAT, keep as KEEPTTL, none as no option at all — in every SET-style surface.
 /// </summary>
 public class SetExpiryWireTests
@@ -40,7 +40,7 @@ public class SetExpiryWireTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        await client.SetAsync("key", "value", RespireTtl.At(Instant));
+        await client.SetAsync("key", "value", RespireExpiry.At(Instant));
 
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("SET key value PXAT 1700000000123");
     }
@@ -51,7 +51,7 @@ public class SetExpiryWireTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        await client.SetAsync("key", "value", RespireTtl.Keep);
+        await client.SetAsync("key", "value", RespireExpiry.Keep);
 
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("SET key value KEEPTTL");
     }
@@ -65,7 +65,7 @@ public class SetExpiryWireTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         await client.SetAsync("key", "value", TimeSpan.FromSeconds(1), when);
-        await client.SetAsync("key", "value", RespireTtl.Keep, when);
+        await client.SetAsync("key", "value", RespireExpiry.Keep, when);
 
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo($"SET key value PX 1000 {token}");
         await Assert.That(server.ReceivedCommands[1]).IsEqualTo($"SET key value {token} KEEPTTL");
@@ -90,7 +90,7 @@ public class SetExpiryWireTests
 
         var batch = client.CreateBatch();
         var relative = batch.SetAsync("key", "value", TimeSpan.FromSeconds(5));
-        var keep = batch.SetAsync("other", "value", RespireTtl.Keep);
+        var keep = batch.SetAsync("other", "value", RespireExpiry.Keep);
         await batch.SendAsync();
 
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("SET key value PX 5000");
@@ -107,7 +107,7 @@ public class SetExpiryWireTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         var transaction = client.CreateTransaction();
-        var pending = transaction.SetAsync("key", "value", RespireTtl.At(Instant));
+        var pending = transaction.SetAsync("key", "value", RespireExpiry.At(Instant));
         var committed = await transaction.CommitAsync();
 
         await Assert.That(server.ReceivedCommands[1]).IsEqualTo("SET key value PXAT 1700000000123");
@@ -133,9 +133,9 @@ public class SetExpiryWireTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         await client.Strings.SetManyAsync(TimeSpan.FromSeconds(3), pairs: ("a", "1"));
-        await client.Strings.SetManyAsync(RespireTtl.At(Instant), SetWhen.Exists, ("b", "2"));
-        await client.Strings.SetManyAsync(RespireTtl.Keep, SetWhen.NotExists, ("c", "3"));
-        await client.Strings.SetManyAsync(RespireTtl.None, SetWhen.NotExists, ("d", "4"));
+        await client.Strings.SetManyAsync(RespireExpiry.At(Instant), SetWhen.Exists, ("b", "2"));
+        await client.Strings.SetManyAsync(RespireExpiry.Keep, SetWhen.NotExists, ("c", "3"));
+        await client.Strings.SetManyAsync(RespireExpiry.None, SetWhen.NotExists, ("d", "4"));
 
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("MSETEX 1 a 1 PX 3000");
         await Assert.That(server.ReceivedCommands[1]).IsEqualTo("MSETEX 1 b 2 XX PXAT 1700000000123");

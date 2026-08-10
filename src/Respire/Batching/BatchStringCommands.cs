@@ -27,14 +27,14 @@ public interface IBatchStringCommands
     RespirePending<bool> SetAsync(
         RespireKey key,
         RespireValue value,
-        RespireTtl expiry = default,
+        RespireExpiry expiry = default,
         SetWhen when = SetWhen.Always);
 
     /// <summary>Sets a key to a serialized <typeparamref name="T"/>. Redis: SET.</summary>
     RespirePending<bool> SetAsync<T>(
         RespireKey key,
         T value,
-        RespireTtl expiry = default,
+        RespireExpiry expiry = default,
         SetWhen when = SetWhen.Always);
 
     /// <summary>Sets a key and returns its previous value. Redis: SET … GET.</summary>
@@ -69,7 +69,7 @@ public interface IBatchStringCommands
 
     /// <summary>Atomically sets many keys with a shared expiry and optional NX/XX condition. Redis: MSETEX.</summary>
     RespirePending<bool> SetManyAsync(
-        RespireTtl expiry,
+        RespireExpiry expiry,
         SetWhen when = SetWhen.Always,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
 
@@ -98,14 +98,14 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
             static (c, v) => ResponseReader.BytesOrNull(in v));
 
     public RespirePending<bool> SetAsync(
-        RespireKey key, RespireValue value, RespireTtl expiry = default, SetWhen when = SetWhen.Always)
+        RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
         => sink.Add<SetCommand, bool>(
             "SET",
             new SetCommand(sink.Client.Key(in key), value, expiry, when, returnOld: false),
             static (c, v) => ResponseReader.OkOrNull(in v));
 
     public RespirePending<bool> SetAsync<T>(
-        RespireKey key, T value, RespireTtl expiry = default, SetWhen when = SetWhen.Always)
+        RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
         => sink.Add<SetCommand, bool>(
             "SET",
             new SetCommand(sink.Client.Key(in key), sink.Client.Serialize(value), expiry, when, returnOld: false),
@@ -114,7 +114,7 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
     public RespirePending<string?> GetSetAsync(RespireKey key, RespireValue value)
         => sink.Add<SetCommand, string?>(
             "SET",
-            new SetCommand(sink.Client.Key(in key), value, RespireTtl.None, SetWhen.Always, returnOld: true),
+            new SetCommand(sink.Client.Key(in key), value, RespireExpiry.None, SetWhen.Always, returnOld: true),
             static (c, v) => ResponseReader.StringOrNull(in v));
 
     public RespirePending<string?> GetDeleteAsync(RespireKey key)
@@ -171,7 +171,7 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
     }
 
     public RespirePending<bool> SetManyAsync(
-        RespireTtl expiry,
+        RespireExpiry expiry,
         SetWhen when = SetWhen.Always,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
     {

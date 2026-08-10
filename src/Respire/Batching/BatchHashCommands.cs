@@ -53,7 +53,7 @@ public interface IBatchHashCommands
     RespirePending<string[]> ValuesAsync(RespireKey key);
 
     /// <summary>Expiry state for fields, in milliseconds. Redis: HPTTL.</summary>
-    RespirePending<HashFieldExpiry[]> ExpiryAsync(RespireKey key, params ReadOnlySpan<string> fields);
+    RespirePending<RespireTtl[]> ExpiryAsync(RespireKey key, params ReadOnlySpan<string> fields);
 
     /// <summary>Sets field TTLs using millisecond precision. Redis: HPEXPIRE.</summary>
     RespirePending<HashFieldExpiryResult[]> ExpireAsync(
@@ -178,11 +178,11 @@ internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
             "HVALS", new Cmd1(Verbs.HVals, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.StringArray(in v));
 
-    public RespirePending<HashFieldExpiry[]> ExpiryAsync(RespireKey key, params ReadOnlySpan<string> fields)
-        => sink.Add<Cmd1N, HashFieldExpiry[]>(
+    public RespirePending<RespireTtl[]> ExpiryAsync(RespireKey key, params ReadOnlySpan<string> fields)
+        => sink.Add<Cmd1N, RespireTtl[]>(
             "HPTTL",
             new Cmd1N(RespireCommands.Hash.HPTTL.Verb, sink.Client.Key(in key), HashCommands.FieldsBlock(fields)),
-            static (c, v) => ResponseReader.HashFieldExpiryArray(in v));
+            static (c, v) => ResponseReader.TtlArray(in v));
 
     public RespirePending<HashFieldExpiryResult[]> ExpireAsync(
         RespireKey key, TimeSpan expiry, params ReadOnlySpan<string> fields)
