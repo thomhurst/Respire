@@ -539,7 +539,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             var placementStart = Stopwatch.GetTimestamp();
             await _client.SetAsync(
                     lease,
-                    1,
+                    (RespireValue)1,
                     leaseTtl,
                     cancellationToken: cancellationToken)
                 .AsTask()

@@ -1,5 +1,7 @@
+using System.Diagnostics.CodeAnalysis;
 using Respire.Commands;
 using Respire.Internal;
+using Respire.Serialization;
 using Respire.Protocol;
 
 namespace Respire;
@@ -27,6 +29,8 @@ public interface ISortedSetCommands
     /// to the <c>params</c> overload.
     /// </para>
     /// </summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<bool> AddAsync<T>(RespireKey key, T member, double score, CancellationToken cancellationToken = default);
 
     /// <summary>Adds or updates many members; returns how many were new. Redis: ZADD.</summary>
@@ -95,6 +99,8 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
     public ValueTask<bool> AddAsync(RespireKey key, RespireValue member, double score, CancellationToken cancellationToken = default)
         => client.FlagAsync("ZADD", new Cmd3(Verbs.ZAdd, client.Key(in key), score, member), cancellationToken);
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<bool> AddAsync<T>(RespireKey key, T member, double score, CancellationToken cancellationToken = default)
         => client.FlagAsync(
             "ZADD",

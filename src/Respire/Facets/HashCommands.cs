@@ -1,6 +1,8 @@
+using System.Diagnostics.CodeAnalysis;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
+using Respire.Serialization;
 
 namespace Respire;
 
@@ -25,6 +27,8 @@ public interface IHashCommands
     /// and <see cref="GetAsync{T}"/> reads both.
     /// </para>
     /// </summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<bool> SetAsync<T>(RespireKey key, string field, T value, CancellationToken cancellationToken = default);
 
     /// <summary>Sets many fields in one round trip; returns how many were newly created. Redis: HSET.</summary>
@@ -40,12 +44,16 @@ public interface IHashCommands
     ValueTask<string?> GetStringAsync(RespireKey key, string field, CancellationToken cancellationToken = default);
 
     /// <summary>Gets a field deserialized as <typeparamref name="T"/>. Redis: HGET.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<T?> GetAsync<T>(RespireKey key, string field, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets a field deserialized as <typeparamref name="T"/>, reporting presence separately so a
     /// missing field is distinguishable from a stored <c>default(T)</c>. Redis: HGET.
     /// </summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, string field, CancellationToken cancellationToken = default);
 
     /// <summary>Gets a field's raw bytes, or null when missing. Redis: HGET.</summary>
@@ -62,6 +70,8 @@ public interface IHashCommands
     ValueTask<Dictionary<string, string>> GetAllAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>The whole hash with values deserialized as <typeparamref name="T"/>. Redis: HGETALL.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<Dictionary<string, T>> GetAllAsync<T>(
         RespireKey key, CancellationToken cancellationToken = default);
 
@@ -164,6 +174,8 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
     public ValueTask<bool> SetAsync(RespireKey key, string field, RespireValue value, CancellationToken cancellationToken = default)
         => client.FlagAsync("HSET", new Cmd3(Verbs.HSet, client.Key(in key), field, value), cancellationToken);
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<bool> SetAsync<T>(RespireKey key, string field, T value, CancellationToken cancellationToken = default)
         => client.FlagAsync(
             "HSET",
@@ -183,9 +195,13 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
     public ValueTask<string?> GetStringAsync(RespireKey key, string field, CancellationToken cancellationToken = default)
         => client.StringOrNullAsync("HGET", new Cmd2(Verbs.HGet, client.Key(in key), field), cancellationToken);
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?> GetAsync<T>(RespireKey key, string field, CancellationToken cancellationToken = default)
         => client.DeserializeAsync<T, Cmd2>("HGET", new Cmd2(Verbs.HGet, client.Key(in key), field), cancellationToken);
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, string field, CancellationToken cancellationToken = default)
         => client.TryDeserializeAsync<T, Cmd2>("HGET", new Cmd2(Verbs.HGet, client.Key(in key), field), cancellationToken);
 
@@ -203,6 +219,8 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
     public ValueTask<Dictionary<string, string>> GetAllAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.StringMapAsync("HGETALL", new Cmd1(Verbs.HGetAll, client.Key(in key)), cancellationToken);
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<Dictionary<string, T>> GetAllAsync<T>(
         RespireKey key, CancellationToken cancellationToken = default)
         => client.DeserializeMapAsync<T, Cmd1>(

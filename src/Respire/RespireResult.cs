@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using Respire.Internal;
 using Respire.Protocol;
@@ -104,6 +105,8 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
     /// Converts the reply using primitive fast paths or the serializer configured on the client
     /// that produced this result.
     /// </summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public T? As<T>()
     {
         var value = Value;

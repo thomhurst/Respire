@@ -1,5 +1,7 @@
+using System.Diagnostics.CodeAnalysis;
 using Respire.Commands;
 using Respire.Internal;
+using Respire.Serialization;
 
 namespace Respire;
 
@@ -37,6 +39,8 @@ public interface IBatchListCommands
     RespirePending<string[]> Range(RespireKey key, long start = 0, long stop = -1);
 
     /// <summary>Deserialized elements between two indexes inclusive. Redis: LRANGE.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     RespirePending<T[]> Range<T>(RespireKey key, long start = 0, long stop = -1);
 
     /// <summary>The element at an index, or null out of range. Redis: LINDEX.</summary>
@@ -96,6 +100,8 @@ internal sealed class BatchListCommands(IPendingSink sink) : IBatchListCommands
             "LRANGE", new Cmd3(Verbs.LRange, sink.Client.Key(in key), start, stop),
             static (c, v) => ResponseReader.StringArray(in v));
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public RespirePending<T[]> Range<T>(RespireKey key, long start = 0, long stop = -1)
         => sink.Add<Cmd3, T[]>(
             "LRANGE", new Cmd3(Verbs.LRange, sink.Client.Key(in key), start, stop),

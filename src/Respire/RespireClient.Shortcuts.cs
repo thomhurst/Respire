@@ -1,4 +1,6 @@
+using System.Diagnostics.CodeAnalysis;
 using Respire.Commands;
+using Respire.Serialization;
 
 namespace Respire;
 
@@ -12,10 +14,14 @@ public sealed partial class RespireClient
         => StringOrNullAsync("GET", new Cmd1(Verbs.Get, Key(in key)), cancellationToken);
 
     /// <inheritdoc cref="IStringCommands.GetAsync{T}"/>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?> GetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
         => DeserializeAsync<T, Cmd1>("GET", new Cmd1(Verbs.Get, Key(in key)), cancellationToken);
 
     /// <inheritdoc cref="IStringCommands.TryGetAsync{T}"/>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
         => TryDeserializeAsync<T, Cmd1>("GET", new Cmd1(Verbs.Get, Key(in key)), cancellationToken);
 
@@ -33,6 +39,8 @@ public sealed partial class RespireClient
         => Strings.SetAsync(key, value, expiry, when, cancellationToken);
 
     /// <inheritdoc cref="IStringCommands.SetAsync{T}(RespireKey, T, RespireExpiry, SetWhen, CancellationToken)"/>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<bool> SetAsync<T>(
         RespireKey key,
         T value,

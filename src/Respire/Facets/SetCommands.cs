@@ -1,5 +1,7 @@
+using System.Diagnostics.CodeAnalysis;
 using Respire.Commands;
 using Respire.Internal;
+using Respire.Serialization;
 using Respire.Protocol;
 
 namespace Respire;
@@ -34,6 +36,8 @@ public interface ISetCommands
     /// use normal typed serialization.
     /// </para>
     /// </summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<bool> ContainsAsync<T>(RespireKey key, T member, CancellationToken cancellationToken = default);
 
     /// <summary>Number of members. Redis: SCARD.</summary>
@@ -43,6 +47,8 @@ public interface ISetCommands
     ValueTask<string[]> MembersAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>All members deserialized as <typeparamref name="T"/>. Redis: SMEMBERS.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<T[]> MembersAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Iterates members incrementally. Redis: SSCAN.</summary>
@@ -119,6 +125,8 @@ internal sealed class SetCommands(RespireClient client) : ISetCommands
     public ValueTask<bool> ContainsAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken = default)
         => client.FlagAsync("SISMEMBER", new Cmd2(Verbs.SIsMember, client.Key(in key), member), cancellationToken);
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<bool> ContainsAsync<T>(RespireKey key, T member, CancellationToken cancellationToken = default)
         => client.FlagAsync(
             "SISMEMBER",
@@ -131,6 +139,8 @@ internal sealed class SetCommands(RespireClient client) : ISetCommands
     public ValueTask<string[]> MembersAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.StringArrayAsync("SMEMBERS", new Cmd1(Verbs.SMembers, client.Key(in key)), cancellationToken);
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T[]> MembersAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
         => client.DeserializeArrayAsync<T, Cmd1>(
             "SMEMBERS", new Cmd1(Verbs.SMembers, client.Key(in key)), cancellationToken);

@@ -1,5 +1,7 @@
+using System.Diagnostics.CodeAnalysis;
 using Respire.Commands;
 using Respire.Internal;
+using Respire.Serialization;
 
 namespace Respire;
 
@@ -16,9 +18,13 @@ public interface IBatchStringCommands
     RespirePending<string?> GetString(RespireKey key);
 
     /// <summary>Gets a key's value deserialized as <typeparamref name="T"/>, or default when missing. Redis: GET.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     RespirePending<T?> Get<T>(RespireKey key);
 
     /// <summary>Gets a typed value while reporting whether the key existed. Redis: GET.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     RespirePending<RespireGet<T>> TryGet<T>(RespireKey key);
 
     /// <summary>Gets a key's raw bytes, or null when missing. Redis: GET.</summary>
@@ -34,6 +40,8 @@ public interface IBatchStringCommands
         SetWhen when = SetWhen.Always);
 
     /// <summary>Sets a key to a serialized <typeparamref name="T"/>. Redis: SET.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     RespirePending<bool> Set<T>(
         RespireKey key,
         T value,
@@ -48,6 +56,8 @@ public interface IBatchStringCommands
     /// Sets a serialized <typeparamref name="T"/> and deserializes the previous value.
     /// Redis: SET … GET.
     /// </summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     RespirePending<T?> GetAndSet<T>(
         RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always);
 
@@ -79,6 +89,8 @@ public interface IBatchStringCommands
     RespirePending<string?[]> GetMany(params ReadOnlySpan<RespireKey> keys);
 
     /// <summary>Gets and deserializes many keys; missing keys yield default. Redis: MGET.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     RespirePending<T?[]> GetMany<T>(params ReadOnlySpan<RespireKey> keys);
 
     /// <summary>Sets many keys atomically; the pending is true once the server replies OK. Redis: MSET.</summary>
@@ -109,11 +121,15 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
             "GET", new Cmd1(Verbs.Get, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.StringOrNull(in v));
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public RespirePending<T?> Get<T>(RespireKey key)
         => sink.Add<Cmd1, T?>(
             "GET", new Cmd1(Verbs.Get, sink.Client.Key(in key)),
             static (c, v) => c.DeserializeBorrowed<T>(in v));
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public RespirePending<RespireGet<T>> TryGet<T>(RespireKey key)
         => sink.Add<Cmd1, RespireGet<T>>(
             "GET", new Cmd1(Verbs.Get, sink.Client.Key(in key)),
@@ -134,6 +150,8 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
             static (c, v) => ResponseReader.OkOrNull(in v));
     }
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public RespirePending<bool> Set<T>(
         RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
     {
@@ -154,6 +172,8 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
             static (c, v) => ResponseReader.StringOrNull(in v));
     }
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public RespirePending<T?> GetAndSet<T>(
         RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
     {
@@ -236,6 +256,8 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
             static (c, v) => ResponseReader.NullableStringArray(in v));
     }
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public RespirePending<T?[]> GetMany<T>(params ReadOnlySpan<RespireKey> keys)
     {
         return sink.Add<CmdN, T?[]>(
