@@ -148,13 +148,25 @@ public readonly struct RespValue : IEquatable<RespValue>, IDisposable
     {
         return _type switch
         {
-            RespDataType.SimpleString or RespDataType.BulkString or RespDataType.VerbatimString
-                or RespDataType.BigNumber => Encoding.UTF8.GetString(AsSpan()),
+            RespDataType.SimpleString or RespDataType.BulkString or RespDataType.BigNumber =>
+                _payload.IsEmpty ? string.Empty : Encoding.UTF8.GetString(_payload.Span),
+            RespDataType.VerbatimString => DecodeVerbatimString(),
             RespDataType.Integer => _integerValue.ToString(),
             RespDataType.Boolean => AsBoolean().ToString(),
             RespDataType.Double => AsDouble().ToString(),
             _ => string.Empty,
         };
+    }
+
+    private string DecodeVerbatimString()
+    {
+        var span = _payload.Span;
+        if (span.Length >= 4)
+        {
+            span = span[4..];
+        }
+
+        return span.IsEmpty ? string.Empty : Encoding.UTF8.GetString(span);
     }
 
     public string GetErrorMessage()
