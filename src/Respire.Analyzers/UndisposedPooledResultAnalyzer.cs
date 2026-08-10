@@ -105,6 +105,8 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             if (IsDisposedOrEscapes(context, scope, declaration, acquisitionAssignment: null, local)
                 || ConditionalAcquisitionsAreReleased(
                     context, scope, declaration, variable.Initializer.Value, local)
+                || CoalescingAcquisitionsAreReleased(
+                    context, scope, declaration, variable.Initializer.Value, local)
                 || SwitchAcquisitionsAreReleased(
                     context, scope, declaration, variable.Initializer.Value, local))
             {
@@ -133,6 +135,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         if (pooledType is null
             || IsDisposedOrEscapes(context, scope, assignment.Right, assignment, local)
             || ConditionalAcquisitionsAreReleased(context, scope, assignment, assignment.Right, local)
+            || CoalescingAcquisitionsAreReleased(context, scope, assignment, assignment.Right, local)
             || SwitchAcquisitionsAreReleased(context, scope, assignment, assignment.Right, local))
         {
             return;
@@ -199,10 +202,11 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            if ((!ownsWhenTrue || HasUnconditionalRelease(context, scope, ifStatement.Statement, local))
+            if ((!ownsWhenTrue || HasUnconditionalRelease(
+                    context, scope, acquisition, ifStatement.Statement, local))
                 && (!ownsWhenFalse
                     || ifStatement.Else is { Statement: { } falseBranch }
-                    && HasUnconditionalRelease(context, scope, falseBranch, local)))
+                    && HasUnconditionalRelease(context, scope, acquisition, falseBranch, local)))
             {
                 return true;
             }
@@ -211,13 +215,103 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         return false;
     }
 
-    private static bool HasUnconditionalRelease(
-        SyntaxNodeAnalysisContext context, SyntaxNode scope, SyntaxNode branch, ILocalSymbol local)
+    private static bool CoalescingAcquisitionsAreReleased(
+        SyntaxNodeAnalysisContext context,
+        SyntaxNode scope,
+        SyntaxNode acquisition,
+        ExpressionSyntax value,
+        ILocalSymbol local)
     {
+        if (ScopeWalker.Unwrap(value) is not BinaryExpressionSyntax coalesce
+            || !coalesce.IsKind(SyntaxKind.CoalesceExpression)
+            || ContainsRespireAcquisition(context, coalesce.Left)
+            || !ContainsRespireAcquisition(context, coalesce.Right))
+        {
+            return false;
+        }
+
+        foreach (var ifStatement in scope.DescendantNodes().OfType<IfStatementSyntax>())
+        {
+            if (ifStatement.SpanStart <= acquisition.SpanStart
+                || GetNullBranch(coalesce.Left, ifStatement) is not { } owningBranch
+                || ScopeWalker.HasWriteBetween(
+                    context.SemanticModel,
+                    scope,
+                    coalesce.Left,
+                    coalesce,
+                    ifStatement,
+                    context.CancellationToken)
+                || !ScopeWalker.PostDominates(
+                    context.SemanticModel, scope, acquisition, ifStatement, context.CancellationToken))
+            {
+                continue;
+            }
+
+            if (HasUnconditionalRelease(context, scope, acquisition, owningBranch, local))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static StatementSyntax? GetNullBranch(
+        ExpressionSyntax expression, IfStatementSyntax ifStatement)
+    {
+        var condition = ScopeWalker.Unwrap(ifStatement.Condition);
+        if (condition is IsPatternExpressionSyntax isPattern
+            && SyntaxFactory.AreEquivalent(
+                ScopeWalker.Unwrap(expression), ScopeWalker.Unwrap(isPattern.Expression))
+            && IsNullPattern(isPattern.Pattern))
+        {
+            return ifStatement.Statement;
+        }
+
+        if (condition is not BinaryExpressionSyntax comparison
+            || !comparison.IsKind(SyntaxKind.EqualsExpression)
+            && !comparison.IsKind(SyntaxKind.NotEqualsExpression)
+            || !IsNullComparison(expression, comparison.Left, comparison.Right))
+        {
+            return null;
+        }
+
+        return comparison.IsKind(SyntaxKind.EqualsExpression)
+            ? ifStatement.Statement
+            : ifStatement.Else?.Statement;
+    }
+
+    private static bool IsNullComparison(
+        ExpressionSyntax expression, ExpressionSyntax left, ExpressionSyntax right)
+        => SyntaxFactory.AreEquivalent(ScopeWalker.Unwrap(expression), ScopeWalker.Unwrap(left))
+           && ScopeWalker.Unwrap(right).IsKind(SyntaxKind.NullLiteralExpression)
+           || SyntaxFactory.AreEquivalent(ScopeWalker.Unwrap(expression), ScopeWalker.Unwrap(right))
+           && ScopeWalker.Unwrap(left).IsKind(SyntaxKind.NullLiteralExpression);
+
+    private static bool IsNullPattern(PatternSyntax pattern)
+        => pattern is ConstantPatternSyntax constant
+           && ScopeWalker.Unwrap(constant.Expression).IsKind(SyntaxKind.NullLiteralExpression);
+
+    private static bool HasUnconditionalRelease(
+        SyntaxNodeAnalysisContext context,
+        SyntaxNode scope,
+        SyntaxNode acquisition,
+        SyntaxNode branch,
+        ILocalSymbol local)
+    {
+        var reassignments = ScopeWalker.FindReferences(
+                scope, local, context.SemanticModel, context.CancellationToken)
+            .Where(reference => reference.Parent is AssignmentExpressionSyntax assignment
+                                && ScopeWalker.IsSame(assignment.Left, reference)
+                                && !assignment.IsKind(SyntaxKind.CoalesceAssignmentExpression))
+            .Select(static reference => (AssignmentExpressionSyntax)reference.Parent!)
+            .ToArray();
         var releases = ScopeWalker.FindReferences(
                 branch, local, context.SemanticModel, context.CancellationToken)
             .Where(reference => !ScopeWalker.IsNestedInLambda(reference, scope)
-                                && IsImmediatelyReleasedOrTransferred(context, reference))
+                                && IsImmediatelyReleasedOrTransferred(context, reference)
+                                && !IsReassignedBefore(
+                                    context, scope, acquisition, reference, reassignments))
             .Select(ScopeWalker.GetOutermostTransparentExpression)
             .ToArray();
 
@@ -277,7 +371,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            if (HasUnconditionalRelease(context, scope, selectedBranch, local))
+            if (HasUnconditionalRelease(context, scope, acquisition, selectedBranch, local))
             {
                 return true;
             }
@@ -444,16 +538,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            if (reassignments.Any(reassignment =>
-                    ScopeWalker.CanReachWithoutCrossing(
-                        context.SemanticModel,
-                        scope,
-                        acquisition,
-                        reassignment,
-                        [reference],
-                        context.CancellationToken)
-                    && ScopeWalker.CanReach(
-                        context.SemanticModel, scope, reassignment, reference, context.CancellationToken)))
+            if (IsReassignedBefore(context, scope, acquisition, reference, reassignments))
             {
                 // Later uses refer to the replacement, not the acquired pooled owner.
                 continue;
@@ -534,6 +619,23 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         return ScopeWalker.CollectivelyPostDominates(
             context.SemanticModel, scope, acquisition, releases, context.CancellationToken);
     }
+
+    private static bool IsReassignedBefore(
+        SyntaxNodeAnalysisContext context,
+        SyntaxNode scope,
+        SyntaxNode acquisition,
+        SyntaxNode reference,
+        IEnumerable<AssignmentExpressionSyntax> reassignments)
+        => reassignments.Any(reassignment =>
+            ScopeWalker.CanReachWithoutCrossing(
+                context.SemanticModel,
+                scope,
+                acquisition,
+                reassignment,
+                [reference],
+                context.CancellationToken)
+            && ScopeWalker.CanReach(
+                context.SemanticModel, scope, reassignment, reference, context.CancellationToken));
 
     private static bool IsImmediatelyReleasedOrTransferred(
         SyntaxNodeAnalysisContext context, ExpressionSyntax expression)

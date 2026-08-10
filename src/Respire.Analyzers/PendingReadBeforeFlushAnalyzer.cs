@@ -802,8 +802,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            if (method.Name is "Add" or "AddRange" or "Clear" or "Insert" or "InsertRange"
-                or "Remove" or "RemoveAll" or "RemoveAt" or "RemoveRange" or "Reverse" or "Sort")
+            if (method.Name is "Clear" or "Remove" or "RemoveAll" or "RemoveAt" or "RemoveRange")
             {
                 return true;
             }

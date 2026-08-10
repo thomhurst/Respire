@@ -896,6 +896,49 @@ public class UndisposedPooledResultAnalyzerTests
         """);
 
     [Test]
+    public async Task CoalescingAcquisitionDisposedOnOwningBranch_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        #nullable enable
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, RespireResult? existing)
+            {
+                var result = existing ?? await client.ExecuteAsync("PING");
+                if (existing is null)
+                {
+                    result.Dispose();
+                }
+            }
+        }
+        """);
+
+    [Test]
+    public async Task ConditionalAcquisitionOverwrittenBeforeDispose_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, RespireResult existing, bool condition)
+            {
+                var {|RESP001:result|} = condition
+                    ? await client.ExecuteAsync("PING")
+                    : existing;
+
+                if (condition)
+                {
+                    result = default;
+                    result.Dispose();
+                }
+            }
+        }
+        """);
+
+    [Test]
     public async Task SwitchAcquisitionWithoutDispose_IsFlagged() => await Verify.VerifyAsync(
         """
         using System.Threading.Tasks;
