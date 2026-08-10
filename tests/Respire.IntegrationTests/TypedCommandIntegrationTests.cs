@@ -7,6 +7,36 @@ namespace Respire.IntegrationTests;
 public class TypedCommandIntegrationTests(RedisTestContainer fixture)
 {
     [Test]
+    public async Task KeyCommands_RoundTripConditionalCopyAndTypedScan()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        var prefix = $"keys:{Guid.NewGuid():N}:";
+        var source = prefix + "source";
+        var target = prefix + "target";
+        var copy = prefix + "copy";
+
+        await client.Strings.SetAsync(source, "one");
+        (await client.Keys.TypeAsync(source)).Should().Be(RespireKeyType.String);
+        (await client.Keys.TryRenameAsync(source, target)).Should().BeTrue();
+        await client.Strings.SetAsync(source, "two");
+        (await client.Keys.TryRenameAsync(source, target)).Should().BeFalse();
+        (await client.Keys.CopyAsync(target, copy)).Should().BeTrue();
+        (await client.Keys.CopyAsync(source, copy)).Should().BeFalse();
+        (await client.Keys.CopyAsync(source, copy, replace: true)).Should().BeTrue();
+        (await client.Strings.GetStringAsync(copy)).Should().Be("two");
+
+        var keys = new List<string>();
+        await foreach (var key in client.Keys.ScanAsync(prefix + "*", countHint: 1, type: "string"))
+        {
+            keys.Add(key);
+        }
+
+        keys.Should().BeEquivalentTo(source, target, copy);
+        await client.Keys.DeleteAsync(source, target, copy);
+        (await client.Keys.TypeAsync(source)).Should().Be(RespireKeyType.None);
+    }
+
+    [Test]
     public async Task BitmapCommands_RoundTripAgainstRedis()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);

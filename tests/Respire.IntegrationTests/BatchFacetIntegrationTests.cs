@@ -36,7 +36,7 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         value.Result.Should().Be("alpha-beta");
         many.Result.Should().Equal("alpha-beta", null);
         exists.Result.Should().BeTrue();
-        type.Result.Should().Be("string");
+        type.Result.Should().Be(RespireKeyType.String);
         expired.Result.Should().BeTrue();
         expiry.Result.HasExpiry.Should().BeTrue();
         persisted.Result.Should().BeTrue();
@@ -157,7 +157,7 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         members.Result.Should().BeEquivalentTo("x", "y", "z");
         ranked.Result.Should().BeTrue();
         rank.Result.Should().Be(0);
-        keyType.Result.Should().Be("hash");
+        keyType.Result.Should().Be(RespireKeyType.Hash);
         removed.Result.Should().Be(1);
 
         // The DEL inside the transaction applied, and the connection is usable afterwards.

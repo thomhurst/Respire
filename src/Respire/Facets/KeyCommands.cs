@@ -4,6 +4,24 @@ using Respire.Internal;
 
 namespace Respire;
 
+/// <summary>The data structure stored at a Redis key.</summary>
+public enum RespireKeyType
+{
+    /// <summary>The server returned a key type this Respire version does not recognize.</summary>
+    Unknown,
+
+    /// <summary>The key does not exist.</summary>
+    None,
+
+    String,
+    List,
+    Set,
+    SortedSet,
+    Hash,
+    Stream,
+    VectorSet,
+}
+
 /// <summary>Generic key management commands.</summary>
 public interface IKeyCommands
 {
@@ -36,11 +54,21 @@ public interface IKeyCommands
     /// </summary>
     ValueTask<RespireTtl> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default);
 
-    /// <summary>The key's Redis type name ("string", "hash", …, or "none"). Redis: TYPE.</summary>
-    ValueTask<string> TypeAsync(RespireKey key, CancellationToken cancellationToken = default);
+    /// <summary>The data structure stored at a key, or <see cref="RespireKeyType.None"/>. Redis: TYPE.</summary>
+    ValueTask<RespireKeyType> TypeAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Renames a key, returning true when Redis confirms the write. Redis: RENAME.</summary>
     ValueTask<bool> RenameAsync(RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default);
+
+    /// <summary>Renames a key only when the target does not exist. Redis: RENAMENX.</summary>
+    ValueTask<bool> TryRenameAsync(RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default);
+
+    /// <summary>Copies a key, optionally replacing an existing target. Redis: COPY.</summary>
+    ValueTask<bool> CopyAsync(
+        RespireKey source,
+        RespireKey destination,
+        bool replace = false,
+        CancellationToken cancellationToken = default);
 
     /// <summary>Touches keys (updates access time); returns how many existed. Redis: TOUCH.</summary>
     ValueTask<long> TouchAsync(params ReadOnlySpan<RespireKey> keys);
@@ -53,7 +81,11 @@ public interface IKeyCommands
     /// internally. In cluster mode, every known master is scanned with its own cursor.
     /// Redis: SCAN.
     /// </summary>
-    IAsyncEnumerable<string> ScanAsync(string? match = null, int pageSize = 250, CancellationToken cancellationToken = default);
+    IAsyncEnumerable<string> ScanAsync(
+        string? match = null,
+        int countHint = 250,
+        string? type = null,
+        CancellationToken cancellationToken = default);
 }
 
 internal sealed class KeyCommands(RespireClient client) : IKeyCommands
@@ -88,12 +120,35 @@ internal sealed class KeyCommands(RespireClient client) : IKeyCommands
         => RespireTtl.FromRedisMilliseconds(
             await client.IntegerAsync("PTTL", new Cmd1(Verbs.Pttl, client.Key(in key)), cancellationToken).ConfigureAwait(false));
 
-    public ValueTask<string> TypeAsync(RespireKey key, CancellationToken cancellationToken = default)
-        => client.StringAsync("TYPE", new Cmd1(Verbs.Type, client.Key(in key)), cancellationToken);
+    public async ValueTask<RespireKeyType> TypeAsync(
+        RespireKey key,
+        CancellationToken cancellationToken = default)
+        => ParseKeyType(await client.StringAsync(
+            "TYPE", new Cmd1(Verbs.Type, client.Key(in key)), cancellationToken).ConfigureAwait(false));
 
     public ValueTask<bool> RenameAsync(RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default)
         => client.ConfirmedOkAsync(
             "RENAME", new Cmd2(Verbs.Rename, client.Key(in key), client.Key(in newKey)), cancellationToken);
+
+    public ValueTask<bool> TryRenameAsync(
+        RespireKey key,
+        RespireKey newKey,
+        CancellationToken cancellationToken = default)
+        => client.FlagAsync(
+            "RENAMENX", new Cmd2(Verbs.RenameNx, client.Key(in key), client.Key(in newKey)), cancellationToken);
+
+    public ValueTask<bool> CopyAsync(
+        RespireKey source,
+        RespireKey destination,
+        bool replace = false,
+        CancellationToken cancellationToken = default)
+        => replace
+            ? client.FlagAsync(
+                "COPY", new Cmd3(Verbs.Copy, client.Key(in source), client.Key(in destination), "REPLACE"),
+                cancellationToken)
+            : client.FlagAsync(
+                "COPY", new Cmd2(Verbs.Copy, client.Key(in source), client.Key(in destination)),
+                cancellationToken);
 
     public ValueTask<long> TouchAsync(params ReadOnlySpan<RespireKey> keys)
         => client.IntegerKeysAsync("TOUCH", Verbs.Touch, keys, CancellationToken.None);
@@ -102,8 +157,17 @@ internal sealed class KeyCommands(RespireClient client) : IKeyCommands
         => client.IntegerKeysAsync("TOUCH", Verbs.Touch, keys, cancellationToken);
 
     public async IAsyncEnumerable<string> ScanAsync(
-        string? match = null, int pageSize = 250, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        string? match = null,
+        int countHint = 250,
+        string? type = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(countHint);
+        if (type is not null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(type);
+        }
+
         // A key-prefixed view scans inside its prefix and returns keys with the prefix stripped,
         // so results round-trip through the same view's commands. The prefix is glob-escaped —
         // a prefix like "tenant:*:" must match itself literally, never act as a wildcard.
@@ -136,9 +200,13 @@ internal sealed class KeyCommands(RespireClient client) : IKeyCommands
             var cursor = "0";
             do
             {
-                var args = effectiveMatch is null
-                    ? new RespireValue[] { cursor, "COUNT", pageSize }
-                    : new RespireValue[] { cursor, "MATCH", effectiveMatch, "COUNT", pageSize };
+                var args = (effectiveMatch, type) switch
+                {
+                    (null, null) => new RespireValue[] { cursor, "COUNT", countHint },
+                    (not null, null) => [cursor, "MATCH", effectiveMatch, "COUNT", countHint],
+                    (null, not null) => [cursor, "COUNT", countHint, "TYPE", type],
+                    _ => [cursor, "MATCH", effectiveMatch, "COUNT", countHint, "TYPE", type],
+                };
                 var command = new CmdN(Verbs.Scan, args);
                 var reply = connection is null
                     ? await client.SendAsync("SCAN", command, token).ConfigureAwait(false)
@@ -166,6 +234,20 @@ internal sealed class KeyCommands(RespireClient client) : IKeyCommands
             while (cursor != "0");
         }
     }
+
+    internal static RespireKeyType ParseKeyType(string value)
+        => value switch
+        {
+            "none" => RespireKeyType.None,
+            "string" => RespireKeyType.String,
+            "list" => RespireKeyType.List,
+            "set" => RespireKeyType.Set,
+            "zset" => RespireKeyType.SortedSet,
+            "hash" => RespireKeyType.Hash,
+            "stream" => RespireKeyType.Stream,
+            "vectorset" => RespireKeyType.VectorSet,
+            _ => RespireKeyType.Unknown,
+        };
 
     /// <summary>Escapes Redis glob metacharacters so the text matches itself literally.</summary>
     private static string EscapeGlob(string value)

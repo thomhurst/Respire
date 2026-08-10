@@ -104,16 +104,16 @@ public interface IServerCommands
     ValueTask<DateTimeOffset> TimeAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Connected clients parsed from CLIENT LIST.</summary>
-    ValueTask<RespireServerClientInfo[]> ClientListAsync(CancellationToken cancellationToken = default);
+    ValueTask<RespireServerClientInfo[]> ClientsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Closes a client by server client id using CLIENT KILL ID ... SKIPME yes/no.</summary>
-    ValueTask<bool> KillClientByIdAsync(
+    ValueTask<bool> KillClientAsync(
         long clientId,
         bool skipMe = true,
         CancellationToken cancellationToken = default);
 
     /// <summary>Slow command log entries. Redis: SLOWLOG GET [count].</summary>
-    ValueTask<RespireSlowLogEntry[]> GetSlowLogAsync(
+    ValueTask<RespireSlowLogEntry[]> SlowLogAsync(
         long? count = null,
         CancellationToken cancellationToken = default);
 
@@ -121,7 +121,7 @@ public interface IServerCommands
     ValueTask ResetSlowLogAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Latest latency samples. Redis: LATENCY LATEST.</summary>
-    ValueTask<RespireLatencySample[]> GetLatestLatencyAsync(CancellationToken cancellationToken = default);
+    ValueTask<RespireLatencySample[]> LatestLatencyAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Resets all latency events. Redis: LATENCY RESET.</summary>
     ValueTask<long> ResetLatencyAsync(CancellationToken cancellationToken = default);
@@ -151,10 +151,10 @@ public interface IServerCommands
     ValueTask<string[]> CommandListAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Configuration values matching a glob pattern. Redis: CONFIG GET.</summary>
-    ValueTask<Dictionary<string, string>> ConfigGetAsync(string pattern, CancellationToken cancellationToken = default);
+    ValueTask<Dictionary<string, string>> ConfigAsync(string pattern, CancellationToken cancellationToken = default);
 
     /// <summary>Sets a configuration value. Requires <see cref="RespireOptions.AllowAdmin"/>. Redis: CONFIG SET.</summary>
-    ValueTask ConfigSetAsync(string name, RespireValue value, CancellationToken cancellationToken = default);
+    ValueTask SetConfigAsync(string name, RespireValue value, CancellationToken cancellationToken = default);
 }
 
 internal sealed class ServerCommands(RespireClient client) : IServerCommands
@@ -185,12 +185,12 @@ internal sealed class ServerCommands(RespireClient client) : IServerCommands
             : FlushClusterAsync("FLUSHALL", RespCommands.FlushAll, cancellationToken);
     }
 
-    public ValueTask<RespireServerClientInfo[]> ClientListAsync(CancellationToken cancellationToken = default)
+    public ValueTask<RespireServerClientInfo[]> ClientsAsync(CancellationToken cancellationToken = default)
         => ConvertAsync(
             "CLIENT LIST", new Cmd(Verbs.ClientList), cancellationToken,
             static (ServerCommands _, in RespValue value) => ParseClientList(in value));
 
-    public ValueTask<bool> KillClientByIdAsync(
+    public ValueTask<bool> KillClientAsync(
         long clientId,
         bool skipMe = true,
         CancellationToken cancellationToken = default)
@@ -202,7 +202,7 @@ internal sealed class ServerCommands(RespireClient client) : IServerCommands
             cancellationToken);
     }
 
-    public ValueTask<RespireSlowLogEntry[]> GetSlowLogAsync(
+    public ValueTask<RespireSlowLogEntry[]> SlowLogAsync(
         long? count = null,
         CancellationToken cancellationToken = default)
     {
@@ -223,7 +223,7 @@ internal sealed class ServerCommands(RespireClient client) : IServerCommands
     public ValueTask ResetSlowLogAsync(CancellationToken cancellationToken = default)
         => client.OkAsync("SLOWLOG RESET", new Cmd(Verbs.SlowLogReset), cancellationToken);
 
-    public ValueTask<RespireLatencySample[]> GetLatestLatencyAsync(CancellationToken cancellationToken = default)
+    public ValueTask<RespireLatencySample[]> LatestLatencyAsync(CancellationToken cancellationToken = default)
         => ConvertAsync(
             "LATENCY LATEST", new Cmd(Verbs.LatencyLatest), cancellationToken,
             static (ServerCommands _, in RespValue value) => ParseLatencyLatest(in value));
@@ -339,10 +339,10 @@ internal sealed class ServerCommands(RespireClient client) : IServerCommands
         }
     }
 
-    public ValueTask<Dictionary<string, string>> ConfigGetAsync(string pattern, CancellationToken cancellationToken = default)
+    public ValueTask<Dictionary<string, string>> ConfigAsync(string pattern, CancellationToken cancellationToken = default)
         => client.StringMapAsync("CONFIG GET", new Cmd1(Verbs.ConfigGet, pattern), cancellationToken);
 
-    public ValueTask ConfigSetAsync(string name, RespireValue value, CancellationToken cancellationToken = default)
+    public ValueTask SetConfigAsync(string name, RespireValue value, CancellationToken cancellationToken = default)
     {
         EnsureAdminAllowed("CONFIG SET");
         return client.OkAsync("CONFIG SET", new Cmd2(Verbs.ConfigSet, name, value), cancellationToken);

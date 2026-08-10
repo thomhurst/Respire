@@ -294,15 +294,29 @@ public class MultiItemCancellationOverloadTests
         public ValueTask<RespireTtl> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
-        public ValueTask<string> TypeAsync(RespireKey key, CancellationToken cancellationToken = default)
+        public ValueTask<RespireKeyType> TypeAsync(RespireKey key, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
         public ValueTask<bool> RenameAsync(
             RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
+        public ValueTask<bool> TryRenameAsync(
+            RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask<bool> CopyAsync(
+            RespireKey source,
+            RespireKey destination,
+            bool replace = false,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
         public IAsyncEnumerable<string> ScanAsync(
-            string? match = null, int pageSize = 250, CancellationToken cancellationToken = default)
+            string? match = null,
+            int countHint = 250,
+            string? type = null,
+            CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
     }
 }
