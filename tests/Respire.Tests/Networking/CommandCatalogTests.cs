@@ -224,7 +224,7 @@ public class CommandCatalogTests
             await Assert.That(visibleMethods.Count(static method => method.Name == nameof(IRespireClient.ExecuteAsync)))
                 .IsEqualTo(3);
             await Assert.That(visibleMethods.Count(static method => method.Name == nameof(IRespireClient.ExecuteFireAndForgetAsync)))
-                .IsEqualTo(2);
+                .IsEqualTo(3);
             await Assert.That(hiddenStringForwarders.Count(static method => method.Name == nameof(IRespireClient.ExecuteAsync)))
                 .IsEqualTo(2);
             await Assert.That(hiddenStringForwarders.Count(static method => method.Name == nameof(IRespireClient.ExecuteFireAndForgetAsync)))
@@ -304,6 +304,20 @@ public class CommandCatalogTests
 
         static RespireValue[] BuildTokens(RespireCommandInterpolatedStringHandler handler)
             => handler.Build().Tokens;
+    }
+
+    [Test]
+    public async Task InterpolatedFireAndForget_PreservesEmptyArgumentsThroughInterface()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var concrete = await FakeRespServer.ConnectClientAsync(server.Port);
+        IRespireClient client = concrete;
+        var empty = string.Empty;
+
+        await client.ExecuteFireAndForgetAsync($"SET {empty} x");
+        await WaitForCommandsAsync(server, 1);
+
+        await Assert.That(server.ReceivedCommands.Single()).IsEqualTo("SET  x");
     }
 
     [Test]

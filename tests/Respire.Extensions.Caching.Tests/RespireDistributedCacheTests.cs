@@ -1501,6 +1501,11 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             string command, RespireValue[] args, CancellationToken cancellationToken = default)
             => inner.ExecuteFireAndForgetAsync((RespireCommand)command, args, cancellationToken);
 
+        public ValueTask ExecuteFireAndForgetAsync(
+            RespireCommandInterpolatedStringHandler command,
+            CancellationToken cancellationToken = default)
+            => inner.ExecuteFireAndForgetAsync(command, cancellationToken);
+
         public IRespireClient WithKeyPrefix(string prefix) => inner.WithKeyPrefix(prefix);
 
         public RespireKey ResolveKey(RespireKey key) => inner.ResolveKey(key);

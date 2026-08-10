@@ -293,6 +293,16 @@ public sealed partial class RespireClient : IRespireClient
         string command, RespireValue[] args, CancellationToken cancellationToken = default)
         => ExecuteCommandFireAndForgetAsync(command, args, cancellationToken);
 
+    /// <summary>
+    /// Queues a command written as an interpolated string and discards its reply. Literal text
+    /// splits on spaces; every interpolation hole is exactly one argument and is never
+    /// re-tokenized, so values containing spaces are safe.
+    /// </summary>
+    public ValueTask ExecuteFireAndForgetAsync(
+        RespireCommandInterpolatedStringHandler command,
+        CancellationToken cancellationToken = default)
+        => ExecuteInterpolatedFireAndForgetAsync(command, cancellationToken);
+
     private ValueTask<RespireResult> ExecuteCommandAsync(
         RespireCommand command,
         RespireValue[] args,
@@ -509,6 +519,32 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         return new RespireResult(in response, _core.Options.Serializer);
+    }
+
+    private async ValueTask ExecuteInterpolatedFireAndForgetAsync(
+        RespireCommandInterpolatedStringHandler command,
+        CancellationToken cancellationToken)
+    {
+        var (operation, tokens) = command.Build();
+        var arguments = tokens.AsSpan(1);
+        ValidateRawFireAndForgetCommand(operation, ReadOnlySpan<string>.Empty, arguments);
+
+        var storedProcedureName = StoredProcedureName(operation, arguments);
+        var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(
+            operation, tokens, firstArgumentIndex: 1);
+        var commandValue = new DynamicCommand(tokens, routingKeyIndex);
+        if (_core.Cluster is { } cluster
+            && DynamicCommandRouting.IsClusterWideMutation(operation, arguments))
+        {
+            await SendClusterWideFireAndForgetAsync(
+                    operation, cluster, commandValue, cancellationToken, storedProcedureName)
+                .ConfigureAwait(false);
+            return;
+        }
+
+        await SendFireAndForgetAsync(
+                operation, commandValue, cancellationToken, storedProcedureName)
+            .ConfigureAwait(false);
     }
 
     private void ValidateCatalogCommand(RespireCommand command)
