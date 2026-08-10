@@ -31,7 +31,7 @@ The flush itself does not throw for command or connection-acquisition failures; 
 
 ## The same facets as the client
 
-Batches and transactions expose the client's facets — `Strings`, `Keys`, `Hashes`, `Lists`, `Sets`, `SortedSets`, `Bitmaps`, `HyperLogLog`, `Geo` — with matching command names minus the `Async` suffix and the same parameter shapes. The missing suffix signals that each call only queues work. The return type is `RespirePending<T>` instead of `ValueTask<T>`, and there is no `CancellationToken` because `ExecuteAsync` / `CommitAsync` owns cancellation.
+Batches and transactions expose the client's facets — `Strings`, `Keys`, `Hashes`, `Lists`, `Sets`, `SortedSets`, `Bitmaps`, `HyperLogLog`, `Geo`, and `Scripts` — with matching command names minus the `Async` suffix and the same parameter shapes. The missing suffix signals that each call only queues work. The return type is `RespirePending<T>` instead of `ValueTask<T>`, and there is no `CancellationToken` because `ExecuteAsync` / `CommitAsync` owns cancellation.
 
 ```csharp
 RespireBatch batch = redis.CreateBatch();
@@ -44,9 +44,29 @@ RespirePending<long> ranked = batch.SortedSets.Add(
 RespireBatchResult result = await batch.ExecuteAsync();
 ```
 
-Both types implement the same facet interfaces (`IBatchListCommands`, `IBatchHashCommands`, …), so helper code can queue into a batch or a transaction interchangeably.
+Both types implement `IRespireCommandQueue`, which unifies every deferred facet and the root
+shortcuts. Helpers can therefore queue work across facets without choosing an execution model:
 
-Two client facets have no deferred form: blocking variants (a `waitFor` argument, i.e. `BLPOP` / `BLMOVE`) and streaming ones (`Keys.ScanAsync`, `Strings.GetLeaseAsync`) — a batch cannot block, and a lease borrows reply memory that is released once the batch completes. `Streams`, `Server`, `Scripts`, and `Locks` remain client-only.
+```csharp
+static void QueueUserUpdate(IRespireCommandQueue queue, string userId)
+{
+    queue.Hashes.Set($"user:{userId}", "status", "active");
+    queue.Expire($"user:{userId}", TimeSpan.FromHours(1));
+}
+
+RespireBatch batch = redis.CreateBatch();
+QueueUserUpdate(batch, "42");
+await batch.ExecuteAsync();
+
+await using RespireTransaction transaction = redis.CreateTransaction();
+QueueUserUpdate(transaction, "43");
+await transaction.CommitAsync();
+```
+
+Execution remains specific to the concrete type: batches call `ExecuteAsync`; transactions call
+`CommitAsync`.
+
+Blocking variants (a `waitFor` argument, i.e. `BLPOP` / `BLMOVE`) and streaming operations (`Keys.ScanAsync`, `Strings.GetLeaseAsync`) have no deferred form — a queue cannot block, and a lease borrows reply memory that is released once the batch completes. `Streams`, `Server`, and `Locks` remain client-only.
 
 ## Atomic transactions
 
