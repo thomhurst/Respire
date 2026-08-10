@@ -195,8 +195,8 @@ public sealed class RespireBatch : IDisposable, IPendingSink
             }
 
             var clusterResults = await Task.WhenAll(clusterTasks).ConfigureAwait(false);
-            var firstError = clusterResults
-                .Select(static result => result.FirstError)
+            var firstError = _ops
+                .Select(static operation => operation.Error)
                 .FirstOrDefault(static error => error is not null);
             telemetry.Complete(
                 core,
@@ -353,6 +353,8 @@ public sealed class RespireBatch : IDisposable, IPendingSink
 
         public string Operation { get; }
 
+        public abstract Exception? Error { get; }
+
         public abstract Task<Exception?> RunAsync(
             RespireClient client, RespireConnection connection, CancellationToken effectiveToken,
             CancellationToken callerToken, TimeSpan? timeout);
@@ -376,6 +378,8 @@ public sealed class RespireBatch : IDisposable, IPendingSink
         string operation, TCommand command, RespirePending<T> pending, Func<RespireClient, RespValue, T> convert) : Op(operation)
         where TCommand : struct, IRespCommand
     {
+        public override Exception? Error => pending.Error;
+
         public override void Fail(Exception error) => pending.Fail(error);
 
         public override bool TryGetClusterSlot(out int slot) => command.TryGetClusterSlot(out slot);
