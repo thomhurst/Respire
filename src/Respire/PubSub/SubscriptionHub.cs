@@ -19,7 +19,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
 
     private readonly object _gate = new();
     private readonly object _reconnectStateGate = new();
-    private readonly Queue<RespireConnectionState> _pendingReconnectStates = [];
+    private readonly Queue<RespireConnectionStateChange> _pendingReconnectStates = [];
     private readonly Utf8RouteDictionary<List<RespireSubscription>>[] _routes =
         [new(), new(), new()];
     private readonly SemaphoreSlim _controlGate = new(1, 1);
@@ -378,7 +378,10 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             }
 
             reconnectGeneration = ++_reconnectGeneration;
-            publishState = QueueReconnectStateLocked(RespireConnectionState.Reconnecting);
+            publishState = QueueReconnectStateLocked(new RespireConnectionStateChange(
+                new RespireEndpoint(connection.Host, connection.Port),
+                RespireConnectionState.Reconnecting,
+                connection.CloseError));
         }
 
         if (publishState)
@@ -429,7 +432,10 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                             && ReferenceEquals(Volatile.Read(ref _connection), replacement)
                             && replacement.IsConnected)
                         {
-                            publishState = QueueReconnectStateLocked(RespireConnectionState.Connected);
+                            publishState = QueueReconnectStateLocked(new RespireConnectionStateChange(
+                                new RespireEndpoint(replacement.Host, replacement.Port),
+                                RespireConnectionState.Connected,
+                                null));
                         }
                     }
                 }
@@ -458,9 +464,9 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         }
     }
 
-    private bool QueueReconnectStateLocked(RespireConnectionState state)
+    private bool QueueReconnectStateLocked(RespireConnectionStateChange change)
     {
-        _pendingReconnectStates.Enqueue(state);
+        _pendingReconnectStates.Enqueue(change);
         if (_publishingReconnectState)
         {
             return false;
@@ -474,17 +480,17 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
     {
         while (true)
         {
-            RespireConnectionState state;
+            RespireConnectionStateChange change;
             lock (_reconnectStateGate)
             {
-                if (!_pendingReconnectStates.TryDequeue(out state))
+                if (!_pendingReconnectStates.TryDequeue(out change))
                 {
                     _publishingReconnectState = false;
                     return;
                 }
             }
 
-            core.NotifySubscriptionStateChanged(state);
+            core.NotifySubscriptionStateChanged(change);
         }
     }
 

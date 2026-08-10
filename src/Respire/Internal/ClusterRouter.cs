@@ -16,7 +16,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
     private readonly RespireEndpoint[] _seeds;
     private readonly RespireConnectionMultiplexer _primary;
     private readonly Dictionary<RespireEndpoint, RespireConnectionMultiplexer> _nodes = [];
-    private readonly Dictionary<RespireConnectionMultiplexer, Action<int, RespireConnectionState>> _nodeStateHandlers = [];
+    private readonly Dictionary<RespireConnectionMultiplexer, Action<int, RespireConnectionStateChange>> _nodeStateHandlers = [];
     private readonly Dictionary<RespireEndpoint, DedicatedConnectionPool> _dedicatedPools = [];
     private readonly object _nodesGate = new();
     private readonly RespireConnectionMultiplexer?[] _slots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
@@ -58,7 +58,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             return false;
         }
     }
-    internal event Action<RespireConnectionMultiplexer, int, RespireConnectionState>? SlotStateChanged;
+    internal event Action<RespireConnectionMultiplexer, int, RespireConnectionStateChange>? SlotStateChanged;
     internal event Action<RespireConnectionMultiplexer>? NodeRetired;
 
     internal bool IsSlotConnected(int slot)
@@ -565,8 +565,8 @@ internal sealed class ClusterRouter : IAsyncDisposable
             return;
         }
 
-        Action<int, RespireConnectionState> handler =
-            (slot, state) => SlotStateChanged?.Invoke(node, slot, state);
+        Action<int, RespireConnectionStateChange> handler =
+            (slot, change) => SlotStateChanged?.Invoke(node, slot, change);
         _nodeStateHandlers.Add(node, handler);
         node.SlotStateChanged += handler;
     }
@@ -864,7 +864,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
         }
 
         RespireConnectionMultiplexer[] nodes;
-        KeyValuePair<RespireConnectionMultiplexer, Action<int, RespireConnectionState>>[] stateHandlers;
+        KeyValuePair<RespireConnectionMultiplexer, Action<int, RespireConnectionStateChange>>[] stateHandlers;
         DedicatedConnectionPool[] dedicatedPools;
         lock (_nodesGate)
         {

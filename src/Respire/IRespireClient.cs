@@ -10,7 +10,7 @@ public interface IRespireClient : IAsyncDisposable
 
     bool IsConnected { get; }
 
-    event Action<RespireConnectionState>? ConnectionStateChanged;
+    event Action<RespireConnectionStateChange>? ConnectionStateChanged;
 
     // Typed convenience facets, grouped by data type.
     IStringCommands Strings { get; }

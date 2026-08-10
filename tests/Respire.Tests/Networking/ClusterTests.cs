@@ -210,9 +210,9 @@ public class ClusterTests
         });
         var reconnecting = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        client.ConnectionStateChanged += state =>
+        client.ConnectionStateChanged += change =>
         {
-            if (state == RespireConnectionState.Reconnecting)
+            if (change.State == RespireConnectionState.Reconnecting)
             {
                 reconnecting.TrySetResult();
             }
@@ -919,7 +919,7 @@ public class ClusterTests
         var retiredMultiplexer = core.Cluster!.GetMultiplexer(
             new RespireEndpoint("127.0.0.1", retiredNode.Port));
         var states = new List<RespireConnectionState>();
-        core.ConnectionStateChanged += states.Add;
+        core.ConnectionStateChanged += change => states.Add(change.State);
         core.NotifyCommandStateChanged(retiredMultiplexer, 0, RespireConnectionState.Reconnecting);
 
         _ = await core.Cluster.GetMasterConnectionsAsync(CancellationToken.None);
@@ -949,7 +949,7 @@ public class ClusterTests
         var retiredMultiplexer = cluster.GetMultiplexer(new RespireEndpoint("127.0.0.1", retiredNode.Port));
         var currentMultiplexer = cluster.GetMultiplexer(new RespireEndpoint("127.0.0.1", currentNode.Port));
         var states = new List<RespireConnectionState>();
-        core.ConnectionStateChanged += states.Add;
+        core.ConnectionStateChanged += change => states.Add(change.State);
         core.NotifyCommandStateChanged(retiredMultiplexer, 0, RespireConnectionState.Reconnecting);
 
         cluster.SetSlotOwner(slot, currentMultiplexer);

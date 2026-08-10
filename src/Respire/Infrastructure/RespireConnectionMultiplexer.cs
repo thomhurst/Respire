@@ -45,8 +45,8 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     public RespireConnectionOptions Options => _options;
 
     /// <summary>Raised when any client-owned connection is reconnecting or restored.</summary>
-    public event Action<RespireConnectionState>? StateChanged;
-    internal event Action<int, RespireConnectionState>? SlotStateChanged;
+    public event Action<RespireConnectionStateChange>? StateChanged;
+    internal event Action<int, RespireConnectionStateChange>? SlotStateChanged;
 
     public bool IsConnected
     {
@@ -624,14 +624,16 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     private void ScheduleReconnect(int slot)
     {
-        RetireConnection(Volatile.Read(ref _connections[slot]));
+        var connection = Volatile.Read(ref _connections[slot]);
+        var error = connection?.CloseError;
+        RetireConnection(connection);
         if (Interlocked.CompareExchange(ref _reconnecting[slot], 1, 0) != 0)
         {
             return;
         }
 
-        NotifyStateChanged(RespireConnectionState.Reconnecting);
-        NotifySlotStateChanged(slot, RespireConnectionState.Reconnecting);
+        NotifyStateChanged(RespireConnectionState.Reconnecting, error);
+        NotifySlotStateChanged(slot, RespireConnectionState.Reconnecting, error);
         _ = ReconnectAsync(slot);
     }
 
@@ -694,6 +696,11 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             }
 
             _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; will retry on next use", Host, Port);
+            if (Volatile.Read(ref _disposed) == 0)
+            {
+                NotifyStateChanged(RespireConnectionState.Disconnected, ex);
+                NotifySlotStateChanged(slot, RespireConnectionState.Disconnected, ex);
+            }
         }
         finally
         {
@@ -701,11 +708,12 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
-    internal void NotifyStateChanged(RespireConnectionState state)
+    internal void NotifyStateChanged(RespireConnectionState state, Exception? error = null)
     {
         try
         {
-            StateChanged?.Invoke(state);
+            StateChanged?.Invoke(new RespireConnectionStateChange(
+                new RespireEndpoint(Host, Port), state, error));
         }
         catch (Exception ex)
         {
@@ -713,11 +721,16 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
-    private void NotifySlotStateChanged(int slot, RespireConnectionState state)
+    private void NotifySlotStateChanged(
+        int slot,
+        RespireConnectionState state,
+        Exception? error = null)
     {
         try
         {
-            SlotStateChanged?.Invoke(slot, state);
+            SlotStateChanged?.Invoke(
+                slot,
+                new RespireConnectionStateChange(new RespireEndpoint(Host, Port), state, error));
         }
         catch (Exception ex)
         {
@@ -731,6 +744,8 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
         {
             return;
         }
+
+        NotifyStateChanged(RespireConnectionState.Disconnected);
 
         // Wait out any in-flight EnsureConnectedAsync so connections it publishes are swept
         // here instead of leaked, and so the gate is never disposed while held.

@@ -12,10 +12,11 @@ internal sealed class ClientCore : IAsyncDisposable
 {
     private readonly object _hubGate = new();
     private readonly object _stateGate = new();
-    private readonly Queue<RespireConnectionState> _pendingStates = [];
+    private readonly Queue<RespireConnectionStateChange> _pendingStates = [];
     private readonly HashSet<(RespireConnectionMultiplexer Node, int Slot)> _reconnectingCommandSlots = [];
+    private readonly HashSet<(RespireConnectionMultiplexer Node, int Slot)> _disconnectedCommandSlots = [];
     private SubscriptionHub? _hub;
-    private bool _subscriptionReconnecting;
+    private RespireConnectionState _subscriptionState = RespireConnectionState.Connected;
     private bool _publishingState;
     private RespireConnectionState _publishedState = RespireConnectionState.Connected;
 
@@ -58,41 +59,73 @@ internal sealed class ClientCore : IAsyncDisposable
             ? cluster.EnsureConnectedAsync(cancellationToken)
             : Multiplexer.EnsureConnectedAsync(cancellationToken);
 
-    public event Action<RespireConnectionState>? ConnectionStateChanged;
+    public event Action<RespireConnectionStateChange>? ConnectionStateChanged;
 
-    internal void NotifySubscriptionStateChanged(RespireConnectionState state)
+    internal void NotifySubscriptionStateChanged(
+        RespireConnectionState state,
+        Exception? error = null)
+        => NotifySubscriptionStateChanged(new RespireConnectionStateChange(
+            Options.PrimaryEndpoint, state, error));
+
+    internal void NotifySubscriptionStateChanged(RespireConnectionStateChange change)
     {
         lock (_stateGate)
         {
-            _subscriptionReconnecting = state == RespireConnectionState.Reconnecting;
-            QueueAggregateStateLocked();
+            _subscriptionState = change.State;
+            QueueAggregateStateLocked(change);
         }
 
         PublishQueuedStates();
     }
 
-    internal void NotifyCommandStateChanged(int slot, RespireConnectionState state)
-        => NotifyCommandStateChanged(Multiplexer, slot, state);
+    internal void NotifyCommandStateChanged(
+        int slot,
+        RespireConnectionState state,
+        Exception? error = null)
+        => NotifyCommandStateChanged(
+            Multiplexer,
+            slot,
+            new RespireConnectionStateChange(
+                new RespireEndpoint(Multiplexer.Host, Multiplexer.Port), state, error));
+
+    internal void NotifyCommandStateChanged(int slot, RespireConnectionStateChange change)
+        => NotifyCommandStateChanged(Multiplexer, slot, change);
 
     internal void NotifyCommandStateChanged(
         RespireConnectionMultiplexer node,
         int slot,
-        RespireConnectionState state)
+        RespireConnectionState state,
+        Exception? error = null)
+        => NotifyCommandStateChanged(
+            node,
+            slot,
+            new RespireConnectionStateChange(new RespireEndpoint(node.Host, node.Port), state, error));
+
+    internal void NotifyCommandStateChanged(
+        RespireConnectionMultiplexer node,
+        int slot,
+        RespireConnectionStateChange change)
     {
         lock (_stateGate)
         {
             var commandSlot = (node, slot);
-            var reconnecting = state == RespireConnectionState.Reconnecting;
-            if (reconnecting)
+            switch (change.State)
             {
-                _reconnectingCommandSlots.Add(commandSlot);
-            }
-            else
-            {
-                _reconnectingCommandSlots.Remove(commandSlot);
+                case RespireConnectionState.Reconnecting:
+                    _disconnectedCommandSlots.Remove(commandSlot);
+                    _reconnectingCommandSlots.Add(commandSlot);
+                    break;
+                case RespireConnectionState.Disconnected:
+                    _reconnectingCommandSlots.Remove(commandSlot);
+                    _disconnectedCommandSlots.Add(commandSlot);
+                    break;
+                default:
+                    _reconnectingCommandSlots.Remove(commandSlot);
+                    _disconnectedCommandSlots.Remove(commandSlot);
+                    break;
             }
 
-            QueueAggregateStateLocked();
+            QueueAggregateStateLocked(change);
         }
 
         PublishQueuedStates();
@@ -104,24 +137,39 @@ internal sealed class ClientCore : IAsyncDisposable
         {
             _reconnectingCommandSlots.RemoveWhere(
                 commandSlot => ReferenceEquals(commandSlot.Node, node));
-            QueueAggregateStateLocked();
+            _disconnectedCommandSlots.RemoveWhere(
+                commandSlot => ReferenceEquals(commandSlot.Node, node));
+            QueueAggregateStateLocked(new RespireConnectionStateChange(
+                new RespireEndpoint(node.Host, node.Port), RespireConnectionState.Connected, null));
         }
 
         PublishQueuedStates();
     }
 
-    private void QueueAggregateStateLocked()
+    private void QueueAggregateStateLocked(RespireConnectionStateChange source)
     {
-        var aggregate = _reconnectingCommandSlots.Count == 0 && !_subscriptionReconnecting
-            ? RespireConnectionState.Connected
-            : RespireConnectionState.Reconnecting;
+        var aggregate = GetAggregateStateLocked();
         if (aggregate == _publishedState)
         {
             return;
         }
 
         _publishedState = aggregate;
-        _pendingStates.Enqueue(aggregate);
+        _pendingStates.Enqueue(source with { State = aggregate });
+    }
+
+    private RespireConnectionState GetAggregateStateLocked()
+    {
+        if (_disconnectedCommandSlots.Count > 0
+            || _subscriptionState == RespireConnectionState.Disconnected)
+        {
+            return RespireConnectionState.Disconnected;
+        }
+
+        return _reconnectingCommandSlots.Count > 0
+               || _subscriptionState == RespireConnectionState.Reconnecting
+            ? RespireConnectionState.Reconnecting
+            : RespireConnectionState.Connected;
     }
 
     private void PublishQueuedStates()
@@ -138,11 +186,11 @@ internal sealed class ClientCore : IAsyncDisposable
 
         while (true)
         {
-            Action<RespireConnectionState>? handlers;
-            RespireConnectionState state;
+            Action<RespireConnectionStateChange>? handlers;
+            RespireConnectionStateChange change;
             lock (_stateGate)
             {
-                if (!_pendingStates.TryDequeue(out state))
+                if (!_pendingStates.TryDequeue(out change))
                 {
                     _publishingState = false;
                     return;
@@ -153,7 +201,7 @@ internal sealed class ClientCore : IAsyncDisposable
 
             try
             {
-                handlers?.Invoke(state);
+                handlers?.Invoke(change);
             }
             catch (Exception ex)
             {
@@ -190,6 +238,14 @@ internal sealed class ClientCore : IAsyncDisposable
         }
 
         Disposed = true;
+        lock (_stateGate)
+        {
+            _subscriptionState = RespireConnectionState.Disconnected;
+            QueueAggregateStateLocked(new RespireConnectionStateChange(
+                Options.PrimaryEndpoint, RespireConnectionState.Disconnected, null));
+        }
+
+        PublishQueuedStates();
         SubscriptionHub? hub;
         lock (_hubGate)
         {
