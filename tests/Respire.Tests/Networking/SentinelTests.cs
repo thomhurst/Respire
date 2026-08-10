@@ -75,12 +75,12 @@ public class SentinelTests
         [
             "AUTH sentinel-user sentinel-secret",
             "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster",
-        ]);
+        ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(
         [
             "AUTH redis-user redis-secret",
             "PING",
-        ]);
+        ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
     }
 
     [Test]
@@ -102,7 +102,7 @@ public class SentinelTests
         [
             "AUTH redis-secret",
             "PING",
-        ]);
+        ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
     }
 
     [Test]
