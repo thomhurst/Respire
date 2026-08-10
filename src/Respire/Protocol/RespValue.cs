@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
+using Respire.Internal;
 using Respire.Networking;
 
 namespace Respire.Protocol;
@@ -149,7 +150,7 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
         return _type switch
         {
             RespDataType.SimpleString or RespDataType.BulkString or RespDataType.BigNumber =>
-                _payload.IsEmpty ? string.Empty : Encoding.UTF8.GetString(_payload.Span),
+                Utf8String.GetString(_payload),
             RespDataType.VerbatimString => DecodeVerbatimString(),
             RespDataType.Integer => _integerValue.ToString(),
             RespDataType.Boolean => AsBoolean().ToString(),
@@ -160,17 +161,17 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
 
     private string DecodeVerbatimString()
     {
-        var span = _payload.Span;
-        if (span.Length >= 4)
+        var payload = _payload;
+        if (payload.Length >= 4)
         {
-            span = span[4..];
+            payload = payload[4..];
         }
 
-        return span.IsEmpty ? string.Empty : Encoding.UTF8.GetString(span);
+        return Utf8String.GetString(payload);
     }
 
     public string GetErrorMessage()
-        => IsError ? Encoding.UTF8.GetString(AsSpan()) : string.Empty;
+        => IsError ? Utf8String.GetString(_payload) : string.Empty;
 
     /// <summary>
     /// If this value is a RESP error reply, disposes it and throws
@@ -227,7 +228,7 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
                 => $"[{_type}({_elementCount})]",
             RespDataType.SimpleString or RespDataType.BulkString or RespDataType.Error
                 or RespDataType.BulkError or RespDataType.VerbatimString or RespDataType.BigNumber
-                => Encoding.UTF8.GetString(AsSpan()),
+                => Utf8String.GetString(AsSpan()),
             _ => $"Unknown({_type})",
         };
     }

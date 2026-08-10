@@ -28,7 +28,7 @@ public readonly struct RespireMessage
     public ReadOnlyMemory<byte> Payload { get; }
 
     /// <summary>The payload decoded as UTF-8.</summary>
-    public string Text => Encoding.UTF8.GetString(Payload.Span);
+    public string Text => Internal.Utf8String.GetString(Payload);
 
     /// <summary>The typed payload; strings, bytes, Boolean values, and numbers bypass the serializer.</summary>
     public T? As<T>()
