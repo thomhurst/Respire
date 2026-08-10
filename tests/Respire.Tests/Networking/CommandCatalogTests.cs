@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using System.Reflection;
 using Respire.Commands;
 using Respire.Networking;
@@ -200,7 +199,7 @@ public class CommandCatalogTests
     }
 
     [Test]
-    public async Task ExecuteSurface_HidesBinaryCompatibleStringForwarders()
+    public async Task ExecuteSurface_UsesRespireCommandWithoutStringForwarders()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var concrete = await FakeRespServer.ConnectClientAsync(server.Port);
@@ -214,32 +213,20 @@ public class CommandCatalogTests
                 .Where(static method => method.Name is nameof(IRespireClient.ExecuteAsync)
                     or nameof(IRespireClient.ExecuteFireAndForgetAsync))
                 .ToArray();
-            var hiddenStringForwarders = executeMethods
+            var stringForwarders = executeMethods
                 .Where(static method => method.GetParameters()[0].ParameterType == typeof(string))
                 .ToArray();
-            var visibleMethods = executeMethods
-                .Except(hiddenStringForwarders)
-                .ToArray();
 
-            await Assert.That(visibleMethods.Count(static method => method.Name == nameof(IRespireClient.ExecuteAsync)))
+            await Assert.That(executeMethods.Count(static method => method.Name == nameof(IRespireClient.ExecuteAsync)))
                 .IsEqualTo(3);
-            await Assert.That(visibleMethods.Count(static method => method.Name == nameof(IRespireClient.ExecuteFireAndForgetAsync)))
+            await Assert.That(executeMethods.Count(static method => method.Name == nameof(IRespireClient.ExecuteFireAndForgetAsync)))
                 .IsEqualTo(3);
-            await Assert.That(hiddenStringForwarders.Count(static method => method.Name == nameof(IRespireClient.ExecuteAsync)))
-                .IsEqualTo(2);
-            await Assert.That(hiddenStringForwarders.Count(static method => method.Name == nameof(IRespireClient.ExecuteFireAndForgetAsync)))
-                .IsEqualTo(2);
-            foreach (var method in hiddenStringForwarders)
-            {
-                await Assert.That(method.GetCustomAttribute<EditorBrowsableAttribute>()?.State)
-                    .IsEqualTo(EditorBrowsableState.Never);
-                await Assert.That(method.GetCustomAttribute<ObsoleteAttribute>()).IsNull();
-            }
+            await Assert.That(stringForwarders).IsEmpty();
         }
         await Assert.That(Enum.GetNames<RespireCommandFlags>()).IsEquivalentTo(["None", "NoRedirect"]);
         var noRedirect = Enum.GetValues<RespireCommandFlags>()
             .Single(static value => value.ToString() == "NoRedirect");
-        await Assert.That(Convert.ToInt32(noRedirect)).IsEqualTo(2);
+        await Assert.That(Convert.ToInt32(noRedirect)).IsEqualTo(1);
         await Assert.That(raw.Name).IsEqualTo("CONFIG GET");
         await Assert.That(raw.Sources).IsEqualTo(RespireCommandSource.None);
         await Assert.That(raw.Verb.Bulk).IsNull();

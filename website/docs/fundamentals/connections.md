@@ -109,14 +109,14 @@ The first command triggers connection. Dependency-injection registration uses th
 
 ## Redis Sentinel
 
-Set `ServiceName` to resolve the current primary from one or more Sentinel endpoints before
+Set `SentinelPrimaryName` to resolve the current primary from one or more Sentinel endpoints before
 connecting:
 
 ```csharp
 await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 {
     Endpoints = { new RespireEndpoint("sentinel-1", 26379) },
-    ServiceName = "mymaster",
+    SentinelPrimaryName = "mymaster",
     Password = configuration["Redis:Password"],
     SentinelPassword = configuration["Redis:SentinelPassword"],
 });

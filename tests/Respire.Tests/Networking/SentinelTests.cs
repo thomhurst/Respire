@@ -18,7 +18,7 @@ public class SentinelTests
             "redis://sentinel.example?serviceName=mymaster&sentinelUser=sentinel&sentinelPassword=secret&sentinelTls=false");
 
         await Assert.That(options.PrimaryEndpoint).IsEqualTo(new RespireEndpoint("sentinel.example", 26379));
-        await Assert.That(options.ServiceName).IsEqualTo("mymaster");
+        await Assert.That(options.SentinelPrimaryName).IsEqualTo("mymaster");
         await Assert.That(options.SentinelUsername).IsEqualTo("sentinel");
         await Assert.That(options.SentinelPassword).IsEqualTo("secret");
         await Assert.That(options.SentinelUseTls).IsFalse();
@@ -76,7 +76,7 @@ public class SentinelTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new RespireEndpoint("127.0.0.1", sentinel.Port) },
-            ServiceName = "mymaster",
+            SentinelPrimaryName = "mymaster",
             ConnectTimeout = TimeSpan.FromSeconds(1),
         });
 
@@ -100,7 +100,7 @@ public class SentinelTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new RespireEndpoint("127.0.0.1", sentinel.Port) },
-            ServiceName = "mymaster",
+            SentinelPrimaryName = "mymaster",
             Username = "redis-user",
             Password = "redis-secret",
             SentinelUsername = "sentinel-user",
@@ -158,7 +158,7 @@ public class SentinelTests
                 new RespireEndpoint("127.0.0.1", invalidSentinel.Port),
                 new RespireEndpoint("127.0.0.1", validSentinel.Port),
             },
-            ServiceName = "mymaster",
+            SentinelPrimaryName = "mymaster",
             ConnectTimeout = TimeSpan.FromSeconds(1),
         });
 
@@ -186,7 +186,7 @@ public class SentinelTests
                 new RespireEndpoint("127.0.0.1", unresponsiveSentinel.Port),
                 new RespireEndpoint("127.0.0.1", responsiveSentinel.Port),
             },
-            ServiceName = "mymaster",
+            SentinelPrimaryName = "mymaster",
             ConnectTimeout = TimeSpan.FromSeconds(1),
             // Keep sentinel timeout well below its 2-second stall while leaving enough headroom
             // for the follow-up primary PING on loaded CI runners.
@@ -215,7 +215,7 @@ public class SentinelTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new RespireEndpoint("127.0.0.1", sentinel.Port) },
-            ServiceName = "mymaster",
+            SentinelPrimaryName = "mymaster",
             Password = "redis-secret",
             SentinelPassword = string.Empty,
             // Each phase fits comfortably, but their combined 2.4 seconds exceeds this timeout.
@@ -252,7 +252,7 @@ public class SentinelTests
                 new RespireEndpoint("127.0.0.1", staleSentinel.Port),
                 new RespireEndpoint("127.0.0.1", currentSentinel.Port),
             },
-            ServiceName = "mymaster",
+            SentinelPrimaryName = "mymaster",
             ConnectTimeout = TimeSpan.FromSeconds(1),
         });
 
@@ -271,7 +271,7 @@ public class SentinelTests
         var error = Assert.Throws<RespireConfigurationException>(() => RespireClient.Create(new RespireOptions
         {
             Endpoints = { new RespireEndpoint("127.0.0.1", 26379) },
-            ServiceName = "mymaster",
+            SentinelPrimaryName = "mymaster",
         }));
 
         await Assert.That(error.Message).Contains("ConnectAsync");

@@ -18,6 +18,16 @@ public class RespireOptionsTests
     }
 
     [Test]
+    public async Task CompatibilityAliases_AreAbsent()
+    {
+        var properties = typeof(RespireOptions).GetProperties().Select(static property => property.Name);
+
+        await Assert.That(properties).DoesNotContain("Cluster");
+        await Assert.That(properties).DoesNotContain("ServiceName");
+        await Assert.That(properties).DoesNotContain("ResponseTimeout");
+    }
+
+    [Test]
     [Arguments("redis://localhost?connections=0")]
     [Arguments("redis://localhost?connections=-1")]
     public async Task ConnectionString_RejectsNonPositiveConnectionCount(string connectionString)

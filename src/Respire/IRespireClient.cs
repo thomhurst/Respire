@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using Respire.Serialization;
 
@@ -171,24 +170,12 @@ public interface IRespireClient : IAsyncDisposable
     /// </summary>
     ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args);
 
-    /// <summary>Compatibility forwarder for the former string command overload.</summary>
-    [EditorBrowsable(EditorBrowsableState.Never)]
-    ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args);
-
     /// <summary>
     /// Sends a command with optional policy flags and cancellation. The result owns pooled
     /// memory and must be disposed.
     /// </summary>
     ValueTask<RespireResult> ExecuteAsync(
         RespireCommand command,
-        RespireValue[] args,
-        RespireCommandFlags flags = RespireCommandFlags.None,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>Compatibility forwarder for the former string command overload.</summary>
-    [EditorBrowsable(EditorBrowsableState.Never)]
-    ValueTask<RespireResult> ExecuteAsync(
-        string command,
         RespireValue[] args,
         RespireCommandFlags flags = RespireCommandFlags.None,
         CancellationToken cancellationToken = default);
@@ -205,18 +192,9 @@ public interface IRespireClient : IAsyncDisposable
     /// <summary>Queues a command and discards its reply.</summary>
     ValueTask ExecuteFireAndForgetAsync(RespireCommand command, params RespireValue[] args);
 
-    /// <summary>Compatibility forwarder for the former string command overload.</summary>
-    [EditorBrowsable(EditorBrowsableState.Never)]
-    ValueTask ExecuteFireAndForgetAsync(string command, params RespireValue[] args);
-
     /// <summary>Queues a command with cancellation and discards its reply.</summary>
     ValueTask ExecuteFireAndForgetAsync(
         RespireCommand command, RespireValue[] args, CancellationToken cancellationToken = default);
-
-    /// <summary>Compatibility forwarder for the former string command overload.</summary>
-    [EditorBrowsable(EditorBrowsableState.Never)]
-    ValueTask ExecuteFireAndForgetAsync(
-        string command, RespireValue[] args, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Queues an interpolated command and discards its reply; each hole is one argument.

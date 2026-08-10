@@ -391,7 +391,7 @@ public class RespireConnectionTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
-            ResponseTimeout = TimeSpan.FromMilliseconds(50),
+            ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(50),
         });
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
@@ -410,7 +410,7 @@ public class RespireConnectionTests
         await using var client = RespireClient.Create(new RespireOptions
         {
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
-            ResponseTimeout = TimeSpan.FromMilliseconds(50),
+            ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(50),
         });
         var connection = await client.Core.DedicatedPool.RentAsync(CancellationToken.None);
 

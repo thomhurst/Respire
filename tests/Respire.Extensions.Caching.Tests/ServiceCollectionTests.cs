@@ -11,6 +11,16 @@ namespace Respire.Extensions.Caching.Tests;
 public class ServiceCollectionTests(RedisTestContainer fixture)
 {
     [Test]
+    public async Task OptionsBuilderCompatibilityAliases_AreAbsent()
+    {
+        var properties = typeof(RespireOptionsBuilder).GetProperties().Select(static property => property.Name);
+
+        await Assert.That(properties).DoesNotContain("Cluster");
+        await Assert.That(properties).DoesNotContain("ServiceName");
+        await Assert.That(properties).DoesNotContain("ResponseTimeout");
+    }
+
+    [Test]
     public async Task ConnectionString_RegistersWorkingBufferCache()
     {
         var services = new ServiceCollection();

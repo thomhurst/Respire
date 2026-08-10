@@ -101,7 +101,7 @@ public class ClusterOwnershipBenchmarks
         var primary = RespireConnectionMultiplexer.Create("localhost", 6379);
         _oldOwner = RespireConnectionMultiplexer.Create("localhost", 6380);
         _newOwner = RespireConnectionMultiplexer.Create("localhost", 6381);
-        _router = new ClusterRouter(new RespireOptions { Cluster = true }, primary);
+        _router = new ClusterRouter(new RespireOptions { UseCluster = true }, primary);
         _router.SetSlotOwner(1, _oldOwner);
         _router.SetSlotOwner(2, _newOwner);
     }

@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using System.Globalization;
 using System.Net.Security;
 using Microsoft.Extensions.Logging;
@@ -105,28 +104,12 @@ public sealed record RespireOptions
         init => _useCluster = value;
     }
 
-    /// <summary>Compatibility alias for <see cref="UseCluster"/>.</summary>
-    [EditorBrowsable(EditorBrowsableState.Never)]
-    public bool Cluster
-    {
-        get => _useCluster;
-        init => _useCluster = value;
-    }
-
     /// <summary>
     /// Redis Sentinel primary service name. When set, <see cref="RespireClient.ConnectAsync(RespireOptions, CancellationToken)"/>
     /// treats <see cref="Endpoints"/> as Sentinel endpoints and discovers the current primary
     /// before opening Redis connections.
     /// </summary>
     public string? SentinelPrimaryName
-    {
-        get => _sentinelPrimaryName;
-        init => _sentinelPrimaryName = value;
-    }
-
-    /// <summary>Compatibility alias for <see cref="SentinelPrimaryName"/>.</summary>
-    [EditorBrowsable(EditorBrowsableState.Never)]
-    public string? ServiceName
     {
         get => _sentinelPrimaryName;
         init => _sentinelPrimaryName = value;
@@ -184,14 +167,6 @@ public sealed record RespireOptions
     /// period. Null (default) disables the receive watchdog.
     /// </summary>
     public TimeSpan? ConnectionIdleReadTimeout
-    {
-        get => _connectionIdleReadTimeout;
-        init => _connectionIdleReadTimeout = value;
-    }
-
-    /// <summary>Compatibility alias for <see cref="ConnectionIdleReadTimeout"/>.</summary>
-    [EditorBrowsable(EditorBrowsableState.Never)]
-    public TimeSpan? ResponseTimeout
     {
         get => _connectionIdleReadTimeout;
         init => _connectionIdleReadTimeout = value;
