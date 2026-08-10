@@ -848,6 +848,9 @@ public sealed partial class RespireClient : IRespireClient
         return buffer.WrittenMemory;
     }
 
+    internal RespireResult CreateResult(in RespValue value)
+        => new(in value, _core.Options.Serializer);
+
     internal RespireValue SerializeRawCompatible<T>(T value)
     {
         if (value is null && (typeof(T) == typeof(string) || typeof(T) == typeof(byte[])))
@@ -906,7 +909,7 @@ public sealed partial class RespireClient : IRespireClient
             return (T)(object)value.AsSpan().ToArray();
         }
 
-        if (PrimitiveCodec.TryDeserialize<T>(value.AsSpan(), out var primitive))
+        if (PrimitiveCodec.TryDeserialize<T>(in value, out var primitive))
         {
             return primitive;
         }

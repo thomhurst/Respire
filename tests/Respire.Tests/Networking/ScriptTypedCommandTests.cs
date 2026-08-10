@@ -53,6 +53,27 @@ public class ScriptTypedCommandTests
             "EVAL return #KEYS + #ARGV 1 key argument");
     }
 
+    [Test]
+    public async Task DeferredScriptResult_UsesConfiguredSerializer()
+    {
+        await using var server = new FakeRespServer("$7\r\npayload\r\n"u8.ToArray());
+        var serializer = new RecordingSerializer();
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Serializer = serializer,
+        });
+        var script = RespireScript.Create("return ARGV[1]");
+
+        using var batch = client.CreateBatch();
+        var pending = batch.Scripts.Evaluate(script, args: ["payload"]);
+        await batch.ExecuteAsync();
+        using var result = pending.Result;
+
+        await Assert.That(result.As<Payload>()).IsEqualTo(new Payload("payload"));
+        await Assert.That(serializer.DeserializeCalls).IsEqualTo(1);
+    }
+
     private sealed record Payload(string Value);
 
     private sealed class RecordingSerializer : IRespireSerializer

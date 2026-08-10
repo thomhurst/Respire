@@ -33,6 +33,19 @@ public class RespireResultTests
     }
 
     [Test]
+    public async Task As_ConvertsNativeRespPrimitives()
+    {
+        using var integer = new RespireResult(RespValue.Integer(42));
+        using var boolean = new RespireResult(RespValue.Boolean(true));
+        using var @double = new RespireResult(RespValue.Double(3.5));
+
+        await Assert.That(integer.As<long>()).IsEqualTo(42);
+        await Assert.That(integer.As<int?>()).IsEqualTo(42);
+        await Assert.That(boolean.As<bool>()).IsTrue();
+        await Assert.That(@double.As<double>()).IsEqualTo(3.5);
+    }
+
+    [Test]
     public async Task RootAndNestedViews_ExposeDisposedLifetime()
     {
         var result = new RespireResult(RespValue.Array(RespValue.BulkString("value")));

@@ -114,7 +114,7 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
             return (T)(object)value.AsSpan().ToArray();
         }
 
-        if (PrimitiveCodec.TryDeserialize<T>(value.AsSpan(), out var primitive))
+        if (PrimitiveCodec.TryDeserialize<T>(in value, out var primitive))
         {
             return primitive;
         }
