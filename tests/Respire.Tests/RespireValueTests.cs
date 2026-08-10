@@ -79,7 +79,7 @@ public class RespireValueTests
         await Assert.That(guidValue.ToString()).IsEqualTo(guid.ToString("D"));
         await Assert.That(instantValue.ToString()).IsEqualTo(instant.ToString("O", CultureInfo.InvariantCulture));
         await Assert.That(durationValue.ToString()).IsEqualTo(duration.ToString("c", CultureInfo.InvariantCulture));
-        await Assert.That(characterValue.ToString()).IsEqualTo("£");
+        await Assert.That(characterValue.ToString()).IsEqualTo(((ushort)'£').ToString());
     }
 
     [Test]
@@ -94,5 +94,19 @@ public class RespireValueTests
         await Assert.That(memory == (RespireValue)"value").IsTrue();
         await Assert.That(segment == memory).IsTrue();
         await Assert.That(keyValue == memory).IsTrue();
+    }
+
+    [Test]
+    public async Task LargeBinaryValuesCompareWithoutChangingTheirContents()
+    {
+        var left = Enumerable.Repeat((byte)0xA5, 1024 * 1024).ToArray();
+        var right = left.ToArray();
+        RespireValue leftValue = left;
+        RespireValue rightValue = right;
+
+        await Assert.That(leftValue == rightValue).IsTrue();
+        await Assert.That(leftValue.GetHashCode()).IsEqualTo(rightValue.GetHashCode());
+        await Assert.That(left.All(value => value == 0xA5)).IsTrue();
+        await Assert.That(right.All(value => value == 0xA5)).IsTrue();
     }
 }

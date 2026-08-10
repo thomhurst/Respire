@@ -85,8 +85,8 @@ public readonly struct RespireValue : IEquatable<RespireValue>
     public static implicit operator RespireValue(TimeSpan value)
         => new(value.ToString("c", CultureInfo.InvariantCulture));
 
-    /// <summary>Converts one UTF-16 character as text.</summary>
-    public static implicit operator RespireValue(char value) => new(value.ToString());
+    /// <summary>Converts one UTF-16 code unit using its unsigned integer value.</summary>
+    public static implicit operator RespireValue(char value) => new(Kind.Integer, number: value);
 
     public static implicit operator RespireValue(long value) => new(Kind.Integer, number: value);
 
@@ -292,39 +292,33 @@ public readonly struct RespireValue : IEquatable<RespireValue>
             return _kind == other._kind;
         }
 
-        var length = GetWireLength();
-        if (length != other.GetWireLength())
+        if (_kind == Kind.Bytes)
         {
-            return false;
+            return other.EqualsBytes(_bytes.Span);
         }
 
-        byte[]? leftRented = null;
-        byte[]? rightRented = null;
-        var left = length <= StackallocThreshold
-            ? stackalloc byte[length]
-            : (leftRented = ArrayPool<byte>.Shared.Rent(length));
-        var right = length <= StackallocThreshold
-            ? stackalloc byte[length]
-            : (rightRented = ArrayPool<byte>.Shared.Rent(length));
-
-        try
+        if (other._kind == Kind.Bytes)
         {
-            WriteWirePayload(left);
-            other.WriteWirePayload(right);
-            return left[..length].SequenceEqual(right[..length]);
+            return EqualsBytes(other._bytes.Span);
         }
-        finally
-        {
-            if (leftRented is not null)
-            {
-                ArrayPool<byte>.Shared.Return(leftRented, clearArray: true);
-            }
 
-            if (rightRented is not null)
-            {
-                ArrayPool<byte>.Shared.Return(rightRented, clearArray: true);
-            }
+        if (_kind == Kind.String)
+        {
+            return other._kind == Kind.String
+                ? string.Equals(_string, other._string, StringComparison.Ordinal)
+                : other.EqualsUtf8(_string!);
         }
+
+        if (other._kind == Kind.String)
+        {
+            return EqualsUtf8(other._string!);
+        }
+
+        Span<byte> left = stackalloc byte[32];
+        Span<byte> right = stackalloc byte[32];
+        var leftLength = WriteWirePayload(left);
+        var rightLength = other.WriteWirePayload(right);
+        return left[..leftLength].SequenceEqual(right[..rightLength]);
     }
 
     public override bool Equals(object? obj) => obj is RespireValue other && Equals(other);
@@ -336,6 +330,11 @@ public readonly struct RespireValue : IEquatable<RespireValue>
             return 0;
         }
 
+        if (_kind == Kind.Bytes)
+        {
+            return HashPayload(_bytes.Span);
+        }
+
         var length = GetWireLength();
         byte[]? rented = null;
         var payload = length <= StackallocThreshold
@@ -345,13 +344,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
         try
         {
             WriteWirePayload(payload);
-            var hash = new HashCode();
-            for (var i = 0; i < length; i++)
-            {
-                hash.Add(payload[i]);
-            }
-
-            return hash.ToHashCode();
+            return HashPayload(payload[..length]);
         }
         finally
         {
@@ -360,6 +353,68 @@ public readonly struct RespireValue : IEquatable<RespireValue>
                 ArrayPool<byte>.Shared.Return(rented, clearArray: true);
             }
         }
+    }
+
+    private bool EqualsBytes(ReadOnlySpan<byte> bytes)
+    {
+        if (_kind == Kind.Bytes)
+        {
+            return _bytes.Span.SequenceEqual(bytes);
+        }
+
+        if (_kind == Kind.String)
+        {
+            return Utf8Equals(_string!, bytes);
+        }
+
+        Span<byte> payload = stackalloc byte[32];
+        var length = WriteWirePayload(payload);
+        return payload[..length].SequenceEqual(bytes);
+    }
+
+    private bool EqualsUtf8(string value)
+    {
+        Span<byte> payload = stackalloc byte[32];
+        var length = WriteWirePayload(payload);
+        return Utf8Equals(value, payload[..length]);
+    }
+
+    private static bool Utf8Equals(string value, ReadOnlySpan<byte> bytes)
+    {
+        var byteCount = Encoding.UTF8.GetByteCount(value);
+        if (byteCount != bytes.Length)
+        {
+            return false;
+        }
+
+        byte[]? rented = null;
+        var encoded = byteCount <= StackallocThreshold
+            ? stackalloc byte[byteCount]
+            : (rented = ArrayPool<byte>.Shared.Rent(byteCount));
+
+        try
+        {
+            Encoding.UTF8.GetBytes(value, encoded);
+            return encoded[..byteCount].SequenceEqual(bytes);
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                ArrayPool<byte>.Shared.Return(rented, clearArray: true);
+            }
+        }
+    }
+
+    private static int HashPayload(ReadOnlySpan<byte> payload)
+    {
+        var hash = new HashCode();
+        foreach (var value in payload)
+        {
+            hash.Add(value);
+        }
+
+        return hash.ToHashCode();
     }
 
     private int GetWireLength()
