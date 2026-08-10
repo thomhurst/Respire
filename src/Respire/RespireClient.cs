@@ -1329,8 +1329,7 @@ public sealed partial class RespireClient : IRespireClient
         bool sendAsking)
         where TCommand : struct, IRespCommand
     {
-        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutSource.CancelAfter(timeout);
+        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
         try
         {
             return await (sendAsking
@@ -1617,8 +1616,7 @@ public sealed partial class RespireClient : IRespireClient
             return;
         }
 
-        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutSource.CancelAfter(timeout);
+        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
         try
         {
             await core.Multiplexer.EnsureReliableCorrectionOrderingAsync(timeoutSource.Token).ConfigureAwait(false);
@@ -1764,8 +1762,7 @@ public sealed partial class RespireClient : IRespireClient
             return await multiplexer.GetHealthyConnectionAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutSource.CancelAfter(timeout);
+        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
         try
         {
             return await multiplexer.GetHealthyConnectionAsync(timeoutSource.Token).ConfigureAwait(false);
@@ -1788,8 +1785,7 @@ public sealed partial class RespireClient : IRespireClient
                 .ConfigureAwait(false);
         }
 
-        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutSource.CancelAfter(timeout);
+        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
         try
         {
             return await cluster.GetTrackedConnectionAsync(slot, requireIdentity, timeoutSource.Token)
@@ -1815,8 +1811,7 @@ public sealed partial class RespireClient : IRespireClient
                 .ConfigureAwait(false);
         }
 
-        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutSource.CancelAfter(timeout);
+        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
         try
         {
             return await cluster.GetTrackedRedirectConnectionAsync(
@@ -2067,8 +2062,7 @@ public sealed partial class RespireClient : IRespireClient
     internal async ValueTask UnlinkGuardedAsync(RespireKey key, CancellationToken cancellationToken)
     {
         var timeout = _core.Options.CommandTimeout ?? RemovalLeaseTtl;
-        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutSource.CancelAfter(timeout);
+        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
         try
         {
             await UnlinkLeasedAsync(key, timeoutSource.Token).ConfigureAwait(false);
@@ -2262,18 +2256,68 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        if (core.Options.CommandTimeout is null
-            && !RespireTelemetry.IsEnabled
+        if (!RespireTelemetry.IsEnabled
             && core.Cluster is null
             && core.Multiplexer.IsInitialized)
         {
             var connection = core.Multiplexer.GetConnection();
-            return connection.SendConvertedAsync(
-                in command, state, converter, transferOwnership, ct, operation);
+            return core.Options.CommandTimeout is { } timeout
+                ? SendConvertedWithTimeoutAsync(
+                    operation, connection, command, state, converter, transferOwnership, ct, timeout)
+                : connection.SendConvertedAsync(
+                    in command, state, converter, transferOwnership, ct, operation);
         }
 
         return PooledResponseSource<TState, TResult>.Create(
             SendAsync(operation, command, ct), state, converter, transferOwnership);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private static async ValueTask<TResult> SendConvertedWithTimeoutAsync<TCommand, TState, TResult>(
+        string operation,
+        RespireConnection connection,
+        TCommand command,
+        TState state,
+        ResponseConverter<TState, TResult> converter,
+        bool transferOwnership,
+        CancellationToken cancellationToken,
+        TimeSpan timeout)
+        where TCommand : struct, IRespCommand
+    {
+        RespValue response;
+        // CommandTimeout covers the Redis response, not user converter work.
+        using (var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout))
+        {
+            try
+            {
+                response = await connection.SendCheckedAsync(
+                        in command, timeoutSource.Token, operation)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (
+                !cancellationToken.IsCancellationRequested
+                && timeoutSource.IsCancellationRequested)
+            {
+                throw new RespireTimeoutException(operation, timeout);
+            }
+        }
+
+        var converted = false;
+        try
+        {
+            var result = converter(state, in response);
+            converted = true;
+            return result;
+        }
+        finally
+        {
+            if (!transferOwnership || !converted)
+            {
+                response.Dispose();
+            }
+        }
     }
 
     internal ValueTask<long> IntegerAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
@@ -2353,20 +2397,46 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        if (core.Options.CommandTimeout is null
-            && !RespireTelemetry.IsEnabled
+        if (!RespireTelemetry.IsEnabled
             && core.Cluster is null
             && core.Multiplexer.IsInitialized)
         {
             // Specialized bulk-string source: small buffered replies decode straight from the
             // receive buffer instead of round-tripping through a pooled RespValue payload.
-            return core.Multiplexer.GetConnection().SendStringAsync(in command, ct, operation);
+            var connection = core.Multiplexer.GetConnection();
+            return core.Options.CommandTimeout is { } timeout
+                ? SendStringWithTimeoutAsync(operation, connection, command, ct, timeout)
+                : connection.SendStringAsync(in command, ct, operation);
         }
 
         return PooledResponseSource<RespireClient, string?>.Create(
             SendAsync(operation, command, ct), this,
             static (RespireClient _, in RespValue value) => ResponseReader.StringOrNull(in value),
             transferOwnership: false);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private static async ValueTask<string?> SendStringWithTimeoutAsync<TCommand>(
+        string operation,
+        RespireConnection connection,
+        TCommand command,
+        CancellationToken cancellationToken,
+        TimeSpan timeout)
+        where TCommand : struct, IRespCommand
+    {
+        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
+        try
+        {
+            return await connection.SendStringAsync(
+                    in command, timeoutSource.Token, operation)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new RespireTimeoutException(operation, timeout);
+        }
     }
 
     internal ValueTask<byte[]?> BytesOrNullAsync<TCommand>(string operation, TCommand command, CancellationToken ct)

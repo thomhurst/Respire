@@ -177,6 +177,46 @@ public class StringFastPathWireTests
     }
 
     [Test]
+    public async Task Get_CommandTimeout_ThrowsRespireTimeoutException()
+    {
+        await using var server = new FakeRespServer("$5\r\nhello\r\n"u8.ToArray())
+        {
+            SuppressReply = static command => command == "GET key"
+        };
+        await using var client = await ConnectClientAsync(server, TimeSpan.FromMilliseconds(100));
+
+        await Assert.That(async () => await client.GetStringAsync("key"))
+            .ThrowsExactly<RespireTimeoutException>();
+    }
+
+    [Test]
+    public async Task Ping_CommandTimeout_ThrowsRespireTimeoutException()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            SuppressReply = static command => command == "PING"
+        };
+        await using var client = await ConnectClientAsync(server, TimeSpan.FromMilliseconds(100));
+
+        await Assert.That(async () => await client.PingAsync())
+            .ThrowsExactly<RespireTimeoutException>();
+    }
+
+    [Test]
+    public async Task Get_CallerCancellation_RemainsOperationCanceledException()
+    {
+        await using var server = new FakeRespServer("$5\r\nhello\r\n"u8.ToArray())
+        {
+            SuppressReply = static command => command == "GET key"
+        };
+        await using var client = await ConnectClientAsync(server, TimeSpan.FromSeconds(10));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+
+        await Assert.That(async () => await client.GetStringAsync("key", cancellation.Token))
+            .ThrowsExactly<OperationCanceledException>();
+    }
+
+    [Test]
     public async Task HashGet_SmallBulkReply_UsesSamePath()
     {
         await using var server = new FakeRespServer("$5\r\nvalue\r\n"u8.ToArray());
@@ -187,4 +227,14 @@ public class StringFastPathWireTests
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("HGET key field");
         await Assert.That(result).IsEqualTo("value");
     }
+
+    private static ValueTask<RespireClient> ConnectClientAsync(
+        FakeRespServer server,
+        TimeSpan commandTimeout)
+        => RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+            CommandTimeout = commandTimeout
+        });
 }

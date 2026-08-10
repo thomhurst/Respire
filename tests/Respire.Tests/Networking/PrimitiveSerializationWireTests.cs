@@ -1,3 +1,5 @@
+using System.Buffers;
+using Respire.Serialization;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -42,6 +44,22 @@ public class PrimitiveSerializationWireTests
     }
 
     [Test]
+    public async Task SerializerCancellation_AfterResponseTimeoutWindow_IsNotCommandTimeout()
+    {
+        await using var server = new FakeRespServer("$2\r\n{}\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+            CommandTimeout = TimeSpan.FromMilliseconds(250),
+            Serializer = new CancelingDeserializer()
+        });
+
+        await Assert.That(async () => await client.GetAsync<Payload>("key"))
+            .ThrowsExactly<OperationCanceledException>();
+    }
+
+    [Test]
     public async Task NullRawValue_IsRejectedBeforeSending()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
@@ -69,5 +87,19 @@ public class PrimitiveSerializationWireTests
             .Throws<ArgumentNullException>();
 
         await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    private sealed record Payload;
+
+    private sealed class CancelingDeserializer : IRespireSerializer
+    {
+        public void Serialize<T>(IBufferWriter<byte> destination, T value)
+            => throw new NotSupportedException();
+
+        public T? Deserialize<T>(ReadOnlySpan<byte> payload)
+        {
+            Thread.Sleep(TimeSpan.FromMilliseconds(500));
+            throw new OperationCanceledException("Serializer canceled conversion.");
+        }
     }
 }
