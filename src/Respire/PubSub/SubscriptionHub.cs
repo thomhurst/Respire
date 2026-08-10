@@ -15,18 +15,21 @@ namespace Respire.Internal;
 /// </summary>
 internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
 {
+    private static readonly TimeSpan DisposeConnectionPollInterval = TimeSpan.FromMilliseconds(10);
+
     private readonly object _gate = new();
     private readonly object _reconnectStateGate = new();
     private readonly Queue<RespireConnectionState> _pendingReconnectStates = [];
     private readonly Utf8RouteDictionary<List<RespireSubscription>>[] _routes =
         [new(), new(), new()];
+    private readonly SemaphoreSlim _controlGate = new(1, 1);
     private readonly SemaphoreSlim _connectionGate = new(1, 1);
     private RespireConnection? _connection;
     private long _reconnectGeneration;
     private bool _publishingReconnectState;
     private volatile bool _disposed;
 
-    public RespireSubscription CreateSubscription(SubscriptionKind kind, string[] names)
+    private RespireSubscription CreateSubscription(SubscriptionKind kind, string[] names)
     {
         ArgumentNullException.ThrowIfNull(names);
         if (kind == SubscriptionKind.Sharded && core.Cluster is not null)
@@ -39,6 +42,13 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         if (names.Length == 0)
         {
             throw new ArgumentException("At least one channel is required.", nameof(names));
+        }
+
+        // Validated before anything observable happens: a name that cannot be written as UTF-8
+        // must not register routes, open the pub/sub connection, or reach the wire.
+        foreach (var name in names)
+        {
+            Utf8RouteName.Validate(name);
         }
 
         var buffer = Channel.CreateBounded<RespireMessage>(new BoundedChannelOptions(core.Options.SubscriptionBufferSize)
@@ -56,19 +66,31 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         return new RespireSubscription(this, kind, [.. names.Distinct(StringComparer.Ordinal)], buffer);
     }
 
-    /// <summary>Registers the subscription's routes and sends SUBSCRIBE; idempotent per subscription.</summary>
-    public async ValueTask ActivateAsync(RespireSubscription subscription, CancellationToken cancellationToken)
+    /// <summary>
+    /// Creates a subscription and activates it before handing it back, so it is already live
+    /// server-side when the caller sees it — enumeration only drains the buffer.
+    /// </summary>
+    public async ValueTask<RespireSubscription> SubscribeAsync(
+        SubscriptionKind kind, string[] names, CancellationToken cancellationToken)
     {
-        if (!subscription.TryMarkActivated())
-        {
-            return;
-        }
+        var subscription = CreateSubscription(kind, names);
+        await ActivateAsync(subscription, cancellationToken).ConfigureAwait(false);
+        return subscription;
+    }
 
-        var routed = false;
+    /// <summary>
+    /// Registers the subscription's routes and sends SUBSCRIBE. Failures leave the cleanup to the
+    /// caller's <see cref="RespireSubscription.DisposeAsync"/>, which unsubscribes every route it
+    /// takes back out.
+    /// </summary>
+    private async ValueTask ActivateAsync(RespireSubscription subscription, CancellationToken cancellationToken)
+    {
+        await _controlGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        RespireConnection? connection = null;
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            var connection = await EnsureConnectionAsync(cancellationToken).ConfigureAwait(false);
+            connection = await EnsureConnectionAsync(cancellationToken).ConfigureAwait(false);
 
             lock (_gate)
             {
@@ -77,7 +99,6 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                 // not register routes (and subscribe server-side) on a disposed hub.
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 var routes = Routes(subscription.Kind);
-                routed = true;
                 foreach (var name in subscription.Names)
                 {
                     if (!routes.TryGetValue(name, out var list))
@@ -97,40 +118,24 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                         cancellationToken, instrument: true)
                     .ConfigureAwait(false);
             }
-
-            // A DisposeAsync racing this activation may have run before the routes existed —
-            // its removal saw nothing to undo. Re-check and take the registration back out
-            // (including the server-side subscription) so a disposed subscription cannot
-            // linger routed with a completed buffer.
-            if (subscription.IsDisposed)
-            {
-                await ReleaseRoutesAsync(subscription).ConfigureAwait(false);
-            }
         }
         catch
         {
-            // Roll back completely so a later enumeration attempt subscribes from scratch.
-            if (routed)
+            subscription.Buffer.Writer.TryComplete();
+            RemoveRoutes(subscription);
+            if (connection is not null)
             {
-                lock (_gate)
-                {
-                    var routes = Routes(subscription.Kind);
-                    foreach (var name in subscription.Names)
-                    {
-                        if (routes.TryGetValue(name, out var list))
-                        {
-                            list.Remove(subscription);
-                            if (list.Count == 0)
-                            {
-                                routes.Remove(name);
-                            }
-                        }
-                    }
-                }
+                // A cancelled command may already be on the wire. Closing the connection clears
+                // that uncertain server-side subscription immediately and does not await another
+                // response from the same stalled stream. Existing routes reconnect normally.
+                AbandonConnection(connection);
             }
 
-            subscription.ResetActivation();
             throw;
+        }
+        finally
+        {
+            _controlGate.Release();
         }
     }
 
@@ -138,40 +143,21 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
     public async ValueTask RemoveAsync(RespireSubscription subscription)
     {
         subscription.Buffer.Writer.TryComplete();
-        await ReleaseRoutesAsync(subscription).ConfigureAwait(false);
+        await _controlGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await ReleaseRoutesAsync(subscription).ConfigureAwait(false);
+        }
+        finally
+        {
+            _controlGate.Release();
+        }
     }
 
     /// <summary>Removes the subscription's routes and unsubscribes channels left without consumers.</summary>
     private async ValueTask ReleaseRoutesAsync(RespireSubscription subscription)
     {
-        var releasedRoutes = new List<(SubscriptionKind Kind, string Name)>();
-        lock (_gate)
-        {
-            var routes = Routes(subscription.Kind);
-            foreach (var name in subscription.Names)
-            {
-                if (routes.TryGetValue(name, out var list))
-                {
-                    list.Remove(subscription);
-                    if (list.Count == 0)
-                    {
-                        routes.Remove(name);
-                    }
-                }
-
-                // Released = no consumer remains, regardless of who removed the route. A
-                // disposal racing activation can strip the route before activation's SUBSCRIBE
-                // even goes out; deriving the unsubscribe list from "route absent" (rather
-                // than "this call removed the last entry") makes the rollback cover that
-                // ordering too. A redundant UNSUBSCRIBE is harmless; a missing one leaks a
-                // server-side subscription.
-                if (!routes.ContainsKey(name))
-                {
-                    releasedRoutes.Add((subscription.Kind, name));
-                }
-            }
-        }
-
+        var releasedRoutes = RemoveRoutes(subscription);
         var connection = _connection;
         if (_disposed || connection is not { IsConnected: true })
         {
@@ -192,6 +178,79 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                 // The connection died mid-unsubscribe; the server forgets the subscription anyway.
                 break;
             }
+        }
+    }
+
+    private List<(SubscriptionKind Kind, string Name)> RemoveRoutes(RespireSubscription subscription)
+    {
+        var releasedRoutes = new List<(SubscriptionKind Kind, string Name)>();
+        lock (_gate)
+        {
+            var routes = Routes(subscription.Kind);
+            foreach (var name in subscription.Names)
+            {
+                if (routes.TryGetValue(name, out var list))
+                {
+                    list.Remove(subscription);
+                    if (list.Count == 0)
+                    {
+                        routes.Remove(name);
+                    }
+                }
+
+                // Released = no consumer remains, regardless of who removed the route. A failed
+                // activation can leave a name subscribed server-side but never routed; deriving
+                // the unsubscribe list from "route absent" (rather than "this call removed the
+                // last entry") covers that too. A redundant UNSUBSCRIBE is harmless; a missing
+                // one leaks a server-side subscription.
+                if (!routes.ContainsKey(name))
+                {
+                    releasedRoutes.Add((subscription.Kind, name));
+                }
+            }
+        }
+
+        return releasedRoutes;
+    }
+
+    private void AbandonConnection(RespireConnection connection)
+    {
+        if (DetachConnection(connection) is not { } disposal)
+        {
+            return;
+        }
+
+        if (disposal.IsCompletedSuccessfully)
+        {
+            return;
+        }
+
+        _ = ObserveAbandonedConnectionAsync(disposal);
+    }
+
+    private Task? DetachConnection(RespireConnection connection)
+        => ReferenceEquals(Interlocked.CompareExchange(ref _connection, null, connection), connection)
+            ? connection.DisposeAsync().AsTask()
+            : null;
+
+    private async Task ObserveAbandonedConnectionAsync(Task disposal)
+    {
+        try
+        {
+            await disposal.ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            core.Logger?.LogDebug(ex, "Closing a failed subscription connection failed");
+        }
+    }
+
+    private void InterruptPublishedConnection(List<Task> interruptedDisposals)
+    {
+        var connection = Volatile.Read(ref _connection);
+        if (connection is not null && DetachConnection(connection) is { } disposal)
+        {
+            interruptedDisposals.Add(disposal);
         }
     }
 
@@ -332,43 +391,51 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         {
             try
             {
-                var replacement = await EnsureConnectionAsync(CancellationToken.None).ConfigureAwait(false);
-
-                (SubscriptionKind Kind, string Name)[] routes;
-                lock (_gate)
+                await _controlGate.WaitAsync().ConfigureAwait(false);
+                try
                 {
-                    var snapshot = new List<(SubscriptionKind Kind, string Name)>();
-                    for (var i = 0; i < _routes.Length; i++)
+                    var replacement = await EnsureConnectionAsync(CancellationToken.None).ConfigureAwait(false);
+
+                    (SubscriptionKind Kind, string Name)[] routes;
+                    lock (_gate)
                     {
-                        foreach (var name in _routes[i].Names)
+                        var snapshot = new List<(SubscriptionKind Kind, string Name)>();
+                        for (var i = 0; i < _routes.Length; i++)
                         {
-                            snapshot.Add(((SubscriptionKind)i, name));
+                            foreach (var name in _routes[i].Names)
+                            {
+                                snapshot.Add(((SubscriptionKind)i, name));
+                            }
+                        }
+
+                        routes = [.. snapshot];
+                    }
+
+                    foreach (var (kind, name) in routes)
+                    {
+                        await SendControlAsync(
+                                replacement, SubscribeVerb(kind), SubscribeOperation(kind), name,
+                                CancellationToken.None, instrument: false)
+                            .ConfigureAwait(false);
+                    }
+
+                    // A replacement can itself fail while this watcher is resubscribing. Its watcher
+                    // then owns the newer reconnect generation; this stale watcher must not announce
+                    // Connected after that newer Reconnecting notification.
+                    publishState = false;
+                    lock (_reconnectStateGate)
+                    {
+                        if (reconnectGeneration == _reconnectGeneration
+                            && ReferenceEquals(Volatile.Read(ref _connection), replacement)
+                            && replacement.IsConnected)
+                        {
+                            publishState = QueueReconnectStateLocked(RespireConnectionState.Connected);
                         }
                     }
-
-                    routes = [.. snapshot];
                 }
-
-                foreach (var (kind, name) in routes)
+                finally
                 {
-                    await SendControlAsync(
-                            replacement, SubscribeVerb(kind), SubscribeOperation(kind), name,
-                            CancellationToken.None, instrument: false)
-                        .ConfigureAwait(false);
-                }
-
-                // A replacement can itself fail while this watcher is resubscribing. Its watcher
-                // then owns the newer reconnect generation; this stale watcher must not announce
-                // Connected after that newer Reconnecting notification.
-                publishState = false;
-                lock (_reconnectStateGate)
-                {
-                    if (reconnectGeneration == _reconnectGeneration
-                        && ReferenceEquals(Volatile.Read(ref _connection), replacement)
-                        && replacement.IsConnected)
-                    {
-                        publishState = QueueReconnectStateLocked(RespireConnectionState.Connected);
-                    }
+                    _controlGate.Release();
                 }
 
                 if (publishState)
@@ -495,40 +562,57 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             _pendingReconnectStates.Clear();
         }
 
-        List<RespireSubscription> subscriptions = [];
-        lock (_gate)
+        // Interrupt stalled control commands while waiting for their serialization gate. A
+        // reconnect can publish a replacement after the first snapshot, so keep detaching every
+        // connection that appears until the gate is ours.
+        List<Task> interruptedDisposals = [];
+        InterruptPublishedConnection(interruptedDisposals);
+        while (!await _controlGate.WaitAsync(DisposeConnectionPollInterval).ConfigureAwait(false))
         {
-            foreach (var routes in _routes)
-            {
-                foreach (var list in routes.Values)
-                {
-                    subscriptions.AddRange(list);
-                }
-
-                routes.Clear();
-            }
+            InterruptPublishedConnection(interruptedDisposals);
         }
 
-        foreach (var subscription in subscriptions)
-        {
-            subscription.Buffer.Writer.TryComplete();
-        }
-
-        // Synchronize with a racing first connect: once the gate is ours, any connection an
-        // in-flight EnsureConnectionAsync published is visible here and gets swept instead of
-        // leaking an open socket past client disposal.
-        await _connectionGate.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (_connection is { } connection)
+            InterruptPublishedConnection(interruptedDisposals);
+
+            List<RespireSubscription> subscriptions = [];
+            lock (_gate)
             {
-                await connection.DisposeAsync().ConfigureAwait(false);
+                foreach (var routes in _routes)
+                {
+                    foreach (var list in routes.Values)
+                    {
+                        subscriptions.AddRange(list);
+                    }
+
+                    routes.Clear();
+                }
+            }
+
+            foreach (var subscription in subscriptions)
+            {
+                subscription.Buffer.Writer.TryComplete();
+            }
+
+            // Synchronize with a racing first connect: once the gate is ours, any connection an
+            // in-flight EnsureConnectionAsync published is visible here and gets swept instead of
+            // leaking an open socket past client disposal.
+            await _connectionGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                InterruptPublishedConnection(interruptedDisposals);
+                await Task.WhenAll(interruptedDisposals).ConfigureAwait(false);
+            }
+            finally
+            {
+                _connectionGate.Release();
+                _connectionGate.Dispose();
             }
         }
         finally
         {
-            _connectionGate.Release();
-            _connectionGate.Dispose();
+            _controlGate.Release();
         }
     }
 

@@ -186,6 +186,8 @@ public class SentinelTests
             },
             ServiceName = "mymaster",
             ConnectTimeout = TimeSpan.FromSeconds(1),
+            // Keep sentinel timeout well below its 2-second stall while leaving enough headroom
+            // for the follow-up primary PING on loaded CI runners.
             CommandTimeout = TimeSpan.FromMilliseconds(500),
         });
 

@@ -57,9 +57,15 @@ public interface IRespireClient : IAsyncDisposable
     // Pub/sub.
     ValueTask<long> PublishAsync(string channel, RespireValue message, CancellationToken cancellationToken = default);
     ValueTask<long> PublishShardedAsync(string channel, RespireValue message, CancellationToken cancellationToken = default);
-    RespireSubscription Subscribe(params string[] channels);
-    RespireSubscription SubscribePattern(params string[] patterns);
-    RespireSubscription SubscribeSharded(params string[] channels);
+
+    // Subscribing is always awaited: the subscription is live on the server when the task
+    // completes, so a publish that follows is guaranteed to reach it.
+    ValueTask<RespireSubscription> SubscribeAsync(string channel, CancellationToken cancellationToken = default);
+    ValueTask<RespireSubscription> SubscribeAsync(string[] channels, CancellationToken cancellationToken = default);
+    ValueTask<RespireSubscription> SubscribePatternAsync(string pattern, CancellationToken cancellationToken = default);
+    ValueTask<RespireSubscription> SubscribePatternAsync(string[] patterns, CancellationToken cancellationToken = default);
+    ValueTask<RespireSubscription> SubscribeShardedAsync(string channel, CancellationToken cancellationToken = default);
+    ValueTask<RespireSubscription> SubscribeShardedAsync(string[] channels, CancellationToken cancellationToken = default);
 
     // Batches and transactions.
     RespireBatch CreateBatch();

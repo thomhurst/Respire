@@ -1416,9 +1416,18 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ValueTask<long> PublishShardedAsync(string channel, RespireValue message, CancellationToken cancellationToken = default)
             => inner.PublishShardedAsync(channel, message, cancellationToken);
 
-        public RespireSubscription Subscribe(params string[] channels) => inner.Subscribe(channels);
-        public RespireSubscription SubscribePattern(params string[] patterns) => inner.SubscribePattern(patterns);
-        public RespireSubscription SubscribeSharded(params string[] channels) => inner.SubscribeSharded(channels);
+        public ValueTask<RespireSubscription> SubscribeAsync(string channel, CancellationToken cancellationToken = default)
+            => inner.SubscribeAsync(channel, cancellationToken);
+        public ValueTask<RespireSubscription> SubscribeAsync(string[] channels, CancellationToken cancellationToken = default)
+            => inner.SubscribeAsync(channels, cancellationToken);
+        public ValueTask<RespireSubscription> SubscribePatternAsync(string pattern, CancellationToken cancellationToken = default)
+            => inner.SubscribePatternAsync(pattern, cancellationToken);
+        public ValueTask<RespireSubscription> SubscribePatternAsync(string[] patterns, CancellationToken cancellationToken = default)
+            => inner.SubscribePatternAsync(patterns, cancellationToken);
+        public ValueTask<RespireSubscription> SubscribeShardedAsync(string channel, CancellationToken cancellationToken = default)
+            => inner.SubscribeShardedAsync(channel, cancellationToken);
+        public ValueTask<RespireSubscription> SubscribeShardedAsync(string[] channels, CancellationToken cancellationToken = default)
+            => inner.SubscribeShardedAsync(channels, cancellationToken);
 
         public RespireBatch CreateBatch() => inner.CreateBatch();
         public RespireTransaction CreateTransaction() => inner.CreateTransaction();

@@ -1,4 +1,7 @@
+using System.Diagnostics;
+using System.Reflection;
 using Respire.Commands;
+using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
 using TUnit.Core;
@@ -31,11 +34,74 @@ public class PubSubTests
     {
         await using var server = new FakeRespServer(SubscribeConfirmation);
         await using var client = CreateLazyClient(server.Port);
-        await using var subscription = client.Subscribe("valid", "\uD800");
-        await using var enumerator = subscription.GetAsyncEnumerator();
 
-        await Assert.That(async () => await enumerator.MoveNextAsync()).Throws<ArgumentException>();
+        // Names are validated before any route is registered or any byte reaches the wire.
+        await Assert.That(async () => await client.SubscribeAsync(["valid", "\uD800"]))
+            .Throws<ArgumentException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task SubscribeAsync_ReturnsAfterConfirmation_ThenMessagesFlowToEnumerator()
+    {
+        await using var server = new FakeRespServer(SubscribeConfirmation);
+        await using var client = CreateLazyClient(server.Port);
+
+        var channel = new string("ch".AsSpan());
+        await using var subscription = await client.SubscribeAsync(channel);
+
+        // Returning already implies the confirmation arrived — no waiting for the command to show up.
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(["SUBSCRIBE ch"]);
+
+        var enumerator = subscription.GetAsyncEnumerator();
+        var moveTask = enumerator.MoveNextAsync();
+        await server.SendRawAsync(MessageFrame);
+
+        await Assert.That(await moveTask.AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        await Assert.That(enumerator.Current.Channel).IsEqualTo("ch");
+        await Assert.That(ReferenceEquals(enumerator.Current.Channel, channel)).IsTrue();
+        await Assert.That(enumerator.Current.Text).IsEqualTo("hello");
+
+        // Enumeration streams the buffer; it never resubscribes.
+        await Assert.That(server.CommandsSeen).IsEqualTo(1);
+        await enumerator.DisposeAsync();
+    }
+
+    [Test]
+    public async Task SubscribeAsync_Cancelled_AbandonsStalledConnectionBeforeReplacement()
+    {
+        await using var server = new FakeRespServer(
+            2,
+            "*3\r\n$9\r\nsubscribe\r\n$4\r\nwarm\r\n:1\r\n"u8.ToArray(),
+            SubscribeConfirmation);
+        var suppressFirstChannelReply = 1;
+        server.SuppressReply = command => command == "SUBSCRIBE ch"
+            && Interlocked.Exchange(ref suppressFirstChannelReply, 0) == 1;
+        await using var client = CreateLazyClient(server.Port);
+
+        await using var warm = await client.SubscribeAsync("warm");
+        using var cts = new CancellationTokenSource();
+        var failedSubscription = client.SubscribeAsync("ch", cts.Token).AsTask();
+        await WaitForCommandsAsync(server, 2);
+
+        var cancellationStarted = Stopwatch.GetTimestamp();
+        await cts.CancelAsync();
+        await Assert.That(async () => await failedSubscription.WaitAsync(TimeSpan.FromSeconds(1)))
+            .Throws<OperationCanceledException>();
+        await Assert.That(Stopwatch.GetElapsedTime(cancellationStarted)).IsLessThan(TimeSpan.FromSeconds(1));
+
+        // Failed cleanup closes the uncertain connection instead of queueing an UNSUBSCRIBE on
+        // its stalled response stream. Existing routes reconnect, then replacement activation is
+        // serialized behind that recovery and remains subscribed.
+        await using var replacement = await client.SubscribeAsync("ch").AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(server.ReceivedCommands).DoesNotContain("UNSUBSCRIBE ch");
+        await Assert.That(server.ReceivedCommands.Count(command => command == "SUBSCRIBE ch")).IsEqualTo(2);
+        var channelConnectionIds = server.ReceivedCommands
+            .Select((command, index) => (command, connectionId: server.ReceivedConnectionIds[index]))
+            .Where(entry => entry.command == "SUBSCRIBE ch")
+            .Select(entry => entry.connectionId)
+            .ToArray();
+        await Assert.That(channelConnectionIds[0]).IsNotEqualTo(channelConnectionIds[1]);
     }
 
     private static async Task WaitForCommandsAsync(FakeRespServer server, int count)
@@ -43,32 +109,68 @@ public class PubSubTests
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (server.CommandsSeen < count)
         {
-            cts.Token.ThrowIfCancellationRequested();
             await Task.Delay(10, cts.Token);
         }
     }
 
     [Test]
-    public async Task Subscribe_ConfirmationCompletes_MessagesFlowToEnumerator()
+    public async Task DisposeAsync_InterruptsStalledSubscriptionActivation()
     {
-        await using var server = new FakeRespServer(SubscribeConfirmation);
-        await using var client = CreateLazyClient(server.Port);
-
-        var channel = new string("ch".AsSpan());
-        await using var subscription = client.Subscribe(channel);
-        var enumerator = subscription.GetAsyncEnumerator();
-        var moveTask = enumerator.MoveNextAsync();
-
+        await using var server = new FakeRespServer(SubscribeConfirmation)
+        {
+            SuppressReply = command => command == "SUBSCRIBE ch",
+        };
+        var client = CreateLazyClient(server.Port);
+        var subscription = client.SubscribeAsync("ch").AsTask();
         await WaitForCommandsAsync(server, 1);
-        await Assert.That(server.ReceivedCommands[0]).IsEqualTo("SUBSCRIBE ch");
 
-        await server.SendRawAsync(MessageFrame);
+        await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(1));
 
-        await Assert.That(await moveTask.AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
-        await Assert.That(enumerator.Current.Channel).IsEqualTo("ch");
-        await Assert.That(ReferenceEquals(enumerator.Current.Channel, channel)).IsTrue();
-        await Assert.That(enumerator.Current.Text).IsEqualTo("hello");
-        await enumerator.DisposeAsync();
+        await Assert.That(async () => await subscription).Throws<RespireConnectionException>();
+    }
+
+    [Test]
+    public async Task DisposeAsync_InterruptsReplacementPublishedWhileWaitingForControlGate()
+    {
+        await using var server = new FakeRespServer(SubscribeConfirmation)
+        {
+            SuppressReply = _ => true,
+        };
+        var client = CreateLazyClient(server.Port);
+        var hub = client.Core.Hub;
+        var controlGate = (SemaphoreSlim)typeof(SubscriptionHub)
+            .GetField("_controlGate", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(hub)!;
+        var connectionField = typeof(SubscriptionHub)
+            .GetField("_connection", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var replacement = await RespireConnection.ConnectAsync(
+            "127.0.0.1", server.Port, new RespireConnectionOptions());
+
+        await controlGate.WaitAsync();
+        try
+        {
+            // Disposal snapshots no connection, then waits behind a reconnect control operation.
+            var disposal = client.DisposeAsync().AsTask();
+            var stalledResubscribe = replacement.SendAsync(new Cmd1(Verbs.Subscribe, "ch")).AsTask();
+            await WaitForCommandsAsync(server, 1);
+            connectionField.SetValue(hub, replacement);
+
+            await replacement.Closed.WaitAsync(TimeSpan.FromSeconds(1));
+            await Assert.That(async () => await stalledResubscribe).Throws<RespireConnectionException>();
+
+            controlGate.Release();
+            await disposal.WaitAsync(TimeSpan.FromSeconds(1));
+        }
+        finally
+        {
+            if (controlGate.CurrentCount == 0)
+            {
+                controlGate.Release();
+            }
+
+            await client.DisposeAsync();
+            await replacement.DisposeAsync();
+        }
     }
 
     [Test]
@@ -77,7 +179,7 @@ public class PubSubTests
         await using var server = new FakeRespServer(SubscribeConfirmation);
         await using var client = CreateLazyClient(server.Port);
 
-        await using var subscription = client.Subscribe("ch");
+        await using var subscription = await client.SubscribeAsync("ch");
         var received = new List<string>();
         var collector = Task.Run(async () =>
         {
@@ -95,7 +197,6 @@ public class PubSubTests
             }
         });
 
-        await WaitForCommandsAsync(server, 1);
         await server.SendRawAsync(
             "*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$1\r\na\r\n*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$1\r\nb\r\n*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$1\r\nc\r\n"u8.ToArray());
         await collector.WaitAsync(TimeSpan.FromSeconds(5));
@@ -110,11 +211,10 @@ public class PubSubTests
             "*3\r\n$10\r\npsubscribe\r\n$3\r\nch*\r\n:1\r\n"u8.ToArray());
         await using var client = CreateLazyClient(server.Port);
 
-        await using var subscription = client.SubscribePattern("ch*");
+        await using var subscription = await client.SubscribePatternAsync("ch*");
         var enumerator = subscription.GetAsyncEnumerator();
         var moveTask = enumerator.MoveNextAsync();
 
-        await WaitForCommandsAsync(server, 1);
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("PSUBSCRIBE ch*");
 
         await server.SendRawAsync("*4\r\n$8\r\npmessage\r\n$3\r\nch*\r\n$3\r\nch1\r\n$4\r\ndata\r\n"u8.ToArray());
@@ -134,16 +234,14 @@ public class PubSubTests
             "*3\r\n$11\r\nunsubscribe\r\n$2\r\nch\r\n:0\r\n"u8.ToArray());
         await using var client = CreateLazyClient(server.Port);
 
-        var subscription = client.Subscribe("ch");
+        var subscription = await client.SubscribeAsync("ch");
         var enumerator = subscription.GetAsyncEnumerator();
         var moveTask = enumerator.MoveNextAsync();
-        await WaitForCommandsAsync(server, 1);
 
         await subscription.DisposeAsync();
 
         // The stream ends (no message ever arrived) and UNSUBSCRIBE went to the server.
         await Assert.That(await moveTask.AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
-        await WaitForCommandsAsync(server, 2);
         await Assert.That(server.ReceivedCommands[1]).IsEqualTo("UNSUBSCRIBE ch");
         await enumerator.DisposeAsync();
     }
@@ -156,20 +254,18 @@ public class PubSubTests
             "*3\r\n$9\r\nsubscribe\r\n$3\r\nch2\r\n:1\r\n"u8.ToArray());
         await using var client = CreateLazyClient(server.Port);
 
-        var first = client.Subscribe("ch");
+        var first = await client.SubscribeAsync("ch");
         var firstEnumerator = first.GetAsyncEnumerator();
         var firstMove = firstEnumerator.MoveNextAsync();
-        await WaitForCommandsAsync(server, 1);
 
         // A message for a channel nobody routes must be dropped silently.
         await server.SendRawAsync("*3\r\n$7\r\nmessage\r\n$5\r\nother\r\n$1\r\nx\r\n"u8.ToArray());
 
         // A follow-up subscription round trip on the same stream proves the frame was consumed
         // without killing the receive loop.
-        var second = client.Subscribe("ch2");
+        var second = await client.SubscribeAsync("ch2");
         var secondEnumerator = second.GetAsyncEnumerator();
         var secondMove = secondEnumerator.MoveNextAsync();
-        await WaitForCommandsAsync(server, 2);
         await Assert.That(server.ReceivedCommands[1]).IsEqualTo("SUBSCRIBE ch2");
 
         // Disposing the subscriptions completes their buffers, which lets the pending

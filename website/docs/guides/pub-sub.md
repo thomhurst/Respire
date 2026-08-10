@@ -9,8 +9,11 @@ Respire models subscriptions as `IAsyncEnumerable<RespireMessage>`. Leaving the 
 
 ## Subscribe
 
+`SubscribeAsync` returns once the server has acknowledged the SUBSCRIBE, so the subscription is live before the first message is published—no polling on `PublishAsync`'s receiver count.
+
 ```csharp
-await using var subscription = redis.Subscribe("orders", "payments");
+await using var subscription =
+    await redis.SubscribeAsync(["orders", "payments"], stoppingToken);
 
 await foreach (RespireMessage message in
     subscription.WithCancellation(stoppingToken))
@@ -22,9 +25,11 @@ await foreach (RespireMessage message in
 Pattern and Redis 7 sharded subscriptions use dedicated entry points:
 
 ```csharp
-await using var patterns = redis.SubscribePattern("events:*");
-await using var shard = redis.SubscribeSharded("events:eu-west");
+await using var patterns = await redis.SubscribePatternAsync("events:*");
+await using var shard = await redis.SubscribeShardedAsync("events:eu-west");
 ```
+
+Messages are buffered from the moment the subscription is acknowledged, so nothing is lost between `SubscribeAsync` returning and the `await foreach` starting.
 
 ## Publish
 

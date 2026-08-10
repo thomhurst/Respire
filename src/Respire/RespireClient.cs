@@ -682,20 +682,43 @@ public sealed partial class RespireClient : IRespireClient
         => IntegerAsync("SPUBLISH", new Cmd2(Verbs.SPublish, channel, message), cancellationToken);
 
     /// <summary>
-    /// Subscribes to channels as an async stream: <c>await foreach (var msg in client.Subscribe("news"))</c>.
-    /// The SUBSCRIBE is sent when enumeration starts; disposing the subscription unsubscribes.
-    /// Redis: SUBSCRIBE.
+    /// Subscribes to a channel and returns once the server has acknowledged the SUBSCRIBE, so the
+    /// next publish is guaranteed to reach this subscriber — no readiness polling. Messages are
+    /// buffered from that moment, whenever enumeration starts; disposing the subscription
+    /// unsubscribes. Redis: SUBSCRIBE.
     /// </summary>
-    public RespireSubscription Subscribe(params string[] channels)
-        => _core.Hub.CreateSubscription(SubscriptionKind.Channel, channels);
+    public ValueTask<RespireSubscription> SubscribeAsync(string channel, CancellationToken cancellationToken = default)
+        => SubscribeCoreAsync(SubscriptionKind.Channel, [channel], cancellationToken);
 
-    /// <summary>Subscribes to glob patterns ("news.*"). Redis: PSUBSCRIBE.</summary>
-    public RespireSubscription SubscribePattern(params string[] patterns)
-        => _core.Hub.CreateSubscription(SubscriptionKind.Pattern, patterns);
+    /// <inheritdoc cref="SubscribeAsync(string, CancellationToken)"/>
+    public ValueTask<RespireSubscription> SubscribeAsync(string[] channels, CancellationToken cancellationToken = default)
+        => SubscribeCoreAsync(SubscriptionKind.Channel, channels, cancellationToken);
 
-    /// <summary>Subscribes to sharded channels (Redis 7+). Redis: SSUBSCRIBE.</summary>
-    public RespireSubscription SubscribeSharded(params string[] channels)
-        => _core.Hub.CreateSubscription(SubscriptionKind.Sharded, channels);
+    /// <summary>
+    /// Subscribes to a glob pattern ("news.*") and returns once the server has acknowledged.
+    /// Redis: PSUBSCRIBE.
+    /// </summary>
+    public ValueTask<RespireSubscription> SubscribePatternAsync(string pattern, CancellationToken cancellationToken = default)
+        => SubscribeCoreAsync(SubscriptionKind.Pattern, [pattern], cancellationToken);
+
+    /// <inheritdoc cref="SubscribePatternAsync(string, CancellationToken)"/>
+    public ValueTask<RespireSubscription> SubscribePatternAsync(string[] patterns, CancellationToken cancellationToken = default)
+        => SubscribeCoreAsync(SubscriptionKind.Pattern, patterns, cancellationToken);
+
+    /// <summary>
+    /// Subscribes to a sharded channel (Redis 7+) and returns once the server has acknowledged.
+    /// Redis: SSUBSCRIBE.
+    /// </summary>
+    public ValueTask<RespireSubscription> SubscribeShardedAsync(string channel, CancellationToken cancellationToken = default)
+        => SubscribeCoreAsync(SubscriptionKind.Sharded, [channel], cancellationToken);
+
+    /// <inheritdoc cref="SubscribeShardedAsync(string, CancellationToken)"/>
+    public ValueTask<RespireSubscription> SubscribeShardedAsync(string[] channels, CancellationToken cancellationToken = default)
+        => SubscribeCoreAsync(SubscriptionKind.Sharded, channels, cancellationToken);
+
+    private ValueTask<RespireSubscription> SubscribeCoreAsync(
+        SubscriptionKind kind, string[] names, CancellationToken cancellationToken)
+        => _core.Hub.SubscribeAsync(kind, names, cancellationToken);
 
     // Batches and transactions
 

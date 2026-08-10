@@ -52,10 +52,11 @@ string? job = await redis.Lists.LeftPopAsync(
 ### Pub/sub
 
 Subscriptions are async streams. Leaving the loop and disposing the subscription handles
-cleanup—no delegate bookkeeping required.
+cleanup—no delegate bookkeeping required. `SubscribeAsync` returns once the server has
+acknowledged the SUBSCRIBE, so the next publish is guaranteed to reach it.
 
 ```csharp
-await using var subscription = redis.Subscribe("orders");
+await using var subscription = await redis.SubscribeAsync("orders", token);
 
 await foreach (var message in subscription.WithCancellation(token))
 {
@@ -66,17 +67,12 @@ await foreach (var message in subscription.WithCancellation(token))
 Redis 7 sharded pub/sub uses `SSUBSCRIBE` and `SPUBLISH`. Run this as a separate consumer:
 
 ```csharp
-await using var shard = redis.SubscribeSharded("orders:europe");
+await using var shard = await redis.SubscribeShardedAsync("orders:europe", token);
 await using var shardMessages = shard.GetAsyncEnumerator(token);
-var nextMessage = shardMessages.MoveNextAsync().AsTask(); // Starts SSUBSCRIBE.
 
-while (!nextMessage.IsCompleted)
-{
-    await redis.PublishShardedAsync("orders:europe", "ready", token);
-    await Task.WhenAny(nextMessage, Task.Delay(10, token));
-}
+await redis.PublishShardedAsync("orders:europe", "ready", token);
 
-if (await nextMessage.WaitAsync(token))
+if (await shardMessages.MoveNextAsync())
 {
     Console.WriteLine(shardMessages.Current.Text);
 }
