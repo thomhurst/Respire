@@ -85,27 +85,42 @@ public interface IRespireClient : IAsyncDisposable
     // Raw escape hatch. Two shapes per command form: a params call for the common case, and an
     // array call that adds flags and cancellation as optional arguments — name the one you need.
 
-    /// <summary>Sends a catalog command; each value is exactly one argument.</summary>
+    /// <summary>
+    /// Sends a catalog command; each value is exactly one argument. The result owns pooled memory
+    /// and must be disposed.
+    /// </summary>
     ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args);
 
-    /// <summary>Sends a catalog command with optional policy flags and cancellation.</summary>
+    /// <summary>
+    /// Sends a catalog command with optional policy flags and cancellation. The result owns pooled
+    /// memory and must be disposed.
+    /// </summary>
     ValueTask<RespireResult> ExecuteAsync(
         RespireCommand command,
         RespireValue[] args,
         RespireCommandFlags flags = RespireCommandFlags.None,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Sends any command; the name may contain spaces and each value is one argument.</summary>
+    /// <summary>
+    /// Sends any command; the name may contain spaces and each value is one argument. The result
+    /// owns pooled memory and must be disposed.
+    /// </summary>
     ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args);
 
-    /// <summary>Sends any command with optional policy flags and cancellation.</summary>
+    /// <summary>
+    /// Sends any command with optional policy flags and cancellation. The result owns pooled memory
+    /// and must be disposed.
+    /// </summary>
     ValueTask<RespireResult> ExecuteAsync(
         string command,
         RespireValue[] args,
         RespireCommandFlags flags = RespireCommandFlags.None,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Sends a command written as an interpolated string; each hole is one argument.</summary>
+    /// <summary>
+    /// Sends a command written as an interpolated string; each hole is one argument. The result owns
+    /// pooled memory and must be disposed.
+    /// </summary>
     ValueTask<RespireResult> ExecuteAsync(
         RespireCommandInterpolatedStringHandler command,
         RespireCommandFlags flags = RespireCommandFlags.None,
