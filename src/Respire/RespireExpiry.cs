@@ -84,8 +84,10 @@ public readonly struct RespireExpiry : IEquatable<RespireExpiry>
     /// <summary>Converts an absolute expiry instant. Redis: PXAT Unix milliseconds.</summary>
     public static implicit operator RespireExpiry(DateTimeOffset instant) => At(instant);
 
+    /// <summary>Tests two expiry policies for equality.</summary>
     public static bool operator ==(RespireExpiry left, RespireExpiry right) => left.Equals(right);
 
+    /// <summary>Tests two expiry policies for inequality.</summary>
     public static bool operator !=(RespireExpiry left, RespireExpiry right) => !left.Equals(right);
 
     /// <summary>The number of command tokens this expiry contributes: 0 for none, 1 for KEEPTTL/PERSIST, 2 otherwise.</summary>
@@ -109,12 +111,16 @@ public readonly struct RespireExpiry : IEquatable<RespireExpiry>
         return _kind == RespireExpiryKind.Absolute;
     }
 
+    /// <inheritdoc/>
     public bool Equals(RespireExpiry other) => _kind == other._kind && _value == other._value;
 
+    /// <inheritdoc/>
     public override bool Equals(object? obj) => obj is RespireExpiry other && Equals(other);
 
+    /// <inheritdoc/>
     public override int GetHashCode() => HashCode.Combine((byte)_kind, _value);
 
+    /// <inheritdoc/>
     public override string ToString()
         => _kind switch
         {

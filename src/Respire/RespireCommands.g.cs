@@ -5,6 +5,7 @@ namespace Respire;
 /// <summary>Pre-encoded descriptors for commands documented by Redis, Valkey, KeyDB, and Dragonfly.</summary>
 public static class RespireCommands
 {
+    /// <summary>Pre-encoded Array command descriptors.</summary>
     public static class Array
     {
         /// <summary><c>ARCOUNT</c>.</summary>
@@ -63,6 +64,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded Bitmap command descriptors.</summary>
     public static class Bitmap
     {
         /// <summary><c>BITCOUNT</c>.</summary>
@@ -88,6 +90,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded Bloom command descriptors.</summary>
     public static class Bloom
     {
         /// <summary><c>BF.ADD</c>.</summary>
@@ -125,6 +128,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded Cluster command descriptors.</summary>
     public static class Cluster
     {
         /// <summary><c>ASKING</c>.</summary>
@@ -249,6 +253,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded Connection command descriptors.</summary>
     public static class Connection
     {
         /// <summary><c>AUTH</c>.</summary>
@@ -340,6 +345,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded CountMinSketch command descriptors.</summary>
     public static class CountMinSketch
     {
         /// <summary><c>CMS.INCRBY</c>.</summary>
@@ -362,6 +368,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded Cuckoo command descriptors.</summary>
     public static class Cuckoo
     {
         /// <summary><c>CF.ADD</c>.</summary>
@@ -402,6 +409,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded Dragonfly command descriptors.</summary>
     public static class Dragonfly
     {
         /// <summary><c>STICK</c>.</summary>
@@ -409,6 +417,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded Geo command descriptors.</summary>
     public static class Geo
     {
         /// <summary><c>GEOADD</c>.</summary>
@@ -443,6 +452,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded Hash command descriptors.</summary>
     public static class Hash
     {
         /// <summary><c>HDEL</c>.</summary>
@@ -546,6 +556,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded HyperLogLog command descriptors.</summary>
     public static class HyperLogLog
     {
         /// <summary><c>PFADD</c>.</summary>
@@ -565,6 +576,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded Json command descriptors.</summary>
     public static class Json
     {
         /// <summary><c>JSON.ARRAPPEND</c>.</summary>
@@ -647,6 +659,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded Key command descriptors.</summary>
     public static class Key
     {
         /// <summary><c>COPY</c>.</summary>
@@ -753,6 +766,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded KeyDb command descriptors.</summary>
     public static class KeyDb
     {
         /// <summary><c>EXPIREMEMBER</c>.</summary>
@@ -769,6 +783,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded List command descriptors.</summary>
     public static class List
     {
         /// <summary><c>BLMOVE</c>.</summary>
@@ -845,6 +860,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded PubSub command descriptors.</summary>
     public static class PubSub
     {
         /// <summary><c>PSUBSCRIBE</c>.</summary>
@@ -894,6 +910,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded Scripting command descriptors.</summary>
     public static class Scripting
     {
         /// <summary><c>EVAL</c>.</summary>
@@ -970,6 +987,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded Search command descriptors.</summary>
     public static class Search
     {
         /// <summary><c>FT._LIST</c>.</summary>
@@ -1064,6 +1082,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded Sentinel command descriptors.</summary>
     public static class Sentinel
     {
         /// <summary><c>SENTINEL</c>.</summary>
@@ -1146,6 +1165,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded Server command descriptors.</summary>
     public static class Server
     {
         /// <summary><c>ACL</c>.</summary>
@@ -1441,6 +1461,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded Set command descriptors.</summary>
     public static class Set
     {
         /// <summary><c>SADD</c>.</summary>
@@ -1502,6 +1523,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded SortedSet command descriptors.</summary>
     public static class SortedSet
     {
         /// <summary><c>BZMPOP</c>.</summary>
@@ -1611,6 +1633,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded Stream command descriptors.</summary>
     public static class Stream
     {
         /// <summary><c>XACK</c>.</summary>
@@ -1705,6 +1728,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded String command descriptors.</summary>
     public static class String
     {
         /// <summary><c>APPEND</c>.</summary>
@@ -1790,6 +1814,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded TDigest command descriptors.</summary>
     public static class TDigest
     {
         /// <summary><c>TDIGEST.ADD</c>.</summary>
@@ -1836,6 +1861,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded TimeSeries command descriptors.</summary>
     public static class TimeSeries
     {
         /// <summary><c>TS.ADD</c>.</summary>
@@ -1903,6 +1929,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded TopK command descriptors.</summary>
     public static class TopK
     {
         /// <summary><c>TOPK.ADD</c>.</summary>
@@ -1928,6 +1955,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded Transaction command descriptors.</summary>
     public static class Transaction
     {
         /// <summary><c>DISCARD</c>.</summary>
@@ -1947,6 +1975,7 @@ public static class RespireCommands
 
     }
 
+    /// <summary>Pre-encoded VectorSet command descriptors.</summary>
     public static class VectorSet
     {
         /// <summary><c>VADD</c>.</summary>

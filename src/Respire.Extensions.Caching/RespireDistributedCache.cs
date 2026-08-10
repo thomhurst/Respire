@@ -191,8 +191,10 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     private static IRespireClient ApplyInstanceName(IRespireClient client, RespireCacheOptions? options)
         => string.IsNullOrEmpty(options?.InstanceName) ? client : client.WithKeyPrefix(options.InstanceName);
 
+    /// <inheritdoc/>
     public byte[]? Get(string key) => GetAsync(key).GetAwaiter().GetResult();
 
+    /// <inheritdoc/>
     public async Task<byte[]?> GetAsync(string key, CancellationToken token = default)
     {
         ArgumentNullException.ThrowIfNull(key);
@@ -207,9 +209,11 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         return payload.IsNull ? null : payload.AsBytes();
     }
 
+    /// <inheritdoc/>
     public bool TryGet(string key, IBufferWriter<byte> destination)
         => TryGetAsync(key, destination).AsTask().GetAwaiter().GetResult();
 
+    /// <inheritdoc/>
     public async ValueTask<bool> TryGetAsync(string key, IBufferWriter<byte> destination, CancellationToken token = default)
     {
         ArgumentNullException.ThrowIfNull(key);
@@ -231,18 +235,22 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         return true;
     }
 
+    /// <inheritdoc/>
     public void Set(string key, byte[] value, DistributedCacheEntryOptions options)
         => SetAsync(key, value, options).GetAwaiter().GetResult();
 
+    /// <inheritdoc/>
     public Task SetAsync(string key, byte[] value, DistributedCacheEntryOptions options, CancellationToken token = default)
     {
         ArgumentNullException.ThrowIfNull(value);
         return SetCoreAsync(key, value, options, token).AsTask();
     }
 
+    /// <inheritdoc/>
     public void Set(string key, ReadOnlySequence<byte> value, DistributedCacheEntryOptions options)
         => SetAsync(key, value, options).AsTask().GetAwaiter().GetResult();
 
+    /// <inheritdoc/>
     public ValueTask SetAsync(string key, ReadOnlySequence<byte> value, DistributedCacheEntryOptions options, CancellationToken token = default)
         => SetCoreAsync(key, value.IsSingleSegment ? value.First : value.ToArray(), options, token);
 
@@ -462,8 +470,10 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         }
     }
 
+    /// <inheritdoc/>
     public void Refresh(string key) => RefreshAsync(key).GetAwaiter().GetResult();
 
+    /// <inheritdoc/>
     public async Task RefreshAsync(string key, CancellationToken token = default)
     {
         ArgumentNullException.ThrowIfNull(key);
@@ -472,8 +482,10 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         result.Dispose();
     }
 
+    /// <inheritdoc/>
     public void Remove(string key) => RemoveAsync(key).GetAwaiter().GetResult();
 
+    /// <inheritdoc/>
     public async Task RemoveAsync(string key, CancellationToken token = default)
     {
         ArgumentNullException.ThrowIfNull(key);
