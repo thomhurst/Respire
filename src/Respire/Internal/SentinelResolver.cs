@@ -27,14 +27,7 @@ internal static class SentinelResolver
         var sentinelEndpoints = options.Endpoints.Count == 0
             ? [new RespireEndpoint("localhost", 26379)]
             : options.Endpoints.ToArray();
-        var sentinelAuthenticationDisabled = options.SentinelPassword is { Length: 0 };
-        var sentinelOptions = options.ToConnectionOptions() with
-        {
-            Username = sentinelAuthenticationDisabled ? null : options.SentinelUsername ?? options.Username,
-            Password = sentinelAuthenticationDisabled ? null : options.SentinelPassword ?? options.Password,
-            Database = 0,
-            PushHandler = null,
-        };
+        var sentinelOptions = CreateSentinelConnectionOptions(options);
         var logger = options.CreateLogger("Respire.Sentinel");
         Exception? lastError = null;
 
@@ -81,6 +74,21 @@ internal static class SentinelResolver
         throw lastError is null
             ? new RespireConnectionException(message)
             : new RespireConnectionException(message, lastError);
+    }
+
+    internal static RespireConnectionOptions CreateSentinelConnectionOptions(RespireOptions options)
+    {
+        var authenticationDisabled = options.SentinelPassword is { Length: 0 };
+        return options.ToConnectionOptions() with
+        {
+            Username = authenticationDisabled ? null : options.SentinelUsername ?? options.Username,
+            Password = authenticationDisabled ? null : options.SentinelPassword ?? options.Password,
+            Database = 0,
+            UseResp3 = false,
+            UseTls = options.SentinelUseTls ?? options.UseTls,
+            TlsOptions = options.SentinelTlsOptions ?? options.TlsOptions,
+            PushHandler = null,
+        };
     }
 
     private static async ValueTask<RespireEndpoint> QueryPrimaryAsync(

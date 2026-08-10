@@ -1,4 +1,6 @@
+using System.Net.Security;
 using System.Text;
+using Respire.Internal;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -11,12 +13,45 @@ public class SentinelTests
     public async Task ConnectionString_ParsesSentinelOptions()
     {
         var options = RespireOptions.Parse(
-            "redis://sentinel.example?serviceName=mymaster&sentinelUser=sentinel&sentinelPassword=secret");
+            "redis://sentinel.example?serviceName=mymaster&sentinelUser=sentinel&sentinelPassword=secret&sentinelTls=false");
 
         await Assert.That(options.PrimaryEndpoint).IsEqualTo(new RespireEndpoint("sentinel.example", 26379));
         await Assert.That(options.ServiceName).IsEqualTo("mymaster");
         await Assert.That(options.SentinelUsername).IsEqualTo("sentinel");
         await Assert.That(options.SentinelPassword).IsEqualTo("secret");
+        await Assert.That(options.SentinelUseTls).IsFalse();
+    }
+
+    [Test]
+    public async Task SentinelConnectionOptions_ForceResp2AndAllowPlaintextOverride()
+    {
+        var options = SentinelResolver.CreateSentinelConnectionOptions(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp3,
+            UseTls = true,
+            SentinelUseTls = false,
+        });
+
+        await Assert.That(options.UseResp3).IsFalse();
+        await Assert.That(options.UseTls).IsFalse();
+    }
+
+    [Test]
+    public async Task SentinelConnectionOptions_UseDedicatedTlsOptions()
+    {
+        var primaryTlsOptions = new SslClientAuthenticationOptions { TargetHost = "primary.example" };
+        var sentinelTlsOptions = new SslClientAuthenticationOptions { TargetHost = "sentinel.example" };
+
+        var options = SentinelResolver.CreateSentinelConnectionOptions(new RespireOptions
+        {
+            UseTls = false,
+            TlsOptions = primaryTlsOptions,
+            SentinelUseTls = true,
+            SentinelTlsOptions = sentinelTlsOptions,
+        });
+
+        await Assert.That(options.UseTls).IsTrue();
+        await Assert.That(ReferenceEquals(options.TlsOptions, sentinelTlsOptions)).IsTrue();
     }
 
     [Test]

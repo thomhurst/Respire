@@ -101,7 +101,8 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 });
 ```
 
-URI connections use `serviceName`, `sentinelUser`, and `sentinelPassword` query parameters:
+URI connections use `serviceName`, `sentinelUser`, `sentinelPassword`, and `sentinelTls` query
+parameters:
 
 ```csharp
 await using var redis = await RespireClient.ConnectAsync(
@@ -114,6 +115,12 @@ explicitly disable Sentinel authentication while retaining authentication on the
 primary. When multiple Sentinel endpoints are configured, Respire also tries the next endpoint
 if discovery times out, returns invalid data, or reports a primary that cannot be reached during
 the initial connection.
+
+Sentinel discovery always uses RESP2, so older Sentinel nodes can discover a RESP3 primary.
+Transport settings inherit from the primary by default. Set `SentinelUseTls` independently when
+Sentinel and the primary use different TLS modes, and set `SentinelTlsOptions` when Sentinel needs
+different certificate validation or a different `TargetHost`. In a URI, `sentinelTls=false`
+selects plaintext Sentinel discovery even when the `rediss://` primary uses TLS.
 
 Sentinel currently requires `ConnectAsync` because discovery is a network operation that must run
 before Redis connections exist. Lazy `Create` and automatic Sentinel re-discovery during failover

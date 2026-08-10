@@ -85,6 +85,17 @@ public sealed record RespireOptions
     /// </summary>
     public string? SentinelPassword { get; init; }
 
+    /// <summary>
+    /// Whether Sentinel discovery uses TLS. Null inherits <see cref="UseTls"/>; false allows a
+    /// plaintext Sentinel to discover a TLS primary.
+    /// </summary>
+    public bool? SentinelUseTls { get; init; }
+
+    /// <summary>
+    /// Optional TLS settings for Sentinel endpoints. Null inherits <see cref="TlsOptions"/>.
+    /// </summary>
+    public SslClientAuthenticationOptions? SentinelTlsOptions { get; init; }
+
     /// <summary>When set, CLIENT SETNAME runs during the handshake — invaluable in CLIENT LIST.</summary>
     public string? ClientName { get; init; }
 
@@ -199,7 +210,8 @@ public sealed record RespireOptions
     /// <c>clientName</c>, <c>connections</c>, <c>connectTimeoutMs</c>, <c>commandTimeoutMs</c>,
     /// <c>responseTimeoutMs</c>, <c>protocol</c> (2 or 3), <c>db</c>,
     /// <c>cluster</c> (true or false), <c>serviceName</c>, <c>sentinelUser</c>,
-    /// <c>sentinelPassword</c>, and <c>allowAdmin</c> (true or false).
+    /// <c>sentinelPassword</c>, <c>sentinelTls</c> (true or false), and
+    /// <c>allowAdmin</c> (true or false).
     /// Use <c>rediss://</c> to enable TLS.
     /// Connection strings contain one endpoint; configure <see cref="Endpoints"/> directly when
     /// cluster seed failover requires multiple endpoints.
@@ -254,6 +266,7 @@ public sealed record RespireOptions
         string? serviceName = null;
         string? sentinelUser = null;
         string? sentinelPassword = null;
+        bool? sentinelUseTls = null;
         var allowAdmin = false;
 
         foreach (var pair in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
@@ -303,6 +316,9 @@ public sealed record RespireOptions
                 case "sentinelpassword":
                     sentinelPassword = value;
                     break;
+                case "sentineltls":
+                    sentinelUseTls = bool.Parse(value);
+                    break;
                 case "allowadmin":
                     allowAdmin = bool.Parse(value);
                     break;
@@ -319,6 +335,7 @@ public sealed record RespireOptions
             Password = password,
             SentinelUsername = sentinelUser,
             SentinelPassword = sentinelPassword,
+            SentinelUseTls = sentinelUseTls,
             ClientName = clientName,
             Database = database,
             Connections = connections,
