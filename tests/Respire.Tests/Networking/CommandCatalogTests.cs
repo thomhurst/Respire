@@ -188,6 +188,24 @@ public class CommandCatalogTests
     }
 
     [Test]
+    public async Task RawFireAndForget_ConnectionScopedCommandsAreRejectedBeforeSending()
+    {
+        await using var server = new FakeRespServer();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await Assert.That(async () => await client.ExecuteFireAndForgetAsync("CLIENT REPLY", "OFF"))
+            .Throws<NotSupportedException>()
+            .WithMessage(
+                "CLIENT requires connection affinity and cannot run through ExecuteFireAndForgetAsync.");
+        await Assert.That(async () => await client.ExecuteFireAndForgetAsync("client reply skip"))
+            .Throws<NotSupportedException>()
+            .WithMessage(
+                "CLIENT requires connection affinity and cannot run through ExecuteFireAndForgetAsync.");
+
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
     public async Task CatalogFireAndForget_CompletesWithoutPendingResultAndDiscardsReply()
     {
         await using var server = new FakeRespServer(

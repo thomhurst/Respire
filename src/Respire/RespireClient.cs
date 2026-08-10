@@ -230,7 +230,7 @@ public sealed partial class RespireClient : IRespireClient
             return;
         }
 
-        await SendFireAndForgetAsync(commandValue, cancellationToken).ConfigureAwait(false);
+        await SendFireAndForgetAsync(command.Name, commandValue, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -306,11 +306,7 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken)
     {
         var (operation, _, commandValue) = CreateRawCommand(command, args);
-        if (RespireCommand.IsBlocking(operation, commandValue.Arguments))
-        {
-            throw new NotSupportedException(
-                $"{operation} can block and cannot run through ExecuteFireAndForgetAsync.");
-        }
+        ValidateRawFireAndForgetCommand(operation, commandValue.Arguments);
 
         if (_core.Cluster is { } cluster
             && DynamicCommandRouting.IsClusterWideMutation(operation, args))
@@ -321,7 +317,7 @@ public sealed partial class RespireClient : IRespireClient
             return;
         }
 
-        await SendFireAndForgetAsync(commandValue, cancellationToken).ConfigureAwait(false);
+        await SendFireAndForgetAsync(operation, commandValue, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -415,6 +411,24 @@ public sealed partial class RespireClient : IRespireClient
 
     private static bool HasFlag(RespireCommandFlags flags, RespireCommandFlags flag)
         => (flags & flag) != 0;
+
+    private static void ValidateRawFireAndForgetCommand(
+        string operation,
+        ReadOnlySpan<RespireValue> arguments)
+    {
+        var behavior = RespireCommand.Classify(operation);
+        if (behavior == RespireCommandBehavior.ConnectionScoped)
+        {
+            throw new NotSupportedException(
+                $"{operation} requires connection affinity and cannot run through ExecuteFireAndForgetAsync.");
+        }
+
+        if (RespireCommand.IsBlocking(behavior, arguments))
+        {
+            throw new NotSupportedException(
+                $"{operation} can block and cannot run through ExecuteFireAndForgetAsync.");
+        }
+    }
 
     private static (string Operation, string? StoredProcedureName, DynamicCommand Command) CreateRawCommand(
         string command,
@@ -799,14 +813,17 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
-    private ValueTask SendFireAndForgetAsync<TCommand>(TCommand command, CancellationToken cancellationToken)
+    private ValueTask SendFireAndForgetAsync<TCommand>(
+        string operation,
+        TCommand command,
+        CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         if (core.Cluster is { } cluster)
         {
-            return SendFireAndForgetClusterAsync(cluster, command, cancellationToken);
+            return SendFireAndForgetClusterAsync(operation, cluster, command, cancellationToken);
         }
 
         if (!core.Multiplexer.IsInitialized)
@@ -829,15 +846,23 @@ public sealed partial class RespireClient : IRespireClient
         await connection.SendFireAndForgetAsync(in command, cancellationToken).ConfigureAwait(false);
     }
 
-    private static async ValueTask SendFireAndForgetClusterAsync<TCommand>(
+    private async ValueTask SendFireAndForgetClusterAsync<TCommand>(
+        string operation,
         ClusterRouter cluster,
         TCommand command,
         CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
-        var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
-        var connection = await cluster.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
-        await connection.SendFireAndForgetAsync(in command, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var response = await SendClusterAsync(
+                    operation, cluster, command, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (RespireServerException)
+        {
+            // Fire-and-forget still discards ordinary server errors after processing redirects.
+        }
     }
 
     private static async ValueTask SendClusterWideFireAndForgetAsync<TCommand>(

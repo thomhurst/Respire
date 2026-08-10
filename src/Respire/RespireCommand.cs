@@ -31,7 +31,7 @@ public readonly struct RespireCommand
 
     public override string ToString() => Name;
 
-    private static RespireCommandBehavior Classify(string name) => name switch
+    internal static RespireCommandBehavior Classify(string name) => name switch
     {
         "BLMOVE" or "BLMOVEM" or "BLMPOP" or "BLPOP" or "BRPOP" or "BRPOPLPUSH" or
         "BZMPOP" or "BZPOPMAX" or "BZPOPMIN" => RespireCommandBehavior.Blocking,
@@ -53,10 +53,7 @@ public readonly struct RespireCommand
 
     internal bool IsBlocking(RespireValue[] args) => IsBlocking(Behavior, args);
 
-    internal static bool IsBlocking(string name, ReadOnlySpan<RespireValue> args)
-        => IsBlocking(Classify(name), args);
-
-    private static bool IsBlocking(
+    internal static bool IsBlocking(
         RespireCommandBehavior behavior,
         ReadOnlySpan<RespireValue> args)
     {
