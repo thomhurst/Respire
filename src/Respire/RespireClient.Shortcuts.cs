@@ -18,25 +18,23 @@ public sealed partial class RespireClient
     public ValueTask<byte[]?> GetBytesAsync(RespireKey key, CancellationToken cancellationToken = default)
         => Strings.GetBytesAsync(key, cancellationToken);
 
-    /// <inheritdoc cref="IStringCommands.SetAsync(RespireKey, RespireValue, TimeSpan?, SetWhen, bool, CancellationToken)"/>
+    /// <inheritdoc cref="IStringCommands.SetAsync(RespireKey, RespireValue, RespireTtl, SetWhen, CancellationToken)"/>
     public ValueTask<bool> SetAsync(
         RespireKey key,
         RespireValue value,
-        TimeSpan? expiry = null,
+        RespireTtl expiry = default,
         SetWhen when = SetWhen.Always,
-        bool keepTtl = false,
         CancellationToken cancellationToken = default)
-        => Strings.SetAsync(key, value, expiry, when, keepTtl, cancellationToken);
+        => Strings.SetAsync(key, value, expiry, when, cancellationToken);
 
-    /// <inheritdoc cref="IStringCommands.SetAsync{T}(RespireKey, T, TimeSpan?, SetWhen, bool, CancellationToken)"/>
+    /// <inheritdoc cref="IStringCommands.SetAsync{T}(RespireKey, T, RespireTtl, SetWhen, CancellationToken)"/>
     public ValueTask<bool> SetAsync<T>(
         RespireKey key,
         T value,
-        TimeSpan? expiry = null,
+        RespireTtl expiry = default,
         SetWhen when = SetWhen.Always,
-        bool keepTtl = false,
         CancellationToken cancellationToken = default)
-        => Strings.SetAsync(key, value, expiry, when, keepTtl, cancellationToken);
+        => Strings.SetAsync(key, value, expiry, when, cancellationToken);
 
     /// <inheritdoc cref="IKeyCommands.DeleteAsync(ReadOnlySpan{RespireKey})"/>
     public ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys)

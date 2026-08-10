@@ -54,8 +54,9 @@ public class MultiItemCancellationOverloadTests
 
         await Assert.That(missing).IsEmpty();
 
-        // Guards the guard: a scan that stops finding params-span commands must not pass silently.
-        await Assert.That(covered).IsGreaterThanOrEqualTo(50);
+        // Guards the guard: RespireTtl intentionally collapses six expiry-specific overloads
+        // into one, leaving 49 params-span commands in the combined surface.
+        await Assert.That(covered).IsGreaterThanOrEqualTo(49);
     }
 
     [Test]
@@ -131,12 +132,9 @@ public class MultiItemCancellationOverloadTests
 
         _ = client.Strings.GetManyAsync(keys, token);
         _ = client.Strings.SetManyAsync(pairs, token);
-        _ = client.Strings.SetManyExpireAsync(expiry, pairs, token);
-        _ = client.Strings.SetManyExpireAsync(expiry, SetWhen.NotExists, pairs, token);
-        _ = client.Strings.SetManyExpireAtAsync(expireAt, pairs, token);
-        _ = client.Strings.SetManyExpireAtAsync(expireAt, SetWhen.Exists, pairs, token);
-        _ = client.Strings.SetManyKeepExpiryAsync(pairs, token);
-        _ = client.Strings.SetManyKeepExpiryAsync(SetWhen.Exists, pairs, token);
+        _ = client.Strings.SetManyAsync(expiry, SetWhen.NotExists, pairs, token);
+        _ = client.Strings.SetManyAsync(expireAt, SetWhen.Exists, pairs, token);
+        _ = client.Strings.SetManyAsync(RespireTtl.Keep, SetWhen.Exists, pairs, token);
 
         _ = client.Hashes.SetAsync("h", fieldValues, token);
         _ = client.Hashes.GetManyAsync("h", fields, token);

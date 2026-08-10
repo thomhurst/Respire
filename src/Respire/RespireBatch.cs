@@ -78,15 +78,15 @@ public sealed class RespireBatch : IPendingSink
     /// <inheritdoc cref="IBatchStringCommands.GetBytesAsync"/>
     public RespirePending<byte[]?> GetBytesAsync(RespireKey key) => Strings.GetBytesAsync(key);
 
-    /// <inheritdoc cref="IBatchStringCommands.SetAsync(RespireKey, RespireValue, TimeSpan?, SetWhen, bool)"/>
+    /// <inheritdoc cref="IBatchStringCommands.SetAsync(RespireKey, RespireValue, RespireTtl, SetWhen)"/>
     public RespirePending<bool> SetAsync(
-        RespireKey key, RespireValue value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always, bool keepTtl = false)
-        => Strings.SetAsync(key, value, expiry, when, keepTtl);
+        RespireKey key, RespireValue value, RespireTtl expiry = default, SetWhen when = SetWhen.Always)
+        => Strings.SetAsync(key, value, expiry, when);
 
-    /// <inheritdoc cref="IBatchStringCommands.SetAsync{T}(RespireKey, T, TimeSpan?, SetWhen, bool)"/>
+    /// <inheritdoc cref="IBatchStringCommands.SetAsync{T}(RespireKey, T, RespireTtl, SetWhen)"/>
     public RespirePending<bool> SetAsync<T>(
-        RespireKey key, T value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always, bool keepTtl = false)
-        => Strings.SetAsync(key, value, expiry, when, keepTtl);
+        RespireKey key, T value, RespireTtl expiry = default, SetWhen when = SetWhen.Always)
+        => Strings.SetAsync(key, value, expiry, when);
 
     /// <inheritdoc cref="IBatchKeyCommands.DeleteAsync(ReadOnlySpan{RespireKey})"/>
     public RespirePending<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys) => Keys.DeleteAsync(keys);

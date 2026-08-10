@@ -1364,21 +1364,21 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             => inner.GetBytesAsync(key, cancellationToken);
 
         public async ValueTask<bool> SetAsync(
-            RespireKey key, RespireValue value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always,
-            bool keepTtl = false, CancellationToken cancellationToken = default)
+            RespireKey key, RespireValue value, RespireTtl expiry = default, SetWhen when = SetWhen.Always,
+            CancellationToken cancellationToken = default)
         {
             _lastSetKey = key;
             await DelaySetAsync(cancellationToken);
-            return await inner.SetAsync(key, value, expiry, when, keepTtl, cancellationToken);
+            return await inner.SetAsync(key, value, expiry, when, cancellationToken);
         }
 
         public async ValueTask<bool> SetAsync<T>(
-            RespireKey key, T value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always,
-            bool keepTtl = false, CancellationToken cancellationToken = default)
+            RespireKey key, T value, RespireTtl expiry = default, SetWhen when = SetWhen.Always,
+            CancellationToken cancellationToken = default)
         {
             _lastSetKey = key;
             await DelaySetAsync(cancellationToken);
-            return await inner.SetAsync(key, value, expiry, when, keepTtl, cancellationToken);
+            return await inner.SetAsync(key, value, expiry, when, cancellationToken);
         }
 
         private async ValueTask DelaySetAsync(CancellationToken cancellationToken)

@@ -120,10 +120,37 @@ while (!applied);
 
 ### Distributed locks
 
-Use a unique token for each attempted owner. Release and extend compare that token on the server
-before changing the key. `RunReportAsync` below must finish before the 30-second lease expires.
-For longer work, call `ExtendAsync` before expiry and stop protected writes if it returns `false`,
-because the lock is no longer owned.
+`AcquireAsync` generates the owner token, returns a handle, and releases the lock when that handle
+is disposed. It returns `null` when someone else holds the key.
+
+```csharp
+await using var mutex = await redis.Locks.AcquireAsync("locks:report", TimeSpan.FromSeconds(30));
+if (mutex is null)
+{
+    return; // someone else holds it
+}
+
+await RunReportAsync();
+```
+
+A lock is a lease, not a mutex: it disappears on its own when the expiry elapses, even mid-work.
+`RunReportAsync` above must finish inside the 30-second lease. For longer work, call
+`mutex.ExtendAsync(...)` before expiry and stop protected writes if it returns `false`, because the
+lock is no longer owned. Every operation compares the token on the server, so a handle whose lease
+expired never extends or deletes the next owner's lock.
+
+Pass `wait` and `retryEvery` to poll for a contended lock instead of giving up immediately:
+
+```csharp
+await using var mutex = await redis.Locks.AcquireAsync(
+    "locks:report",
+    TimeSpan.FromSeconds(30),
+    wait: TimeSpan.FromSeconds(5),
+    retryEvery: TimeSpan.FromMilliseconds(250));
+```
+
+`TakeAsync`, `ExtendAsync`, and `ReleaseAsync` stay available for callers that own the token
+themselves — when it has to be shared between processes, or outlive the acquiring one:
 
 ```csharp
 var token = Guid.NewGuid().ToString("N");

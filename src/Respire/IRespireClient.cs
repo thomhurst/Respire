@@ -35,17 +35,15 @@ public interface IRespireClient : IAsyncDisposable
     ValueTask<bool> SetAsync(
         RespireKey key,
         RespireValue value,
-        TimeSpan? expiry = null,
+        RespireTtl expiry = default,
         SetWhen when = SetWhen.Always,
-        bool keepTtl = false,
         CancellationToken cancellationToken = default);
 
     ValueTask<bool> SetAsync<T>(
         RespireKey key,
         T value,
-        TimeSpan? expiry = null,
+        RespireTtl expiry = default,
         SetWhen when = SetWhen.Always,
-        bool keepTtl = false,
         CancellationToken cancellationToken = default);
 
     ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys);

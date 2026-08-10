@@ -27,17 +27,15 @@ public interface IBatchStringCommands
     RespirePending<bool> SetAsync(
         RespireKey key,
         RespireValue value,
-        TimeSpan? expiry = null,
-        SetWhen when = SetWhen.Always,
-        bool keepTtl = false);
+        RespireTtl expiry = default,
+        SetWhen when = SetWhen.Always);
 
     /// <summary>Sets a key to a serialized <typeparamref name="T"/>. Redis: SET.</summary>
     RespirePending<bool> SetAsync<T>(
         RespireKey key,
         T value,
-        TimeSpan? expiry = null,
-        SetWhen when = SetWhen.Always,
-        bool keepTtl = false);
+        RespireTtl expiry = default,
+        SetWhen when = SetWhen.Always);
 
     /// <summary>Sets a key and returns its previous value. Redis: SET … GET.</summary>
     RespirePending<string?> GetSetAsync(RespireKey key, RespireValue value);
@@ -69,28 +67,11 @@ public interface IBatchStringCommands
     /// <summary>Sets many keys atomically; the pending is true once the server replies OK. Redis: MSET.</summary>
     RespirePending<bool> SetManyAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
 
-    /// <summary>Atomically sets many keys with a shared TTL using PX milliseconds. Redis: MSETEX.</summary>
-    RespirePending<bool> SetManyExpireAsync(
-        TimeSpan expiry, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
-
-    /// <summary>Atomically sets many keys with NX/XX and a shared TTL using PX milliseconds. Redis: MSETEX.</summary>
-    RespirePending<bool> SetManyExpireAsync(
-        TimeSpan expiry, SetWhen when, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
-
-    /// <summary>Atomically sets many keys with a shared PXAT Unix-millisecond expiry. Redis: MSETEX.</summary>
-    RespirePending<bool> SetManyExpireAtAsync(
-        DateTimeOffset expireAt, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
-
-    /// <summary>Atomically sets many keys with NX/XX and a shared PXAT Unix-millisecond expiry. Redis: MSETEX.</summary>
-    RespirePending<bool> SetManyExpireAtAsync(
-        DateTimeOffset expireAt, SetWhen when, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
-
-    /// <summary>Atomically sets many keys while retaining existing TTLs. Redis: MSETEX KEEPTTL.</summary>
-    RespirePending<bool> SetManyKeepExpiryAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
-
-    /// <summary>Atomically sets many keys with NX/XX while retaining existing TTLs. Redis: MSETEX KEEPTTL.</summary>
-    RespirePending<bool> SetManyKeepExpiryAsync(
-        SetWhen when, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
+    /// <summary>Atomically sets many keys with a shared expiry and optional NX/XX condition. Redis: MSETEX.</summary>
+    RespirePending<bool> SetManyAsync(
+        RespireTtl expiry,
+        SetWhen when = SetWhen.Always,
+        params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
 
     /// <summary>Returns the longest common subsequence. Redis: LCS.</summary>
     RespirePending<string> LongestCommonSubsequenceAsync(RespireKey firstKey, RespireKey secondKey);
@@ -117,25 +98,23 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
             static (c, v) => ResponseReader.BytesOrNull(in v));
 
     public RespirePending<bool> SetAsync(
-        RespireKey key, RespireValue value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always,
-        bool keepTtl = false)
+        RespireKey key, RespireValue value, RespireTtl expiry = default, SetWhen when = SetWhen.Always)
         => sink.Add<SetCommand, bool>(
             "SET",
-            new SetCommand(sink.Client.Key(in key), value, expiry, when, keepTtl, returnOld: false),
+            new SetCommand(sink.Client.Key(in key), value, expiry, when, returnOld: false),
             static (c, v) => ResponseReader.OkOrNull(in v));
 
     public RespirePending<bool> SetAsync<T>(
-        RespireKey key, T value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always,
-        bool keepTtl = false)
+        RespireKey key, T value, RespireTtl expiry = default, SetWhen when = SetWhen.Always)
         => sink.Add<SetCommand, bool>(
             "SET",
-            new SetCommand(sink.Client.Key(in key), sink.Client.Serialize(value), expiry, when, keepTtl, returnOld: false),
+            new SetCommand(sink.Client.Key(in key), sink.Client.Serialize(value), expiry, when, returnOld: false),
             static (c, v) => ResponseReader.OkOrNull(in v));
 
     public RespirePending<string?> GetSetAsync(RespireKey key, RespireValue value)
         => sink.Add<SetCommand, string?>(
             "SET",
-            new SetCommand(sink.Client.Key(in key), value, expiry: null, SetWhen.Always, keepTtl: false, returnOld: true),
+            new SetCommand(sink.Client.Key(in key), value, RespireTtl.None, SetWhen.Always, returnOld: true),
             static (c, v) => ResponseReader.StringOrNull(in v));
 
     public RespirePending<string?> GetDeleteAsync(RespireKey key)
@@ -191,29 +170,19 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
             static (c, v) => ResponseReader.Ok(in v));
     }
 
-    public RespirePending<bool> SetManyExpireAsync(
-        TimeSpan expiry, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
-        => SetManyExpireAsync(expiry, SetWhen.Always, pairs);
-
-    public RespirePending<bool> SetManyExpireAsync(
-        TimeSpan expiry, SetWhen when, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
-        => SetManyExpireCore("PX", (long)expiry.TotalMilliseconds, hasValue: true, when, pairs);
-
-    public RespirePending<bool> SetManyExpireAtAsync(
-        DateTimeOffset expireAt, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
-        => SetManyExpireAtAsync(expireAt, SetWhen.Always, pairs);
-
-    public RespirePending<bool> SetManyExpireAtAsync(
-        DateTimeOffset expireAt, SetWhen when, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
-        => SetManyExpireCore("PXAT", expireAt.ToUnixTimeMilliseconds(), hasValue: true, when, pairs);
-
-    public RespirePending<bool> SetManyKeepExpiryAsync(
+    public RespirePending<bool> SetManyAsync(
+        RespireTtl expiry,
+        SetWhen when = SetWhen.Always,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
-        => SetManyKeepExpiryAsync(SetWhen.Always, pairs);
-
-    public RespirePending<bool> SetManyKeepExpiryAsync(
-        SetWhen when, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
-        => SetManyExpireCore("KEEPTTL", optionValue: 0, hasValue: false, when, pairs);
+    {
+        sink.ValidateClusterKeys(pairs);
+        return sink.Add<MSetExCommand, bool>(
+            "MSETEX",
+            new MSetExCommand(
+                RespireCommands.String.MSETEX.Verb,
+                StringCommands.SetManyExpireArgs(sink.Client, expiry, when, pairs)),
+            static (c, v) => ResponseReader.Flag(in v));
+    }
 
     public RespirePending<string> LongestCommonSubsequenceAsync(RespireKey firstKey, RespireKey secondKey)
     {
@@ -233,19 +202,4 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
             static (c, v) => ResponseReader.Integer(in v));
     }
 
-    private RespirePending<bool> SetManyExpireCore(
-        string option,
-        long optionValue,
-        bool hasValue,
-        SetWhen when,
-        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
-    {
-        sink.ValidateClusterKeys(pairs);
-        return sink.Add<MSetExCommand, bool>(
-            "MSETEX",
-            new MSetExCommand(
-                RespireCommands.String.MSETEX.Verb,
-                StringCommands.SetManyExpireArgs(sink.Client, option, optionValue, hasValue, when, pairs)),
-            static (c, v) => ResponseReader.Flag(in v));
-    }
 }

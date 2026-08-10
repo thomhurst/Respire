@@ -36,6 +36,10 @@ public readonly struct RespireKey : IEquatable<RespireKey>
     internal RespireValue AsValue()
         => _string is not null ? new RespireValue(_string) : new RespireValue(_bytes);
 
+    /// <summary>Returns a key whose storage cannot be changed by the original caller.</summary>
+    internal RespireKey Snapshot()
+        => _string is not null ? this : new RespireKey(_bytes.ToArray());
+
     /// <summary>Returns a copy of this key with <paramref name="prefix"/> prepended.</summary>
     internal RespireKey Prepend(string prefix)
     {
