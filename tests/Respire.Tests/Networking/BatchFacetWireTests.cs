@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using TUnit.Assertions;
 using TUnit.Assertions.Enums;
 using TUnit.Assertions.Extensions;
@@ -12,6 +14,67 @@ namespace Respire.Tests.Networking;
 /// </summary>
 public class BatchFacetWireTests
 {
+    [Test]
+    public async Task ExecuteAsync_ReturnsPerCommandFailureSummary()
+    {
+        await using var server = new FakeRespServer(
+            "-WRONGTYPE bad value\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var batch = client.CreateBatch();
+        var failed = batch.GetString("wrong-type");
+        var succeeded = batch.Exists("present");
+
+        var result = await batch.ExecuteAsync();
+
+        await Assert.That(result.Count).IsEqualTo(2);
+        await Assert.That(result.FailureCount).IsEqualTo(1);
+        await Assert.That(result.FirstError).IsSameReferenceAs(failed.Error);
+        await Assert.That(result.FirstError).IsTypeOf<RespireServerException>();
+        await Assert.That(succeeded.Result).IsTrue();
+        await Assert.That(() => result.ThrowIfAnyFailed()).ThrowsExactly<RespireServerException>();
+    }
+
+    [Test]
+    public async Task ExecuteAsync_EmptyBatchReturnsEmptySummary()
+    {
+        await using var client = RespireClient.Create("localhost:6379");
+
+        var result = await client.CreateBatch().ExecuteAsync();
+
+        await Assert.That(result.Count).IsEqualTo(0);
+        await Assert.That(result.FailureCount).IsEqualTo(0);
+        await Assert.That(result.FirstError).IsNull();
+        result.ThrowIfAnyFailed();
+    }
+
+    [Test]
+    public async Task ExecuteAsync_ConnectionFailureReturnsSummaryAndFaultsPendings()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var unavailablePort = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", unavailablePort) },
+            ConnectTimeout = TimeSpan.FromMilliseconds(100),
+        });
+        var batch = client.CreateBatch();
+        var first = batch.GetString("first");
+        var second = batch.Exists("second");
+
+        var result = await batch.ExecuteAsync();
+
+        await Assert.That(result.Count).IsEqualTo(2);
+        await Assert.That(result.FailureCount).IsEqualTo(2);
+        await Assert.That(result.FirstError).IsNotNull();
+        await Assert.That(first.Error).IsSameReferenceAs(result.FirstError);
+        await Assert.That(second.Error).IsSameReferenceAs(result.FirstError);
+    }
+
     [Test]
     public async Task BatchCommandError_PreservesCommandName()
     {

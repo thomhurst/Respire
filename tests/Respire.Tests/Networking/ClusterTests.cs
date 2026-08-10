@@ -360,6 +360,42 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task Batch_FirstErrorFollowsOriginalQueueOrderAcrossNodes()
+    {
+        const string firstKey = "{first}a";
+        const string secondKey = "{second}b";
+        const string thirdKey = "{first}c";
+        await using var firstNode = new FakeRespServer(
+            "$3\r\none\r\n"u8.ToArray(),
+            "-ERR third failed\r\n"u8.ToArray());
+        await using var secondNode = new FakeRespServer("-ERR second failed\r\n"u8.ToArray());
+        var firstSlot = ClusterHash.GetSlot(firstKey);
+        var secondSlot = ClusterHash.GetSlot(secondKey);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*2\r\n" +
+            $"*3\r\n:{firstSlot}\r\n:{firstSlot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{firstNode.Port}\r\n" +
+            $"*3\r\n:{secondSlot}\r\n:{secondSlot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{secondNode.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        var batch = client.CreateBatch();
+        var first = batch.GetString(firstKey);
+        var second = batch.GetString(secondKey);
+        var third = batch.GetString(thirdKey);
+
+        var result = await batch.ExecuteAsync();
+
+        await Assert.That(first.Result).IsEqualTo("one");
+        await Assert.That(result.FailureCount).IsEqualTo(2);
+        await Assert.That(result.FirstError).IsSameReferenceAs(second.Error);
+        await Assert.That(result.FirstError).IsNotSameReferenceAs(third.Error);
+    }
+
+    [Test]
     public async Task Batch_PreservesSameSlotOrderAcrossConnections()
     {
         var slot = ClusterHash.GetSlot("key");

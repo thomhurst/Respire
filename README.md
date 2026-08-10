@@ -89,7 +89,8 @@ var batch = redis.CreateBatch();
 var name = batch.GetString("name");
 var visits = batch.Increment("visits");
 var profile = batch.Hashes.GetAll("user:1");
-await batch.ExecuteAsync();
+RespireBatchResult batchResult = await batch.ExecuteAsync();
+batchResult.ThrowIfAnyFailed();
 
 Console.WriteLine($"{name.Result}: {visits.Result} ({profile.Result.Count} fields)");
 

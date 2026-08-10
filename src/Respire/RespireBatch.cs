@@ -140,14 +140,14 @@ public sealed class RespireBatch : IDisposable, IPendingSink
     /// <summary>
     /// Sends every queued command in one flush and completes all pendings. Per-command failures
     /// (server errors, <see cref="RespireOptions.CommandTimeout"/> expiry) fault that command's
-    /// pending, not this call; failing to obtain a connection at all faults every pending and
-    /// rethrows.
+    /// pending and are summarized in the returned result.
     /// In cluster mode, commands are grouped by slot and each group shares one connection so its
     /// commands retain queue order. Different slot groups may run out of order, and an acquisition
-    /// failure faults only its group; this method completes normally after recording the first
-    /// error in telemetry.
+    /// failure faults only its group. Connection-acquisition failures use the same result contract
+    /// in standalone and cluster modes; call <see cref="RespireBatchResult.ThrowIfAnyFailed"/> when
+    /// fail-fast behavior is preferred.
     /// </summary>
-    public async ValueTask ExecuteAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<RespireBatchResult> ExecuteAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (_sent)
@@ -168,7 +168,7 @@ public sealed class RespireBatch : IDisposable, IPendingSink
         if (_ops.Count == 0)
         {
             telemetry.Complete(core, telemetryOperation, batchSize: 0);
-            return;
+            return new RespireBatchResult(0, 0, null);
         }
 
         if (core.Cluster is not null)
@@ -188,20 +188,26 @@ public sealed class RespireBatch : IDisposable, IPendingSink
                 groups[groupIndex].Operations.Add(op);
             }
 
-            var clusterTasks = new Task<Exception?>[groups.Count];
+            var clusterTasks = new Task<RespireBatchResult>[groups.Count];
             for (var i = 0; i < groups.Count; i++)
             {
                 clusterTasks[i] = RunClusterGroupAsync(
                     groups[i].Slot, groups[i].Operations, cancellationToken);
             }
 
-            var clusterErrors = await Task.WhenAll(clusterTasks).ConfigureAwait(false);
+            var clusterResults = await Task.WhenAll(clusterTasks).ConfigureAwait(false);
+            var firstError = _ops
+                .Select(static operation => operation.Error)
+                .FirstOrDefault(static error => error is not null);
             telemetry.Complete(
                 core,
                 telemetryOperation,
-                error: clusterErrors.FirstOrDefault(static error => error is not null),
+                error: firstError,
                 batchSize: _ops.Count == 1 ? null : _ops.Count);
-            return;
+            return new RespireBatchResult(
+                _ops.Count,
+                clusterResults.Sum(static result => result.FailureCount),
+                firstError);
         }
 
         RespireConnection? connection = null;
@@ -223,7 +229,7 @@ public sealed class RespireBatch : IDisposable, IPendingSink
                 telemetryOperation,
                 error: ex,
                 batchSize: _ops.Count == 1 ? null : _ops.Count);
-            throw;
+            return new RespireBatchResult(_ops.Count, _ops.Count, ex);
         }
 
         var timeout = _client.Core.Options.CommandTimeout;
@@ -240,12 +246,17 @@ public sealed class RespireBatch : IDisposable, IPendingSink
         }
 
         var errors = await Task.WhenAll(tasks).ConfigureAwait(false);
+        var batchFirstError = errors.FirstOrDefault(static error => error is not null);
         telemetry.Complete(
             core,
             telemetryOperation,
-            error: errors.FirstOrDefault(static error => error is not null),
+            error: batchFirstError,
             connection: connection,
             batchSize: _ops.Count == 1 ? null : _ops.Count);
+        return new RespireBatchResult(
+            _ops.Count,
+            errors.Count(static error => error is not null),
+            batchFirstError);
     }
 
     /// <summary>
@@ -272,7 +283,7 @@ public sealed class RespireBatch : IDisposable, IPendingSink
         }
     }
 
-    private async Task<Exception?> RunClusterGroupAsync(
+    private async Task<RespireBatchResult> RunClusterGroupAsync(
         int? slot,
         List<Op> operations,
         CancellationToken cancellationToken)
@@ -289,7 +300,7 @@ public sealed class RespireBatch : IDisposable, IPendingSink
                 operation.Fail(ex);
             }
 
-            return ex;
+            return new RespireBatchResult(operations.Count, operations.Count, ex);
         }
 
         var sends = new ValueTask<RespValue>[operations.Count];
@@ -307,15 +318,20 @@ public sealed class RespireBatch : IDisposable, IPendingSink
         }
 
         Exception? firstError = null;
+        var failureCount = 0;
         for (var i = 0; i < operations.Count; i++)
         {
             var error = await operations[i].CompleteClusterSendAsync(
                     _client, sends[i], cancellationToken)
                 .ConfigureAwait(false);
-            firstError ??= error;
+            if (error is not null)
+            {
+                firstError ??= error;
+                failureCount++;
+            }
         }
 
-        return firstError;
+        return new RespireBatchResult(operations.Count, failureCount, firstError);
     }
 
     private RespirePending<T> Add<TCommand, T>(string operation, in TCommand command, Func<RespireClient, RespValue, T> convert)
@@ -337,6 +353,8 @@ public sealed class RespireBatch : IDisposable, IPendingSink
         protected Op(string operation) => Operation = operation;
 
         public string Operation { get; }
+
+        public abstract Exception? Error { get; }
 
         public abstract Task<Exception?> RunAsync(
             RespireClient client, RespireConnection connection, CancellationToken effectiveToken,
@@ -361,6 +379,8 @@ public sealed class RespireBatch : IDisposable, IPendingSink
         string operation, TCommand command, RespirePending<T> pending, Func<RespireClient, RespValue, T> convert) : Op(operation)
         where TCommand : struct, IRespCommand
     {
+        public override Exception? Error => pending.Error;
+
         public override void Fail(Exception error) => pending.Fail(error);
 
         public override bool TryGetClusterSlot(out int slot) => command.TryGetClusterSlot(out slot);
