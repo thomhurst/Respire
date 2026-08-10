@@ -92,7 +92,7 @@ internal sealed class KeyCommands(RespireClient client) : IKeyCommands
         => client.StringAsync("TYPE", new Cmd1(Verbs.Type, client.Key(in key)), cancellationToken);
 
     public ValueTask<bool> RenameAsync(RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default)
-        => client.OkOrNullAsync(
+        => client.ConfirmedOkAsync(
             "RENAME", new Cmd2(Verbs.Rename, client.Key(in key), client.Key(in newKey)), cancellationToken);
 
     public ValueTask<long> TouchAsync(params ReadOnlySpan<RespireKey> keys)

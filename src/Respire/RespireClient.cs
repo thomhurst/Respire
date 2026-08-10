@@ -2227,6 +2227,12 @@ public sealed partial class RespireClient : IRespireClient
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.OkOrNull(in value));
 
+    internal ValueTask<bool> ConfirmedOkAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+        where TCommand : struct, IRespCommand
+        => ConvertAsync(
+            operation, command, ct,
+            static (RespireClient _, in RespValue value) => ResponseReader.Ok(in value));
+
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
 #endif

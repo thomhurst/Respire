@@ -198,7 +198,7 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
 
     public ValueTask<bool> SetManyAsync(
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs, CancellationToken cancellationToken)
-        => client.OkOrNullAsync(
+        => client.ConfirmedOkAsync(
             "MSET", new CmdN(Verbs.MSet, SetManyArgs(client, pairs)), cancellationToken);
 
     public ValueTask<bool> SetManyAsync(
