@@ -11,7 +11,7 @@ public interface IBatchGeoCommands
 {
     /// <summary>Adds members with coordinates; returns how many were new. Redis: GEOADD.</summary>
     RespirePending<long> AddAsync(
-        RespireKey key, GeoAddCondition condition = GeoAddCondition.Always, bool changed = false,
+        RespireKey key, SetWhen when = SetWhen.Always, bool changed = false,
         params ReadOnlySpan<GeoEntry> entries);
 
     /// <summary>The distance between two members, or null when either is absent. Redis: GEODIST.</summary>
@@ -37,14 +37,14 @@ public interface IBatchGeoCommands
 internal sealed class BatchGeoCommands(IPendingSink sink) : IBatchGeoCommands
 {
     public RespirePending<long> AddAsync(
-        RespireKey key, GeoAddCondition condition = GeoAddCondition.Always, bool changed = false,
+        RespireKey key, SetWhen when = SetWhen.Always, bool changed = false,
         params ReadOnlySpan<GeoEntry> entries)
     {
-        GeoCommands.ValidateAdd(condition, entries);
+        GeoCommands.ValidateAdd(when, entries);
         return sink.Add<GeoAddCommand, long>(
             "GEOADD",
             new GeoAddCommand(
-                RespireCommands.Geo.GEOADD.Verb, sink.Client.Key(in key), condition, changed, entries.ToArray()),
+                RespireCommands.Geo.GEOADD.Verb, sink.Client.Key(in key), when, changed, entries.ToArray()),
             static (c, v) => ResponseReader.Integer(in v));
     }
 

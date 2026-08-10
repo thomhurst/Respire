@@ -559,10 +559,10 @@ public class ClusterTests
             transaction => transaction.Keys.RenameAsync("foo", "bar"),
             transaction => transaction.Strings.GetManyAsync("foo", "bar"),
             transaction => transaction.Strings.SetManyAsync(("foo", "one"), ("bar", "two")),
-            transaction => transaction.Strings.SetManyAsync(
+            transaction => transaction.Strings.SetManyExpireAsync(
                 RespireExpiry.In(TimeSpan.FromMinutes(1)), SetWhen.Always,
                 ("foo", "one"), ("bar", "two")),
-            transaction => transaction.Strings.LongestCommonSubsequenceAsync("foo", "bar"),
+            transaction => transaction.Strings.LcsAsync("foo", "bar"),
             transaction => transaction.Lists.MoveAsync("foo", "bar"),
             transaction => transaction.Sets.UnionAsync("foo", "bar"),
             transaction => transaction.Sets.UnionStoreAsync("foo", "bar"),

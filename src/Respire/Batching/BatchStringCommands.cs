@@ -38,7 +38,15 @@ public interface IBatchStringCommands
         SetWhen when = SetWhen.Always);
 
     /// <summary>Sets a key and returns its previous value. Redis: SET … GET.</summary>
-    RespirePending<string?> GetSetAsync(RespireKey key, RespireValue value);
+    RespirePending<string?> GetAndSetAsync(
+        RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always);
+
+    /// <summary>
+    /// Sets a serialized <typeparamref name="T"/> and deserializes the previous value.
+    /// Redis: SET … GET.
+    /// </summary>
+    RespirePending<T?> GetAndSetAsync<T>(
+        RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always);
 
     /// <summary>Gets a key's value and deletes the key. Redis: GETDEL.</summary>
     RespirePending<string?> GetDeleteAsync(RespireKey key);
@@ -68,16 +76,16 @@ public interface IBatchStringCommands
     RespirePending<bool> SetManyAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
 
     /// <summary>Atomically sets many keys with a shared expiry and optional NX/XX condition. Redis: MSETEX.</summary>
-    RespirePending<bool> SetManyAsync(
+    RespirePending<bool> SetManyExpireAsync(
         RespireExpiry expiry,
         SetWhen when = SetWhen.Always,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
 
     /// <summary>Returns the longest common subsequence. Redis: LCS.</summary>
-    RespirePending<string> LongestCommonSubsequenceAsync(RespireKey firstKey, RespireKey secondKey);
+    RespirePending<string> LcsAsync(RespireKey firstKey, RespireKey secondKey);
 
     /// <summary>Returns the length of the longest common subsequence. Redis: LCS LEN.</summary>
-    RespirePending<long> LongestCommonSubsequenceLengthAsync(RespireKey firstKey, RespireKey secondKey);
+    RespirePending<long> LcsLengthAsync(RespireKey firstKey, RespireKey secondKey);
 }
 
 internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringCommands
@@ -111,11 +119,19 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
             new SetCommand(sink.Client.Key(in key), sink.Client.Serialize(value), expiry, when, returnOld: false),
             static (c, v) => ResponseReader.OkOrNull(in v));
 
-    public RespirePending<string?> GetSetAsync(RespireKey key, RespireValue value)
+    public RespirePending<string?> GetAndSetAsync(
+        RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
         => sink.Add<SetCommand, string?>(
             "SET",
-            new SetCommand(sink.Client.Key(in key), value, RespireExpiry.None, SetWhen.Always, returnOld: true),
+            new SetCommand(sink.Client.Key(in key), value, expiry, when, returnOld: true),
             static (c, v) => ResponseReader.StringOrNull(in v));
+
+    public RespirePending<T?> GetAndSetAsync<T>(
+        RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
+        => sink.Add<SetCommand, T?>(
+            "SET",
+            new SetCommand(sink.Client.Key(in key), sink.Client.Serialize(value), expiry, when, returnOld: true),
+            static (c, v) => c.DeserializeBorrowed<T>(in v));
 
     public RespirePending<string?> GetDeleteAsync(RespireKey key)
         => sink.Add<Cmd1, string?>(
@@ -170,7 +186,7 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
             static (c, v) => ResponseReader.Ok(in v));
     }
 
-    public RespirePending<bool> SetManyAsync(
+    public RespirePending<bool> SetManyExpireAsync(
         RespireExpiry expiry,
         SetWhen when = SetWhen.Always,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
@@ -184,7 +200,7 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
             static (c, v) => ResponseReader.Flag(in v));
     }
 
-    public RespirePending<string> LongestCommonSubsequenceAsync(RespireKey firstKey, RespireKey secondKey)
+    public RespirePending<string> LcsAsync(RespireKey firstKey, RespireKey secondKey)
     {
         return sink.Add<Cmd2, string>(
             "LCS",
@@ -193,7 +209,7 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
             static (c, v) => ResponseReader.String(in v));
     }
 
-    public RespirePending<long> LongestCommonSubsequenceLengthAsync(RespireKey firstKey, RespireKey secondKey)
+    public RespirePending<long> LcsLengthAsync(RespireKey firstKey, RespireKey secondKey)
     {
         return sink.Add<Cmd3, long>(
             "LCS",

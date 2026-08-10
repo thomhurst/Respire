@@ -19,13 +19,6 @@ public enum GeoSortOrder
     Descending,
 }
 
-public enum GeoAddCondition
-{
-    Always,
-    NotExists,
-    Exists,
-}
-
 public readonly record struct GeoEntry(double Longitude, double Latitude, RespireValue Member);
 
 public readonly record struct GeoPosition(double Longitude, double Latitude);
@@ -108,11 +101,11 @@ public readonly record struct GeoSearchOptions
 public interface IGeoCommands
 {
     ValueTask<long> AddAsync(
-        RespireKey key, GeoAddCondition condition = GeoAddCondition.Always, bool changed = false,
+        RespireKey key, SetWhen when = SetWhen.Always, bool changed = false,
         params ReadOnlySpan<GeoEntry> entries);
     ValueTask<long> AddAsync(
         RespireKey key,
-        GeoAddCondition condition,
+        SetWhen when,
         bool changed,
         ReadOnlySpan<GeoEntry> entries,
         CancellationToken cancellationToken);
@@ -137,22 +130,22 @@ public interface IGeoCommands
 internal sealed class GeoCommands(RespireClient client) : IGeoCommands
 {
     public ValueTask<long> AddAsync(
-        RespireKey key, GeoAddCondition condition = GeoAddCondition.Always, bool changed = false,
+        RespireKey key, SetWhen when = SetWhen.Always, bool changed = false,
         params ReadOnlySpan<GeoEntry> entries)
-        => AddAsync(key, condition, changed, entries, CancellationToken.None);
+        => AddAsync(key, when, changed, entries, CancellationToken.None);
 
     public ValueTask<long> AddAsync(
         RespireKey key,
-        GeoAddCondition condition,
+        SetWhen when,
         bool changed,
         ReadOnlySpan<GeoEntry> entries,
         CancellationToken cancellationToken)
     {
-        ValidateAdd(condition, entries);
+        ValidateAdd(when, entries);
         return client.IntegerAsync(
             "GEOADD",
             new GeoAddCommand(
-                RespireCommands.Geo.GEOADD.Verb, client.Key(in key), condition, changed, entries.ToArray()),
+                RespireCommands.Geo.GEOADD.Verb, client.Key(in key), when, changed, entries.ToArray()),
             cancellationToken);
     }
 
@@ -297,16 +290,16 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
     }
 
     /// <summary>Shared with the deferred (batch/transaction) facet.</summary>
-    internal static void ValidateAdd(GeoAddCondition condition, ReadOnlySpan<GeoEntry> entries)
+    internal static void ValidateAdd(SetWhen when, ReadOnlySpan<GeoEntry> entries)
     {
         if (entries.IsEmpty)
         {
             throw new ArgumentException("At least one geo entry is required.", nameof(entries));
         }
 
-        if (!Enum.IsDefined(condition))
+        if (!Enum.IsDefined(when))
         {
-            throw new ArgumentOutOfRangeException(nameof(condition));
+            throw new ArgumentOutOfRangeException(nameof(when));
         }
 
         foreach (var entry in entries)
@@ -483,19 +476,19 @@ internal readonly struct GeoSearchCommand(
 }
 
 internal readonly struct GeoAddCommand(
-    Verb verb, RespireValue key, GeoAddCondition condition, bool changed, GeoEntry[] entries) : IRespCommand
+    Verb verb, RespireValue key, SetWhen when, bool changed, GeoEntry[] entries) : IRespCommand
 {
     public bool TryGetClusterSlot(out int slot) => key.TryGetClusterSlot(out slot);
 
     public void Write(ref RespWriter writer)
     {
-        var optionCount = (condition == GeoAddCondition.Always ? 0 : 1) + (changed ? 1 : 0);
+        var optionCount = (when == SetWhen.Always ? 0 : 1) + (changed ? 1 : 0);
         writer.WriteArrayHeader(verb.Tokens + 1 + optionCount + entries.Length * 3);
         writer.WriteRaw(verb.Bulk);
         key.WriteTo(ref writer);
-        if (condition != GeoAddCondition.Always)
+        if (when != SetWhen.Always)
         {
-            writer.WriteBulkString(condition == GeoAddCondition.NotExists ? "NX" : "XX");
+            writer.WriteBulkString(when == SetWhen.NotExists ? "NX" : "XX");
         }
 
         if (changed)
