@@ -1,4 +1,6 @@
 using Respire.Commands;
+using Respire.Internal;
+using Respire.Protocol;
 
 namespace Respire;
 
@@ -39,6 +41,11 @@ public interface ISetCommands
 
     /// <summary>All members. Redis: SMEMBERS.</summary>
     ValueTask<string[]> MembersAsync(RespireKey key, CancellationToken cancellationToken = default);
+
+    /// <summary>Iterates members incrementally. Redis: SSCAN.</summary>
+    IAsyncEnumerable<string> ScanAsync(
+        RespireKey key, string? match = null, int countHint = 250,
+        CancellationToken cancellationToken = default);
 
     /// <summary>Removes and returns a random member, or null when empty. Redis: SPOP.</summary>
     ValueTask<string?> PopAsync(RespireKey key, CancellationToken cancellationToken = default);
@@ -112,8 +119,17 @@ internal sealed class SetCommands(RespireClient client) : ISetCommands
     public ValueTask<string[]> MembersAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.StringArrayAsync("SMEMBERS", new Cmd1(Verbs.SMembers, client.Key(in key)), cancellationToken);
 
+    public IAsyncEnumerable<string> ScanAsync(
+        RespireKey key, string? match = null, int countHint = 250,
+        CancellationToken cancellationToken = default)
+        => CollectionScan.EnumerateAsync(
+            client, "SSCAN", RespireCommands.Set.SSCAN.Verb, key, match, countHint,
+            ParseScanMembers, cancellationToken);
+
     public ValueTask<string?> PopAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.StringOrNullAsync("SPOP", new Cmd1(Verbs.SPop, client.Key(in key)), cancellationToken);
+
+    private static string[] ParseScanMembers(in RespValue page) => ResponseReader.StringArray(in page);
 
     public ValueTask<string[]> IntersectAsync(params ReadOnlySpan<RespireKey> keys)
         => IntersectAsync(keys, CancellationToken.None);

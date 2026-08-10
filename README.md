@@ -30,7 +30,7 @@ User? user = await redis.GetAsync<User>("user:1");
 - **An API that is easy to explore.** Commands are grouped by data type (`redis.Hashes`,
   `redis.Streams`, `redis.SortedSets`, and more), while common string operations remain on the
   client itself.
-- **Modern async patterns.** Pub/sub, stream consumer groups, and `SCAN` use
+- **Modern async patterns.** Pub/sub, stream consumer groups, and the `SCAN` family use
   `IAsyncEnumerable`. Expiries use `TimeSpan` and `DateTimeOffset`.
 - **Safer failure modes.** Early batch awaits fail immediately instead of deadlocking.
   Cancellation abandons the wait without leaving a partial RESP frame on the connection.
