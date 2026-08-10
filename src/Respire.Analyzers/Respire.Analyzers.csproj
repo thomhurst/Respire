@@ -13,6 +13,10 @@
     <!-- Shipped inside the Respire package (analyzers/dotnet/cs), never as its own package. -->
     <IsPackable>false</IsPackable>
     <IncludeBuildOutput>false</IncludeBuildOutput>
+    <!-- The code-fix provider needs Workspaces and MEF assemblies at host load time. Keep
+         compiler-owned Microsoft.CodeAnalysis assemblies out of the package, but copy the
+         remaining runtime closure so the Respire package can ship it beside the analyzer. -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>

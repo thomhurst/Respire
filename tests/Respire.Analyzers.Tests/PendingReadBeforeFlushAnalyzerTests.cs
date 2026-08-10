@@ -1052,6 +1052,48 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    public async Task ConditionalPendingReadBeforeSend_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool condition)
+            {
+                var batch = client.CreateBatch();
+                Console.WriteLine({|RESP002:(condition
+                    ? batch.GetStringAsync("a")
+                    : batch.GetStringAsync("b")).Result|});
+                await batch.SendAsync();
+            }
+        }
+        """);
+
+    [Test]
+    public async Task SwitchPendingReadBeforeSend_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, int choice)
+            {
+                var batch = client.CreateBatch();
+                Console.WriteLine({|RESP002:(choice switch
+                {
+                    0 => batch.GetStringAsync("a"),
+                    _ => batch.GetStringAsync("b"),
+                }).Result|});
+                await batch.SendAsync();
+            }
+        }
+        """);
+
+    [Test]
     public async Task CoalesceAssignedPendingBeforeSend_IsFlagged() => await Verify.VerifyAsync(
         """
         using System;

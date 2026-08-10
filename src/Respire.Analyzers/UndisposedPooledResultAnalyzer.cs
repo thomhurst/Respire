@@ -84,8 +84,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             context.CancellationToken.ThrowIfCancellationRequested();
 
             if (variable.Initializer is null
-                || ScopeWalker.Unwrap(variable.Initializer.Value) is not AwaitExpressionSyntax awaitExpression
-                || !IsRespireAcquisition(context, awaitExpression.Expression))
+                || !ContainsRespireAcquisition(context, variable.Initializer.Value))
             {
                 // Only an awaited Respire API call hands out a fresh lease; indexer views, copies,
                 // and values forwarded through Task/ValueTask helpers keep their existing owner.
@@ -118,8 +117,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         var assignment = (AssignmentExpressionSyntax)context.Node;
         if (ScopeWalker.Unwrap(assignment.Left) is not IdentifierNameSyntax identifier
             || context.SemanticModel.GetSymbolInfo(identifier, context.CancellationToken).Symbol is not ILocalSymbol local
-            || ScopeWalker.Unwrap(assignment.Right) is not AwaitExpressionSyntax awaitExpression
-            || !IsRespireAcquisition(context, awaitExpression.Expression)
+            || !ContainsRespireAcquisition(context, assignment.Right)
             || ScopeWalker.GetEnclosingScope(assignment) is not { } scope
             || local.DeclaringSyntaxReferences.Length != 1
             || !scope.Span.Contains(local.DeclaringSyntaxReferences[0].Span))
@@ -128,12 +126,33 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         }
 
         var pooledType = Match(local.Type, resultType) ?? Match(local.Type, leaseType);
-        if (pooledType is null || IsDisposedOrEscapes(context, scope, awaitExpression, assignment, local))
+        if (pooledType is null || IsDisposedOrEscapes(context, scope, assignment.Right, assignment, local))
         {
             return;
         }
 
         context.ReportDiagnostic(Diagnostic.Create(Rule, identifier.GetLocation(), local.Name, pooledType.Name));
+    }
+
+    private static bool ContainsRespireAcquisition(
+        SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
+    {
+        switch (ScopeWalker.Unwrap(expression))
+        {
+            case AwaitExpressionSyntax awaitExpression:
+                return IsRespireAcquisition(context, awaitExpression.Expression);
+
+            case ConditionalExpressionSyntax conditional:
+                return ContainsRespireAcquisition(context, conditional.WhenTrue)
+                       || ContainsRespireAcquisition(context, conditional.WhenFalse);
+
+            case SwitchExpressionSyntax switchExpression:
+                return switchExpression.Arms.Any(arm =>
+                    ContainsRespireAcquisition(context, arm.Expression));
+
+            default:
+                return false;
+        }
     }
 
     private static INamedTypeSymbol? Match(ITypeSymbol candidate, INamedTypeSymbol? pooledType)

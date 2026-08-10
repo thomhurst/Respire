@@ -204,6 +204,33 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 yield return inlineCall;
                 yield break;
 
+            case ConditionalExpressionSyntax conditional:
+                foreach (var origin in ResolveOriginatingCalls(
+                             context, scope, conditional.WhenTrue, read))
+                {
+                    yield return origin;
+                }
+
+                foreach (var origin in ResolveOriginatingCalls(
+                             context, scope, conditional.WhenFalse, read))
+                {
+                    yield return origin;
+                }
+
+                yield break;
+
+            case SwitchExpressionSyntax switchExpression:
+                foreach (var arm in switchExpression.Arms)
+                {
+                    foreach (var origin in ResolveOriginatingCalls(
+                                 context, scope, arm.Expression, read))
+                    {
+                        yield return origin;
+                    }
+                }
+
+                yield break;
+
             case IdentifierNameSyntax identifier:
                 if (context.SemanticModel.GetSymbolInfo(identifier, context.CancellationToken).Symbol is not ILocalSymbol local
                     || IsDeclaredOutside(scope, local)

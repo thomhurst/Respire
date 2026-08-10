@@ -37,12 +37,20 @@
        The path is TFM-independent, so this runs once on the outer (cross-targeting) build. -->
   <Target Name="_PackRespireAnalyzers" BeforeTargets="_GetPackageFiles">
     <MSBuild Projects="..\Respire.Analyzers\Respire.Analyzers.csproj"
-             Targets="GetTargetPath"
+             Targets="Build"
              Properties="Configuration=$(Configuration)">
       <Output TaskParameter="TargetOutputs" ItemName="_RespireAnalyzerAssembly" />
     </MSBuild>
     <ItemGroup>
       <None Include="@(_RespireAnalyzerAssembly)" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+      <_RespireAnalyzerDependency
+          Include="$(MSBuildProjectDirectory)\..\Respire.Analyzers\bin\$(Configuration)\netstandard2.0\*.dll"
+          Exclude="@(_RespireAnalyzerAssembly);
+                   $(MSBuildProjectDirectory)\..\Respire.Analyzers\bin\$(Configuration)\netstandard2.0\Respire.Analyzers.dll;
+                   $(MSBuildProjectDirectory)\..\Respire.Analyzers\bin\$(Configuration)\netstandard2.0\Microsoft.CodeAnalysis.dll;
+                   $(MSBuildProjectDirectory)\..\Respire.Analyzers\bin\$(Configuration)\netstandard2.0\Microsoft.CodeAnalysis.CSharp.dll" />
+      <None Include="@(_RespireAnalyzerDependency)"
+            Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
     </ItemGroup>
   </Target>
 

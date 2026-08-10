@@ -791,6 +791,42 @@ public class UndisposedPooledResultAnalyzerTests
         """);
 
     [Test]
+    public async Task ConditionalAcquisitionWithoutDispose_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool condition)
+            {
+                var {|RESP001:result|} = condition
+                    ? await client.ExecuteAsync("A")
+                    : await client.ExecuteAsync("B");
+            }
+        }
+        """);
+
+    [Test]
+    public async Task SwitchAcquisitionWithoutDispose_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, int choice)
+            {
+                var {|RESP001:result|} = choice switch
+                {
+                    0 => await client.ExecuteAsync("A"),
+                    _ => await client.ExecuteAsync("B"),
+                };
+            }
+        }
+        """);
+
+    [Test]
     public async Task DiscardedNestedAssignmentWithoutDispose_IsFlagged() => await Verify.VerifyAsync(
         """
         using System.Threading.Tasks;
