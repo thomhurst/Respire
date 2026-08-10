@@ -119,6 +119,83 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    public async Task StartedButUnawaitedSendBeforeRead_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                var send = batch.SendAsync();
+                Console.WriteLine({|RESP002:pending.Result|});
+                await send;
+            }
+        }
+        """);
+
+    [Test]
+    public async Task StartedButUnawaitedCommitBeforeRead_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                await using var transaction = client.CreateTransaction();
+                var pending = transaction.GetStringAsync("key");
+                var commit = transaction.CommitAsync();
+                Console.WriteLine({|RESP002:pending.Result|});
+                await commit;
+            }
+        }
+        """);
+
+    [Test]
+    public async Task AwaitedSendLocalBeforeRead_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                var send = batch.SendAsync();
+                await send;
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    public async Task ResultInsideNameOf_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using Respire;
+
+        public class Caller
+        {
+            public void Run(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                Console.WriteLine(nameof(pending.Result));
+            }
+        }
+        """);
+
+    [Test]
     public async Task PendingPassedToAnotherMethod_IsNotFlagged() => await Verify.VerifyAsync(
         """
         using System;

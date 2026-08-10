@@ -3,6 +3,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Microsoft.CodeAnalysis.Operations;
 
 namespace Respire.Analyzers;
 
@@ -12,9 +13,8 @@ namespace Respire.Analyzers;
 /// </summary>
 /// <remarks>
 /// Pragmatic and same-method only: the pending must come from a local batch/transaction in this
-/// scope, and neither the pending nor the batch may leave it. The flush is matched textually, so
-/// any <c>SendAsync</c>/<c>CommitAsync</c> written before the read — even a conditional one —
-/// silences the rule.
+/// scope, and neither the pending nor the batch may leave it. The flush is matched textually and
+/// must be awaited before the read.
 /// </remarks>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
@@ -78,6 +78,11 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             return;
         }
 
+        if (IsInsideNameOf(context, member))
+        {
+            return;
+        }
+
         if (context.SemanticModel.GetSymbolInfo(member, context.CancellationToken).Symbol is not IPropertySymbol property
             || !SymbolEqualityComparer.Default.Equals(property.ContainingType.OriginalDefinition, known.Pending))
         {
@@ -85,6 +90,21 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         }
 
         AnalyzeRead(context, read: member, pending: member.Expression, known);
+    }
+
+    private static bool IsInsideNameOf(SyntaxNodeAnalysisContext context, SyntaxNode node)
+    {
+        for (var operation = context.SemanticModel.GetOperation(node, context.CancellationToken);
+             operation is not null;
+             operation = operation.Parent)
+        {
+            if (operation is INameOfOperation)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void AnalyzeAwait(SyntaxNodeAnalysisContext context, KnownTypes known)
@@ -225,9 +245,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            // Textual order stands in for control flow; a flush inside the loop that also contains
-            // the read counts too, because the next iteration reads a flushed batch.
-            if (invocation.SpanStart < read.SpanStart || SharesEnclosingLoop(read, invocation))
+            if (IsAwaitedBefore(context, scope, invocation, read))
             {
                 return true;
             }
@@ -236,18 +254,46 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         return false;
     }
 
-    private static bool SharesEnclosingLoop(SyntaxNode read, SyntaxNode flush)
+    private static bool IsAwaitedBefore(
+        SyntaxNodeAnalysisContext context,
+        SyntaxNode scope,
+        InvocationExpressionSyntax invocation,
+        SyntaxNode read)
     {
-        for (var current = read.Parent; current is not null; current = current.Parent)
+        if (GetDirectAwait(invocation) is { } directAwait && directAwait.SpanStart < read.SpanStart)
         {
-            if (current is ForStatementSyntax or CommonForEachStatementSyntax or WhileStatementSyntax or DoStatementSyntax
-                && current.Span.Contains(flush.Span))
+            return true;
+        }
+
+        if (invocation.Parent is not EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax declarator }
+            || context.SemanticModel.GetDeclaredSymbol(declarator, context.CancellationToken) is not ILocalSymbol flush)
+        {
+            return false;
+        }
+
+        foreach (var reference in ScopeWalker.FindReferences(
+                     scope, flush, context.SemanticModel, context.CancellationToken))
+        {
+            if (GetDirectAwait(reference) is { } awaitExpression && awaitExpression.SpanStart < read.SpanStart)
             {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private static AwaitExpressionSyntax? GetDirectAwait(ExpressionSyntax expression)
+    {
+        while (expression.Parent is ParenthesizedExpressionSyntax parenthesized)
+        {
+            expression = parenthesized;
+        }
+
+        return expression.Parent is AwaitExpressionSyntax awaitExpression
+               && ScopeWalker.IsSame(awaitExpression.Expression, expression)
+            ? awaitExpression
+            : null;
     }
 
     private sealed class KnownTypes(INamedTypeSymbol pending, INamedTypeSymbol? batch, INamedTypeSymbol? transaction)
