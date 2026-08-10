@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Text;
 using System.Globalization;
 using System.Runtime.CompilerServices;
@@ -13,8 +14,10 @@ namespace Respire;
 /// Input-only: command results come back as plain .NET types (<c>string?</c>, <c>long</c>, …),
 /// never as this struct.
 /// </summary>
-public readonly struct RespireValue
+public readonly struct RespireValue : IEquatable<RespireValue>
 {
+    private const int StackallocThreshold = 256;
+
     private enum Kind : byte
     {
         Null = 0,
@@ -63,6 +66,28 @@ public readonly struct RespireValue
 
     public static implicit operator RespireValue(ReadOnlyMemory<byte> value) => new(value);
 
+    public static implicit operator RespireValue(Memory<byte> value) => new(value);
+
+    public static implicit operator RespireValue(ArraySegment<byte> value) => new(value.AsMemory());
+
+    /// <summary>Converts a key without changing its UTF-8 or binary representation.</summary>
+    public static implicit operator RespireValue(RespireKey value) => value.AsValue();
+
+    /// <summary>Converts a GUID using the invariant 36-character <c>D</c> format.</summary>
+    public static implicit operator RespireValue(Guid value)
+        => new(value.ToString("D", CultureInfo.InvariantCulture));
+
+    /// <summary>Converts an instant using the invariant round-trip <c>O</c> format.</summary>
+    public static implicit operator RespireValue(DateTimeOffset value)
+        => new(value.ToString("O", CultureInfo.InvariantCulture));
+
+    /// <summary>Converts a duration using the invariant constant <c>c</c> format.</summary>
+    public static implicit operator RespireValue(TimeSpan value)
+        => new(value.ToString("c", CultureInfo.InvariantCulture));
+
+    /// <summary>Converts one UTF-16 code unit using its unsigned integer value.</summary>
+    public static implicit operator RespireValue(char value) => new(Kind.Integer, number: value);
+
     public static implicit operator RespireValue(long value) => new(Kind.Integer, number: value);
 
     public static implicit operator RespireValue(byte value) => new(Kind.Integer, number: value);
@@ -91,6 +116,10 @@ public readonly struct RespireValue
 
     public static implicit operator RespireValue(bool value)
         => new(Kind.Boolean, number: value ? 1 : 0);
+
+    public static bool operator ==(RespireValue left, RespireValue right) => left.Equals(right);
+
+    public static bool operator !=(RespireValue left, RespireValue right) => !left.Equals(right);
 
     /// <summary>Serializes this argument as one RESP bulk string.</summary>
     internal void WriteTo(ref RespWriter writer)
@@ -251,6 +280,243 @@ public readonly struct RespireValue
             Kind.Bytes => _bytes.IsEmpty,
             _ => false,
         };
+
+    /// <summary>
+    /// Compares the exact bulk-string payload written to Redis, so equivalent text, binary, and
+    /// scalar representations compare equal.
+    /// </summary>
+    public bool Equals(RespireValue other)
+    {
+        if (_kind == Kind.Null || other._kind == Kind.Null)
+        {
+            return _kind == other._kind;
+        }
+
+        if (_kind == Kind.Bytes)
+        {
+            return other.EqualsBytes(_bytes.Span);
+        }
+
+        if (other._kind == Kind.Bytes)
+        {
+            return EqualsBytes(other._bytes.Span);
+        }
+
+        if (_kind == Kind.String)
+        {
+            return other._kind == Kind.String
+                ? StringsHaveSamePayload(_string!, other._string!)
+                : other.EqualsUtf8(_string!);
+        }
+
+        if (other._kind == Kind.String)
+        {
+            return EqualsUtf8(other._string!);
+        }
+
+        Span<byte> left = stackalloc byte[32];
+        Span<byte> right = stackalloc byte[32];
+        var leftLength = WriteWirePayload(left);
+        var rightLength = other.WriteWirePayload(right);
+        return left[..leftLength].SequenceEqual(right[..rightLength]);
+    }
+
+    public override bool Equals(object? obj) => obj is RespireValue other && Equals(other);
+
+    public override int GetHashCode()
+    {
+        if (_kind == Kind.Null)
+        {
+            return 0;
+        }
+
+        if (_kind == Kind.Bytes)
+        {
+            return HashPayload(_bytes.Span);
+        }
+
+        var length = GetWireLength();
+        byte[]? rented = null;
+        var payload = length <= StackallocThreshold
+            ? stackalloc byte[length]
+            : (rented = ArrayPool<byte>.Shared.Rent(length));
+
+        try
+        {
+            WriteWirePayload(payload);
+            return HashPayload(payload[..length]);
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                ArrayPool<byte>.Shared.Return(rented, clearArray: true);
+            }
+        }
+    }
+
+    private bool EqualsBytes(ReadOnlySpan<byte> bytes)
+    {
+        if (_kind == Kind.Bytes)
+        {
+            return _bytes.Span.SequenceEqual(bytes);
+        }
+
+        if (_kind == Kind.String)
+        {
+            return Utf8Equals(_string!, bytes);
+        }
+
+        Span<byte> payload = stackalloc byte[32];
+        var length = WriteWirePayload(payload);
+        return payload[..length].SequenceEqual(bytes);
+    }
+
+    private bool EqualsUtf8(string value)
+    {
+        Span<byte> payload = stackalloc byte[32];
+        var length = WriteWirePayload(payload);
+        return Utf8Equals(value, payload[..length]);
+    }
+
+    private static bool Utf8Equals(string value, ReadOnlySpan<byte> bytes)
+    {
+        var byteCount = Encoding.UTF8.GetByteCount(value);
+        if (byteCount != bytes.Length)
+        {
+            return false;
+        }
+
+        byte[]? rented = null;
+        var encoded = byteCount <= StackallocThreshold
+            ? stackalloc byte[byteCount]
+            : (rented = ArrayPool<byte>.Shared.Rent(byteCount));
+
+        try
+        {
+            Encoding.UTF8.GetBytes(value, encoded);
+            return encoded[..byteCount].SequenceEqual(bytes);
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                ArrayPool<byte>.Shared.Return(rented, clearArray: true);
+            }
+        }
+    }
+
+    private static bool StringsHaveSamePayload(string left, string right)
+    {
+        if (string.Equals(left, right, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (!ContainsUnpairedSurrogate(left) && !ContainsUnpairedSurrogate(right))
+        {
+            return false;
+        }
+
+        var byteCount = Encoding.UTF8.GetByteCount(left);
+        byte[]? rented = null;
+        var encoded = byteCount <= StackallocThreshold
+            ? stackalloc byte[byteCount]
+            : (rented = ArrayPool<byte>.Shared.Rent(byteCount));
+
+        try
+        {
+            Encoding.UTF8.GetBytes(left, encoded);
+            return Utf8Equals(right, encoded[..byteCount]);
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                ArrayPool<byte>.Shared.Return(rented, clearArray: true);
+            }
+        }
+    }
+
+    private static bool ContainsUnpairedSurrogate(string value)
+    {
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (char.IsHighSurrogate(value[i]))
+            {
+                if (i + 1 < value.Length && char.IsLowSurrogate(value[i + 1]))
+                {
+                    i++;
+                    continue;
+                }
+
+                return true;
+            }
+
+            if (char.IsLowSurrogate(value[i]))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static int HashPayload(ReadOnlySpan<byte> payload)
+    {
+        var hash = new HashCode();
+        foreach (var value in payload)
+        {
+            hash.Add(value);
+        }
+
+        return hash.ToHashCode();
+    }
+
+    private int GetWireLength()
+    {
+        if (_kind == Kind.String)
+        {
+            return Encoding.UTF8.GetByteCount(_string!);
+        }
+
+        if (_kind == Kind.Bytes)
+        {
+            return _bytes.Length;
+        }
+
+        Span<byte> buffer = stackalloc byte[32];
+        return WriteWirePayload(buffer);
+    }
+
+    private int WriteWirePayload(Span<byte> destination)
+    {
+        switch (_kind)
+        {
+            case Kind.String:
+                return Encoding.UTF8.GetBytes(_string!, destination);
+            case Kind.Bytes:
+                _bytes.Span.CopyTo(destination);
+                return _bytes.Length;
+            case Kind.Integer:
+                Utf8Formatter.TryFormat(_number, destination, out var integerWritten);
+                return integerWritten;
+            case Kind.UnsignedInteger:
+                Utf8Formatter.TryFormat(unchecked((ulong)_number), destination, out var unsignedWritten);
+                return unsignedWritten;
+            case Kind.Single:
+                Utf8Formatter.TryFormat(BitConverter.Int32BitsToSingle((int)_number), destination, out var singleWritten);
+                return singleWritten;
+            case Kind.Double:
+                Utf8Formatter.TryFormat(BitConverter.Int64BitsToDouble(_number), destination, out var doubleWritten);
+                return doubleWritten;
+            case Kind.Boolean:
+                destination[0] = _number != 0 ? (byte)'1' : (byte)'0';
+                return 1;
+            default:
+                return 0;
+        }
+    }
 
     public override string ToString()
         => _kind switch

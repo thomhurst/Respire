@@ -146,13 +146,14 @@ long n = await redis.Sets.IntersectStoreAsync(destination: "both", "set:a", "set
 Two small readonly structs with implicit conversions kill the overload explosion:
 
 ```csharp
-public readonly struct RespireKey    // from: string, ReadOnlyMemory<byte>, byte[]
-public readonly struct RespireValue  // from: string, byte[], ReadOnlyMemory<byte>,
-                                     //       long, int, double, bool
+public readonly struct RespireKey    // from: string, byte[], ReadOnlyMemory<byte>
+public readonly struct RespireValue  // from: key/text/binary, numeric primitives, bool,
+                                     //       Guid, DateTimeOffset, TimeSpan, char
 ```
 
 `RespireValue` is *input-only*. (The current parse-side `RespireValue` union becomes an
-internal type; results surface as plain .NET types.)
+internal type; results surface as plain .NET types.) Equality compares the exact bulk-string
+payload written to Redis, so equivalent text, bytes, and scalar values compare equal.
 
 ### Outputs: real types, serializer for objects
 

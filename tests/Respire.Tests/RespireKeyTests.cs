@@ -8,6 +8,18 @@ namespace Respire.Tests;
 public class RespireKeyTests
 {
     [Test]
+    public async Task EmptyAndEqualityOperatorsUseValueSemantics()
+    {
+        RespireKey text = "key";
+        RespireKey bytes = "key"u8.ToArray();
+
+        await Assert.That(RespireKey.Empty.IsEmpty).IsTrue();
+        await Assert.That(text == bytes).IsTrue();
+        await Assert.That(text != bytes).IsFalse();
+        await Assert.That(text != "other").IsTrue();
+    }
+
+    [Test]
     [Arguments("key")]
     [Arguments("£ sterling")]
     [Arguments("𐍈")]
@@ -30,6 +42,20 @@ public class RespireKeyTests
 
         await Assert.That(invalidBytes.Equals(replacementString)).IsFalse();
         await Assert.That(replacementString.Equals(invalidBytes)).IsFalse();
+    }
+
+    [Test]
+    public async Task UnpairedSurrogateStringsUseTheirEncodedWirePayload()
+    {
+        var first = new RespireKey("\uD800");
+        var second = new RespireKey("\uD801");
+        var replacementBytes = new RespireKey("�"u8.ToArray());
+
+        await Assert.That(first == second).IsTrue();
+        await Assert.That(first == replacementBytes).IsTrue();
+        await Assert.That(second == replacementBytes).IsTrue();
+        await Assert.That(first.GetHashCode()).IsEqualTo(second.GetHashCode());
+        await Assert.That(first.GetHashCode()).IsEqualTo(replacementBytes.GetHashCode());
     }
 
     [Test]

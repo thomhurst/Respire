@@ -9,7 +9,7 @@ Respire separates flexible command inputs from convenient application outputs.
 
 ## Keys and input values
 
-`RespireKey` accepts `string`, `byte[]`, or `ReadOnlyMemory<byte>`. `RespireValue` accepts text, binary data, numeric primitives, and booleans through implicit conversions.
+`RespireKey` accepts `string`, `byte[]`, or `ReadOnlyMemory<byte>`. `RespireValue` accepts keys, text, binary data (`byte[]`, `Memory<byte>`, `ReadOnlyMemory<byte>`, or `ArraySegment<byte>`), numeric primitives, booleans, `Guid`, `DateTimeOffset`, `TimeSpan`, and `char` through implicit conversions.
 
 ```csharp
 RespireKey key = "counter";
@@ -19,6 +19,8 @@ await redis.SetAsync(key, value);
 ```
 
 These small readonly structs keep command overloads manageable without forcing a protocol union type on every result.
+
+Keys and values use value equality. `RespireValue` compares the exact bulk-string payload sent to Redis, so `5`, `"5"`, and the UTF-8 bytes for `5` are equal and share a hash code. GUIDs use the invariant `D` format, `DateTimeOffset` uses the invariant round-trip `O` format, `TimeSpan` uses the invariant constant `c` format, and `char` uses its unsigned UTF-16 code-unit value.
 
 ## Typed output
 
