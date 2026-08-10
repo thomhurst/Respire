@@ -4,11 +4,27 @@ using Respire.Internal;
 
 namespace Respire;
 
-internal enum SubscriptionKind
+/// <summary>The Redis pub/sub command family used by a subscription.</summary>
+public enum SubscriptionKind
 {
+    /// <summary>A regular channel subscription created with SUBSCRIBE.</summary>
     Channel,
+
+    /// <summary>A glob-pattern subscription created with PSUBSCRIBE.</summary>
     Pattern,
+
+    /// <summary>A sharded channel subscription created with SSUBSCRIBE.</summary>
     Sharded,
+}
+
+/// <summary>Why a subscription stopped accepting and yielding messages.</summary>
+public enum RespireSubscriptionEndReason
+{
+    /// <summary>The subscription was explicitly disposed.</summary>
+    Disposed,
+
+    /// <summary>The client that owns the subscription was disposed.</summary>
+    ClientDisposed,
 }
 
 /// <summary>
@@ -21,22 +37,62 @@ internal enum SubscriptionKind
 /// after it reaches this subscriber and messages are buffered until enumeration starts. Disposing
 /// unsubscribes. If the pub/sub connection drops, Respire reconnects and resubscribes
 /// automatically — the stream just keeps going (messages published while disconnected are lost, as
-/// with any Redis pub/sub).
+/// with any Redis pub/sub). Only one enumerator may be active at a time; dispose it before starting
+/// another.
 /// </summary>
 public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsyncDisposable
 {
     private readonly SubscriptionHub _hub;
+    private readonly TaskCompletionSource<RespireSubscriptionEndReason> _completion =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private long _droppedMessages;
     private int _disposed;
+    private int _enumerating;
 
-    internal RespireSubscription(SubscriptionHub hub, SubscriptionKind kind, string[] names, Channel<RespireMessage> buffer)
+    internal RespireSubscription(
+        SubscriptionHub hub,
+        SubscriptionKind kind,
+        string[] names,
+        int bufferSize,
+        SubscriptionOverflow overflow)
     {
         _hub = hub;
         Kind = kind;
         Names = names;
-        Buffer = buffer;
+        Channels = Array.AsReadOnly(names);
+        Buffer = Channel.CreateBounded<RespireMessage>(new BoundedChannelOptions(bufferSize)
+        {
+            FullMode = overflow == SubscriptionOverflow.DropOldest
+                ? BoundedChannelFullMode.DropOldest
+                : BoundedChannelFullMode.DropWrite,
+            SingleWriter = true,
+            SingleReader = true,
+        }, _ =>
+        {
+            Interlocked.Increment(ref _droppedMessages);
+            RespireTelemetry.RecordSubscriptionMessageDropped(kind, overflow);
+        });
     }
 
-    internal SubscriptionKind Kind { get; }
+    /// <summary>The Redis pub/sub command family used by this subscription.</summary>
+    public SubscriptionKind Kind { get; }
+
+    /// <summary>
+    /// The channels or patterns covered by this subscription. The collection is immutable.
+    /// </summary>
+    public IReadOnlyList<string> Channels { get; }
+
+    /// <summary>Whether this subscription has ended because it or its owning client was disposed.</summary>
+    public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
+
+    /// <summary>The number of messages discarded by this subscription's overflow policy.</summary>
+    public long DroppedMessages => Interlocked.Read(ref _droppedMessages);
+
+    /// <summary>
+    /// Completes with the reason this subscription ended. Enumeration may finish before explicit
+    /// unsubscription completes; await this task when the distinction matters.
+    /// </summary>
+    public Task<RespireSubscriptionEndReason> Completion => _completion.Task;
 
     internal string[] Names { get; }
 
@@ -44,12 +100,28 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
 
     /// <inheritdoc/>
     public IAsyncEnumerator<RespireMessage> GetAsyncEnumerator(CancellationToken cancellationToken = default)
-        => EnumerateAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
+    {
+        ObjectDisposedException.ThrowIf(IsDisposed, this);
+        if (Interlocked.CompareExchange(ref _enumerating, 1, 0) != 0)
+        {
+            throw new InvalidOperationException("A RespireSubscription can only have one active enumerator.");
+        }
+
+        try
+        {
+            return new SubscriptionEnumerator(
+                this,
+                EnumerateAsync(cancellationToken).GetAsyncEnumerator(cancellationToken));
+        }
+        catch
+        {
+            Volatile.Write(ref _enumerating, 0);
+            throw;
+        }
+    }
 
     private async IAsyncEnumerable<RespireMessage> EnumerateAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-
         while (await Buffer.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
         {
             while (Buffer.Reader.TryRead(out var message))
@@ -67,6 +139,56 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
             return;
         }
 
-        await _hub.RemoveAsync(this).ConfigureAwait(false);
+        Buffer.Writer.TryComplete();
+        try
+        {
+            await _hub.RemoveAsync(this).ConfigureAwait(false);
+            _completion.TrySetResult(RespireSubscriptionEndReason.Disposed);
+        }
+        catch (Exception ex)
+        {
+            _completion.TrySetException(ex);
+            throw;
+        }
+    }
+
+    internal void CompleteFromClientDisposal()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        Buffer.Writer.TryComplete();
+        _completion.TrySetResult(RespireSubscriptionEndReason.ClientDisposed);
+    }
+
+    private sealed class SubscriptionEnumerator(
+        RespireSubscription subscription,
+        IAsyncEnumerator<RespireMessage> inner) : IAsyncEnumerator<RespireMessage>
+    {
+        private RespireSubscription? _subscription = subscription;
+
+        public RespireMessage Current => inner.Current;
+
+        public ValueTask<bool> MoveNextAsync() => inner.MoveNextAsync();
+
+        public async ValueTask DisposeAsync()
+        {
+            var owner = Interlocked.Exchange(ref _subscription, null);
+            if (owner is null)
+            {
+                return;
+            }
+
+            try
+            {
+                await inner.DisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                Volatile.Write(ref owner._enumerating, 0);
+            }
+        }
     }
 }
