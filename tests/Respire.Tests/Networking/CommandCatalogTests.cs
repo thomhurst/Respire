@@ -245,6 +245,28 @@ public class CommandCatalogTests
     }
 
     [Test]
+    public async Task InterpolatedCommand_AlignmentPreservesSpecializedEncodings()
+    {
+        await using var server = new FakeRespServer(
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var bytes = "ab"u8.ToArray();
+        ReadOnlyMemory<byte> memory = "cd"u8.ToArray();
+
+        using var booleanResult = await client.ExecuteAsync($"SET boolean {true,3}");
+        using var bytesResult = await client.ExecuteAsync($"SET bytes {bytes,-4}");
+        using var memoryResult = await client.ExecuteAsync($"SET memory {memory,4}");
+
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo([
+            "SET boolean   1",
+            "SET bytes ab  ",
+            "SET memory   cd",
+        ]);
+    }
+
+    [Test]
     public async Task RawFireAndForget_CompletesWithoutPendingResultAndDiscardsReply()
     {
         await using var server = new FakeRespServer(

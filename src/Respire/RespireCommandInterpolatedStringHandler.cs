@@ -53,6 +53,26 @@ public struct RespireCommandInterpolatedStringHandler
     public void AppendFormatted<T>(T value, string? format)
         => _tokens.Add(Format(value, format));
 
+    public void AppendFormatted(bool value, int alignment)
+        => _tokens.Add(Align((RespireValue)value, alignment));
+
+    public void AppendFormatted(bool value, int alignment, string? format)
+        => AppendFormatted(value, alignment);
+
+    public void AppendFormatted(byte[]? value, int alignment)
+        => _tokens.Add(value is null
+            ? Align(RespireValue.Null, alignment)
+            : Align(value.AsMemory(), alignment));
+
+    public void AppendFormatted(byte[]? value, int alignment, string? format)
+        => AppendFormatted(value, alignment);
+
+    public void AppendFormatted(ReadOnlyMemory<byte> value, int alignment)
+        => _tokens.Add(Align(value, alignment));
+
+    public void AppendFormatted(ReadOnlyMemory<byte> value, int alignment, string? format)
+        => AppendFormatted(value, alignment);
+
     public void AppendFormatted<T>(T value, int alignment)
         => _tokens.Add(Align(Format(value, format: null), alignment));
 
@@ -74,6 +94,20 @@ public struct RespireCommandInterpolatedStringHandler
         return alignment < 0
             ? text.PadRight(-alignment)
             : text.PadLeft(alignment);
+    }
+
+    private static RespireValue Align(ReadOnlyMemory<byte> value, int alignment)
+    {
+        var width = Math.Abs(alignment);
+        if (value.Length >= width)
+        {
+            return new RespireValue(value);
+        }
+
+        var padded = new byte[width];
+        padded.AsSpan().Fill((byte)' ');
+        value.Span.CopyTo(alignment < 0 ? padded : padded.AsSpan(width - value.Length));
+        return padded;
     }
 
     internal readonly (string Operation, RespireValue[] Tokens) Build()
