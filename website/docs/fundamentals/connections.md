@@ -86,6 +86,46 @@ await using var redis = RespireClient.Create(options);
 
 The first command triggers connection. Dependency-injection registration uses this lazy behavior so Redis availability does not block host startup.
 
+## Redis Sentinel
+
+Set `ServiceName` to resolve the current primary from one or more Sentinel endpoints before
+connecting:
+
+```csharp
+await using var redis = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = { new RespireEndpoint("sentinel-1", 26379) },
+    ServiceName = "mymaster",
+    Password = configuration["Redis:Password"],
+    SentinelPassword = configuration["Redis:SentinelPassword"],
+});
+```
+
+URI connections use `serviceName`, `sentinelUser`, `sentinelPassword`, and `sentinelTls` query
+parameters:
+
+```csharp
+await using var redis = await RespireClient.ConnectAsync(
+    "redis://:redis-password@sentinel-1?serviceName=mymaster&sentinelPassword=sentinel-password");
+```
+
+By default, Sentinel authentication inherits the primary Redis credentials. Set
+`SentinelPassword = string.Empty`, or include an empty `sentinelPassword=` URI parameter, to
+explicitly disable Sentinel authentication while retaining authentication on the discovered
+primary. When multiple Sentinel endpoints are configured, Respire also tries the next endpoint
+if discovery times out, returns invalid data, or reports a primary that cannot be reached during
+the initial connection.
+
+Sentinel discovery always uses RESP2, so older Sentinel nodes can discover a RESP3 primary.
+Transport settings inherit from the primary by default. Set `SentinelUseTls` independently when
+Sentinel and the primary use different TLS modes, and set `SentinelTlsOptions` when Sentinel needs
+different certificate validation or a different `TargetHost`. In a URI, `sentinelTls=false`
+selects plaintext Sentinel discovery even when the `rediss://` primary uses TLS.
+
+Sentinel currently requires `ConnectAsync` because discovery is a network operation that must run
+before Redis connections exist. Lazy `Create` and automatic Sentinel re-discovery during failover
+are planned follow-up work.
+
 ## Cancellation and timeouts
 
 Commands with a `CancellationToken` abandon the wait when cancelled; cancellation cannot guarantee the server did not execute a command already written to the socket. Some variadic `params ReadOnlySpan<T>` overloads do not accept cancellation.

@@ -50,6 +50,16 @@ public sealed partial class RespireClient : IRespireClient
 
     public static async ValueTask<RespireClient> ConnectAsync(RespireOptions options, CancellationToken cancellationToken = default)
     {
+        return await SentinelResolver.ResolveAndConnectPrimaryAsync(
+            options ?? throw new ArgumentNullException(nameof(options)),
+            ConnectPrimaryAsync,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<RespireClient> ConnectPrimaryAsync(
+        RespireOptions options,
+        CancellationToken cancellationToken)
+    {
         var client = Create(options);
         try
         {
@@ -132,7 +142,17 @@ public sealed partial class RespireClient : IRespireClient
     public static RespireClient Create(string connectionString) => Create(RespireOptions.Parse(connectionString));
 
     public static RespireClient Create(RespireOptions options)
-        => new(new ClientCore(options ?? throw new ArgumentNullException(nameof(options))), keyPrefix: null, ownsCore: true);
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        if (!string.IsNullOrWhiteSpace(options.ServiceName))
+        {
+            throw new NotSupportedException(
+                "Redis Sentinel discovery requires RespireClient.ConnectAsync because it must query Sentinel " +
+                "before Redis connections are created. Lazy Sentinel failover is not supported yet.");
+        }
+
+        return new RespireClient(new ClientCore(options), keyPrefix: null, ownsCore: true);
+    }
 
     public RespireEndpoint Endpoint => new(_core.Multiplexer.Host, _core.Multiplexer.Port);
 
