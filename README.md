@@ -116,16 +116,17 @@ while (!applied);
 
 ### Distributed locks
 
-`AcquireAsync` generates the owner token, returns a handle, and releases the lock when that handle
-is disposed. It returns `null` when someone else holds the key.
+`AcquireAsync` generates the owner token and returns a non-null attempt. Check `Acquired`, then use
+the `Lock` handle; disposing the attempt also releases an acquired lock.
 
 ```csharp
-await using var mutex = await redis.Locks.AcquireAsync("locks:report", TimeSpan.FromSeconds(30));
-if (mutex is null)
+await using var attempt = await redis.Locks.AcquireAsync("locks:report", TimeSpan.FromSeconds(30));
+if (!attempt.Acquired)
 {
     return; // someone else holds it
 }
 
+var mutex = attempt.Lock;
 await RunReportAsync();
 ```
 
@@ -135,10 +136,11 @@ A lock is a lease, not a mutex: it disappears on its own when the expiry elapses
 lock is no longer owned. Every operation compares the token on the server, so a handle whose lease
 expired never extends or deletes the next owner's lock.
 
-Pass `wait` and `retryEvery` to poll for a contended lock instead of giving up immediately:
+When contention is exceptional, `AcquireOrThrowAsync` returns the handle directly and throws
+`RespireLockNotAcquiredException` after the optional wait budget:
 
 ```csharp
-await using var mutex = await redis.Locks.AcquireAsync(
+await using var mutex = await redis.Locks.AcquireOrThrowAsync(
     "locks:report",
     TimeSpan.FromSeconds(30),
     wait: TimeSpan.FromSeconds(5),

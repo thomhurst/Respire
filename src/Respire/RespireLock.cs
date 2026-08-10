@@ -1,7 +1,28 @@
 namespace Respire;
 
+/// <summary>The result of trying to acquire a distributed lock.</summary>
+public readonly struct RespireLockAttempt : IAsyncDisposable
+{
+    private readonly RespireLock? _lock;
+
+    internal RespireLockAttempt(RespireLock? @lock) => _lock = @lock;
+
+    /// <summary>Whether this attempt acquired the lock.</summary>
+    public bool Acquired => _lock is not null;
+
+    /// <summary>
+    /// The acquired lock. Throws <see cref="RespireLockNotAcquiredException"/> when
+    /// <see cref="Acquired"/> is <see langword="false"/>.
+    /// </summary>
+    public RespireLock Lock => _lock ?? throw new RespireLockNotAcquiredException();
+
+    /// <summary>Releases the acquired lock, or does nothing when acquisition failed.</summary>
+    public ValueTask DisposeAsync() => _lock?.DisposeAsync() ?? default;
+}
+
 /// <summary>
-/// An acquired distributed lock. Returned by <see cref="ILockCommands.AcquireAsync(RespireKey, TimeSpan, CancellationToken)"/>,
+/// An acquired distributed lock. Exposed by <see cref="RespireLockAttempt.Lock"/> or returned by
+/// <see cref="ILockCommands.AcquireOrThrowAsync(RespireKey, TimeSpan, CancellationToken)"/>,
 /// which generates the owner token, so callers never invent or thread one through calls. Every
 /// operation compares that token on the server, so a lock that expired and was taken by someone
 /// else is never extended or deleted by this handle.

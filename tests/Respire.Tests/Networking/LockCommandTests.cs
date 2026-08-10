@@ -135,10 +135,11 @@ public class LockCommandTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var mutex = await client.Locks.AcquireAsync("resource", TimeSpan.FromSeconds(30));
+        var attempt = await client.Locks.AcquireAsync("resource", TimeSpan.FromSeconds(30));
+        var mutex = attempt.Lock;
 
-        await Assert.That(mutex).IsNotNull();
-        await Assert.That(mutex!.Key.ToString()).IsEqualTo("resource");
+        await Assert.That(attempt.Acquired).IsTrue();
+        await Assert.That(mutex.Key.ToString()).IsEqualTo("resource");
         await Assert.That(mutex.Expiry).IsEqualTo(TimeSpan.FromSeconds(30));
         var token = Encoding.UTF8.GetString(mutex.Token.Span);
         await Assert.That(token.Length).IsEqualTo(32);
@@ -153,15 +154,27 @@ public class LockCommandTests
     }
 
     [Test]
-    public async Task RespireLock_AcquireReturnsNullAndIssuesNothingElseWhenTheKeyExists()
+    public async Task RespireLock_AcquireReturnsUnacquiredAttemptAndIssuesNothingElseWhenTheKeyExists()
     {
         await using var server = new FakeRespServer("$-1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var mutex = await client.Locks.AcquireAsync("resource", TimeSpan.FromSeconds(30));
+        var attempt = await client.Locks.AcquireAsync("resource", TimeSpan.FromSeconds(30));
 
-        await Assert.That(mutex).IsNull();
+        await Assert.That(attempt.Acquired).IsFalse();
+        await Assert.That(() => _ = attempt.Lock).Throws<RespireLockNotAcquiredException>();
         await Assert.That(server.ReceivedCommands.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task RespireLock_AcquireOrThrowThrowsWhenTheKeyExists()
+    {
+        await using var server = new FakeRespServer("$-1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await Assert.That(async () => await client.Locks.AcquireOrThrowAsync(
+                "resource", TimeSpan.FromSeconds(30)))
+            .Throws<RespireLockNotAcquiredException>();
     }
 
     [Test]
@@ -170,10 +183,10 @@ public class LockCommandTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var first = await client.Locks.AcquireAsync("resource", TimeSpan.FromSeconds(30));
-        var second = await client.Locks.AcquireAsync("other", TimeSpan.FromSeconds(30));
+        var first = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
+        var second = await client.Locks.AcquireOrThrowAsync("other", TimeSpan.FromSeconds(30));
 
-        await Assert.That(first!.Token.Span.SequenceEqual(second!.Token.Span)).IsFalse();
+        await Assert.That(first.Token.Span.SequenceEqual(second.Token.Span)).IsFalse();
     }
 
     [Test]
@@ -183,9 +196,9 @@ public class LockCommandTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var key = "resource"u8.ToArray();
 
-        var mutex = await client.Locks.AcquireAsync(key, TimeSpan.FromSeconds(30));
+        var mutex = await client.Locks.AcquireOrThrowAsync(key, TimeSpan.FromSeconds(30));
         key.AsSpan().Fill((byte)'x');
-        await mutex!.DisposeAsync();
+        await mutex.DisposeAsync();
 
         var token = Encoding.UTF8.GetString(mutex.Token.Span);
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
@@ -201,9 +214,9 @@ public class LockCommandTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var mutex = await client.Locks.AcquireAsync("resource", TimeSpan.FromSeconds(30));
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
 
-        await Assert.That(await mutex!.ReleaseAsync()).IsTrue();
+        await Assert.That(await mutex.ReleaseAsync()).IsTrue();
         await Assert.That(await mutex.ReleaseAsync()).IsFalse();
         await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(60))).IsFalse();
         await mutex.DisposeAsync();
@@ -221,9 +234,9 @@ public class LockCommandTests
             ":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var mutex = await client.Locks.AcquireAsync("resource", TimeSpan.FromSeconds(30));
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
 
-        await Assert.That(await mutex!.ExtendAsync(TimeSpan.FromSeconds(45))).IsFalse();
+        await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(45))).IsFalse();
         await Assert.That(mutex.Expiry).IsEqualTo(TimeSpan.FromSeconds(30));
 
         await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(90))).IsTrue();
@@ -237,8 +250,8 @@ public class LockCommandTests
         await using var owner = await FakeRespServer.ConnectClientAsync(server.Port);
         var client = owner.WithKeyPrefix("tenant:");
 
-        var mutex = await client.Locks.AcquireAsync("resource", TimeSpan.FromSeconds(30));
-        var token = Encoding.UTF8.GetString(mutex!.Token.Span);
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
+        var token = Encoding.UTF8.GetString(mutex.Token.Span);
         await mutex.DisposeAsync();
 
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
@@ -254,13 +267,13 @@ public class LockCommandTests
         await using var server = new FakeRespServer("$-1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var mutex = await client.Locks.AcquireAsync(
+        var attempt = await client.Locks.AcquireAsync(
             "resource",
             TimeSpan.FromSeconds(30),
             wait: TimeSpan.FromMilliseconds(120),
             retryEvery: TimeSpan.FromMilliseconds(50));
 
-        await Assert.That(mutex).IsNull();
+        await Assert.That(attempt.Acquired).IsFalse();
         await Assert.That(server.ReceivedCommands.Count).IsGreaterThan(1);
     }
 
@@ -270,13 +283,12 @@ public class LockCommandTests
         await using var server = new FakeRespServer("$-1\r\n"u8.ToArray(), FakeRespServer.OkReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var mutex = await client.Locks.AcquireAsync(
+        var mutex = await client.Locks.AcquireOrThrowAsync(
             "resource",
             TimeSpan.FromSeconds(30),
             wait: TimeSpan.FromMilliseconds(50),
             retryEvery: TimeSpan.FromSeconds(1));
 
-        await Assert.That(mutex).IsNotNull();
         await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
     }
 

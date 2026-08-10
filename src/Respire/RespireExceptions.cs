@@ -27,6 +27,10 @@ public class RespireConnectionException : RespireException
 /// <summary>The byte stream violated the RESP protocol; the connection is no longer usable.</summary>
 public sealed class RespireProtocolException(string message) : RespireException(message);
 
+/// <summary>A distributed lock could not be acquired because another owner holds it.</summary>
+public sealed class RespireLockNotAcquiredException() : RespireException(
+    "The distributed lock was not acquired because another owner holds it.");
+
 /// <summary>The server answered a command with a RESP error reply ("-WRONGTYPE ...").</summary>
 public sealed class RespireServerException : RespireException
 {
