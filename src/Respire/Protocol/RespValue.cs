@@ -116,6 +116,28 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
     internal static RespValue PooledAggregate(RespDataType type, RespValue[] pooledElements, int count)
         => new(type, ValueFlags.PooledElements, elements: pooledElements, elementCount: count);
 
+    /// <summary>Deep-copies this value into GC-owned storage with no pooled-buffer ownership.</summary>
+    internal RespValue ToOwned()
+    {
+        if (_elements is not null)
+        {
+            var elements = new RespValue[_elementCount];
+            for (var i = 0; i < _elementCount; i++)
+            {
+                elements[i] = _elements[i].ToOwned();
+            }
+
+            return new RespValue(_type, elements: elements, elementCount: elements.Length);
+        }
+
+        if (!_payload.IsEmpty)
+        {
+            return new RespValue(_type, payload: _payload.ToArray());
+        }
+
+        return new RespValue(_type, integerValue: _integerValue);
+    }
+
     public long AsInteger() => _type == RespDataType.Integer ? _integerValue : 0;
 
     public bool AsBoolean() => _type == RespDataType.Boolean && _integerValue != 0;

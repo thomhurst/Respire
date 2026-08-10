@@ -18,6 +18,9 @@ public interface IBatchStringCommands
     /// <summary>Gets a key's value deserialized as <typeparamref name="T"/>, or default when missing. Redis: GET.</summary>
     RespirePending<T?> Get<T>(RespireKey key);
 
+    /// <summary>Gets a typed value while reporting whether the key existed. Redis: GET.</summary>
+    RespirePending<RespireGet<T>> TryGet<T>(RespireKey key);
+
     /// <summary>Gets a key's raw bytes, or null when missing. Redis: GET.</summary>
     RespirePending<byte[]?> GetBytes(RespireKey key);
 
@@ -99,6 +102,11 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
         => sink.Add<Cmd1, T?>(
             "GET", new Cmd1(Verbs.Get, sink.Client.Key(in key)),
             static (c, v) => c.DeserializeBorrowed<T>(in v));
+
+    public RespirePending<RespireGet<T>> TryGet<T>(RespireKey key)
+        => sink.Add<Cmd1, RespireGet<T>>(
+            "GET", new Cmd1(Verbs.Get, sink.Client.Key(in key)),
+            static (c, v) => c.TryDeserializeBorrowed<T>(in v));
 
     public RespirePending<byte[]?> GetBytes(RespireKey key)
         => sink.Add<Cmd1, byte[]?>(
