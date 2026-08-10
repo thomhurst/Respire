@@ -18,6 +18,9 @@ namespace Respire;
 /// and there is no per-command cancellation token:
 /// <see cref="ExecuteAsync"/> owns cancellation. Members that block (a <c>waitFor</c> argument) or
 /// stream (<c>ScanAsync</c>, <c>GetLeaseAsync</c>) have no deferred form.
+/// Streams, server administration, and distributed locks remain client-only because their
+/// blocking, streaming, connection-scoped, or managed-lifetime semantics do not fit a deferred
+/// single-flush command queue.
 /// </remarks>
 public sealed class RespireBatch : IDisposable, IPendingSink
 {
@@ -35,6 +38,7 @@ public sealed class RespireBatch : IDisposable, IPendingSink
     private IBatchBitmapCommands? _bitmaps;
     private IBatchHyperLogLogCommands? _hyperLogLog;
     private IBatchGeoCommands? _geo;
+    private IBatchScriptCommands? _scripts;
 
     internal RespireBatch(RespireClient client) => _client = client;
 
@@ -74,6 +78,9 @@ public sealed class RespireBatch : IDisposable, IPendingSink
     /// <summary>Geospatial commands. Redis: GEOADD, GEODIST, GEOSEARCH, …</summary>
     public IBatchGeoCommands Geo => _geo ??= new BatchGeoCommands(this);
 
+    /// <summary>Lua script evaluation. Redis: EVAL.</summary>
+    public IBatchScriptCommands Scripts => _scripts ??= new BatchScriptCommands(this);
+
     // Root shortcuts, mirroring the client's.
 
     /// <inheritdoc cref="IBatchStringCommands.GetString"/>
@@ -81,6 +88,9 @@ public sealed class RespireBatch : IDisposable, IPendingSink
 
     /// <inheritdoc cref="IBatchStringCommands.Get{T}"/>
     public RespirePending<T?> Get<T>(RespireKey key) => Strings.Get<T>(key);
+
+    /// <inheritdoc cref="IBatchStringCommands.TryGet{T}"/>
+    public RespirePending<RespireGet<T>> TryGet<T>(RespireKey key) => Strings.TryGet<T>(key);
 
     /// <inheritdoc cref="IBatchStringCommands.GetBytes"/>
     public RespirePending<byte[]?> GetBytes(RespireKey key) => Strings.GetBytes(key);

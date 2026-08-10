@@ -217,4 +217,34 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         transacted.Result.Should().Be(2);
         (await client.Lists.RangeAsync("shared:audit")).Should().Equal("entry", "entry");
     }
+
+    [Test]
+    public async Task BatchAndTransaction_QueueTypedReadsAndScripts()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await client.SetAsync("deferred:typed", 0);
+        var script = RespireScript.Create("return {KEYS[1], ARGV[1]}");
+
+        var batch = client.CreateBatch();
+        var stored = batch.TryGet<int>("deferred:typed");
+        var missing = batch.TryGet<int>("deferred:missing");
+        var batchScript = batch.Scripts.Evaluate(script, ["deferred:typed"], ["batch"]);
+        await batch.ExecuteAsync();
+
+        stored.Result.Should().Be(new RespireGet<int>(true, 0));
+        missing.Result.Found.Should().BeFalse();
+        using (var result = batchScript.Result)
+        {
+            result[0].AsString().Should().Be("deferred:typed");
+            result[1].AsString().Should().Be("batch");
+        }
+
+        var transaction = client.CreateTransaction();
+        var txScript = transaction.Scripts.Evaluate(script, ["deferred:typed"], ["transaction"]);
+        (await transaction.CommitAsync()).Should().BeTrue();
+
+        using var transactionResult = txScript.Result;
+        transactionResult[0].AsString().Should().Be("deferred:typed");
+        transactionResult[1].AsString().Should().Be("transaction");
+    }
 }

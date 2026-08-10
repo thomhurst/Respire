@@ -550,6 +550,19 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task Transaction_ZeroKeyScriptDoesNotRouteByArgument()
+    {
+        await using var client = RespireClient.Create(new RespireOptions { Cluster = true });
+        await using var transaction = client.CreateTransaction();
+        var script = RespireScript.Create("return ARGV[1]");
+
+        _ = transaction.Set("{account}name", "Ada");
+        _ = transaction.Scripts.Evaluate(script, args: ["{other}value"]);
+
+        await Assert.That(transaction.Count).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task Transaction_RejectsCrossSlotKeysWithinFacetCommands()
     {
         await using var client = RespireClient.Create(new RespireOptions { Cluster = true });
