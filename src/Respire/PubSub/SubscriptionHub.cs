@@ -541,7 +541,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         }
 
         var channelName = isPattern
-            ? Encoding.UTF8.GetString(channel)
+            ? Internal.Utf8String.GetString(channel)
             : cachedRouteName;
         var message = new RespireMessage(
             channelName,

@@ -522,7 +522,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
         => _kind switch
         {
             Kind.String => _string!,
-            Kind.Bytes => Encoding.UTF8.GetString(_bytes.Span),
+            Kind.Bytes => Internal.Utf8String.GetString(_bytes),
             Kind.Integer => _number.ToString(CultureInfo.InvariantCulture),
             Kind.UnsignedInteger => unchecked((ulong)_number).ToString(CultureInfo.InvariantCulture),
             Kind.Single => BitConverter.Int32BitsToSingle((int)_number).ToString(CultureInfo.InvariantCulture),

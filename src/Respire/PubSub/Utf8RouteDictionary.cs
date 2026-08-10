@@ -71,7 +71,7 @@ internal sealed class Utf8RouteDictionary<TValue>
 #if NET9_0_OR_GREATER
         if (_utf8Lookup.TryGetValue(utf8Name, out var entry))
 #else
-        var decoded = Encoding.UTF8.GetString(utf8Name);
+        var decoded = Internal.Utf8String.GetString(utf8Name);
         if (_byName.TryGetValue(decoded, out var entry))
 #endif
         {
@@ -185,7 +185,7 @@ internal sealed class Utf8RouteKeyComparer :
     public int GetHashCode(ReadOnlySpan<byte> alternate) => Hash(alternate);
 
     public Utf8RouteKey Create(ReadOnlySpan<byte> alternate)
-        => new(Encoding.UTF8.GetString(alternate), this);
+        => new(Internal.Utf8String.GetString(alternate), this);
 
     internal int Hash(ReadOnlySpan<byte> value)
         => unchecked((int)XxHash32.HashToUInt32(value, _seed));
