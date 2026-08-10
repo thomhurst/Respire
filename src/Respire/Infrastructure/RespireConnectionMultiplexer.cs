@@ -346,8 +346,8 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     }
 
     internal static bool IsDefinitiveCorrectionOrderingFailure(RespireServerException exception)
-        => exception.Code == "NOPERM" ||
-           exception.Code == "ERR" &&
+        => exception.Code == RespireErrorCodes.NoPerm ||
+           exception.Code == RespireErrorCodes.Err &&
            (exception.Message.Contains("unknown command", StringComparison.OrdinalIgnoreCase) ||
             exception.Message.Contains("unknown subcommand", StringComparison.OrdinalIgnoreCase) ||
             exception.Message.Contains("wrong number of arguments", StringComparison.OrdinalIgnoreCase));
@@ -356,7 +356,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     {
         if (Volatile.Read(ref _correctionOrderingFailure) is { } failure)
         {
-            throw new RespireServerException(failure);
+            throw new RespireServerException(failure, "CLIENT KILL");
         }
     }
 
@@ -370,7 +370,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             new ClientKillIdCommand(connection.ServerClientId, skipMe: true), cancellationToken).ConfigureAwait(false);
         if (reply.IsError)
         {
-            var error = new RespireServerException(reply.GetErrorMessage());
+            var error = new RespireServerException(reply.GetErrorMessage(), "CLIENT KILL");
             reply.Dispose();
             throw error;
         }
@@ -542,7 +542,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
                             new ClientKillIdCommand(clientId), cancellationToken).ConfigureAwait(false);
                         if (reply.IsError)
                         {
-                            var error = new RespireServerException(reply.GetErrorMessage());
+                            var error = new RespireServerException(reply.GetErrorMessage(), "CLIENT KILL");
                             reply.Dispose();
                             throw error;
                         }

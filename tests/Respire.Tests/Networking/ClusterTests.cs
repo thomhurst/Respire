@@ -1439,7 +1439,7 @@ public class ClusterTests
     [Test]
     public async Task ClusterMode_RejectsNonZeroDatabase()
     {
-        var error = Assert.Throws<ArgumentException>(() => RespireClient.Create(new RespireOptions
+        var error = Assert.Throws<RespireConfigurationException>(() => RespireClient.Create(new RespireOptions
         {
             Cluster = true,
             Database = 1,

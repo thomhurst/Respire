@@ -114,7 +114,7 @@ internal static class SentinelResolver
         {
             if (reply.IsError)
             {
-                throw new RespireServerException(reply.GetErrorMessage());
+                throw new RespireServerException(reply.GetErrorMessage(), "SENTINEL GET-MASTER-ADDR-BY-NAME");
             }
 
             if (reply.IsNull)

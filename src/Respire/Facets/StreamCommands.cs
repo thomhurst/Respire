@@ -369,7 +369,7 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
 
             return true;
         }
-        catch (RespireServerException ex) when (ex.Code == "BUSYGROUP")
+        catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.BusyGroup)
         {
             return false;
         }

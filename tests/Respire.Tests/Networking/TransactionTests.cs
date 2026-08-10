@@ -85,6 +85,23 @@ public class TransactionTests
     }
 
     [Test]
+    public async Task CommandError_PreservesQueuedCommandName()
+    {
+        await using var server = new FakeRespServer(
+            FakeRespServer.OkReply,
+            QueuedReply,
+            "*1\r\n-WRONGTYPE bad value\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server.Port);
+
+        var transaction = client.CreateTransaction();
+        var pending = transaction.GetStringAsync("key");
+
+        await transaction.CommitAsync();
+        var error = Assert.Throws<RespireServerException>(() => _ = pending.Result);
+        await Assert.That(error.CommandName).IsEqualTo("GET");
+    }
+
+    [Test]
     public async Task EmptyTransaction_CommitsAsNoOpAndBecomesCompleted()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);

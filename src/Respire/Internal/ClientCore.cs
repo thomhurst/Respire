@@ -32,7 +32,7 @@ internal sealed class ClientCore : IAsyncDisposable
     {
         if (options.Cluster && options.Database != 0)
         {
-            throw new ArgumentException("Redis Cluster supports database 0 only.", nameof(options));
+            throw new RespireConfigurationException("Redis Cluster supports database 0 only.");
         }
 
         Options = options;

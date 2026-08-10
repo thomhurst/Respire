@@ -452,9 +452,10 @@ public class CommandCatalogTests
         await using var server = new FakeRespServer("-ERR catalog failure\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        await Assert.That(async () => await client.ExecuteAsync(RespireCommands.String.GETEX, "key"))
+        var error = await Assert.That(async () => await client.ExecuteAsync(RespireCommands.String.GETEX, "key"))
             .Throws<RespireServerException>()
             .WithMessage("ERR catalog failure");
+        await Assert.That(error!.CommandName).IsEqualTo("GETEX");
     }
 
     private static async Task WaitForCommandsAsync(FakeRespServer server, int count)

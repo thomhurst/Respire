@@ -268,7 +268,7 @@ public class SentinelTests
     [Test]
     public async Task Create_RejectsSentinelBecauseDiscoveryIsNetworked()
     {
-        var error = Assert.Throws<NotSupportedException>(() => RespireClient.Create(new RespireOptions
+        var error = Assert.Throws<RespireConfigurationException>(() => RespireClient.Create(new RespireOptions
         {
             Endpoints = { new RespireEndpoint("127.0.0.1", 26379) },
             ServiceName = "mymaster",

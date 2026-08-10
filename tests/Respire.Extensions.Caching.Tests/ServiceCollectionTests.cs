@@ -82,7 +82,7 @@ public class ServiceCollectionTests(RedisTestContainer fixture)
         {
             provider.GetRequiredService<IDistributedCache>();
         }
-        catch (InvalidOperationException)
+        catch (RespireConfigurationException)
         {
             threw = true;
         }

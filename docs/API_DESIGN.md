@@ -373,8 +373,10 @@ concatenates). Also the natural seam for a future `WithLocalCache(...)` view.
 ```
 RespireException
 ├── RespireConnectionException     // can't connect / connection lost mid-command
-├── RespireTimeoutException        // includes diagnostic snapshot
-└── RespireServerException         // Redis replied -ERR; .Code = "WRONGTYPE", "NOSCRIPT"…
+├── RespireConfigurationException  // valid input cannot configure the requested API
+├── RespireProtocolException       // malformed or invalid RESP data
+├── RespireTimeoutException        // command name and elapsed timeout
+└── RespireServerException         // .Code, .CommandName, and .IsTransient
 ```
 
 Server errors always throw at the friendly layer — no error-as-value inspection. Only

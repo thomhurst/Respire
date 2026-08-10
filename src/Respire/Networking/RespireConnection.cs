@@ -405,7 +405,7 @@ public sealed class RespireConnection : IAsyncDisposable
         {
             var message = reply.GetErrorMessage();
             reply.Dispose();
-            throw new RespireServerException(message);
+            throw new RespireServerException(message, "CLIENT ID");
         }
 
         var id = reply.AsInteger();
@@ -462,9 +462,12 @@ public sealed class RespireConnection : IAsyncDisposable
 
     /// <summary>Sends a command and translates a RESP error reply when its result is consumed.</summary>
     internal ValueTask<RespValue> SendCheckedAsync<TCommand>(
-        in TCommand command, CancellationToken cancellationToken = default)
+        in TCommand command,
+        CancellationToken cancellationToken = default,
+        string? commandName = null)
         where TCommand : struct, IRespCommand
-        => SendCoreAsync(in command, discardRepliesBefore: 0, throwOnError: true, cancellationToken);
+        => SendCoreAsync(
+            in command, discardRepliesBefore: 0, throwOnError: true, cancellationToken, commandName);
 
     /// <summary>
     /// Sends a command through a typed in-flight source, avoiding intermediate async state
@@ -475,10 +478,12 @@ public sealed class RespireConnection : IAsyncDisposable
         TState state,
         ResponseConverter<TState, TResult> converter,
         bool transferOwnership,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? commandName = null)
         where TCommand : struct, IRespCommand
     {
-        var source = ConvertedPendingResponseSource<TState, TResult>.Rent(state, converter, transferOwnership);
+        var source = ConvertedPendingResponseSource<TState, TResult>.Rent(
+            state, converter, transferOwnership, commandName);
         bool enqueued;
         bool startedBatch;
         try
@@ -536,16 +541,19 @@ public sealed class RespireConnection : IAsyncDisposable
     internal ValueTask<RespValue> SendPrefixedCheckedAsync<TPrefix, TCommand>(
         in TPrefix prefix,
         in TCommand command,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? commandName = null)
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
-        => SendPrefixedAsync(in prefix, in command, throwOnError: true, cancellationToken);
+        => SendPrefixedAsync(
+            in prefix, in command, throwOnError: true, cancellationToken, commandName);
 
     internal ValueTask<RespValue> SendPrefixedAsync<TPrefix, TCommand>(
         in TPrefix prefix,
         in TCommand command,
         bool throwOnError,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? commandName = null)
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
@@ -559,7 +567,8 @@ public sealed class RespireConnection : IAsyncDisposable
             new PrefixedCommand<TPrefix, TCommand>(prefix, command),
             discardRepliesBefore: 1,
             throwOnError,
-            cancellationToken);
+            cancellationToken,
+            commandName);
     }
 
     private ValueTask<RespValue> SendTransactionCoreAsync<TCommand>(
@@ -597,10 +606,14 @@ public sealed class RespireConnection : IAsyncDisposable
     }
 
     private ValueTask<RespValue> SendCoreAsync<TCommand>(
-        in TCommand command, int discardRepliesBefore, bool throwOnError, CancellationToken cancellationToken)
+        in TCommand command,
+        int discardRepliesBefore,
+        bool throwOnError,
+        CancellationToken cancellationToken,
+        string? commandName = null)
         where TCommand : struct, IRespCommand
     {
-        var source = _sourcePool.Rent(throwOnError);
+        var source = _sourcePool.Rent(throwOnError, commandName);
         bool enqueued;
         bool startedBatch;
         try
