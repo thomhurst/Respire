@@ -2,19 +2,6 @@ name: Redis Container Benchmarks
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - 'src/**'
-      - 'benchmarks/**'
-      - '.github/workflows/benchmark-redis-container.yml'
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'src/**'
-      - 'benchmarks/**'
 
 env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
@@ -23,7 +10,6 @@ env:
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   redis-container-benchmarks:
@@ -118,39 +104,3 @@ jobs:
           name: redis-container-benchmarks-${{ matrix.framework }}
           path: benchmarks/Respire.Benchmarks/BenchmarkDotNet.Artifacts/
           retention-days: 30
-      
-      - name: Comment PR with results (if PR)
-        if: github.event_name == 'pull_request'
-        continue-on-error: true
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-
-            const artifactsDir = 'benchmarks/Respire.Benchmarks/BenchmarkDotNet.Artifacts/results';
-            const files = fs.existsSync(artifactsDir) ? fs.readdirSync(artifactsDir) : [];
-            const markdownFile = files.find(f => f.endsWith('.md'));
-            
-            if (markdownFile) {
-              const content = fs.readFileSync(path.join(artifactsDir, markdownFile), 'utf8');
-              
-              const comment = `## Redis Container Benchmark Results (${{ matrix.framework }})
-              
-              ${content}
-              
-              <details>
-              <summary>View raw benchmark output</summary>
-              
-              \`\`\`
-              ${content}
-              \`\`\`
-              </details>`;
-              
-              github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: comment
-              });
-            }

@@ -14,13 +14,6 @@ on:
   schedule:
     # Run weekly on Sunday at 2 AM UTC
     - cron: '0 2 * * 0'
-  push:
-    branches:
-      - main
-    paths:
-      - 'src/**'
-      - 'benchmarks/**'
-      - '.github/workflows/benchmark-redis-throughput.yml'
 
 env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
@@ -207,38 +200,3 @@ jobs:
         with:
           files: benchmarks/Respire.Benchmarks/throughput-report.md
           name: Throughput Benchmark Report - ${{ matrix.framework }}
-      
-      - name: Create benchmark comparison (if main branch)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: |
-          # Store results for comparison with future runs
-          mkdir -p .benchmark-history
-          cp benchmarks/Respire.Benchmarks/throughput-report.md \
-             .benchmark-history/throughput-${{ matrix.framework }}-$(date +%Y%m%d-%H%M%S).md
-      
-      - name: Comment PR with throughput results (if PR)
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const fs = require('fs');
-            const report = fs.readFileSync('benchmarks/Respire.Benchmarks/throughput-report.md', 'utf8');
-            
-            const comment = `## 📊 Redis Throughput Benchmark Results
-            
-            ${report}
-            
-            ---
-            
-            💡 **Tips for reading results:**
-            - Higher Ops/sec is better
-            - Lower mean time is better
-            - Check P95 for consistency
-            - Compare Respire vs StackExchange.Redis performance`;
-            
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
-            });
