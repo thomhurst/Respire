@@ -194,7 +194,7 @@ in cluster mode; `SSUBSCRIBE` subscriptions require a non-cluster client.
 ```csharp
 await using var cluster = await RespireClient.ConnectAsync(new RespireOptions
 {
-    Cluster = true,
+    UseCluster = true,
     Endpoints =
     {
         new("redis-1", 6379),
@@ -250,7 +250,10 @@ public sealed class CartService(
     [FromKeyedServices("sessions")] IRespireClient redis);
 ```
 
-Registration is lazy, so Redis availability never blocks application startup.
+Registration is lazy, so Redis availability never blocks application startup. If the first
+command cannot connect, the socket or TLS exception surfaces immediately, or an
+`OperationCanceledException` surfaces when `ConnectTimeout` elapses. The next command starts a
+new connection attempt.
 
 ### NativeAOT and trimming
 

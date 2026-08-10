@@ -143,11 +143,18 @@ public sealed partial class RespireClient : IRespireClient
 
     /// <summary>
     /// Creates a client without connecting; the first command connects. Useful for dependency
-    /// injection, where construction should not block on the network.
+    /// injection, where construction should not block on the network. A failed connection attempt
+    /// surfaces its socket or TLS exception, or <see cref="OperationCanceledException"/> when
+    /// <see cref="RespireOptions.ConnectTimeout"/> elapses. A later command starts a new attempt.
     /// </summary>
     public static RespireClient Create(string connectionString) => Create(RespireOptions.Parse(connectionString));
 
-    /// <summary>Creates a lazy client using structured options; the first command connects.</summary>
+    /// <summary>
+    /// Creates a lazy client using structured options; the first command connects. A failed
+    /// attempt surfaces its socket or TLS exception, or <see cref="OperationCanceledException"/>
+    /// when <see cref="RespireOptions.ConnectTimeout"/> elapses. A later command starts a new
+    /// connection attempt.
+    /// </summary>
     public static RespireClient Create(RespireOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
