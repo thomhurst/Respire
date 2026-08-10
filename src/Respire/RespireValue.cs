@@ -104,7 +104,16 @@ public readonly struct RespireValue : IEquatable<RespireValue>
         => new(value.ToString("c", CultureInfo.InvariantCulture));
 
     /// <summary>Converts one UTF-16 code unit to a one-character string.</summary>
-    public static implicit operator RespireValue(char value) => new(value.ToString());
+    public static implicit operator RespireValue(char value)
+    {
+        if (char.IsSurrogate(value))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(value), value, "An isolated UTF-16 surrogate cannot be encoded as UTF-8.");
+        }
+
+        return new RespireValue(value.ToString());
+    }
 
     /// <summary>Converts a signed 64-bit integer to a command argument.</summary>
     public static implicit operator RespireValue(long value) => new(Kind.Integer, number: value);

@@ -61,8 +61,19 @@ public class PrimitiveCodecTests
         await Assert.That(client.Serialize(nullable).ToString()).IsEqualTo("£");
         await Assert.That(client.DeserializeBorrowed<char>(Bulk("£"))).IsEqualTo('£');
         await Assert.That(client.DeserializeBorrowed<char?>(Bulk("£"))).IsEqualTo('£');
+        await Assert.That(client.DeserializeBorrowed<char>(Bulk("\"A\""))).IsEqualTo('A');
+        await Assert.That(client.DeserializeBorrowed<char?>(Bulk("\"\\u00A3\""))).IsEqualTo('£');
         await Assert.That(serializer.SerializeCalls).IsEqualTo(0);
         await Assert.That(serializer.DeserializeCalls).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task CharacterWrite_RejectsIsolatedSurrogates()
+    {
+        await using var client = CreateClient(new CountingSerializer());
+
+        await Assert.That(() => client.Serialize('\uD800')).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => (RespireValue)'\uDC00').Throws<ArgumentOutOfRangeException>();
     }
 
     [Test]

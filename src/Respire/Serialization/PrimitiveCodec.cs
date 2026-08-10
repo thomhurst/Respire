@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.Json;
 using Respire.Protocol;
 
 namespace Respire.Serialization;
@@ -255,6 +256,30 @@ internal static class PrimitiveCodec
 
     private static char ParseCharacter(ReadOnlySpan<byte> payload)
     {
+        if (payload.Length >= 2 && payload[0] == (byte)'"' && payload[^1] == (byte)'"')
+        {
+            try
+            {
+                var reader = new Utf8JsonReader(payload);
+                if (!reader.Read() || reader.TokenType != JsonTokenType.String)
+                {
+                    throw InvalidValue<char>();
+                }
+
+                var value = reader.GetString();
+                if (value?.Length != 1 || reader.Read())
+                {
+                    throw InvalidValue<char>();
+                }
+
+                return value[0];
+            }
+            catch (JsonException)
+            {
+                throw InvalidValue<char>();
+            }
+        }
+
         try
         {
             if (StrictUtf8.GetCharCount(payload) != 1)
