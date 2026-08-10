@@ -136,7 +136,8 @@ public class LockCommandTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var attempt = await client.Locks.AcquireAsync("resource", TimeSpan.FromSeconds(30));
+        var attempt = await client.Locks.AcquireAsync(
+            "resource", TimeSpan.FromSeconds(30) + TimeSpan.FromTicks(9_999));
         var mutex = attempt.Lock;
 
         await Assert.That(attempt.Acquired).IsTrue();
@@ -312,7 +313,8 @@ public class LockCommandTests
 
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
 
-        await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(45))).IsTrue();
+        await Assert.That(await mutex.ExtendAsync(
+            TimeSpan.FromSeconds(45) + TimeSpan.FromTicks(9_999))).IsTrue();
         await Assert.That(mutex.Duration).IsEqualTo(TimeSpan.FromSeconds(45));
 
         await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(90))).IsFalse();
@@ -321,6 +323,7 @@ public class LockCommandTests
         await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(90))).IsFalse();
         await Assert.That(server.ReceivedCommands).Count().IsEqualTo(5);
         await Assert.That(server.ReceivedCommands[1]).IsEqualTo("CLIENT ID");
+        await Assert.That(server.ReceivedCommands[3]).EndsWith(" 45000");
     }
 
     [Test]
@@ -507,6 +510,28 @@ public class LockCommandTests
     }
 
     [Test]
+    public async Task RespireLock_StoppingKeepAliveWaitsForRenewalAndPreservesRelease()
+    {
+        var commands = new CoordinatedLockCommands();
+        var mutex = new RespireLock(
+            commands,
+            "resource",
+            "owner"u8.ToArray(),
+            TimeSpan.FromMilliseconds(500),
+            Stopwatch.GetTimestamp());
+        var keepAlive = await mutex.KeepAliveAsync();
+
+        await commands.FirstExtensionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var dispose = keepAlive.DisposeAsync().AsTask();
+        await Assert.That(dispose.IsCompleted).IsFalse();
+        commands.CompleteFirstExtension();
+        await dispose;
+
+        await Assert.That(mutex.IsReleased).IsFalse();
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+    }
+
+    [Test]
     public async Task RespireLock_UncertainRenewalCancelsProtectedWorkBeforeFenceCompletes()
     {
         var commands = new CoordinatedLockCommands(reportUncertain: true);
@@ -620,6 +645,8 @@ public class LockCommandTests
         await Assert.That(RespireLockKeepAlive.GetRenewalDelay(
                 TimeSpan.FromTicks(1), TimeSpan.FromTicks(1)))
             .IsEqualTo(TimeSpan.FromTicks(1));
+        await Assert.That(RespireLockKeepAlive.GetTimerDelayChunk(TimeSpan.MaxValue))
+            .IsEqualTo(TimeSpan.FromMilliseconds(uint.MaxValue - 1d));
     }
 
     [Test]
@@ -912,7 +939,7 @@ public class LockCommandTests
         {
             if (!_raceOwnershipLoss)
             {
-                throw new NotSupportedException();
+                return true;
             }
 
             RaceReleaseStarted.TrySetResult();

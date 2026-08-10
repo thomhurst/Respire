@@ -141,10 +141,11 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         TimeSpan expiry,
         CancellationToken cancellationToken = default)
     {
+        var normalizedExpiry = TimeSpan.FromMilliseconds(ValidateExpiry(expiry));
         var token = RespireLock.NewToken();
         var acquiredTimestamp = Stopwatch.GetTimestamp();
-        var mutex = await TryTakeAsync(key, token, expiry, cancellationToken).ConfigureAwait(false)
-            ? new RespireLock(this, key, token, expiry, acquiredTimestamp)
+        var mutex = await TryTakeAsync(key, token, normalizedExpiry, cancellationToken).ConfigureAwait(false)
+            ? new RespireLock(this, key, token, normalizedExpiry, acquiredTimestamp)
             : null;
         return new RespireLockAttempt(mutex);
     }

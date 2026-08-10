@@ -161,7 +161,7 @@ public sealed class RespireLock : IAsyncDisposable
                 return false;
             }
 
-            var effectiveExpiry = expiry ?? Duration;
+            var effectiveExpiry = NormalizeDuration(expiry ?? Duration);
             var renewedTimestamp = Stopwatch.GetTimestamp();
             var extended = _locks is IManagedLockCommands managed
                 ? await managed.ExtendManagedAsync(
@@ -344,6 +344,9 @@ public sealed class RespireLock : IAsyncDisposable
         }
     }
 
+    private static TimeSpan NormalizeDuration(TimeSpan duration)
+        => TimeSpan.FromMilliseconds((long)duration.TotalMilliseconds);
+
     private bool TryMarkOwnershipLost()
     {
         while (true)
@@ -369,6 +372,7 @@ public sealed class RespireLock : IAsyncDisposable
 public sealed class RespireLockKeepAlive : IAsyncDisposable
 {
     private static readonly TimeSpan MinimumRenewalDelay = TimeSpan.FromMilliseconds(10);
+    private static readonly TimeSpan MaximumTimerDelay = TimeSpan.FromMilliseconds(uint.MaxValue - 1d);
 
     private readonly RespireLock _lock;
     private readonly CancellationTokenSource _stop = new();
@@ -409,7 +413,7 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
                         _lifetime.Token, leaseChanged);
                     try
                     {
-                        await Task.Delay(delay, delayCancellation.Token).ConfigureAwait(false);
+                        await DelayInChunksAsync(delay, delayCancellation.Token).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (
                         leaseChanged.IsCancellationRequested && !_lifetime.IsCancellationRequested)
@@ -418,6 +422,7 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
                     }
                 }
 
+                _lifetime.Token.ThrowIfCancellationRequested();
                 var remaining = _lock.RemainingEstimate;
                 if (remaining <= TimeSpan.Zero)
                 {
@@ -425,13 +430,7 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
                     return;
                 }
 
-                using var deadline = new CancellationTokenSource(remaining);
-                using var deadlineRegistration = deadline.Token.Register(
-                    static state => ((RespireLockKeepAlive)state!).MarkOwnershipUncertain(), this);
-                using var renewalCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-                    _lifetime.Token, deadline.Token);
-                if (!await _lock.RenewAsync(MarkOwnershipUncertain, renewalCancellation.Token)
-                        .ConfigureAwait(false))
+                if (!await RenewBeforeDeadlineAsync(remaining).ConfigureAwait(false))
                 {
                     Volatile.Write(ref _ownershipLost, 1);
                     await _lifetime.CancelAsync().ConfigureAwait(false);
@@ -472,6 +471,55 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
         return remaining > MinimumRenewalDelay
             ? MinimumRenewalDelay
             : TimeSpan.FromTicks(Math.Max(1, remaining.Ticks / 2));
+    }
+
+    internal static TimeSpan GetTimerDelayChunk(TimeSpan remaining)
+        => remaining > MaximumTimerDelay ? MaximumTimerDelay : remaining;
+
+    private async ValueTask<bool> RenewBeforeDeadlineAsync(TimeSpan remaining)
+    {
+        using var deadlineStop = new CancellationTokenSource();
+        using var renewalCancellation = new CancellationTokenSource();
+        var deadline = MarkOwnershipLostAtDeadlineAsync(
+            remaining, deadlineStop.Token, renewalCancellation);
+        try
+        {
+            return await _lock.RenewAsync(MarkOwnershipUncertain, renewalCancellation.Token)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            await deadlineStop.CancelAsync().ConfigureAwait(false);
+            await deadline.ConfigureAwait(false);
+        }
+    }
+
+    private async Task MarkOwnershipLostAtDeadlineAsync(
+        TimeSpan remaining,
+        CancellationToken stop,
+        CancellationTokenSource renewalCancellation)
+    {
+        try
+        {
+            await DelayInChunksAsync(remaining, stop).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested)
+        {
+            return;
+        }
+
+        MarkOwnershipUncertain();
+        await renewalCancellation.CancelAsync().ConfigureAwait(false);
+    }
+
+    private static async Task DelayInChunksAsync(TimeSpan delay, CancellationToken cancellationToken)
+    {
+        while (delay > TimeSpan.Zero)
+        {
+            var chunk = GetTimerDelayChunk(delay);
+            await Task.Delay(chunk, cancellationToken).ConfigureAwait(false);
+            delay -= chunk;
+        }
     }
 
     private void MarkOwnershipUncertain()
