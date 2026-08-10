@@ -1122,6 +1122,129 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    public async Task ConditionalFlushInsideSelectedBranch_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool condition, bool flushNow)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = condition
+                    ? first.GetStringAsync("a")
+                    : second.GetStringAsync("b");
+
+                if (condition)
+                {
+                    if (flushNow)
+                    {
+                        await first.SendAsync();
+                    }
+                }
+                else
+                {
+                    await second.SendAsync();
+                }
+
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
+    public async Task ReassignedConditionInvalidatesBranchCorrelation() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool condition)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = condition
+                    ? first.GetStringAsync("a")
+                    : second.GetStringAsync("b");
+                condition = !condition;
+
+                if (condition)
+                {
+                    await first.SendAsync();
+                }
+                else
+                {
+                    await second.SendAsync();
+                }
+
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
+    public async Task SwitchSelectedPendingWithMatchingFlush_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, int choice)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = choice switch
+                {
+                    0 => first.GetStringAsync("a"),
+                    _ => second.GetStringAsync("b"),
+                };
+
+                switch (choice)
+                {
+                    case 0:
+                        await first.SendAsync();
+                        break;
+                    default:
+                        await second.SendAsync();
+                        break;
+                }
+
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    public async Task MutatedListWhenAllBeforeRead_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Collections.Generic;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                var flushes = new List<Task> { batch.SendAsync().AsTask() };
+                flushes.Clear();
+                flushes.Add(Task.CompletedTask);
+                await Task.WhenAll(flushes);
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
     public async Task SameNamedExtensionDoesNotCountAsFlush() => await Verify.VerifyAsync(
         """
         using System;
