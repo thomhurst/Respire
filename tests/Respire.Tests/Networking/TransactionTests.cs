@@ -66,6 +66,11 @@ public class TransactionTests
         await Assert.That(pending.IsCompleted).IsFalse();
         await Assert.That(() => _ = pending.Result).ThrowsExactly<RespirePendingNotReadyException>();
         await transaction.DisposeAsync();
+
+        await Assert.That(pending.Status).IsEqualTo(RespirePendingStatus.Faulted);
+        await Assert.That(pending.IsCompleted).IsTrue();
+        await Assert.That(pending.Error).IsTypeOf<RespireTransactionDiscardedException>();
+        await Assert.That(() => _ = pending.Result).ThrowsExactly<RespireTransactionDiscardedException>();
     }
 
     [Test]

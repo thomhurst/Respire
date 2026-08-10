@@ -64,6 +64,10 @@ public sealed class RespireLockNotAcquiredException() : RespireException(
 public sealed class RespireBatchDiscardedException() : RespireException(
     "The batch was disposed before ExecuteAsync; its queued commands were discarded.");
 
+/// <summary>An uncommitted transaction was disposed, so none of its queued commands ran.</summary>
+public sealed class RespireTransactionDiscardedException() : RespireException(
+    "The transaction was disposed before CommitAsync; its queued commands were discarded.");
+
 /// <summary>A deferred result was read before its batch or transaction executed.</summary>
 public sealed class RespirePendingNotReadyException() : RespireException(
     "This result is not available yet: execute the batch (ExecuteAsync) or commit the transaction (CommitAsync) first.");
