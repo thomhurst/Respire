@@ -92,9 +92,8 @@ public sealed class RespireClient : IRespireClient, IAsyncDisposable
     ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken ct = default);
     ValueTask<T?>      GetAsync<T>(RespireKey key, CancellationToken ct = default);
     ValueTask<bool>    SetAsync(RespireKey key, RespireValue value,
-                                TimeSpan? expiry = null,
+                                RespireTtl expiry = default,   // none | In | At | Keep
                                 SetWhen when = SetWhen.Always,
-                                bool keepTtl = false,
                                 CancellationToken ct = default);
     ValueTask<bool>    SetAsync<T>(RespireKey key, T value, /* same options */);
     ValueTask<long>    DeleteAsync(params ReadOnlySpan<RespireKey> keys);
