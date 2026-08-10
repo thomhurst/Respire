@@ -1,4 +1,5 @@
 using System.Text;
+using Respire.Commands;
 using TUnit.Core;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -216,9 +217,16 @@ public class StringFastPathWireTests
         await Assert.That(exception!.CommandName).IsEqualTo("GET");
 
         // The timed-out command's reply arrives late and must be drained without corrupting
-        // FIFO pairing for the next command.
+        // FIFO pairing for the next command. The health probe deliberately does not inherit
+        // the first command's 100 ms deadline: under CI load that would test scheduler latency,
+        // not whether the connection recovered. A generous cancellation guard still bounds it.
         await server.SendRawAsync("$5\r\nfirst\r\n"u8.ToArray());
-        await Assert.That(await client.GetStringAsync("second")).IsEqualTo("second");
+        var connection = client.Core.Multiplexer.GetConnection();
+        var command = new Cmd1(Verbs.Get, "second");
+        using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var reply = await connection.SendAsync(
+            in command, guard.Token, armCommandDeadline: false, commandName: "GET");
+        await Assert.That(reply.AsString()).IsEqualTo("second");
     }
 
     [Test]
