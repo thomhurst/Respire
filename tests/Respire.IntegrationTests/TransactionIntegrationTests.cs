@@ -32,9 +32,9 @@ public class TransactionIntegrationTests
         await _client.DeleteAsync("tx:key", "tx:counter");
 
         var transaction = _client.CreateTransaction();
-        var setPending = transaction.SetAsync("tx:key", "tx-value");
-        var incrPending = transaction.IncrementAsync("tx:counter");
-        var getPending = transaction.GetStringAsync("tx:key");
+        var setPending = transaction.Set("tx:key", "tx-value");
+        var incrPending = transaction.Increment("tx:counter");
+        var getPending = transaction.GetString("tx:key");
         transaction.Count.Should().Be(3);
 
         // Queued results are unreadable until the transaction commits.
@@ -59,9 +59,9 @@ public class TransactionIntegrationTests
         await _client.SetAsync("tx:err:string", "not-a-number");
 
         var transaction = _client.CreateTransaction();
-        var setPending = transaction.SetAsync("tx:err:applied", "persisted");
+        var setPending = transaction.Set("tx:err:applied", "persisted");
         // INCR on a non-numeric value queues fine but fails inside EXEC.
-        var incrPending = transaction.IncrementAsync("tx:err:string");
+        var incrPending = transaction.Increment("tx:err:string");
 
         var committed = await transaction.CommitAsync();
 
@@ -84,7 +84,7 @@ public class TransactionIntegrationTests
         var pendings = new RespirePending<bool>[100];
         for (var i = 0; i < 100; i++)
         {
-            pendings[i] = transaction.SetAsync($"tx:bulk:{i}", $"value-{i}");
+            pendings[i] = transaction.Set($"tx:bulk:{i}", $"value-{i}");
         }
 
         var committed = await transaction.CommitAsync();
@@ -110,7 +110,7 @@ public class TransactionIntegrationTests
         var pendings = new RespirePending<long>[10];
         for (var i = 0; i < 10; i++)
         {
-            pendings[i] = transaction.IncrementAsync("tx:concurrent:counter");
+            pendings[i] = transaction.Increment("tx:concurrent:counter");
         }
 
         var committed = await transaction.CommitAsync();
@@ -131,7 +131,7 @@ public class TransactionIntegrationTests
         await _client.SetAsync("tx:watched", "initial");
 
         await using var transaction = await _client.CreateTransactionAsync(new RespireKey[] { "tx:watched" });
-        var setPending = transaction.SetAsync("tx:watched", "from-transaction");
+        var setPending = transaction.Set("tx:watched", "from-transaction");
 
         // Another client writes the watched key between WATCH and EXEC, voiding the transaction.
         await using (var interloper = await RespireClient.ConnectAsync(_fixture.ConnectionString))
@@ -154,8 +154,8 @@ public class TransactionIntegrationTests
 
         await using var transaction = await _client.CreateTransactionAsync(
             new RespireKey[] { "tx:watched:success" });
-        var setPending = transaction.SetAsync("tx:watched:success", "committed");
-        var getPending = transaction.GetStringAsync("tx:watched:success");
+        var setPending = transaction.Set("tx:watched:success", "committed");
+        var getPending = transaction.GetString("tx:watched:success");
 
         var committed = await transaction.CommitAsync();
 

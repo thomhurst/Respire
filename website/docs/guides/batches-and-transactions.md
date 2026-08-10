@@ -12,32 +12,32 @@ Respire pipelines concurrent commands automatically. Explicit batches help seque
 ```csharp
 RespireBatch batch = redis.CreateBatch();
 
-RespirePending<string?> name = batch.GetStringAsync("name");
-RespirePending<long> visits = batch.IncrementAsync("visits");
+RespirePending<string?> name = batch.GetString("name");
+RespirePending<long> visits = batch.Increment("visits");
 
-await batch.SendAsync();
+await batch.ExecuteAsync();
 
 Console.WriteLine($"{name.Result}: {visits.Result}");
 ```
 
 `RespirePending<T>` is awaitable and exposes `.Result`. Inspect `Status`, `HasResult`, `Error`, or
-use `TryGetResult` when exception-free state handling is preferable. Access before `SendAsync`
+use `TryGetResult` when exception-free state handling is preferable. Access before `ExecuteAsync`
 throws `RespirePendingNotReadyException` instead of waiting forever for a batch that was never
 flushed; command failures set `Status` to `Faulted` and expose the exception through `Error`.
 
 ## The same facets as the client
 
-Batches and transactions expose the client's facets — `Strings`, `Keys`, `Hashes`, `Lists`, `Sets`, `SortedSets`, `Bitmaps`, `HyperLogLog`, `Geo` — with the same method names and parameter shapes. Only the return type differs: a `RespirePending<T>` instead of a `ValueTask<T>`, and there is no `CancellationToken` because the `SendAsync` / `CommitAsync` call owns cancellation.
+Batches and transactions expose the client's facets — `Strings`, `Keys`, `Hashes`, `Lists`, `Sets`, `SortedSets`, `Bitmaps`, `HyperLogLog`, `Geo` — with matching command names minus the `Async` suffix and the same parameter shapes. The missing suffix signals that each call only queues work. The return type is `RespirePending<T>` instead of `ValueTask<T>`, and there is no `CancellationToken` because `ExecuteAsync` / `CommitAsync` owns cancellation.
 
 ```csharp
 RespireBatch batch = redis.CreateBatch();
 
-RespirePending<long> pushed = batch.Lists.RightPushAsync("queue", "job-1", "job-2");
-RespirePending<bool> stored = batch.Hashes.SetAsync("user:1", "name", "Ada");
-RespirePending<long> ranked = batch.SortedSets.AddAsync(
+RespirePending<long> pushed = batch.Lists.RightPush("queue", "job-1", "job-2");
+RespirePending<bool> stored = batch.Hashes.Set("user:1", "name", "Ada");
+RespirePending<long> ranked = batch.SortedSets.Add(
     "leaderboard", new SortedSetEntry("ada", 42));
 
-await batch.SendAsync();
+await batch.ExecuteAsync();
 ```
 
 Both types implement the same facet interfaces (`IBatchListCommands`, `IBatchHashCommands`, …), so helper code can queue into a batch or a transaction interchangeably.
@@ -49,8 +49,8 @@ Two client facets have no deferred form: blocking variants (a `waitFor` argument
 ```csharp
 await using RespireTransaction transaction = redis.CreateTransaction();
 
-RespirePending<long> balance = transaction.IncrementAsync("balance", -100);
-transaction.Lists.RightPushAsync("audit", "withdraw:100");
+RespirePending<long> balance = transaction.Increment("balance", -100);
+transaction.Lists.RightPush("audit", "withdraw:100");
 
 bool committed = await transaction.CommitAsync();
 
@@ -73,7 +73,7 @@ Watch keys before queuing operations:
 
 ```csharp
 await using RespireTransaction transaction = await redis.CreateTransactionAsync(["balance"]);
-transaction.IncrementAsync("balance", -100);
+transaction.Increment("balance", -100);
 
 bool committed = await transaction.CommitAsync();
 ```

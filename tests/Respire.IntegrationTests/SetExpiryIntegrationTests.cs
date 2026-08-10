@@ -122,10 +122,10 @@ public class SetExpiryIntegrationTests(RedisTestContainer fixture)
         await client.SetAsync("ttl:batch:keep", "first", TimeSpan.FromSeconds(60));
 
         var batch = client.CreateBatch();
-        var relative = batch.SetAsync("ttl:batch:relative", "value", TimeSpan.FromSeconds(30));
-        var absolute = batch.SetAsync("ttl:batch:absolute", "value", RespireExpiry.At(DateTimeOffset.UtcNow.AddSeconds(30)));
-        var keep = batch.SetAsync("ttl:batch:keep", "second", RespireExpiry.Keep);
-        await batch.SendAsync();
+        var relative = batch.Set("ttl:batch:relative", "value", TimeSpan.FromSeconds(30));
+        var absolute = batch.Set("ttl:batch:absolute", "value", RespireExpiry.At(DateTimeOffset.UtcNow.AddSeconds(30)));
+        var keep = batch.Set("ttl:batch:keep", "second", RespireExpiry.Keep);
+        await batch.ExecuteAsync();
 
         (await relative).Should().BeTrue();
         (await absolute).Should().BeTrue();

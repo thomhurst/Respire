@@ -5,17 +5,18 @@ using Respire.Protocol;
 namespace Respire;
 
 /// <summary>
-/// An explicit pipeline: queue commands, then <see cref="SendAsync"/> flushes them to one
+/// An explicit pipeline: queue commands, then <see cref="ExecuteAsync"/> flushes them to one
 /// connection together and completes every queued <see cref="RespirePending{T}"/>. Not atomic —
 /// use <see cref="RespireTransaction"/> for MULTI/EXEC semantics. Single-shot and not
 /// thread-safe: build, send once, discard. Dispose an unsent batch to fault its queued pendings
 /// with <see cref="RespireBatchDiscardedException"/>.
 /// </summary>
 /// <remarks>
-/// Commands are grouped into the same facets as the client — <c>batch.Hashes.SetAsync</c>
-/// mirrors <c>client.Hashes.SetAsync</c> — with identical names and parameter shapes. Only the
-/// return type differs (a pending, not a task) and there is no per-command cancellation token:
-/// <see cref="SendAsync"/> owns cancellation. Members that block (a <c>waitFor</c> argument) or
+/// Commands are grouped into the same facets as the client — <c>batch.Hashes.Set</c>
+/// mirrors <c>client.Hashes.SetAsync</c> — with the <c>Async</c> suffix removed because queuing is
+/// synchronous, but otherwise identical parameter shapes. The return type is a pending, not a task,
+/// and there is no per-command cancellation token:
+/// <see cref="ExecuteAsync"/> owns cancellation. Members that block (a <c>waitFor</c> argument) or
 /// stream (<c>ScanAsync</c>, <c>GetLeaseAsync</c>) have no deferred form.
 /// </remarks>
 public sealed class RespireBatch : IDisposable, IPendingSink
@@ -37,13 +38,13 @@ public sealed class RespireBatch : IDisposable, IPendingSink
 
     internal RespireBatch(RespireClient client) => _client = client;
 
-    /// <summary>Gets whether <see cref="SendAsync"/> has started.</summary>
+    /// <summary>Gets whether <see cref="ExecuteAsync"/> has started.</summary>
     public bool IsSent => _sent;
 
     /// <summary>Gets the number of queued commands.</summary>
     public int Count => _ops.Count;
 
-    // Deferred command facets, grouped exactly like the client's — same names, same parameter
+    // Deferred command facets, grouped like the client's — synchronous names, same parameter
     // shapes, each returning a RespirePending instead of a ValueTask. Created on first use.
 
     /// <summary>String (plain value) commands. Redis: GET, SET, INCR, …</summary>
@@ -75,39 +76,39 @@ public sealed class RespireBatch : IDisposable, IPendingSink
 
     // Root shortcuts, mirroring the client's.
 
-    /// <inheritdoc cref="IBatchStringCommands.GetStringAsync"/>
-    public RespirePending<string?> GetStringAsync(RespireKey key) => Strings.GetStringAsync(key);
+    /// <inheritdoc cref="IBatchStringCommands.GetString"/>
+    public RespirePending<string?> GetString(RespireKey key) => Strings.GetString(key);
 
-    /// <inheritdoc cref="IBatchStringCommands.GetAsync{T}"/>
-    public RespirePending<T?> GetAsync<T>(RespireKey key) => Strings.GetAsync<T>(key);
+    /// <inheritdoc cref="IBatchStringCommands.Get{T}"/>
+    public RespirePending<T?> Get<T>(RespireKey key) => Strings.Get<T>(key);
 
-    /// <inheritdoc cref="IBatchStringCommands.GetBytesAsync"/>
-    public RespirePending<byte[]?> GetBytesAsync(RespireKey key) => Strings.GetBytesAsync(key);
+    /// <inheritdoc cref="IBatchStringCommands.GetBytes"/>
+    public RespirePending<byte[]?> GetBytes(RespireKey key) => Strings.GetBytes(key);
 
-    /// <inheritdoc cref="IBatchStringCommands.SetAsync(RespireKey, RespireValue, RespireExpiry, SetWhen)"/>
-    public RespirePending<bool> SetAsync(
+    /// <inheritdoc cref="IBatchStringCommands.Set(RespireKey, RespireValue, RespireExpiry, SetWhen)"/>
+    public RespirePending<bool> Set(
         RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
-        => Strings.SetAsync(key, value, expiry, when);
+        => Strings.Set(key, value, expiry, when);
 
-    /// <inheritdoc cref="IBatchStringCommands.SetAsync{T}(RespireKey, T, RespireExpiry, SetWhen)"/>
-    public RespirePending<bool> SetAsync<T>(
+    /// <inheritdoc cref="IBatchStringCommands.Set{T}(RespireKey, T, RespireExpiry, SetWhen)"/>
+    public RespirePending<bool> Set<T>(
         RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
-        => Strings.SetAsync(key, value, expiry, when);
+        => Strings.Set(key, value, expiry, when);
 
-    /// <inheritdoc cref="IBatchKeyCommands.DeleteAsync(ReadOnlySpan{RespireKey})"/>
-    public RespirePending<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys) => Keys.DeleteAsync(keys);
+    /// <inheritdoc cref="IBatchKeyCommands.Delete(ReadOnlySpan{RespireKey})"/>
+    public RespirePending<long> Delete(params ReadOnlySpan<RespireKey> keys) => Keys.Delete(keys);
 
-    /// <inheritdoc cref="IBatchKeyCommands.ExistsAsync"/>
-    public RespirePending<bool> ExistsAsync(RespireKey key) => Keys.ExistsAsync(key);
+    /// <inheritdoc cref="IBatchKeyCommands.Exists"/>
+    public RespirePending<bool> Exists(RespireKey key) => Keys.Exists(key);
 
-    /// <inheritdoc cref="IBatchStringCommands.IncrementAsync(RespireKey, long)"/>
-    public RespirePending<long> IncrementAsync(RespireKey key, long by = 1) => Strings.IncrementAsync(key, by);
+    /// <inheritdoc cref="IBatchStringCommands.Increment(RespireKey, long)"/>
+    public RespirePending<long> Increment(RespireKey key, long by = 1) => Strings.Increment(key, by);
 
-    /// <inheritdoc cref="IBatchStringCommands.DecrementAsync"/>
-    public RespirePending<long> DecrementAsync(RespireKey key, long by = 1) => Strings.DecrementAsync(key, by);
+    /// <inheritdoc cref="IBatchStringCommands.Decrement"/>
+    public RespirePending<long> Decrement(RespireKey key, long by = 1) => Strings.Decrement(key, by);
 
-    /// <inheritdoc cref="IBatchKeyCommands.ExpireAsync"/>
-    public RespirePending<bool> ExpireAsync(RespireKey key, TimeSpan expiry) => Keys.ExpireAsync(key, expiry);
+    /// <inheritdoc cref="IBatchKeyCommands.Expire"/>
+    public RespirePending<bool> Expire(RespireKey key, TimeSpan expiry) => Keys.Expire(key, expiry);
 
     RespireClient IPendingSink.Client => _client;
 
@@ -146,7 +147,7 @@ public sealed class RespireBatch : IDisposable, IPendingSink
     /// failure faults only its group; this method completes normally after recording the first
     /// error in telemetry.
     /// </summary>
-    public async ValueTask SendAsync(CancellationToken cancellationToken = default)
+    public async ValueTask ExecuteAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (_sent)

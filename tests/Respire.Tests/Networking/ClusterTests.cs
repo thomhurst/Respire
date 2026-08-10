@@ -349,9 +349,9 @@ public class ClusterTests
         });
 
         var batch = client.CreateBatch();
-        var first = batch.GetStringAsync("foo");
-        var second = batch.GetStringAsync("bar");
-        await batch.SendAsync();
+        var first = batch.GetString("foo");
+        var second = batch.GetString("bar");
+        await batch.ExecuteAsync();
 
         await Assert.That(first.Result).IsEqualTo("one");
         await Assert.That(second.Result).IsEqualTo("two");
@@ -375,11 +375,11 @@ public class ClusterTests
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
         var batch = client.CreateBatch();
-        var set = batch.SetAsync("key", "value");
-        var get = batch.GetStringAsync("key");
+        var set = batch.Set("key", "value");
+        var get = batch.GetString("key");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
-        await batch.SendAsync(timeout.Token);
+        await batch.ExecuteAsync(timeout.Token);
 
         await Assert.That(target.ReceivedCommands).Count().IsEqualTo(2);
         await Assert.That(target.ReceivedCommands[0]).IsEqualTo("SET key value");
@@ -406,9 +406,9 @@ public class ClusterTests
         });
 
         var batch = client.CreateBatch();
-        var stored = batch.Sets.UnionStoreAsync("{acct}dest", "{acct}a", "{acct}b");
-        var deleted = batch.Keys.DeleteAsync("{acct}a", "{acct}b");
-        await batch.SendAsync();
+        var stored = batch.Sets.UnionStore("{acct}dest", "{acct}a", "{acct}b");
+        var deleted = batch.Keys.Delete("{acct}a", "{acct}b");
+        await batch.ExecuteAsync();
 
         await Assert.That(stored.Result).IsEqualTo(2);
         await Assert.That(deleted.Result).IsEqualTo(2);
@@ -434,7 +434,7 @@ public class ClusterTests
         });
 
         var transaction = client.CreateTransaction();
-        var pending = transaction.SetAsync("{account}name", "Ada");
+        var pending = transaction.Set("{account}name", "Ada");
         var committed = await transaction.CommitAsync();
 
         await Assert.That(committed).IsTrue();
@@ -464,7 +464,7 @@ public class ClusterTests
         });
 
         var transaction = client.CreateTransaction();
-        var pending = transaction.SetAsync("{account}name", "Ada");
+        var pending = transaction.Set("{account}name", "Ada");
         var committed = await transaction.CommitAsync();
 
         await Assert.That(committed).IsTrue();
@@ -492,7 +492,7 @@ public class ClusterTests
         });
 
         var transaction = client.CreateTransaction();
-        _ = transaction.SetAsync("{account}name", "Ada");
+        _ = transaction.Set("{account}name", "Ada");
 
         var error = await Assert.That(async () => await transaction.CommitAsync())
             .Throws<RespireConnectionException>();
@@ -506,9 +506,9 @@ public class ClusterTests
     {
         await using var client = RespireClient.Create(new RespireOptions { Cluster = true });
         await using var transaction = client.CreateTransaction();
-        _ = transaction.SetAsync("foo", "one");
+        _ = transaction.Set("foo", "one");
 
-        var error = Assert.Throws<InvalidOperationException>(() => transaction.SetAsync("bar", "two"));
+        var error = Assert.Throws<InvalidOperationException>(() => transaction.Set("bar", "two"));
 
         await Assert.That(error.Message).Contains("same hash slot");
     }
@@ -519,21 +519,21 @@ public class ClusterTests
         await using var client = RespireClient.Create(new RespireOptions { Cluster = true });
         Action<RespireTransaction>[] queueCommands =
         [
-            transaction => transaction.Keys.DeleteAsync("foo", "bar"),
-            transaction => transaction.Keys.RenameAsync("foo", "bar"),
-            transaction => transaction.Strings.GetManyAsync("foo", "bar"),
-            transaction => transaction.Strings.SetManyAsync(("foo", "one"), ("bar", "two")),
-            transaction => transaction.Strings.SetManyAsync(
+            transaction => transaction.Keys.Delete("foo", "bar"),
+            transaction => transaction.Keys.Rename("foo", "bar"),
+            transaction => transaction.Strings.GetMany("foo", "bar"),
+            transaction => transaction.Strings.SetMany(("foo", "one"), ("bar", "two")),
+            transaction => transaction.Strings.SetMany(
                 RespireExpiry.In(TimeSpan.FromMinutes(1)), SetWhen.Always,
                 ("foo", "one"), ("bar", "two")),
-            transaction => transaction.Strings.LongestCommonSubsequenceAsync("foo", "bar"),
-            transaction => transaction.Lists.MoveAsync("foo", "bar"),
-            transaction => transaction.Sets.UnionAsync("foo", "bar"),
-            transaction => transaction.Sets.UnionStoreAsync("foo", "bar"),
-            transaction => transaction.Bitmaps.OperateAsync(BitOperation.Or, "foo", "bar"),
-            transaction => transaction.HyperLogLog.CountAsync("foo", "bar"),
-            transaction => transaction.HyperLogLog.MergeAsync("foo", "bar"),
-            transaction => transaction.Geo.SearchStoreAsync(
+            transaction => transaction.Strings.LongestCommonSubsequence("foo", "bar"),
+            transaction => transaction.Lists.Move("foo", "bar"),
+            transaction => transaction.Sets.Union("foo", "bar"),
+            transaction => transaction.Sets.UnionStore("foo", "bar"),
+            transaction => transaction.Bitmaps.Operate(BitOperation.Or, "foo", "bar"),
+            transaction => transaction.HyperLogLog.Count("foo", "bar"),
+            transaction => transaction.HyperLogLog.Merge("foo", "bar"),
+            transaction => transaction.Geo.SearchStore(
                 "foo", "bar", GeoSearchOrigin.FromMember("member"), GeoSearchShape.Circle(1)),
         ];
 
@@ -555,8 +555,8 @@ public class ClusterTests
         await using var transaction = client.CreateTransaction();
 
         _ = Assert.Throws<InvalidOperationException>(
-            () => transaction.Keys.DeleteAsync("foo", "bar"));
-        _ = transaction.SetAsync("bar", "two");
+            () => transaction.Keys.Delete("foo", "bar"));
+        _ = transaction.Set("bar", "two");
 
         await Assert.That(transaction.Count).IsEqualTo(1);
     }
@@ -567,10 +567,10 @@ public class ClusterTests
         await using var client = RespireClient.Create(new RespireOptions { Cluster = true });
         await using var transaction = client.CreateTransaction();
 
-        _ = Assert.Throws<ArgumentException>(() => transaction.Strings.SetManyAsync(
+        _ = Assert.Throws<ArgumentException>(() => transaction.Strings.SetMany(
             ("{rejected}one", RespireValue.Null),
             ("{rejected}two", "value")));
-        _ = transaction.SetAsync("{accepted}key", "value");
+        _ = transaction.Set("{accepted}key", "value");
 
         await Assert.That(transaction.Count).IsEqualTo(1);
     }
@@ -581,10 +581,10 @@ public class ClusterTests
         await using var client = RespireClient.Create(new RespireOptions { Cluster = true });
         await using var transaction = client.CreateTransaction();
 
-        _ = transaction.Strings.GetManyAsync("{account}one", "{account}two");
+        _ = transaction.Strings.GetMany("{account}one", "{account}two");
 
         _ = Assert.Throws<InvalidOperationException>(
-            () => transaction.SetAsync("{other}key", "value"));
+            () => transaction.Set("{other}key", "value"));
         await Assert.That(transaction.Count).IsEqualTo(1);
     }
 

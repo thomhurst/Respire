@@ -22,7 +22,7 @@ public class MultiItemCancellationOverloadTests
 
         foreach (var type in typeof(RespireClient).Assembly.GetExportedTypes())
         {
-            // Deferred commands intentionally omit per-command cancellation because SendAsync
+            // Deferred commands intentionally omit per-command cancellation because ExecuteAsync
             // or CommitAsync owns cancellation for the whole queued operation set.
             if (type == typeof(RespireBatch)
                 || type == typeof(RespireTransaction)
