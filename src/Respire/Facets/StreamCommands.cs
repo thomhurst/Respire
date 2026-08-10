@@ -84,7 +84,7 @@ public sealed class RespireStreamEntry
 
     /// <summary>The field decoded as a UTF-8 string, or null when absent.</summary>
     public string? GetString(string field)
-        => this[field] is { } bytes ? System.Text.Encoding.UTF8.GetString(bytes) : null;
+        => this[field] is { } bytes ? Internal.Utf8String.GetString(bytes) : null;
 
     /// <summary>
     /// Acknowledges this entry to its consumer group; returns false when it was already
