@@ -202,6 +202,18 @@ public class TypedValueApiTests
         await Assert.That(bound.GetGenericArguments()[0]).IsEqualTo(typeof(int));
     }
 
+    [Test]
+    public async Task ListPopAsync_WithDefaultLiteral_SelectsTheWaitOverload()
+    {
+        var left = BoundMethod(
+            (IListCommands list) => list.LeftPopAsync("key", default));
+        var right = BoundMethod(
+            (IListCommands list) => list.RightPopAsync("key", default));
+
+        await Assert.That(left.GetParameters()[1].ParameterType).IsEqualTo(typeof(TimeSpan?));
+        await Assert.That(right.GetParameters()[1].ParameterType).IsEqualTo(typeof(TimeSpan?));
+    }
+
     private static MethodInfo BoundMethod<TFacet, TResult>(Expression<Func<TFacet, TResult>> call)
         => ((MethodCallExpression)call.Body).Method;
 }

@@ -123,6 +123,18 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    public async Task ListCountPop_RoundTrip()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+
+        await client.Lists.RightPushAsync("typed:list:count", 1, 2, 3);
+
+        (await client.Lists.LeftPopManyAsync<int>("typed:list:count", 2)).Should().Equal(1, 2);
+        (await client.Lists.RightPopManyAsync<int>("typed:list:count", 2)).Should().Equal(3);
+        (await client.Lists.LeftPopManyAsync<int>("typed:list:count", 1)).Should().BeEmpty();
+    }
+
+    [Test]
     public async Task SetTypedContains_RoundTrip()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);

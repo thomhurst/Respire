@@ -48,6 +48,12 @@ public interface IListCommands
     /// <summary>Pops from the tail. Redis: RPOP / BRPOP.</summary>
     ValueTask<string?> RightPopAsync(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default);
 
+    /// <summary>Removes and returns up to <paramref name="count"/> elements from the head. Redis: LPOP.</summary>
+    ValueTask<string[]> LeftPopManyAsync(RespireKey key, long count, CancellationToken cancellationToken = default);
+
+    /// <summary>Removes and returns up to <paramref name="count"/> elements from the tail. Redis: RPOP.</summary>
+    ValueTask<string[]> RightPopManyAsync(RespireKey key, long count, CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Pops from the head and deserializes as <typeparamref name="T"/>; default when the list is
     /// empty. Always call with an explicit type argument — that is what separates it from the
@@ -61,6 +67,22 @@ public interface IListCommands
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<T?> RightPopAsync<T>(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Removes up to <paramref name="count"/> elements from the head and deserializes them as
+    /// <typeparamref name="T"/>. Redis: LPOP.
+    /// </summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    ValueTask<T[]> LeftPopManyAsync<T>(RespireKey key, long count, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Removes up to <paramref name="count"/> elements from the tail and deserializes them as
+    /// <typeparamref name="T"/>. Redis: RPOP.
+    /// </summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    ValueTask<T[]> RightPopManyAsync<T>(RespireKey key, long count, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Atomically moves an element between lists and returns it; null when the source is empty.
@@ -121,6 +143,22 @@ internal sealed class ListCommands(RespireClient client) : IListCommands
     public ValueTask<string?> RightPopAsync(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
         => PopAsync(key, waitFor, Verbs.RPop, Verbs.BRPop, "RPOP", "BRPOP", cancellationToken);
 
+    public ValueTask<string[]> LeftPopManyAsync(
+        RespireKey key, long count, CancellationToken cancellationToken = default)
+        => PopAsync(key, count, Verbs.LPop, "LPOP", cancellationToken);
+
+    public ValueTask<string[]> RightPopManyAsync(
+        RespireKey key, long count, CancellationToken cancellationToken = default)
+        => PopAsync(key, count, Verbs.RPop, "RPOP", cancellationToken);
+
+    private ValueTask<string[]> PopAsync(
+        RespireKey key, long count, Verb verb, string operation, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        return client.StringArrayAsync(
+            operation, new Cmd2(verb, client.Key(in key), count), cancellationToken);
+    }
+
     private ValueTask<string?> PopAsync(
         RespireKey key, TimeSpan? waitFor, Verb plain, Verb blocking, string plainName, string blockingName,
         CancellationToken cancellationToken)
@@ -156,6 +194,28 @@ internal sealed class ListCommands(RespireClient client) : IListCommands
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?> RightPopAsync<T>(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
         => PopAsync<T>(key, waitFor, Verbs.RPop, Verbs.BRPop, "RPOP", "BRPOP", cancellationToken);
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public ValueTask<T[]> LeftPopManyAsync<T>(
+        RespireKey key, long count, CancellationToken cancellationToken = default)
+        => PopAsync<T>(key, count, Verbs.LPop, "LPOP", cancellationToken);
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public ValueTask<T[]> RightPopManyAsync<T>(
+        RespireKey key, long count, CancellationToken cancellationToken = default)
+        => PopAsync<T>(key, count, Verbs.RPop, "RPOP", cancellationToken);
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    private ValueTask<T[]> PopAsync<T>(
+        RespireKey key, long count, Verb verb, string operation, CancellationToken cancellationToken)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        return client.DeserializeArrayAsync<T, Cmd2>(
+            operation, new Cmd2(verb, client.Key(in key), count), cancellationToken);
+    }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
