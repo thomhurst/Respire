@@ -26,7 +26,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
     private bool _publishingReconnectState;
     private volatile bool _disposed;
 
-    public RespireSubscription CreateSubscription(SubscriptionKind kind, string[] names)
+    private RespireSubscription CreateSubscription(SubscriptionKind kind, string[] names)
     {
         ArgumentNullException.ThrowIfNull(names);
         if (kind == SubscriptionKind.Sharded && core.Cluster is not null)
@@ -39,6 +39,13 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         if (names.Length == 0)
         {
             throw new ArgumentException("At least one channel is required.", nameof(names));
+        }
+
+        // Validated before anything observable happens: a name that cannot be written as UTF-8
+        // must not register routes, open the pub/sub connection, or reach the wire.
+        foreach (var name in names)
+        {
+            Utf8RouteName.Validate(name);
         }
 
         var buffer = Channel.CreateBounded<RespireMessage>(new BoundedChannelOptions(core.Options.SubscriptionBufferSize)
@@ -57,11 +64,10 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
     }
 
     /// <summary>
-    /// Creates a subscription and activates it up front, so it is live server-side before the
-    /// caller sees it. Enumeration later finds it already activated and streams straight from the
-    /// buffer.
+    /// Creates a subscription and activates it before handing it back, so it is already live
+    /// server-side when the caller sees it — enumeration only drains the buffer.
     /// </summary>
-    public async ValueTask<RespireSubscription> CreateActivatedSubscriptionAsync(
+    public async ValueTask<RespireSubscription> SubscribeAsync(
         SubscriptionKind kind, string[] names, CancellationToken cancellationToken)
     {
         var subscription = CreateSubscription(kind, names);
@@ -71,9 +77,9 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         }
         catch
         {
-            // Cancellation can land after some SUBSCRIBEs already reached the server. Activation
-            // only rolls its own routing back, so dispose to unsubscribe whatever took effect —
-            // the caller never receives this subscription and must not keep paying for it.
+            // Cancellation can land after some SUBSCRIBEs already reached the server, so cleanup
+            // has to unsubscribe rather than just forget the routes. The caller never receives
+            // this subscription and must not keep paying for it.
             try
             {
                 await subscription.DisposeAsync().ConfigureAwait(false);
@@ -91,81 +97,41 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         return subscription;
     }
 
-    /// <summary>Registers the subscription's routes and sends SUBSCRIBE; idempotent per subscription.</summary>
-    public async ValueTask ActivateAsync(RespireSubscription subscription, CancellationToken cancellationToken)
+    /// <summary>
+    /// Registers the subscription's routes and sends SUBSCRIBE. Failures leave the cleanup to the
+    /// caller's <see cref="RespireSubscription.DisposeAsync"/>, which unsubscribes every route it
+    /// takes back out.
+    /// </summary>
+    private async ValueTask ActivateAsync(RespireSubscription subscription, CancellationToken cancellationToken)
     {
-        if (!subscription.TryMarkActivated())
-        {
-            return;
-        }
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var connection = await EnsureConnectionAsync(cancellationToken).ConfigureAwait(false);
 
-        var routed = false;
-        try
+        lock (_gate)
         {
+            // Re-checked under the routing gate: disposal snapshots and completes routed
+            // subscriptions under this same lock, so an activation that loses the race must
+            // not register routes (and subscribe server-side) on a disposed hub.
             ObjectDisposedException.ThrowIf(_disposed, this);
-            var connection = await EnsureConnectionAsync(cancellationToken).ConfigureAwait(false);
-
-            lock (_gate)
-            {
-                // Re-checked under the routing gate: disposal snapshots and completes routed
-                // subscriptions under this same lock, so an activation that loses the race must
-                // not register routes (and subscribe server-side) on a disposed hub.
-                ObjectDisposedException.ThrowIf(_disposed, this);
-                var routes = Routes(subscription.Kind);
-                routed = true;
-                foreach (var name in subscription.Names)
-                {
-                    if (!routes.TryGetValue(name, out var list))
-                    {
-                        list = [];
-                        routes.Add(name, list);
-                    }
-
-                    list.Add(subscription);
-                }
-            }
-
+            var routes = Routes(subscription.Kind);
             foreach (var name in subscription.Names)
             {
-                await SendControlAsync(
-                        connection, SubscribeVerb(subscription.Kind), SubscribeOperation(subscription.Kind), name,
-                        cancellationToken, instrument: true)
-                    .ConfigureAwait(false);
-            }
+                if (!routes.TryGetValue(name, out var list))
+                {
+                    list = [];
+                    routes.Add(name, list);
+                }
 
-            // A DisposeAsync racing this activation may have run before the routes existed —
-            // its removal saw nothing to undo. Re-check and take the registration back out
-            // (including the server-side subscription) so a disposed subscription cannot
-            // linger routed with a completed buffer.
-            if (subscription.IsDisposed)
-            {
-                await ReleaseRoutesAsync(subscription).ConfigureAwait(false);
+                list.Add(subscription);
             }
         }
-        catch
-        {
-            // Roll back completely so a later enumeration attempt subscribes from scratch.
-            if (routed)
-            {
-                lock (_gate)
-                {
-                    var routes = Routes(subscription.Kind);
-                    foreach (var name in subscription.Names)
-                    {
-                        if (routes.TryGetValue(name, out var list))
-                        {
-                            list.Remove(subscription);
-                            if (list.Count == 0)
-                            {
-                                routes.Remove(name);
-                            }
-                        }
-                    }
-                }
-            }
 
-            subscription.ResetActivation();
-            throw;
+        foreach (var name in subscription.Names)
+        {
+            await SendControlAsync(
+                    connection, SubscribeVerb(subscription.Kind), SubscribeOperation(subscription.Kind), name,
+                    cancellationToken, instrument: true)
+                .ConfigureAwait(false);
         }
     }
 
@@ -194,12 +160,11 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                     }
                 }
 
-                // Released = no consumer remains, regardless of who removed the route. A
-                // disposal racing activation can strip the route before activation's SUBSCRIBE
-                // even goes out; deriving the unsubscribe list from "route absent" (rather
-                // than "this call removed the last entry") makes the rollback cover that
-                // ordering too. A redundant UNSUBSCRIBE is harmless; a missing one leaks a
-                // server-side subscription.
+                // Released = no consumer remains, regardless of who removed the route. A failed
+                // activation can leave a name subscribed server-side but never routed; deriving
+                // the unsubscribe list from "route absent" (rather than "this call removed the
+                // last entry") covers that too. A redundant UNSUBSCRIBE is harmless; a missing
+                // one leaks a server-side subscription.
                 if (!routes.ContainsKey(name))
                 {
                     releasedRoutes.Add((subscription.Kind, name));

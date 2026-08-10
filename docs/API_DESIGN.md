@@ -239,7 +239,7 @@ Subscriptions are async streams. Unsubscribe = dispose/cancel. No delegate soup,
 handler-ordering questions:
 
 ```csharp
-await using var sub = redis.Subscribe("orders");            // also: patterns, sharded
+await using var sub = await redis.SubscribeAsync("orders");  // also: patterns, sharded
 await foreach (RespireMessage msg in sub.WithCancellation(ct))
 {
     Console.WriteLine($"{msg.Channel}: {msg.Text}");
@@ -247,8 +247,9 @@ await foreach (RespireMessage msg in sub.WithCancellation(ct))
 }
 ```
 
-- `Subscribe(params channels)`, `SubscribePattern(pattern)`, `SubscribeSharded(channel)`
-  (RESP3 SSUBSCRIBE).
+- `SubscribeAsync(channel | channels)`, `SubscribePatternAsync(pattern)`,
+  `SubscribeShardedAsync(channel)` (RESP3 SSUBSCRIBE). Subscribing is always awaited: the
+  task completes once the server has acknowledged, so the next publish reaches the stream.
 - Backed by a bounded `Channel<T>`; overflow policy in options (`DropOldest` default,
   `Block`, `Throw`).
 - `RespireMessage` exposes `Channel`, `Pattern`, `Text`, `Memory`, `As<T>()`.
@@ -425,7 +426,7 @@ var json = redis.As<IJsonCommands>();
 | `PingWithResponseAsync` | Gone; `PingAsync` returns RTT `TimeSpan` |
 | Flat `HGetAsync`/`LPushAsync`/`SAddAsync`… | Facets: `Hashes.GetAsync`, `Lists.PushAsync`, `Sets.AddAsync` |
 | `RespireTransaction.Add<TCommand>` public generic | Internal; typed methods only |
-| `RespireSubscriber` + `RespireMessageHandler` delegate | `redis.Subscribe(...)` → `IAsyncEnumerable<RespireMessage>` |
+| `RespireSubscriber` + `RespireMessageHandler` delegate | `await redis.SubscribeAsync(...)` → `IAsyncEnumerable<RespireMessage>` |
 | `IRespireClientFactory` | Keyed DI registrations |
 
 ## Open questions

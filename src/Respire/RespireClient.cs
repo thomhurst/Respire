@@ -746,34 +746,10 @@ public sealed partial class RespireClient : IRespireClient
         => IntegerAsync("SPUBLISH", new Cmd2(Verbs.SPublish, channel, message), cancellationToken);
 
     /// <summary>
-    /// Subscribes to channels as an async stream: <c>await foreach (var msg in client.Subscribe("news"))</c>.
-    /// The SUBSCRIBE is sent lazily when enumeration starts, so a publish issued before then can
-    /// miss this subscriber — prefer <see cref="SubscribeAsync(string, CancellationToken)"/>, which
-    /// returns only once the server has acknowledged. Disposing the subscription unsubscribes.
-    /// Redis: SUBSCRIBE.
-    /// </summary>
-    public RespireSubscription Subscribe(params string[] channels)
-        => _core.Hub.CreateSubscription(SubscriptionKind.Channel, channels);
-
-    /// <summary>
-    /// Subscribes to glob patterns ("news.*"), sending PSUBSCRIBE lazily when enumeration starts —
-    /// prefer <see cref="SubscribePatternAsync(string, CancellationToken)"/>. Redis: PSUBSCRIBE.
-    /// </summary>
-    public RespireSubscription SubscribePattern(params string[] patterns)
-        => _core.Hub.CreateSubscription(SubscriptionKind.Pattern, patterns);
-
-    /// <summary>
-    /// Subscribes to sharded channels (Redis 7+), sending SSUBSCRIBE lazily when enumeration
-    /// starts — prefer <see cref="SubscribeShardedAsync(string, CancellationToken)"/>.
-    /// Redis: SSUBSCRIBE.
-    /// </summary>
-    public RespireSubscription SubscribeSharded(params string[] channels)
-        => _core.Hub.CreateSubscription(SubscriptionKind.Sharded, channels);
-
-    /// <summary>
     /// Subscribes to a channel and returns once the server has acknowledged the SUBSCRIBE, so the
     /// next publish is guaranteed to reach this subscriber — no readiness polling. Messages are
-    /// buffered from that moment, whenever enumeration starts. Redis: SUBSCRIBE.
+    /// buffered from that moment, whenever enumeration starts; disposing the subscription
+    /// unsubscribes. Redis: SUBSCRIBE.
     /// </summary>
     public ValueTask<RespireSubscription> SubscribeAsync(string channel, CancellationToken cancellationToken = default)
         => SubscribeCoreAsync(SubscriptionKind.Channel, [channel], cancellationToken);
@@ -806,7 +782,7 @@ public sealed partial class RespireClient : IRespireClient
 
     private ValueTask<RespireSubscription> SubscribeCoreAsync(
         SubscriptionKind kind, string[] names, CancellationToken cancellationToken)
-        => _core.Hub.CreateActivatedSubscriptionAsync(kind, names, cancellationToken);
+        => _core.Hub.SubscribeAsync(kind, names, cancellationToken);
 
     // Batches and transactions
 

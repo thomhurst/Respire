@@ -78,9 +78,6 @@ if (await shardMessages.MoveNextAsync())
 }
 ```
 
-`Subscribe`, `SubscribePattern` and `SubscribeSharded` still exist and send the SUBSCRIBE
-lazily when enumeration starts; prefer the awaited variants.
-
 ### Batches and transactions
 
 Batch commands share one flush. Transactions use one connection and return typed pending

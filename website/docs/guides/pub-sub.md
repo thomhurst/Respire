@@ -29,7 +29,7 @@ await using var patterns = await redis.SubscribePatternAsync("events:*");
 await using var shard = await redis.SubscribeShardedAsync("events:eu-west");
 ```
 
-The synchronous `Subscribe`, `SubscribePattern` and `SubscribeSharded` overloads return the same stream but defer the SUBSCRIBE until enumeration starts, so a publish that races the first `await foreach` can miss the subscriber. Prefer the async variants unless the subscription is created far from where it is consumed.
+Messages are buffered from the moment the subscription is acknowledged, so nothing is lost between `SubscribeAsync` returning and the `await foreach` starting.
 
 ## Publish
 
