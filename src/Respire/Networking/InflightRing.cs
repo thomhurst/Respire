@@ -68,6 +68,52 @@ internal sealed class InflightRing
         return true;
     }
 
+    /// <summary>
+    /// Deadline-sweep only. Scans published slots oldest-first, timing out sources whose armed
+    /// deadline has passed, and returns milliseconds until the next observed armed deadline
+    /// (or -1 when none is armed). Lock-free against both sides: slots between the head and
+    /// tail snapshots are published; a slot observed mid-dequeue reads null and is skipped; a
+    /// source recycled after its state was captured is rejected by the epoch CAS inside
+    /// <see cref="PendingResponse.TrySetTimedOut"/>. One connection arms one constant timeout,
+    /// so deadlines are monotonic in enqueue order and the scan stops at the first unexpired
+    /// armed entry.
+    /// </summary>
+    public long SweepExpired(long nowMilliseconds, TimeSpan timeout)
+    {
+        var head = Volatile.Read(ref _head);
+        var tail = Volatile.Read(ref _tail);
+        for (var position = head; position < tail; position++)
+        {
+            var source = Volatile.Read(ref _slots[position & _mask]);
+            if (source is null || ReferenceEquals(source, DiscardSentinel))
+            {
+                continue;
+            }
+
+            var state = source.State;
+            if (PendingResponse.IsCompleted(state))
+            {
+                continue;
+            }
+
+            var deadline = source.Deadline;
+            if (deadline == 0)
+            {
+                continue;
+            }
+
+            var remaining = deadline - nowMilliseconds;
+            if (remaining > 0)
+            {
+                return remaining;
+            }
+
+            source.TrySetTimedOut(state, timeout);
+        }
+
+        return -1;
+    }
+
     /// <summary>Consumer only (receive loop, or the fail-all drain after the loop exits).</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryDequeue(out PendingResponse source)

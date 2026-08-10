@@ -17,15 +17,34 @@ namespace Respire.Networking;
 internal abstract class PendingResponse
 {
     private CancellationTokenRegistration _cancellationRegistration;
-    private int _completed;
+
+    // Low bit: completed. Upper bits: reuse epoch, bumped every time the source goes back to
+    // its pool. Completion is a CAS on the whole word so the deadline sweep — which peeks
+    // ring slots without holding a reference — can never complete a recycled source: its
+    // captured state carries the old epoch and the CAS fails.
+    private long _state;
     private int _refs;
+
+    /// <summary>
+    /// Absolute <see cref="Environment.TickCount64"/> deadline stamped at enqueue; 0 means
+    /// none. Written before the ring slot is published, read afterwards by the deadline sweep.
+    /// </summary>
+    internal long Deadline;
+
+    /// <summary>Command label used in timeout errors; null when the source carries none.</summary>
+    internal virtual string? CommandName => null;
+
+    /// <summary>Completion state captured by the deadline sweep for its epoch-checked CAS.</summary>
+    internal long State => Volatile.Read(ref _state);
+
+    internal static bool IsCompleted(long state) => (state & 1) != 0;
 
     /// <summary>Called after rent, before source is published anywhere.</summary>
     internal void PrepareForUse(int receiveReferences = 1) => _refs = receiveReferences + 1;
 
     public virtual bool TrySetResult(in RespValue result)
     {
-        if (Interlocked.CompareExchange(ref _completed, 1, 0) != 0)
+        if (!TryAcquireCompletion())
         {
             return false;
         }
@@ -36,7 +55,7 @@ internal abstract class PendingResponse
 
     public bool TrySetException(Exception exception)
     {
-        if (Interlocked.CompareExchange(ref _completed, 1, 0) != 0)
+        if (!TryAcquireCompletion())
         {
             return false;
         }
@@ -47,13 +66,38 @@ internal abstract class PendingResponse
 
     public bool TrySetCanceled(CancellationToken cancellationToken)
     {
-        if (Interlocked.CompareExchange(ref _completed, 1, 0) != 0)
+        if (!TryAcquireCompletion())
         {
             return false;
         }
 
         DispatchException(new OperationCanceledException(cancellationToken));
         return true;
+    }
+
+    /// <summary>
+    /// Deadline sweep only. <paramref name="observedState"/> is the state captured when the
+    /// sweep read this source from its ring slot; the CAS fails if the source completed or
+    /// was recycled since, so a stale peek can never time out a different command.
+    /// </summary>
+    internal bool TrySetTimedOut(long observedState, TimeSpan timeout)
+    {
+        if (Interlocked.CompareExchange(ref _state, observedState | 1, observedState) != observedState)
+        {
+            return false;
+        }
+
+        DispatchException(new RespireTimeoutException(CommandName ?? "(command)", timeout));
+        return true;
+    }
+
+    private bool TryAcquireCompletion()
+    {
+        // Callers hold a reference, so the epoch cannot move under them; the only race is
+        // against another completer, and losing that CAS means the source already completed.
+        var state = Volatile.Read(ref _state);
+        return (state & 1) == 0
+            && Interlocked.CompareExchange(ref _state, state | 1, state) == state;
     }
 
     /// <summary>
@@ -95,7 +139,9 @@ internal abstract class PendingResponse
             return;
         }
 
-        Volatile.Write(ref _completed, 0);
+        // Bump the reuse epoch and clear the completed bit in one atomic store, invalidating
+        // any state the deadline sweep captured for this incarnation.
+        Volatile.Write(ref _state, ((Volatile.Read(ref _state) >> 1) + 1) << 1);
         ResetAndReturn();
     }
 
@@ -126,6 +172,8 @@ internal sealed class TransactionPendingResponseSource : PendingResponse, IValue
     private TransactionPendingResponseSource()
     {
     }
+
+    internal override string? CommandName => "EXEC";
 
     internal ValueTask<RespValue> Task => new(this, _core.Version);
 
@@ -230,6 +278,8 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
 
     public ValueTask<RespValue> Task => new(this, _core.Version);
 
+    internal override string? CommandName => _commandName;
+
     internal void SetPool(PendingResponsePool pool) => _pool = pool;
 
     internal void Configure(bool throwOnError, string? commandName)
@@ -302,6 +352,8 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
     }
 
     public ValueTask<TResult> Task => new(this, _core.Version);
+
+    internal override string? CommandName => _commandName;
 
     public static ConvertedPendingResponseSource<TState, TResult> Rent(
         TState state,
@@ -414,6 +466,8 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
     }
 
     public ValueTask<string?> Task => new(this, _core.Version);
+
+    internal override string? CommandName => _commandName;
 
     public static StringPendingResponseSource Rent(string? commandName)
     {

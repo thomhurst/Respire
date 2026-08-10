@@ -203,6 +203,51 @@ public class StringFastPathWireTests
     }
 
     [Test]
+    public async Task Get_TimedOutCommand_ReplyConsumedAndConnectionStaysUsable()
+    {
+        // Scripted replies serve only unsuppressed commands: the timed-out GET's late reply is
+        // injected raw, so "GET second" consumes the first scripted slot.
+        await using var server = new FakeRespServer("$6\r\nsecond\r\n"u8.ToArray());
+        server.SuppressReply = command => command == "GET first";
+        await using var client = await ConnectClientAsync(server, TimeSpan.FromMilliseconds(100));
+
+        var exception = await Assert.That(async () => await client.GetStringAsync("first"))
+            .ThrowsExactly<RespireTimeoutException>();
+        await Assert.That(exception!.CommandName).IsEqualTo("GET");
+
+        // The timed-out command's reply arrives late and must be drained without corrupting
+        // FIFO pairing for the next command.
+        await server.SendRawAsync("$5\r\nfirst\r\n"u8.ToArray());
+        await Assert.That(await client.GetStringAsync("second")).IsEqualTo("second");
+    }
+
+    [Test]
+    public async Task BlockingPop_IsExemptFromCommandTimeout()
+    {
+        // BLPOP travels over the dedicated blocking pool (the server's second connection) and
+        // must never be expired by the command deadline sweep, no matter how long it blocks.
+        await using var server = new FakeRespServer(2, "$-1\r\n"u8.ToArray());
+        server.SuppressReply = command => command.StartsWith("BLPOP", StringComparison.Ordinal);
+        var client = await ConnectClientAsync(server, TimeSpan.FromMilliseconds(100));
+
+        var pop = client.Lists.LeftPopAsync("key", waitFor: TimeSpan.FromSeconds(5));
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!server.ReceivedCommands.Any(static c => c.StartsWith("BLPOP", StringComparison.Ordinal)))
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
+        await Task.Delay(400);
+        await Assert.That(pop.IsCompleted).IsFalse();
+
+        // Tearing the client down fails the still-blocked wait with a connection error, never
+        // a timeout.
+        await client.DisposeAsync();
+        await Assert.That(async () => await pop).Throws<RespireConnectionException>();
+    }
+
+    [Test]
     public async Task Get_CallerCancellation_RemainsOperationCanceledException()
     {
         await using var server = new FakeRespServer("$5\r\nhello\r\n"u8.ToArray())

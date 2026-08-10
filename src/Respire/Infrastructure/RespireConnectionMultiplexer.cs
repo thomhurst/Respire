@@ -415,10 +415,11 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
                 try
                 {
+                    // Corrections, once owed, must not be abandonable: no command deadline.
                     var send = sendAsking
                         ? Respire.Internal.ClusterRouter.SendAskingUncheckedAsync(
-                            connection, in command, cancellationToken)
-                        : connection.SendAsync(in command, cancellationToken);
+                            connection, in command, cancellationToken, armCommandDeadline: false)
+                        : connection.SendAsync(in command, cancellationToken, armCommandDeadline: false);
                     sends.Add((connection, send));
                 }
                 catch (Exception ex) when (IsConnectionLoss(ex))

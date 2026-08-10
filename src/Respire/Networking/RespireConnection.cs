@@ -57,8 +57,11 @@ internal sealed class RespireConnection : IAsyncDisposable
     private readonly Task _receiveTask;
     private readonly Task _flushTask;
     private readonly Task? _watchdogTask;
+    private readonly Task? _deadlineSweepTask;
     private readonly CancellationTokenSource? _watchdogCancellation;
     private readonly TimeSpan? _responseTimeout;
+    private readonly TimeSpan? _commandTimeout;
+    private readonly long _commandTimeoutMilliseconds;
     // Sent/received counters and the deadline are one state transition: a reply must not clear
     // a deadline concurrently armed for a later batch.
     private readonly Lock _receiveDeadlineGate = new();
@@ -119,7 +122,13 @@ internal sealed class RespireConnection : IAsyncDisposable
         _activeBuffer = new WriteBuffer(options.WriteBufferSize);
         _spareBuffer = new WriteBuffer(options.WriteBufferSize);
         _responseTimeout = options.ResponseTimeout;
-        if (_responseTimeout is not null)
+        _commandTimeout = options.CommandTimeout;
+        if (_commandTimeout is { } commandTimeoutValue)
+        {
+            _commandTimeoutMilliseconds = Math.Max(1L, (long)commandTimeoutValue.TotalMilliseconds);
+        }
+
+        if (_responseTimeout is not null || _commandTimeout is not null)
         {
             _watchdogCancellation = new CancellationTokenSource();
         }
@@ -129,6 +138,11 @@ internal sealed class RespireConnection : IAsyncDisposable
         if (_responseTimeout is { } responseTimeout)
         {
             _watchdogTask = WatchReceiveAsync(responseTimeout, _watchdogCancellation!.Token);
+        }
+
+        if (_commandTimeout is { } commandTimeout)
+        {
+            _deadlineSweepTask = SweepCommandDeadlinesAsync(commandTimeout, _watchdogCancellation!.Token);
         }
     }
 
@@ -144,6 +158,12 @@ internal sealed class RespireConnection : IAsyncDisposable
         {
             throw new ArgumentOutOfRangeException(
                 nameof(options), "ResponseTimeout must be at least one millisecond.");
+        }
+
+        if (options.CommandTimeout is { } invalidCommandTimeout && invalidCommandTimeout < MinWatchdogDelay)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options), "CommandTimeout must be at least one millisecond.");
         }
 
         ValidateTcpKeepAlive(options);
@@ -400,7 +420,10 @@ internal sealed class RespireConnection : IAsyncDisposable
             return existing;
         }
 
-        var reply = await SendAsync(new Commands.ClientIdCommand(), cancellationToken).ConfigureAwait(false);
+        var reply = await SendCoreAsync(
+                new Commands.ClientIdCommand(), discardRepliesBefore: 0, throwOnError: false,
+                cancellationToken, commandName: "CLIENT ID")
+            .ConfigureAwait(false);
         if (reply.IsError)
         {
             var message = reply.GetErrorMessage();
@@ -418,11 +441,17 @@ internal sealed class RespireConnection : IAsyncDisposable
     /// Serializes the command into the coalescing write buffer and returns a task that
     /// completes with its response.
     /// </summary>
-    public ValueTask<RespValue> SendAsync<TCommand>(in TCommand command, CancellationToken cancellationToken = default)
+    public ValueTask<RespValue> SendAsync<TCommand>(
+        in TCommand command,
+        CancellationToken cancellationToken = default,
+        bool armCommandDeadline = true)
         where TCommand : struct, IRespCommand
-        => SendCoreAsync(in command, discardRepliesBefore: 0, throwOnError: false, cancellationToken);
+        => SendCoreAsync(
+            in command, discardRepliesBefore: 0, throwOnError: false, cancellationToken,
+            commandName: null, armCommandDeadline);
 
-    /// <summary>Sends an intentionally blocking command without applying the receive watchdog.</summary>
+    /// <summary>Sends an intentionally blocking command without applying the receive watchdog
+    /// or the command deadline (a BLPOP-style wait may legitimately outlast both).</summary>
     internal async ValueTask<RespValue> SendWithoutResponseTimeoutAsync<TCommand>(
         TCommand command, CancellationToken cancellationToken = default)
         where TCommand : struct, IRespCommand
@@ -430,7 +459,10 @@ internal sealed class RespireConnection : IAsyncDisposable
         Interlocked.Increment(ref _responseTimeoutSuppressions);
         try
         {
-            return await SendAsync(in command, cancellationToken).ConfigureAwait(false);
+            return await SendCoreAsync(
+                    in command, discardRepliesBefore: 0, throwOnError: false, cancellationToken,
+                    commandName: null, armCommandDeadline: false)
+                .ConfigureAwait(false);
         }
         finally
         {
@@ -438,7 +470,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         }
     }
 
-    /// <summary>Sends a prefixed blocking command without applying the receive watchdog.</summary>
+    /// <summary>Sends a prefixed blocking command without applying the receive watchdog
+    /// or the command deadline (a BLPOP-style wait may legitimately outlast both).</summary>
     internal async ValueTask<RespValue> SendPrefixedWithoutResponseTimeoutAsync<TPrefix, TCommand>(
         TPrefix prefix,
         TCommand command,
@@ -451,7 +484,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         try
         {
             return await SendPrefixedAsync(
-                    in prefix, in command, throwOnError, cancellationToken)
+                    in prefix, in command, throwOnError, cancellationToken,
+                    commandName: null, armCommandDeadline: false)
                 .ConfigureAwait(false);
         }
         finally
@@ -601,7 +635,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         in TCommand command,
         bool throwOnError,
         CancellationToken cancellationToken = default,
-        string? commandName = null)
+        string? commandName = null,
+        bool armCommandDeadline = true)
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
@@ -616,7 +651,8 @@ internal sealed class RespireConnection : IAsyncDisposable
             discardRepliesBefore: 1,
             throwOnError,
             cancellationToken,
-            commandName);
+            commandName,
+            armCommandDeadline);
     }
 
     private ValueTask<RespValue> SendTransactionCoreAsync<TCommand>(
@@ -658,7 +694,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         int discardRepliesBefore,
         bool throwOnError,
         CancellationToken cancellationToken,
-        string? commandName = null)
+        string? commandName = null,
+        bool armCommandDeadline = true)
         where TCommand : struct, IRespCommand
     {
         var source = _sourcePool.Rent(throwOnError, commandName);
@@ -666,7 +703,9 @@ internal sealed class RespireConnection : IAsyncDisposable
         bool startedBatch;
         try
         {
-            enqueued = TryEnqueue(in command, source, out startedBatch, discardRepliesBefore);
+            enqueued = TryEnqueue(
+                in command, source, out startedBatch, discardRepliesBefore,
+                retainRepliesBefore: false, armCommandDeadline);
         }
         catch
         {
@@ -681,7 +720,7 @@ internal sealed class RespireConnection : IAsyncDisposable
             return source.Task;
         }
 
-        return SendSlowAsync(command, source, discardRepliesBefore, cancellationToken);
+        return SendSlowAsync(command, source, discardRepliesBefore, cancellationToken, armCommandDeadline);
     }
 
     /// <summary>
@@ -740,7 +779,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         PendingResponse source,
         out bool startedBatch,
         int discardRepliesBefore = 0,
-        bool retainRepliesBefore = false)
+        bool retainRepliesBefore = false,
+        bool armCommandDeadline = true)
         where TCommand : struct, IRespCommand
         => TryEnqueue(
             in command,
@@ -749,7 +789,8 @@ internal sealed class RespireConnection : IAsyncDisposable
             out _,
             trackWrite: false,
             discardRepliesBefore,
-            retainRepliesBefore);
+            retainRepliesBefore,
+            armCommandDeadline);
 
     private bool TryEnqueueForWrite<TCommand>(
         in TCommand command,
@@ -774,7 +815,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         out Task? writeTask,
         bool trackWrite,
         int discardRepliesBefore = 0,
-        bool retainRepliesBefore = false)
+        bool retainRepliesBefore = false,
+        bool armCommandDeadline = true)
         where TCommand : struct, IRespCommand
     {
         startedBatch = false;
@@ -797,7 +839,8 @@ internal sealed class RespireConnection : IAsyncDisposable
                 out writeTask,
                 trackWrite,
                 discardRepliesBefore,
-                retainRepliesBefore);
+                retainRepliesBefore,
+                armCommandDeadline);
         }
 
         var scratch = _serializeScratch ??= new WriteBuffer(ScratchInitialSize);
@@ -831,6 +874,7 @@ internal sealed class RespireConnection : IAsyncDisposable
                     _activeReplyCount += discardRepliesBefore + 1;
                 }
 
+                StampDeadline(source, armCommandDeadline);
                 for (var i = 0; i < discardRepliesBefore; i++)
                 {
                     _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel);
@@ -870,7 +914,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         out Task? writeTask,
         bool trackWrite,
         int discardRepliesBefore,
-        bool retainRepliesBefore)
+        bool retainRepliesBefore,
+        bool armCommandDeadline)
         where TCommand : struct, IRespCommand
     {
         startedBatch = false;
@@ -910,6 +955,7 @@ internal sealed class RespireConnection : IAsyncDisposable
                 _activeReplyCount += discardRepliesBefore + 1;
             }
 
+            StampDeadline(source, armCommandDeadline);
             for (var i = 0; i < discardRepliesBefore; i++)
             {
                 _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel);
@@ -925,14 +971,37 @@ internal sealed class RespireConnection : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Stamps (or clears — pooled sources carry the previous command's value) the command
+    /// deadline before the source is published to the ring. The shared discard sentinel is
+    /// never written: it sits in many slots at once and the sweep skips it by reference.
+    /// </summary>
+    private void StampDeadline(PendingResponse source, bool armCommandDeadline)
+    {
+        if (ReferenceEquals(source, InflightRing.DiscardSentinel))
+        {
+            return;
+        }
+
+        source.Deadline = armCommandDeadline && _commandTimeoutMilliseconds != 0
+            ? Environment.TickCount64 + _commandTimeoutMilliseconds
+            : 0;
+    }
+
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
     private async ValueTask<RespValue> SendSlowAsync<TCommand>(
-        TCommand command, PendingResponseSource source, int discardRepliesBefore, CancellationToken cancellationToken)
+        TCommand command,
+        PendingResponseSource source,
+        int discardRepliesBefore,
+        CancellationToken cancellationToken,
+        bool armCommandDeadline)
         where TCommand : struct, IRespCommand
     {
-        var startedBatch = await WaitForInflightCapacityAsync(command, source, discardRepliesBefore, cancellationToken).ConfigureAwait(false);
+        var startedBatch = await WaitForInflightCapacityAsync(
+                command, source, discardRepliesBefore, cancellationToken, armCommandDeadline)
+            .ConfigureAwait(false);
         source.RegisterCancellation(cancellationToken);
         ScheduleFlush(startedBatch);
         return await source.Task.ConfigureAwait(false);
@@ -952,6 +1021,9 @@ internal sealed class RespireConnection : IAsyncDisposable
         bool startedBatch;
         try
         {
+            var deadline = _commandTimeoutMilliseconds == 0
+                ? 0
+                : Environment.TickCount64 + _commandTimeoutMilliseconds;
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -963,7 +1035,8 @@ internal sealed class RespireConnection : IAsyncDisposable
                 }
 
                 ScheduleFlush(startedBatch: false);
-                await capacityAvailable.ConfigureAwait(false);
+                await WaitForCapacityAsync(capacityAvailable, deadline, source.CommandName, cancellationToken)
+                    .ConfigureAwait(false);
             }
         }
         catch
@@ -1022,11 +1095,18 @@ internal sealed class RespireConnection : IAsyncDisposable
     /// whether the eventual enqueue started a new write batch.
     /// </summary>
     private async ValueTask<bool> WaitForInflightCapacityAsync<TCommand>(
-        TCommand command, PendingResponse source, int discardRepliesBefore, CancellationToken cancellationToken)
+        TCommand command,
+        PendingResponse source,
+        int discardRepliesBefore,
+        CancellationToken cancellationToken,
+        bool armCommandDeadline = true)
         where TCommand : struct, IRespCommand
     {
         try
         {
+            var deadline = armCommandDeadline && _commandTimeoutMilliseconds != 0
+                ? Environment.TickCount64 + _commandTimeoutMilliseconds
+                : 0;
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -1034,19 +1114,53 @@ internal sealed class RespireConnection : IAsyncDisposable
 
                 // Arm before retrying so a concurrent dequeue cannot pulse between the
                 // failed enqueue and waiter registration.
-                if (TryEnqueue(in command, source, out var startedBatch, discardRepliesBefore))
+                if (TryEnqueue(
+                    in command, source, out var startedBatch, discardRepliesBefore,
+                    retainRepliesBefore: false, armCommandDeadline))
                 {
                     return startedBatch;
                 }
 
                 ScheduleFlush(startedBatch: false);
-                await capacityAvailable.ConfigureAwait(false);
+                await WaitForCapacityAsync(capacityAvailable, deadline, source.CommandName, cancellationToken)
+                    .ConfigureAwait(false);
             }
         }
         catch
         {
             ReclaimUnpublished(source);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Awaits freed ring capacity, bounded by the command deadline when one is armed — a full
+    /// ring on a stalled connection must not park a caller past its command timeout.
+    /// </summary>
+    private async Task WaitForCapacityAsync(
+        Task capacityAvailable, long deadline, string? commandName, CancellationToken cancellationToken)
+    {
+        if (deadline == 0)
+        {
+            await capacityAvailable.ConfigureAwait(false);
+            return;
+        }
+
+        var remaining = deadline - Environment.TickCount64;
+        if (remaining <= 0)
+        {
+            throw new RespireTimeoutException(commandName ?? "(command)", _commandTimeout!.Value);
+        }
+
+        try
+        {
+            await capacityAvailable
+                .WaitAsync(TimeSpan.FromMilliseconds(remaining), cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            throw new RespireTimeoutException(commandName ?? "(command)", _commandTimeout!.Value);
         }
     }
 
@@ -1690,6 +1804,35 @@ internal sealed class RespireConnection : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Enforces <see cref="RespireConnectionOptions.CommandTimeout"/> without per-command
+    /// timers: each command is stamped with a deadline at enqueue and this loop expires the
+    /// oldest in-flight entries, completing only the caller — the reply is still consumed
+    /// from the wire when it arrives, so the RESP stream stays in sync. Sleep is capped at
+    /// the granularity so a command armed while the ring looked idle (or a stale slot read
+    /// from a recycled source) can delay a timeout by at most one granularity interval.
+    /// </summary>
+    private async Task SweepCommandDeadlinesAsync(TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        var granularityMilliseconds = (long)Math.Clamp(timeout.TotalMilliseconds / 4, 10, 1000);
+        var granularity = TimeSpan.FromMilliseconds(granularityMilliseconds);
+        try
+        {
+            while (true)
+            {
+                var next = _inflight.SweepExpired(Environment.TickCount64, timeout);
+                var delay = next < 0 || next > granularityMilliseconds
+                    ? granularity
+                    : TimeSpan.FromMilliseconds(next);
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Normal connection teardown.
+        }
+    }
+
     private static Task DelayWatchdogAsync(TimeSpan delay, CancellationToken cancellationToken)
         => Task.Delay(delay > MaxWatchdogSleep ? MaxWatchdogSleep : delay, cancellationToken);
 
@@ -1813,6 +1956,11 @@ internal sealed class RespireConnection : IAsyncDisposable
             await _watchdogTask.ConfigureAwait(false);
         }
 
+        if (_deadlineSweepTask is not null)
+        {
+            await _deadlineSweepTask.ConfigureAwait(false);
+        }
+
         lock (_writeGate)
         {
             _activeBuffer.Release();
@@ -1852,6 +2000,13 @@ internal sealed record RespireConnectionOptions
     /// Null disables the watchdog.
     /// </summary>
     public TimeSpan? ResponseTimeout { get; init; }
+
+    /// <summary>
+    /// Client-side cap on how long each command waits for its response. Commands are stamped
+    /// with a deadline at enqueue and expired by a per-connection sweep — no per-command
+    /// timer. Null disables the cap.
+    /// </summary>
+    public TimeSpan? CommandTimeout { get; init; }
 
     /// <summary>Wrap the connected socket in TLS before the RESP handshake.</summary>
     public bool UseTls { get; init; }

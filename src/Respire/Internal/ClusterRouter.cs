@@ -327,9 +327,12 @@ internal sealed class ClusterRouter : IAsyncDisposable
     internal static ValueTask<Respire.Protocol.RespValue> SendAskingUncheckedAsync<TCommand>(
         RespireConnection connection,
         in TCommand command,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool armCommandDeadline = true)
         where TCommand : struct, Respire.Protocol.IRespCommand
-        => connection.SendPrefixedAsync(in Asking, in command, throwOnError: false, cancellationToken);
+        => connection.SendPrefixedAsync(
+            in Asking, in command, throwOnError: false, cancellationToken,
+            commandName: null, armCommandDeadline);
 
     internal static ValueTask<Respire.Protocol.RespValue> SendBlockingAskingUncheckedAsync<TCommand>(
         RespireConnection connection,

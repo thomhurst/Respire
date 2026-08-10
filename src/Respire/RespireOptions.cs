@@ -281,6 +281,7 @@ public sealed record RespireOptions
         {
             ConnectTimeout = ConnectTimeout,
             ResponseTimeout = ConnectionIdleReadTimeout,
+            CommandTimeout = CommandTimeout,
             UseTls = UseTls,
             TlsOptions = TlsOptions,
             Username = Username,
