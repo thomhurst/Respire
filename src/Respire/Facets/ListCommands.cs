@@ -22,8 +22,16 @@ public interface IListCommands
     /// <summary>Prepends values; returns the new length. Redis: LPUSH.</summary>
     ValueTask<long> LeftPushAsync(RespireKey key, params ReadOnlySpan<RespireValue> values);
 
+    /// <summary>Prepends values; returns the new length. Redis: LPUSH.</summary>
+    ValueTask<long> LeftPushAsync(
+        RespireKey key, ReadOnlySpan<RespireValue> values, CancellationToken cancellationToken);
+
     /// <summary>Appends values; returns the new length. Redis: RPUSH.</summary>
     ValueTask<long> RightPushAsync(RespireKey key, params ReadOnlySpan<RespireValue> values);
+
+    /// <summary>Appends values; returns the new length. Redis: RPUSH.</summary>
+    ValueTask<long> RightPushAsync(
+        RespireKey key, ReadOnlySpan<RespireValue> values, CancellationToken cancellationToken);
 
     /// <summary>
     /// Pops from the head. Null when the list is empty (after <paramref name="waitFor"/>, if
@@ -68,10 +76,18 @@ public interface IListCommands
 internal sealed class ListCommands(RespireClient client) : IListCommands
 {
     public ValueTask<long> LeftPushAsync(RespireKey key, params ReadOnlySpan<RespireValue> values)
-        => client.IntegerValuesAsync("LPUSH", Verbs.LPush, client.Key(in key), values);
+        => LeftPushAsync(key, values, CancellationToken.None);
+
+    public ValueTask<long> LeftPushAsync(
+        RespireKey key, ReadOnlySpan<RespireValue> values, CancellationToken cancellationToken)
+        => client.IntegerValuesAsync("LPUSH", Verbs.LPush, client.Key(in key), values, cancellationToken);
 
     public ValueTask<long> RightPushAsync(RespireKey key, params ReadOnlySpan<RespireValue> values)
-        => client.IntegerValuesAsync("RPUSH", Verbs.RPush, client.Key(in key), values);
+        => RightPushAsync(key, values, CancellationToken.None);
+
+    public ValueTask<long> RightPushAsync(
+        RespireKey key, ReadOnlySpan<RespireValue> values, CancellationToken cancellationToken)
+        => client.IntegerValuesAsync("RPUSH", Verbs.RPush, client.Key(in key), values, cancellationToken);
 
     public ValueTask<string?> LeftPopAsync(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
         => PopAsync(key, waitFor, Verbs.LPop, Verbs.BLPop, "LPOP", "BLPOP", cancellationToken);

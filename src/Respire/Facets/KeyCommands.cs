@@ -10,8 +10,14 @@ public interface IKeyCommands
     /// <summary>Deletes keys; returns how many existed. Redis: DEL.</summary>
     ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys);
 
+    /// <summary>Deletes keys; returns how many existed. Redis: DEL.</summary>
+    ValueTask<long> DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
+
     /// <summary>Deletes keys asynchronously on the server (non-blocking reclaim). Redis: UNLINK.</summary>
     ValueTask<long> UnlinkAsync(params ReadOnlySpan<RespireKey> keys);
+
+    /// <summary>Deletes keys asynchronously on the server (non-blocking reclaim). Redis: UNLINK.</summary>
+    ValueTask<long> UnlinkAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
 
     /// <summary>Whether the key exists. Redis: EXISTS.</summary>
     ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default);
@@ -39,6 +45,9 @@ public interface IKeyCommands
     /// <summary>Touches keys (updates access time); returns how many existed. Redis: TOUCH.</summary>
     ValueTask<long> TouchAsync(params ReadOnlySpan<RespireKey> keys);
 
+    /// <summary>Touches keys (updates access time); returns how many existed. Redis: TOUCH.</summary>
+    ValueTask<long> TouchAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
+
     /// <summary>
     /// Iterates keys incrementally without blocking the server; the cursor is handled
     /// internally. In cluster mode, every known master is scanned with its own cursor.
@@ -50,10 +59,16 @@ public interface IKeyCommands
 internal sealed class KeyCommands(RespireClient client) : IKeyCommands
 {
     public ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys)
-        => client.IntegerKeysAsync("DEL", Verbs.Del, keys);
+        => client.IntegerKeysAsync("DEL", Verbs.Del, keys, CancellationToken.None);
+
+    public ValueTask<long> DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
+        => client.IntegerKeysAsync("DEL", Verbs.Del, keys, cancellationToken);
 
     public ValueTask<long> UnlinkAsync(params ReadOnlySpan<RespireKey> keys)
-        => client.IntegerKeysAsync("UNLINK", Verbs.Unlink, keys);
+        => client.IntegerKeysAsync("UNLINK", Verbs.Unlink, keys, CancellationToken.None);
+
+    public ValueTask<long> UnlinkAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
+        => client.IntegerKeysAsync("UNLINK", Verbs.Unlink, keys, cancellationToken);
 
     public ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.FlagAsync("EXISTS", new Cmd1(Verbs.Exists, client.Key(in key)), cancellationToken);
@@ -80,7 +95,10 @@ internal sealed class KeyCommands(RespireClient client) : IKeyCommands
         => client.OkAsync("RENAME", new Cmd2(Verbs.Rename, client.Key(in key), client.Key(in newKey)), cancellationToken);
 
     public ValueTask<long> TouchAsync(params ReadOnlySpan<RespireKey> keys)
-        => client.IntegerKeysAsync("TOUCH", Verbs.Touch, keys);
+        => client.IntegerKeysAsync("TOUCH", Verbs.Touch, keys, CancellationToken.None);
+
+    public ValueTask<long> TouchAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
+        => client.IntegerKeysAsync("TOUCH", Verbs.Touch, keys, cancellationToken);
 
     public async IAsyncEnumerable<string> ScanAsync(
         string? match = null, int pageSize = 250, [EnumeratorCancellation] CancellationToken cancellationToken = default)
