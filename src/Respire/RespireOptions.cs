@@ -114,6 +114,27 @@ public sealed record RespireOptions
 
     public ILoggerFactory? LoggerFactory { get; init; }
 
+    /// <summary>
+    /// Enables TCP keepalive on every connection and sets how long a connection may sit idle
+    /// before the kernel starts probing. Whole seconds, minimum one second. Null (the default)
+    /// leaves keepalive off. Recommended (e.g. 60 seconds) when connections idle behind NATs
+    /// or load balancers that silently drop stale flows.
+    /// </summary>
+    public TimeSpan? TcpKeepAliveTime { get; init; }
+
+    /// <summary>
+    /// Interval between keepalive probes once <see cref="TcpKeepAliveTime"/> has elapsed
+    /// without traffic. Whole seconds, minimum one second. Null keeps the OS default; requires
+    /// <see cref="TcpKeepAliveTime"/>.
+    /// </summary>
+    public TimeSpan? TcpKeepAliveInterval { get; init; }
+
+    /// <summary>
+    /// Unanswered keepalive probes before the kernel declares the connection dead. Null keeps
+    /// the OS default; requires <see cref="TcpKeepAliveTime"/>.
+    /// </summary>
+    public int? TcpKeepAliveRetryCount { get; init; }
+
     /// <summary>Buffered messages per subscription before <see cref="SubscriptionOverflow"/> applies.</summary>
     public int SubscriptionBufferSize { get; init; } = 1024;
 
@@ -147,6 +168,9 @@ public sealed record RespireOptions
             ClientName = ClientName,
             Database = Database,
             UseResp3 = Protocol == RespProtocol.Resp3,
+            TcpKeepAliveTime = TcpKeepAliveTime,
+            TcpKeepAliveInterval = TcpKeepAliveInterval,
+            TcpKeepAliveRetryCount = TcpKeepAliveRetryCount,
             ReceiveBufferSize = ReceiveBufferSize,
             WriteBufferSize = WriteBufferSize,
             MaxInflightCommands = MaxInflightCommands,
