@@ -100,9 +100,11 @@ public class BatchFacetWireTests
         await client.Strings.SetManyAsync(
             RespireExpiry.In(TimeSpan.FromSeconds(1)), SetWhen.NotExists, ("a", "1"), ("b", "2"));
         await client.Keys.DeleteAsync("k1", "k2", "k3");
-        await client.Keys.ExpireAtAsync("k1", DateTimeOffset.FromUnixTimeMilliseconds(987654321));
+        await client.Keys.ExpireAsync(
+            "k1", RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(987654321)));
         await client.Hashes.SetAsync("h", ("f1", "v1"), ("f2", "v2"));
-        await client.Hashes.SetExpireAsync("h", TimeSpan.FromSeconds(2), SetWhen.NotExists, ("a", "one"));
+        await client.Hashes.SetExpireAsync(
+            "h", RespireExpiry.In(TimeSpan.FromSeconds(2)), SetWhen.NotExists, ("a", "one"));
         await client.Hashes.CountAsync("h");
         await client.Lists.RightPushAsync("l", "x", "y");
         await client.Lists.RemoveAsync("l", "x", count: -1);
@@ -120,9 +122,10 @@ public class BatchFacetWireTests
         _ = batch.Strings.SetMany(
             RespireExpiry.In(TimeSpan.FromSeconds(1)), SetWhen.NotExists, ("a", "1"), ("b", "2"));
         _ = batch.Keys.Delete("k1", "k2", "k3");
-        _ = batch.Keys.ExpireAt("k1", DateTimeOffset.FromUnixTimeMilliseconds(987654321));
+        _ = batch.Keys.Expire("k1", RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(987654321)));
         _ = batch.Hashes.Set("h", ("f1", "v1"), ("f2", "v2"));
-        _ = batch.Hashes.SetExpire("h", TimeSpan.FromSeconds(2), SetWhen.NotExists, ("a", "one"));
+        _ = batch.Hashes.SetExpire(
+            "h", RespireExpiry.In(TimeSpan.FromSeconds(2)), SetWhen.NotExists, ("a", "one"));
         _ = batch.Hashes.Count("h");
         _ = batch.Lists.RightPush("l", "x", "y");
         _ = batch.Lists.Remove("l", "x", count: -1);
@@ -136,6 +139,38 @@ public class BatchFacetWireTests
         await batch.ExecuteAsync();
 
         var queued = server.ReceivedCommands.Skip(expected.Count).ToArray();
+        await Assert.That(queued).IsEquivalentTo(expected, CollectionOrdering.Matching);
+    }
+
+    [Test]
+    public async Task UnifiedExpiryFacets_EmitTheSameFramesWhenDeferred()
+    {
+        var flag = ":1\r\n"u8.ToArray();
+        var value = "$5\r\nvalue\r\n"u8.ToArray();
+        var fieldResult = "*1\r\n:1\r\n"u8.ToArray();
+        var fieldValue = "*1\r\n$5\r\nvalue\r\n"u8.ToArray();
+        await using var server = new FakeRespServer(
+            flag, value, fieldResult, fieldValue, flag,
+            flag, value, fieldResult, fieldValue, flag);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var instant = DateTimeOffset.FromUnixTimeMilliseconds(987654321);
+
+        await client.Keys.ExpireAsync("key", RespireExpiry.In(TimeSpan.FromSeconds(2)), ExpireWhen.GreaterThan);
+        await client.Strings.GetExpireAsync("key", RespireExpiry.At(instant));
+        await client.Hashes.ExpireAsync("hash", RespireExpiry.Persist, "field");
+        await client.Hashes.GetExpireAsync("hash", RespireExpiry.At(instant), "field");
+        await client.Hashes.SetExpireAsync("hash", RespireExpiry.Keep, ("field", "value"));
+        var expected = server.ReceivedCommands.ToArray();
+
+        var batch = client.CreateBatch();
+        _ = batch.Keys.Expire("key", RespireExpiry.In(TimeSpan.FromSeconds(2)), ExpireWhen.GreaterThan);
+        _ = batch.Strings.GetExpire("key", RespireExpiry.At(instant));
+        _ = batch.Hashes.Expire("hash", RespireExpiry.Persist, "field");
+        _ = batch.Hashes.GetExpire("hash", RespireExpiry.At(instant), "field");
+        _ = batch.Hashes.SetExpire("hash", RespireExpiry.Keep, ("field", "value"));
+        await batch.ExecuteAsync();
+
+        var queued = server.ReceivedCommands.Skip(expected.Length).ToArray();
         await Assert.That(queued).IsEquivalentTo(expected, CollectionOrdering.Matching);
     }
 

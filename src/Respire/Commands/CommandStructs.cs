@@ -471,6 +471,13 @@ internal readonly struct SetCommand(
 
     public void Write(ref RespWriter writer)
     {
+        if (expiry.IsPersist)
+        {
+            throw new ArgumentException(
+                "SET does not support RespireExpiry.Persist; use RespireExpiry.None to replace the value without a TTL.",
+                nameof(expiry));
+        }
+
         var count = 3
             + expiry.TokenCount
             + (when != SetWhen.Always ? 1 : 0)

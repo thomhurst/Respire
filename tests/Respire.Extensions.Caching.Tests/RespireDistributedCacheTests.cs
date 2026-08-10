@@ -1407,8 +1407,12 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ValueTask<long> DecrementAsync(RespireKey key, long by = 1, CancellationToken cancellationToken = default)
             => inner.DecrementAsync(key, by, cancellationToken);
 
-        public ValueTask<bool> ExpireAsync(RespireKey key, TimeSpan expiry, CancellationToken cancellationToken = default)
-            => inner.ExpireAsync(key, expiry, cancellationToken);
+        public ValueTask<bool> ExpireAsync(
+            RespireKey key,
+            RespireExpiry expiry,
+            ExpireWhen when = ExpireWhen.Always,
+            CancellationToken cancellationToken = default)
+            => inner.ExpireAsync(key, expiry, when, cancellationToken);
 
         public ValueTask<TimeSpan> PingAsync(CancellationToken cancellationToken = default)
             => inner.PingAsync(cancellationToken);
@@ -1507,15 +1511,11 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             => inner.ExistsAsync(key, cancellationToken);
 
         public ValueTask<bool> ExpireAsync(
-            RespireKey key, TimeSpan expiry, CancellationToken cancellationToken = default)
-            => inner.ExpireAsync(key, expiry, cancellationToken);
-
-        public ValueTask<bool> ExpireAtAsync(
-            RespireKey key, DateTimeOffset expireAt, CancellationToken cancellationToken = default)
-            => inner.ExpireAtAsync(key, expireAt, cancellationToken);
-
-        public ValueTask<bool> PersistAsync(RespireKey key, CancellationToken cancellationToken = default)
-            => inner.PersistAsync(key, cancellationToken);
+            RespireKey key,
+            RespireExpiry expiry,
+            ExpireWhen when = ExpireWhen.Always,
+            CancellationToken cancellationToken = default)
+            => inner.ExpireAsync(key, expiry, when, cancellationToken);
 
         public ValueTask<RespireTtl> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
             => inner.ExpiryAsync(key, cancellationToken);

@@ -4,6 +4,25 @@ using Respire.Internal;
 
 namespace Respire;
 
+/// <summary>Condition for key expiry updates. Redis: PEXPIRE/PEXPIREAT.</summary>
+public enum ExpireWhen
+{
+    /// <summary>Set or update the expiry unconditionally.</summary>
+    Always,
+
+    /// <summary>Only set expiry when the key has no expiry. Redis: NX.</summary>
+    NotExists,
+
+    /// <summary>Only set expiry when the key already has an expiry. Redis: XX.</summary>
+    Exists,
+
+    /// <summary>Only set expiry when the new expiry is greater than the current expiry. Redis: GT.</summary>
+    GreaterThan,
+
+    /// <summary>Only set expiry when the new expiry is less than the current expiry. Redis: LT.</summary>
+    LessThan,
+}
+
 /// <summary>Generic key management commands.</summary>
 public interface IKeyCommands
 {
@@ -22,14 +41,15 @@ public interface IKeyCommands
     /// <summary>Whether the key exists. Redis: EXISTS.</summary>
     ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default);
 
-    /// <summary>Sets a key's time to live. Returns false when the key is missing. Redis: PEXPIRE.</summary>
-    ValueTask<bool> ExpireAsync(RespireKey key, TimeSpan expiry, CancellationToken cancellationToken = default);
-
-    /// <summary>Sets an absolute expiry instant. Returns false when the key is missing. Redis: PEXPIREAT.</summary>
-    ValueTask<bool> ExpireAtAsync(RespireKey key, DateTimeOffset expireAt, CancellationToken cancellationToken = default);
-
-    /// <summary>Removes a key's expiry. Returns false when the key is missing or had none. Redis: PERSIST.</summary>
-    ValueTask<bool> PersistAsync(RespireKey key, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Sets, updates, or removes a key's expiry. Returns false when the key is missing or the
+    /// condition is not met. Redis: PEXPIRE/PEXPIREAT/PERSIST.
+    /// </summary>
+    ValueTask<bool> ExpireAsync(
+        RespireKey key,
+        RespireExpiry expiry,
+        ExpireWhen when = ExpireWhen.Always,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// The key's expiry state — distinguishes missing key, no expiry, and remaining TTL. Redis: PTTL.
@@ -73,16 +93,44 @@ internal sealed class KeyCommands(RespireClient client) : IKeyCommands
     public ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.FlagAsync("EXISTS", new Cmd1(Verbs.Exists, client.Key(in key)), cancellationToken);
 
-    public ValueTask<bool> ExpireAsync(RespireKey key, TimeSpan expiry, CancellationToken cancellationToken = default)
-        => client.FlagAsync(
-            "PEXPIRE", new Cmd2(Verbs.PExpire, client.Key(in key), (long)expiry.TotalMilliseconds), cancellationToken);
+    public ValueTask<bool> ExpireAsync(
+        RespireKey key,
+        RespireExpiry expiry,
+        ExpireWhen when = ExpireWhen.Always,
+        CancellationToken cancellationToken = default)
+    {
+        var condition = ExpireWhenToken(when);
+        if (expiry.IsPersist)
+        {
+            if (condition is not null)
+            {
+                throw new ArgumentException("PERSIST does not support NX, XX, GT, or LT.", nameof(when));
+            }
 
-    public ValueTask<bool> ExpireAtAsync(RespireKey key, DateTimeOffset expireAt, CancellationToken cancellationToken = default)
-        => client.FlagAsync(
-            "PEXPIREAT", new Cmd2(Verbs.PExpireAt, client.Key(in key), expireAt.ToUnixTimeMilliseconds()), cancellationToken);
+            return client.FlagAsync("PERSIST", new Cmd1(Verbs.Persist, client.Key(in key)), cancellationToken);
+        }
 
-    public ValueTask<bool> PersistAsync(RespireKey key, CancellationToken cancellationToken = default)
-        => client.FlagAsync("PERSIST", new Cmd1(Verbs.Persist, client.Key(in key)), cancellationToken);
+        if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
+        {
+            return condition is null
+                ? client.FlagAsync(
+                    "PEXPIRE", new Cmd2(Verbs.PExpire, client.Key(in key), milliseconds), cancellationToken)
+                : client.FlagAsync(
+                    "PEXPIRE", new Cmd3(Verbs.PExpire, client.Key(in key), milliseconds, condition), cancellationToken);
+        }
+
+        if (expiry.TryGetAbsoluteUnixMilliseconds(out var unixMilliseconds))
+        {
+            return condition is null
+                ? client.FlagAsync(
+                    "PEXPIREAT", new Cmd2(Verbs.PExpireAt, client.Key(in key), unixMilliseconds), cancellationToken)
+                : client.FlagAsync(
+                    "PEXPIREAT", new Cmd3(Verbs.PExpireAt, client.Key(in key), unixMilliseconds, condition), cancellationToken);
+        }
+
+        throw new ArgumentException(
+            "Key expiry must be relative, absolute, or RespireExpiry.Persist.", nameof(expiry));
+    }
 
     public async ValueTask<RespireTtl> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
         => RespireTtl.FromRedisMilliseconds(
@@ -99,6 +147,17 @@ internal sealed class KeyCommands(RespireClient client) : IKeyCommands
 
     public ValueTask<long> TouchAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
         => client.IntegerKeysAsync("TOUCH", Verbs.Touch, keys, cancellationToken);
+
+    internal static string? ExpireWhenToken(ExpireWhen when)
+        => when switch
+        {
+            ExpireWhen.Always => null,
+            ExpireWhen.NotExists => "NX",
+            ExpireWhen.Exists => "XX",
+            ExpireWhen.GreaterThan => "GT",
+            ExpireWhen.LessThan => "LT",
+            _ => throw new ArgumentOutOfRangeException(nameof(when), when, null),
+        };
 
     public async IAsyncEnumerable<string> ScanAsync(
         string? match = null, int pageSize = 250, [EnumeratorCancellation] CancellationToken cancellationToken = default)

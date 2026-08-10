@@ -54,9 +54,9 @@ public class MultiItemCancellationOverloadTests
 
         await Assert.That(missing).IsEmpty();
 
-        // Guards the guard: RespireExpiry intentionally collapses six expiry-specific overloads
-        // into one, leaving 49 params-span commands in the combined surface.
-        await Assert.That(covered).IsGreaterThanOrEqualTo(49);
+        // Guards the guard: RespireExpiry intentionally collapses the relative, absolute, persist,
+        // and keep permutations, leaving 42 params-span commands in the combined surface.
+        await Assert.That(covered).IsGreaterThanOrEqualTo(42);
     }
 
     [Test]
@@ -142,17 +142,17 @@ public class MultiItemCancellationOverloadTests
         _ = client.Hashes.ExpiryAsync("h", fields, token);
         _ = client.Hashes.ExpireAsync("h", expiry, fields, token);
         _ = client.Hashes.ExpireAsync("h", expiry, HashFieldExpireWhen.Exists, fields, token);
-        _ = client.Hashes.ExpireAtAsync("h", expireAt, fields, token);
-        _ = client.Hashes.ExpireAtAsync("h", expireAt, HashFieldExpireWhen.Exists, fields, token);
-        _ = client.Hashes.PersistAsync("h", fields, token);
+        _ = client.Hashes.ExpireAsync("h", RespireExpiry.At(expireAt), fields, token);
+        _ = client.Hashes.ExpireAsync("h", RespireExpiry.At(expireAt), HashFieldExpireWhen.Exists, fields, token);
+        _ = client.Hashes.ExpireAsync("h", RespireExpiry.Persist, fields, token);
         _ = client.Hashes.GetDeleteAsync("h", fields, token);
         _ = client.Hashes.GetExpireAsync("h", expiry, fields, token);
-        _ = client.Hashes.GetExpireAtAsync("h", expireAt, fields, token);
-        _ = client.Hashes.GetPersistAsync("h", fields, token);
+        _ = client.Hashes.GetExpireAsync("h", RespireExpiry.At(expireAt), fields, token);
+        _ = client.Hashes.GetExpireAsync("h", RespireExpiry.Persist, fields, token);
         _ = client.Hashes.SetExpireAsync("h", expiry, fieldValues, token);
         _ = client.Hashes.SetExpireAsync("h", expiry, SetWhen.Exists, fieldValues, token);
-        _ = client.Hashes.SetExpireAtAsync("h", expireAt, fieldValues, token);
-        _ = client.Hashes.SetExpireAtAsync("h", expireAt, SetWhen.Exists, fieldValues, token);
+        _ = client.Hashes.SetExpireAsync("h", RespireExpiry.At(expireAt), fieldValues, token);
+        _ = client.Hashes.SetExpireAsync("h", RespireExpiry.At(expireAt), SetWhen.Exists, fieldValues, token);
 
         _ = client.Lists.LeftPushAsync("l", values, token);
         _ = client.Lists.RightPushAsync("l", values, token);
@@ -261,13 +261,11 @@ public class MultiItemCancellationOverloadTests
         public ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
-        public ValueTask<bool> ExpireAsync(RespireKey key, TimeSpan expiry, CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
-
-        public ValueTask<bool> ExpireAtAsync(RespireKey key, DateTimeOffset expireAt, CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
-
-        public ValueTask<bool> PersistAsync(RespireKey key, CancellationToken cancellationToken = default)
+        public ValueTask<bool> ExpireAsync(
+            RespireKey key,
+            RespireExpiry expiry,
+            ExpireWhen when = ExpireWhen.Always,
+            CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
         public ValueTask<RespireTtl> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)

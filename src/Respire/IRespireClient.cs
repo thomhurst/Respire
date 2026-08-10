@@ -58,7 +58,11 @@ public interface IRespireClient : IAsyncDisposable
     ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default);
     ValueTask<long> IncrementAsync(RespireKey key, long by = 1, CancellationToken cancellationToken = default);
     ValueTask<long> DecrementAsync(RespireKey key, long by = 1, CancellationToken cancellationToken = default);
-    ValueTask<bool> ExpireAsync(RespireKey key, TimeSpan expiry, CancellationToken cancellationToken = default);
+    ValueTask<bool> ExpireAsync(
+        RespireKey key,
+        RespireExpiry expiry,
+        ExpireWhen when = ExpireWhen.Always,
+        CancellationToken cancellationToken = default);
     ValueTask<TimeSpan> PingAsync(CancellationToken cancellationToken = default);
 
     // Pub/sub.
