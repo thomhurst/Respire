@@ -45,10 +45,9 @@ public class DistributedLockTests(RedisTestContainer fixture)
     [Test]
     public async Task Acquire_WhenFree_StoresGeneratedTokenUnderTheKey()
     {
-        await using var mutex = await Client.Locks.AcquireAsync(Key, TimeSpan.FromSeconds(30));
+        await using var mutex = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(30));
 
-        await Assert.That(mutex).IsNotNull();
-        await Assert.That(mutex!.Key.ToString()).IsEqualTo(Key);
+        await Assert.That(mutex.Key.ToString()).IsEqualTo(Key);
         await Assert.That(mutex.Expiry).IsEqualTo(TimeSpan.FromSeconds(30));
         await Assert.That(mutex.Token.Length).IsEqualTo(32);
 
@@ -57,46 +56,44 @@ public class DistributedLockTests(RedisTestContainer fixture)
     }
 
     [Test]
-    public async Task Acquire_WhenAlreadyHeld_ReturnsNull()
+    public async Task Acquire_WhenAlreadyHeld_ReturnsUnacquiredAttempt()
     {
-        await using var mutex = await Client.Locks.AcquireAsync(Key, TimeSpan.FromSeconds(30));
-        await Assert.That(mutex).IsNotNull();
+        await using var mutex = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(30));
 
         var contender = await Client.Locks.AcquireAsync(Key, TimeSpan.FromSeconds(30));
 
-        await Assert.That(contender).IsNull();
+        await Assert.That(contender.Acquired).IsFalse();
     }
 
     [Test]
     public async Task Release_FreesTheKeyForTheNextOwner()
     {
-        var mutex = await Client.Locks.AcquireAsync(Key, TimeSpan.FromSeconds(30));
+        var mutex = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(30));
 
-        await Assert.That(await mutex!.ReleaseAsync()).IsTrue();
+        await Assert.That(await mutex.ReleaseAsync()).IsTrue();
         await Assert.That(await Db.KeyExistsAsync(Key)).IsFalse();
 
-        await using var next = await Client.Locks.AcquireAsync(Key, TimeSpan.FromSeconds(30));
-        await Assert.That(next).IsNotNull();
+        await using var next = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(30));
     }
 
     [Test]
     public async Task Release_IsIdempotent()
     {
-        var mutex = await Client.Locks.AcquireAsync(Key, TimeSpan.FromSeconds(30));
+        var mutex = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(30));
 
-        await Assert.That(await mutex!.ReleaseAsync()).IsTrue();
+        await Assert.That(await mutex.ReleaseAsync()).IsTrue();
         await Assert.That(await mutex.ReleaseAsync()).IsFalse();
     }
 
     [Test]
     public async Task Extend_ProlongsTheKeyTtl()
     {
-        await using var mutex = await Client.Locks.AcquireAsync(Key, TimeSpan.FromSeconds(2));
+        await using var mutex = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(2));
 
         var beforeExtend = await Db.KeyTimeToLiveAsync(Key);
         await Assert.That(beforeExtend!.Value.TotalMilliseconds).IsLessThanOrEqualTo(2000);
 
-        await Assert.That(await mutex!.ExtendAsync(TimeSpan.FromSeconds(60))).IsTrue();
+        await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(60))).IsTrue();
 
         var afterExtend = await Db.KeyTimeToLiveAsync(Key);
         await Assert.That(afterExtend!.Value.TotalMilliseconds).IsGreaterThan(30_000);
@@ -106,8 +103,8 @@ public class DistributedLockTests(RedisTestContainer fixture)
     [Test]
     public async Task Extend_AfterRelease_ReturnsFalseAndDoesNotRecreateTheKey()
     {
-        var mutex = await Client.Locks.AcquireAsync(Key, TimeSpan.FromSeconds(30));
-        await mutex!.ReleaseAsync();
+        var mutex = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(30));
+        await mutex.ReleaseAsync();
 
         await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(60))).IsFalse();
         await Assert.That(await Db.KeyExistsAsync(Key)).IsFalse();
@@ -116,9 +113,9 @@ public class DistributedLockTests(RedisTestContainer fixture)
     [Test]
     public async Task Dispose_ReleasesTheLock()
     {
-        var mutex = await Client.Locks.AcquireAsync(Key, TimeSpan.FromSeconds(30));
+        var mutex = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(30));
 
-        await mutex!.DisposeAsync();
+        await mutex.DisposeAsync();
 
         await Assert.That(await Db.KeyExistsAsync(Key)).IsFalse();
     }
@@ -126,28 +123,27 @@ public class DistributedLockTests(RedisTestContainer fixture)
     [Test]
     public async Task Dispose_AfterExplicitRelease_DoesNotTouchTheNextOwnersLock()
     {
-        var mutex = await Client.Locks.AcquireAsync(Key, TimeSpan.FromSeconds(30));
-        await Assert.That(await mutex!.ReleaseAsync()).IsTrue();
+        var mutex = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(30));
+        await Assert.That(await mutex.ReleaseAsync()).IsTrue();
 
-        await using var next = await Client.Locks.AcquireAsync(Key, TimeSpan.FromSeconds(30));
-        await Assert.That(next).IsNotNull();
+        await using var next = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(30));
 
         await mutex.DisposeAsync();
 
         var stored = (byte[]?)await Db.StringGetAsync(Key);
         await Assert.That(stored).IsNotNull();
-        await Assert.That(stored!.AsSpan().SequenceEqual(next!.Token.Span)).IsTrue();
+        await Assert.That(stored!.AsSpan().SequenceEqual(next.Token.Span)).IsTrue();
     }
 
     [Test]
     public async Task StolenLock_FailsExtendAndRelease_AndDisposeLeavesTheThiefAlone()
     {
-        var mutex = await Client.Locks.AcquireAsync(Key, TimeSpan.FromSeconds(30));
+        var mutex = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(30));
 
         // Simulate the lease expiring and another owner taking over.
         await Db.StringSetAsync(Key, "thief", TimeSpan.FromSeconds(30));
 
-        await Assert.That(await mutex!.ExtendAsync(TimeSpan.FromSeconds(60))).IsFalse();
+        await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(60))).IsFalse();
         await Assert.That(await mutex.ReleaseAsync()).IsFalse();
 
         await mutex.DisposeAsync();
@@ -158,10 +154,10 @@ public class DistributedLockTests(RedisTestContainer fixture)
     [Test]
     public async Task Dispose_LeavesTheThiefAlone_WhenReleaseWasNeverCalled()
     {
-        var mutex = await Client.Locks.AcquireAsync(Key, TimeSpan.FromSeconds(30));
+        var mutex = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(30));
         await Db.StringSetAsync(Key, "thief", TimeSpan.FromSeconds(30));
 
-        await mutex!.DisposeAsync();
+        await mutex.DisposeAsync();
 
         await Assert.That((string?)await Db.StringGetAsync(Key)).IsEqualTo("thief");
     }
@@ -171,21 +167,19 @@ public class DistributedLockTests(RedisTestContainer fixture)
     {
         var prefixed = Client.WithKeyPrefix("tenant:");
 
-        await using var mutex = await prefixed.Locks.AcquireAsync(Key, TimeSpan.FromSeconds(30));
+        await using var mutex = await prefixed.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(30));
 
-        await Assert.That(mutex).IsNotNull();
         await Assert.That(await Db.KeyExistsAsync("tenant:" + Key)).IsTrue();
         await Assert.That(await Db.KeyExistsAsync(Key)).IsFalse();
 
-        await Assert.That(await mutex!.ReleaseAsync()).IsTrue();
+        await Assert.That(await mutex.ReleaseAsync()).IsTrue();
         await Assert.That(await Db.KeyExistsAsync("tenant:" + Key)).IsFalse();
     }
 
     [Test]
-    public async Task AcquireWithWait_ReturnsNullWhenTheLockIsHeldForTheWholeBudget()
+    public async Task AcquireWithWait_ReturnsUnacquiredAttemptWhenTheLockIsHeldForTheWholeBudget()
     {
-        await using var holder = await Client.Locks.AcquireAsync(Key, TimeSpan.FromSeconds(30));
-        await Assert.That(holder).IsNotNull();
+        await using var holder = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(30));
 
         var start = Stopwatch.GetTimestamp();
         var contender = await Client.Locks.AcquireAsync(
@@ -194,29 +188,26 @@ public class DistributedLockTests(RedisTestContainer fixture)
             wait: TimeSpan.FromMilliseconds(400),
             retryEvery: TimeSpan.FromMilliseconds(50));
 
-        await Assert.That(contender).IsNull();
+        await Assert.That(contender.Acquired).IsFalse();
         await Assert.That(Stopwatch.GetElapsedTime(start)).IsGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(300));
     }
 
     [Test]
     public async Task AcquireWithWait_SucceedsOnceTheHoldersLeaseExpires()
     {
-        var holder = await Client.Locks.AcquireAsync(Key, TimeSpan.FromMilliseconds(300));
-        await Assert.That(holder).IsNotNull();
+        var holder = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromMilliseconds(300));
 
-        await using var contender = await Client.Locks.AcquireAsync(
+        await using var contender = await Client.Locks.AcquireOrThrowAsync(
             Key,
             TimeSpan.FromSeconds(30),
             wait: TimeSpan.FromSeconds(10),
             retryEvery: TimeSpan.FromMilliseconds(50));
 
-        await Assert.That(contender).IsNotNull();
-
         // The first lease expired, so its handle owns nothing and must not delete the new lock.
-        await Assert.That(await holder!.ReleaseAsync()).IsFalse();
+        await Assert.That(await holder.ReleaseAsync()).IsFalse();
 
         var stored = (byte[]?)await Db.StringGetAsync(Key);
-        await Assert.That(Encoding.UTF8.GetString(stored!)).IsEqualTo(Encoding.UTF8.GetString(contender!.Token.Span));
+        await Assert.That(Encoding.UTF8.GetString(stored!)).IsEqualTo(Encoding.UTF8.GetString(contender.Token.Span));
     }
 
     [Test]
