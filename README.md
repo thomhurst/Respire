@@ -85,19 +85,21 @@ if (await nextMessage.WaitAsync(token))
 ### Batches and transactions
 
 Batch commands share one flush. Transactions use one connection and return typed pending
-results.
+results. Both carry the same facets as the client — `batch.Lists.RightPushAsync` mirrors
+`redis.Lists.RightPushAsync` — but return a `RespirePending<T>` instead of awaiting.
 
 ```csharp
 var batch = redis.CreateBatch();
 var name = batch.GetStringAsync("name");
 var visits = batch.IncrementAsync("visits");
+var profile = batch.Hashes.GetAllAsync("user:1");
 await batch.SendAsync();
 
-Console.WriteLine($"{name.Result}: {visits.Result}");
+Console.WriteLine($"{name.Result}: {visits.Result} ({profile.Result.Count} fields)");
 
 var transaction = redis.CreateTransaction();
 var balance = transaction.IncrementAsync("balance", -100);
-transaction.ListRightPushAsync("audit", "withdraw:100");
+transaction.Lists.RightPushAsync("audit", "withdraw:100");
 bool committed = await transaction.CommitAsync();
 ```
 

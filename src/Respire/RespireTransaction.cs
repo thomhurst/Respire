@@ -1,4 +1,3 @@
-using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
@@ -12,12 +11,14 @@ namespace Respire;
 /// into the server-side transaction, then completes every pending from EXEC's reply.
 /// </summary>
 /// <remarks>
+/// Commands are grouped into the same facets as the client and a batch — see
+/// <see cref="RespireBatch"/> for what the deferred surface leaves out.
 /// Single-shot and not thread-safe: build, commit once, discard. When created with watch keys
 /// (<see cref="RespireClient.CreateTransactionAsync"/>), the transaction owns a dedicated
 /// connection and <see cref="CommitAsync"/> returns false if a watched key changed — always
 /// commit or dispose so that connection is released.
 /// </remarks>
-public sealed class RespireTransaction : IAsyncDisposable
+public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
 {
     private readonly RespireClient _client;
     private readonly RespireConnection? _watchConnection;
@@ -27,6 +28,16 @@ public sealed class RespireTransaction : IAsyncDisposable
     private bool _hasClusterSlot;
     private bool _completed;
 
+    private IBatchStringCommands? _strings;
+    private IBatchKeyCommands? _keys;
+    private IBatchHashCommands? _hashes;
+    private IBatchListCommands? _lists;
+    private IBatchSetCommands? _sets;
+    private IBatchSortedSetCommands? _sortedSets;
+    private IBatchBitmapCommands? _bitmaps;
+    private IBatchHyperLogLogCommands? _hyperLogLog;
+    private IBatchGeoCommands? _geo;
+
     internal RespireTransaction(RespireClient client, RespireConnection? watchConnection)
     {
         _client = client;
@@ -35,56 +46,135 @@ public sealed class RespireTransaction : IAsyncDisposable
 
     public int Count => _ops.Count;
 
-    public RespirePending<string?> GetStringAsync(RespireKey key)
-        => Add<Cmd1, string?>("GET", new Cmd1(Verbs.Get, _client.Key(in key)), static (c, v) => ResponseReader.StringOrNull(in v));
+    // Deferred command facets, grouped exactly like the client's — and the same interfaces a
+    // batch exposes, so helper code can queue into either. Created on first use.
 
-    public RespirePending<T?> GetAsync<T>(RespireKey key)
-        => Add<Cmd1, T?>("GET", new Cmd1(Verbs.Get, _client.Key(in key)), static (c, v) => c.DeserializeBorrowed<T>(in v));
+    /// <summary>String (plain value) commands. Redis: GET, SET, INCR, …</summary>
+    public IBatchStringCommands Strings => _strings ??= new BatchStringCommands(this);
 
+    /// <summary>Generic key management commands. Redis: DEL, EXPIRE, TYPE, …</summary>
+    public IBatchKeyCommands Keys => _keys ??= new BatchKeyCommands(this);
+
+    /// <summary>Hash (field → value map) commands. Redis: HSET, HGET, HGETALL, …</summary>
+    public IBatchHashCommands Hashes => _hashes ??= new BatchHashCommands(this);
+
+    /// <summary>List commands. Redis: LPUSH, RPUSH, LRANGE, …</summary>
+    public IBatchListCommands Lists => _lists ??= new BatchListCommands(this);
+
+    /// <summary>Set (unordered, unique members) commands. Redis: SADD, SMEMBERS, …</summary>
+    public IBatchSetCommands Sets => _sets ??= new BatchSetCommands(this);
+
+    /// <summary>Sorted set (score-ordered members) commands. Redis: ZADD, ZRANGE, …</summary>
+    public IBatchSortedSetCommands SortedSets => _sortedSets ??= new BatchSortedSetCommands(this);
+
+    /// <summary>Bitmap commands. Redis: SETBIT, BITCOUNT, BITOP, …</summary>
+    public IBatchBitmapCommands Bitmaps => _bitmaps ??= new BatchBitmapCommands(this);
+
+    /// <summary>HyperLogLog commands. Redis: PFADD, PFCOUNT, PFMERGE.</summary>
+    public IBatchHyperLogLogCommands HyperLogLog => _hyperLogLog ??= new BatchHyperLogLogCommands(this);
+
+    /// <summary>Geospatial commands. Redis: GEOADD, GEODIST, GEOSEARCH, …</summary>
+    public IBatchGeoCommands Geo => _geo ??= new BatchGeoCommands(this);
+
+    // Root shortcuts, mirroring the client's.
+
+    /// <inheritdoc cref="IBatchStringCommands.GetStringAsync"/>
+    public RespirePending<string?> GetStringAsync(RespireKey key) => Strings.GetStringAsync(key);
+
+    /// <inheritdoc cref="IBatchStringCommands.GetAsync{T}"/>
+    public RespirePending<T?> GetAsync<T>(RespireKey key) => Strings.GetAsync<T>(key);
+
+    /// <inheritdoc cref="IBatchStringCommands.GetBytesAsync"/>
+    public RespirePending<byte[]?> GetBytesAsync(RespireKey key) => Strings.GetBytesAsync(key);
+
+    /// <inheritdoc cref="IBatchStringCommands.SetAsync(RespireKey, RespireValue, RespireTtl, SetWhen)"/>
     public RespirePending<bool> SetAsync(
         RespireKey key, RespireValue value, RespireTtl expiry = default, SetWhen when = SetWhen.Always)
-        => Add<SetCommand, bool>("SET",
-            new SetCommand(_client.Key(in key), value, expiry, when, returnOld: false),
-            static (c, v) => ResponseReader.OkOrNull(in v));
+        => Strings.SetAsync(key, value, expiry, when);
 
+    /// <inheritdoc cref="IBatchStringCommands.SetAsync{T}(RespireKey, T, RespireTtl, SetWhen)"/>
     public RespirePending<bool> SetAsync<T>(
         RespireKey key, T value, RespireTtl expiry = default, SetWhen when = SetWhen.Always)
-        => Add<SetCommand, bool>("SET",
-            new SetCommand(_client.Key(in key), _client.Serialize(value), expiry, when, returnOld: false),
-            static (c, v) => ResponseReader.OkOrNull(in v));
+        => Strings.SetAsync(key, value, expiry, when);
 
-    public RespirePending<long> DeleteAsync(RespireKey key)
-        => Add<CmdN, long>("DEL", new CmdN(Verbs.Del, [_client.Key(in key)]), static (c, v) => ResponseReader.Integer(in v));
+    /// <inheritdoc cref="IBatchKeyCommands.DeleteAsync(ReadOnlySpan{RespireKey})"/>
+    public RespirePending<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys) => Keys.DeleteAsync(keys);
 
-    public RespirePending<long> IncrementAsync(RespireKey key, long by = 1)
-        => Add<IncrementCommand, long>(by == 1 ? "INCR" : "INCRBY",
-            new IncrementCommand(Verbs.Incr, Verbs.IncrBy, _client.Key(in key), by),
-            static (c, v) => ResponseReader.Integer(in v));
+    /// <inheritdoc cref="IBatchKeyCommands.ExistsAsync"/>
+    public RespirePending<bool> ExistsAsync(RespireKey key) => Keys.ExistsAsync(key);
 
-    public RespirePending<long> DecrementAsync(RespireKey key, long by = 1)
-        => Add<IncrementCommand, long>(by == 1 ? "DECR" : "DECRBY",
-            new IncrementCommand(Verbs.Decr, Verbs.DecrBy, _client.Key(in key), by),
-            static (c, v) => ResponseReader.Integer(in v));
+    /// <inheritdoc cref="IBatchStringCommands.IncrementAsync(RespireKey, long)"/>
+    public RespirePending<long> IncrementAsync(RespireKey key, long by = 1) => Strings.IncrementAsync(key, by);
 
-    public RespirePending<bool> ExpireAsync(RespireKey key, TimeSpan expiry)
-        => Add<Cmd2, bool>("PEXPIRE",
-            new Cmd2(Verbs.PExpire, _client.Key(in key), (long)expiry.TotalMilliseconds),
-            static (c, v) => ResponseReader.Flag(in v));
+    /// <inheritdoc cref="IBatchStringCommands.DecrementAsync"/>
+    public RespirePending<long> DecrementAsync(RespireKey key, long by = 1) => Strings.DecrementAsync(key, by);
 
-    public RespirePending<bool> HashSetAsync(RespireKey key, string field, RespireValue value)
-        => Add<Cmd3, bool>("HSET", new Cmd3(Verbs.HSet, _client.Key(in key), field, value), static (c, v) => ResponseReader.Flag(in v));
+    /// <inheritdoc cref="IBatchKeyCommands.ExpireAsync"/>
+    public RespirePending<bool> ExpireAsync(RespireKey key, TimeSpan expiry) => Keys.ExpireAsync(key, expiry);
 
-    public RespirePending<long> ListLeftPushAsync(RespireKey key, RespireValue value)
-        => Add<Cmd2, long>("LPUSH", new Cmd2(Verbs.LPush, _client.Key(in key), value), static (c, v) => ResponseReader.Integer(in v));
+    RespireClient IPendingSink.Client => _client;
 
-    public RespirePending<long> ListRightPushAsync(RespireKey key, RespireValue value)
-        => Add<Cmd2, long>("RPUSH", new Cmd2(Verbs.RPush, _client.Key(in key), value), static (c, v) => ResponseReader.Integer(in v));
+    internal void ValidateClusterKeys(ReadOnlySpan<RespireKey> keys)
+    {
+        if (!TryBeginClusterKeyValidation(out var slot))
+        {
+            return;
+        }
 
-    public RespirePending<bool> SetAddAsync(RespireKey key, RespireValue member)
-        => Add<Cmd2, bool>("SADD", new Cmd2(Verbs.SAdd, _client.Key(in key), member), static (c, v) => ResponseReader.Flag(in v));
+        foreach (ref readonly var key in keys)
+        {
+            ValidateClusterKey(in key, ref slot);
+        }
 
-    public RespirePending<bool> SortedSetAddAsync(RespireKey key, RespireValue member, double score)
-        => Add<Cmd3, bool>("ZADD", new Cmd3(Verbs.ZAdd, _client.Key(in key), score, member), static (c, v) => ResponseReader.Flag(in v));
+        ApplyClusterSlot(slot);
+    }
+
+    internal void ValidateClusterKeys(RespireKey first, RespireKey second)
+    {
+        if (!TryBeginClusterKeyValidation(out var slot))
+        {
+            return;
+        }
+
+        ValidateClusterKey(in first, ref slot);
+        ValidateClusterKey(in second, ref slot);
+        ApplyClusterSlot(slot);
+    }
+
+    internal void ValidateClusterKeys(RespireKey first, ReadOnlySpan<RespireKey> rest)
+    {
+        if (!TryBeginClusterKeyValidation(out var slot))
+        {
+            return;
+        }
+
+        ValidateClusterKey(in first, ref slot);
+        foreach (ref readonly var key in rest)
+        {
+            ValidateClusterKey(in key, ref slot);
+        }
+
+        ApplyClusterSlot(slot);
+    }
+
+    internal void ValidateClusterKeys(ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+    {
+        if (!TryBeginClusterKeyValidation(out var slot))
+        {
+            return;
+        }
+
+        foreach (ref readonly var pair in pairs)
+        {
+            ValidateClusterKey(in pair.Key, ref slot);
+        }
+
+        ApplyClusterSlot(slot);
+    }
+
+    RespirePending<T> IPendingSink.Add<TCommand, T>(
+        string operation, in TCommand command, Func<RespireClient, RespValue, T> convert)
+        => Add<TCommand, T>(operation, in command, convert);
 
     /// <summary>
     /// Executes the transaction. Returns true when EXEC ran (pendings hold their results;
@@ -282,15 +372,7 @@ public sealed class RespireTransaction : IAsyncDisposable
         ThrowIfCompleted();
         if (_client.Core.Cluster is not null && command.TryGetClusterSlot(out var slot))
         {
-            if (_hasClusterSlot && _clusterSlot != slot)
-            {
-                throw new InvalidOperationException(
-                    "Redis Cluster transactions require every key to use the same hash slot. " +
-                    "Use matching {...} hash tags for related keys.");
-            }
-
-            _clusterSlot = slot;
-            _hasClusterSlot = true;
+            ValidateClusterSlot(slot);
         }
 
         var writer = new RespWriter(_buffer);
@@ -298,6 +380,51 @@ public sealed class RespireTransaction : IAsyncDisposable
         var pending = new RespirePending<T>();
         _ops.Add(new TxOp<T>(operation, pending, convert));
         return pending;
+    }
+
+    private void ValidateClusterSlot(int slot)
+    {
+        int? candidate = _hasClusterSlot ? _clusterSlot : null;
+        ValidateClusterSlot(slot, ref candidate);
+        ApplyClusterSlot(candidate);
+    }
+
+    private bool TryBeginClusterKeyValidation(out int? slot)
+    {
+        ThrowIfCompleted();
+        slot = _hasClusterSlot ? _clusterSlot : null;
+        return _client.Core.Cluster is not null;
+    }
+
+    private void ValidateClusterKey(in RespireKey key, ref int? candidate)
+    {
+        if (_client.Key(in key).TryGetClusterSlot(out var slot))
+        {
+            ValidateClusterSlot(slot, ref candidate);
+        }
+    }
+
+    private static void ValidateClusterSlot(int slot, ref int? candidate)
+    {
+        if (candidate is { } current && current != slot)
+        {
+            throw new InvalidOperationException(
+                "Redis Cluster transactions require every key to use the same hash slot. " +
+                "Use matching {...} hash tags for related keys.");
+        }
+
+        candidate = slot;
+    }
+
+    private void ApplyClusterSlot(int? slot)
+    {
+        if (slot is not { } value)
+        {
+            return;
+        }
+
+        _clusterSlot = value;
+        _hasClusterSlot = true;
     }
 
     private void ThrowIfCompleted()

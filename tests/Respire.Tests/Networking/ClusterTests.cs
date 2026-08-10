@@ -390,6 +390,33 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task Batch_FacetMultiKeyCommand_RoutesByItsSharedSlot()
+    {
+        // Hash-tagged keys share a slot, so a multi-key facet command queued on a batch must
+        // route as one unit to that slot's node.
+        var slot = ClusterHash.GetSlot("{acct}dest");
+        await using var target = new FakeRespServer(":2\r\n"u8.ToArray());
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        var batch = client.CreateBatch();
+        var stored = batch.Sets.UnionStoreAsync("{acct}dest", "{acct}a", "{acct}b");
+        var deleted = batch.Keys.DeleteAsync("{acct}a", "{acct}b");
+        await batch.SendAsync();
+
+        await Assert.That(stored.Result).IsEqualTo(2);
+        await Assert.That(deleted.Result).IsEqualTo(2);
+        await Assert.That(target.ReceivedCommands[0]).IsEqualTo("SUNIONSTORE {acct}dest {acct}a {acct}b");
+        await Assert.That(target.ReceivedCommands[1]).IsEqualTo("DEL {acct}a {acct}b");
+    }
+
+    [Test]
     public async Task Transaction_RoutesToItsSingleHashSlot()
     {
         await using var target = new FakeRespServer(
@@ -484,6 +511,54 @@ public class ClusterTests
         var error = Assert.Throws<InvalidOperationException>(() => transaction.SetAsync("bar", "two"));
 
         await Assert.That(error.Message).Contains("same hash slot");
+    }
+
+    [Test]
+    public async Task Transaction_RejectsCrossSlotKeysWithinFacetCommands()
+    {
+        await using var client = RespireClient.Create(new RespireOptions { Cluster = true });
+        Action<RespireTransaction>[] queueCommands =
+        [
+            transaction => transaction.Keys.DeleteAsync("foo", "bar"),
+            transaction => transaction.Keys.RenameAsync("foo", "bar"),
+            transaction => transaction.Strings.GetManyAsync("foo", "bar"),
+            transaction => transaction.Strings.SetManyAsync(("foo", "one"), ("bar", "two")),
+            transaction => transaction.Strings.SetManyAsync(
+                RespireTtl.In(TimeSpan.FromMinutes(1)), SetWhen.Always,
+                ("foo", "one"), ("bar", "two")),
+            transaction => transaction.Strings.LongestCommonSubsequenceAsync("foo", "bar"),
+            transaction => transaction.Lists.MoveAsync("foo", "bar"),
+            transaction => transaction.Sets.UnionAsync("foo", "bar"),
+            transaction => transaction.Sets.UnionStoreAsync("foo", "bar"),
+            transaction => transaction.Bitmaps.OperateAsync(BitOperation.Or, "foo", "bar"),
+            transaction => transaction.HyperLogLog.CountAsync("foo", "bar"),
+            transaction => transaction.HyperLogLog.MergeAsync("foo", "bar"),
+            transaction => transaction.Geo.SearchStoreAsync(
+                "foo", "bar", GeoSearchOrigin.FromMember("member"), GeoSearchShape.Circle(1)),
+        ];
+
+        foreach (var queueCommand in queueCommands)
+        {
+            await using var transaction = client.CreateTransaction();
+
+            var error = Assert.Throws<InvalidOperationException>(() => queueCommand(transaction));
+
+            await Assert.That(error.Message).Contains("same hash slot");
+            await Assert.That(transaction.Count).IsEqualTo(0);
+        }
+    }
+
+    [Test]
+    public async Task Transaction_CrossSlotRejectionDoesNotPinSlot()
+    {
+        await using var client = RespireClient.Create(new RespireOptions { Cluster = true });
+        await using var transaction = client.CreateTransaction();
+
+        _ = Assert.Throws<InvalidOperationException>(
+            () => transaction.Keys.DeleteAsync("foo", "bar"));
+        _ = transaction.SetAsync("bar", "two");
+
+        await Assert.That(transaction.Count).IsEqualTo(1);
     }
 
     [Test]

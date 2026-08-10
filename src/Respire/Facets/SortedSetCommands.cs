@@ -61,7 +61,13 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
     public ValueTask<long> AddAsync(RespireKey key, params ReadOnlySpan<SortedSetEntry> entries)
         => AddAsync(key, entries, CancellationToken.None);
 
-    public ValueTask<long> AddAsync(RespireKey key, ReadOnlySpan<SortedSetEntry> entries, CancellationToken cancellationToken)
+    public ValueTask<long> AddAsync(
+        RespireKey key, ReadOnlySpan<SortedSetEntry> entries, CancellationToken cancellationToken)
+        => client.IntegerAsync(
+            "ZADD", new Cmd1N(Verbs.ZAdd, client.Key(in key), ScoreMemberPairs(entries)), cancellationToken);
+
+    /// <summary>score member… — shared with the deferred (batch/transaction) facet.</summary>
+    internal static RespireValue[] ScoreMemberPairs(ReadOnlySpan<SortedSetEntry> entries)
     {
         var args = new RespireValue[entries.Length * 2];
         for (var i = 0; i < entries.Length; i++)
@@ -70,7 +76,7 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
             args[i * 2 + 1] = entries[i].Member;
         }
 
-        return client.IntegerAsync("ZADD", new Cmd1N(Verbs.ZAdd, client.Key(in key), args), cancellationToken);
+        return args;
     }
 
     public ValueTask<double?> ScoreAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken = default)
@@ -132,7 +138,7 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
                 "ZRANGE", new Cmd4(Verbs.ZRange, client.Key(in key), min, max, "BYSCORE"), cancellationToken);
 
     /// <summary>WITHSCORES replies alternate member,score (RESP2 flat array; RESP3 pairs are flattened too).</summary>
-    private static SortedSetEntry[] ParseEntries(in RespValue reply)
+    internal static SortedSetEntry[] ParseEntries(in RespValue reply)
     {
         var elements = reply.AsArray();
 

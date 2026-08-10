@@ -207,16 +207,8 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
         RespireKey key,
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         CancellationToken cancellationToken)
-    {
-        var args = new RespireValue[fields.Length * 2];
-        for (var i = 0; i < fields.Length; i++)
-        {
-            args[i * 2] = fields[i].Field;
-            args[i * 2 + 1] = fields[i].Value;
-        }
-
-        return client.IntegerAsync("HSET", new Cmd1N(Verbs.HSet, client.Key(in key), args), cancellationToken);
-    }
+        => client.IntegerAsync(
+            "HSET", new Cmd1N(Verbs.HSet, client.Key(in key), FieldValuePairs(fields)), cancellationToken);
 
     public ValueTask<string?> GetStringAsync(RespireKey key, string field, CancellationToken cancellationToken = default)
         => client.StringOrNullAsync("HGET", new Cmd2(Verbs.HGet, client.Key(in key), field), cancellationToken);
@@ -443,7 +435,20 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
                 SetExFieldsBlock("PXAT", expireAt.ToUnixTimeMilliseconds(), when, fields)),
             cancellationToken);
 
-    private static RespireValue[] ToValues(ReadOnlySpan<string> items)
+    /// <summary>field value… — shared with the deferred (batch/transaction) facet.</summary>
+    internal static RespireValue[] FieldValuePairs(ReadOnlySpan<(string Field, RespireValue Value)> fields)
+    {
+        var args = new RespireValue[fields.Length * 2];
+        for (var i = 0; i < fields.Length; i++)
+        {
+            args[i * 2] = fields[i].Field;
+            args[i * 2 + 1] = fields[i].Value;
+        }
+
+        return args;
+    }
+
+    internal static RespireValue[] ToValues(ReadOnlySpan<string> items)
     {
         var values = new RespireValue[items.Length];
         for (var i = 0; i < items.Length; i++)
@@ -454,7 +459,7 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
         return values;
     }
 
-    private static RespireValue[] FieldsBlock(ReadOnlySpan<string> fields)
+    internal static RespireValue[] FieldsBlock(ReadOnlySpan<string> fields)
     {
         ValidateFields(fields);
         var args = new RespireValue[2 + fields.Length];
@@ -468,7 +473,7 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
         return args;
     }
 
-    private static RespireValue[] ExpireFieldsBlock(
+    internal static RespireValue[] ExpireFieldsBlock(
         long milliseconds, HashFieldExpireWhen when, ReadOnlySpan<string> fields)
     {
         ValidateFields(fields);
@@ -491,7 +496,7 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
         return args;
     }
 
-    private static RespireValue[] GetExFieldsBlock(
+    internal static RespireValue[] GetExFieldsBlock(
         string option, long optionValue, bool hasValue, ReadOnlySpan<string> fields)
     {
         ValidateFields(fields);
@@ -513,7 +518,7 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
         return args;
     }
 
-    private static RespireValue[] SetExFieldsBlock(
+    internal static RespireValue[] SetExFieldsBlock(
         string option, long optionValue, SetWhen when, ReadOnlySpan<(string Field, RespireValue Value)> fields)
     {
         ValidateFieldPairs(fields);

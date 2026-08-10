@@ -184,16 +184,8 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
 
     public ValueTask SetManyAsync(
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs, CancellationToken cancellationToken)
-    {
-        var args = new RespireValue[pairs.Length * 2];
-        for (var i = 0; i < pairs.Length; i++)
-        {
-            args[i * 2] = client.Key(in pairs[i].Key);
-            args[i * 2 + 1] = pairs[i].Value;
-        }
-
-        return client.OkAsync("MSET", new CmdN(Verbs.MSet, args), cancellationToken);
-    }
+        => client.OkAsync(
+            "MSET", new CmdN(Verbs.MSet, SetManyArgs(client, pairs)), cancellationToken);
 
     public ValueTask<bool> SetManyAsync(
         RespireTtl expiry, SetWhen when = SetWhen.Always,
@@ -205,6 +197,47 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         SetWhen when,
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
         CancellationToken cancellationToken)
+        => client.FlagAsync(
+            "MSETEX",
+            new MSetExCommand(
+                RespireCommands.String.MSETEX.Verb,
+                SetManyExpireArgs(client, expiry, when, pairs)),
+            cancellationToken);
+
+    public ValueTask<string> LongestCommonSubsequenceAsync(
+        RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken = default)
+        => client.StringAsync(
+            "LCS",
+            new Cmd2(RespireCommands.String.LCS.Verb, client.Key(in firstKey), client.Key(in secondKey)),
+            cancellationToken);
+
+    public ValueTask<long> LongestCommonSubsequenceLengthAsync(
+        RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken = default)
+        => client.IntegerAsync(
+            "LCS",
+            new Cmd3(RespireCommands.String.LCS.Verb, client.Key(in firstKey), client.Key(in secondKey), "LEN"),
+            cancellationToken);
+
+    /// <summary>MSET key value… — shared with the deferred (batch/transaction) facet.</summary>
+    internal static RespireValue[] SetManyArgs(
+        RespireClient client, ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+    {
+        var args = new RespireValue[pairs.Length * 2];
+        for (var i = 0; i < pairs.Length; i++)
+        {
+            args[i * 2] = client.Key(in pairs[i].Key);
+            args[i * 2 + 1] = pairs[i].Value;
+        }
+
+        return args;
+    }
+
+    /// <summary>MSETEX numkeys key value… [NX|XX] expiry — shared with the deferred facet.</summary>
+    internal static RespireValue[] SetManyExpireArgs(
+        RespireClient client,
+        RespireTtl expiry,
+        SetWhen when,
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
     {
         ValidatePairs(pairs);
         var condition = StringSetWhenToken(when);
@@ -238,26 +271,8 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
             args[index++] = "KEEPTTL";
         }
 
-        return client.FlagAsync(
-            "MSETEX",
-            new MSetExCommand(RespireCommands.String.MSETEX.Verb, args),
-            cancellationToken);
+        return args;
     }
-
-    public ValueTask<string> LongestCommonSubsequenceAsync(
-        RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken = default)
-        => client.StringAsync(
-            "LCS",
-            new Cmd2(RespireCommands.String.LCS.Verb, client.Key(in firstKey), client.Key(in secondKey)),
-            cancellationToken);
-
-    public ValueTask<long> LongestCommonSubsequenceLengthAsync(
-        RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken = default)
-        => client.IntegerAsync(
-            "LCS",
-            new Cmd3(RespireCommands.String.LCS.Verb, client.Key(in firstKey), client.Key(in secondKey), "LEN"),
-            cancellationToken);
-
     private static string? StringSetWhenToken(SetWhen when)
         => when switch
         {

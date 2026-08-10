@@ -210,10 +210,16 @@ sequential-code case where you want N commands in one flush:
 var batch = redis.CreateBatch();
 RespirePending<string?> a = batch.GetStringAsync("a");
 RespirePending<long>    n = batch.IncrementAsync("hits");
+RespirePending<long>    q = batch.Lists.RightPushAsync("queue", "job-1");
 await batch.SendAsync(ct);
 
 string? av = a.Result;   // valid only after SendAsync
 ```
+
+A batch carries the same facets as the client (`Strings`, `Keys`, `Hashes`, `Lists`, `Sets`,
+`SortedSets`, `Bitmaps`, `HyperLogLog`, `Geo`) with the same method names and parameter
+shapes — only the return type differs, and cancellation belongs to `SendAsync`. Blocking
+(`waitFor`) and streaming (`ScanAsync`, `GetLeaseAsync`) members have no deferred form.
 
 `RespirePending<T>` is awaitable *and* has `.Result`, but both throw
 `InvalidOperationException("batch not sent")` if touched before `SendAsync` — the
@@ -227,7 +233,7 @@ won:
 ```csharp
 var tx = redis.CreateTransaction(watch: ["balance"]);
 var newBal = tx.IncrementAsync("balance", -100);
-var log    = tx.Lists.PushAsync("audit", "withdraw:100");
+var log    = tx.Lists.RightPushAsync("audit", "withdraw:100");
 bool committed = await tx.CommitAsync(ct);
 ```
 
