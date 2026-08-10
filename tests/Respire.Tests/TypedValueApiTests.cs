@@ -108,10 +108,10 @@ public class TypedValueApiTests
     {
         var raw = BoundMethod(
             (IStringCommands strings) => strings.SetAsync(
-                "key", (RespireValue)"text", null, SetWhen.Always, false, CancellationToken.None));
+                "key", (RespireValue)"text", RespireTtl.None, SetWhen.Always, CancellationToken.None));
         var typed = BoundMethod(
             (IStringCommands strings) => strings.SetAsync(
-                "key", "text", null, SetWhen.Always, false, CancellationToken.None));
+                "key", "text", RespireTtl.None, SetWhen.Always, CancellationToken.None));
 
         await Assert.That(raw.IsGenericMethod).IsFalse();
         await Assert.That(typed.IsGenericMethod).IsTrue();
