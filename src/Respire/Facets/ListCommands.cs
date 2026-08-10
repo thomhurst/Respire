@@ -12,7 +12,8 @@ public enum ListSide
 }
 
 /// <summary>
-/// List commands. The pop and move operations accept an optional <c>waitFor</c>: when given,
+/// List commands. Collection cardinality uses <see cref="CountAsync"/>. The pop and move
+/// operations accept an optional <c>waitFor</c>: when given,
 /// the call becomes its blocking Redis variant (BLPOP, BLMOVE, …) and transparently runs on a
 /// dedicated pooled connection, so blocking never stalls multiplexed traffic — use
 /// <see cref="System.Threading.Timeout.InfiniteTimeSpan"/> to wait indefinitely.
@@ -64,8 +65,8 @@ public interface IListCommands
         TimeSpan? waitFor = null,
         CancellationToken cancellationToken = default);
 
-    /// <summary>List length (0 when missing). Redis: LLEN.</summary>
-    ValueTask<long> LengthAsync(RespireKey key, CancellationToken cancellationToken = default);
+    /// <summary>Number of elements in the list (0 when missing). Redis: LLEN.</summary>
+    ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Elements between two indexes inclusive (negative counts from the end). Redis: LRANGE.</summary>
     ValueTask<string[]> RangeAsync(RespireKey key, long start = 0, long stop = -1, CancellationToken cancellationToken = default);
@@ -200,7 +201,7 @@ internal sealed class ListCommands(RespireClient client) : IListCommands
         return moved;
     }
 
-    public ValueTask<long> LengthAsync(RespireKey key, CancellationToken cancellationToken = default)
+    public ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.IntegerAsync("LLEN", new Cmd1(Verbs.LLen, client.Key(in key)), cancellationToken);
 
     public ValueTask<string[]> RangeAsync(RespireKey key, long start = 0, long stop = -1, CancellationToken cancellationToken = default)

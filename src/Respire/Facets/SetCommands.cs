@@ -2,7 +2,10 @@ using Respire.Commands;
 
 namespace Respire;
 
-/// <summary>Set (unordered, unique members) commands.</summary>
+/// <summary>
+/// Set (unordered, unique members) commands. Collection cardinality uses
+/// <see cref="CountAsync"/>.
+/// </summary>
 public interface ISetCommands
 {
     /// <summary>Adds members; returns how many were new. Redis: SADD.</summary>

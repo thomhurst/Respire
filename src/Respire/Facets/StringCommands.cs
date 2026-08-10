@@ -15,7 +15,10 @@ public enum SetWhen
     Exists,
 }
 
-/// <summary>String (plain value) commands.</summary>
+/// <summary>
+/// String (plain value) commands. Unlike collection facets' <c>CountAsync</c>,
+/// <see cref="LengthAsync"/> returns a byte length.
+/// </summary>
 public interface IStringCommands
 {
     /// <summary>Gets a key's value as a string, or null when missing. Redis: GET.</summary>

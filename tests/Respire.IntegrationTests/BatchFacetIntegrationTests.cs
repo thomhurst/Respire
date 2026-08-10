@@ -54,9 +54,11 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         var hashSet = batch.Hashes.SetAsync("batch:h", ("name", "Ada"), ("lang", "en"));
         var hashIncrement = batch.Hashes.IncrementAsync("batch:h", "visits", 3);
         var hashAll = batch.Hashes.GetAllAsync("batch:h");
+        var hashCount = batch.Hashes.CountAsync("batch:h");
         var pushed = batch.Lists.RightPushAsync("batch:l", "a", "b", "c");
         var listRange = batch.Lists.RangeAsync("batch:l");
         var popped = batch.Lists.LeftPopAsync("batch:l");
+        var listCount = batch.Lists.CountAsync("batch:l");
         var added = batch.Sets.AddAsync("batch:set", "x", "y");
         var contains = batch.Sets.ContainsAsync("batch:set", "x");
         var count = batch.Sets.CountAsync("batch:set");
@@ -75,9 +77,11 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
             ["lang"] = "en",
             ["visits"] = "3",
         });
+        hashCount.Result.Should().Be(3);
         pushed.Result.Should().Be(3);
         listRange.Result.Should().Equal("a", "b", "c");
         popped.Result.Should().Be("a");
+        listCount.Result.Should().Be(2);
         added.Result.Should().Be(2);
         contains.Result.Should().BeTrue();
         count.Result.Should().Be(2);
@@ -132,7 +136,7 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         var hashSet = transaction.Hashes.SetAsync("tx:facet:h", "name", "Ada");
         var hashValue = transaction.Hashes.GetStringAsync("tx:facet:h", "name");
         var pushed = transaction.Lists.LeftPushAsync("tx:facet:l", "one", "two");
-        var listLength = transaction.Lists.LengthAsync("tx:facet:l");
+        var listCount = transaction.Lists.CountAsync("tx:facet:l");
         var added = transaction.Sets.AddAsync("tx:facet:set", "x", "y", "z");
         var members = transaction.Sets.MembersAsync("tx:facet:set");
         var ranked = transaction.SortedSets.AddAsync("tx:facet:z", "ada", 42);
@@ -148,7 +152,7 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         hashSet.Result.Should().BeTrue();
         hashValue.Result.Should().Be("Ada");
         pushed.Result.Should().Be(2);
-        listLength.Result.Should().Be(2);
+        listCount.Result.Should().Be(2);
         added.Result.Should().Be(3);
         members.Result.Should().BeEquivalentTo("x", "y", "z");
         ranked.Result.Should().BeTrue();

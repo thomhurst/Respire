@@ -121,7 +121,7 @@ Naming inside facets drops the Redis prefix — the facet *is* the prefix:
 ```csharp
 await redis.Hashes.SetAsync("user:1", "name", "Tom");          // HSET
 string? name = await redis.Hashes.GetStringAsync("user:1", "name"); // HGET
-long len   = await redis.Lists.LengthAsync("queue");           // LLEN
+long count = await redis.Lists.CountAsync("queue");            // LLEN
 bool added = await redis.SortedSets.AddAsync("board", "tom", 42.0); // ZADD
 ```
 
