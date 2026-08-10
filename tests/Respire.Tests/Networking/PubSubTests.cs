@@ -112,6 +112,22 @@ public class PubSubTests
     }
 
     [Test]
+    public async Task DisposeAsync_InterruptsStalledSubscriptionActivation()
+    {
+        await using var server = new FakeRespServer(SubscribeConfirmation)
+        {
+            SuppressReply = command => command == "SUBSCRIBE ch",
+        };
+        var client = CreateLazyClient(server.Port);
+        var subscription = client.SubscribeAsync("ch").AsTask();
+        await WaitForCommandsAsync(server, 1);
+
+        await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(1));
+
+        await Assert.That(async () => await subscription).Throws<RespireConnectionException>();
+    }
+
+    [Test]
     public async Task MultipleMessages_AllDelivered_InOrder()
     {
         await using var server = new FakeRespServer(SubscribeConfirmation);

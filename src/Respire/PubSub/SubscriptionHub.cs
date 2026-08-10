@@ -213,12 +213,11 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
 
     private void AbandonConnection(RespireConnection connection)
     {
-        if (!ReferenceEquals(Interlocked.CompareExchange(ref _connection, null, connection), connection))
+        if (DetachConnection(connection) is not { } disposal)
         {
             return;
         }
 
-        var disposal = connection.DisposeAsync();
         if (disposal.IsCompletedSuccessfully)
         {
             disposal.GetAwaiter().GetResult();
@@ -228,6 +227,11 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             _ = ObserveAbandonedConnectionAsync(disposal);
         }
     }
+
+    private ValueTask? DetachConnection(RespireConnection connection)
+        => ReferenceEquals(Interlocked.CompareExchange(ref _connection, null, connection), connection)
+            ? connection.DisposeAsync()
+            : null;
 
     private async Task ObserveAbandonedConnectionAsync(ValueTask disposal)
     {
@@ -549,6 +553,11 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             _pendingReconnectStates.Clear();
         }
 
+        // Interrupt a stalled control command before waiting for its serialization gate. Socket
+        // closure fails the in-flight response and lets that operation release the gate promptly.
+        var connection = Volatile.Read(ref _connection);
+        var interruptedDisposal = connection is null ? null : DetachConnection(connection);
+
         await _controlGate.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -577,9 +586,14 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             await _connectionGate.WaitAsync().ConfigureAwait(false);
             try
             {
-                if (_connection is { } connection)
+                if (_connection is { } racedConnection)
                 {
-                    await connection.DisposeAsync().ConfigureAwait(false);
+                    await racedConnection.DisposeAsync().ConfigureAwait(false);
+                }
+
+                if (interruptedDisposal is { } disposal)
+                {
+                    await disposal.ConfigureAwait(false);
                 }
             }
             finally
