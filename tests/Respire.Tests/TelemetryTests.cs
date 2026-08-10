@@ -15,6 +15,25 @@ namespace Respire.Tests;
 public class TelemetryTests
 {
     [Test]
+    public async Task SubscriptionDrop_EmitsCounterWithPolicyTags()
+    {
+        using var capture = new TelemetryCapture();
+
+        RespireTelemetry.RecordSubscriptionMessageDropped(
+            SubscriptionKind.Pattern,
+            SubscriptionOverflow.DropNewest);
+
+        var measurement = capture.Measurements.Single(item =>
+            item.InstrumentName == "respire.pubsub.messages.dropped"
+            && item.Tags.GetValueOrDefault("respire.subscription.kind") as string == "Pattern"
+            && item.Tags.GetValueOrDefault("respire.subscription.overflow") as string == "DropNewest");
+        await Assert.That(measurement.Unit).IsEqualTo("{message}");
+        await Assert.That(measurement.Value).IsEqualTo(1);
+        await Assert.That(measurement.Tags["respire.subscription.kind"]).IsEqualTo("Pattern");
+        await Assert.That(measurement.Tags["respire.subscription.overflow"]).IsEqualTo("DropNewest");
+    }
+
+    [Test]
     public async Task Command_EmitsRedisSpanAndStableDurationMetric()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.PongReply);
@@ -424,14 +443,29 @@ public class TelemetryTests
             {
                 InstrumentPublished = (instrument, listener) =>
                 {
-                    if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+                    if (instrument.Meter.Name != "Respire")
+                    {
+                        return;
+                    }
+
+                    if (instrument.Name == "db.client.operation.duration")
                     {
                         HistogramBucketBoundaries = ((Histogram<double>)instrument).Advice?.HistogramBucketBoundaries;
+                        listener.EnableMeasurementEvents(instrument);
+                    }
+                    else if (instrument.Name == "respire.pubsub.messages.dropped")
+                    {
                         listener.EnableMeasurementEvents(instrument);
                     }
                 },
             };
             _meterListener.SetMeasurementEventCallback<double>((instrument, value, tags, _) =>
+                Measurements.Enqueue(new Measurement(
+                    instrument.Name,
+                    instrument.Unit,
+                    value,
+                    tags.ToArray().ToDictionary(static tag => tag.Key, static tag => tag.Value))));
+            _meterListener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
                 Measurements.Enqueue(new Measurement(
                     instrument.Name,
                     instrument.Unit,

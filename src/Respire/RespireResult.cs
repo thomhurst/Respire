@@ -150,7 +150,7 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
     /// <summary>Returns pooled buffers (root results only). Safe to call more than once.</summary>
     public void Dispose() => _owner?.Dispose();
 
-    /// <summary>Enumerates non-owning views of an aggregate result's elements.</summary>
+    /// <summary>Enumerates non-owning views over an aggregate result's elements.</summary>
     public struct Enumerator : IEnumerator<RespireResult>
     {
         private readonly RespireResult _result;
@@ -162,7 +162,7 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
             _index = -1;
         }
 
-        /// <summary>Gets the element at the current position.</summary>
+        /// <summary>Gets the element at the current enumerator position.</summary>
         public readonly RespireResult Current => _result[_index];
 
         readonly object IEnumerator.Current => Current;
@@ -183,7 +183,7 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
         /// <summary>Resets the enumerator to its initial position.</summary>
         public void Reset() => _index = -1;
 
-        /// <summary>Releases no resources; element views remain owned by the root result.</summary>
+        /// <summary>Releases the enumerator. No resources are owned.</summary>
         public readonly void Dispose()
         {
         }
