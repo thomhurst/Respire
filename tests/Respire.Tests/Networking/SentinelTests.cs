@@ -206,9 +206,9 @@ public class SentinelTests
         await using var primary = new FakeRespServer(
             FakeRespServer.OkReply,
             FakeRespServer.PongReply);
-        primary.DelayReply(0, 700);
+        primary.DelayReply(0, 1_200);
         await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port));
-        sentinel.DelayReply(0, 500);
+        sentinel.DelayReply(0, 1_200);
 
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
@@ -216,8 +216,10 @@ public class SentinelTests
             ServiceName = "mymaster",
             Password = "redis-secret",
             SentinelPassword = string.Empty,
-            CommandTimeout = TimeSpan.FromMilliseconds(800),
-            ConnectTimeout = TimeSpan.FromSeconds(1),
+            // Each phase fits comfortably, but their combined 2.4 seconds exceeds this timeout.
+            // Reusing discovery's budget for the primary connection would therefore still fail.
+            CommandTimeout = TimeSpan.FromSeconds(2),
+            ConnectTimeout = TimeSpan.FromSeconds(3),
         });
 
         _ = await client.PingAsync();
