@@ -222,8 +222,9 @@ shapes — only the return type differs, and cancellation belongs to `SendAsync`
 (`waitFor`) and streaming (`ScanAsync`, `GetLeaseAsync`) members have no deferred form.
 
 `RespirePending<T>` is awaitable *and* has `.Result`, but both throw
-`InvalidOperationException("batch not sent")` if touched before `SendAsync` — the
-SE.Redis await-before-flush deadlock becomes impossible by construction.
+`RespirePendingNotReadyException` if touched before `SendAsync` — the SE.Redis
+await-before-flush deadlock becomes impossible by construction. `Status`, `HasResult`, `Error`,
+and `TryGetResult` expose pending, successful, faulted, and aborted outcomes without try/catch.
 
 ## 6. Transactions
 
@@ -236,6 +237,9 @@ var newBal = tx.IncrementAsync("balance", -100);
 var log    = tx.Lists.RightPushAsync("audit", "withdraw:100");
 bool committed = await tx.CommitAsync(ct);
 ```
+
+When WATCH aborts EXEC, `committed` is false, each pending reports
+`RespirePendingStatus.Aborted`, and reading one throws `RespireTransactionAbortedException`.
 
 Interactive WATCH → read → decide → MULTI (true CAS) requires a dedicated connection; we
 already dedicate connections for blocking commands, so a v2 `redis.WatchAsync(keys,

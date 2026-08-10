@@ -56,6 +56,14 @@ public sealed class RespireLockNotAcquiredException() : RespireException(
 public sealed class RespireBatchDiscardedException() : InvalidOperationException(
     "The batch was disposed before SendAsync; its queued commands were discarded.");
 
+/// <summary>A deferred result was read before its batch or transaction executed.</summary>
+public sealed class RespirePendingNotReadyException() : InvalidOperationException(
+    "This result is not available yet: send the batch (SendAsync) or commit the transaction (CommitAsync) first.");
+
+/// <summary>A watched key changed, so Redis aborted the transaction and no command ran.</summary>
+public sealed class RespireTransactionAbortedException() : InvalidOperationException(
+    "The transaction was aborted — a watched key changed, so no command ran.");
+
 /// <summary>The server answered a command with a RESP error reply ("-WRONGTYPE ...").</summary>
 public sealed class RespireServerException : RespireException
 {

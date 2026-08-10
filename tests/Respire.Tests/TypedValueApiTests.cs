@@ -71,6 +71,17 @@ public class TypedValueApiTests
     }
 
     [Test]
+    public async Task PendingTryGetResult_AnnotatesMissingReferenceAsMaybeNull()
+    {
+        var parameter = typeof(RespirePending<>).GetMethod(nameof(RespirePending<int>.TryGetResult))!
+            .GetParameters()[0];
+        var attribute = parameter.GetCustomAttribute<MaybeNullWhenAttribute>();
+
+        await Assert.That(attribute).IsNotNull();
+        await Assert.That(attribute!.ReturnValue).IsFalse();
+    }
+
+    [Test]
     public async Task RespireGet_ForReferenceTypes_KeepsFoundNullDistinctFromMissing()
     {
         var foundNull = new RespireGet<string?>(Found: true, Value: null);
