@@ -313,9 +313,9 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             }
 
             if (expression.Parent is MemberAccessExpressionSyntax
-                {
-                    Name.Identifier.ValueText: "ConfigureAwait",
-                    Parent: InvocationExpressionSyntax configureAwait,
+            {
+                Name.Identifier.ValueText: "ConfigureAwait" or "AsTask",
+                Parent: InvocationExpressionSyntax configureAwait,
                 } member
                 && ScopeWalker.IsSame(member.Expression, expression))
             {

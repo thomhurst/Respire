@@ -183,6 +183,22 @@ internal static class ScopeWalker
     {
         try
         {
+            if (scope is LocalFunctionStatementSyntax localFunction
+                && semanticModel.GetDeclaredSymbol(localFunction, cancellationToken) is IMethodSymbol localFunctionSymbol
+                && GetEnclosingScope(localFunction) is { } parentScope
+                && CreateControlFlowGraph(semanticModel, parentScope, cancellationToken) is { } parentGraph)
+            {
+                return parentGraph.GetLocalFunctionControlFlowGraph(localFunctionSymbol, cancellationToken);
+            }
+
+            if (scope is AnonymousFunctionExpressionSyntax anonymousFunction
+                && GetEnclosingScope(anonymousFunction) is { } containingScope
+                && CreateControlFlowGraph(semanticModel, containingScope, cancellationToken) is { } containingGraph
+                && FindAnonymousFunction(containingGraph, anonymousFunction) is { } flowAnonymousFunction)
+            {
+                return containingGraph.GetAnonymousFunctionControlFlowGraph(flowAnonymousFunction, cancellationToken);
+            }
+
             return ControlFlowGraph.Create(scope, semanticModel, cancellationToken);
         }
         catch (ArgumentException)
@@ -193,6 +209,49 @@ internal static class ScopeWalker
         {
             return null;
         }
+    }
+
+    private static IFlowAnonymousFunctionOperation? FindAnonymousFunction(
+        ControlFlowGraph graph, AnonymousFunctionExpressionSyntax syntax)
+    {
+        foreach (var block in graph.Blocks)
+        {
+            foreach (var operation in block.Operations)
+            {
+                if (FindAnonymousFunction(operation, syntax) is { } match)
+                {
+                    return match;
+                }
+            }
+
+            if (block.BranchValue is { } branchValue
+                && FindAnonymousFunction(branchValue, syntax) is { } branchMatch)
+            {
+                return branchMatch;
+            }
+        }
+
+        return null;
+    }
+
+    private static IFlowAnonymousFunctionOperation? FindAnonymousFunction(
+        IOperation operation, AnonymousFunctionExpressionSyntax syntax)
+    {
+        if (operation is IFlowAnonymousFunctionOperation anonymousFunction
+            && IsSame(anonymousFunction.Syntax, syntax))
+        {
+            return anonymousFunction;
+        }
+
+        foreach (var child in operation.ChildOperations)
+        {
+            if (FindAnonymousFunction(child, syntax) is { } match)
+            {
+                return match;
+            }
+        }
+
+        return null;
     }
 
     private static BasicBlock? FindBlock(ControlFlowGraph graph, SyntaxNode node)

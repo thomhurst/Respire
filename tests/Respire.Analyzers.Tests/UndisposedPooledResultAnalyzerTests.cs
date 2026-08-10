@@ -206,6 +206,49 @@ public class UndisposedPooledResultAnalyzerTests
         """);
 
     [Test]
+    public async Task LambdaDispose_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                Func<Task> run = async () =>
+                {
+                    var result = await client.ExecuteAsync("PING");
+                    result.Dispose();
+                };
+
+                await run();
+            }
+        }
+        """);
+
+    [Test]
+    public async Task LocalFunctionDispose_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                await RunLocalAsync();
+
+                async Task RunLocalAsync()
+                {
+                    var result = await client.ExecuteAsync("PING");
+                    result.Dispose();
+                }
+            }
+        }
+        """);
+
+    [Test]
     public async Task EarlyReturnBeforeDispose_IsFlagged() => await Verify.VerifyAsync(
         """
         using System;
