@@ -124,21 +124,26 @@ public sealed class RespireLock : IAsyncDisposable
     /// Resets the lock's expiry to <paramref name="expiry"/> from now, only while this handle is
     /// still the owner. Redis: compare-and-PEXPIRE.
     /// </summary>
+    /// <remarks>
+    /// Managed extensions that can time out or be cancelled use Redis <c>CLIENT ID</c> and
+    /// <c>CLIENT KILL</c> to fence uncertain commands; the authenticated user must permit them.
+    /// </remarks>
     /// <returns>
     /// <see langword="false"/> when the lock is no longer owned — it expired, it was released, or
     /// another owner took it — in which case protected work must stop rather than retry.
     /// </returns>
     public ValueTask<bool> ExtendAsync(TimeSpan expiry, CancellationToken cancellationToken = default)
-        => ExtendCoreAsync(expiry, signalLeaseChanged: true, cancellationToken);
+        => ExtendCoreAsync(expiry, signalLeaseChanged: true, onOutcomeUncertain: null, cancellationToken);
 
-    internal ValueTask<bool> RenewAsync(CancellationToken cancellationToken)
-        => ExtendCoreAsync(expiry: null, signalLeaseChanged: false, cancellationToken);
+    internal ValueTask<bool> RenewAsync(Action onOutcomeUncertain, CancellationToken cancellationToken)
+        => ExtendCoreAsync(expiry: null, signalLeaseChanged: false, onOutcomeUncertain, cancellationToken);
 
     internal CancellationToken LeaseChanged => Volatile.Read(ref _leaseChanged).Token;
 
     private async ValueTask<bool> ExtendCoreAsync(
         TimeSpan? expiry,
         bool signalLeaseChanged,
+        Action? onOutcomeUncertain,
         CancellationToken cancellationToken)
     {
         if (IsReleased)
@@ -159,7 +164,9 @@ public sealed class RespireLock : IAsyncDisposable
             var effectiveExpiry = expiry ?? Duration;
             var renewedTimestamp = Stopwatch.GetTimestamp();
             var extended = _locks is IManagedLockCommands managed
-                ? await managed.ExtendManagedAsync(Key, Token, effectiveExpiry, cancellationToken).ConfigureAwait(false)
+                ? await managed.ExtendManagedAsync(
+                        Key, Token, effectiveExpiry, onOutcomeUncertain, cancellationToken)
+                    .ConfigureAwait(false)
                 : await _locks.ExtendAsync(Key, Token, effectiveExpiry, cancellationToken).ConfigureAwait(false);
             if (!extended)
             {
@@ -377,7 +384,7 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
                     }
                 }
 
-                if (!await _lock.RenewAsync(_lifetime.Token).ConfigureAwait(false))
+                if (!await _lock.RenewAsync(MarkOwnershipUncertain, _lifetime.Token).ConfigureAwait(false))
                 {
                     Volatile.Write(ref _ownershipLost, 1);
                     await _lifetime.CancelAsync().ConfigureAwait(false);
@@ -387,6 +394,7 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
         {
+            await _lifetime.CancelAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -405,6 +413,13 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
     {
         var delay = remaining - TimeSpan.FromTicks(duration.Ticks / 2);
         return delay > MinimumRenewalDelay ? delay : MinimumRenewalDelay;
+    }
+
+    private void MarkOwnershipUncertain()
+    {
+        Volatile.Write(ref _ownershipLost, 1);
+        _lock.MarkOwnershipLost();
+        _ = _lifetime.CancelAsync();
     }
 
     /// <summary>Stops renewal and waits for the background renewal loop to finish.</summary>

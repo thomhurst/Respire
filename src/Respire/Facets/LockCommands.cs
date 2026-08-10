@@ -114,6 +114,7 @@ internal interface IManagedLockCommands
         RespireKey key,
         RespireValue token,
         TimeSpan expiry,
+        Action? onOutcomeUncertain,
         CancellationToken cancellationToken);
 }
 
@@ -256,6 +257,7 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         RespireKey key,
         RespireValue token,
         TimeSpan expiry,
+        Action? onOutcomeUncertain,
         CancellationToken cancellationToken)
     {
         ValidateToken(token);
@@ -280,6 +282,7 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         catch (Exception ex) when (
             ex is OperationCanceledException or RespireTimeoutException or RespireConnectionException)
         {
+            onOutcomeUncertain?.Invoke();
             if (execution?.ConnectionIdentity.ServerClientId > 0)
             {
                 await client.FenceCorrectionConnectionAsync(execution.ConnectionIdentity).ConfigureAwait(false);

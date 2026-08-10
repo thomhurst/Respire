@@ -86,6 +86,10 @@ The keep-alive token is cancelled when renewal fails or ownership is lost. Prote
 must honor it and stop protected writes after cancellation. Disposing `keepAlive` stops renewal;
 it does not release `mutex`, which remains held until `ReleaseAsync`, mutex disposal, or expiry.
 
+Managed `RespireLock.ExtendAsync` and `KeepAliveAsync` fence cancelled or timed-out renewals with
+Redis `CLIENT ID` and `CLIENT KILL`. The authenticated Redis user must permit both commands. The
+raw-token APIs remain available for restricted users, but do not provide this managed fencing.
+
 Disposing `mutex` is the normal release path. Call `ReleaseAsync` explicitly when release success
 must be observed; it returns `LockReleaseOutcome.Released`, `AlreadyReleased`, or `NotOwned`.
 Disposal suppresses connection, timeout, cancellation, and disposed-client cleanup failures because

@@ -384,7 +384,7 @@ public class LockCommandTests
 
         var extension = mutex.ExtendAsync(TimeSpan.FromMinutes(5)).AsTask();
         await commands.FirstExtensionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var renewal = mutex.RenewAsync(CancellationToken.None).AsTask();
+        var renewal = mutex.RenewAsync(static () => { }, CancellationToken.None).AsTask();
 
         await Assert.That(commands.ExtensionCount).IsEqualTo(1);
         commands.CompleteFirstExtension();
@@ -434,6 +434,28 @@ public class LockCommandTests
         await commands.SecondExtensionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(commands.Expiries).IsEquivalentTo(
             [TimeSpan.FromMilliseconds(200), TimeSpan.FromMilliseconds(200)]);
+    }
+
+    [Test]
+    public async Task RespireLock_UncertainRenewalCancelsProtectedWorkBeforeFenceCompletes()
+    {
+        var commands = new CoordinatedLockCommands(reportUncertain: true);
+        var mutex = new RespireLock(
+            commands,
+            "resource",
+            "owner"u8.ToArray(),
+            TimeSpan.FromMilliseconds(20),
+            Stopwatch.GetTimestamp());
+        var keepAlive = await mutex.KeepAliveAsync();
+
+        await commands.FenceStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(keepAlive.CancellationToken.IsCancellationRequested).IsTrue();
+        await Assert.That(keepAlive.OwnershipLost).IsTrue();
+        await Assert.That(commands.FenceCompleted.Task.IsCompleted).IsFalse();
+
+        commands.CompleteFence();
+        await keepAlive.DisposeAsync();
+        await Assert.That(keepAlive.Failure).IsTypeOf<RespireConnectionException>();
     }
 
     [Test]
@@ -576,20 +598,32 @@ public class LockCommandTests
         }
     }
 
-    private sealed class CoordinatedLockCommands : ILockCommands
+    private sealed class CoordinatedLockCommands : ILockCommands, IManagedLockCommands
     {
         private readonly bool _blockFirstExtension;
+        private readonly bool _reportUncertain;
         private readonly TaskCompletionSource<bool> _firstExtension =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _fence =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly List<TimeSpan> _expiries = [];
 
-        public CoordinatedLockCommands(bool blockFirstExtension = true)
-            => _blockFirstExtension = blockFirstExtension;
+        public CoordinatedLockCommands(bool blockFirstExtension = true, bool reportUncertain = false)
+        {
+            _blockFirstExtension = blockFirstExtension;
+            _reportUncertain = reportUncertain;
+        }
 
         public TaskCompletionSource FirstExtensionStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public TaskCompletionSource SecondExtensionStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource FenceStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource FenceCompleted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public int ExtensionCount
@@ -615,6 +649,27 @@ public class LockCommandTests
         }
 
         public void CompleteFirstExtension() => _firstExtension.TrySetResult(true);
+
+        public void CompleteFence() => _fence.TrySetResult();
+
+        async ValueTask<bool> IManagedLockCommands.ExtendManagedAsync(
+            RespireKey key,
+            RespireValue token,
+            TimeSpan expiry,
+            Action? onOutcomeUncertain,
+            CancellationToken cancellationToken)
+        {
+            if (!_reportUncertain)
+            {
+                return await ExtendAsync(key, token, expiry, cancellationToken);
+            }
+
+            onOutcomeUncertain?.Invoke();
+            FenceStarted.TrySetResult();
+            await _fence.Task;
+            FenceCompleted.TrySetResult();
+            throw new RespireConnectionException("renewal outcome is uncertain");
+        }
 
         public ValueTask<bool> ExtendAsync(
             RespireKey key,
