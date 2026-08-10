@@ -6,7 +6,8 @@ using TUnit.Core;
 namespace Respire.Tests;
 
 /// <summary>
-/// The expiry union used by SET-style writes: exactly one of none, relative, absolute, or keep,
+/// The expiry union used by expiry mutations and SET-style writes: exactly one of none, relative,
+/// absolute, keep, or persist,
 /// with implicit conversions so <c>expiry: TimeSpan.FromMinutes(5)</c> keeps working.
 /// </summary>
 public class RespireExpiryTests
@@ -19,6 +20,7 @@ public class RespireExpiryTests
         await Assert.That(ttl).IsEqualTo(RespireExpiry.None);
         await Assert.That(ttl.IsNone).IsTrue();
         await Assert.That(ttl.IsKeep).IsFalse();
+        await Assert.That(ttl.IsPersist).IsFalse();
         await Assert.That(ttl.TimeToLive).IsNull();
         await Assert.That(ttl.ExpiresAt).IsNull();
     }
@@ -61,6 +63,18 @@ public class RespireExpiryTests
         await Assert.That(RespireExpiry.Keep.TimeToLive).IsNull();
         await Assert.That(RespireExpiry.Keep.ExpiresAt).IsNull();
         await Assert.That(RespireExpiry.Keep).IsNotEqualTo(RespireExpiry.None);
+    }
+
+    [Test]
+    public async Task Persist_IsItsOwnState()
+    {
+        await Assert.That(RespireExpiry.Persist.IsPersist).IsTrue();
+        await Assert.That(RespireExpiry.Persist.IsNone).IsFalse();
+        await Assert.That(RespireExpiry.Persist.IsKeep).IsFalse();
+        await Assert.That(RespireExpiry.Persist.TimeToLive).IsNull();
+        await Assert.That(RespireExpiry.Persist.ExpiresAt).IsNull();
+        await Assert.That(RespireExpiry.Persist).IsNotEqualTo(RespireExpiry.None);
+        await Assert.That(RespireExpiry.Persist).IsNotEqualTo(RespireExpiry.Keep);
     }
 
     [Test]
@@ -113,6 +127,7 @@ public class RespireExpiryTests
     {
         await Assert.That(RespireExpiry.None.ToString()).IsEqualTo("(none)");
         await Assert.That(RespireExpiry.Keep.ToString()).IsEqualTo("(keep)");
+        await Assert.That(RespireExpiry.Persist.ToString()).IsEqualTo("(persist)");
         await Assert.That(RespireExpiry.In(TimeSpan.FromSeconds(1)).ToString())
             .IsEqualTo(TimeSpan.FromSeconds(1).ToString());
     }

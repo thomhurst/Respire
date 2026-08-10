@@ -58,53 +58,28 @@ public interface IBatchHashCommands
     /// <summary>Expiry state for fields, in milliseconds. Redis: HPTTL.</summary>
     RespirePending<RespireTtl[]> Expiry(RespireKey key, params ReadOnlySpan<string> fields);
 
-    /// <summary>Sets field TTLs using millisecond precision. Redis: HPEXPIRE.</summary>
+    /// <summary>Sets, updates, or removes field expiry metadata. Redis: HPEXPIRE/HPEXPIREAT/HPERSIST.</summary>
     RespirePending<HashFieldExpiryResult[]> Expire(
-        RespireKey key, TimeSpan expiry, params ReadOnlySpan<string> fields);
+        RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields);
 
-    /// <summary>Sets field TTLs with an NX, XX, GT, or LT condition. Redis: HPEXPIRE.</summary>
+    /// <summary>Sets field expiry with an NX, XX, GT, or LT condition. Redis: HPEXPIRE/HPEXPIREAT.</summary>
     RespirePending<HashFieldExpiryResult[]> Expire(
-        RespireKey key, TimeSpan expiry, HashFieldExpireWhen when, params ReadOnlySpan<string> fields);
-
-    /// <summary>Sets absolute field expiry instants using Unix milliseconds. Redis: HPEXPIREAT.</summary>
-    RespirePending<HashFieldExpiryResult[]> ExpireAt(
-        RespireKey key, DateTimeOffset expireAt, params ReadOnlySpan<string> fields);
-
-    /// <summary>Sets absolute field expiry instants with an NX, XX, GT, or LT condition. Redis: HPEXPIREAT.</summary>
-    RespirePending<HashFieldExpiryResult[]> ExpireAt(
-        RespireKey key, DateTimeOffset expireAt, HashFieldExpireWhen when, params ReadOnlySpan<string> fields);
-
-    /// <summary>Removes field expiry metadata. Redis: HPERSIST.</summary>
-    RespirePending<HashFieldExpiryResult[]> Persist(RespireKey key, params ReadOnlySpan<string> fields);
+        RespireKey key, RespireExpiry expiry, HashFieldExpireWhen when, params ReadOnlySpan<string> fields);
 
     /// <summary>Gets fields and deletes them atomically. Redis: HGETDEL.</summary>
     RespirePending<string?[]> GetDelete(RespireKey key, params ReadOnlySpan<string> fields);
 
-    /// <summary>Gets fields and sets their TTL using PX milliseconds. Redis: HGETEX.</summary>
-    RespirePending<string?[]> GetExpire(RespireKey key, TimeSpan expiry, params ReadOnlySpan<string> fields);
+    /// <summary>Gets fields and updates or removes their expiry metadata. Redis: HGETEX.</summary>
+    RespirePending<string?[]> GetExpire(
+        RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields);
 
-    /// <summary>Gets fields and sets their absolute expiry using PXAT Unix milliseconds. Redis: HGETEX.</summary>
-    RespirePending<string?[]> GetExpireAt(
-        RespireKey key, DateTimeOffset expireAt, params ReadOnlySpan<string> fields);
-
-    /// <summary>Gets fields and removes their TTL metadata. Redis: HGETEX PERSIST.</summary>
-    RespirePending<string?[]> GetPersist(RespireKey key, params ReadOnlySpan<string> fields);
-
-    /// <summary>Sets fields and applies a TTL using PX milliseconds. Redis: HSETEX.</summary>
+    /// <summary>Sets fields and applies a relative, absolute, or retained expiry. Redis: HSETEX.</summary>
     RespirePending<bool> SetExpire(
-        RespireKey key, TimeSpan expiry, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
+        RespireKey key, RespireExpiry expiry, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
 
-    /// <summary>Sets fields with a FNX/FXX condition and applies a TTL using PX milliseconds. Redis: HSETEX.</summary>
+    /// <summary>Sets fields with a FNX/FXX condition and applies an expiry. Redis: HSETEX.</summary>
     RespirePending<bool> SetExpire(
-        RespireKey key, TimeSpan expiry, SetWhen when, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
-
-    /// <summary>Sets fields and applies an absolute expiry using PXAT Unix milliseconds. Redis: HSETEX.</summary>
-    RespirePending<bool> SetExpireAt(
-        RespireKey key, DateTimeOffset expireAt, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
-
-    /// <summary>Sets fields with a FNX/FXX condition and applies an absolute expiry using PXAT. Redis: HSETEX.</summary>
-    RespirePending<bool> SetExpireAt(
-        RespireKey key, DateTimeOffset expireAt, SetWhen when,
+        RespireKey key, RespireExpiry expiry, SetWhen when,
         params ReadOnlySpan<(string Field, RespireValue Value)> fields);
 }
 
@@ -193,38 +168,38 @@ internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
             static (c, v) => ResponseReader.TtlArray(in v));
 
     public RespirePending<HashFieldExpiryResult[]> Expire(
-        RespireKey key, TimeSpan expiry, params ReadOnlySpan<string> fields)
+        RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)
         => Expire(key, expiry, HashFieldExpireWhen.Always, fields);
 
     public RespirePending<HashFieldExpiryResult[]> Expire(
-        RespireKey key, TimeSpan expiry, HashFieldExpireWhen when, params ReadOnlySpan<string> fields)
-        => sink.Add<Cmd1N, HashFieldExpiryResult[]>(
-            "HPEXPIRE",
-            new Cmd1N(
-                RespireCommands.Hash.HPEXPIRE.Verb,
-                sink.Client.Key(in key),
-                HashCommands.ExpireFieldsBlock((long)expiry.TotalMilliseconds, when, fields)),
-            static (c, v) => ResponseReader.HashFieldExpiryResultArray(in v));
+        RespireKey key, RespireExpiry expiry, HashFieldExpireWhen when, params ReadOnlySpan<string> fields)
+    {
+        if (expiry.IsPersist)
+        {
+            if (when != HashFieldExpireWhen.Always)
+            {
+                throw new ArgumentException("HPERSIST does not support NX, XX, GT, or LT.", nameof(when));
+            }
 
-    public RespirePending<HashFieldExpiryResult[]> ExpireAt(
-        RespireKey key, DateTimeOffset expireAt, params ReadOnlySpan<string> fields)
-        => ExpireAt(key, expireAt, HashFieldExpireWhen.Always, fields);
+            return sink.Add<Cmd1N, HashFieldExpiryResult[]>(
+                "HPERSIST",
+                new Cmd1N(RespireCommands.Hash.HPERSIST.Verb, sink.Client.Key(in key), HashCommands.FieldsBlock(fields)),
+                static (c, v) => ResponseReader.HashFieldExpiryResultArray(in v));
+        }
 
-    public RespirePending<HashFieldExpiryResult[]> ExpireAt(
-        RespireKey key, DateTimeOffset expireAt, HashFieldExpireWhen when, params ReadOnlySpan<string> fields)
-        => sink.Add<Cmd1N, HashFieldExpiryResult[]>(
-            "HPEXPIREAT",
-            new Cmd1N(
-                RespireCommands.Hash.HPEXPIREAT.Verb,
-                sink.Client.Key(in key),
-                HashCommands.ExpireFieldsBlock(expireAt.ToUnixTimeMilliseconds(), when, fields)),
-            static (c, v) => ResponseReader.HashFieldExpiryResultArray(in v));
+        if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
+        {
+            return ExpireCore("HPEXPIRE", RespireCommands.Hash.HPEXPIRE.Verb, key, milliseconds, when, fields);
+        }
 
-    public RespirePending<HashFieldExpiryResult[]> Persist(RespireKey key, params ReadOnlySpan<string> fields)
-        => sink.Add<Cmd1N, HashFieldExpiryResult[]>(
-            "HPERSIST",
-            new Cmd1N(RespireCommands.Hash.HPERSIST.Verb, sink.Client.Key(in key), HashCommands.FieldsBlock(fields)),
-            static (c, v) => ResponseReader.HashFieldExpiryResultArray(in v));
+        if (expiry.TryGetAbsoluteUnixMilliseconds(out var unixMilliseconds))
+        {
+            return ExpireCore("HPEXPIREAT", RespireCommands.Hash.HPEXPIREAT.Verb, key, unixMilliseconds, when, fields);
+        }
+
+        throw new ArgumentException(
+            "Hash expiry must be relative, absolute, or RespireExpiry.Persist.", nameof(expiry));
+    }
 
     public RespirePending<string?[]> GetDelete(RespireKey key, params ReadOnlySpan<string> fields)
         => sink.Add<Cmd1N, string?[]>(
@@ -233,33 +208,65 @@ internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
             static (c, v) => ResponseReader.NullableStringArray(in v));
 
     public RespirePending<string?[]> GetExpire(
-        RespireKey key, TimeSpan expiry, params ReadOnlySpan<string> fields)
-        => GetExpireCore(key, "PX", (long)expiry.TotalMilliseconds, hasValue: true, fields);
+        RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)
+    {
+        if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
+        {
+            return GetExpireCore(key, "PX", milliseconds, hasValue: true, fields);
+        }
 
-    public RespirePending<string?[]> GetExpireAt(
-        RespireKey key, DateTimeOffset expireAt, params ReadOnlySpan<string> fields)
-        => GetExpireCore(key, "PXAT", expireAt.ToUnixTimeMilliseconds(), hasValue: true, fields);
+        if (expiry.TryGetAbsoluteUnixMilliseconds(out var unixMilliseconds))
+        {
+            return GetExpireCore(key, "PXAT", unixMilliseconds, hasValue: true, fields);
+        }
 
-    public RespirePending<string?[]> GetPersist(RespireKey key, params ReadOnlySpan<string> fields)
-        => GetExpireCore(key, "PERSIST", optionValue: 0, hasValue: false, fields);
+        if (expiry.IsPersist)
+        {
+            return GetExpireCore(key, "PERSIST", optionValue: 0, hasValue: false, fields);
+        }
+
+        throw new ArgumentException(
+            "HGETEX expiry must be relative, absolute, or RespireExpiry.Persist.", nameof(expiry));
+    }
 
     public RespirePending<bool> SetExpire(
-        RespireKey key, TimeSpan expiry, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
+        RespireKey key, RespireExpiry expiry, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
         => SetExpire(key, expiry, SetWhen.Always, fields);
 
     public RespirePending<bool> SetExpire(
-        RespireKey key, TimeSpan expiry, SetWhen when,
+        RespireKey key, RespireExpiry expiry, SetWhen when,
         params ReadOnlySpan<(string Field, RespireValue Value)> fields)
-        => SetExpireCore(key, "PX", (long)expiry.TotalMilliseconds, when, fields);
+    {
+        if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
+        {
+            return SetExpireCore(key, "PX", milliseconds, hasValue: true, when, fields);
+        }
 
-    public RespirePending<bool> SetExpireAt(
-        RespireKey key, DateTimeOffset expireAt, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
-        => SetExpireAt(key, expireAt, SetWhen.Always, fields);
+        if (expiry.TryGetAbsoluteUnixMilliseconds(out var unixMilliseconds))
+        {
+            return SetExpireCore(key, "PXAT", unixMilliseconds, hasValue: true, when, fields);
+        }
 
-    public RespirePending<bool> SetExpireAt(
-        RespireKey key, DateTimeOffset expireAt, SetWhen when,
-        params ReadOnlySpan<(string Field, RespireValue Value)> fields)
-        => SetExpireCore(key, "PXAT", expireAt.ToUnixTimeMilliseconds(), when, fields);
+        if (expiry.IsKeep)
+        {
+            return SetExpireCore(key, "KEEPTTL", optionValue: 0, hasValue: false, when, fields);
+        }
+
+        throw new ArgumentException(
+            "HSETEX expiry must be relative, absolute, or RespireExpiry.Keep.", nameof(expiry));
+    }
+
+    private RespirePending<HashFieldExpiryResult[]> ExpireCore(
+        string operation,
+        Verb verb,
+        RespireKey key,
+        long value,
+        HashFieldExpireWhen when,
+        ReadOnlySpan<string> fields)
+        => sink.Add<Cmd1N, HashFieldExpiryResult[]>(
+            operation,
+            new Cmd1N(verb, sink.Client.Key(in key), HashCommands.ExpireFieldsBlock(value, when, fields)),
+            static (c, v) => ResponseReader.HashFieldExpiryResultArray(in v));
 
     private RespirePending<string?[]> GetExpireCore(
         RespireKey key, string option, long optionValue, bool hasValue, ReadOnlySpan<string> fields)
@@ -272,13 +279,13 @@ internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
             static (c, v) => ResponseReader.NullableStringArray(in v));
 
     private RespirePending<bool> SetExpireCore(
-        RespireKey key, string option, long optionValue, SetWhen when,
+        RespireKey key, string option, long optionValue, bool hasValue, SetWhen when,
         ReadOnlySpan<(string Field, RespireValue Value)> fields)
         => sink.Add<Cmd1N, bool>(
             "HSETEX",
             new Cmd1N(
                 RespireCommands.Hash.HSETEX.Verb,
                 sink.Client.Key(in key),
-                HashCommands.SetExFieldsBlock(option, optionValue, when, fields)),
+                HashCommands.SetExFieldsBlock(option, optionValue, hasValue, when, fields)),
             static (c, v) => ResponseReader.Flag(in v));
 }

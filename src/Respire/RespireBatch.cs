@@ -118,7 +118,9 @@ public sealed class RespireBatch : IDisposable, IPendingSink
     public RespirePending<long> Decrement(RespireKey key, long by = 1) => Strings.Decrement(key, by);
 
     /// <inheritdoc cref="IBatchKeyCommands.Expire"/>
-    public RespirePending<bool> Expire(RespireKey key, TimeSpan expiry) => Keys.Expire(key, expiry);
+    public RespirePending<bool> Expire(
+        RespireKey key, RespireExpiry expiry, ExpireWhen when = ExpireWhen.Always)
+        => Keys.Expire(key, expiry, when);
 
     RespireClient IPendingSink.Client => _client;
 

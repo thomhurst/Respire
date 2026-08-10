@@ -5,8 +5,8 @@ namespace Respire;
 
 /// <summary>
 /// String (plain value) commands queued on a <see cref="RespireBatch"/> or
-/// <see cref="RespireTransaction"/>. Mirrors <see cref="IStringCommands"/> with synchronous names
-/// and the same parameter shapes; each call returns a <see cref="RespirePending{T}"/> instead of awaiting,
+/// <see cref="RespireTransaction"/>. Mirrors <see cref="IStringCommands"/>: same names and
+/// parameter shapes, but each call returns a <see cref="RespirePending{T}"/> instead of awaiting,
 /// and cancellation belongs to the execute/commit call. <c>GetLeaseAsync</c> has no deferred form —
 /// a lease borrows the reply's pooled memory, which is released once the batch completes.
 /// </summary>
@@ -53,6 +53,9 @@ public interface IBatchStringCommands
 
     /// <summary>Gets a key's value and deletes the key. Redis: GETDEL.</summary>
     RespirePending<string?> GetDelete(RespireKey key);
+
+    /// <summary>Gets a key's value and updates or removes its expiry. Redis: GETEX.</summary>
+    RespirePending<string?> GetExpire(RespireKey key, RespireExpiry expiry);
 
     /// <summary>Appends to a string and returns the new length. Redis: APPEND.</summary>
     RespirePending<long> Append(RespireKey key, RespireValue value);
@@ -123,36 +126,75 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
 
     public RespirePending<bool> Set(
         RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
-        => sink.Add<SetCommand, bool>(
+    {
+        SetCommand.ValidateExpiry(expiry);
+        return sink.Add<SetCommand, bool>(
             "SET",
             new SetCommand(sink.Client.Key(in key), value, expiry, when, returnOld: false),
             static (c, v) => ResponseReader.OkOrNull(in v));
+    }
 
     public RespirePending<bool> Set<T>(
         RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
-        => sink.Add<SetCommand, bool>(
+    {
+        SetCommand.ValidateExpiry(expiry);
+        return sink.Add<SetCommand, bool>(
             "SET",
             new SetCommand(sink.Client.Key(in key), sink.Client.Serialize(value), expiry, when, returnOld: false),
             static (c, v) => ResponseReader.OkOrNull(in v));
+    }
 
     public RespirePending<string?> GetAndSet(
         RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
-        => sink.Add<SetCommand, string?>(
+    {
+        SetCommand.ValidateExpiry(expiry);
+        return sink.Add<SetCommand, string?>(
             "SET",
             new SetCommand(sink.Client.Key(in key), value, expiry, when, returnOld: true),
             static (c, v) => ResponseReader.StringOrNull(in v));
+    }
 
     public RespirePending<T?> GetAndSet<T>(
         RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
-        => sink.Add<SetCommand, T?>(
+    {
+        SetCommand.ValidateExpiry(expiry);
+        return sink.Add<SetCommand, T?>(
             "SET",
             new SetCommand(sink.Client.Key(in key), sink.Client.Serialize(value), expiry, when, returnOld: true),
             static (c, v) => c.DeserializeBorrowed<T>(in v));
+    }
 
     public RespirePending<string?> GetDelete(RespireKey key)
         => sink.Add<Cmd1, string?>(
             "GETDEL", new Cmd1(Verbs.GetDel, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.StringOrNull(in v));
+
+    public RespirePending<string?> GetExpire(RespireKey key, RespireExpiry expiry)
+    {
+        if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
+        {
+            return sink.Add<Cmd3, string?>(
+                "GETEX", new Cmd3(RespireCommands.String.GETEX.Verb, sink.Client.Key(in key), "PX", milliseconds),
+                static (c, v) => ResponseReader.StringOrNull(in v));
+        }
+
+        if (expiry.TryGetAbsoluteUnixMilliseconds(out var unixMilliseconds))
+        {
+            return sink.Add<Cmd3, string?>(
+                "GETEX", new Cmd3(RespireCommands.String.GETEX.Verb, sink.Client.Key(in key), "PXAT", unixMilliseconds),
+                static (c, v) => ResponseReader.StringOrNull(in v));
+        }
+
+        if (expiry.IsPersist)
+        {
+            return sink.Add<Cmd2, string?>(
+                "GETEX", new Cmd2(RespireCommands.String.GETEX.Verb, sink.Client.Key(in key), "PERSIST"),
+                static (c, v) => ResponseReader.StringOrNull(in v));
+        }
+
+        throw new ArgumentException(
+            "GETEX expiry must be relative, absolute, or RespireExpiry.Persist.", nameof(expiry));
+    }
 
     public RespirePending<long> Append(RespireKey key, RespireValue value)
         => sink.Add<Cmd2, long>(

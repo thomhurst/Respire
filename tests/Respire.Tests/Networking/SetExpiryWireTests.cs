@@ -1,3 +1,5 @@
+using System.Buffers;
+using Respire.Serialization;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -80,6 +82,43 @@ public class SetExpiryWireTests
         await client.SetAsync("key", 42, Instant);
 
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("SET key 42 PXAT 1700000000123");
+    }
+
+    [Test]
+    public async Task Set_WithPersist_ThrowsBeforeConnectingOrSerializing()
+    {
+        var serializer = new ThrowingSerializer();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", 1) },
+            ConnectTimeout = TimeSpan.FromMilliseconds(50),
+            Serializer = serializer,
+        });
+
+        await Assert.That(async () => await client.SetAsync("raw", (RespireValue)"value", RespireExpiry.Persist))
+            .ThrowsExactly<ArgumentException>();
+        await Assert.That(async () => await client.SetAsync("typed", new Payload(1), RespireExpiry.Persist))
+            .ThrowsExactly<ArgumentException>();
+        await Assert.That(async () => await client.Strings.GetAndSetAsync(
+                "raw-get", (RespireValue)"value", RespireExpiry.Persist))
+            .ThrowsExactly<ArgumentException>();
+        await Assert.That(async () => await client.Strings.GetAndSetAsync(
+                "typed-get", new Payload(2), RespireExpiry.Persist))
+            .ThrowsExactly<ArgumentException>();
+
+        using var batch = client.CreateBatch();
+        await Assert.That(() => batch.Set("batch-raw", (RespireValue)"value", RespireExpiry.Persist))
+            .ThrowsExactly<ArgumentException>();
+        await Assert.That(() => batch.Set("batch-typed", new Payload(3), RespireExpiry.Persist))
+            .ThrowsExactly<ArgumentException>();
+        await Assert.That(() => batch.Strings.GetAndSet(
+                "batch-get-raw", (RespireValue)"value", RespireExpiry.Persist))
+            .ThrowsExactly<ArgumentException>();
+        await Assert.That(() => batch.Strings.GetAndSet(
+                "batch-get-typed", new Payload(4), RespireExpiry.Persist))
+            .ThrowsExactly<ArgumentException>();
+
+        await Assert.That(serializer.SerializeCalls).IsEqualTo(0);
     }
 
     [Test]
@@ -182,5 +221,20 @@ public class SetExpiryWireTests
         await Assert.That(server.ReceivedCommands[1]).IsEqualTo("MSETEX 1 b 2 XX PXAT 1700000000123");
         await Assert.That(server.ReceivedCommands[2]).IsEqualTo("MSETEX 1 c 3 NX KEEPTTL");
         await Assert.That(server.ReceivedCommands[3]).IsEqualTo("MSETEX 1 d 4 NX");
+    }
+
+    private sealed record Payload(int Value);
+
+    private sealed class ThrowingSerializer : IRespireSerializer
+    {
+        public int SerializeCalls { get; private set; }
+
+        public void Serialize<T>(IBufferWriter<byte> destination, T value)
+        {
+            SerializeCalls++;
+            throw new InvalidOperationException("Serializer must not run for an invalid SET expiry.");
+        }
+
+        public T? Deserialize<T>(ReadOnlySpan<byte> payload) => default;
     }
 }

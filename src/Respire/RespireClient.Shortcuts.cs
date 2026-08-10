@@ -62,6 +62,10 @@ public sealed partial class RespireClient
         => Strings.DecrementAsync(key, by, cancellationToken);
 
     /// <inheritdoc cref="IKeyCommands.ExpireAsync"/>
-    public ValueTask<bool> ExpireAsync(RespireKey key, TimeSpan expiry, CancellationToken cancellationToken = default)
-        => Keys.ExpireAsync(key, expiry, cancellationToken);
+    public ValueTask<bool> ExpireAsync(
+        RespireKey key,
+        RespireExpiry expiry,
+        ExpireWhen when = ExpireWhen.Always,
+        CancellationToken cancellationToken = default)
+        => Keys.ExpireAsync(key, expiry, when, cancellationToken);
 }
