@@ -96,25 +96,15 @@ public interface IRespireClient : IAsyncDisposable
     /// <summary>Returns the effective Redis key after this client applies any key transformation.</summary>
     RespireKey ResolveKey(RespireKey key);
 
-    // Raw escape hatch. Two shapes per command form: a params call for the common case, and an
-    // array call that adds flags and cancellation as optional arguments — name the one you need.
+    // Escape hatch. A string converts implicitly to RespireCommand. The params shape covers the
+    // common case; the array shape adds flags and cancellation as optional arguments.
 
-    /// <summary>Sends a catalog command; each value is exactly one argument.</summary>
+    /// <summary>Sends a command; each value is exactly one argument.</summary>
     ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args);
 
-    /// <summary>Sends a catalog command with optional policy flags and cancellation.</summary>
+    /// <summary>Sends a command with optional policy flags and cancellation.</summary>
     ValueTask<RespireResult> ExecuteAsync(
         RespireCommand command,
-        RespireValue[] args,
-        RespireCommandFlags flags = RespireCommandFlags.None,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>Sends any command; the name may contain spaces and each value is one argument.</summary>
-    ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args);
-
-    /// <summary>Sends any command with optional policy flags and cancellation.</summary>
-    ValueTask<RespireResult> ExecuteAsync(
-        string command,
         RespireValue[] args,
         RespireCommandFlags flags = RespireCommandFlags.None,
         CancellationToken cancellationToken = default);
@@ -125,19 +115,12 @@ public interface IRespireClient : IAsyncDisposable
         RespireCommandFlags flags = RespireCommandFlags.None,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Queues a catalog command and discards its reply.</summary>
+    /// <summary>Queues a command and discards its reply.</summary>
     ValueTask ExecuteFireAndForgetAsync(RespireCommand command, params RespireValue[] args);
 
-    /// <summary>Queues a catalog command with cancellation and discards its reply.</summary>
+    /// <summary>Queues a command with cancellation and discards its reply.</summary>
     ValueTask ExecuteFireAndForgetAsync(
         RespireCommand command, RespireValue[] args, CancellationToken cancellationToken = default);
-
-    /// <summary>Queues any command and discards its reply.</summary>
-    ValueTask ExecuteFireAndForgetAsync(string command, params RespireValue[] args);
-
-    /// <summary>Queues any command with cancellation and discards its reply.</summary>
-    ValueTask ExecuteFireAndForgetAsync(
-        string command, RespireValue[] args, CancellationToken cancellationToken = default);
 
     /// <summary>A view that prepends a prefix to every key; shares this client's connections.</summary>
     IRespireClient WithKeyPrefix(string prefix);

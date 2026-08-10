@@ -1,3 +1,4 @@
+using System.Reflection;
 using Respire.Commands;
 using Respire.Networking;
 using Respire.Protocol;
@@ -198,22 +199,22 @@ public class CommandCatalogTests
     }
 
     [Test]
-    public async Task ExecuteAsync_RejectsTheFireAndForgetFlagAcrossEveryCommandForm()
+    public async Task ExecuteSurface_IsCollapsedAndStringCommandsConvertImplicitly()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var concrete = await FakeRespServer.ConnectClientAsync(server.Port);
         IRespireClient client = concrete;
-        RespireValue value = "value";
+        RespireCommand raw = "CONFIG GET";
 
-        await Assert.That(async () => await client.ExecuteAsync(
-                "SET", ["key", "value"], RespireCommandFlags.FireAndForget))
-            .Throws<ArgumentException>();
-        await Assert.That(async () => await client.ExecuteAsync(
-                RespireCommands.String.SET, ["key", "value"], RespireCommandFlags.FireAndForget))
-            .Throws<ArgumentException>();
-        await Assert.That(async () => await client.ExecuteAsync(
-                $"SET key {value}", RespireCommandFlags.FireAndForget))
-            .Throws<ArgumentException>();
+        var methods = typeof(IRespireClient).GetMethods(
+            BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+        await Assert.That(methods.Count(static method => method.Name == nameof(IRespireClient.ExecuteAsync)))
+            .IsEqualTo(3);
+        await Assert.That(methods.Count(static method => method.Name == nameof(IRespireClient.ExecuteFireAndForgetAsync)))
+            .IsEqualTo(2);
+        await Assert.That(Enum.GetNames<RespireCommandFlags>()).IsEquivalentTo(["None", "NoRedirect"]);
+        await Assert.That(raw.Name).IsEqualTo("CONFIG GET");
+        await Assert.That(raw.Sources).IsEqualTo(RespireCommandSource.None);
 
         await client.ExecuteFireAndForgetAsync("SET", "raw-key", "value");
         await client.ExecuteFireAndForgetAsync(
@@ -222,6 +223,20 @@ public class CommandCatalogTests
 
         await Assert.That(server.ReceivedCommands)
             .IsEquivalentTo(["SET raw-key value", "SET catalog-key value"]);
+    }
+
+    [Test]
+    public async Task InterpolatedCommand_HonorsInvariantFormatsAndAlignment()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var number = 1234.5m;
+        var left = 42;
+
+        using var result = await client.ExecuteAsync($"SET formatted {number,12:N2} {left,-5:D4}");
+
+        await Assert.That(server.ReceivedCommands.Single())
+            .IsEqualTo("SET formatted     1,234.50 0042 ");
     }
 
     [Test]

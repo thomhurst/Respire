@@ -3,9 +3,9 @@ using Respire.Commands;
 namespace Respire;
 
 /// <summary>
-/// A known RESP command whose verb is parsed and encoded once. Use entries from
-/// <see cref="RespireCommands"/> with <see cref="IRespireClient.ExecuteAsync(RespireCommand, RespireValue[])"/>
-/// for discoverable access to commands without a dedicated convenience method.
+/// A RESP command whose verb is parsed and encoded once. Use entries from
+/// <see cref="RespireCommands"/> for discoverable access, or pass a command name as a string for
+/// an experimental or server-specific command.
 /// </summary>
 public readonly struct RespireCommand
 {
@@ -28,6 +28,12 @@ public readonly struct RespireCommand
     internal Verb Verb => _verb;
 
     internal RespireCommandBehavior Behavior { get; }
+
+    internal bool IsCallerSupplied => Sources == RespireCommandSource.None;
+
+    /// <summary>Creates a caller-supplied command descriptor from a command name.</summary>
+    public static implicit operator RespireCommand(string name)
+        => new(name, RespireCommandSource.None);
 
     public override string ToString() => Name;
 

@@ -7,8 +7,9 @@ namespace Respire;
 /// Lets raw commands be written as interpolated strings:
 /// <c>client.ExecuteAsync($"SET {key} {value} EX {60}")</c>. Literal text splits on spaces into
 /// command tokens; every interpolation hole becomes exactly one argument and is never
-/// re-tokenized — a value containing spaces stays a single argument. Arguments serialize
-/// straight into the RESP frame.
+/// re-tokenized — a value containing spaces stays a single argument. Holes use invariant
+/// <see cref="IFormattable"/> formatting or <see cref="object.ToString"/>; they are not routed
+/// through a Respire serializer.
 /// </summary>
 [InterpolatedStringHandler]
 public struct RespireCommandInterpolatedStringHandler
@@ -47,12 +48,33 @@ public struct RespireCommandInterpolatedStringHandler
     public void AppendFormatted(RespireKey value) => _tokens.Add(value.AsValue());
 
     public void AppendFormatted<T>(T value)
-        => _tokens.Add(value switch
+        => _tokens.Add(Format(value, format: null));
+
+    public void AppendFormatted<T>(T value, string? format)
+        => _tokens.Add(Format(value, format));
+
+    public void AppendFormatted<T>(T value, int alignment)
+        => _tokens.Add(Align(Format(value, format: null), alignment));
+
+    public void AppendFormatted<T>(T value, int alignment, string? format)
+        => _tokens.Add(Align(Format(value, format), alignment));
+
+    private static RespireValue Format<T>(T value, string? format)
+        => value switch
         {
-            null => RespireValue.Null,
-            IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
+            null when format is null => RespireValue.Null,
+            null => string.Empty,
+            IFormattable formattable => formattable.ToString(format, CultureInfo.InvariantCulture),
             _ => value.ToString() ?? string.Empty,
-        });
+        };
+
+    private static RespireValue Align(RespireValue value, int alignment)
+    {
+        var text = value.IsNull ? string.Empty : value.ToString();
+        return alignment < 0
+            ? text.PadRight(-alignment)
+            : text.PadLeft(alignment);
+    }
 
     internal readonly (string Operation, RespireValue[] Tokens) Build()
     {

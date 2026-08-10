@@ -205,39 +205,39 @@ public sealed partial class RespireClient : IRespireClient
             static (long timestamp, in RespValue _) => Stopwatch.GetElapsedTime(timestamp));
     }
 
-    // Raw escape hatch
+    // Command escape hatch
 
     /// <summary>
-    /// Sends a command from <see cref="RespireCommands"/>. Unlike the string overload, command
-    /// words are pre-encoded once and never split or allocated per call. The result is a lease.
+    /// Sends a command. Catalog descriptors are pre-encoded; a string converts implicitly to a
+    /// caller-supplied descriptor and may contain spaces. The result is a lease.
     /// </summary>
     public ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args)
-        => ExecuteCatalogAsync(command, args, RespireCommandFlags.None, CancellationToken.None);
+        => ExecuteCommandAsync(command, args, RespireCommandFlags.None, CancellationToken.None);
 
     /// <summary>
-    /// Sends a command from <see cref="RespireCommands"/> with optional policy flags and
-    /// cancellation. Blocking descriptors use a dedicated pooled connection; cancellation
-    /// abandons that connection without stalling multiplexed traffic.
+    /// Sends a command with optional policy flags and cancellation. Blocking commands use a
+    /// dedicated pooled connection; cancellation abandons that connection without stalling
+    /// multiplexed traffic.
     /// </summary>
     public ValueTask<RespireResult> ExecuteAsync(
         RespireCommand command,
         RespireValue[] args,
         RespireCommandFlags flags = RespireCommandFlags.None,
         CancellationToken cancellationToken = default)
-        => ExecuteCatalogAsync(command, args, flags, cancellationToken);
+        => ExecuteCommandAsync(command, args, flags, cancellationToken);
 
     /// <summary>
-    /// Queues a catalog command and discards its reply once it arrives.
+    /// Queues a command and discards its reply once it arrives.
     /// </summary>
     /// <remarks>
     /// Standalone execution returns after writing. Cluster execution may await replies to process
     /// <c>MOVED</c> and <c>ASK</c> redirects, adding round-trip latency.
     /// </remarks>
     public ValueTask ExecuteFireAndForgetAsync(RespireCommand command, params RespireValue[] args)
-        => ExecuteCatalogFireAndForgetAsync(command, args, CancellationToken.None);
+        => ExecuteCommandFireAndForgetAsync(command, args, CancellationToken.None);
 
     /// <summary>
-    /// Queues a catalog command and discards its reply once it arrives.
+    /// Queues a command and discards its reply once it arrives.
     /// </summary>
     /// <remarks>
     /// Standalone execution returns after writing. Cluster execution may await replies to process
@@ -245,7 +245,24 @@ public sealed partial class RespireClient : IRespireClient
     /// </remarks>
     public ValueTask ExecuteFireAndForgetAsync(
         RespireCommand command, RespireValue[] args, CancellationToken cancellationToken = default)
-        => ExecuteCatalogFireAndForgetAsync(command, args, cancellationToken);
+        => ExecuteCommandFireAndForgetAsync(command, args, cancellationToken);
+
+    private ValueTask<RespireResult> ExecuteCommandAsync(
+        RespireCommand command,
+        RespireValue[] args,
+        RespireCommandFlags flags,
+        CancellationToken cancellationToken)
+        => command.IsCallerSupplied
+            ? ExecuteRawAsync(command.Name, args, flags, cancellationToken)
+            : ExecuteCatalogAsync(command, args, flags, cancellationToken);
+
+    private ValueTask ExecuteCommandFireAndForgetAsync(
+        RespireCommand command,
+        RespireValue[] args,
+        CancellationToken cancellationToken)
+        => command.IsCallerSupplied
+            ? ExecuteRawFireAndForgetAsync(command.Name, args, cancellationToken)
+            : ExecuteCatalogFireAndForgetAsync(command, args, cancellationToken);
 
     private async ValueTask<RespireResult> ExecuteCatalogAsync(
         RespireCommand command,
@@ -317,44 +334,6 @@ public sealed partial class RespireClient : IRespireClient
                 command.Name, commandValue, cancellationToken, storedProcedureName)
             .ConfigureAwait(false);
     }
-
-    /// <summary>
-    /// Sends any command. The command may contain spaces ("CONFIG GET"); each arg is exactly one
-    /// argument. The result is a lease — dispose it.
-    /// </summary>
-    public ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args)
-        => ExecuteRawAsync(command, args, RespireCommandFlags.None, CancellationToken.None);
-
-    /// <summary>
-    /// Sends any command with optional policy flags and cancellation.
-    /// </summary>
-    public ValueTask<RespireResult> ExecuteAsync(
-        string command,
-        RespireValue[] args,
-        RespireCommandFlags flags = RespireCommandFlags.None,
-        CancellationToken cancellationToken = default)
-        => ExecuteRawAsync(command, args, flags, cancellationToken);
-
-    /// <summary>
-    /// Queues any command and discards its reply once it arrives.
-    /// </summary>
-    /// <remarks>
-    /// Standalone execution returns after writing. Cluster execution may await replies to process
-    /// <c>MOVED</c> and <c>ASK</c> redirects, adding round-trip latency.
-    /// </remarks>
-    public ValueTask ExecuteFireAndForgetAsync(string command, params RespireValue[] args)
-        => ExecuteRawFireAndForgetAsync(command, args, CancellationToken.None);
-
-    /// <summary>
-    /// Queues any command and discards its reply once it arrives.
-    /// </summary>
-    /// <remarks>
-    /// Standalone execution returns after writing. Cluster execution may await replies to process
-    /// <c>MOVED</c> and <c>ASK</c> redirects, adding round-trip latency.
-    /// </remarks>
-    public ValueTask ExecuteFireAndForgetAsync(
-        string command, RespireValue[] args, CancellationToken cancellationToken = default)
-        => ExecuteRawFireAndForgetAsync(command, args, cancellationToken);
 
     private async ValueTask<RespireResult> ExecuteRawAsync(
         string command,
@@ -510,14 +489,6 @@ public sealed partial class RespireClient : IRespireClient
 
     private static void ValidateResultFlags(RespireCommandFlags flags)
     {
-        if (HasFlag(flags, RespireCommandFlags.FireAndForget))
-        {
-            throw new ArgumentException(
-                $"{nameof(RespireCommandFlags.FireAndForget)} commands do not return a {nameof(RespireResult)}. " +
-                $"Use {nameof(ExecuteFireAndForgetAsync)} instead.",
-                nameof(flags));
-        }
-
         if ((flags & ~RespireCommandFlags.NoRedirect) != 0)
         {
             throw new ArgumentOutOfRangeException(nameof(flags), flags, "Unsupported command flags.");

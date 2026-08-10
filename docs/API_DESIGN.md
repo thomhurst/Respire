@@ -329,11 +329,14 @@ using RespireResult catalogResult = await redis.ExecuteAsync(
 // Explicit args — RespireValue params, no string-splitting surprises
 using RespireResult rawResult = await redis.ExecuteAsync("OBJECT", "ENCODING", "user:1");
 
-// Interpolated-string handler: literal text splits on whitespace into args,
-// each hole is exactly one argument (never re-tokenized), written straight
-// into the RESP frame — zero intermediate strings
+// Interpolated-string handler: literal text splits on whitespace into args;
+// each hole is exactly one argument and supports format/alignment syntax.
 using RespireResult interpolatedResult = await redis.ExecuteAsync($"SET {key} {payload} EX {60}");
 ```
+
+Strings convert implicitly to `RespireCommand`, so raw and catalog calls share the same two result
+method shapes and two fire-and-forget shapes. Interpolation holes use invariant `IFormattable`
+formatting or `ToString()`; they are not routed through a Respire serializer.
 
 `RespireResult` is the one public protocol-shaped type: `Kind`, `AsString()`,
 `AsInteger()`, `AsSpan()`, array enumeration, and it is a lease (`using`). It exists only
