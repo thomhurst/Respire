@@ -75,6 +75,15 @@ await redis.Keys.PersistAsync("session:42");
 await redis.Keys.ExpireAtAsync("report", DateTimeOffset.UtcNow.AddDays(1));
 ```
 
+`TypeAsync` returns `RespireKeyType` rather than a server string. Conditional rename and copy are
+available without dropping to raw commands:
+
+```csharp
+RespireKeyType type = await redis.Keys.TypeAsync("session:42");
+bool renamed = await redis.Keys.TryRenameAsync("draft", "published");
+bool copied = await redis.Keys.CopyAsync("template", "working-copy", replace: true);
+```
+
 ## Scan safely
 
 `ScanAsync` manages Redis cursors and returns an async stream:
@@ -82,13 +91,15 @@ await redis.Keys.ExpireAtAsync("report", DateTimeOffset.UtcNow.AddDays(1));
 ```csharp
 await foreach (string key in redis.Keys.ScanAsync(
     match: "session:*",
-    pageSize: 500,
+    countHint: 500,
+    type: "hash",
     cancellationToken: stoppingToken))
 {
     await InspectAsync(key);
 }
 ```
 
+`countHint` maps to Redis `COUNT`; it guides work per iteration but does not guarantee page size.
 Prefer `SCAN` over `KEYS` in production; each page yields control and avoids a single server-blocking sweep.
 
 ## Key-prefixed views

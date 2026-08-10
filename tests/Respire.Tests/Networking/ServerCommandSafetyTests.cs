@@ -19,7 +19,7 @@ public class ServerCommandSafetyTests
             () => client.Server.FlushAllAsync(),
             "FLUSHALL");
         await AssertRequiresAllowAdmin(
-            () => client.Server.ConfigSetAsync("maxmemory", "1"),
+            () => client.Server.SetConfigAsync("maxmemory", "1"),
             "CONFIG SET");
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
@@ -40,7 +40,7 @@ public class ServerCommandSafetyTests
 
         await client.Server.FlushDatabaseAsync();
         await client.Server.FlushAllAsync();
-        await client.Server.ConfigSetAsync("maxmemory", "1");
+        await client.Server.SetConfigAsync("maxmemory", "1");
 
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
         {

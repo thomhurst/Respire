@@ -1520,12 +1520,23 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ValueTask<RespireTtl> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
             => inner.ExpiryAsync(key, cancellationToken);
 
-        public ValueTask<string> TypeAsync(RespireKey key, CancellationToken cancellationToken = default)
+        public ValueTask<RespireKeyType> TypeAsync(RespireKey key, CancellationToken cancellationToken = default)
             => inner.TypeAsync(key, cancellationToken);
 
         public ValueTask<bool> RenameAsync(
             RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default)
             => inner.RenameAsync(key, newKey, cancellationToken);
+
+        public ValueTask<bool> TryRenameAsync(
+            RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default)
+            => inner.TryRenameAsync(key, newKey, cancellationToken);
+
+        public ValueTask<bool> CopyAsync(
+            RespireKey source,
+            RespireKey destination,
+            bool replace = false,
+            CancellationToken cancellationToken = default)
+            => inner.CopyAsync(source, destination, replace, cancellationToken);
 
         public ValueTask<long> TouchAsync(params ReadOnlySpan<RespireKey> keys) => inner.TouchAsync(keys);
 
@@ -1534,8 +1545,9 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
 
         public IAsyncEnumerable<string> ScanAsync(
             string? match = null,
-            int pageSize = 250,
+            int countHint = 250,
+            string? type = null,
             CancellationToken cancellationToken = default)
-            => inner.ScanAsync(match, pageSize, cancellationToken);
+            => inner.ScanAsync(match, countHint, type, cancellationToken);
     }
 }
