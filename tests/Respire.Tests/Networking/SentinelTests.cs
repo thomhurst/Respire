@@ -167,7 +167,7 @@ public class SentinelTests
         await using var primary = new FakeRespServer(
             FakeRespServer.OkReply,
             FakeRespServer.PongReply);
-        primary.DelayReply(0, 400);
+        primary.DelayReply(0, 700);
         await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port));
         sentinel.DelayReply(0, 500);
 
@@ -177,8 +177,8 @@ public class SentinelTests
             ServiceName = "mymaster",
             Password = "redis-secret",
             SentinelPassword = string.Empty,
-            CommandTimeout = TimeSpan.FromMilliseconds(750),
-            ConnectTimeout = TimeSpan.FromSeconds(2),
+            CommandTimeout = TimeSpan.FromMilliseconds(800),
+            ConnectTimeout = TimeSpan.FromSeconds(1),
         });
 
         _ = await client.PingAsync();
