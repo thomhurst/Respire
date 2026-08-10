@@ -71,6 +71,18 @@ public class TypedValueApiTests
     }
 
     [Test]
+    public async Task Value_AnnotatesMissingReferenceAsNullable()
+    {
+        var property = typeof(RespireGet<string>).GetProperty(nameof(RespireGet<string>.Value))!;
+        var nullableContext = property.GetMethod!.CustomAttributes
+            .Single(attribute => attribute.AttributeType.FullName ==
+                "System.Runtime.CompilerServices.NullableContextAttribute");
+        var annotation = (byte)nullableContext.ConstructorArguments[0].Value!;
+
+        await Assert.That(annotation).IsEqualTo((byte)2);
+    }
+
+    [Test]
     public async Task PendingTryGetResult_AnnotatesMissingReferenceAsMaybeNull()
     {
         var parameter = typeof(RespirePending<>).GetMethod(nameof(RespirePending<int>.TryGetResult))!

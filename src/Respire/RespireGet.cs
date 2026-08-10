@@ -19,10 +19,10 @@ namespace Respire;
 /// var (found, hits) = await client.TryGetAsync&lt;int&gt;("page:hits");
 /// </code>
 /// </example>
-public readonly record struct RespireGet<T>(bool Found, T Value)
+public readonly record struct RespireGet<T>(bool Found, T? Value)
 {
     /// <summary>The value when present, otherwise <paramref name="fallback"/>.</summary>
-    public T GetValueOrDefault(T fallback) => Found ? Value : fallback;
+    public T? GetValueOrDefault(T? fallback) => Found ? Value : fallback;
 
     /// <summary>Gets the value and reports whether Redis returned one.</summary>
     /// <param name="value">The deserialized value, or <c>default</c> when not found.</param>
