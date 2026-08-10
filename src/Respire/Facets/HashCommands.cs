@@ -11,12 +11,17 @@ namespace Respire;
 /// </summary>
 public interface IHashCommands
 {
+    /// <summary>Sets one field. Returns true when the field was newly created. Redis: HSET.</summary>
+    ValueTask<bool> SetAsync(
+        RespireKey key, string field, RespireValue value,
+        CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Sets one field. Returns true when an unconditional write creates the field, or when a
     /// conditional write is applied. Redis: HSET/HSETNX/HSETEX.
     /// </summary>
     ValueTask<bool> SetAsync(
-        RespireKey key, string field, RespireValue value, SetWhen when = SetWhen.Always,
+        RespireKey key, string field, RespireValue value, SetWhen when,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -35,7 +40,17 @@ public interface IHashCommands
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<bool> SetAsync<T>(
-        RespireKey key, string field, T value, SetWhen when = SetWhen.Always,
+        RespireKey key, string field, T value,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Conditionally sets one field to a serialized <typeparamref name="T"/>. Redis:
+    /// HSET/HSETNX/HSETEX.
+    /// </summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    ValueTask<bool> SetAsync<T>(
+        RespireKey key, string field, T value, SetWhen when,
         CancellationToken cancellationToken = default);
 
     /// <summary>Sets many fields in one round trip; returns how many were newly created. Redis: HSET.</summary>
@@ -179,14 +194,27 @@ public interface IHashCommands
 internal sealed class HashCommands(RespireClient client) : IHashCommands
 {
     public ValueTask<bool> SetAsync(
-        RespireKey key, string field, RespireValue value, SetWhen when = SetWhen.Always,
+        RespireKey key, string field, RespireValue value,
+        CancellationToken cancellationToken = default)
+        => SetCoreAsync(key, field, value, SetWhen.Always, cancellationToken);
+
+    public ValueTask<bool> SetAsync(
+        RespireKey key, string field, RespireValue value, SetWhen when,
         CancellationToken cancellationToken = default)
         => SetCoreAsync(key, field, value, when, cancellationToken);
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<bool> SetAsync<T>(
-        RespireKey key, string field, T value, SetWhen when = SetWhen.Always,
+        RespireKey key, string field, T value,
+        CancellationToken cancellationToken = default)
+        => SetCoreAsync(
+            key, field, client.SerializeRawCompatible(value), SetWhen.Always, cancellationToken);
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public ValueTask<bool> SetAsync<T>(
+        RespireKey key, string field, T value, SetWhen when,
         CancellationToken cancellationToken = default)
         => SetCoreAsync(key, field, client.SerializeRawCompatible(value), when, cancellationToken);
 

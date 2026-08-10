@@ -12,12 +12,15 @@ namespace Respire;
 /// </summary>
 public interface IBatchHashCommands
 {
+    /// <summary>Sets one field. True when the field was newly created. Redis: HSET.</summary>
+    RespirePending<bool> Set(RespireKey key, string field, RespireValue value);
+
     /// <summary>
     /// Sets one field. The pending is true when an unconditional write creates the field, or when
     /// a conditional write is applied. Redis: HSET/HSETNX/HSETEX.
     /// </summary>
     RespirePending<bool> Set(
-        RespireKey key, string field, RespireValue value, SetWhen when = SetWhen.Always);
+        RespireKey key, string field, RespireValue value, SetWhen when);
 
     /// <summary>Sets many fields; returns how many were newly created. Redis: HSET.</summary>
     RespirePending<long> Set(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
@@ -95,8 +98,11 @@ public interface IBatchHashCommands
 
 internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
 {
+    public RespirePending<bool> Set(RespireKey key, string field, RespireValue value)
+        => Set(key, field, value, SetWhen.Always);
+
     public RespirePending<bool> Set(
-        RespireKey key, string field, RespireValue value, SetWhen when = SetWhen.Always)
+        RespireKey key, string field, RespireValue value, SetWhen when)
         => when switch
         {
             SetWhen.Always => sink.Add<Cmd3, bool>(
