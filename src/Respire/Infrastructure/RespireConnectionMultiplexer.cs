@@ -703,11 +703,12 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; will retry on next use", Host, Port);
             if (Volatile.Read(ref _disposed) == 0)
             {
-                // A synchronous state-change handler may issue a command immediately. Release
-                // this attempt's guard first so that command can schedule the promised retry.
-                Volatile.Write(ref _reconnecting[slot], 0);
+                var publish = EnqueueReconnectFailure(slot, ex);
                 reconnectGuardReleased = true;
-                NotifyStateChanged(slot, RespireConnectionState.Disconnected, ex);
+                if (publish)
+                {
+                    DrainStateNotifications();
+                }
             }
         }
         finally
@@ -730,19 +731,49 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     private void EnqueueStateNotification(StateNotification notification)
     {
+        bool publish;
         lock (_stateNotificationGate)
         {
-            _stateNotifications.Enqueue(notification);
-            if (_publishingStateNotifications)
-            {
-                return;
-            }
-
-            _publishingStateNotifications = true;
+            publish = EnqueueStateNotificationUnderLock(notification);
         }
 
+        if (publish)
+        {
+            DrainStateNotifications();
+        }
+    }
+
+    private bool EnqueueReconnectFailure(int slot, Exception error)
+    {
+        lock (_stateNotificationGate)
+        {
+            var publish = EnqueueStateNotificationUnderLock(
+                new StateNotification(slot, RespireConnectionState.Disconnected, error));
+
+            // The failure is ordered before the guard opens. Concurrent or synchronous retries
+            // can now enqueue Reconnecting, but only behind this Disconnected notification.
+            Volatile.Write(ref _reconnecting[slot], 0);
+            return publish;
+        }
+    }
+
+    private bool EnqueueStateNotificationUnderLock(StateNotification notification)
+    {
+        _stateNotifications.Enqueue(notification);
+        if (_publishingStateNotifications)
+        {
+            return false;
+        }
+
+        _publishingStateNotifications = true;
+        return true;
+    }
+
+    private void DrainStateNotifications()
+    {
         while (true)
         {
+            StateNotification notification;
             lock (_stateNotificationGate)
             {
                 if (_stateNotifications.Count == 0)
