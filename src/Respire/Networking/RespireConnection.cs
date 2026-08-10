@@ -507,6 +507,54 @@ internal sealed class RespireConnection : IAsyncDisposable
     }
 
     /// <summary>
+    /// Sends a command whose reply shape is <c>bulk string | null | error</c> through a
+    /// specialized source. The receive loop decodes small fully buffered bulk replies straight
+    /// into the final <see cref="string"/> (see <see cref="StringPendingResponseSource"/>);
+    /// anything else falls back to the general <see cref="RespValue"/> conversion path.
+    /// </summary>
+    internal ValueTask<string?> SendStringAsync<TCommand>(
+        in TCommand command,
+        CancellationToken cancellationToken = default,
+        string? commandName = null)
+        where TCommand : struct, IRespCommand
+    {
+        var source = StringPendingResponseSource.Rent(commandName);
+        bool enqueued;
+        bool startedBatch;
+        try
+        {
+            enqueued = TryEnqueue(in command, source, out startedBatch);
+        }
+        catch
+        {
+            ReclaimUnpublished(source);
+            throw;
+        }
+
+        if (enqueued)
+        {
+            source.RegisterCancellation(cancellationToken);
+            ScheduleFlush(startedBatch);
+            return source.Task;
+        }
+
+        return SendStringSlowAsync(command, source, cancellationToken);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<string?> SendStringSlowAsync<TCommand>(
+        TCommand command, StringPendingResponseSource source, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var startedBatch = await WaitForInflightCapacityAsync(command, source, 0, cancellationToken).ConfigureAwait(false);
+        source.RegisterCancellation(cancellationToken);
+        ScheduleFlush(startedBatch);
+        return await source.Task.ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Sends MULTI + pre-serialized commands + EXEC as one atomic append, so no other
     /// multiplexed command can interleave into the server-side transaction state. MULTI's +OK
     /// and each queue reply are drained; the returned task completes with the first queue
@@ -1173,6 +1221,14 @@ internal sealed class RespireConnection : IAsyncDisposable
                         }
                         else
                         {
+                            if (hasBulkHeader
+                                && TryCompleteStringDirect(bufferedData, bulkType, bulkLength, headerEnd, out var frameEnd))
+                            {
+                                start = frameEnd;
+                                responseBytes = 0;
+                                continue;
+                            }
+
                             var pos = start;
                             status = hasBulkHeader
                                 ? RespParser.TryParseBulkValue(
@@ -1391,6 +1447,78 @@ internal sealed class RespireConnection : IAsyncDisposable
             throw new RespireProtocolException($"Unsolicited response from {Host}:{Port} with no command in flight.");
         }
 
+        MarkReplyReceived();
+
+        if (ReferenceEquals(source, InflightRing.DiscardSentinel))
+        {
+            value.Dispose();
+            return;
+        }
+
+        // Deferred: the scheduler runs TrySetResult + ReleaseRef on a pool thread, one work
+        // item per receive drain rather than one per reply.
+        _completions.Add(source, in value);
+    }
+
+    /// <summary>
+    /// Completes the head in-flight command with a string decoded straight from the receive
+    /// buffer when the reply is a small, fully buffered bulk string and the head source asked
+    /// for a <c>string?</c>. Skips the pooled payload rent/copy/return and the
+    /// <see cref="RespValue"/> round-trip of the general path. A bulk string is never a push
+    /// frame, so FIFO pairing with the ring head is safe. Returns false — leaving the general
+    /// parser to handle the frame — for any other reply shape, an incomplete or malformed
+    /// frame, or a head source of another type.
+    /// </summary>
+    private bool TryCompleteStringDirect(
+        ReadOnlySpan<byte> buffer, RespDataType type, long payloadLength, int headerEnd, out int frameEnd)
+    {
+        frameEnd = 0;
+        if (type != RespDataType.BulkString
+            || !_inflight.TryPeek(out var head)
+            || head is not StringPendingResponseSource source)
+        {
+            return false;
+        }
+
+        string? result;
+        if (payloadLength == -1)
+        {
+            result = null;
+            frameEnd = headerEnd;
+        }
+        else
+        {
+            if (payloadLength < 0)
+            {
+                return false;
+            }
+
+            // The caller's direct-fill branch bounds payloadLength below DirectFillThreshold.
+            var length = (int)payloadLength;
+            if (buffer.Length - headerEnd < length + 2)
+            {
+                return false;
+            }
+
+            if (buffer[headerEnd + length] != RespConstants.CarriageReturn
+                || buffer[headerEnd + length + 1] != RespConstants.LineFeed)
+            {
+                return false;
+            }
+
+            result = Utf8String.GetString(buffer.Slice(headerEnd, length));
+            frameEnd = headerEnd + length + 2;
+        }
+
+        _inflight.TryDequeue(out _);
+        MarkReplyReceived();
+        source.SetDirectResult(result);
+        _completions.Add(source, default);
+        return true;
+    }
+
+    private void MarkReplyReceived()
+    {
         if (_responseTimeout is not null)
         {
             lock (_receiveDeadlineGate)
@@ -1404,16 +1532,6 @@ internal sealed class RespireConnection : IAsyncDisposable
         }
 
         _capacitySignal.Signal();
-
-        if (ReferenceEquals(source, InflightRing.DiscardSentinel))
-        {
-            value.Dispose();
-            return;
-        }
-
-        // Deferred: the scheduler runs TrySetResult + ReleaseRef on a pool thread, one work
-        // item per receive drain rather than one per reply.
-        _completions.Add(source, in value);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
