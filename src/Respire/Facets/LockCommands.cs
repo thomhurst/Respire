@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Respire.Commands;
 using Respire.Protocol;
 
@@ -6,6 +7,33 @@ namespace Respire;
 /// <summary>StackExchange.Redis-style distributed lock helper commands.</summary>
 public interface ILockCommands
 {
+    /// <summary>
+    /// Acquires a lock with a generated owner token and returns a handle that releases it on
+    /// disposal, or <see langword="null"/> when another owner holds it. Redis: SET ... NX PX.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// await using var mutex = await redis.Locks.AcquireAsync("job:42", TimeSpan.FromSeconds(30));
+    /// if (mutex is null) return; // someone else holds it
+    /// </code>
+    /// </example>
+    ValueTask<RespireLock?> AcquireAsync(
+        RespireKey key,
+        TimeSpan expiry,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Acquires a lock as <see cref="AcquireAsync(RespireKey, TimeSpan, CancellationToken)"/> does,
+    /// but retries every <paramref name="retryEvery"/> until <paramref name="wait"/> elapses.
+    /// Returns <see langword="null"/> when the lock was still held at the end of that budget.
+    /// </summary>
+    ValueTask<RespireLock?> AcquireAsync(
+        RespireKey key,
+        TimeSpan expiry,
+        TimeSpan wait,
+        TimeSpan retryEvery,
+        CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Acquires a lock when it does not already exist. The token identifies the owner and is
     /// required for later release or extension. Redis: SET ... NX PX.
@@ -54,6 +82,57 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands
         end
         return 0
         """);
+
+    public async ValueTask<RespireLock?> AcquireAsync(
+        RespireKey key,
+        TimeSpan expiry,
+        CancellationToken cancellationToken = default)
+    {
+        var token = RespireLock.NewToken();
+        return await TakeAsync(key, token, expiry, cancellationToken).ConfigureAwait(false)
+            ? new RespireLock(this, key, token, expiry)
+            : null;
+    }
+
+    public async ValueTask<RespireLock?> AcquireAsync(
+        RespireKey key,
+        TimeSpan expiry,
+        TimeSpan wait,
+        TimeSpan retryEvery,
+        CancellationToken cancellationToken = default)
+    {
+        if (wait < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(wait), wait, "Lock wait must not be negative.");
+        }
+
+        if (retryEvery <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(retryEvery),
+                retryEvery,
+                "Lock retry interval must be greater than zero.");
+        }
+
+        var start = Stopwatch.GetTimestamp();
+        while (true)
+        {
+            var acquired = await AcquireAsync(key, expiry, cancellationToken).ConfigureAwait(false);
+            if (acquired is not null)
+            {
+                return acquired;
+            }
+
+            // Only sleep when a full interval still fits inside the budget, so the last attempt
+            // happens at the deadline rather than after it.
+            if (Stopwatch.GetElapsedTime(start) + retryEvery > wait)
+            {
+                return null;
+            }
+
+            await Task.Delay(retryEvery, cancellationToken).ConfigureAwait(false);
+        }
+    }
 
     public ValueTask<bool> TakeAsync(
         RespireKey key,
