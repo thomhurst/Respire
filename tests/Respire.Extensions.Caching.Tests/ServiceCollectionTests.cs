@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.DependencyInjection;
+using Respire.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -40,6 +41,76 @@ public class ServiceCollectionTests(RedisTestContainer fixture)
 
         // Written through the shared client, under the configured instance prefix.
         await Assert.That(await client.ExistsAsync("shared:reuse-key")).IsTrue();
+    }
+
+    [Test]
+    public async Task ClientOptions_TakesPrecedenceOverConnectionString()
+    {
+        var services = new ServiceCollection();
+        services.AddRespireDistributedCache(options =>
+        {
+            options.ConnectionString = "redis://127.0.0.1:1";
+            options.ClientOptions = provider =>
+            {
+                _ = provider.GetRequiredService<FactoryMarker>();
+                return RespireOptions.Parse(fixture.ConnectionString);
+            };
+        });
+        services.AddSingleton<FactoryMarker>();
+
+        await using var provider = services.BuildServiceProvider();
+        var cache = provider.GetRequiredService<IDistributedCache>();
+
+        await cache.SetAsync("factory-key", [4, 2], new DistributedCacheEntryOptions());
+        await Assert.That(await cache.GetAsync("factory-key")).IsEquivalentTo((byte[])[4, 2]);
+    }
+
+    [Test]
+    public async Task AddRespire_ActionBuilder_RegistersConfiguredClient()
+    {
+        var endpoint = RespireOptions.Parse(fixture.ConnectionString).Endpoints[0];
+        var services = new ServiceCollection();
+        services.AddRespire(options =>
+        {
+            options.Endpoints.Add(endpoint);
+            options.Database = fixture.Database;
+            options.ClientName = "respire-di-test";
+        });
+
+        await using var provider = services.BuildServiceProvider();
+        var concrete = provider.GetRequiredService<RespireClient>();
+        var abstraction = provider.GetRequiredService<IRespireClient>();
+
+        await Assert.That(abstraction).IsSameReferenceAs(concrete);
+        await concrete.SetAsync("builder-key", "configured");
+        await Assert.That(await concrete.GetStringAsync("builder-key")).IsEqualTo("configured");
+    }
+
+    [Test]
+    public async Task AddKeyedRespire_RegistersSeparateClients()
+    {
+        var services = new ServiceCollection();
+        services.AddKeyedRespire("sessions", fixture.ConnectionString);
+        services.AddKeyedRespire("jobs", options =>
+            options.Endpoints.Add(RespireOptions.Parse(fixture.ConnectionString).Endpoints[0]));
+
+        await using var provider = services.BuildServiceProvider();
+        var sessions = provider.GetRequiredKeyedService<IRespireClient>("sessions");
+        var jobs = provider.GetRequiredKeyedService<IRespireClient>("jobs");
+
+        await Assert.That(sessions).IsNotSameReferenceAs(jobs);
+    }
+
+    [Test]
+    public async Task DuplicateRespireRegistration_ThrowsImmediately()
+    {
+        var services = new ServiceCollection();
+        services.AddRespire(fixture.ConnectionString);
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            services.AddRespire(fixture.ConnectionString));
+
+        await Assert.That(exception.Message).Contains("already registered");
     }
 
     [Test]
@@ -89,4 +160,6 @@ public class ServiceCollectionTests(RedisTestContainer fixture)
 
         await Assert.That(threw).IsTrue();
     }
+
+    private sealed class FactoryMarker;
 }

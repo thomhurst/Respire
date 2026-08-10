@@ -17,6 +17,25 @@ builder.Services.AddRespireDistributedCache(
     instanceName: "myapp:");
 ```
 
+Use `ClientOptions` when the cache needs its own fully configured client. The factory receives
+the service provider, and takes precedence if `ConnectionString` is also set:
+
+```csharp
+builder.Services.AddRespireDistributedCache(options =>
+{
+    options.ClientOptions = services => new RespireOptions
+    {
+        Endpoints = { new RespireEndpoint("redis.internal") },
+        Serializer = services.GetRequiredService<IRespireSerializer>(),
+        CommandTimeout = TimeSpan.FromSeconds(2),
+    };
+    options.InstanceName = "myapp:";
+});
+```
+
+The cache owns and disposes clients created from `ClientOptions` or `ConnectionString`. If neither
+is set, it uses a separately registered `IRespireClient` without taking ownership.
+
 Inject the framework abstraction into application code:
 
 ```csharp
