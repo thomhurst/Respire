@@ -2,6 +2,7 @@ using Respire.Commands;
 
 namespace Respire;
 
+/// <summary>Probabilistic cardinality commands. Redis: PFADD, PFCOUNT, PFMERGE.</summary>
 public interface IHyperLogLogCommands
 {
     /// <summary>Adds values and returns whether estimated cardinality changed. Redis: PFADD.</summary>

@@ -17,6 +17,7 @@ const sidebars = {
       type: 'category',
       label: 'Guides',
       items: [
+        'guides/distributed-locks',
         'guides/blocking-queues',
         'guides/pub-sub',
         'guides/batches-and-transactions',

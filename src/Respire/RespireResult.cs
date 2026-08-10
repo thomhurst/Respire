@@ -28,17 +28,22 @@ public readonly struct RespireResult : IDisposable
 
     private RespValue Value => _owner?.Value ?? _borrowed;
 
+    /// <summary>The RESP wire type of this result.</summary>
     public RespDataType Type => Value.Type;
 
+    /// <summary>Whether the server returned RESP null.</summary>
     public bool IsNull => Value.IsNull;
 
     /// <summary>True for a RESP error element (top-level errors throw instead).</summary>
     public bool IsError => Value.IsError;
 
+    /// <summary>The server error text.</summary>
     public string ErrorMessage => Value.GetErrorMessage();
 
+    /// <summary>Decodes a string-like result as UTF-8.</summary>
     public string AsString() => Value.AsString();
 
+    /// <summary>Reads an integer result.</summary>
     public long AsInteger() => Value.AsInteger();
 
     /// <summary>
@@ -60,14 +65,17 @@ public readonly struct RespireResult : IDisposable
             : throw new FormatException($"The {value.Type} reply '{text}' is not a valid double.");
     }
 
+    /// <summary>Reads a RESP boolean or integer flag.</summary>
     public bool AsBoolean()
     {
         var value = Value;
         return value.Type == RespDataType.Boolean ? value.AsBoolean() : value.AsInteger() != 0;
     }
 
+    /// <summary>Returns the borrowed raw bytes for a string-like result.</summary>
     public ReadOnlySpan<byte> AsSpan() => Value.AsSpan();
 
+    /// <summary>Copies a string-like result into a byte array.</summary>
     public byte[] AsBytes() => Value.AsSpan().ToArray();
 
     /// <summary>Element count for aggregate replies (map pairs count as two elements).</summary>
@@ -76,6 +84,7 @@ public readonly struct RespireResult : IDisposable
     /// <summary>A non-owning view of an aggregate element; valid while the root is undisposed.</summary>
     public RespireResult this[int index] => new(in Value.AsArray()[index], none: null);
 
+    /// <inheritdoc/>
     public override string ToString() => Value.ToString();
 
     /// <summary>Returns pooled buffers (root results only). Safe to call more than once.</summary>

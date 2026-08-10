@@ -5,25 +5,42 @@ using Respire.Protocol;
 
 namespace Respire;
 
+/// <summary>A distance unit accepted by Redis geospatial commands.</summary>
 public enum GeoUnit
 {
+    /// <summary>Meters (<c>m</c>).</summary>
     Meters,
+
+    /// <summary>Kilometers (<c>km</c>).</summary>
     Kilometers,
+
+    /// <summary>Miles (<c>mi</c>).</summary>
     Miles,
+
+    /// <summary>Feet (<c>ft</c>).</summary>
     Feet,
 }
 
+/// <summary>The result ordering requested from Redis GEOSEARCH.</summary>
 public enum GeoSortOrder
 {
+    /// <summary>Return results in server-selected order.</summary>
     Unsorted,
+
+    /// <summary>Sort nearest to farthest.</summary>
     Ascending,
+
+    /// <summary>Sort farthest to nearest.</summary>
     Descending,
 }
 
+/// <summary>A longitude, latitude, and member tuple supplied to Redis GEOADD.</summary>
 public readonly record struct GeoEntry(double Longitude, double Latitude, RespireValue Member);
 
+/// <summary>A longitude and latitude returned by Redis GEOPOS or GEOSEARCH.</summary>
 public readonly record struct GeoPosition(double Longitude, double Latitude);
 
+/// <summary>A Redis GEOSEARCH result with the optional details requested by <see cref="GeoSearchOptions"/>.</summary>
 public readonly record struct GeoSearchResult(
     string Member,
     double? Distance = null,
@@ -33,6 +50,7 @@ public readonly record struct GeoSearchResult(
     private readonly string _member = Member;
     private readonly byte[]? _memberBytes = Member is null ? null : Encoding.UTF8.GetBytes(Member);
 
+    /// <summary>The member decoded as UTF-8 text.</summary>
     public string Member
     {
         get => _member;
@@ -54,6 +72,7 @@ public readonly record struct GeoSearchResult(
         : this(Encoding.UTF8.GetString(memberBytes), distance, hash, position)
         => _memberBytes = memberBytes.ToArray();
 
+    /// <inheritdoc/>
     public bool Equals(GeoSearchResult other)
         => Member == other.Member
             && Distance == other.Distance
@@ -61,6 +80,7 @@ public readonly record struct GeoSearchResult(
             && Position == other.Position
             && MemberBytes.Span.SequenceEqual(other.MemberBytes.Span);
 
+    /// <inheritdoc/>
     public override int GetHashCode()
     {
         var hash = new HashCode();
@@ -73,6 +93,7 @@ public readonly record struct GeoSearchResult(
     }
 }
 
+/// <summary>The member or coordinates from which Redis GEOSEARCH measures distance.</summary>
 public readonly struct GeoSearchOrigin
 {
     private GeoSearchOrigin(RespireValue? member, double longitude, double latitude)
@@ -88,12 +109,15 @@ public readonly struct GeoSearchOrigin
     internal double Latitude { get; }
     internal bool IsInitialized { get; }
 
+    /// <summary>Creates a Redis GEOSEARCH <c>FROMMEMBER</c> origin.</summary>
     public static GeoSearchOrigin FromMember(RespireValue member) => new(member, 0, 0);
 
+    /// <summary>Creates a Redis GEOSEARCH <c>FROMLONLAT</c> origin.</summary>
     public static GeoSearchOrigin FromCoordinates(double longitude, double latitude)
         => new(null, longitude, latitude);
 }
 
+/// <summary>The circular or rectangular area searched by Redis GEOSEARCH.</summary>
 public readonly struct GeoSearchShape
 {
     private GeoSearchShape(double radius, double width, double height, GeoUnit unit)
@@ -110,12 +134,14 @@ public readonly struct GeoSearchShape
     internal GeoUnit Unit { get; }
     internal bool IsRadius => Radius > 0;
 
+    /// <summary>Creates a Redis GEOSEARCH <c>BYRADIUS</c> shape.</summary>
     public static GeoSearchShape Circle(double radius, GeoUnit unit = GeoUnit.Meters)
     {
         ValidatePositiveFinite(radius, nameof(radius));
         return new(radius, 0, 0, unit);
     }
 
+    /// <summary>Creates a Redis GEOSEARCH <c>BYBOX</c> shape.</summary>
     public static GeoSearchShape Box(double width, double height, GeoUnit unit = GeoUnit.Meters)
     {
         ValidatePositiveFinite(width, nameof(width));
@@ -132,49 +158,86 @@ public readonly struct GeoSearchShape
     }
 }
 
+/// <summary>Sorting, limiting, and optional detail fields for Redis GEOSEARCH.</summary>
 public readonly record struct GeoSearchOptions
 {
+    /// <summary>Gets the requested distance ordering.</summary>
     public GeoSortOrder Sort { get; init; }
+
+    /// <summary>Gets the maximum number of results, or null for no limit.</summary>
     public int? Count { get; init; }
+
+    /// <summary>Gets whether Redis may stop after any <see cref="Count"/> matches.</summary>
     public bool Any { get; init; }
+
+    /// <summary>Gets whether each result includes its distance. Redis: GEOSEARCH WITHDIST.</summary>
     public bool IncludeDistance { get; init; }
+
+    /// <summary>Gets whether each result includes its geohash integer. Redis: GEOSEARCH WITHHASH.</summary>
     public bool IncludeHash { get; init; }
+
+    /// <summary>Gets whether each result includes coordinates. Redis: GEOSEARCH WITHCOORD.</summary>
     public bool IncludeCoordinates { get; init; }
 }
 
 /// <summary>Options controlling GEOADD conditional writes and changed-count reporting.</summary>
 public readonly record struct GeoAddOptions
 {
+    /// <summary>Gets the condition under which members are written.</summary>
     public SetWhen When { get; init; }
+
+    /// <summary>Gets whether Redis counts both added and changed members.</summary>
     public bool Changed { get; init; }
 }
 
+/// <summary>Redis geospatial index commands.</summary>
 public interface IGeoCommands
 {
+    /// <summary>Adds geospatial members and returns the number added. Redis: GEOADD.</summary>
     ValueTask<long> AddAsync(RespireKey key, params ReadOnlySpan<GeoEntry> entries);
+
+    /// <summary>Adds geospatial members and returns the number added. Redis: GEOADD.</summary>
     ValueTask<long> AddAsync(
         RespireKey key,
         ReadOnlySpan<GeoEntry> entries,
         CancellationToken cancellationToken);
+
+    /// <summary>Adds geospatial members using conditional and count options. Redis: GEOADD.</summary>
     ValueTask<long> AddAsync(
         RespireKey key, GeoAddOptions options, params ReadOnlySpan<GeoEntry> entries);
+
+    /// <summary>Adds geospatial members using conditional and count options. Redis: GEOADD.</summary>
     ValueTask<long> AddAsync(
         RespireKey key,
         GeoAddOptions options,
         ReadOnlySpan<GeoEntry> entries,
         CancellationToken cancellationToken);
+
+    /// <summary>Returns the distance between two members, or null when either is absent. Redis: GEODIST.</summary>
     ValueTask<double?> DistanceAsync(
         RespireKey key, RespireValue firstMember, RespireValue secondMember,
         GeoUnit unit = GeoUnit.Meters, CancellationToken cancellationToken = default);
+
+    /// <summary>Returns geohash strings for members; missing members yield null. Redis: GEOHASH.</summary>
     ValueTask<string?[]> HashAsync(RespireKey key, params ReadOnlySpan<RespireValue> members);
+
+    /// <summary>Returns geohash strings for members; missing members yield null. Redis: GEOHASH.</summary>
     ValueTask<string?[]> HashAsync(
         RespireKey key, ReadOnlySpan<RespireValue> members, CancellationToken cancellationToken);
+
+    /// <summary>Returns coordinates for members; missing members yield null. Redis: GEOPOS.</summary>
     ValueTask<GeoPosition?[]> PositionAsync(RespireKey key, params ReadOnlySpan<RespireValue> members);
+
+    /// <summary>Returns coordinates for members; missing members yield null. Redis: GEOPOS.</summary>
     ValueTask<GeoPosition?[]> PositionAsync(
         RespireKey key, ReadOnlySpan<RespireValue> members, CancellationToken cancellationToken);
+
+    /// <summary>Searches members inside a circle or box. Redis: GEOSEARCH.</summary>
     ValueTask<GeoSearchResult[]> SearchAsync(
         RespireKey key, GeoSearchOrigin origin, GeoSearchShape shape,
         GeoSearchOptions options = default, CancellationToken cancellationToken = default);
+
+    /// <summary>Stores matching members or distances in another sorted set. Redis: GEOSEARCHSTORE.</summary>
     ValueTask<long> SearchStoreAsync(
         RespireKey destination, RespireKey source, GeoSearchOrigin origin, GeoSearchShape shape,
         GeoSearchOptions options = default, bool storeDistance = false,

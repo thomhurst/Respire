@@ -42,6 +42,7 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
 
     internal Channel<RespireMessage> Buffer { get; }
 
+    /// <inheritdoc/>
     public IAsyncEnumerator<RespireMessage> GetAsyncEnumerator(CancellationToken cancellationToken = default)
         => EnumerateAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
 

@@ -25,6 +25,7 @@ public readonly struct RespireMessage
     /// <summary>The glob pattern that matched, for pattern subscriptions; otherwise null.</summary>
     public string? Pattern { get; }
 
+    /// <summary>The raw message payload as owned memory.</summary>
     public ReadOnlyMemory<byte> Payload { get; }
 
     /// <summary>The payload decoded as UTF-8.</summary>
@@ -51,5 +52,6 @@ public readonly struct RespireMessage
         return _serializer.Deserialize<T>(Payload.Span);
     }
 
+    /// <inheritdoc/>
     public override string ToString() => $"{Channel}: {Text}";
 }

@@ -23,10 +23,13 @@ public sealed class RespireScript
         Sha1 = sha1;
     }
 
+    /// <summary>The Lua source text.</summary>
     public string Source { get; }
 
+    /// <summary>The lowercase SHA1 used by Redis EVALSHA.</summary>
     public string Sha1 { get; }
 
+    /// <summary>Creates a reusable script and computes its SHA1.</summary>
     public static RespireScript Create(string source)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(source);

@@ -37,6 +37,7 @@ public readonly record struct RespireLatencySample(
 /// <summary>Top-level MEMORY STATS values keyed by Redis' stat names.</summary>
 public sealed record RespireMemoryStats(IReadOnlyDictionary<string, RespireMemoryStatValue> Values)
 {
+    /// <summary>Gets a named stat, or null when absent.</summary>
     public RespireMemoryStatValue? this[string name]
         => Values.TryGetValue(name, out var value) ? value : null;
 }
@@ -46,27 +47,36 @@ public readonly record struct RespireMemoryStatValue(
     string? Scalar,
     IReadOnlyDictionary<string, RespireMemoryStatValue>? Children)
 {
+    /// <summary>Whether this value contains nested stats.</summary>
     public bool IsMap => Children is not null;
 
+    /// <summary>Parses the scalar as an integer, or returns null.</summary>
     public long? AsInt64
         => long.TryParse(Scalar, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
             ? value
             : null;
 
+    /// <summary>Parses the scalar as a floating-point number, or returns null.</summary>
     public double? AsDouble
         => double.TryParse(Scalar, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
             ? value
             : null;
 
+    /// <inheritdoc/>
     public override string ToString()
         => Scalar ?? (Children is null ? string.Empty : $"Map({Children.Count})");
 }
 
+/// <summary>A server role returned by Redis ROLE.</summary>
 public enum RespireServerRoleKind
 {
+    /// <summary>An unrecognized role.</summary>
     Unknown,
+    /// <summary>A writable master.</summary>
     Master,
+    /// <summary>A replica of another server.</summary>
     Replica,
+    /// <summary>A Sentinel monitor.</summary>
     Sentinel,
 }
 
