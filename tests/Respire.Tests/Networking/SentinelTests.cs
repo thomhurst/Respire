@@ -30,10 +30,12 @@ public class SentinelTests
             Protocol = RespProtocol.Resp3,
             UseTls = true,
             SentinelUseTls = false,
+            ClientName = "primary-client",
         });
 
         await Assert.That(options.UseResp3).IsFalse();
         await Assert.That(options.UseTls).IsFalse();
+        await Assert.That(options.ClientName).IsNull();
     }
 
     [Test]
