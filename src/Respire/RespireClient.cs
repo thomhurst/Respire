@@ -49,8 +49,16 @@ public sealed partial class RespireClient : IRespireClient
 
     public static async ValueTask<RespireClient> ConnectAsync(RespireOptions options, CancellationToken cancellationToken = default)
     {
-        options = await SentinelResolver.ResolvePrimaryAsync(
-            options ?? throw new ArgumentNullException(nameof(options)), cancellationToken).ConfigureAwait(false);
+        return await SentinelResolver.ResolveAndConnectPrimaryAsync(
+            options ?? throw new ArgumentNullException(nameof(options)),
+            ConnectPrimaryAsync,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<RespireClient> ConnectPrimaryAsync(
+        RespireOptions options,
+        CancellationToken cancellationToken)
+    {
         var client = Create(options);
         try
         {

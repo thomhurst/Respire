@@ -84,6 +84,28 @@ public class SentinelTests
     }
 
     [Test]
+    public async Task ConnectAsync_EmptySentinelPasswordDisablesInheritedAuthentication()
+    {
+        await using var primary = new FakeRespServer(
+            FakeRespServer.OkReply,
+            FakeRespServer.PongReply);
+        await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port));
+
+        await using var client = await RespireClient.ConnectAsync(
+            $"redis://:redis-secret@127.0.0.1:{sentinel.Port}?serviceName=mymaster&sentinelPassword=");
+
+        _ = await client.PingAsync();
+
+        await Assert.That(sentinel.ReceivedCommands).IsEquivalentTo(
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(
+        [
+            "AUTH redis-secret",
+            "PING",
+        ]);
+    }
+
+    [Test]
     public async Task ConnectAsync_FallsBackWhenSentinelReturnsInvalidPort()
     {
         await using var primary = new FakeRespServer(FakeRespServer.PongReply);
@@ -135,6 +157,35 @@ public class SentinelTests
         await Assert.That(unresponsiveSentinel.ReceivedCommands).IsEquivalentTo(
             ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
         await Assert.That(responsiveSentinel.ReceivedCommands).IsEquivalentTo(
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["PING"]);
+    }
+
+    [Test]
+    public async Task ConnectAsync_FallsBackWhenSentinelReportsUnreachablePrimary()
+    {
+        await using var stalePrimary = new FakeRespServer(FakeRespServer.PongReply);
+        await using var primary = new FakeRespServer(FakeRespServer.PongReply);
+        await using var staleSentinel = new FakeRespServer(PrimaryReply(stalePrimary.Port));
+        await using var currentSentinel = new FakeRespServer(PrimaryReply(primary.Port));
+        await stalePrimary.DisposeAsync();
+
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints =
+            {
+                new RespireEndpoint("127.0.0.1", staleSentinel.Port),
+                new RespireEndpoint("127.0.0.1", currentSentinel.Port),
+            },
+            ServiceName = "mymaster",
+            ConnectTimeout = TimeSpan.FromSeconds(1),
+        });
+
+        _ = await client.PingAsync();
+
+        await Assert.That(staleSentinel.ReceivedCommands).IsEquivalentTo(
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
+        await Assert.That(currentSentinel.ReceivedCommands).IsEquivalentTo(
             ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["PING"]);
     }

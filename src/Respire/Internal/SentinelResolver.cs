@@ -7,13 +7,14 @@ namespace Respire.Internal;
 
 internal static class SentinelResolver
 {
-    public static async ValueTask<RespireOptions> ResolvePrimaryAsync(
+    public static async ValueTask<TResult> ResolveAndConnectPrimaryAsync<TResult>(
         RespireOptions options,
+        Func<RespireOptions, CancellationToken, ValueTask<TResult>> connectPrimaryAsync,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(options.ServiceName))
         {
-            return options;
+            return await connectPrimaryAsync(options, cancellationToken).ConfigureAwait(false);
         }
 
         if (options.Cluster)
@@ -26,10 +27,11 @@ internal static class SentinelResolver
         var sentinelEndpoints = options.Endpoints.Count == 0
             ? [new RespireEndpoint("localhost", 26379)]
             : options.Endpoints.ToArray();
+        var sentinelAuthenticationDisabled = options.SentinelPassword is { Length: 0 };
         var sentinelOptions = options.ToConnectionOptions() with
         {
-            Username = options.SentinelUsername ?? options.Username,
-            Password = options.SentinelPassword ?? options.Password,
+            Username = sentinelAuthenticationDisabled ? null : options.SentinelUsername ?? options.Username,
+            Password = sentinelAuthenticationDisabled ? null : options.SentinelPassword ?? options.Password,
             Database = 0,
             PushHandler = null,
         };
@@ -49,11 +51,12 @@ internal static class SentinelResolver
                         logger,
                         timeoutSource.Token)
                     .ConfigureAwait(false);
-                return options with
+                var primaryOptions = options with
                 {
                     Endpoints = new List<RespireEndpoint> { primary },
                     ServiceName = null,
                 };
+                return await connectPrimaryAsync(primaryOptions, timeoutSource.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -64,14 +67,15 @@ internal static class SentinelResolver
                 lastError = ex;
                 logger?.LogWarning(
                     ex,
-                    "Redis Sentinel discovery failed through {Host}:{Port}",
+                    "Redis Sentinel discovery or primary connection failed through {Host}:{Port}",
                     endpoint.Host,
                     endpoint.Port);
             }
         }
 
         var message =
-            $"Unable to discover Redis Sentinel service '{options.ServiceName}' from {sentinelEndpoints.Length} endpoint(s).";
+            $"Unable to discover and connect to Redis Sentinel service '{options.ServiceName}' " +
+            $"from {sentinelEndpoints.Length} endpoint(s).";
         throw lastError is null
             ? new RespireConnectionException(message)
             : new RespireConnectionException(message, lastError);

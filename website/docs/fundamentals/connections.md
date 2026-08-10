@@ -68,6 +68,13 @@ await using var redis = await RespireClient.ConnectAsync(
     "redis://:redis-password@sentinel-1?serviceName=mymaster&sentinelPassword=sentinel-password");
 ```
 
+By default, Sentinel authentication inherits the primary Redis credentials. Set
+`SentinelPassword = string.Empty`, or include an empty `sentinelPassword=` URI parameter, to
+explicitly disable Sentinel authentication while retaining authentication on the discovered
+primary. When multiple Sentinel endpoints are configured, Respire also tries the next endpoint
+if discovery times out, returns invalid data, or reports a primary that cannot be reached during
+the initial connection.
+
 Sentinel currently requires `ConnectAsync` because discovery is a network operation that must run
 before Redis connections exist. Lazy `Create` and automatic Sentinel re-discovery during failover
 are planned follow-up work.

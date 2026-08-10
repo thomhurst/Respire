@@ -79,7 +79,10 @@ public sealed record RespireOptions
     /// <summary>Optional ACL username for Sentinel endpoints; falls back to <see cref="Username"/>.</summary>
     public string? SentinelUsername { get; init; }
 
-    /// <summary>Optional password for Sentinel endpoints; falls back to <see cref="Password"/>.</summary>
+    /// <summary>
+    /// Optional password for Sentinel endpoints. Null falls back to <see cref="Password"/>;
+    /// an empty string explicitly disables Sentinel authentication.
+    /// </summary>
     public string? SentinelPassword { get; init; }
 
     /// <summary>When set, CLIENT SETNAME runs during the handshake — invaluable in CLIENT LIST.</summary>
