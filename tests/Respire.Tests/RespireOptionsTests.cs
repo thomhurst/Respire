@@ -22,7 +22,7 @@ public class RespireOptionsTests
         var options = RespireOptions.Parse(
             "cache-a:6380,cache-b,user=app,password=secret,clientName=api," +
             "defaultDatabase=2,connectTimeout=1500,asyncTimeout=2500,protocol=resp3," +
-            "allowAdmin=true,keepAlive=60");
+            "allowAdmin=true");
 
         await Assert.That(options.Endpoints).IsEquivalentTo(
             [new RespireEndpoint("cache-a", 6380), new RespireEndpoint("cache-b")]);
@@ -34,7 +34,6 @@ public class RespireOptionsTests
         await Assert.That(options.CommandTimeout).IsEqualTo(TimeSpan.FromMilliseconds(2500));
         await Assert.That(options.Protocol).IsEqualTo(RespProtocol.Resp3);
         await Assert.That(options.AllowAdmin).IsTrue();
-        await Assert.That(options.TcpKeepAliveTime).IsEqualTo(TimeSpan.FromSeconds(60));
     }
 
     [Test]
@@ -44,6 +43,16 @@ public class RespireOptionsTests
             () => RespireOptions.Parse("localhost,connectRetry=3"));
 
         await Assert.That(exception.Message).Contains("connectRetry");
+        await Assert.That(exception.Message).Contains("redis://");
+    }
+
+    [Test]
+    public async Task StackExchangeConnectionString_KeepAliveFailsClearly()
+    {
+        var exception = Assert.Throws<ArgumentException>(
+            () => RespireOptions.Parse("localhost,keepAlive=60"));
+
+        await Assert.That(exception.Message).Contains("keepAlive");
         await Assert.That(exception.Message).Contains("redis://");
     }
 

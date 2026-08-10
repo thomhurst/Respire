@@ -238,7 +238,7 @@ public sealed record RespireOptions
     /// Comma-delimited strings support multiple endpoints and the options <c>user</c>,
     /// <c>password</c>, <c>ssl</c>, <c>clientName</c>, <c>defaultDatabase</c>,
     /// <c>connectTimeout</c>, <c>asyncTimeout</c>, <c>syncTimeout</c>, <c>protocol</c>,
-    /// <c>allowAdmin</c>, and <c>keepAlive</c>. Recognized URI query parameters:
+    /// and <c>allowAdmin</c>. Recognized URI query parameters:
     /// <c>clientName</c>, <c>connections</c>, <c>connectTimeoutMs</c>, <c>commandTimeoutMs</c>,
     /// <c>responseTimeoutMs</c>, <c>protocol</c> (2 or 3), <c>db</c>,
     /// <c>cluster</c> (true or false), <c>serviceName</c>, <c>sentinelUser</c>,
@@ -408,7 +408,6 @@ public sealed record RespireOptions
         TimeSpan? syncTimeout = null;
         var protocol = RespProtocol.Resp2;
         var allowAdmin = false;
-        TimeSpan? keepAlive = null;
 
         var segments = connectionString.Split(
             ',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -463,10 +462,6 @@ public sealed record RespireOptions
                 case "allowadmin":
                     allowAdmin = bool.Parse(value);
                     break;
-                case "keepalive":
-                    var keepAliveSeconds = int.Parse(value, CultureInfo.InvariantCulture);
-                    keepAlive = keepAliveSeconds > 0 ? TimeSpan.FromSeconds(keepAliveSeconds) : null;
-                    break;
                 default:
                     throw new ArgumentException(
                         $"StackExchange.Redis connection string option '{name}' is not supported. " +
@@ -494,7 +489,6 @@ public sealed record RespireOptions
             CommandTimeout = asyncTimeout ?? syncTimeout,
             Protocol = protocol,
             AllowAdmin = allowAdmin,
-            TcpKeepAliveTime = keepAlive,
         };
     }
 }

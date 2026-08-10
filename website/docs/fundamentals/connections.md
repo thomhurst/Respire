@@ -88,7 +88,7 @@ cache-a:6380,cache-b,password=secret,ssl=true,defaultDatabase=2
 Multiple endpoints are preserved in `RespireOptions.Endpoints`. Supported options are `user`
 (or `username`), `password`, `ssl`, `clientName`, `defaultDatabase` (or `db`),
 `connectTimeout`, `asyncTimeout` (or `syncTimeout`), `protocol` (`resp2` or `resp3`),
-`allowAdmin`, and `keepAlive`. Unsupported StackExchange.Redis options fail immediately with an
+and `allowAdmin`. Unsupported StackExchange.Redis options fail immediately with an
 `ArgumentException`; use a `redis://` URI or configure `RespireOptions` directly for Respire-only
 settings.
 
