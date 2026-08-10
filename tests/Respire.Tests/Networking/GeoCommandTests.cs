@@ -86,7 +86,7 @@ public class GeoCommandTests
             "places", GeoSearchOrigin.FromMember("cafe"), GeoSearchShape.Circle(10, GeoUnit.Kilometers), options);
         await Assert.That(search).IsEquivalentTo(new[]
         {
-            new GeoSearchResult("cafe"u8.ToArray(), 1.5, 123, new GeoPosition(2.5, 3.5)),
+            new GeoSearchResult("cafe", 1.5, 123, new GeoPosition(2.5, 3.5)),
         });
         await Assert.That(await client.Geo.SearchStoreAsync(
             "nearby", "places", GeoSearchOrigin.FromCoordinates(1.5, 2.5),
@@ -105,13 +105,13 @@ public class GeoCommandTests
     }
 
     [Test]
-    public async Task GeoSearch_PreservesBinaryResultMembers()
+    public async Task GeoSearch_DecodesResultMembersAsStrings()
     {
         byte[] response =
         [
             (byte)'*', (byte)'1', (byte)'\r', (byte)'\n',
-            (byte)'$', (byte)'2', (byte)'\r', (byte)'\n',
-            0xff, 0x00, (byte)'\r', (byte)'\n',
+            (byte)'$', (byte)'5', (byte)'\r', (byte)'\n',
+            (byte)'c', (byte)'a', (byte)'f', 0xc3, 0xa9, (byte)'\r', (byte)'\n',
         ];
         await using var server = new FakeRespServer(response);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
@@ -120,7 +120,7 @@ public class GeoCommandTests
             "places", GeoSearchOrigin.FromMember("origin"), GeoSearchShape.Circle(1));
 
         await Assert.That(results).Count().IsEqualTo(1);
-        await Assert.That(results[0].Member.AsSpan().SequenceEqual(new byte[] { 0xff, 0x00 })).IsTrue();
+        await Assert.That(results[0].Member).IsEqualTo("café");
     }
 
     [Test]

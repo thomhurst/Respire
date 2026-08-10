@@ -41,7 +41,7 @@ public readonly struct RespireStreamId : IEquatable<RespireStreamId>
 /// One stream entry. Entries read through a consumer group can acknowledge themselves via
 /// <see cref="AckAsync"/>.
 /// </summary>
-public sealed class RespireStreamEntry
+public readonly record struct RespireStreamEntry
 {
     private readonly RespireClient? _client;
     private readonly RespireValue _resolvedKey;
