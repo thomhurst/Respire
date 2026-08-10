@@ -344,6 +344,7 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
         return delay > TimeSpan.Zero ? delay : TimeSpan.Zero;
     }
 
+    /// <summary>Stops renewal and waits for the background renewal loop to finish.</summary>
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
