@@ -17,6 +17,7 @@ internal sealed class ClientCore : IAsyncDisposable
     private readonly HashSet<(RespireConnectionMultiplexer Node, int Slot)> _disconnectedCommandSlots = [];
     private readonly Dictionary<RespireEndpoint, RespireConnectionState> _publishedEndpointStates = [];
     private SubscriptionHub? _hub;
+    private RespireEndpoint? _subscriptionEndpoint;
     private RespireConnectionState _subscriptionState = RespireConnectionState.Connected;
     private bool _publishingState;
 
@@ -71,7 +72,15 @@ internal sealed class ClientCore : IAsyncDisposable
     {
         lock (_stateGate)
         {
+            var previousEndpoint = _subscriptionEndpoint;
+            _subscriptionEndpoint = change.Endpoint;
             _subscriptionState = change.State;
+            if (previousEndpoint is { } previous && previous != change.Endpoint)
+            {
+                QueueEndpointStateLocked(new RespireConnectionStateChange(
+                    previous, RespireConnectionState.Connected, null));
+            }
+
             QueueEndpointStateLocked(change);
         }
 
@@ -171,15 +180,15 @@ internal sealed class ClientCore : IAsyncDisposable
 
     private RespireConnectionState GetEndpointStateLocked(RespireEndpoint endpoint)
     {
-        var isPrimary = endpoint == Options.PrimaryEndpoint;
+        var isSubscriptionEndpoint = endpoint == _subscriptionEndpoint;
         if (_disconnectedCommandSlots.Any(commandSlot => IsEndpoint(commandSlot.Node, endpoint))
-            || isPrimary && _subscriptionState == RespireConnectionState.Disconnected)
+            || isSubscriptionEndpoint && _subscriptionState == RespireConnectionState.Disconnected)
         {
             return RespireConnectionState.Disconnected;
         }
 
         return _reconnectingCommandSlots.Any(commandSlot => IsEndpoint(commandSlot.Node, endpoint))
-               || isPrimary && _subscriptionState == RespireConnectionState.Reconnecting
+               || isSubscriptionEndpoint && _subscriptionState == RespireConnectionState.Reconnecting
             ? RespireConnectionState.Reconnecting
             : RespireConnectionState.Connected;
     }
@@ -255,6 +264,7 @@ internal sealed class ClientCore : IAsyncDisposable
         Disposed = true;
         lock (_stateGate)
         {
+            _subscriptionEndpoint = Options.PrimaryEndpoint;
             _subscriptionState = RespireConnectionState.Disconnected;
             QueueEndpointStateLocked(new RespireConnectionStateChange(
                 Options.PrimaryEndpoint, RespireConnectionState.Disconnected, null));

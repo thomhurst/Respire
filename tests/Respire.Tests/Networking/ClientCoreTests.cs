@@ -95,6 +95,47 @@ public class ClientCoreTests
     }
 
     [Test]
+    public async Task SubscriberState_UsesReportedEndpoint()
+    {
+        await using var core = new ClientCore(new RespireOptions { Cluster = true });
+        var endpoint = new RespireEndpoint("127.0.0.1", 6380);
+        var changes = new List<RespireConnectionStateChange>();
+        core.ConnectionStateChanged += changes.Add;
+
+        core.NotifySubscriptionStateChanged(new RespireConnectionStateChange(
+            endpoint, RespireConnectionState.Reconnecting, null));
+        core.NotifySubscriptionStateChanged(new RespireConnectionStateChange(
+            endpoint, RespireConnectionState.Connected, null));
+
+        await Assert.That(changes.Select(change => (change.Endpoint, change.State))).IsEquivalentTo(
+            [
+                (endpoint, RespireConnectionState.Reconnecting),
+                (endpoint, RespireConnectionState.Connected),
+            ]);
+    }
+
+    [Test]
+    public async Task SubscriberRecoveryToNewEndpoint_ClearsPreviousEndpoint()
+    {
+        await using var core = new ClientCore(new RespireOptions { Cluster = true });
+        var previousEndpoint = core.Options.PrimaryEndpoint;
+        var replacementEndpoint = new RespireEndpoint("127.0.0.1", 6380);
+        var changes = new List<RespireConnectionStateChange>();
+        core.ConnectionStateChanged += changes.Add;
+
+        core.NotifySubscriptionStateChanged(new RespireConnectionStateChange(
+            previousEndpoint, RespireConnectionState.Reconnecting, null));
+        core.NotifySubscriptionStateChanged(new RespireConnectionStateChange(
+            replacementEndpoint, RespireConnectionState.Connected, null));
+
+        await Assert.That(changes.Select(change => (change.Endpoint, change.State))).IsEquivalentTo(
+            [
+                (previousEndpoint, RespireConnectionState.Reconnecting),
+                (previousEndpoint, RespireConnectionState.Connected),
+            ]);
+    }
+
+    [Test]
     public async Task CommandRecovery_WaitsForEveryReconnectingSlot()
     {
         await using var core = new ClientCore(new RespireOptions { Connections = 2 });
