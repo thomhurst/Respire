@@ -276,6 +276,57 @@ internal static class ScopeWalker
             barrierArray);
     }
 
+    /// <summary>True when a local or parameter used by a condition is written between two nodes.</summary>
+    public static bool HasWriteBetween(
+        SemanticModel semanticModel,
+        SyntaxNode scope,
+        ExpressionSyntax condition,
+        SyntaxNode before,
+        SyntaxNode after,
+        CancellationToken cancellationToken)
+    {
+        var symbols = condition.DescendantNodesAndSelf().OfType<IdentifierNameSyntax>()
+            .Select(identifier => semanticModel.GetSymbolInfo(identifier, cancellationToken).Symbol)
+            .Where(static symbol => symbol is ILocalSymbol or IParameterSymbol)
+            .Distinct(SymbolEqualityComparer.Default);
+
+        foreach (var symbol in symbols)
+        {
+            foreach (var reference in FindReferences(scope, symbol!, semanticModel, cancellationToken))
+            {
+                if (reference.SpanStart > before.Span.End
+                    && reference.SpanStart < after.SpanStart
+                    && IsWrite(reference))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsWrite(IdentifierNameSyntax reference)
+    {
+        if (reference.FirstAncestorOrSelf<AssignmentExpressionSyntax>() is { } assignment
+            && assignment.Left.Span.Contains(reference.Span))
+        {
+            return true;
+        }
+
+        return reference.Parent switch
+        {
+            PrefixUnaryExpressionSyntax prefix =>
+                prefix.IsKind(SyntaxKind.PreIncrementExpression)
+                || prefix.IsKind(SyntaxKind.PreDecrementExpression),
+            PostfixUnaryExpressionSyntax postfix =>
+                postfix.IsKind(SyntaxKind.PostIncrementExpression)
+                || postfix.IsKind(SyntaxKind.PostDecrementExpression),
+            ArgumentSyntax argument => !argument.RefKindKeyword.IsKind(SyntaxKind.None),
+            _ => false,
+        };
+    }
+
     private static bool PathExistsAvoiding(
         ControlFlowGraph graph,
         BasicBlock startBlock,

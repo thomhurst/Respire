@@ -808,6 +808,77 @@ public class UndisposedPooledResultAnalyzerTests
         """);
 
     [Test]
+    public async Task ConditionalAcquisitionDisposedOnOwningBranch_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, RespireResult existing, bool condition)
+            {
+                var result = condition
+                    ? await client.ExecuteAsync("PING")
+                    : existing;
+
+                if (condition)
+                {
+                    result.Dispose();
+                }
+            }
+        }
+        """);
+
+    [Test]
+    public async Task ReassignedConditionalAcquisitionPredicate_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, RespireResult existing, bool condition)
+            {
+                var {|RESP001:result|} = condition
+                    ? await client.ExecuteAsync("PING")
+                    : existing;
+                condition = !condition;
+
+                if (condition)
+                {
+                    result.Dispose();
+                }
+            }
+        }
+        """);
+
+    [Test]
+    public async Task GuardedConditionalAcquisitionRelease_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(
+                RespireClient client, RespireResult existing, bool condition, bool release)
+            {
+                var {|RESP001:result|} = condition
+                    ? await client.ExecuteAsync("PING")
+                    : existing;
+
+                if (release)
+                {
+                    if (condition)
+                    {
+                        result.Dispose();
+                    }
+                }
+            }
+        }
+        """);
+
+    [Test]
     public async Task CoalescingAcquisitionWithoutDispose_IsFlagged() => await Verify.VerifyAsync(
         """
         #nullable enable

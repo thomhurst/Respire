@@ -102,7 +102,9 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            if (IsDisposedOrEscapes(context, scope, declaration, acquisitionAssignment: null, local))
+            if (IsDisposedOrEscapes(context, scope, declaration, acquisitionAssignment: null, local)
+                || ConditionalAcquisitionsAreReleased(
+                    context, scope, declaration, variable.Initializer.Value, local))
             {
                 continue;
             }
@@ -126,7 +128,9 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         }
 
         var pooledType = Match(local.Type, resultType) ?? Match(local.Type, leaseType);
-        if (pooledType is null || IsDisposedOrEscapes(context, scope, assignment.Right, assignment, local))
+        if (pooledType is null
+            || IsDisposedOrEscapes(context, scope, assignment.Right, assignment, local)
+            || ConditionalAcquisitionsAreReleased(context, scope, assignment, assignment.Right, local))
         {
             return;
         }
@@ -157,6 +161,65 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             default:
                 return false;
         }
+    }
+
+    private static bool ConditionalAcquisitionsAreReleased(
+        SyntaxNodeAnalysisContext context,
+        SyntaxNode scope,
+        SyntaxNode acquisition,
+        ExpressionSyntax value,
+        ILocalSymbol local)
+    {
+        if (ScopeWalker.Unwrap(value) is not ConditionalExpressionSyntax conditional)
+        {
+            return false;
+        }
+
+        var ownsWhenTrue = ContainsRespireAcquisition(context, conditional.WhenTrue);
+        var ownsWhenFalse = ContainsRespireAcquisition(context, conditional.WhenFalse);
+        foreach (var ifStatement in scope.DescendantNodes().OfType<IfStatementSyntax>())
+        {
+            if (ifStatement.SpanStart <= acquisition.SpanStart
+                || !SyntaxFactory.AreEquivalent(
+                    ScopeWalker.Unwrap(conditional.Condition),
+                    ScopeWalker.Unwrap(ifStatement.Condition))
+                || ScopeWalker.HasWriteBetween(
+                    context.SemanticModel,
+                    scope,
+                    conditional.Condition,
+                    conditional,
+                    ifStatement,
+                    context.CancellationToken)
+                || !ScopeWalker.PostDominates(
+                    context.SemanticModel, scope, acquisition, ifStatement, context.CancellationToken))
+            {
+                continue;
+            }
+
+            if ((!ownsWhenTrue || HasUnconditionalRelease(context, scope, ifStatement.Statement, local))
+                && (!ownsWhenFalse
+                    || ifStatement.Else is { Statement: { } falseBranch }
+                    && HasUnconditionalRelease(context, scope, falseBranch, local)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasUnconditionalRelease(
+        SyntaxNodeAnalysisContext context, SyntaxNode scope, SyntaxNode branch, ILocalSymbol local)
+    {
+        var releases = ScopeWalker.FindReferences(
+                branch, local, context.SemanticModel, context.CancellationToken)
+            .Where(reference => !ScopeWalker.IsNestedInLambda(reference, scope)
+                                && IsImmediatelyReleasedOrTransferred(context, reference))
+            .Select(ScopeWalker.GetOutermostTransparentExpression)
+            .ToArray();
+
+        return ScopeWalker.CollectivelyPostDominates(
+            context.SemanticModel, scope, branch, releases, context.CancellationToken);
     }
 
     private static INamedTypeSymbol? Match(ITypeSymbol candidate, INamedTypeSymbol? pooledType)
@@ -354,9 +417,9 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
     }
 
     private static bool IsImmediatelyReleasedOrTransferred(
-        SyntaxNodeAnalysisContext context, AssignmentExpressionSyntax assignment)
+        SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
     {
-        var use = ScopeWalker.GetOutermostTransparentExpression(assignment);
+        var use = ScopeWalker.GetOutermostTransparentExpression(expression);
         switch (use.Parent)
         {
             case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, use):

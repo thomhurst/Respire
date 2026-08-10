@@ -1156,6 +1156,59 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    public async Task MatchingFlushInsideOuterGuard_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool condition, bool flushNow)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = condition
+                    ? first.GetStringAsync("a")
+                    : second.GetStringAsync("b");
+
+                if (flushNow)
+                {
+                    if (condition)
+                    {
+                        await first.SendAsync();
+                    }
+                    else
+                    {
+                        await second.SendAsync();
+                    }
+                }
+
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
+    public async Task PendingAliasReadBeforeSend_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                var alias = pending;
+                Console.WriteLine({|RESP002:alias.Result|});
+            }
+        }
+        """);
+
+    [Test]
     public async Task ReassignedConditionInvalidatesBranchCorrelation() => await Verify.VerifyAsync(
         """
         using System;
