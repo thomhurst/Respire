@@ -173,7 +173,7 @@ public class SetExpiryWireTests
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        await client.Strings.SetManyExpireAsync(TimeSpan.FromSeconds(3), pairs: ("a", "1"));
+        await client.Strings.SetManyExpireAsync(TimeSpan.FromSeconds(3), ("a", "1"));
         await client.Strings.SetManyExpireAsync(RespireExpiry.At(Instant), SetWhen.Exists, ("b", "2"));
         await client.Strings.SetManyExpireAsync(RespireExpiry.Keep, SetWhen.NotExists, ("c", "3"));
         await client.Strings.SetManyExpireAsync(RespireExpiry.None, SetWhen.NotExists, ("d", "4"));

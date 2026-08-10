@@ -121,16 +121,27 @@ public interface IStringCommands
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Atomically sets many keys with a shared expiry and an optional NX/XX condition. Use
+    /// Atomically sets many keys with a shared expiry. Use
     /// <see cref="RespireCommands.String.MSETEX"/> directly for second-precision EX/EXAT forms.
     /// Redis: MSETEX.
     /// </summary>
     ValueTask<bool> SetManyExpireAsync(
         RespireExpiry expiry,
-        SetWhen when = SetWhen.Always,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
 
-    /// <summary>Atomically sets many keys with a shared expiry and optional NX/XX condition. Redis: MSETEX.</summary>
+    /// <summary>Atomically sets many keys with a shared expiry. Redis: MSETEX.</summary>
+    ValueTask<bool> SetManyExpireAsync(
+        RespireExpiry expiry,
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
+        CancellationToken cancellationToken);
+
+    /// <summary>Atomically sets many keys with a shared expiry and an NX/XX condition. Redis: MSETEX.</summary>
+    ValueTask<bool> SetManyExpireAsync(
+        RespireExpiry expiry,
+        SetWhen when,
+        params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
+
+    /// <summary>Atomically sets many keys with a shared expiry and an NX/XX condition. Redis: MSETEX.</summary>
     ValueTask<bool> SetManyExpireAsync(
         RespireExpiry expiry,
         SetWhen when,
@@ -239,7 +250,18 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
             "MSET", new CmdN(Verbs.MSet, SetManyArgs(client, pairs)), cancellationToken);
 
     public ValueTask<bool> SetManyExpireAsync(
-        RespireExpiry expiry, SetWhen when = SetWhen.Always,
+        RespireExpiry expiry, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+        => SetManyExpireAsync(expiry, SetWhen.Always, pairs, CancellationToken.None);
+
+    public ValueTask<bool> SetManyExpireAsync(
+        RespireExpiry expiry,
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
+        CancellationToken cancellationToken)
+        => SetManyExpireAsync(expiry, SetWhen.Always, pairs, cancellationToken);
+
+    public ValueTask<bool> SetManyExpireAsync(
+        RespireExpiry expiry,
+        SetWhen when,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
         => SetManyExpireAsync(expiry, when, pairs, CancellationToken.None);
 

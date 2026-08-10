@@ -68,16 +68,24 @@ public interface IRespireClient : IAsyncDisposable
     // Subscribing is always awaited: the subscription is live on the server when the task
     // completes, so a publish that follows is guaranteed to reach it.
     ValueTask<RespireSubscription> SubscribeAsync(string channel, CancellationToken cancellationToken = default);
-    ValueTask<RespireSubscription> SubscribeAsync(string[] channels, CancellationToken cancellationToken = default);
+    ValueTask<RespireSubscription> SubscribeAsync(params ReadOnlySpan<string> channels);
+    ValueTask<RespireSubscription> SubscribeAsync(
+        ReadOnlySpan<string> channels, CancellationToken cancellationToken);
     ValueTask<RespireSubscription> SubscribePatternAsync(string pattern, CancellationToken cancellationToken = default);
-    ValueTask<RespireSubscription> SubscribePatternAsync(string[] patterns, CancellationToken cancellationToken = default);
+    ValueTask<RespireSubscription> SubscribePatternAsync(params ReadOnlySpan<string> patterns);
+    ValueTask<RespireSubscription> SubscribePatternAsync(
+        ReadOnlySpan<string> patterns, CancellationToken cancellationToken);
     ValueTask<RespireSubscription> SubscribeShardedAsync(string channel, CancellationToken cancellationToken = default);
-    ValueTask<RespireSubscription> SubscribeShardedAsync(string[] channels, CancellationToken cancellationToken = default);
+    ValueTask<RespireSubscription> SubscribeShardedAsync(params ReadOnlySpan<string> channels);
+    ValueTask<RespireSubscription> SubscribeShardedAsync(
+        ReadOnlySpan<string> channels, CancellationToken cancellationToken);
 
     // Batches and transactions.
     RespireBatch CreateBatch();
     RespireTransaction CreateTransaction();
-    ValueTask<RespireTransaction> CreateTransactionAsync(RespireKey[] watchKeys, CancellationToken cancellationToken = default);
+    ValueTask<RespireTransaction> CreateTransactionAsync(params ReadOnlySpan<RespireKey> watchKeys);
+    ValueTask<RespireTransaction> CreateTransactionAsync(
+        ReadOnlySpan<RespireKey> watchKeys, CancellationToken cancellationToken);
 
     /// <summary>Returns the effective Redis key after this client applies any key transformation.</summary>
     RespireKey ResolveKey(RespireKey key);

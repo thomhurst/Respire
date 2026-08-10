@@ -112,7 +112,7 @@ public class BatchFacetWireTests
         await client.SortedSets.CountByScoreAsync("z", 10, 50);
         await client.Bitmaps.CountAsync("bits", 0, 8, BitIndexUnit.Bit);
         await client.HyperLogLog.AddAsync("hll", "one", "two");
-        await client.Geo.AddAsync("cities", entries: [new GeoEntry(-0.1276, 51.5072, "london")]);
+        await client.Geo.AddAsync("cities", new GeoEntry(-0.1276, 51.5072, "london"));
 
         var expected = server.ReceivedCommands;
 
@@ -132,7 +132,7 @@ public class BatchFacetWireTests
         _ = batch.SortedSets.CountByScore("z", 10, 50);
         _ = batch.Bitmaps.Count("bits", 0, 8, BitIndexUnit.Bit);
         _ = batch.HyperLogLog.Add("hll", "one", "two");
-        _ = batch.Geo.Add("cities", entries: [new GeoEntry(-0.1276, 51.5072, "london")]);
+        _ = batch.Geo.Add("cities", new GeoEntry(-0.1276, 51.5072, "london"));
         await batch.ExecuteAsync();
 
         var queued = server.ReceivedCommands.Skip(expected.Count).ToArray();

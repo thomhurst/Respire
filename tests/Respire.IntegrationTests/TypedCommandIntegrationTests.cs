@@ -97,11 +97,9 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
 
         (await client.Geo.AddAsync(
-            "cities", entries:
-            [
-                new GeoEntry(-0.1276, 51.5072, "london"),
-                new GeoEntry(2.3522, 48.8566, "paris"),
-            ])).Should().Be(2);
+            "cities",
+            new GeoEntry(-0.1276, 51.5072, "london"),
+            new GeoEntry(2.3522, 48.8566, "paris"))).Should().Be(2);
 
         (await client.Geo.DistanceAsync("cities", "london", "paris", GeoUnit.Kilometers))
             .Should().BeInRange(340, 350);

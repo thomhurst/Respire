@@ -75,10 +75,15 @@ public interface IBatchStringCommands
     /// <summary>Sets many keys atomically; the pending is true once the server replies OK. Redis: MSET.</summary>
     RespirePending<bool> SetMany(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
 
-    /// <summary>Atomically sets many keys with a shared expiry and optional NX/XX condition. Redis: MSETEX.</summary>
+    /// <summary>Atomically sets many keys with a shared expiry. Redis: MSETEX.</summary>
     RespirePending<bool> SetManyExpire(
         RespireExpiry expiry,
-        SetWhen when = SetWhen.Always,
+        params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
+
+    /// <summary>Atomically sets many keys with a shared expiry and an NX/XX condition. Redis: MSETEX.</summary>
+    RespirePending<bool> SetManyExpire(
+        RespireExpiry expiry,
+        SetWhen when,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
 
     /// <summary>Returns the longest common subsequence. Redis: LCS.</summary>
@@ -188,7 +193,12 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
 
     public RespirePending<bool> SetManyExpire(
         RespireExpiry expiry,
-        SetWhen when = SetWhen.Always,
+        params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+        => SetManyExpire(expiry, SetWhen.Always, pairs);
+
+    public RespirePending<bool> SetManyExpire(
+        RespireExpiry expiry,
+        SetWhen when,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
     {
         return sink.Add<MSetExCommand, bool>(
