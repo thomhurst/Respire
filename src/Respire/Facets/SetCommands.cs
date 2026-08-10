@@ -42,6 +42,9 @@ public interface ISetCommands
     /// <summary>All members. Redis: SMEMBERS.</summary>
     ValueTask<string[]> MembersAsync(RespireKey key, CancellationToken cancellationToken = default);
 
+    /// <summary>All members deserialized as <typeparamref name="T"/>. Redis: SMEMBERS.</summary>
+    ValueTask<T[]> MembersAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
+
     /// <summary>Iterates members incrementally. Redis: SSCAN.</summary>
     IAsyncEnumerable<string> ScanAsync(
         RespireKey key, string? match = null, int countHint = 250,
@@ -118,6 +121,10 @@ internal sealed class SetCommands(RespireClient client) : ISetCommands
 
     public ValueTask<string[]> MembersAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.StringArrayAsync("SMEMBERS", new Cmd1(Verbs.SMembers, client.Key(in key)), cancellationToken);
+
+    public ValueTask<T[]> MembersAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
+        => client.DeserializeArrayAsync<T, Cmd1>(
+            "SMEMBERS", new Cmd1(Verbs.SMembers, client.Key(in key)), cancellationToken);
 
     public IAsyncEnumerable<string> ScanAsync(
         RespireKey key, string? match = null, int countHint = 250,
