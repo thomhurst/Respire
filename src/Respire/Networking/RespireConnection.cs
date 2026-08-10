@@ -37,7 +37,7 @@ namespace Respire.Networking;
 /// multiplexer, never revived in place.
 /// </para>
 /// </remarks>
-public sealed class RespireConnection : IAsyncDisposable
+internal sealed class RespireConnection : IAsyncDisposable
 {
     private const int DirectFillThreshold = 4 * 1024;
     private const int MaxResponseSize = 512 * 1024 * 1024;
@@ -1709,10 +1709,10 @@ public sealed class RespireConnection : IAsyncDisposable
 /// loop. The value is only valid for the duration of the callback — copy what you need; the
 /// connection disposes it afterwards. Do not block.
 /// </summary>
-public delegate void RespirePushHandler(in RespValue value);
+internal delegate void RespirePushHandler(in RespValue value);
 
 /// <summary>Tuning options for a single RESP connection.</summary>
-public sealed record RespireConnectionOptions
+internal sealed record RespireConnectionOptions
 {
     public static readonly RespireConnectionOptions Default = new();
 

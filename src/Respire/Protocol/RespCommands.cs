@@ -3,7 +3,7 @@ namespace Respire.Protocol;
 /// <summary>
 /// Pre-encoded RESP frames for commands that take no arguments.
 /// </summary>
-public static class RespCommands
+internal static class RespCommands
 {
     public static readonly byte[] Ping = "*1\r\n$4\r\nPING\r\n"u8.ToArray();
     public static readonly byte[] Quit = "*1\r\n$4\r\nQUIT\r\n"u8.ToArray();

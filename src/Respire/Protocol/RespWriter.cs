@@ -11,7 +11,7 @@ namespace Respire.Protocol;
 /// write buffer. Obtained by the connection while it holds the write gate; commands implement
 /// <see cref="IRespCommand"/> and append one complete RESP frame through this writer.
 /// </summary>
-public ref struct RespWriter
+internal ref struct RespWriter
 {
     // Max digits for a long (19) + sign + type prefix + CRLF
     private const int MaxIntegerLineLength = 24;
@@ -99,7 +99,7 @@ public ref struct RespWriter
 /// A command that can serialize itself as a RESP frame. Implement on a readonly struct so the
 /// connection's generic send path is fully monomorphized with no delegate or boxing overhead.
 /// </summary>
-public interface IRespCommand
+internal interface IRespCommand
 {
     void Write(ref RespWriter writer);
 

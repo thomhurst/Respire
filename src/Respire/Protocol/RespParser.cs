@@ -16,7 +16,7 @@ namespace Respire.Protocol;
 /// <see cref="RespParseState"/> to retain aggregate progress and direct-fill large bulk values
 /// at any nesting depth.
 /// </remarks>
-public enum RespParseStatus : byte
+internal enum RespParseStatus : byte
 {
     Done,
     NeedMoreData,
@@ -24,7 +24,7 @@ public enum RespParseStatus : byte
     NeedDirectFill,
 }
 
-public static class RespParser
+internal static class RespParser
 {
     /// <summary>
     /// Attempts to parse one complete RESP value starting at <paramref name="pos"/>.

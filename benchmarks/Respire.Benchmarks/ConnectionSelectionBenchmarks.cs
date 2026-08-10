@@ -52,5 +52,5 @@ public class ConnectionSelectionBenchmarks
     }
 
     [Benchmark]
-    public RespireConnection SelectHealthyConnection() => _multiplexer.GetConnection();
+    public object SelectHealthyConnection() => _multiplexer.GetConnection();
 }
