@@ -76,6 +76,25 @@ redis://localhost:6379/0?clientName=checkout-api&connections=4&allowAdmin=false
 
 Supported query parameters are `clientName`, `connections`, `connectTimeoutMs`, `commandTimeoutMs`, `responseTimeoutMs`, `protocol` (`2` or `3`), `db`, `cluster`, and `allowAdmin`.
 
+## StackExchange.Redis connection strings
+
+Respire also accepts the common comma-delimited format, which eases migration from
+StackExchange.Redis:
+
+```text
+cache-a:6380,cache-b,password=secret,ssl=true,defaultDatabase=2
+```
+
+Multiple endpoints are preserved in `RespireOptions.Endpoints`. Supported options are `user`
+(or `username`), `password`, `ssl`, `clientName`, `defaultDatabase` (or `db`),
+`connectTimeout`, `asyncTimeout` (or `syncTimeout`), `protocol` (`resp2` or `resp3`),
+`allowAdmin`, and `keepAlive`. Unsupported StackExchange.Redis options fail immediately with an
+`ArgumentException`; use a `redis://` URI or configure `RespireOptions` directly for Respire-only
+settings.
+
+Bare IPv6 endpoints use the default Redis port. Add brackets when specifying a port: `::1` or
+`[::1]:6380`.
+
 ## Lazy creation
 
 Applications that must start before Redis can use `Create`:

@@ -7,6 +7,56 @@ namespace Respire.Tests;
 public class RespireOptionsTests
 {
     [Test]
+    public async Task StackExchangeConnectionString_ParsesEndpointPasswordAndTls()
+    {
+        var options = RespireOptions.Parse("localhost:6379,password=secret,ssl=true");
+
+        await Assert.That(options.Endpoints).IsEquivalentTo([new RespireEndpoint("localhost", 6379)]);
+        await Assert.That(options.Password).IsEqualTo("secret");
+        await Assert.That(options.UseTls).IsTrue();
+    }
+
+    [Test]
+    public async Task StackExchangeConnectionString_MapsCommonOptionsAndMultipleEndpoints()
+    {
+        var options = RespireOptions.Parse(
+            "cache-a:6380,cache-b,user=app,password=secret,clientName=api," +
+            "defaultDatabase=2,connectTimeout=1500,asyncTimeout=2500,protocol=resp3," +
+            "allowAdmin=true,keepAlive=60");
+
+        await Assert.That(options.Endpoints).IsEquivalentTo(
+            [new RespireEndpoint("cache-a", 6380), new RespireEndpoint("cache-b")]);
+        await Assert.That(options.Username).IsEqualTo("app");
+        await Assert.That(options.Password).IsEqualTo("secret");
+        await Assert.That(options.ClientName).IsEqualTo("api");
+        await Assert.That(options.Database).IsEqualTo(2);
+        await Assert.That(options.ConnectTimeout).IsEqualTo(TimeSpan.FromMilliseconds(1500));
+        await Assert.That(options.CommandTimeout).IsEqualTo(TimeSpan.FromMilliseconds(2500));
+        await Assert.That(options.Protocol).IsEqualTo(RespProtocol.Resp3);
+        await Assert.That(options.AllowAdmin).IsTrue();
+        await Assert.That(options.TcpKeepAliveTime).IsEqualTo(TimeSpan.FromSeconds(60));
+    }
+
+    [Test]
+    public async Task StackExchangeConnectionString_UnknownOptionFailsClearly()
+    {
+        var exception = Assert.Throws<ArgumentException>(
+            () => RespireOptions.Parse("localhost,connectRetry=3"));
+
+        await Assert.That(exception.Message).Contains("connectRetry");
+        await Assert.That(exception.Message).Contains("redis://");
+    }
+
+    [Test]
+    public async Task Endpoint_ParsesBareAndBracketedIpv6()
+    {
+        await Assert.That(RespireEndpoint.Parse("::1")).IsEqualTo(new RespireEndpoint("::1"));
+        await Assert.That(RespireEndpoint.Parse("[::1]")).IsEqualTo(new RespireEndpoint("::1"));
+        await Assert.That(RespireEndpoint.Parse("[::1]:6380")).IsEqualTo(new RespireEndpoint("::1", 6380));
+        await Assert.That(new RespireEndpoint("::1").ToString()).IsEqualTo("[::1]:6379");
+    }
+
+    [Test]
     public async Task ConnectionString_DefaultsAllowAdminToFalse()
     {
         var hostOnly = RespireOptions.Parse("localhost");
