@@ -33,16 +33,26 @@ public class RespireLeaseTests
     }
 
     [Test]
-    public async Task AccessAfterDispose_ThrowsObjectDisposedException()
+    public async Task StateAfterDispose_RemainsInspectableWhilePayloadAccessThrows()
     {
         var lease = new RespireLease(RespValue.BulkString("value"));
         lease.Dispose();
 
         await Assert.That(lease.IsDisposed).IsTrue();
-        await Assert.That(() => lease.IsNull).ThrowsExactly<ObjectDisposedException>();
-        await Assert.That(() => lease.Length).ThrowsExactly<ObjectDisposedException>();
+        await Assert.That(lease.IsNull).IsTrue();
+        await Assert.That(lease.Length).IsEqualTo(0);
         await Assert.That(() => lease.ToString()).ThrowsExactly<ObjectDisposedException>();
         await Assert.That(() => lease.ToArray()).ThrowsExactly<ObjectDisposedException>();
         await Assert.That(() => lease.TryCopyTo(new byte[5])).ThrowsExactly<ObjectDisposedException>();
+    }
+
+    [Test]
+    public async Task DefaultLease_ReportsNullEmptyDisposedState()
+    {
+        var lease = default(RespireLease);
+
+        await Assert.That(lease.IsDisposed).IsTrue();
+        await Assert.That(lease.IsNull).IsTrue();
+        await Assert.That(lease.Length).IsEqualTo(0);
     }
 }

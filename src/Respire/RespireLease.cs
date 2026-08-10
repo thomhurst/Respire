@@ -5,8 +5,8 @@ namespace Respire;
 
 /// <summary>
 /// A zero-copy read result backed by pooled memory. Valid until <see cref="Dispose"/>.
-/// Copies share one owner: disposal is idempotent across copies. Access after disposal throws
-/// <see cref="ObjectDisposedException"/>.
+/// Copies share one owner: disposal is idempotent across copies. Payload access after disposal
+/// throws <see cref="ObjectDisposedException"/>.
 /// </summary>
 public readonly struct RespireLease : IDisposable
 {
@@ -26,11 +26,11 @@ public readonly struct RespireLease : IDisposable
     /// <summary>Gets whether this lease (or any copy sharing its owner) has been disposed.</summary>
     public bool IsDisposed => _owner is null || _owner.IsDisposed;
 
-    /// <summary>True when the key was missing.</summary>
-    public bool IsNull => Value.IsNull;
+    /// <summary>True when the key was missing or the lease is null or disposed.</summary>
+    public bool IsNull => IsDisposed || _owner!.Value.IsNull;
 
     /// <summary>The leased payload length in bytes, or zero for a null or disposed lease.</summary>
-    public int Length => Span.Length;
+    public int Length => IsDisposed ? 0 : _owner!.Value.AsSpan().Length;
 
     /// <summary>The payload. Do not use after <see cref="Dispose"/>.</summary>
     public ReadOnlySpan<byte> Span => Value.AsSpan();
