@@ -643,6 +643,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private async Task ReconnectAsync(int slot)
     {
         RespireConnection? replacement = null;
+        var reconnectGuardReleased = false;
         try
         {
             replacement = await RespireConnection.ConnectAsync(Host, Port, _options, _logger).ConfigureAwait(false);
@@ -701,13 +702,20 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; will retry on next use", Host, Port);
             if (Volatile.Read(ref _disposed) == 0)
             {
+                // A synchronous state-change handler may issue a command immediately. Release
+                // this attempt's guard first so that command can schedule the promised retry.
+                Volatile.Write(ref _reconnecting[slot], 0);
+                reconnectGuardReleased = true;
                 NotifyStateChanged(RespireConnectionState.Disconnected, ex);
                 NotifySlotStateChanged(slot, RespireConnectionState.Disconnected, ex);
             }
         }
         finally
         {
-            Volatile.Write(ref _reconnecting[slot], 0);
+            if (!reconnectGuardReleased)
+            {
+                Volatile.Write(ref _reconnecting[slot], 0);
+            }
         }
     }
 
