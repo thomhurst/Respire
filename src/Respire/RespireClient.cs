@@ -129,6 +129,21 @@ public sealed partial class RespireClient : IRespireClient
         => ExecuteCatalogAsync(command, args, RespireCommandFlags.None, CancellationToken.None);
 
     /// <summary>
+    /// Sends a catalog command whose first argument is an integer.
+    /// </summary>
+    public ValueTask<RespireResult> ExecuteAsync(
+        RespireCommand command, int firstArgument, params RespireValue[] args)
+        => ExecuteCatalogAsync(
+            command, [(RespireValue)firstArgument, .. args], RespireCommandFlags.None, CancellationToken.None);
+
+    /// <summary>
+    /// Sends a command from <see cref="RespireCommands"/> with command policy flags.
+    /// </summary>
+    public ValueTask<RespireResult> ExecuteAsync(
+        RespireCommand command, RespireCommandFlags flags, params RespireValue[] args)
+        => ExecuteCatalogAsync(command, args, flags, CancellationToken.None);
+
+    /// <summary>
     /// Sends a command from <see cref="RespireCommands"/> with command policy flags.
     /// </summary>
     public ValueTask<RespireResult> ExecuteAsync(
@@ -248,6 +263,21 @@ public sealed partial class RespireClient : IRespireClient
     /// </summary>
     public ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args)
         => ExecuteRawAsync(command, args, RespireCommandFlags.None, CancellationToken.None);
+
+    /// <summary>
+    /// Sends any command whose first argument is an integer.
+    /// </summary>
+    public ValueTask<RespireResult> ExecuteAsync(
+        string command, int firstArgument, params RespireValue[] args)
+        => ExecuteRawAsync(
+            command, [(RespireValue)firstArgument, .. args], RespireCommandFlags.None, CancellationToken.None);
+
+    /// <summary>
+    /// Sends any command with command policy flags.
+    /// </summary>
+    public ValueTask<RespireResult> ExecuteAsync(
+        string command, RespireCommandFlags flags, params RespireValue[] args)
+        => ExecuteRawAsync(command, args, flags, CancellationToken.None);
 
     /// <summary>
     /// Sends any command with command policy flags.

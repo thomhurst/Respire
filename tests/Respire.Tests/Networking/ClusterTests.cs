@@ -132,8 +132,8 @@ public class ClusterTests
         var error = await Assert.That(async () =>
                 await client.ExecuteAsync(
                     RespireCommands.String.GET,
-                    ["key"],
-                    RespireCommandFlags.NoRedirect))
+                    RespireCommandFlags.NoRedirect,
+                    "key"))
             .Throws<RespireServerException>();
 
         await Assert.That(error!.Code).IsEqualTo("MOVED");
@@ -156,7 +156,7 @@ public class ClusterTests
         });
 
         var error = await Assert.That(async () =>
-                await client.ExecuteAsync("GET", ["key"], RespireCommandFlags.NoRedirect))
+                await client.ExecuteAsync("GET", RespireCommandFlags.NoRedirect, "key"))
             .Throws<RespireServerException>();
 
         await Assert.That(error!.Code).IsEqualTo("MOVED");
