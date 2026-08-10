@@ -85,6 +85,7 @@ public class ClusterTests
 
         await client.ExecuteFireAndForgetAsync(RespireCommands.String.SET, "key", "first");
         await client.ExecuteFireAndForgetAsync(RespireCommands.String.SET, "key", "second");
+        await WaitForCommandsAsync(target, 2);
 
         await Assert.That(seed.ReceivedCommands)
             .IsEquivalentTo(["CLUSTER SLOTS", "SET key first"]);
@@ -1074,6 +1075,33 @@ public class ClusterTests
         };
         await Assert.That(firstNode.ReceivedCommands).IsEquivalentTo(expected);
         await Assert.That(secondNode.ReceivedCommands).IsEquivalentTo(expected);
+    }
+
+    [Test]
+    public async Task ClusterWideMutations_RejectCommandFlags()
+    {
+        var topology = "*0\r\n"u8.ToArray();
+        await using var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        await Assert.That(async () => await client.ExecuteAsync(
+                RespireCommands.Scripting.FUNCTION_LOAD,
+                RespireCommandFlags.NoRedirect,
+                "#!lua name=library"))
+            .Throws<NotSupportedException>();
+        await Assert.That(async () => await client.ExecuteAsync(
+                "SCRIPT FLUSH", RespireCommandFlags.NoRedirect))
+            .Throws<NotSupportedException>();
+        RespireValue subcommand = "FLUSH";
+        await Assert.That(async () => await client.ExecuteAsync(
+                $"FUNCTION {subcommand}", RespireCommandFlags.NoRedirect))
+            .Throws<NotSupportedException>();
+
+        await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
     }
 
     [Test]

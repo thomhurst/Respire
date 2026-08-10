@@ -156,12 +156,20 @@ public sealed partial class RespireClient : IRespireClient
     /// <summary>
     /// Queues a catalog command and discards its reply once it arrives.
     /// </summary>
+    /// <remarks>
+    /// Standalone execution returns after writing. Cluster execution may await replies to process
+    /// <c>MOVED</c> and <c>ASK</c> redirects, adding round-trip latency.
+    /// </remarks>
     public ValueTask ExecuteFireAndForgetAsync(RespireCommand command, params RespireValue[] args)
         => ExecuteCatalogFireAndForgetAsync(command, args, CancellationToken.None);
 
     /// <summary>
     /// Queues a catalog command and discards its reply once it arrives.
     /// </summary>
+    /// <remarks>
+    /// Standalone execution returns after writing. Cluster execution may await replies to process
+    /// <c>MOVED</c> and <c>ASK</c> redirects, adding round-trip latency.
+    /// </remarks>
     public ValueTask ExecuteFireAndForgetAsync(
         RespireCommand command, RespireValue[] args, CancellationToken cancellationToken)
         => ExecuteCatalogFireAndForgetAsync(command, args, cancellationToken);
@@ -181,6 +189,7 @@ public sealed partial class RespireClient : IRespireClient
         if (_core.Cluster is { } cluster
             && DynamicCommandRouting.IsClusterWideMutation(command.Name, args))
         {
+            ValidateClusterWideFlags(command.Name, flags);
             response = await SendClusterWideAsync(
                     command.Name, cluster, commandValue, cancellationToken)
                 .ConfigureAwait(false);
@@ -248,6 +257,13 @@ public sealed partial class RespireClient : IRespireClient
         => ExecuteRawAsync(command, args, flags, CancellationToken.None);
 
     /// <summary>
+    /// Sends any command with cancellation.
+    /// </summary>
+    public ValueTask<RespireResult> ExecuteAsync(
+        string command, RespireValue[] args, CancellationToken cancellationToken)
+        => ExecuteRawAsync(command, args, RespireCommandFlags.None, cancellationToken);
+
+    /// <summary>
     /// Sends any command with command policy flags and cancellation.
     /// </summary>
     public ValueTask<RespireResult> ExecuteAsync(
@@ -260,12 +276,20 @@ public sealed partial class RespireClient : IRespireClient
     /// <summary>
     /// Queues any command and discards its reply once it arrives.
     /// </summary>
+    /// <remarks>
+    /// Standalone execution returns after writing. Cluster execution may await replies to process
+    /// <c>MOVED</c> and <c>ASK</c> redirects, adding round-trip latency.
+    /// </remarks>
     public ValueTask ExecuteFireAndForgetAsync(string command, params RespireValue[] args)
         => ExecuteRawFireAndForgetAsync(command, args, CancellationToken.None);
 
     /// <summary>
     /// Queues any command and discards its reply once it arrives.
     /// </summary>
+    /// <remarks>
+    /// Standalone execution returns after writing. Cluster execution may await replies to process
+    /// <c>MOVED</c> and <c>ASK</c> redirects, adding round-trip latency.
+    /// </remarks>
     public ValueTask ExecuteFireAndForgetAsync(
         string command, RespireValue[] args, CancellationToken cancellationToken)
         => ExecuteRawFireAndForgetAsync(command, args, cancellationToken);
@@ -277,11 +301,14 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken)
     {
         ValidateResultFlags(flags);
-        var (operation, storedProcedureName, commandValue) = CreateRawCommand(command, args);
+        var (operation, words, firstArgumentIndex) = ParseRawCommand(command);
+        var (storedProcedureName, commandValue) = CreateRawCommand(
+            operation, words, firstArgumentIndex, args);
         RespValue response;
         if (_core.Cluster is { } cluster
             && DynamicCommandRouting.IsClusterWideMutation(operation, args))
         {
+            ValidateClusterWideFlags(operation, flags);
             response = await SendClusterWideAsync(
                     operation, cluster, commandValue, cancellationToken)
                 .ConfigureAwait(false);
@@ -305,8 +332,10 @@ public sealed partial class RespireClient : IRespireClient
         RespireValue[] args,
         CancellationToken cancellationToken)
     {
-        var (operation, _, commandValue) = CreateRawCommand(command, args);
-        ValidateRawFireAndForgetCommand(operation, commandValue.Arguments);
+        var (operation, words, firstArgumentIndex) = ParseRawCommand(command);
+        ValidateRawFireAndForgetCommand(
+            operation, words.AsSpan(firstArgumentIndex), args);
+        var (_, commandValue) = CreateRawCommand(operation, words, firstArgumentIndex, args);
 
         if (_core.Cluster is { } cluster
             && DynamicCommandRouting.IsClusterWideMutation(operation, args))
@@ -353,6 +382,7 @@ public sealed partial class RespireClient : IRespireClient
         if (_core.Cluster is { } cluster
             && DynamicCommandRouting.IsClusterWideMutation(operation, tokens.AsSpan(1)))
         {
+            ValidateClusterWideFlags(operation, flags);
             response = await SendClusterWideAsync(
                     operation, cluster, commandValue, cancellationToken)
                 .ConfigureAwait(false);
@@ -412,8 +442,18 @@ public sealed partial class RespireClient : IRespireClient
     private static bool HasFlag(RespireCommandFlags flags, RespireCommandFlags flag)
         => (flags & flag) != 0;
 
+    private static void ValidateClusterWideFlags(string operation, RespireCommandFlags flags)
+    {
+        if (flags != RespireCommandFlags.None)
+        {
+            throw new NotSupportedException(
+                $"{flags} cannot be used with cluster-wide {operation} commands.");
+        }
+    }
+
     private static void ValidateRawFireAndForgetCommand(
         string operation,
+        ReadOnlySpan<string> inlineArguments,
         ReadOnlySpan<RespireValue> arguments)
     {
         var behavior = RespireCommand.Classify(operation);
@@ -423,19 +463,27 @@ public sealed partial class RespireClient : IRespireClient
                 $"{operation} requires connection affinity and cannot run through ExecuteFireAndForgetAsync.");
         }
 
-        if (RespireCommand.IsBlocking(behavior, arguments))
+        if (RespireCommand.IsBlocking(operation, behavior, inlineArguments, arguments))
         {
             throw new NotSupportedException(
                 $"{operation} can block and cannot run through ExecuteFireAndForgetAsync.");
         }
     }
 
-    private static (string Operation, string? StoredProcedureName, DynamicCommand Command) CreateRawCommand(
-        string command,
-        RespireValue[] args)
+    private static (string Operation, string[] Words, int FirstArgumentIndex) ParseRawCommand(string command)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(command);
         var words = command.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var operation = RawOperationName(words, out var firstArgumentIndex);
+        return (operation, words, firstArgumentIndex);
+    }
+
+    private static (string? StoredProcedureName, DynamicCommand Command) CreateRawCommand(
+        string operation,
+        string[] words,
+        int firstArgumentIndex,
+        RespireValue[] args)
+    {
         var tokens = new RespireValue[words.Length + args.Length];
         for (var i = 0; i < words.Length; i++)
         {
@@ -443,10 +491,10 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         args.CopyTo(tokens, words.Length);
-        var operation = RawOperationName(words);
         var storedProcedureName = words.Length == 1 ? StoredProcedureName(operation, args) : null;
-        var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, words.Length);
-        return (operation, storedProcedureName, new DynamicCommand(tokens, routingKeyIndex));
+        var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(
+            operation, tokens, firstArgumentIndex);
+        return (storedProcedureName, new DynamicCommand(tokens, routingKeyIndex));
     }
 
     private static string? StoredProcedureName(string operation, ReadOnlySpan<RespireValue> arguments)
@@ -457,15 +505,17 @@ public sealed partial class RespireClient : IRespireClient
             ? arguments[0].ToString()
             : null;
 
-    private static string RawOperationName(string[] words)
+    private static string RawOperationName(string[] words, out int firstArgumentIndex)
     {
         var command = words[0].ToUpperInvariant();
         if (words.Length == 1)
         {
+            firstArgumentIndex = 1;
             return command;
         }
 
         var subcommand = KnownRawSubcommand(command, words[1]);
+        firstArgumentIndex = subcommand is null ? 1 : 2;
         return subcommand is null ? command : $"{command} {subcommand}";
     }
 
@@ -821,6 +871,18 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        return RespireTelemetry.IsEnabled
+            ? SendFireAndForgetInstrumentedAsync(operation, command, cancellationToken)
+            : SendFireAndForgetCoreAsync(operation, command, cancellationToken);
+    }
+
+    private ValueTask SendFireAndForgetCoreAsync<TCommand>(
+        string operation,
+        TCommand command,
+        CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var core = _core;
         if (core.Cluster is { } cluster)
         {
             return SendFireAndForgetClusterAsync(operation, cluster, command, cancellationToken);
@@ -833,6 +895,30 @@ public sealed partial class RespireClient : IRespireClient
 
         var connection = core.Multiplexer.GetConnection();
         return connection.SendFireAndForgetAsync(in command, cancellationToken);
+    }
+
+    private async ValueTask SendFireAndForgetInstrumentedAsync<TCommand>(
+        string operation,
+        TCommand command,
+        CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var core = _core;
+        var telemetry = RespireTelemetry.StartOperation(
+            operation,
+            core.Multiplexer.Host,
+            core.Multiplexer.Port,
+            core.Options.Database);
+        try
+        {
+            await SendFireAndForgetCoreAsync(operation, command, cancellationToken).ConfigureAwait(false);
+            telemetry.Complete(core, operation);
+        }
+        catch (Exception ex)
+        {
+            telemetry.Complete(core, operation, error: ex);
+            throw;
+        }
     }
 
     private async ValueTask SendFireAndForgetAfterConnectAsync<TCommand>(
@@ -880,9 +966,24 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
     {
         var connections = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
+        List<Exception>? failures = null;
         foreach (var connection in connections)
         {
-            await connection.SendFireAndForgetAsync(in command, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                await connection.SendFireAndForgetAsync(in command, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                (failures ??= []).Add(ex);
+            }
+        }
+
+        if (failures is not null)
+        {
+            throw new AggregateException(
+                "One or more Redis Cluster masters did not accept the command.", failures);
         }
     }
 

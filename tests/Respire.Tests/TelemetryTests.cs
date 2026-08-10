@@ -55,6 +55,20 @@ public class TelemetryTests
     }
 
     [Test]
+    public async Task FireAndForget_EmitsCommandTelemetry()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        using var capture = new TelemetryCapture();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await client.ExecuteFireAndForgetAsync("SET", "key", "value");
+
+        var activity = capture.SingleActivity("SET", server.Port);
+        await Assert.That(activity.Status).IsEqualTo(ActivityStatusCode.Unset);
+        _ = capture.SingleMeasurement("SET", server.Port);
+    }
+
+    [Test]
     public async Task DefaultRedisPort_IsOmitted()
     {
         using var capture = new TelemetryCapture();

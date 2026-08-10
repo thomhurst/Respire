@@ -97,9 +97,14 @@ public class CommandCatalogTests
             .IsFalse();
         await Assert.That(RespireCommands.Stream.XREAD.IsBlocking(["block", 1000, "STREAMS", "source", "0"]))
             .IsTrue();
+        await Assert.That(RespireCommands.Stream.XREAD.IsBlocking(["STREAMS", "BLOCK", "0"]))
+            .IsFalse();
         await Assert.That(RespireCommands.Stream.XREADGROUP.IsBlocking(
                 ["GROUP", "workers", "consumer", "BLOCK"u8.ToArray(), 1000, "STREAMS", "source", ">"]))
             .IsTrue();
+        await Assert.That(RespireCommands.Stream.XREADGROUP.IsBlocking(
+                ["GROUP", "BLOCK", "BLOCK", "STREAMS", "BLOCK", ">"]))
+            .IsFalse();
         await Assert.That(RespireCommands.TimeSeries.TS_READ.IsBlocking(["FILTER", "sensor=1"]))
             .IsFalse();
         await Assert.That(RespireCommands.TimeSeries.TS_READ.IsBlocking(["BLOCK", 0, "FILTER", "sensor=1"]))
@@ -183,8 +188,40 @@ public class CommandCatalogTests
                 "XREAD", "BLOCK", 0, "STREAMS", "events", "$"))
             .Throws<NotSupportedException>()
             .WithMessage("XREAD can block and cannot run through ExecuteFireAndForgetAsync.");
+        await Assert.That(async () => await client.ExecuteFireAndForgetAsync(
+                "XREAD BLOCK 0 STREAMS events $"))
+            .Throws<NotSupportedException>()
+            .WithMessage("XREAD can block and cannot run through ExecuteFireAndForgetAsync.");
 
         await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task RawFireAndForget_BlockTokensAfterStreamsAreNotOptions()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.OkReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await client.ExecuteFireAndForgetAsync("XREAD STREAMS BLOCK $");
+        await client.ExecuteFireAndForgetAsync(
+            "XREADGROUP GROUP", "BLOCK", "BLOCK", "STREAMS", "BLOCK", ">");
+        await WaitForCommandsAsync(server, 2);
+
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo([
+            "XREAD STREAMS BLOCK $",
+            "XREADGROUP GROUP BLOCK BLOCK STREAMS BLOCK >",
+        ]);
+    }
+
+    [Test]
+    public async Task RawCommand_CancellationOnlyOverloadSendsCommand()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        using var response = await client.ExecuteAsync("PING", [], CancellationToken.None);
+
+        await Assert.That(response.AsString()).IsEqualTo("PONG");
     }
 
     [Test]
