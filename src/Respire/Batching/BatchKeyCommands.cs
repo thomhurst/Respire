@@ -33,11 +33,17 @@ public interface IBatchKeyCommands
     /// </summary>
     RespirePending<RespireTtl> Expiry(RespireKey key);
 
-    /// <summary>The key's Redis type name ("string", "hash", …, or "none"). Redis: TYPE.</summary>
-    RespirePending<string> Type(RespireKey key);
+    /// <summary>The data structure stored at a key, or <see cref="RespireKeyType.None"/>. Redis: TYPE.</summary>
+    RespirePending<RespireKeyType> Type(RespireKey key);
 
     /// <summary>Renames a key, overwriting any existing target; true once the server replies OK. Redis: RENAME.</summary>
     RespirePending<bool> Rename(RespireKey key, RespireKey newKey);
+
+    /// <summary>Renames a key only when the target does not exist. Redis: RENAMENX.</summary>
+    RespirePending<bool> TryRename(RespireKey key, RespireKey newKey);
+
+    /// <summary>Copies a key, optionally replacing an existing target. Redis: COPY.</summary>
+    RespirePending<bool> Copy(RespireKey source, RespireKey destination, bool replace = false);
 
     /// <summary>Touches keys (updates access time); returns how many existed. Redis: TOUCH.</summary>
     RespirePending<long> Touch(params ReadOnlySpan<RespireKey> keys);
@@ -76,10 +82,10 @@ internal sealed class BatchKeyCommands(IPendingSink sink) : IBatchKeyCommands
             "PTTL", new Cmd1(Verbs.Pttl, sink.Client.Key(in key)),
             static (c, v) => RespireTtl.FromRedisMilliseconds(ResponseReader.Integer(in v)));
 
-    public RespirePending<string> Type(RespireKey key)
-        => sink.Add<Cmd1, string>(
+    public RespirePending<RespireKeyType> Type(RespireKey key)
+        => sink.Add<Cmd1, RespireKeyType>(
             "TYPE", new Cmd1(Verbs.Type, sink.Client.Key(in key)),
-            static (c, v) => ResponseReader.String(in v));
+            static (c, v) => KeyCommands.ParseKeyType(ResponseReader.String(in v)));
 
     public RespirePending<bool> Rename(RespireKey key, RespireKey newKey)
     {
@@ -87,6 +93,29 @@ internal sealed class BatchKeyCommands(IPendingSink sink) : IBatchKeyCommands
             "RENAME", new Cmd2(Verbs.Rename, sink.Client.Key(in key), sink.Client.Key(in newKey)),
             key, newKey,
             static (c, v) => ResponseReader.Ok(in v));
+    }
+
+    public RespirePending<bool> TryRename(RespireKey key, RespireKey newKey)
+    {
+        return sink.Add<Cmd2, bool>(
+            "RENAMENX", new Cmd2(Verbs.RenameNx, sink.Client.Key(in key), sink.Client.Key(in newKey)),
+            key, newKey,
+            static (c, v) => ResponseReader.Flag(in v));
+    }
+
+    public RespirePending<bool> Copy(RespireKey source, RespireKey destination, bool replace = false)
+    {
+        return replace
+            ? sink.Add<Cmd3, bool>(
+                "COPY",
+                new Cmd3(Verbs.Copy, sink.Client.Key(in source), sink.Client.Key(in destination), "REPLACE"),
+                source,
+                destination,
+                static (c, v) => ResponseReader.Flag(in v))
+            : sink.Add<Cmd2, bool>(
+                "COPY", new Cmd2(Verbs.Copy, sink.Client.Key(in source), sink.Client.Key(in destination)),
+                source, destination,
+                static (c, v) => ResponseReader.Flag(in v));
     }
 
     public RespirePending<long> Touch(params ReadOnlySpan<RespireKey> keys)

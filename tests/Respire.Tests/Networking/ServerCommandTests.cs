@@ -49,7 +49,7 @@ public class ServerCommandTests
             Integer(1));
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var clients = await client.Server.ClientListAsync();
+        var clients = await client.Server.ClientsAsync();
         await Assert.That(clients).Count().IsEqualTo(2);
         await Assert.That(clients[0].Id).IsEqualTo(3);
         await Assert.That(clients[0].Address).IsEqualTo("127.0.0.1:6379");
@@ -59,7 +59,7 @@ public class ServerCommandTests
         await Assert.That(clients[0].Attributes["resp"]).IsEqualTo("3");
         await Assert.That(clients[1].Name).IsNull();
 
-        var slowLog = await client.Server.GetSlowLogAsync(5);
+        var slowLog = await client.Server.SlowLogAsync(5);
         await Assert.That(slowLog).Count().IsEqualTo(1);
         await Assert.That(slowLog[0].Id).IsEqualTo(7);
         await Assert.That(slowLog[0].Timestamp).IsEqualTo(DateTimeOffset.FromUnixTimeSeconds(slowLogTimestamp));
@@ -70,7 +70,7 @@ public class ServerCommandTests
 
         await client.Server.ResetSlowLogAsync();
 
-        var latency = await client.Server.GetLatestLatencyAsync();
+        var latency = await client.Server.LatestLatencyAsync();
         await Assert.That(latency).Count().IsEqualTo(1);
         await Assert.That(latency[0].Event).IsEqualTo("command");
         await Assert.That(latency[0].Latest).IsEqualTo(DateTimeOffset.FromUnixTimeSeconds(latencyTimestamp));
@@ -96,7 +96,7 @@ public class ServerCommandTests
             .IsEqualTo(DateTimeOffset.FromUnixTimeSeconds(lastSaveTimestamp));
         await Assert.That(await client.Server.CommandCountAsync()).IsEqualTo(240);
         await Assert.That(await client.Server.CommandListAsync()).IsEquivalentTo(["get", "set"]);
-        await Assert.That(await client.Server.KillClientByIdAsync(42, skipMe: false)).IsTrue();
+        await Assert.That(await client.Server.KillClientAsync(42, skipMe: false)).IsTrue();
 
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
         {
@@ -131,7 +131,7 @@ public class ServerCommandTests
                     Bulk("keys.count"), Integer(3))));
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var slowLog = await client.Server.GetSlowLogAsync();
+        var slowLog = await client.Server.SlowLogAsync();
         await Assert.That(slowLog).Count().IsEqualTo(1);
         await Assert.That(slowLog[0].Id).IsEqualTo(8);
         await Assert.That(slowLog[0].Timestamp).IsEqualTo(DateTimeOffset.FromUnixTimeSeconds(1_700_000_001));
@@ -154,15 +154,31 @@ public class ServerCommandTests
         await using var server = new FakeRespServer();
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        await Assert.That(async () => await client.Server.KillClientByIdAsync(0))
+        await Assert.That(async () => await client.Server.KillClientAsync(0))
             .Throws<ArgumentOutOfRangeException>();
-        await Assert.That(async () => await client.Server.GetSlowLogAsync(-1))
+        await Assert.That(async () => await client.Server.SlowLogAsync(-1))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Server.MemoryUsageAsync("key", samples: -1))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Server.ResetLatencyAsync(""))
             .Throws<ArgumentException>();
         await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task ConfigAsync_ReturnsMatchingConfiguration()
+    {
+        await using var server = new FakeRespServer(
+            Array(Bulk("maxmemory"), Bulk("0")));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var config = await client.Server.ConfigAsync("max*");
+
+        await Assert.That(config).IsEquivalentTo(new Dictionary<string, string>
+        {
+            ["maxmemory"] = "0",
+        });
+        await Assert.That(server.ReceivedCommands.Single()).IsEqualTo("CONFIG GET max*");
     }
 
     private static byte[] SimpleString(string value)

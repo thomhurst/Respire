@@ -133,6 +133,8 @@ internal static class Verbs
     public static readonly Verb Pttl = new("PTTL");
     public static readonly Verb Type = new("TYPE");
     public static readonly Verb Rename = new("RENAME");
+    public static readonly Verb RenameNx = new("RENAMENX");
+    public static readonly Verb Copy = new("COPY");
     public static readonly Verb Touch = new("TOUCH");
     public static readonly Verb Scan = new("SCAN");
 

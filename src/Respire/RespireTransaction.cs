@@ -14,7 +14,7 @@ namespace Respire;
 /// Commands are grouped into the same facets as the client and a batch — see
 /// <see cref="RespireBatch"/> for what the deferred surface leaves out.
 /// Single-shot and not thread-safe: build, commit once, discard. When created with watch keys
-/// (<see cref="RespireClient.CreateTransactionAsync"/>), the transaction owns a dedicated
+/// (<see cref="RespireClient.CreateTransactionAsync(ReadOnlySpan{RespireKey})"/>), the transaction owns a dedicated
 /// connection and <see cref="CommitAsync"/> returns false if a watched key changed. Always
 /// commit or dispose a transaction so its buffer and any dedicated connection are released.
 /// </remarks>
