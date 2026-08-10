@@ -69,6 +69,41 @@ public class SetSortedSetCoverageTests
     }
 
     [Test]
+    public async Task DeferredSetAndSortedSetCoverage_QueuesAndParsesCommands()
+    {
+        await using var server = new FakeRespServer(
+            "*2\r\n$3\r\none\r\n$3\r\ntwo\r\n"u8.ToArray(),
+            "*2\r\n$3\r\none\r\n$3\r\none\r\n"u8.ToArray(),
+            "*2\r\n$3\r\none\r\n$3\r\n1.5\r\n"u8.ToArray(),
+            ":2\r\n"u8.ToArray(),
+            ":3\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var batch = client.CreateBatch();
+
+        var popped = batch.Sets.Pop("set", count: 2);
+        var random = batch.Sets.RandomMembers("set", count: -2);
+        var sorted = batch.SortedSets.Pop("scores", count: 1);
+        var byScore = batch.SortedSets.RemoveRangeByScore("scores", 1.5, 3.5);
+        var byRank = batch.SortedSets.RemoveRangeByRank("scores", 0, 2);
+
+        await batch.ExecuteAsync();
+
+        await Assert.That(popped.Result).IsEquivalentTo(new[] { "one", "two" });
+        await Assert.That(random.Result).IsEquivalentTo(new[] { "one", "one" });
+        await Assert.That(sorted.Result).IsEquivalentTo(new[] { new SortedSetEntry("one", 1.5) });
+        await Assert.That(byScore.Result).IsEqualTo(2);
+        await Assert.That(byRank.Result).IsEqualTo(3);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        {
+            "SPOP set 2",
+            "SRANDMEMBER set -2",
+            "ZPOPMIN scores 1",
+            "ZREMRANGEBYSCORE scores 1.5 3.5",
+            "ZREMRANGEBYRANK scores 0 2",
+        });
+    }
+
+    [Test]
     public async Task Pop_RejectsNegativeCountsBeforeSending()
     {
         await using var server = new FakeRespServer();
@@ -77,6 +112,11 @@ public class SetSortedSetCoverageTests
         await Assert.That(async () => await client.Sets.PopAsync("set", -1))
             .ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.SortedSets.PopAsync("scores", -1))
+            .ThrowsExactly<ArgumentOutOfRangeException>();
+        var batch = client.CreateBatch();
+        await Assert.That(() => batch.Sets.Pop("set", -1))
+            .ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(() => batch.SortedSets.Pop("scores", -1))
             .ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
