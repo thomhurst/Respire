@@ -10,62 +10,91 @@ namespace Respire.Extensions.DependencyInjection;
 /// </summary>
 public sealed class RespireOptionsBuilder
 {
+    /// <inheritdoc cref="RespireOptions.Endpoints"/>
     public IList<RespireEndpoint> Endpoints { get; } = [];
 
+    /// <inheritdoc cref="RespireOptions.Cluster"/>
     public bool Cluster { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.ServiceName"/>
     public string? ServiceName { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.Username"/>
     public string? Username { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.Password"/>
     public string? Password { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.SentinelUsername"/>
     public string? SentinelUsername { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.SentinelPassword"/>
     public string? SentinelPassword { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.SentinelUseTls"/>
     public bool? SentinelUseTls { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.SentinelTlsOptions"/>
     public SslClientAuthenticationOptions? SentinelTlsOptions { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.ClientName"/>
     public string? ClientName { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.Database"/>
     public int Database { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.AllowAdmin"/>
     public bool AllowAdmin { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.Protocol"/>
     public RespProtocol Protocol { get; set; } = RespProtocol.Resp2;
 
+    /// <inheritdoc cref="RespireOptions.ConnectTimeout"/>
     public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(10);
 
+    /// <inheritdoc cref="RespireOptions.UseTls"/>
     public bool UseTls { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.TlsOptions"/>
     public SslClientAuthenticationOptions? TlsOptions { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.ResponseTimeout"/>
     public TimeSpan? ResponseTimeout { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.CommandTimeout"/>
     public TimeSpan? CommandTimeout { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.Connections"/>
     public int Connections { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.Serializer"/>
     public IRespireSerializer Serializer { get; set; } = RespireSerializer.Default;
 
+    /// <inheritdoc cref="RespireOptions.LoggerFactory"/>
     public ILoggerFactory? LoggerFactory { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.TcpKeepAliveTime"/>
     public TimeSpan? TcpKeepAliveTime { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.TcpKeepAliveInterval"/>
     public TimeSpan? TcpKeepAliveInterval { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.TcpKeepAliveRetryCount"/>
     public int? TcpKeepAliveRetryCount { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.SubscriptionBufferSize"/>
     public int SubscriptionBufferSize { get; set; } = 1024;
 
+    /// <inheritdoc cref="RespireOptions.SubscriptionOverflow"/>
     public SubscriptionOverflow SubscriptionOverflow { get; set; } = SubscriptionOverflow.DropOldest;
 
+    /// <inheritdoc cref="RespireOptions.ReceiveBufferSize"/>
     public int ReceiveBufferSize { get; set; } = 64 * 1024;
 
+    /// <inheritdoc cref="RespireOptions.WriteBufferSize"/>
     public int WriteBufferSize { get; set; } = 64 * 1024;
 
+    /// <inheritdoc cref="RespireOptions.MaxInflightCommands"/>
     public int MaxInflightCommands { get; set; } = 16 * 1024;
 
     internal RespireOptions Build() => new()

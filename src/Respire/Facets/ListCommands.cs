@@ -7,7 +7,10 @@ namespace Respire;
 /// <summary>Which end of a list an operation targets.</summary>
 public enum ListSide
 {
+    /// <summary>The head, or left-hand side, of the list.</summary>
     Left,
+
+    /// <summary>The tail, or right-hand side, of the list.</summary>
     Right,
 }
 

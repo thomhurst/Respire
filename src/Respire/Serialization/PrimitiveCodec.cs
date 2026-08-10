@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Runtime.CompilerServices;
+using Respire.Protocol;
 
 namespace Respire.Serialization;
 
@@ -120,6 +121,87 @@ internal static class PrimitiveCodec
                 return true;
             case PrimitiveKind.Decimal:
                 result = Return<T, decimal>(ParseDecimal(payload));
+                return true;
+            default:
+                result = default;
+                return false;
+        }
+    }
+
+    internal static bool TryDeserialize<T>(in RespValue value, out T? result)
+    {
+        switch (value.Type)
+        {
+            case RespDataType.Integer:
+                return TryDeserializeInteger(value.AsInteger(), out result);
+            case RespDataType.Boolean when TypeCache<T>.Kind == PrimitiveKind.Boolean:
+                result = Return<T, bool>(value.AsBoolean());
+                return true;
+            case RespDataType.Double:
+                return TryDeserializeDouble(value.AsDouble(), out result);
+            default:
+                return TryDeserialize(value.AsSpan(), out result);
+        }
+    }
+
+    private static bool TryDeserializeInteger<T>(long value, out T? result)
+    {
+        var kind = TypeCache<T>.Kind;
+        result = kind switch
+        {
+            PrimitiveKind.Boolean => Return<T, bool>(value != 0),
+            PrimitiveKind.Byte => Return<T, byte>(checked((byte)value)),
+            PrimitiveKind.SByte => Return<T, sbyte>(checked((sbyte)value)),
+            PrimitiveKind.Int16 => Return<T, short>(checked((short)value)),
+            PrimitiveKind.UInt16 => Return<T, ushort>(checked((ushort)value)),
+            PrimitiveKind.Int32 => Return<T, int>(checked((int)value)),
+            PrimitiveKind.UInt32 => Return<T, uint>(checked((uint)value)),
+            PrimitiveKind.Int64 => Return<T, long>(value),
+            PrimitiveKind.UInt64 => Return<T, ulong>(checked((ulong)value)),
+            PrimitiveKind.Single => Return<T, float>(value),
+            PrimitiveKind.Double => Return<T, double>(value),
+            PrimitiveKind.Decimal => Return<T, decimal>(value),
+            _ => default,
+        };
+        return kind != PrimitiveKind.None;
+    }
+
+    private static bool TryDeserializeDouble<T>(double value, out T? result)
+    {
+        switch (TypeCache<T>.Kind)
+        {
+            case PrimitiveKind.Single:
+                var single = (float)value;
+                if (!float.IsFinite(single))
+                {
+                    throw InvalidValue<float>();
+                }
+
+                result = Return<T, float>(single);
+                return true;
+            case PrimitiveKind.Double:
+                if (!double.IsFinite(value))
+                {
+                    throw InvalidValue<double>();
+                }
+
+                result = Return<T, double>(value);
+                return true;
+            case PrimitiveKind.Decimal:
+                if (!double.IsFinite(value))
+                {
+                    throw InvalidValue<decimal>();
+                }
+
+                try
+                {
+                    result = Return<T, decimal>(checked((decimal)value));
+                }
+                catch (OverflowException)
+                {
+                    throw InvalidValue<decimal>();
+                }
+
                 return true;
             default:
                 result = default;

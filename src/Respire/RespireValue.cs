@@ -43,10 +43,12 @@ public readonly struct RespireValue : IEquatable<RespireValue>
         _number = number;
     }
 
+    /// <summary>Creates a UTF-8 command argument from text.</summary>
     public RespireValue(string value) : this(Kind.String, s: value ?? throw new ArgumentNullException(nameof(value)))
     {
     }
 
+    /// <summary>Creates a binary-safe command argument.</summary>
     public RespireValue(ReadOnlyMemory<byte> value) : this(Kind.Bytes, bytes: value)
     {
     }
@@ -56,18 +58,24 @@ public readonly struct RespireValue : IEquatable<RespireValue>
     /// </summary>
     public static readonly RespireValue Null = default;
 
+    /// <summary>Whether this is the absent <see cref="Null"/> sentinel.</summary>
     public bool IsNull => _kind == Kind.Null;
 
+    /// <summary>Converts text or null to a command argument.</summary>
     public static implicit operator RespireValue(string? value)
         => value is null ? Null : new RespireValue(value);
 
+    /// <summary>Converts a byte array or null to a binary-safe command argument.</summary>
     public static implicit operator RespireValue(byte[]? value)
         => value is null ? Null : new RespireValue(value.AsMemory());
 
+    /// <summary>Converts read-only bytes to a binary-safe command argument.</summary>
     public static implicit operator RespireValue(ReadOnlyMemory<byte> value) => new(value);
 
+    /// <summary>Converts bytes to a binary-safe command argument.</summary>
     public static implicit operator RespireValue(Memory<byte> value) => new(value);
 
+    /// <summary>Converts an array segment to a binary-safe command argument.</summary>
     public static implicit operator RespireValue(ArraySegment<byte> value) => new(value.AsMemory());
 
     /// <summary>Converts a key without changing its UTF-8 or binary representation.</summary>
@@ -88,37 +96,51 @@ public readonly struct RespireValue : IEquatable<RespireValue>
     /// <summary>Converts one UTF-16 code unit using its unsigned integer value.</summary>
     public static implicit operator RespireValue(char value) => new(Kind.Integer, number: value);
 
+    /// <summary>Converts a signed 64-bit integer to a command argument.</summary>
     public static implicit operator RespireValue(long value) => new(Kind.Integer, number: value);
 
+    /// <summary>Converts an unsigned byte to a command argument.</summary>
     public static implicit operator RespireValue(byte value) => new(Kind.Integer, number: value);
 
+    /// <summary>Converts a signed byte to a command argument.</summary>
     public static implicit operator RespireValue(sbyte value) => new(Kind.Integer, number: value);
 
+    /// <summary>Converts a signed 16-bit integer to a command argument.</summary>
     public static implicit operator RespireValue(short value) => new(Kind.Integer, number: value);
 
+    /// <summary>Converts an unsigned 16-bit integer to a command argument.</summary>
     public static implicit operator RespireValue(ushort value) => new(Kind.Integer, number: value);
 
+    /// <summary>Converts a signed 32-bit integer to a command argument.</summary>
     public static implicit operator RespireValue(int value) => new(Kind.Integer, number: value);
 
+    /// <summary>Converts an unsigned 32-bit integer to a command argument.</summary>
     public static implicit operator RespireValue(uint value) => new(Kind.Integer, number: value);
 
+    /// <summary>Converts an unsigned 64-bit integer to a command argument.</summary>
     public static implicit operator RespireValue(ulong value)
         => new(Kind.UnsignedInteger, number: unchecked((long)value));
 
+    /// <summary>Converts a single-precision number using invariant formatting.</summary>
     public static implicit operator RespireValue(float value)
         => new(Kind.Single, number: BitConverter.SingleToInt32Bits(value));
 
+    /// <summary>Converts a double-precision number using invariant formatting.</summary>
     public static implicit operator RespireValue(double value)
         => new(Kind.Double, number: BitConverter.DoubleToInt64Bits(value));
 
+    /// <summary>Converts a decimal number using invariant formatting.</summary>
     public static implicit operator RespireValue(decimal value)
         => new(value.ToString(CultureInfo.InvariantCulture));
 
+    /// <summary>Converts a boolean to Redis <c>1</c> or <c>0</c>.</summary>
     public static implicit operator RespireValue(bool value)
         => new(Kind.Boolean, number: value ? 1 : 0);
 
+    /// <summary>Tests two command arguments for value equality.</summary>
     public static bool operator ==(RespireValue left, RespireValue right) => left.Equals(right);
 
+    /// <summary>Tests two command arguments for value inequality.</summary>
     public static bool operator !=(RespireValue left, RespireValue right) => !left.Equals(right);
 
     /// <summary>Serializes this argument as one RESP bulk string.</summary>
@@ -321,8 +343,10 @@ public readonly struct RespireValue : IEquatable<RespireValue>
         return left[..leftLength].SequenceEqual(right[..rightLength]);
     }
 
+    /// <inheritdoc/>
     public override bool Equals(object? obj) => obj is RespireValue other && Equals(other);
 
+    /// <inheritdoc/>
     public override int GetHashCode()
     {
         if (_kind == Kind.Null)
@@ -518,6 +542,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
         }
     }
 
+    /// <inheritdoc/>
     public override string ToString()
         => _kind switch
         {

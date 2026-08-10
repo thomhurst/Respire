@@ -339,8 +339,10 @@ method shapes and two fire-and-forget shapes. Interpolation holes use invariant 
 formatting or `ToString()`; they are not routed through a Respire serializer.
 
 `RespireResult` is the one public protocol-shaped type: `Kind`, `AsString()`,
-`AsInteger()`, `AsSpan()`, array enumeration, and it is a lease (`using`). It exists only
-on the raw layer. The generated catalog covers every audited Redis and Valkey command plus
+`AsInteger()`, serializer-backed `As<T>()`, `AsSpan()`, and allocation-free array enumeration.
+It owns pooled memory and must be disposed (`using`); `IsDisposed` exposes its lifetime state and
+access after disposal throws `ObjectDisposedException`. It exists only on the raw layer. The
+generated catalog covers every audited Redis and Valkey command plus
 documented module, KeyDB, and Dragonfly commands; string execution remains available for
 experimental server extensions.
 
@@ -353,9 +355,13 @@ static readonly RespireScript RateLimit = RespireScript.Create("""
     return n
     """);
 
-long count = (await redis.Scripts.ExecuteAsync(RateLimit,
-    keys: [$"rl:{userId}"], args: [60_000])).AsInteger();
+long count = await redis.Scripts.ExecuteIntegerAsync(RateLimit,
+    keys: [$"rl:{userId}"], args: [60_000]);
 ```
+
+Scripts also expose `ExecuteAsync<T>()` and `ExecuteStringAsync()` conveniences that dispose the
+pooled raw result after conversion. `ExecuteSpanAsync()` accepts `ReadOnlySpan<T>` inputs; both raw
+entry points return a `RespireResult` that the caller must dispose.
 
 - SHA1 computed once at `Create`; `ExecuteAsync` tries EVALSHA, falls back to EVAL on
   NOSCRIPT, transparently.

@@ -10,6 +10,7 @@ public readonly struct RespireStreamId : IEquatable<RespireStreamId>
 {
     private readonly string? _value;
 
+    /// <summary>Creates an id from Redis stream-id syntax.</summary>
     public RespireStreamId(string value) => _value = value ?? throw new ArgumentNullException(nameof(value));
 
     /// <summary>The smallest id ("-"), for range starts.</summary>
@@ -26,14 +27,19 @@ public readonly struct RespireStreamId : IEquatable<RespireStreamId>
 
     internal string Value => _value ?? "0";
 
+    /// <summary>Converts Redis stream-id syntax to a typed id.</summary>
     public static implicit operator RespireStreamId(string value) => new(value);
 
+    /// <inheritdoc/>
     public override string ToString() => Value;
 
+    /// <inheritdoc/>
     public bool Equals(RespireStreamId other) => string.Equals(Value, other.Value, StringComparison.Ordinal);
 
+    /// <inheritdoc/>
     public override bool Equals(object? obj) => obj is RespireStreamId other && Equals(other);
 
+    /// <inheritdoc/>
     public override int GetHashCode() => StringComparer.Ordinal.GetHashCode(Value);
 }
 
@@ -61,8 +67,10 @@ public readonly record struct RespireStreamEntry
         _group = group;
     }
 
+    /// <summary>The entry id.</summary>
     public RespireStreamId Id { get; }
 
+    /// <summary>The entry's field/value pairs.</summary>
     public IReadOnlyList<KeyValuePair<string, byte[]>> Fields { get; }
 
     /// <summary>The field's raw bytes, or null when absent.</summary>
@@ -102,20 +110,24 @@ public readonly record struct RespireStreamEntry
     }
 }
 
+/// <summary>A consumer and its pending-entry count from Redis XPENDING.</summary>
 public readonly record struct RespireStreamConsumerPendingCount(string Consumer, long Pending);
 
+/// <summary>Summary information returned by Redis XPENDING.</summary>
 public readonly record struct RespireStreamPendingSummary(
     long Count,
     RespireStreamId? SmallestId,
     RespireStreamId? GreatestId,
     RespireStreamConsumerPendingCount[] Consumers);
 
+/// <summary>One detailed pending entry returned by Redis XPENDING.</summary>
 public readonly record struct RespireStreamPendingEntry(
     RespireStreamId Id,
     string Consumer,
     TimeSpan IdleTime,
     long DeliveryCount);
 
+/// <summary>Stream metadata returned by Redis XINFO STREAM.</summary>
 public readonly record struct RespireStreamInfo(
     long Length,
     long RadixTreeKeys,
@@ -128,6 +140,7 @@ public readonly record struct RespireStreamInfo(
     RespireStreamEntry? FirstEntry,
     RespireStreamEntry? LastEntry);
 
+/// <summary>Consumer-group metadata returned by Redis XINFO GROUPS.</summary>
 public readonly record struct RespireStreamGroupInfo(
     string Name,
     long Consumers,
@@ -136,6 +149,7 @@ public readonly record struct RespireStreamGroupInfo(
     long? EntriesRead,
     long? Lag);
 
+/// <summary>Consumer metadata returned by Redis XINFO CONSUMERS.</summary>
 public readonly record struct RespireStreamConsumerInfo(
     string Name,
     long Pending,

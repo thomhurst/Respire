@@ -32,12 +32,25 @@ public enum RespireKeyType
     /// <summary>The key does not exist.</summary>
     None,
 
+    /// <summary>A string value.</summary>
     String,
+
+    /// <summary>A list.</summary>
     List,
+
+    /// <summary>A set.</summary>
     Set,
+
+    /// <summary>A sorted set.</summary>
     SortedSet,
+
+    /// <summary>A hash.</summary>
     Hash,
+
+    /// <summary>A stream.</summary>
     Stream,
+
+    /// <summary>A Redis vector set.</summary>
     VectorSet,
 }
 

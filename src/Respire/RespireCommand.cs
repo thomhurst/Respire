@@ -44,6 +44,7 @@ public readonly struct RespireCommand
     public static implicit operator RespireCommand(string name)
         => new(name);
 
+    /// <inheritdoc/>
     public override string ToString() => Name;
 
     internal static RespireCommandBehavior Classify(string name) => name switch
@@ -147,10 +148,16 @@ internal enum RespireCommandBehavior
 [Flags]
 public enum RespireCommandSource
 {
+    /// <summary>No official source reference.</summary>
     None = 0,
+    /// <summary>Documented by Redis.</summary>
     Redis = 1,
+    /// <summary>Documented by Valkey.</summary>
     Valkey = 2,
+    /// <summary>Documented by KeyDB.</summary>
     KeyDb = 4,
+    /// <summary>Documented by Dragonfly.</summary>
     Dragonfly = 8,
+    /// <summary>Documented by both Redis and Valkey.</summary>
     RedisAndValkey = Redis | Valkey,
 }
