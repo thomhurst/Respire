@@ -10,7 +10,7 @@ public class ClientCoreTests
     [Test]
     public async Task StateChange_IncludesSourceEndpointAndError()
     {
-        await using var core = new ClientCore(new RespireOptions { Cluster = true });
+        await using var core = new ClientCore(new RespireOptions { UseCluster = true });
         var endpoint = new RespireEndpoint("127.0.0.1", 6380);
         var node = core.Cluster!.GetMultiplexer(endpoint);
         var changes = new List<RespireConnectionStateChange>();
@@ -59,7 +59,7 @@ public class ClientCoreTests
     [Test]
     public async Task DisposeAsync_DisconnectsActualSubscriptionEndpoint()
     {
-        var core = new ClientCore(new RespireOptions { Cluster = true });
+        var core = new ClientCore(new RespireOptions { UseCluster = true });
         var subscriptionEndpoint = new RespireEndpoint("127.0.0.1", 6380);
         var changes = new List<RespireConnectionStateChange>();
         core.ConnectionStateChanged += changes.Add;
@@ -79,7 +79,7 @@ public class ClientCoreTests
     [Test]
     public async Task DisposeAsync_DisconnectsEveryActiveClusterEndpoint()
     {
-        var core = new ClientCore(new RespireOptions { Cluster = true });
+        var core = new ClientCore(new RespireOptions { UseCluster = true });
         var primaryEndpoint = core.Options.PrimaryEndpoint;
         var secondEndpoint = new RespireEndpoint("127.0.0.1", 6380);
         var secondNode = core.Cluster!.GetMultiplexer(secondEndpoint);
@@ -158,7 +158,7 @@ public class ClientCoreTests
     [Test]
     public async Task SubscriberState_UsesReportedEndpoint()
     {
-        await using var core = new ClientCore(new RespireOptions { Cluster = true });
+        await using var core = new ClientCore(new RespireOptions { UseCluster = true });
         var endpoint = new RespireEndpoint("127.0.0.1", 6380);
         var changes = new List<RespireConnectionStateChange>();
         core.ConnectionStateChanged += changes.Add;
@@ -178,7 +178,7 @@ public class ClientCoreTests
     [Test]
     public async Task SubscriberRecoveryToNewEndpoint_ClearsPreviousEndpoint()
     {
-        await using var core = new ClientCore(new RespireOptions { Cluster = true });
+        await using var core = new ClientCore(new RespireOptions { UseCluster = true });
         var previousEndpoint = core.Options.PrimaryEndpoint;
         var replacementEndpoint = new RespireEndpoint("127.0.0.1", 6380);
         var changes = new List<RespireConnectionStateChange>();
@@ -218,7 +218,7 @@ public class ClientCoreTests
     [Test]
     public async Task ClusterRecovery_PublishesEachEndpointTransition()
     {
-        await using var core = new ClientCore(new RespireOptions { Cluster = true });
+        await using var core = new ClientCore(new RespireOptions { UseCluster = true });
         var primaryEndpoint = core.Options.PrimaryEndpoint;
         var secondEndpoint = new RespireEndpoint("127.0.0.1", 6380);
         var secondNode = core.Cluster!.GetMultiplexer(secondEndpoint);

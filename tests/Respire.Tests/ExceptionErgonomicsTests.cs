@@ -60,7 +60,7 @@ public class ExceptionErgonomicsTests
     [Test]
     public async Task Create_WithSentinelOptions_ThrowsConfigurationException()
     {
-        var options = new RespireOptions { ServiceName = "primary" };
+        var options = new RespireOptions { SentinelPrimaryName = "primary" };
 
         await Assert.That(() => RespireClient.Create(options))
             .ThrowsExactly<RespireConfigurationException>();
@@ -69,7 +69,7 @@ public class ExceptionErgonomicsTests
     [Test]
     public async Task Create_WithClusterDatabase_ThrowsConfigurationException()
     {
-        var options = new RespireOptions { Cluster = true, Database = 1 };
+        var options = new RespireOptions { UseCluster = true, Database = 1 };
 
         await Assert.That(() => RespireClient.Create(options))
             .ThrowsExactly<RespireConfigurationException>();

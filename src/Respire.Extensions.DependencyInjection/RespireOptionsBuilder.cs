@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using System.Net.Security;
 using Microsoft.Extensions.Logging;
 using Respire.Serialization;
@@ -25,24 +24,8 @@ public sealed class RespireOptionsBuilder
         set => _useCluster = value;
     }
 
-    /// <inheritdoc cref="RespireOptions.Cluster"/>
-    [EditorBrowsable(EditorBrowsableState.Never)]
-    public bool Cluster
-    {
-        get => _useCluster;
-        set => _useCluster = value;
-    }
-
     /// <inheritdoc cref="RespireOptions.SentinelPrimaryName"/>
     public string? SentinelPrimaryName
-    {
-        get => _sentinelPrimaryName;
-        set => _sentinelPrimaryName = value;
-    }
-
-    /// <inheritdoc cref="RespireOptions.ServiceName"/>
-    [EditorBrowsable(EditorBrowsableState.Never)]
-    public string? ServiceName
     {
         get => _sentinelPrimaryName;
         set => _sentinelPrimaryName = value;
@@ -89,14 +72,6 @@ public sealed class RespireOptionsBuilder
 
     /// <inheritdoc cref="RespireOptions.ConnectionIdleReadTimeout"/>
     public TimeSpan? ConnectionIdleReadTimeout
-    {
-        get => _connectionIdleReadTimeout;
-        set => _connectionIdleReadTimeout = value;
-    }
-
-    /// <inheritdoc cref="RespireOptions.ResponseTimeout"/>
-    [EditorBrowsable(EditorBrowsableState.Never)]
-    public TimeSpan? ResponseTimeout
     {
         get => _connectionIdleReadTimeout;
         set => _connectionIdleReadTimeout = value;

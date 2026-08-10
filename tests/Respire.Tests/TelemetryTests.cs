@@ -125,7 +125,7 @@ public class TelemetryTests
         using var capture = new TelemetryCapture();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Cluster = true,
+            UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
 
@@ -155,7 +155,7 @@ public class TelemetryTests
         using var capture = new TelemetryCapture();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Cluster = true,
+            UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
 
