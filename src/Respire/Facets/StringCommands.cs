@@ -173,15 +173,21 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
     public ValueTask<bool> SetAsync(
         RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default)
-        => client.OkOrNullAsync(
+    {
+        SetCommand.ValidateExpiry(expiry);
+        return client.OkOrNullAsync(
             "SET", new SetCommand(client.Key(in key), value, expiry, when, returnOld: false), cancellationToken);
+    }
 
     public ValueTask<bool> SetAsync<T>(
         RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default)
-        => client.OkOrNullAsync(
+    {
+        SetCommand.ValidateExpiry(expiry);
+        return client.OkOrNullAsync(
             "SET", new SetCommand(client.Key(in key), client.Serialize(value), expiry, when, returnOld: false),
             cancellationToken);
+    }
 
     public ValueTask<string?> GetAndSetAsync(
         RespireKey key,
@@ -189,9 +195,12 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         RespireExpiry expiry = default,
         SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default)
-        => client.StringOrNullAsync(
+    {
+        SetCommand.ValidateExpiry(expiry);
+        return client.StringOrNullAsync(
             "SET", new SetCommand(client.Key(in key), value, expiry, when, returnOld: true),
             cancellationToken);
+    }
 
     public ValueTask<T?> GetAndSetAsync<T>(
         RespireKey key,
@@ -199,9 +208,12 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         RespireExpiry expiry = default,
         SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default)
-        => client.DeserializeAsync<T, SetCommand>(
+    {
+        SetCommand.ValidateExpiry(expiry);
+        return client.DeserializeAsync<T, SetCommand>(
             "SET", new SetCommand(client.Key(in key), client.Serialize(value), expiry, when, returnOld: true),
             cancellationToken);
+    }
 
     public ValueTask<string?> GetDeleteAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.StringOrNullAsync("GETDEL", new Cmd1(Verbs.GetDel, client.Key(in key)), cancellationToken);

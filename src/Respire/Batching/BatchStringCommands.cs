@@ -110,31 +110,43 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
 
     public RespirePending<bool> Set(
         RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
-        => sink.Add<SetCommand, bool>(
+    {
+        SetCommand.ValidateExpiry(expiry);
+        return sink.Add<SetCommand, bool>(
             "SET",
             new SetCommand(sink.Client.Key(in key), value, expiry, when, returnOld: false),
             static (c, v) => ResponseReader.OkOrNull(in v));
+    }
 
     public RespirePending<bool> Set<T>(
         RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
-        => sink.Add<SetCommand, bool>(
+    {
+        SetCommand.ValidateExpiry(expiry);
+        return sink.Add<SetCommand, bool>(
             "SET",
             new SetCommand(sink.Client.Key(in key), sink.Client.Serialize(value), expiry, when, returnOld: false),
             static (c, v) => ResponseReader.OkOrNull(in v));
+    }
 
     public RespirePending<string?> GetAndSet(
         RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
-        => sink.Add<SetCommand, string?>(
+    {
+        SetCommand.ValidateExpiry(expiry);
+        return sink.Add<SetCommand, string?>(
             "SET",
             new SetCommand(sink.Client.Key(in key), value, expiry, when, returnOld: true),
             static (c, v) => ResponseReader.StringOrNull(in v));
+    }
 
     public RespirePending<T?> GetAndSet<T>(
         RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
-        => sink.Add<SetCommand, T?>(
+    {
+        SetCommand.ValidateExpiry(expiry);
+        return sink.Add<SetCommand, T?>(
             "SET",
             new SetCommand(sink.Client.Key(in key), sink.Client.Serialize(value), expiry, when, returnOld: true),
             static (c, v) => c.DeserializeBorrowed<T>(in v));
+    }
 
     public RespirePending<string?> GetDelete(RespireKey key)
         => sink.Add<Cmd1, string?>(

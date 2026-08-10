@@ -471,12 +471,7 @@ internal readonly struct SetCommand(
 
     public void Write(ref RespWriter writer)
     {
-        if (expiry.IsPersist)
-        {
-            throw new ArgumentException(
-                "SET does not support RespireExpiry.Persist; use RespireExpiry.None to replace the value without a TTL.",
-                nameof(expiry));
-        }
+        ValidateExpiry(expiry);
 
         var count = 3
             + expiry.TokenCount
@@ -515,6 +510,16 @@ internal readonly struct SetCommand(
         if (returnOld)
         {
             writer.WriteBulkString("GET"u8);
+        }
+    }
+
+    internal static void ValidateExpiry(RespireExpiry expiry)
+    {
+        if (expiry.IsPersist)
+        {
+            throw new ArgumentException(
+                "SET does not support RespireExpiry.Persist; use RespireExpiry.None to replace the value without a TTL.",
+                nameof(expiry));
         }
     }
 }
