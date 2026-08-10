@@ -30,6 +30,14 @@ public interface IRespireClient : IAsyncDisposable
     // Root shortcuts for the most common operations.
     ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken cancellationToken = default);
     ValueTask<T?> GetAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets a key's value deserialized as <typeparamref name="T"/> alongside a Found flag, so a
+    /// missing key is distinguishable from a stored <c>default(T)</c>. Redis: GET.
+    /// </summary>
+    ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
+        => Strings.TryGetAsync<T>(key, cancellationToken);
+
     ValueTask<byte[]?> GetBytesAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     ValueTask<bool> SetAsync(

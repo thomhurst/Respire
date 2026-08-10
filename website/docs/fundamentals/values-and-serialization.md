@@ -32,6 +32,19 @@ Order? order = await redis.GetAsync<Order>("order:42");
 
 A missing key returns `null` from string, byte-array, reference-type, and explicitly nullable reads. `GetAsync<T>` returns `default(T)` for a non-nullable value type, so a missing `GetAsync<int>` result is `0`. Numeric and condition commands return `long`, `double`, or `bool` as appropriate.
 
+## Missing keys versus stored defaults
+
+`TryGetAsync<T>` returns a `RespireGet<T>` that reports presence alongside the value, so a missing key stays distinguishable from a stored `default(T)` without a second existence round trip:
+
+```csharp
+var (found, hits) = await redis.TryGetAsync<int>("page:hits");
+
+if (!found) { /* key is absent */ }
+else if (hits == 0) { /* key holds 0 */ }
+```
+
+`RespireGet<T>` also exposes `GetValueOrDefault(fallback)`. The same method exists on `redis.Strings` and, per field, on `redis.Hashes`.
+
 ## Object serialization
 
 `SetAsync<T>` and `GetAsync<T>` use `RespireOptions.Serializer` for object values. `SystemTextJsonSerializer` is the default. Supply an `IRespireSerializer` for another format:
@@ -47,6 +60,8 @@ var options = new RespireOptions
 Typed `string`, `byte[]`, Boolean, and numeric primitive values bypass object serialization. Numbers use invariant Redis text. Generic Boolean writes retain the default JSON-compatible `true`/`false` representation; reads also accept Redis-style `1`/`0`. Nullable forms use the same fast path when they contain a value.
 
 Objects, enums, and other types use the configured serializer. Custom serializers therefore do not control primitive encoding. Pass a `RespireValue` explicitly when a command input must use raw Redis scalar conventions, as shown in [Keys and input values](#keys-and-input-values).
+
+Serializing overloads sit next to the `RespireValue` ones wherever a facet takes a single payload — `Hashes.SetAsync<T>`, `Sets.ContainsAsync<T>`, `SortedSets.AddAsync<T>`, and the `Lists.LeftPopAsync<T>` / `RightPopAsync<T>` reads. An argument already typed as `RespireValue` selects the raw overload; anything else selects the generic one. Only `bool` encodes differently between the two, per the rule above.
 
 ## Zero-copy leased reads
 
