@@ -15,6 +15,7 @@ public interface IRespireClient : IAsyncDisposable
     // Typed convenience facets, grouped by data type.
     IStringCommands Strings { get; }
     IKeyCommands Keys { get; }
+    ILockCommands Locks { get; }
     IHashCommands Hashes { get; }
     IListCommands Lists { get; }
     ISetCommands Sets { get; }

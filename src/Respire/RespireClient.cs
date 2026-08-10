@@ -28,6 +28,7 @@ public sealed partial class RespireClient : IRespireClient
         _ownsCore = ownsCore;
         Strings = new StringCommands(this);
         Keys = new KeyCommands(this);
+        Locks = new LockCommands(this);
         Hashes = new HashCommands(this);
         Lists = new ListCommands(this);
         Sets = new SetCommands(this);
@@ -146,6 +147,7 @@ public sealed partial class RespireClient : IRespireClient
 
     public IStringCommands Strings { get; }
     public IKeyCommands Keys { get; }
+    public ILockCommands Locks { get; }
     public IHashCommands Hashes { get; }
     public IListCommands Lists { get; }
     public ISetCommands Sets { get; }
