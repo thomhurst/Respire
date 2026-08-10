@@ -142,9 +142,14 @@ internal sealed class ListCommands(RespireClient client) : IListCommands
         // BLPOP replies [key, value], or null on timeout.
         var reply = await client.SendBlockingAsync(
             blockingName, new Cmd2(blocking, client.Key(in key), ToSeconds(wait)), cancellationToken).ConfigureAwait(false);
-        var popped = reply.IsNull ? default : client.DeserializeBorrowed<T>(in reply.AsArray()[1]);
-        reply.Dispose();
-        return popped;
+        try
+        {
+            return reply.IsNull ? default : client.DeserializeBorrowed<T>(in reply.AsArray()[1]);
+        }
+        finally
+        {
+            reply.Dispose();
+        }
     }
 
     public ValueTask<string?> MoveAsync(

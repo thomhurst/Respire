@@ -916,6 +916,11 @@ public sealed partial class RespireClient : IRespireClient
             return (T)(object)value.AsSpan().ToArray();
         }
 
+        if (typeof(T) == typeof(ReadOnlyMemory<byte>))
+        {
+            return (T)(object)new ReadOnlyMemory<byte>(value.AsSpan().ToArray());
+        }
+
         if (PrimitiveCodec.TryDeserialize<T>(value.AsSpan(), out var primitive))
         {
             return primitive;

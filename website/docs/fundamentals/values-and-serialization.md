@@ -57,7 +57,7 @@ var options = new RespireOptions
 };
 ```
 
-Typed `string`, `byte[]`, Boolean, and numeric primitive values bypass object serialization. Numbers use invariant Redis text. Generic Boolean writes retain the default JSON-compatible `true`/`false` representation; reads also accept Redis-style `1`/`0`. Nullable forms use the same fast path when they contain a value.
+Typed `string`, `byte[]`, `ReadOnlyMemory<byte>`, Boolean, and numeric primitive values bypass object serialization. Numbers use invariant Redis text. Generic Boolean writes retain the default JSON-compatible `true`/`false` representation; reads also accept Redis-style `1`/`0`. Nullable forms use the same fast path when they contain a value.
 
 Objects, enums, and other types use the configured serializer. Custom serializers therefore do not control primitive encoding. Pass a `RespireValue` explicitly when a command input must use raw Redis scalar conventions, as shown in [Keys and input values](#keys-and-input-values).
 

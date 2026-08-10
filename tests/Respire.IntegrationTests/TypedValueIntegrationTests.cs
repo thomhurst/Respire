@@ -70,8 +70,14 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
         ReadOnlyMemory<byte> bytes = new byte[] { 0, 1, 254, 255 };
         await client.Hashes.SetAsync("typed:hash", "bytes", bytes);
         (await client.Hashes.GetBytesAsync("typed:hash", "bytes")).Should().Equal(bytes.ToArray());
+        (await client.Hashes.GetAsync<ReadOnlyMemory<byte>>("typed:hash", "bytes")).ToArray()
+            .Should().Equal(bytes.ToArray());
         await client.Hashes.SetAsync<RespireValue>("typed:hash", "raw", "text");
         (await client.Hashes.GetStringAsync("typed:hash", "raw")).Should().Be("text");
+
+        string? nullText = null;
+        await client.Hashes.SetAsync("typed:hash", "null-text", nullText);
+        (await client.Hashes.GetStringAsync("typed:hash", "null-text")).Should().BeEmpty();
 
         var storedDefault = await client.Hashes.TryGetAsync<int>("typed:hash", "count");
         storedDefault.Found.Should().BeTrue();
@@ -95,6 +101,11 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
 
         await client.Lists.RightPushAsync("typed:list:json", JsonSerializer.Serialize(payload));
         (await client.Lists.LeftPopAsync<TypedPayload>("typed:list:json")).Should().Be(payload);
+
+        await client.Lists.RightPushAsync("typed:list:invalid", "not-an-integer");
+        Func<Task> popInvalid = async () =>
+            await client.Lists.LeftPopAsync<int>("typed:list:invalid", TimeSpan.FromSeconds(1));
+        await popInvalid.Should().ThrowAsync<FormatException>();
     }
 
     [Test]
