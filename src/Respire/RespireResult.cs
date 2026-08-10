@@ -1,3 +1,4 @@
+using System.Globalization;
 using Respire.Internal;
 using Respire.Protocol;
 
@@ -40,12 +41,23 @@ public readonly struct RespireResult : IDisposable
 
     public long AsInteger() => Value.AsInteger();
 
+    /// <summary>
+    /// The reply as a double. RESP doubles are returned as-is; other replies are parsed from their
+    /// text using the invariant culture.
+    /// </summary>
+    /// <exception cref="FormatException">The reply is not a RESP double and its text does not parse as one.</exception>
     public double AsDouble()
     {
         var value = Value;
-        return value.Type == RespDataType.Double
-            ? value.AsDouble()
-            : double.TryParse(value.AsString(), System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : 0;
+        if (value.Type == RespDataType.Double)
+        {
+            return value.AsDouble();
+        }
+
+        var text = value.AsString();
+        return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : throw new FormatException($"The {value.Type} reply '{text}' is not a valid double.");
     }
 
     public bool AsBoolean()

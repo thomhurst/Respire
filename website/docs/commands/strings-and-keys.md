@@ -58,7 +58,12 @@ string?[] values = await redis.Strings.GetManyAsync("feature:a", "feature:b");
 long removed = await redis.DeleteAsync("feature:a", "feature:b");
 ```
 
-Variadic APIs use `params ReadOnlySpan<T>` where possible, avoiding a params-array allocation on supported C# toolchains.
+Variadic APIs use `params ReadOnlySpan<T>` where possible, avoiding a params-array allocation on supported C# toolchains. Because a `params` parameter must come last, each of these has a sibling overload taking the items non-params plus a required `CancellationToken`:
+
+```csharp
+string?[] values = await redis.Strings.GetManyAsync(keys, cancellationToken);
+long removed = await redis.DeleteAsync(keys, cancellationToken);
+```
 
 ## Key lifetime
 

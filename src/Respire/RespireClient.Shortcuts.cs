@@ -40,6 +40,10 @@ public sealed partial class RespireClient
     public ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys)
         => Keys.DeleteAsync(keys);
 
+    /// <inheritdoc cref="IKeyCommands.DeleteAsync(ReadOnlySpan{RespireKey}, CancellationToken)"/>
+    public ValueTask<long> DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
+        => Keys.DeleteAsync(keys, cancellationToken);
+
     /// <inheritdoc cref="IKeyCommands.ExistsAsync"/>
     public ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default)
         => Keys.ExistsAsync(key, cancellationToken);

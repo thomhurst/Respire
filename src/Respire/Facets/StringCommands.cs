@@ -77,8 +77,15 @@ public interface IStringCommands
     /// <summary>Gets many keys in one round trip; missing keys yield null. Redis: MGET.</summary>
     ValueTask<string?[]> GetManyAsync(params ReadOnlySpan<RespireKey> keys);
 
+    /// <summary>Gets many keys in one round trip; missing keys yield null. Redis: MGET.</summary>
+    ValueTask<string?[]> GetManyAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
+
     /// <summary>Sets many keys in one atomic round trip. Redis: MSET.</summary>
     ValueTask SetManyAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
+
+    /// <summary>Sets many keys in one atomic round trip. Redis: MSET.</summary>
+    ValueTask SetManyAsync(
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs, CancellationToken cancellationToken);
 
     /// <summary>
     /// Atomically sets many keys with a shared expiry and an optional NX/XX condition. Use
@@ -89,6 +96,13 @@ public interface IStringCommands
         RespireTtl expiry,
         SetWhen when = SetWhen.Always,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
+
+    /// <summary>Atomically sets many keys with a shared expiry and optional NX/XX condition. Redis: MSETEX.</summary>
+    ValueTask<bool> SetManyAsync(
+        RespireTtl expiry,
+        SetWhen when,
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
+        CancellationToken cancellationToken);
 
     /// <summary>
     /// Returns the longest common subsequence. Use <see cref="RespireCommands.String.LCS"/> directly
@@ -160,9 +174,16 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
             new IncrementCommand(Verbs.Decr, Verbs.DecrBy, client.Key(in key), by), cancellationToken);
 
     public ValueTask<string?[]> GetManyAsync(params ReadOnlySpan<RespireKey> keys)
-        => client.NullableStringArrayAsync("MGET", new CmdN(Verbs.MGet, client.MapKeys(keys)), CancellationToken.None);
+        => GetManyAsync(keys, CancellationToken.None);
+
+    public ValueTask<string?[]> GetManyAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
+        => client.NullableStringArrayAsync("MGET", new CmdN(Verbs.MGet, client.MapKeys(keys)), cancellationToken);
 
     public ValueTask SetManyAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+        => SetManyAsync(pairs, CancellationToken.None);
+
+    public ValueTask SetManyAsync(
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs, CancellationToken cancellationToken)
     {
         var args = new RespireValue[pairs.Length * 2];
         for (var i = 0; i < pairs.Length; i++)
@@ -171,12 +192,19 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
             args[i * 2 + 1] = pairs[i].Value;
         }
 
-        return client.OkAsync("MSET", new CmdN(Verbs.MSet, args), CancellationToken.None);
+        return client.OkAsync("MSET", new CmdN(Verbs.MSet, args), cancellationToken);
     }
 
     public ValueTask<bool> SetManyAsync(
         RespireTtl expiry, SetWhen when = SetWhen.Always,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+        => SetManyAsync(expiry, when, pairs, CancellationToken.None);
+
+    public ValueTask<bool> SetManyAsync(
+        RespireTtl expiry,
+        SetWhen when,
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
+        CancellationToken cancellationToken)
     {
         ValidatePairs(pairs);
         var condition = StringSetWhenToken(when);
@@ -213,7 +241,7 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         return client.FlagAsync(
             "MSETEX",
             new MSetExCommand(RespireCommands.String.MSETEX.Verb, args),
-            CancellationToken.None);
+            cancellationToken);
     }
 
     public ValueTask<string> LongestCommonSubsequenceAsync(

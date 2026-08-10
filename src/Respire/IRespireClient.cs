@@ -47,6 +47,7 @@ public interface IRespireClient : IAsyncDisposable
         CancellationToken cancellationToken = default);
 
     ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys);
+    ValueTask<long> DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
     ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default);
     ValueTask<long> IncrementAsync(RespireKey key, long by = 1, CancellationToken cancellationToken = default);
     ValueTask<long> DecrementAsync(RespireKey key, long by = 1, CancellationToken cancellationToken = default);
@@ -66,80 +67,50 @@ public interface IRespireClient : IAsyncDisposable
     ValueTask<RespireTransaction> CreateTransactionAsync(RespireKey[] watchKeys, CancellationToken cancellationToken = default);
 
     /// <summary>Returns the effective Redis key after this client applies any key transformation.</summary>
-    RespireKey ResolveKey(RespireKey key) => key;
+    RespireKey ResolveKey(RespireKey key);
 
-    // Raw escape hatch.
+    // Raw escape hatch. Two shapes per command form: a params call for the common case, and an
+    // array call that adds flags and cancellation as optional arguments — name the one you need.
+
+    /// <summary>Sends a catalog command; each value is exactly one argument.</summary>
     ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args);
 
-    ValueTask<RespireResult> ExecuteAsync(
-        RespireCommand command, int firstArgument, params RespireValue[] args)
-        => ExecuteAsync(command, [(RespireValue)firstArgument, .. args]);
-
-    ValueTask<RespireResult> ExecuteAsync(
-        RespireCommand command, RespireCommandFlags flags, params RespireValue[] args)
-        => throw new NotSupportedException("Command flags are not supported by this client implementation.");
-
-    ValueTask<RespireResult> ExecuteAsync(
-        RespireCommand command, RespireValue[] args, RespireCommandFlags flags)
-        => throw new NotSupportedException("Command flags are not supported by this client implementation.");
-
-    ValueTask<RespireResult> ExecuteAsync(
-        RespireCommand command, RespireValue[] args, CancellationToken cancellationToken);
-
+    /// <summary>Sends a catalog command with optional policy flags and cancellation.</summary>
     ValueTask<RespireResult> ExecuteAsync(
         RespireCommand command,
         RespireValue[] args,
-        RespireCommandFlags flags,
-        CancellationToken cancellationToken)
-        => throw new NotSupportedException("Command flags are not supported by this client implementation.");
+        RespireCommandFlags flags = RespireCommandFlags.None,
+        CancellationToken cancellationToken = default);
 
+    /// <summary>Sends any command; the name may contain spaces and each value is one argument.</summary>
     ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args);
 
-    ValueTask<RespireResult> ExecuteAsync(
-        string command, int firstArgument, params RespireValue[] args)
-        => ExecuteAsync(command, [(RespireValue)firstArgument, .. args]);
-
-    ValueTask<RespireResult> ExecuteAsync(
-        string command, RespireCommandFlags flags, params RespireValue[] args)
-        => throw new NotSupportedException("Command flags are not supported by this client implementation.");
-
-    ValueTask<RespireResult> ExecuteAsync(
-        string command, RespireValue[] args, RespireCommandFlags flags)
-        => throw new NotSupportedException("Command flags are not supported by this client implementation.");
-
-    ValueTask<RespireResult> ExecuteAsync(
-        string command, RespireValue[] args, CancellationToken cancellationToken)
-        => throw new NotSupportedException("Raw command cancellation is not supported by this client implementation.");
-
+    /// <summary>Sends any command with optional policy flags and cancellation.</summary>
     ValueTask<RespireResult> ExecuteAsync(
         string command,
         RespireValue[] args,
-        RespireCommandFlags flags,
-        CancellationToken cancellationToken)
-        => throw new NotSupportedException("Command flags are not supported by this client implementation.");
+        RespireCommandFlags flags = RespireCommandFlags.None,
+        CancellationToken cancellationToken = default);
 
-    ValueTask<RespireResult> ExecuteAsync(
-        RespireCommandInterpolatedStringHandler command, CancellationToken cancellationToken = default);
-
+    /// <summary>Sends a command written as an interpolated string; each hole is one argument.</summary>
     ValueTask<RespireResult> ExecuteAsync(
         RespireCommandInterpolatedStringHandler command,
-        RespireCommandFlags flags,
-        CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("Command flags are not supported by this client implementation.");
+        RespireCommandFlags flags = RespireCommandFlags.None,
+        CancellationToken cancellationToken = default);
 
-    ValueTask ExecuteFireAndForgetAsync(RespireCommand command, params RespireValue[] args)
-        => throw new NotSupportedException("Fire-and-forget commands are not supported by this client implementation.");
+    /// <summary>Queues a catalog command and discards its reply.</summary>
+    ValueTask ExecuteFireAndForgetAsync(RespireCommand command, params RespireValue[] args);
 
+    /// <summary>Queues a catalog command with cancellation and discards its reply.</summary>
     ValueTask ExecuteFireAndForgetAsync(
-        RespireCommand command, RespireValue[] args, CancellationToken cancellationToken)
-        => throw new NotSupportedException("Fire-and-forget commands are not supported by this client implementation.");
+        RespireCommand command, RespireValue[] args, CancellationToken cancellationToken = default);
 
-    ValueTask ExecuteFireAndForgetAsync(string command, params RespireValue[] args)
-        => throw new NotSupportedException("Fire-and-forget commands are not supported by this client implementation.");
+    /// <summary>Queues any command and discards its reply.</summary>
+    ValueTask ExecuteFireAndForgetAsync(string command, params RespireValue[] args);
 
+    /// <summary>Queues any command with cancellation and discards its reply.</summary>
     ValueTask ExecuteFireAndForgetAsync(
-        string command, RespireValue[] args, CancellationToken cancellationToken)
-        => throw new NotSupportedException("Fire-and-forget commands are not supported by this client implementation.");
+        string command, RespireValue[] args, CancellationToken cancellationToken = default);
 
     /// <summary>A view that prepends a prefix to every key; shares this client's connections.</summary>
     IRespireClient WithKeyPrefix(string prefix);
