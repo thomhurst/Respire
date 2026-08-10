@@ -34,10 +34,10 @@ internal sealed class BatchHyperLogLogCommands(IPendingSink sink) : IBatchHyperL
             throw new ArgumentException("At least one key is required.", nameof(keys));
         }
 
-        sink.ValidateClusterKeys(keys);
         return sink.Add<CmdN, long>(
             "PFCOUNT",
             new CmdN(RespireCommands.HyperLogLog.PFCOUNT.Verb, sink.Client.MapKeys(keys)),
+            keys,
             static (c, v) => ResponseReader.Integer(in v));
     }
 
@@ -48,13 +48,13 @@ internal sealed class BatchHyperLogLogCommands(IPendingSink sink) : IBatchHyperL
             throw new ArgumentException("At least one source key is required.", nameof(sourceKeys));
         }
 
-        sink.ValidateClusterKeys(destination, sourceKeys);
         return sink.Add<Cmd1N, bool>(
             "PFMERGE",
             new Cmd1N(
                 RespireCommands.HyperLogLog.PFMERGE.Verb,
                 sink.Client.Key(in destination),
                 sink.Client.MapKeys(sourceKeys)),
+            destination, sourceKeys,
             static (c, v) => ResponseReader.Ok(in v));
     }
 }

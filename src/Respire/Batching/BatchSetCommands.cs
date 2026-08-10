@@ -98,18 +98,18 @@ internal sealed class BatchSetCommands(IPendingSink sink) : IBatchSetCommands
 
     private RespirePending<string[]> StringArrayKeys(string operation, Verb verb, ReadOnlySpan<RespireKey> keys)
     {
-        sink.ValidateClusterKeys(keys);
         return sink.Add<CmdN, string[]>(
             operation, new CmdN(verb, sink.Client.MapKeys(keys)),
+            keys,
             static (c, v) => ResponseReader.StringArray(in v));
     }
 
     private RespirePending<long> StoreKeys(
         string operation, Verb verb, RespireKey destination, ReadOnlySpan<RespireKey> keys)
     {
-        sink.ValidateClusterKeys(destination, keys);
         return sink.Add<Cmd1N, long>(
             operation, new Cmd1N(verb, sink.Client.Key(in destination), sink.Client.MapKeys(keys)),
+            destination, keys,
             static (c, v) => ResponseReader.Integer(in v));
     }
 }

@@ -19,42 +19,25 @@ internal interface IPendingSink
     RespirePending<T> Add<TCommand, T>(
         string operation, in TCommand command, Func<RespireClient, RespValue, T> convert)
         where TCommand : struct, IRespCommand;
-}
 
-internal static class PendingSinkExtensions
-{
-    internal static void ValidateClusterKeys(this IPendingSink sink, ReadOnlySpan<RespireKey> keys)
-    {
-        if (sink is RespireTransaction transaction)
-        {
-            transaction.ValidateClusterKeys(keys);
-        }
-    }
+    RespirePending<T> Add<TCommand, T>(
+        string operation, in TCommand command, ReadOnlySpan<RespireKey> keys,
+        Func<RespireClient, RespValue, T> convert)
+        where TCommand : struct, IRespCommand;
 
-    internal static void ValidateClusterKeys(
-        this IPendingSink sink, RespireKey first, RespireKey second)
-    {
-        if (sink is RespireTransaction transaction)
-        {
-            transaction.ValidateClusterKeys(first, second);
-        }
-    }
+    RespirePending<T> Add<TCommand, T>(
+        string operation, in TCommand command, RespireKey first, RespireKey second,
+        Func<RespireClient, RespValue, T> convert)
+        where TCommand : struct, IRespCommand;
 
-    internal static void ValidateClusterKeys(
-        this IPendingSink sink, RespireKey first, ReadOnlySpan<RespireKey> rest)
-    {
-        if (sink is RespireTransaction transaction)
-        {
-            transaction.ValidateClusterKeys(first, rest);
-        }
-    }
+    RespirePending<T> Add<TCommand, T>(
+        string operation, in TCommand command, RespireKey first, ReadOnlySpan<RespireKey> rest,
+        Func<RespireClient, RespValue, T> convert)
+        where TCommand : struct, IRespCommand;
 
-    internal static void ValidateClusterKeys(
-        this IPendingSink sink, ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
-    {
-        if (sink is RespireTransaction transaction)
-        {
-            transaction.ValidateClusterKeys(pairs);
-        }
-    }
+    RespirePending<T> Add<TCommand, T>(
+        string operation, in TCommand command,
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
+        Func<RespireClient, RespValue, T> convert)
+        where TCommand : struct, IRespCommand;
 }

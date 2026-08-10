@@ -1,8 +1,10 @@
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Text;
 using Respire.Internal;
+using Respire.Serialization;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -259,6 +261,31 @@ public class TelemetryTests
     }
 
     [Test]
+    public async Task Transaction_ConversionFailureMarksBatchTelemetryAsError()
+    {
+        await using var server = new FakeRespServer(
+            FakeRespServer.OkReply,
+            "+QUEUED\r\n"u8.ToArray(),
+            "*1\r\n$3\r\nbad\r\n"u8.ToArray());
+        using var capture = new TelemetryCapture();
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+            Serializer = new FailingDeserializer(),
+        });
+        var transaction = client.CreateTransaction();
+        var pending = transaction.GetAsync<Payload>("key");
+
+        await transaction.CommitAsync();
+
+        await Assert.That(async () => await pending).ThrowsExactly<InvalidOperationException>();
+        var activity = capture.SingleActivity("GET", server.Port);
+        await Assert.That(activity.Status).IsEqualTo(ActivityStatusCode.Error);
+        await Assert.That(Tag(activity, "error.type")).IsEqualTo(typeof(InvalidOperationException).FullName);
+    }
+
+    [Test]
     public async Task EmptyTransaction_EmitsBatchSizeZeroWithoutConnecting()
     {
         using var capture = new TelemetryCapture();
@@ -435,4 +462,15 @@ public class TelemetryTests
         string? Unit,
         double Value,
         Dictionary<string, object?> Tags);
+
+    private sealed record Payload;
+
+    private sealed class FailingDeserializer : IRespireSerializer
+    {
+        public void Serialize<T>(IBufferWriter<byte> destination, T value)
+            => throw new NotSupportedException();
+
+        public T? Deserialize<T>(ReadOnlySpan<byte> payload)
+            => throw new InvalidOperationException("Conversion failed.");
+    }
 }
