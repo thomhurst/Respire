@@ -15,6 +15,8 @@ namespace Respire.Internal;
 /// </summary>
 internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
 {
+    private static readonly TimeSpan DisposeConnectionPollInterval = TimeSpan.FromMilliseconds(10);
+
     private readonly object _gate = new();
     private readonly object _reconnectStateGate = new();
     private readonly Queue<RespireConnectionState> _pendingReconnectStates = [];
@@ -220,20 +222,18 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
 
         if (disposal.IsCompletedSuccessfully)
         {
-            disposal.GetAwaiter().GetResult();
+            return;
         }
-        else
-        {
-            _ = ObserveAbandonedConnectionAsync(disposal);
-        }
+
+        _ = ObserveAbandonedConnectionAsync(disposal);
     }
 
-    private ValueTask? DetachConnection(RespireConnection connection)
+    private Task? DetachConnection(RespireConnection connection)
         => ReferenceEquals(Interlocked.CompareExchange(ref _connection, null, connection), connection)
-            ? connection.DisposeAsync()
+            ? connection.DisposeAsync().AsTask()
             : null;
 
-    private async Task ObserveAbandonedConnectionAsync(ValueTask disposal)
+    private async Task ObserveAbandonedConnectionAsync(Task disposal)
     {
         try
         {
@@ -242,6 +242,15 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         catch (Exception ex)
         {
             core.Logger?.LogDebug(ex, "Closing a failed subscription connection failed");
+        }
+    }
+
+    private void InterruptPublishedConnection(List<Task> interruptedDisposals)
+    {
+        var connection = Volatile.Read(ref _connection);
+        if (connection is not null && DetachConnection(connection) is { } disposal)
+        {
+            interruptedDisposals.Add(disposal);
         }
     }
 
@@ -553,14 +562,20 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             _pendingReconnectStates.Clear();
         }
 
-        // Interrupt a stalled control command before waiting for its serialization gate. Socket
-        // closure fails the in-flight response and lets that operation release the gate promptly.
-        var connection = Volatile.Read(ref _connection);
-        var interruptedDisposal = connection is null ? null : DetachConnection(connection);
+        // Interrupt stalled control commands while waiting for their serialization gate. A
+        // reconnect can publish a replacement after the first snapshot, so keep detaching every
+        // connection that appears until the gate is ours.
+        List<Task> interruptedDisposals = [];
+        InterruptPublishedConnection(interruptedDisposals);
+        while (!await _controlGate.WaitAsync(DisposeConnectionPollInterval).ConfigureAwait(false))
+        {
+            InterruptPublishedConnection(interruptedDisposals);
+        }
 
-        await _controlGate.WaitAsync().ConfigureAwait(false);
         try
         {
+            InterruptPublishedConnection(interruptedDisposals);
+
             List<RespireSubscription> subscriptions = [];
             lock (_gate)
             {
@@ -586,15 +601,8 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             await _connectionGate.WaitAsync().ConfigureAwait(false);
             try
             {
-                if (_connection is { } racedConnection)
-                {
-                    await racedConnection.DisposeAsync().ConfigureAwait(false);
-                }
-
-                if (interruptedDisposal is { } disposal)
-                {
-                    await disposal.ConfigureAwait(false);
-                }
+                InterruptPublishedConnection(interruptedDisposals);
+                await Task.WhenAll(interruptedDisposals).ConfigureAwait(false);
             }
             finally
             {

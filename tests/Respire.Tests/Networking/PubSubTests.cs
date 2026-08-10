@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Reflection;
 using Respire.Commands;
+using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
 using TUnit.Core;
@@ -125,6 +127,50 @@ public class PubSubTests
         await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(1));
 
         await Assert.That(async () => await subscription).Throws<RespireConnectionException>();
+    }
+
+    [Test]
+    public async Task DisposeAsync_InterruptsReplacementPublishedWhileWaitingForControlGate()
+    {
+        await using var server = new FakeRespServer(SubscribeConfirmation)
+        {
+            SuppressReply = _ => true,
+        };
+        var client = CreateLazyClient(server.Port);
+        var hub = client.Core.Hub;
+        var controlGate = (SemaphoreSlim)typeof(SubscriptionHub)
+            .GetField("_controlGate", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(hub)!;
+        var connectionField = typeof(SubscriptionHub)
+            .GetField("_connection", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var replacement = await RespireConnection.ConnectAsync(
+            "127.0.0.1", server.Port, new RespireConnectionOptions());
+
+        await controlGate.WaitAsync();
+        try
+        {
+            // Disposal snapshots no connection, then waits behind a reconnect control operation.
+            var disposal = client.DisposeAsync().AsTask();
+            var stalledResubscribe = replacement.SendAsync(new Cmd1(Verbs.Subscribe, "ch")).AsTask();
+            await WaitForCommandsAsync(server, 1);
+            connectionField.SetValue(hub, replacement);
+
+            await replacement.Closed.WaitAsync(TimeSpan.FromSeconds(1));
+            await Assert.That(async () => await stalledResubscribe).Throws<RespireConnectionException>();
+
+            controlGate.Release();
+            await disposal.WaitAsync(TimeSpan.FromSeconds(1));
+        }
+        finally
+        {
+            if (controlGate.CurrentCount == 0)
+            {
+                controlGate.Release();
+            }
+
+            await client.DisposeAsync();
+            await replacement.DisposeAsync();
+        }
     }
 
     [Test]
