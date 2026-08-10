@@ -207,7 +207,19 @@ internal static class Verbs
     public static readonly Verb Watch = new("WATCH");
 
     // Server
+    public static readonly Verb ClientList = new(-1, "CLIENT", "LIST");
+    public static readonly Verb ClientKill = new(-1, "CLIENT", "KILL");
+    public static readonly Verb CommandCount = new(-1, "COMMAND", "COUNT");
+    public static readonly Verb CommandList = new(-1, "COMMAND", "LIST");
     public static readonly Verb Info = new(-1, "INFO");
+    public static readonly Verb LastSave = new(-1, "LASTSAVE");
+    public static readonly Verb LatencyLatest = new(-1, "LATENCY", "LATEST");
+    public static readonly Verb LatencyReset = new(-1, "LATENCY", "RESET");
+    public static readonly Verb MemoryStats = new(-1, "MEMORY", "STATS");
+    public static readonly Verb MemoryUsage = new(0, "MEMORY", "USAGE");
+    public static readonly Verb Role = new(-1, "ROLE");
+    public static readonly Verb SlowLogGet = new(-1, "SLOWLOG", "GET");
+    public static readonly Verb SlowLogReset = new(-1, "SLOWLOG", "RESET");
     public static readonly Verb ConfigGet = new(-1, "CONFIG", "GET");
     public static readonly Verb ConfigSet = new(-1, "CONFIG", "SET");
 
