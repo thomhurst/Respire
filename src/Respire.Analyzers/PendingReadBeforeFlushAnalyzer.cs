@@ -13,8 +13,8 @@ namespace Respire.Analyzers;
 /// </summary>
 /// <remarks>
 /// Pragmatic and same-method only: the pending must come from a local batch/transaction in this
-/// scope, and neither the pending nor the batch may leave it. The flush is matched textually and
-/// must be awaited before the read.
+/// scope, and neither the pending nor the batch may leave it. The flush must be awaited on every
+/// control-flow path to the read.
 /// </remarks>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
@@ -280,7 +280,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         InvocationExpressionSyntax invocation,
         SyntaxNode read)
     {
-        if (GetAwaitExpression(invocation) is { } directAwait && directAwait.SpanStart < read.SpanStart)
+        if (GetAwaitExpression(invocation) is { } directAwait
+            && ScopeWalker.Dominates(context.SemanticModel, scope, directAwait, read, context.CancellationToken))
         {
             return true;
         }
@@ -294,7 +295,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         foreach (var reference in ScopeWalker.FindReferences(
                      scope, flush, context.SemanticModel, context.CancellationToken))
         {
-            if (GetAwaitExpression(reference) is { } awaitExpression && awaitExpression.SpanStart < read.SpanStart)
+            if (GetAwaitExpression(reference) is { } awaitExpression
+                && ScopeWalker.Dominates(context.SemanticModel, scope, awaitExpression, read, context.CancellationToken))
             {
                 return true;
             }

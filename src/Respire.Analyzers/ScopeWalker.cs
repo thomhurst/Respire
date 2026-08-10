@@ -1,6 +1,7 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.FlowAnalysis;
 
 namespace Respire.Analyzers;
 
@@ -75,6 +76,137 @@ internal static class ScopeWalker
     /// <summary>Identity for two nodes of the same syntax tree.</summary>
     public static bool IsSame(SyntaxNode left, SyntaxNode right)
         => left.RawKind == right.RawKind && left.FullSpan == right.FullSpan;
+
+    /// <summary>True when every control-flow path to <paramref name="after"/> crosses <paramref name="before"/>.</summary>
+    public static bool Dominates(
+        SemanticModel semanticModel,
+        SyntaxNode scope,
+        SyntaxNode before,
+        SyntaxNode after,
+        CancellationToken cancellationToken)
+    {
+        var graph = CreateControlFlowGraph(semanticModel, scope, cancellationToken);
+        if (graph is null
+            || FindBlock(graph, before) is not { } beforeBlock
+            || FindBlock(graph, after) is not { } afterBlock)
+        {
+            return false;
+        }
+
+        if (beforeBlock.Ordinal == afterBlock.Ordinal)
+        {
+            return before.SpanStart < after.SpanStart;
+        }
+
+        return ComputeDominators(graph, reverse: false)[afterBlock.Ordinal].Contains(beforeBlock.Ordinal);
+    }
+
+    /// <summary>True when every control-flow path from <paramref name="before"/> to exit crosses <paramref name="after"/>.</summary>
+    public static bool PostDominates(
+        SemanticModel semanticModel,
+        SyntaxNode scope,
+        SyntaxNode before,
+        SyntaxNode after,
+        CancellationToken cancellationToken)
+    {
+        var graph = CreateControlFlowGraph(semanticModel, scope, cancellationToken);
+        if (graph is null
+            || FindBlock(graph, before) is not { } beforeBlock
+            || FindBlock(graph, after) is not { } afterBlock)
+        {
+            return false;
+        }
+
+        if (beforeBlock.Ordinal == afterBlock.Ordinal)
+        {
+            return before.SpanStart < after.SpanStart;
+        }
+
+        return ComputeDominators(graph, reverse: true)[beforeBlock.Ordinal].Contains(afterBlock.Ordinal);
+    }
+
+    private static ControlFlowGraph? CreateControlFlowGraph(
+        SemanticModel semanticModel, SyntaxNode scope, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return ControlFlowGraph.Create(scope, semanticModel, cancellationToken);
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private static BasicBlock? FindBlock(ControlFlowGraph graph, SyntaxNode node)
+        => graph.Blocks.FirstOrDefault(block =>
+            block.Operations.Any(operation => operation.Syntax.FullSpan.IntersectsWith(node.Span))
+            || block.BranchValue?.Syntax.FullSpan.IntersectsWith(node.Span) == true);
+
+    private static HashSet<int>[] ComputeDominators(ControlFlowGraph graph, bool reverse)
+    {
+        var blocks = graph.Blocks;
+        var all = new HashSet<int>(
+            blocks.Where(static block => block.IsReachable).Select(static block => block.Ordinal));
+        var root = reverse ? blocks[blocks.Length - 1].Ordinal : blocks[0].Ordinal;
+        var dominators = new HashSet<int>[blocks.Length];
+
+        foreach (var block in blocks)
+        {
+            dominators[block.Ordinal] = block.Ordinal == root ? [root] : new HashSet<int>(all);
+        }
+
+        bool changed;
+        do
+        {
+            changed = false;
+            foreach (var block in blocks)
+            {
+                if (!block.IsReachable || block.Ordinal == root)
+                {
+                    continue;
+                }
+
+                var adjacent = reverse ? GetSuccessors(block) : block.Predecessors.Select(static branch => branch.Source);
+                var sets = adjacent.Where(static candidate => candidate.IsReachable)
+                    .Select(candidate => dominators[candidate.Ordinal]).ToArray();
+                var next = sets.Length == 0 ? [] : new HashSet<int>(sets[0]);
+                foreach (var set in sets.Skip(1))
+                {
+                    next.IntersectWith(set);
+                }
+
+                next.Add(block.Ordinal);
+                if (!dominators[block.Ordinal].SetEquals(next))
+                {
+                    dominators[block.Ordinal] = next;
+                    changed = true;
+                }
+            }
+        }
+        while (changed);
+
+        return dominators;
+    }
+
+    private static IEnumerable<BasicBlock> GetSuccessors(BasicBlock block)
+    {
+        var fallThrough = block.FallThroughSuccessor?.Destination;
+        if (fallThrough is not null)
+        {
+            yield return fallThrough;
+        }
+
+        if (block.ConditionalSuccessor?.Destination is { } conditional
+            && conditional.Ordinal != fallThrough?.Ordinal)
+        {
+            yield return conditional;
+        }
+    }
 
     /// <summary>The receiver of <c>receiver.Name(...)</c> / <c>receiver.Name</c>, or null.</summary>
     public static ExpressionSyntax? GetReceiver(ExpressionSyntax expression)

@@ -198,6 +198,53 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    public async Task ConditionalSendBeforeRead_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool send)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                if (send)
+                {
+                    await batch.SendAsync();
+                }
+
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
+    public async Task ConditionallyAwaitedSendLocalBeforeRead_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool send)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                var flush = batch.SendAsync();
+                if (send)
+                {
+                    await flush;
+                }
+
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
     public async Task ConditionalResultReadBeforeSend_IsFlagged() => await Verify.VerifyAsync(
         """
         using System;

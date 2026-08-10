@@ -97,7 +97,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            if (IsDisposedOrEscapes(context, scope, local))
+            if (IsDisposedOrEscapes(context, scope, declaration, local))
             {
                 continue;
             }
@@ -138,7 +138,11 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
     /// True when the local is disposed, or when it leaves this scope in any way — both mean the
     /// rule has nothing to say.
     /// </summary>
-    private static bool IsDisposedOrEscapes(SyntaxNodeAnalysisContext context, SyntaxNode scope, ILocalSymbol local)
+    private static bool IsDisposedOrEscapes(
+        SyntaxNodeAnalysisContext context,
+        SyntaxNode scope,
+        LocalDeclarationStatementSyntax declaration,
+        ILocalSymbol local)
     {
         foreach (var reference in ScopeWalker.FindReferences(scope, local, context.SemanticModel, context.CancellationToken))
         {
@@ -153,7 +157,9 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, reference):
                     if (member.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
                         && member.Parent is InvocationExpressionSyntax invocation
-                        && ScopeWalker.IsSame(invocation.Expression, member))
+                        && ScopeWalker.IsSame(invocation.Expression, member)
+                        && ScopeWalker.PostDominates(
+                            context.SemanticModel, scope, declaration, invocation, context.CancellationToken))
                     {
                         return true;
                     }
@@ -169,7 +175,9 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                     if (conditional.WhenNotNull.DescendantNodesAndSelf().OfType<MemberBindingExpressionSyntax>()
                         .Any(binding => binding.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
                                         && binding.Parent is InvocationExpressionSyntax invocation
-                                        && ScopeWalker.IsSame(invocation.Expression, binding)))
+                                        && ScopeWalker.IsSame(invocation.Expression, binding)
+                                        && ScopeWalker.PostDominates(
+                                            context.SemanticModel, scope, declaration, invocation, context.CancellationToken)))
                     {
                         return true;
                     }
