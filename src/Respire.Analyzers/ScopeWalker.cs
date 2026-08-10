@@ -2,6 +2,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FlowAnalysis;
+using Microsoft.CodeAnalysis.Operations;
 
 namespace Respire.Analyzers;
 
@@ -65,6 +66,23 @@ internal static class ScopeWalker
         for (var current = node.Parent; current is not null && !IsSame(current, scope); current = current.Parent)
         {
             if (current is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>True when <paramref name="node"/> is used only to produce a compile-time name.</summary>
+    public static bool IsInsideNameOf(
+        SemanticModel semanticModel, SyntaxNode node, CancellationToken cancellationToken)
+    {
+        for (var operation = semanticModel.GetOperation(node, cancellationToken);
+             operation is not null;
+             operation = operation.Parent)
+        {
+            if (operation is INameOfOperation)
             {
                 return true;
             }

@@ -146,6 +146,11 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
     {
         foreach (var reference in ScopeWalker.FindReferences(scope, local, context.SemanticModel, context.CancellationToken))
         {
+            if (ScopeWalker.IsInsideNameOf(context.SemanticModel, reference, context.CancellationToken))
+            {
+                continue;
+            }
+
             if (ScopeWalker.IsNestedInLambda(reference, scope))
             {
                 return true;
@@ -155,6 +160,13 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             {
                 // result.AsString(), result.Type, result.Dispose()
                 case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, reference):
+                    if (member.Parent is InvocationExpressionSyntax extensionInvocation
+                        && context.SemanticModel.GetSymbolInfo(extensionInvocation, context.CancellationToken).Symbol
+                            is IMethodSymbol { ReducedFrom: not null })
+                    {
+                        return true;
+                    }
+
                     if (member.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
                         && member.Parent is InvocationExpressionSyntax invocation
                         && ScopeWalker.IsSame(invocation.Expression, member)
@@ -187,7 +199,13 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 // using (result) { … }
                 case UsingStatementSyntax usingStatement when usingStatement.Expression is not null
                                                               && ScopeWalker.IsSame(usingStatement.Expression, reference):
-                    return true;
+                    if (ScopeWalker.PostDominates(
+                            context.SemanticModel, scope, declaration, usingStatement, context.CancellationToken))
+                    {
+                        return true;
+                    }
+
+                    break;
 
                 // Anything else — an argument, a return, an assignment — hands ownership away.
                 default:

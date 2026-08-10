@@ -98,6 +98,86 @@ public class UndisposedPooledResultAnalyzerTests
         """);
 
     [Test]
+    public async Task UsingStatement_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var result = await client.ExecuteAsync("PING");
+                using (result)
+                {
+                    Console.WriteLine(result.AsString());
+                }
+            }
+        }
+        """);
+
+    [Test]
+    public async Task ConditionalUsingStatement_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool dispose)
+            {
+                var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                if (dispose)
+                {
+                    using (result)
+                    {
+                    }
+                }
+            }
+        }
+        """);
+
+    [Test]
+    public async Task DirectNameOf_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                Console.WriteLine(nameof(result));
+            }
+        }
+        """);
+
+    [Test]
+    public async Task ResultPassedToExtensionMethod_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var result = await client.ExecuteAsync("PING");
+                result.Consume();
+            }
+        }
+
+        public static class ResultExtensions
+        {
+            public static void Consume(this RespireResult result) => result.Dispose();
+        }
+        """);
+
+    [Test]
     public async Task EarlyReturnBeforeDispose_IsFlagged() => await Verify.VerifyAsync(
         """
         using System;

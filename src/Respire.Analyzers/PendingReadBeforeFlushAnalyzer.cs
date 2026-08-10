@@ -3,7 +3,6 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
-using Microsoft.CodeAnalysis.Operations;
 
 namespace Respire.Analyzers;
 
@@ -80,7 +79,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             return;
         }
 
-        if (IsInsideNameOf(context, member))
+        if (ScopeWalker.IsInsideNameOf(context.SemanticModel, member, context.CancellationToken))
         {
             return;
         }
@@ -98,7 +97,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
     {
         var binding = (MemberBindingExpressionSyntax)context.Node;
         if (binding.Name.Identifier.ValueText != ResultPropertyName
-            || IsInsideNameOf(context, binding)
+            || ScopeWalker.IsInsideNameOf(context.SemanticModel, binding, context.CancellationToken)
             || context.SemanticModel.GetSymbolInfo(binding, context.CancellationToken).Symbol is not IPropertySymbol property
             || !SymbolEqualityComparer.Default.Equals(property.ContainingType.OriginalDefinition, known.Pending)
             || binding.FirstAncestorOrSelf<ConditionalAccessExpressionSyntax>() is not { } conditional)
@@ -107,21 +106,6 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         }
 
         AnalyzeRead(context, read: conditional, pending: conditional.Expression, known);
-    }
-
-    private static bool IsInsideNameOf(SyntaxNodeAnalysisContext context, SyntaxNode node)
-    {
-        for (var operation = context.SemanticModel.GetOperation(node, context.CancellationToken);
-             operation is not null;
-             operation = operation.Parent)
-        {
-            if (operation is INameOfOperation)
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private static void AnalyzeAwait(SyntaxNodeAnalysisContext context, KnownTypes known)
@@ -226,6 +210,13 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             switch (reference.Parent)
             {
                 case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, reference):
+                    if (member.Parent is InvocationExpressionSyntax invocation
+                        && context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol
+                            is IMethodSymbol { ReducedFrom: not null })
+                    {
+                        return true;
+                    }
+
                     break;
 
                 case ConditionalAccessExpressionSyntax conditional when ScopeWalker.IsSame(conditional.Expression, reference):

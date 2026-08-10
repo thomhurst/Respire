@@ -326,6 +326,30 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    public async Task BatchFlushedByExtensionMethod_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                await batch.FlushAsync();
+                Console.WriteLine(pending.Result);
+            }
+        }
+
+        public static class BatchExtensions
+        {
+            public static Task FlushAsync(this RespireBatch batch) => batch.SendAsync().AsTask();
+        }
+        """);
+
+    [Test]
     public async Task PendingReturnedFromMethod_IsNotFlagged() => await Verify.VerifyAsync(
         """
         using System.Threading.Tasks;
