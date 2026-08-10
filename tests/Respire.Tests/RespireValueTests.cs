@@ -54,6 +54,19 @@ public class RespireValueTests
     }
 
     [Test]
+    public async Task UnpairedSurrogateStringsUseTheirEncodedWirePayload()
+    {
+        RespireValue first = "\uD800";
+        RespireValue second = "\uD801";
+        RespireValue replacementBytes = "�"u8.ToArray();
+
+        await Assert.That(first == second).IsTrue();
+        await Assert.That(first == replacementBytes).IsTrue();
+        await Assert.That(second == replacementBytes).IsTrue();
+        await Assert.That(first.GetHashCode()).IsEqualTo(second.GetHashCode());
+    }
+
+    [Test]
     public async Task LongTextAndBytesAreEqualAndShareHashCode()
     {
         var text = new string('x', 1024) + "£";

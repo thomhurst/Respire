@@ -305,7 +305,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
         if (_kind == Kind.String)
         {
             return other._kind == Kind.String
-                ? string.Equals(_string, other._string, StringComparison.Ordinal)
+                ? StringsHaveSamePayload(_string!, other._string!)
                 : other.EqualsUtf8(_string!);
         }
 
@@ -404,6 +404,62 @@ public readonly struct RespireValue : IEquatable<RespireValue>
                 ArrayPool<byte>.Shared.Return(rented, clearArray: true);
             }
         }
+    }
+
+    private static bool StringsHaveSamePayload(string left, string right)
+    {
+        if (string.Equals(left, right, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (!ContainsUnpairedSurrogate(left) && !ContainsUnpairedSurrogate(right))
+        {
+            return false;
+        }
+
+        var byteCount = Encoding.UTF8.GetByteCount(left);
+        byte[]? rented = null;
+        var encoded = byteCount <= StackallocThreshold
+            ? stackalloc byte[byteCount]
+            : (rented = ArrayPool<byte>.Shared.Rent(byteCount));
+
+        try
+        {
+            Encoding.UTF8.GetBytes(left, encoded);
+            return Utf8Equals(right, encoded[..byteCount]);
+        }
+        finally
+        {
+            if (rented is not null)
+            {
+                ArrayPool<byte>.Shared.Return(rented, clearArray: true);
+            }
+        }
+    }
+
+    private static bool ContainsUnpairedSurrogate(string value)
+    {
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (char.IsHighSurrogate(value[i]))
+            {
+                if (i + 1 < value.Length && char.IsLowSurrogate(value[i + 1]))
+                {
+                    i++;
+                    continue;
+                }
+
+                return true;
+            }
+
+            if (char.IsLowSurrogate(value[i]))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static int HashPayload(ReadOnlySpan<byte> payload)
