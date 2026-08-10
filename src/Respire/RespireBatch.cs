@@ -252,17 +252,13 @@ public sealed class RespireBatch : IDisposable, IPendingSink
             return new RespireBatchResult(_ops.Count, _ops.Count, ex);
         }
 
-        var timeout = _client.Core.Options.CommandTimeout;
-        using var timeoutSource = timeout is null
-            ? null
-            : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutSource?.CancelAfter(timeout!.Value);
-        var effectiveToken = timeoutSource?.Token ?? cancellationToken;
-
+        // CommandTimeout is enforced per command by the connection's deadline sweep, which
+        // fails an expired operation with a RespireTimeoutException carrying its name — no
+        // batch-level CancellationTokenSource or per-operation registrations needed.
         var tasks = new Task<Exception?>[_ops.Count];
         for (var i = 0; i < _ops.Count; i++)
         {
-            tasks[i] = _ops[i].RunAsync(_client, connection, effectiveToken, cancellationToken, timeout);
+            tasks[i] = _ops[i].RunAsync(_client, connection, cancellationToken);
         }
 
         var errors = await Task.WhenAll(tasks).ConfigureAwait(false);
@@ -377,8 +373,7 @@ public sealed class RespireBatch : IDisposable, IPendingSink
         public abstract Exception? Error { get; }
 
         public abstract Task<Exception?> RunAsync(
-            RespireClient client, RespireConnection connection, CancellationToken effectiveToken,
-            CancellationToken callerToken, TimeSpan? timeout);
+            RespireClient client, RespireConnection connection, CancellationToken cancellationToken);
 
         public abstract bool TryGetClusterSlot(out int slot);
 
@@ -438,19 +433,13 @@ public sealed class RespireBatch : IDisposable, IPendingSink
         }
 
         public override async Task<Exception?> RunAsync(
-            RespireClient client, RespireConnection connection, CancellationToken effectiveToken,
-            CancellationToken callerToken, TimeSpan? timeout)
+            RespireClient client, RespireConnection connection, CancellationToken cancellationToken)
         {
             try
             {
-                var value = await connection.SendAsync(in command, effectiveToken).ConfigureAwait(false);
+                var value = await connection.SendAsync(in command, cancellationToken, commandName: Operation)
+                    .ConfigureAwait(false);
                 return Complete(client, value);
-            }
-            catch (OperationCanceledException) when (timeout is { } expired && !callerToken.IsCancellationRequested)
-            {
-                var error = new RespireTimeoutException(Operation, expired);
-                pending.Fail(error);
-                return error;
             }
             catch (Exception ex)
             {

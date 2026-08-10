@@ -1299,6 +1299,8 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
+    // CommandTimeout is enforced by the connection's deadline sweep (commands are stamped at
+    // enqueue), so no per-command CancellationTokenSource or timer is created here.
     private ValueTask<RespValue> SendOnConnectionCoreAsync<TCommand>(
         string operation,
         RespireConnection connection,
@@ -1306,42 +1308,9 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken,
         bool sendAsking = false)
         where TCommand : struct, IRespCommand
-    {
-        if (_core.Options.CommandTimeout is not { } timeout)
-        {
-            return sendAsking
-                ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation)
-                : connection.SendCheckedAsync(in command, cancellationToken, operation);
-        }
-
-        return SendWithTimeoutAsync(operation, connection, command, cancellationToken, timeout, sendAsking);
-    }
-
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    private static async ValueTask<RespValue> SendWithTimeoutAsync<TCommand>(
-        string operation,
-        RespireConnection connection,
-        TCommand command,
-        CancellationToken cancellationToken,
-        TimeSpan timeout,
-        bool sendAsking)
-        where TCommand : struct, IRespCommand
-    {
-        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
-        try
-        {
-            return await (sendAsking
-                    ? ClusterRouter.SendAskingAsync(connection, in command, timeoutSource.Token, operation)
-                    : connection.SendCheckedAsync(in command, timeoutSource.Token, operation))
-                .ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            throw new RespireTimeoutException(operation, timeout);
-        }
-    }
+        => sendAsking
+            ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation)
+            : connection.SendCheckedAsync(in command, cancellationToken, operation);
 
     internal ValueTask<RespValue> SendOnConnectionAsync<TCommand>(
         string operation,
@@ -1627,6 +1596,12 @@ public sealed partial class RespireClient : IRespireClient
             // leaves no cache mutation to correct.
             throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout);
         }
+        catch (RespireTimeoutException ex)
+        {
+            // The deadline sweep expired an individual setup command; relabel it as the
+            // whole identity-setup stage.
+            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, ex);
+        }
     }
 
     internal readonly record struct TrackedConnectionIdentity(
@@ -1771,6 +1746,10 @@ public sealed partial class RespireClient : IRespireClient
         {
             throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout);
         }
+        catch (RespireTimeoutException ex)
+        {
+            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, ex);
+        }
     }
 
     private async ValueTask<RespireConnection> GetTrackedClusterConnectionAsync(
@@ -1794,6 +1773,10 @@ public sealed partial class RespireClient : IRespireClient
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout);
+        }
+        catch (RespireTimeoutException ex)
+        {
+            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, ex);
         }
     }
 
@@ -1821,6 +1804,10 @@ public sealed partial class RespireClient : IRespireClient
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout);
+        }
+        catch (RespireTimeoutException ex)
+        {
+            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, ex);
         }
     }
 
@@ -1964,8 +1951,12 @@ public sealed partial class RespireClient : IRespireClient
         var control = await pool.RentAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
+            // The kill is an ordering barrier; once owed it must not be abandonable, so no
+            // command deadline applies.
             var reply = await control.SendAsync(
-                new ClientKillIdCommand(identity.ServerClientId), CancellationToken.None).ConfigureAwait(false);
+                    new ClientKillIdCommand(identity.ServerClientId), CancellationToken.None,
+                    armCommandDeadline: false)
+                .ConfigureAwait(false);
             if (reply.IsError)
             {
                 var error = ResponseReader.ServerError(in reply, "CLIENT KILL");
@@ -2260,64 +2251,15 @@ public sealed partial class RespireClient : IRespireClient
             && core.Cluster is null
             && core.Multiplexer.IsInitialized)
         {
+            // CommandTimeout is enforced by the connection's deadline sweep and covers the
+            // Redis response, not user converter work (conversion runs at the caller).
             var connection = core.Multiplexer.GetConnection();
-            return core.Options.CommandTimeout is { } timeout
-                ? SendConvertedWithTimeoutAsync(
-                    operation, connection, command, state, converter, transferOwnership, ct, timeout)
-                : connection.SendConvertedAsync(
-                    in command, state, converter, transferOwnership, ct, operation);
+            return connection.SendConvertedAsync(
+                in command, state, converter, transferOwnership, ct, operation);
         }
 
         return PooledResponseSource<TState, TResult>.Create(
             SendAsync(operation, command, ct), state, converter, transferOwnership);
-    }
-
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    private static async ValueTask<TResult> SendConvertedWithTimeoutAsync<TCommand, TState, TResult>(
-        string operation,
-        RespireConnection connection,
-        TCommand command,
-        TState state,
-        ResponseConverter<TState, TResult> converter,
-        bool transferOwnership,
-        CancellationToken cancellationToken,
-        TimeSpan timeout)
-        where TCommand : struct, IRespCommand
-    {
-        RespValue response;
-        // CommandTimeout covers the Redis response, not user converter work.
-        using (var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout))
-        {
-            try
-            {
-                response = await connection.SendCheckedAsync(
-                        in command, timeoutSource.Token, operation)
-                    .ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (
-                !cancellationToken.IsCancellationRequested
-                && timeoutSource.IsCancellationRequested)
-            {
-                throw new RespireTimeoutException(operation, timeout);
-            }
-        }
-
-        var converted = false;
-        try
-        {
-            var result = converter(state, in response);
-            converted = true;
-            return result;
-        }
-        finally
-        {
-            if (!transferOwnership || !converted)
-            {
-                response.Dispose();
-            }
-        }
     }
 
     internal ValueTask<long> IntegerAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
@@ -2403,40 +2345,15 @@ public sealed partial class RespireClient : IRespireClient
         {
             // Specialized bulk-string source: small buffered replies decode straight from the
             // receive buffer instead of round-tripping through a pooled RespValue payload.
+            // CommandTimeout is enforced by the connection's deadline sweep.
             var connection = core.Multiplexer.GetConnection();
-            return core.Options.CommandTimeout is { } timeout
-                ? SendStringWithTimeoutAsync(operation, connection, command, ct, timeout)
-                : connection.SendStringAsync(in command, ct, operation);
+            return connection.SendStringAsync(in command, ct, operation);
         }
 
         return PooledResponseSource<RespireClient, string?>.Create(
             SendAsync(operation, command, ct), this,
             static (RespireClient _, in RespValue value) => ResponseReader.StringOrNull(in value),
             transferOwnership: false);
-    }
-
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    private static async ValueTask<string?> SendStringWithTimeoutAsync<TCommand>(
-        string operation,
-        RespireConnection connection,
-        TCommand command,
-        CancellationToken cancellationToken,
-        TimeSpan timeout)
-        where TCommand : struct, IRespCommand
-    {
-        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
-        try
-        {
-            return await connection.SendStringAsync(
-                    in command, timeoutSource.Token, operation)
-                .ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            throw new RespireTimeoutException(operation, timeout);
-        }
     }
 
     internal ValueTask<byte[]?> BytesOrNullAsync<TCommand>(string operation, TCommand command, CancellationToken ct)

@@ -68,6 +68,63 @@ internal sealed class InflightRing
         return true;
     }
 
+    /// <summary>
+    /// Deadline-sweep only. Scans every published slot, timing out sources whose armed
+    /// deadline has passed, and returns milliseconds until the earliest remaining armed
+    /// deadline (or -1 when none is armed). The whole occupied span is examined — deadlines
+    /// are near-monotonic in enqueue order, but a producer that waited out a full ring is
+    /// re-stamped with its original deadline and can land behind a later-expiring entry, so
+    /// an early exit could strand it. Lock-free against both sides: slots between the head
+    /// and tail snapshots are published; a slot observed mid-dequeue reads null and is
+    /// skipped; a source recycled after its state was captured is rejected by the epoch CAS
+    /// inside <see cref="PendingResponse.TrySetTimedOut"/>.
+    /// </summary>
+    public long SweepExpired(long nowMilliseconds, TimeSpan timeout)
+    {
+        var head = Volatile.Read(ref _head);
+        var tail = Volatile.Read(ref _tail);
+        long next = -1;
+        for (var position = head; position < tail; position++)
+        {
+            var source = Volatile.Read(ref _slots[position & _mask]);
+            if (source is null || ReferenceEquals(source, DiscardSentinel))
+            {
+                continue;
+            }
+
+            // State must be read before Deadline: the pool-return path clears the deadline
+            // before its release-store of the new epoch, so a state read that sees the old
+            // epoch pairs only with that incarnation's deadline, and one that sees the new
+            // epoch can no longer see the previous command's expired deadline.
+            var state = source.State;
+            if (PendingResponse.IsCompleted(state))
+            {
+                continue;
+            }
+
+            var deadline = source.Deadline;
+            if (deadline == 0)
+            {
+                continue;
+            }
+
+            var remaining = deadline - nowMilliseconds;
+            if (remaining > 0)
+            {
+                if (next < 0 || remaining < next)
+                {
+                    next = remaining;
+                }
+
+                continue;
+            }
+
+            source.TrySetTimedOut(state, timeout);
+        }
+
+        return next;
+    }
+
     /// <summary>Consumer only (receive loop, or the fail-all drain after the loop exits).</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryDequeue(out PendingResponse source)
