@@ -19,6 +19,9 @@ public readonly struct RespireKey : IEquatable<RespireKey>
 
     public RespireKey(ReadOnlyMemory<byte> key) => _bytes = key;
 
+    /// <summary>An empty Redis key. The default value.</summary>
+    public static readonly RespireKey Empty = default;
+
     public bool IsEmpty => _string is null or "" && _bytes.IsEmpty;
 
     /// <summary>The Redis Cluster hash slot for this key, including {...} hash-tag semantics.</summary>
@@ -31,6 +34,10 @@ public readonly struct RespireKey : IEquatable<RespireKey>
     public static implicit operator RespireKey(byte[] key) => new(key.AsMemory());
 
     public static implicit operator RespireKey(ReadOnlyMemory<byte> key) => new(key);
+
+    public static bool operator ==(RespireKey left, RespireKey right) => left.Equals(right);
+
+    public static bool operator !=(RespireKey left, RespireKey right) => !left.Equals(right);
 
     /// <summary>The key as a command argument.</summary>
     internal RespireValue AsValue()

@@ -8,6 +8,18 @@ namespace Respire.Tests;
 public class RespireKeyTests
 {
     [Test]
+    public async Task EmptyAndEqualityOperatorsUseValueSemantics()
+    {
+        RespireKey text = "key";
+        RespireKey bytes = "key"u8.ToArray();
+
+        await Assert.That(RespireKey.Empty.IsEmpty).IsTrue();
+        await Assert.That(text == bytes).IsTrue();
+        await Assert.That(text != bytes).IsFalse();
+        await Assert.That(text != "other").IsTrue();
+    }
+
+    [Test]
     [Arguments("key")]
     [Arguments("£ sterling")]
     [Arguments("𐍈")]
