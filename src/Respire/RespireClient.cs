@@ -588,6 +588,7 @@ public sealed partial class RespireClient : IRespireClient
             "SCRIPT" when candidate.Equals("DEBUG", StringComparison.OrdinalIgnoreCase) => "DEBUG",
             "SCRIPT" when candidate.Equals("EXISTS", StringComparison.OrdinalIgnoreCase) => "EXISTS",
             "SCRIPT" when candidate.Equals("FLUSH", StringComparison.OrdinalIgnoreCase) => "FLUSH",
+            "SCRIPT" when candidate.Equals("HELP", StringComparison.OrdinalIgnoreCase) => "HELP",
             "SCRIPT" when candidate.Equals("KILL", StringComparison.OrdinalIgnoreCase) => "KILL",
             "SCRIPT" when candidate.Equals("LOAD", StringComparison.OrdinalIgnoreCase) => "LOAD",
             "SCRIPT" when candidate.Equals("SHOW", StringComparison.OrdinalIgnoreCase) => "SHOW",

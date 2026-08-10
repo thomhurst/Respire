@@ -300,16 +300,18 @@ public class CommandCatalogTests
         await using var server = new FakeRespServer(
             FakeRespServer.OkReply,
             FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
             FakeRespServer.OkReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         await client.ExecuteFireAndForgetAsync("SCRIPT KILL");
         await client.ExecuteFireAndForgetAsync("SCRIPT EXISTS", "sha1");
+        await client.ExecuteFireAndForgetAsync("SCRIPT HELP");
         await client.ExecuteFireAndForgetAsync("SCRIPT SHOW", "sha1");
-        await WaitForCommandsAsync(server, 3);
+        await WaitForCommandsAsync(server, 4);
 
         await Assert.That(server.ReceivedCommands)
-            .IsEquivalentTo(["SCRIPT KILL", "SCRIPT EXISTS sha1", "SCRIPT SHOW sha1"]);
+            .IsEquivalentTo(["SCRIPT KILL", "SCRIPT EXISTS sha1", "SCRIPT HELP", "SCRIPT SHOW sha1"]);
     }
 
     [Test]
