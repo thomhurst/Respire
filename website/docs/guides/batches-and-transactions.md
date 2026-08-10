@@ -73,16 +73,32 @@ nothing to Redis.
 
 ## Optimistic concurrency
 
-Watch keys before queuing operations:
+Create the watched transaction first, read current values through the client, and queue only the
+resulting writes on the transaction. Transaction reads return `RespirePending<T>` values, which
+cannot be inspected until after commit and therefore cannot drive the decision:
 
 ```csharp
-await using RespireTransaction transaction = await redis.CreateTransactionAsync(["balance"]);
-transaction.Increment("balance", -100);
+const int maxAttempts = 5;
+bool committed = false;
 
-bool committed = await transaction.CommitAsync();
+for (var attempt = 0; attempt < maxAttempts && !committed; attempt++)
+{
+    await using RespireTransaction transaction =
+        await redis.CreateTransactionAsync(["balance"], cancellationToken);
+
+    long current = await redis.GetAsync<long>("balance", cancellationToken);
+    transaction.Set("balance", current - 100);
+    committed = await transaction.CommitAsync(cancellationToken);
+}
+
+if (!committed)
+{
+    throw new InvalidOperationException("Balance changed too often; retry later.");
+}
 ```
 
 `false` means a watched key changed before `EXEC`. Each pending then has `Status ==
 RespirePendingStatus.Aborted`; reading its result throws `RespireTransactionAbortedException`.
-Re-read state and retry with a deliberate policy. For complex compare-and-set behavior, a Lua
-script often reduces round trips and makes atomic intent clearer.
+Dispose that attempt, create a new watched transaction, re-read state, and retry with a bounded
+policy. For complex compare-and-set behavior, a Lua script often reduces round trips and makes
+atomic intent clearer.

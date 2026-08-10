@@ -259,10 +259,12 @@ bool committed = await tx.CommitAsync(ct);
 When WATCH aborts EXEC, `committed` is false, each pending reports
 `RespirePendingStatus.Aborted`, and reading one throws `RespireTransactionAbortedException`.
 
-Interactive WATCH → read → decide → MULTI (true CAS) requires a dedicated connection; we
-already dedicate connections for blocking commands, so a v2 `redis.WatchAsync(keys,
-callback)` is feasible — but the docs steer CAS users to scripts/functions first, which is
-the honest modern advice.
+Interactive WATCH → read → decide → MULTI (true CAS) uses
+`CreateTransactionAsync(watchKeys)`. Create the watched transaction, read current values through
+the client (transaction reads are deferred and unavailable for decisions), queue writes, then
+commit. If `CommitAsync` returns false, dispose that attempt and recreate the watched transaction,
+including its reads and writes. Keep retries bounded. Scripts/functions remain preferable when
+the operation can be expressed server-side because they avoid round trips and retries.
 
 ## 7. Pub/Sub: `IAsyncEnumerable`
 
