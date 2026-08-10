@@ -46,11 +46,7 @@ public sealed class RespireConnection : IAsyncDisposable
 
     private readonly Socket _socket;
     private readonly SslStream? _tlsStream;
-#if NET9_0_OR_GREATER
     private readonly Lock _writeGate = new();
-#else
-    private readonly object _writeGate = new();
-#endif
     private readonly InflightRing _inflight;
     private readonly PendingResponsePool _sourcePool;
     private readonly int _receiveBufferSize;
@@ -65,11 +61,7 @@ public sealed class RespireConnection : IAsyncDisposable
     private readonly TimeSpan? _responseTimeout;
     // Sent/received counters and the deadline are one state transition: a reply must not clear
     // a deadline concurrently armed for a later batch.
-#if NET9_0_OR_GREATER
     private readonly Lock _receiveDeadlineGate = new();
-#else
-    private readonly object _receiveDeadlineGate = new();
-#endif
     private readonly AsyncFlushSignal _flushSignal = new();
     private readonly AsyncCapacitySignal _capacitySignal = new();
     private readonly CompletionScheduler _completions = new();

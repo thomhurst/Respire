@@ -23,11 +23,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     /// first reply's added latency and the recycled buffer size.</summary>
     private const int MaxBatchSize = 256;
 
-#if NET9_0_OR_GREATER
     private readonly Lock _gate = new();
-#else
-    private readonly object _gate = new();
-#endif
 
     // Producer-owned; touched only by the receive loop, never under the gate.
     private Entry[] _filling = new Entry[InitialBatchSize];
