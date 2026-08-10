@@ -346,7 +346,7 @@ public class LockCommandTests
     }
 
     [Test]
-    public async Task RespireLock_CancelledExtensionIsFencedBeforeTheNextExtension()
+    public async Task RespireLock_CancelledExtensionIsFencedAndMarksTheHandleNotOwned()
     {
         await using var server = new FakeRespServer(
             3,
@@ -368,7 +368,8 @@ public class LockCommandTests
                 await mutex.ExtendAsync(TimeSpan.FromSeconds(60), cancellation.Token))
             .Throws<OperationCanceledException>();
         await WaitForCommandsAsync(server, 6);
-        await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(10))).IsTrue();
+        await Assert.That(mutex.IsReleased).IsTrue();
+        await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(10))).IsFalse();
 
         var extensionIndexes = server.ReceivedCommands
             .Select((command, index) => (command, index))
@@ -380,9 +381,8 @@ public class LockCommandTests
             .Single(item => item.command == "CLIENT KILL ID 41")
             .index;
 
-        await Assert.That(extensionIndexes).Count().IsEqualTo(2);
+        await Assert.That(extensionIndexes).Count().IsEqualTo(1);
         await Assert.That(fenceIndex).IsGreaterThan(extensionIndexes[0]);
-        await Assert.That(fenceIndex).IsLessThan(extensionIndexes[1]);
         await mutex.DisposeAsync();
     }
 
@@ -471,6 +471,61 @@ public class LockCommandTests
         commands.CompleteFence();
         await keepAlive.DisposeAsync();
         await Assert.That(keepAlive.Failure).IsTypeOf<RespireConnectionException>();
+    }
+
+    [Test]
+    public async Task RespireLock_UncertainManualExtensionCancelsSleepingKeepAliveBeforeFenceCompletes()
+    {
+        var commands = new CoordinatedLockCommands(reportUncertain: true);
+        var mutex = new RespireLock(
+            commands,
+            "resource",
+            "owner"u8.ToArray(),
+            TimeSpan.FromSeconds(30),
+            Stopwatch.GetTimestamp());
+        var keepAlive = await mutex.KeepAliveAsync();
+
+        var extension = mutex.ExtendAsync(TimeSpan.FromSeconds(5)).AsTask();
+        await commands.FenceStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, keepAlive.CancellationToken)
+                .WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        await Assert.That(keepAlive.OwnershipLost).IsTrue();
+        await Assert.That(commands.FenceCompleted.Task.IsCompleted).IsFalse();
+
+        commands.CompleteFence();
+        await Assert.That(async () => await extension).Throws<RespireConnectionException>();
+        await keepAlive.DisposeAsync();
+    }
+
+    [Test]
+    public async Task RespireLock_OwnershipLossSurvivesConcurrentReleaseRejection()
+    {
+        var commands = new CoordinatedLockCommands(raceOwnershipLoss: true);
+        var mutex = new RespireLock(
+            commands,
+            "resource",
+            "owner"u8.ToArray(),
+            TimeSpan.FromSeconds(30),
+            Stopwatch.GetTimestamp());
+
+        var extension = mutex.ExtendAsync(TimeSpan.FromSeconds(60)).AsTask();
+        await commands.RaceExtensionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var release = mutex.ReleaseAsync().AsTask();
+        await commands.RaceReleaseStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        commands.CompleteRaceExtension();
+        await Assert.That(await extension).IsFalse();
+        commands.CompleteRaceRelease();
+        await Assert.That(async () => await release).Throws<RespireServerException>();
+
+        await Assert.That(mutex.IsReleased).IsTrue();
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.NotOwned);
     }
 
     [Test]
@@ -623,16 +678,25 @@ public class LockCommandTests
     {
         private readonly bool _blockFirstExtension;
         private readonly bool _reportUncertain;
+        private readonly bool _raceOwnershipLoss;
         private readonly TaskCompletionSource<bool> _firstExtension =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _fence =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _raceExtension =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _raceRelease =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly List<TimeSpan> _expiries = [];
 
-        public CoordinatedLockCommands(bool blockFirstExtension = true, bool reportUncertain = false)
+        public CoordinatedLockCommands(
+            bool blockFirstExtension = true,
+            bool reportUncertain = false,
+            bool raceOwnershipLoss = false)
         {
             _blockFirstExtension = blockFirstExtension;
             _reportUncertain = reportUncertain;
+            _raceOwnershipLoss = raceOwnershipLoss;
         }
 
         public TaskCompletionSource FirstExtensionStarted { get; } =
@@ -645,6 +709,12 @@ public class LockCommandTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public TaskCompletionSource FenceCompleted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource RaceExtensionStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource RaceReleaseStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public int ExtensionCount
@@ -673,6 +743,10 @@ public class LockCommandTests
 
         public void CompleteFence() => _fence.TrySetResult();
 
+        public void CompleteRaceExtension() => _raceExtension.TrySetResult();
+
+        public void CompleteRaceRelease() => _raceRelease.TrySetResult();
+
         async ValueTask<bool> IManagedLockCommands.ExtendManagedAsync(
             RespireKey key,
             RespireValue token,
@@ -680,6 +754,13 @@ public class LockCommandTests
             Action? onOutcomeUncertain,
             CancellationToken cancellationToken)
         {
+            if (_raceOwnershipLoss)
+            {
+                RaceExtensionStarted.TrySetResult();
+                await _raceExtension.Task;
+                return false;
+            }
+
             if (!_reportUncertain)
             {
                 return await ExtendAsync(key, token, expiry, cancellationToken);
@@ -760,10 +841,20 @@ public class LockCommandTests
             TimeSpan expiry,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
-        public ValueTask<bool> ReleaseAsync(
+        public async ValueTask<bool> ReleaseAsync(
             RespireKey key,
             RespireValue token,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+            CancellationToken cancellationToken = default)
+        {
+            if (!_raceOwnershipLoss)
+            {
+                throw new NotSupportedException();
+            }
+
+            RaceReleaseStarted.TrySetResult();
+            await _raceRelease.Task;
+            throw new RespireServerException("NOPERM release denied", "EVAL");
+        }
 
         public ValueTask<byte[]?> GetOwnerTokenAsync(
             RespireKey key,

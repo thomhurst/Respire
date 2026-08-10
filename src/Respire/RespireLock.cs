@@ -133,7 +133,7 @@ public sealed class RespireLock : IAsyncDisposable
     /// another owner took it — in which case protected work must stop rather than retry.
     /// </returns>
     public ValueTask<bool> ExtendAsync(TimeSpan expiry, CancellationToken cancellationToken = default)
-        => ExtendCoreAsync(expiry, signalLeaseChanged: true, onOutcomeUncertain: null, cancellationToken);
+        => ExtendCoreAsync(expiry, signalLeaseChanged: true, MarkOwnershipLost, cancellationToken);
 
     internal ValueTask<bool> RenewAsync(Action onOutcomeUncertain, CancellationToken cancellationToken)
         => ExtendCoreAsync(expiry: null, signalLeaseChanged: false, onOutcomeUncertain, cancellationToken);
@@ -170,7 +170,7 @@ public sealed class RespireLock : IAsyncDisposable
                 : await _locks.ExtendAsync(Key, Token, effectiveExpiry, cancellationToken).ConfigureAwait(false);
             if (!extended)
             {
-                changed = Interlocked.CompareExchange(ref _state, StateNotOwned, StateHeld) == StateHeld;
+                changed = TryMarkOwnershipLost();
                 return false;
             }
 
@@ -268,7 +268,7 @@ public sealed class RespireLock : IAsyncDisposable
             // this handle may still own the key and can safely retry.
             lock (_releaseSync)
             {
-                Volatile.Write(ref _state, StateHeld);
+                Interlocked.CompareExchange(ref _state, StateHeld, StateReleasing);
                 _releaseTask = null;
             }
 
@@ -337,7 +337,29 @@ public sealed class RespireLock : IAsyncDisposable
         => Interlocked.Exchange(ref _leaseChanged, new CancellationTokenSource()).Cancel();
 
     internal void MarkOwnershipLost()
-        => Interlocked.CompareExchange(ref _state, StateNotOwned, StateHeld);
+    {
+        if (TryMarkOwnershipLost())
+        {
+            SignalLeaseChanged();
+        }
+    }
+
+    private bool TryMarkOwnershipLost()
+    {
+        while (true)
+        {
+            var state = Volatile.Read(ref _state);
+            if (state is StateReleased or StateNotOwned)
+            {
+                return false;
+            }
+
+            if (Interlocked.CompareExchange(ref _state, StateNotOwned, state) == state)
+            {
+                return true;
+            }
+        }
+    }
 }
 
 /// <summary>

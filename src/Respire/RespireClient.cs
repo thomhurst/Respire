@@ -1739,7 +1739,7 @@ public sealed partial class RespireClient : IRespireClient
                     "Reliable correction ordering must be initialized before a tracked script starts.");
             }
 
-            connection = await core.Multiplexer.GetHealthyConnectionAsync(cancellationToken)
+            connection = await GetTrackedConnectionAsync(core.Multiplexer, cancellationToken)
                 .ConfigureAwait(false);
         }
 
@@ -1751,6 +1751,27 @@ public sealed partial class RespireClient : IRespireClient
                 execution, router, connection, script, tail, requiresIdentity, cancellationToken)
             : ExecuteScriptOnConnectionAsync(connection, script, tail, cancellationToken);
         return execution;
+    }
+
+    private async ValueTask<RespireConnection> GetTrackedConnectionAsync(
+        Infrastructure.RespireConnectionMultiplexer multiplexer,
+        CancellationToken cancellationToken)
+    {
+        if (_core.Options.CommandTimeout is not { } timeout)
+        {
+            return await multiplexer.GetHealthyConnectionAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(timeout);
+        try
+        {
+            return await multiplexer.GetHealthyConnectionAsync(timeoutSource.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout);
+        }
     }
 
     private async ValueTask<RespireConnection> GetTrackedClusterConnectionAsync(
