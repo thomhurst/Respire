@@ -726,7 +726,7 @@ public sealed partial class RespireClient : IRespireClient
     // Batches and transactions
 
     /// <summary>
-    /// Starts an explicit pipeline: queue commands, then <see cref="RespireBatch.SendAsync"/>
+    /// Starts an explicit pipeline: queue commands, then <see cref="RespireBatch.ExecuteAsync"/>
     /// flushes them together. Queued results are unreadable until the batch is sent — awaiting
     /// early throws instead of deadlocking. Dispose an unsent batch to fault its queued pendings.
     /// </summary>

@@ -15,7 +15,7 @@ namespace Respire.Tests.Networking;
 public class BatchFacetWireTests
 {
     [Test]
-    public async Task SendAsync_ReturnsPerCommandFailureSummary()
+    public async Task ExecuteAsync_ReturnsPerCommandFailureSummary()
     {
         await using var server = new FakeRespServer(
             "-WRONGTYPE bad value\r\n"u8.ToArray(),
@@ -23,10 +23,10 @@ public class BatchFacetWireTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         var batch = client.CreateBatch();
-        var failed = batch.GetStringAsync("wrong-type");
-        var succeeded = batch.ExistsAsync("present");
+        var failed = batch.GetString("wrong-type");
+        var succeeded = batch.Exists("present");
 
-        var result = await batch.SendAsync();
+        var result = await batch.ExecuteAsync();
 
         await Assert.That(result.Count).IsEqualTo(2);
         await Assert.That(result.FailureCount).IsEqualTo(1);
@@ -37,11 +37,11 @@ public class BatchFacetWireTests
     }
 
     [Test]
-    public async Task SendAsync_EmptyBatchReturnsEmptySummary()
+    public async Task ExecuteAsync_EmptyBatchReturnsEmptySummary()
     {
         await using var client = RespireClient.Create("localhost:6379");
 
-        var result = await client.CreateBatch().SendAsync();
+        var result = await client.CreateBatch().ExecuteAsync();
 
         await Assert.That(result.Count).IsEqualTo(0);
         await Assert.That(result.FailureCount).IsEqualTo(0);
@@ -50,7 +50,7 @@ public class BatchFacetWireTests
     }
 
     [Test]
-    public async Task SendAsync_ConnectionFailureReturnsSummaryAndFaultsPendings()
+    public async Task ExecuteAsync_ConnectionFailureReturnsSummaryAndFaultsPendings()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -63,10 +63,10 @@ public class BatchFacetWireTests
             ConnectTimeout = TimeSpan.FromMilliseconds(100),
         });
         var batch = client.CreateBatch();
-        var first = batch.GetStringAsync("first");
-        var second = batch.ExistsAsync("second");
+        var first = batch.GetString("first");
+        var second = batch.Exists("second");
 
-        var result = await batch.SendAsync();
+        var result = await batch.ExecuteAsync();
 
         await Assert.That(result.Count).IsEqualTo(2);
         await Assert.That(result.FailureCount).IsEqualTo(2);
@@ -82,9 +82,9 @@ public class BatchFacetWireTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         var batch = client.CreateBatch();
-        var pending = batch.GetStringAsync("key");
+        var pending = batch.GetString("key");
 
-        await batch.SendAsync();
+        await batch.ExecuteAsync();
         var error = Assert.Throws<RespireServerException>(() => _ = pending.Result);
         await Assert.That(error.CommandName).IsEqualTo("GET");
     }
@@ -117,23 +117,23 @@ public class BatchFacetWireTests
         var expected = server.ReceivedCommands;
 
         var batch = client.CreateBatch();
-        _ = batch.Strings.SetManyAsync(
+        _ = batch.Strings.SetMany(
             RespireExpiry.In(TimeSpan.FromSeconds(1)), SetWhen.NotExists, ("a", "1"), ("b", "2"));
-        _ = batch.Keys.DeleteAsync("k1", "k2", "k3");
-        _ = batch.Keys.ExpireAtAsync("k1", DateTimeOffset.FromUnixTimeMilliseconds(987654321));
-        _ = batch.Hashes.SetAsync("h", ("f1", "v1"), ("f2", "v2"));
-        _ = batch.Hashes.SetExpireAsync("h", TimeSpan.FromSeconds(2), SetWhen.NotExists, ("a", "one"));
-        _ = batch.Hashes.CountAsync("h");
-        _ = batch.Lists.RightPushAsync("l", "x", "y");
-        _ = batch.Lists.RemoveAsync("l", "x", count: -1);
-        _ = batch.Lists.CountAsync("l");
-        _ = batch.Sets.IntersectStoreAsync("dest", "s1", "s2");
-        _ = batch.SortedSets.AddAsync("z", new SortedSetEntry("ada", 42), new SortedSetEntry("grace", 58));
-        _ = batch.SortedSets.CountByScoreAsync("z", 10, 50);
-        _ = batch.Bitmaps.CountAsync("bits", 0, 8, BitIndexUnit.Bit);
-        _ = batch.HyperLogLog.AddAsync("hll", "one", "two");
-        _ = batch.Geo.AddAsync("cities", entries: [new GeoEntry(-0.1276, 51.5072, "london")]);
-        await batch.SendAsync();
+        _ = batch.Keys.Delete("k1", "k2", "k3");
+        _ = batch.Keys.ExpireAt("k1", DateTimeOffset.FromUnixTimeMilliseconds(987654321));
+        _ = batch.Hashes.Set("h", ("f1", "v1"), ("f2", "v2"));
+        _ = batch.Hashes.SetExpire("h", TimeSpan.FromSeconds(2), SetWhen.NotExists, ("a", "one"));
+        _ = batch.Hashes.Count("h");
+        _ = batch.Lists.RightPush("l", "x", "y");
+        _ = batch.Lists.Remove("l", "x", count: -1);
+        _ = batch.Lists.Count("l");
+        _ = batch.Sets.IntersectStore("dest", "s1", "s2");
+        _ = batch.SortedSets.Add("z", new SortedSetEntry("ada", 42), new SortedSetEntry("grace", 58));
+        _ = batch.SortedSets.CountByScore("z", 10, 50);
+        _ = batch.Bitmaps.Count("bits", 0, 8, BitIndexUnit.Bit);
+        _ = batch.HyperLogLog.Add("hll", "one", "two");
+        _ = batch.Geo.Add("cities", entries: [new GeoEntry(-0.1276, 51.5072, "london")]);
+        await batch.ExecuteAsync();
 
         var queued = server.ReceivedCommands.Skip(expected.Count).ToArray();
         await Assert.That(queued).IsEquivalentTo(expected, CollectionOrdering.Matching);
@@ -151,9 +151,9 @@ public class BatchFacetWireTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         var transaction = client.CreateTransaction();
-        var pushed = transaction.Lists.RightPushAsync("audit", "a", "b");
-        var stored = transaction.Hashes.SetAsync("user", "name", "Ada");
-        var range = transaction.Lists.RangeAsync("audit");
+        var pushed = transaction.Lists.RightPush("audit", "a", "b");
+        var stored = transaction.Hashes.Set("user", "name", "Ada");
+        var range = transaction.Lists.Range("audit");
 
         var committed = await transaction.CommitAsync();
 
@@ -177,8 +177,8 @@ public class BatchFacetWireTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         var batch = client.CreateBatch();
-        var deleted = batch.DeleteAsync("one", "two", "three");
-        await batch.SendAsync();
+        var deleted = batch.Delete("one", "two", "three");
+        await batch.ExecuteAsync();
 
         await Assert.That(deleted.Result).IsEqualTo(3);
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("DEL one two three");
@@ -191,7 +191,7 @@ public class BatchFacetWireTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         var batch = client.CreateBatch();
-        var pending = batch.Hashes.GetStringAsync("user", "name");
+        var pending = batch.Hashes.GetString("user", "name");
 
         await Assert.That(pending.Status).IsEqualTo(RespirePendingStatus.Pending);
         await Assert.That(pending.IsCompleted).IsFalse();
@@ -206,8 +206,8 @@ public class BatchFacetWireTests
     {
         await using var client = RespireClient.Create("localhost:6379");
         var batch = client.CreateBatch();
-        var first = batch.GetStringAsync("first");
-        var second = batch.ExistsAsync("second");
+        var first = batch.GetString("first");
+        var second = batch.Exists("second");
 
         await Assert.That(batch.IsSent).IsFalse();
 
@@ -227,8 +227,8 @@ public class BatchFacetWireTests
         await Assert.That(second.TryGetResult(out _)).IsFalse();
         await Assert.That(() => _ = first.Result).ThrowsExactly<RespireBatchDiscardedException>();
         await Assert.That(() => _ = second.Result).ThrowsExactly<RespireBatchDiscardedException>();
-        await Assert.That(() => batch.GetStringAsync("third")).ThrowsExactly<ObjectDisposedException>();
-        await Assert.That(async () => await batch.SendAsync()).ThrowsExactly<ObjectDisposedException>();
+        await Assert.That(() => batch.GetString("third")).ThrowsExactly<ObjectDisposedException>();
+        await Assert.That(async () => await batch.ExecuteAsync()).ThrowsExactly<ObjectDisposedException>();
     }
 
     [Test]
@@ -237,11 +237,11 @@ public class BatchFacetWireTests
         await using var server = new FakeRespServer("$5\r\nvalue\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         using var batch = client.CreateBatch();
-        var pending = batch.GetStringAsync("key");
+        var pending = batch.GetString("key");
 
         await Assert.That(batch.IsSent).IsFalse();
 
-        await batch.SendAsync();
+        await batch.ExecuteAsync();
         batch.Dispose();
 
         await Assert.That(batch.IsSent).IsTrue();

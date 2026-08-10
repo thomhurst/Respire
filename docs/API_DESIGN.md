@@ -209,25 +209,26 @@ sequential-code case where you want N commands in one flush:
 
 ```csharp
 var batch = redis.CreateBatch();
-RespirePending<string?> a = batch.GetStringAsync("a");
-RespirePending<long>    n = batch.IncrementAsync("hits");
-RespirePending<long>    q = batch.Lists.RightPushAsync("queue", "job-1");
-RespireBatchResult result = await batch.SendAsync(ct);
+RespirePending<string?> a = batch.GetString("a");
+RespirePending<long>    n = batch.Increment("hits");
+RespirePending<long>    q = batch.Lists.RightPush("queue", "job-1");
+RespireBatchResult result = await batch.ExecuteAsync(ct);
 result.ThrowIfAnyFailed();
 
-string? av = a.Result;   // valid only after SendAsync
+string? av = a.Result;   // valid only after ExecuteAsync
 ```
 
 A batch carries the same facets as the client (`Strings`, `Keys`, `Hashes`, `Lists`, `Sets`,
-`SortedSets`, `Bitmaps`, `HyperLogLog`, `Geo`) with the same method names and parameter
-shapes — only the return type differs, and cancellation belongs to `SendAsync`. Blocking
+`SortedSets`, `Bitmaps`, `HyperLogLog`, `Geo`) with matching command names minus the `Async`
+suffix and the same parameter shapes. The return type is deferred, and cancellation belongs to
+`ExecuteAsync`. Blocking
 (`waitFor`) and streaming (`ScanAsync`, `GetLeaseAsync`) members have no deferred form.
 
 `RespirePending<T>` is awaitable *and* has `.Result`, but both throw
-`RespirePendingNotReadyException` if touched before `SendAsync` — the SE.Redis
-await-before-flush deadlock becomes impossible by construction. `Status`, `HasResult`, `Error`,
+`RespirePendingNotReadyException` if touched before `ExecuteAsync`. The synchronous queueing names
+make accidental early awaits conspicuous, while the exception prevents a deadlock. `Status`, `HasResult`, `Error`,
 and `TryGetResult` expose pending, successful, faulted, and aborted outcomes without try/catch.
-`SendAsync` returns the batch-wide `Count`, `FailureCount`, and `FirstError`; command and
+`ExecuteAsync` returns the batch-wide `Count`, `FailureCount`, and `FirstError`; command and
 connection-acquisition failures fault their pendings and do not throw unless the caller invokes
 `ThrowIfAnyFailed`.
 
@@ -238,8 +239,8 @@ won:
 
 ```csharp
 await using var tx = await redis.CreateTransactionAsync(["balance"], ct);
-var newBal = tx.IncrementAsync("balance", -100);
-var log    = tx.Lists.RightPushAsync("audit", "withdraw:100");
+var newBal = tx.Increment("balance", -100);
+var log    = tx.Lists.RightPush("audit", "withdraw:100");
 bool committed = await tx.CommitAsync(ct);
 ```
 

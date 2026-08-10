@@ -81,22 +81,22 @@ if (await shardMessages.MoveNextAsync())
 ### Batches and transactions
 
 Batch commands share one flush. Transactions use one connection and return typed pending
-results. Both carry the same facets as the client — `batch.Lists.RightPushAsync` mirrors
+results. Both carry the same facets as the client — `batch.Lists.RightPush` mirrors
 `redis.Lists.RightPushAsync` — but return a `RespirePending<T>` instead of awaiting.
 
 ```csharp
 var batch = redis.CreateBatch();
-var name = batch.GetStringAsync("name");
-var visits = batch.IncrementAsync("visits");
-var profile = batch.Hashes.GetAllAsync("user:1");
-RespireBatchResult batchResult = await batch.SendAsync();
+var name = batch.GetString("name");
+var visits = batch.Increment("visits");
+var profile = batch.Hashes.GetAll("user:1");
+RespireBatchResult batchResult = await batch.ExecuteAsync();
 batchResult.ThrowIfAnyFailed();
 
 Console.WriteLine($"{name.Result}: {visits.Result} ({profile.Result.Count} fields)");
 
 await using var transaction = redis.CreateTransaction();
-var balance = transaction.IncrementAsync("balance", -100);
-transaction.Lists.RightPushAsync("audit", "withdraw:100");
+var balance = transaction.Increment("balance", -100);
+transaction.Lists.RightPush("audit", "withdraw:100");
 bool committed = await transaction.CommitAsync();
 ```
 
@@ -113,7 +113,7 @@ do
 {
     await using var watched = await redis.CreateTransactionAsync(["balance"]);
     long current = long.Parse((await redis.GetStringAsync("balance"))!);
-    watched.SetAsync("balance", current - 100);
+    watched.Set("balance", current - 100);
     applied = await watched.CommitAsync();
 }
 while (!applied);

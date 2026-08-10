@@ -10,33 +10,33 @@ namespace Respire;
 public interface IBatchGeoCommands
 {
     /// <summary>Adds members with coordinates; returns how many were new. Redis: GEOADD.</summary>
-    RespirePending<long> AddAsync(
+    RespirePending<long> Add(
         RespireKey key, GeoAddCondition condition = GeoAddCondition.Always, bool changed = false,
         params ReadOnlySpan<GeoEntry> entries);
 
     /// <summary>The distance between two members, or null when either is absent. Redis: GEODIST.</summary>
-    RespirePending<double?> DistanceAsync(
+    RespirePending<double?> Distance(
         RespireKey key, RespireValue firstMember, RespireValue secondMember, GeoUnit unit = GeoUnit.Meters);
 
     /// <summary>Geohash strings for members; null for absent members. Redis: GEOHASH.</summary>
-    RespirePending<string?[]> HashAsync(RespireKey key, params ReadOnlySpan<RespireValue> members);
+    RespirePending<string?[]> Hash(RespireKey key, params ReadOnlySpan<RespireValue> members);
 
     /// <summary>Coordinates for members; null for absent members. Redis: GEOPOS.</summary>
-    RespirePending<GeoPosition?[]> PositionAsync(RespireKey key, params ReadOnlySpan<RespireValue> members);
+    RespirePending<GeoPosition?[]> Position(RespireKey key, params ReadOnlySpan<RespireValue> members);
 
     /// <summary>Members within a shape around an origin. Redis: GEOSEARCH.</summary>
-    RespirePending<GeoSearchResult[]> SearchAsync(
+    RespirePending<GeoSearchResult[]> Search(
         RespireKey key, GeoSearchOrigin origin, GeoSearchShape shape, GeoSearchOptions options = default);
 
     /// <summary>Stores a search into <paramref name="destination"/>; returns its size. Redis: GEOSEARCHSTORE.</summary>
-    RespirePending<long> SearchStoreAsync(
+    RespirePending<long> SearchStore(
         RespireKey destination, RespireKey source, GeoSearchOrigin origin, GeoSearchShape shape,
         GeoSearchOptions options = default, bool storeDistance = false);
 }
 
 internal sealed class BatchGeoCommands(IPendingSink sink) : IBatchGeoCommands
 {
-    public RespirePending<long> AddAsync(
+    public RespirePending<long> Add(
         RespireKey key, GeoAddCondition condition = GeoAddCondition.Always, bool changed = false,
         params ReadOnlySpan<GeoEntry> entries)
     {
@@ -48,7 +48,7 @@ internal sealed class BatchGeoCommands(IPendingSink sink) : IBatchGeoCommands
             static (c, v) => ResponseReader.Integer(in v));
     }
 
-    public RespirePending<double?> DistanceAsync(
+    public RespirePending<double?> Distance(
         RespireKey key, RespireValue firstMember, RespireValue secondMember, GeoUnit unit = GeoUnit.Meters)
         => sink.Add<Cmd4, double?>(
             "GEODIST",
@@ -57,7 +57,7 @@ internal sealed class BatchGeoCommands(IPendingSink sink) : IBatchGeoCommands
                 GeoCommands.Unit(unit)),
             static (c, v) => ResponseReader.DoubleOrNull(in v));
 
-    public RespirePending<string?[]> HashAsync(RespireKey key, params ReadOnlySpan<RespireValue> members)
+    public RespirePending<string?[]> Hash(RespireKey key, params ReadOnlySpan<RespireValue> members)
     {
         GeoCommands.RequireMembers(members);
         return sink.Add<Cmd1N, string?[]>(
@@ -66,7 +66,7 @@ internal sealed class BatchGeoCommands(IPendingSink sink) : IBatchGeoCommands
             static (c, v) => ResponseReader.NullableStringArray(in v));
     }
 
-    public RespirePending<GeoPosition?[]> PositionAsync(RespireKey key, params ReadOnlySpan<RespireValue> members)
+    public RespirePending<GeoPosition?[]> Position(RespireKey key, params ReadOnlySpan<RespireValue> members)
     {
         GeoCommands.RequireMembers(members);
         return sink.Add<Cmd1N, GeoPosition?[]>(
@@ -75,7 +75,7 @@ internal sealed class BatchGeoCommands(IPendingSink sink) : IBatchGeoCommands
             static (c, v) => GeoCommands.ParsePositions(in v));
     }
 
-    public RespirePending<GeoSearchResult[]> SearchAsync(
+    public RespirePending<GeoSearchResult[]> Search(
         RespireKey key, GeoSearchOrigin origin, GeoSearchShape shape, GeoSearchOptions options = default)
     {
         GeoCommands.Validate(origin, shape, options);
@@ -89,7 +89,7 @@ internal sealed class BatchGeoCommands(IPendingSink sink) : IBatchGeoCommands
             (c, v) => GeoCommands.ParseSearch(in v, options));
     }
 
-    public RespirePending<long> SearchStoreAsync(
+    public RespirePending<long> SearchStore(
         RespireKey destination, RespireKey source, GeoSearchOrigin origin, GeoSearchShape shape,
         GeoSearchOptions options = default, bool storeDistance = false)
     {

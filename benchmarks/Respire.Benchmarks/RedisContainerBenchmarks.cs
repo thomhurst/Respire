@@ -231,8 +231,8 @@ public class RedisContainerBenchmarks
     public async Task<bool> Respire_Transaction_2()
     {
         var transaction = _kevaClient.CreateTransaction();
-        _ = transaction.SetAsync("transaction_key", "value");
-        _ = transaction.IncrementAsync("transaction_counter");
+        _ = transaction.Set("transaction_key", "value");
+        _ = transaction.Increment("transaction_counter");
         return await transaction.CommitAsync();
     }
 }

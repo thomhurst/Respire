@@ -65,9 +65,9 @@ public class IncrementWireTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         var batch = client.CreateBatch();
-        var one = batch.IncrementAsync("counter");
-        var five = batch.IncrementAsync("counter", 5);
-        await batch.SendAsync();
+        var one = batch.Increment("counter");
+        var five = batch.Increment("counter", 5);
+        await batch.ExecuteAsync();
 
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("INCR counter");
         await Assert.That(server.ReceivedCommands[1]).IsEqualTo("INCRBY counter 5");
@@ -83,7 +83,7 @@ public class IncrementWireTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         var transaction = client.CreateTransaction();
-        var incremented = transaction.IncrementAsync("counter");
+        var incremented = transaction.Increment("counter");
         var committed = await transaction.CommitAsync();
 
         await Assert.That(server.ReceivedCommands[1]).IsEqualTo("INCR counter");
