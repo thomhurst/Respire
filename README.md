@@ -220,8 +220,10 @@ using var encoding = await redis.ExecuteAsync(
 Catalog descriptors do not encode key positions, so catalog execution is rejected on
 `WithKeyPrefix` views; use the typed facets there to preserve key isolation.
 
-The string and interpolated overloads remain available for experimental or server-specific
-commands. Interpolated values are encoded as single arguments, so spaces stay safe.
+Strings convert implicitly to `RespireCommand` for experimental or server-specific commands.
+Interpolated values are encoded as single arguments, so spaces stay safe. Format strings and
+alignment are honored with invariant culture; holes use `IFormattable` or `ToString()` and do not
+pass through a Respire serializer.
 
 ## App integration
 

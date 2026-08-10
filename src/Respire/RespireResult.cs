@@ -8,7 +8,7 @@ using Respire.Serialization;
 namespace Respire;
 
 /// <summary>
-/// The reply of a raw command (<see cref="RespireClient.ExecuteAsync(string, RespireValue[])"/>)
+/// The reply of a command (<see cref="RespireClient.ExecuteAsync(RespireCommand, RespireValue[])"/>)
 /// as a thin view over the RESP value. This is the one protocol-shaped public result type; the
 /// typed command surface returns plain .NET types instead. The root result is a lease over
 /// pooled memory — dispose it when done; disposal is idempotent across struct copies. Nested
