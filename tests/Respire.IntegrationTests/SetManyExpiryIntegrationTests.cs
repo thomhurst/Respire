@@ -4,7 +4,7 @@ using TUnit.Core;
 namespace Respire.IntegrationTests;
 
 /// <summary>
-/// MSETEX behaviour against a real server: the collapsed <c>SetManyAsync(RespireExpiry, SetWhen, …)</c>
+/// MSETEX behaviour against a real server: <c>SetManyExpireAsync(RespireExpiry, SetWhen, …)</c>
 /// overload has to map each expiry form onto a shared, live TTL and keep the NX/XX gating.
 /// Runs on Redis 8 — MSETEX does not exist in the Redis 7 fixture the rest of the suite uses.
 /// </summary>
@@ -28,7 +28,7 @@ public class SetManyExpiryIntegrationTests(ModernRedisTestContainer fixture)
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
 
-        (await client.Strings.SetManyAsync(
+        (await client.Strings.SetManyExpireAsync(
             TimeSpan.FromSeconds(30), pairs: [("msetex:a", "1"), ("msetex:b", "2")])).Should().BeTrue();
 
         foreach (var key in (string[])["msetex:a", "msetex:b"])
@@ -46,7 +46,7 @@ public class SetManyExpiryIntegrationTests(ModernRedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
         var instant = DateTimeOffset.UtcNow.AddSeconds(30);
 
-        (await client.Strings.SetManyAsync(RespireExpiry.At(instant), pairs: ("msetexat:a", "1"))).Should().BeTrue();
+        (await client.Strings.SetManyExpireAsync(RespireExpiry.At(instant), pairs: ("msetexat:a", "1"))).Should().BeTrue();
 
         var expiry = await client.Keys.ExpiryAsync("msetexat:a");
         expiry.HasExpiry.Should().BeTrue();
@@ -60,7 +60,7 @@ public class SetManyExpiryIntegrationTests(ModernRedisTestContainer fixture)
 
         await client.SetAsync("msetkeep:a", "first", TimeSpan.FromSeconds(60));
 
-        (await client.Strings.SetManyAsync(RespireExpiry.Keep, pairs: ("msetkeep:a", "second"))).Should().BeTrue();
+        (await client.Strings.SetManyExpireAsync(RespireExpiry.Keep, pairs: ("msetkeep:a", "second"))).Should().BeTrue();
 
         (await client.GetStringAsync("msetkeep:a")).Should().Be("second");
         (await client.Keys.ExpiryAsync("msetkeep:a")).TimeToLive!.Value
@@ -72,18 +72,18 @@ public class SetManyExpiryIntegrationTests(ModernRedisTestContainer fixture)
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
 
-        (await client.Strings.SetManyAsync(
+        (await client.Strings.SetManyExpireAsync(
             TimeSpan.FromSeconds(30), SetWhen.NotExists, ("msetnx:a", "first"))).Should().BeTrue();
-        (await client.Strings.SetManyAsync(
+        (await client.Strings.SetManyExpireAsync(
             TimeSpan.FromSeconds(30), SetWhen.NotExists, ("msetnx:a", "second"))).Should().BeFalse();
         (await client.GetStringAsync("msetnx:a")).Should().Be("first");
 
-        (await client.Strings.SetManyAsync(
+        (await client.Strings.SetManyExpireAsync(
             RespireExpiry.Keep, SetWhen.Exists, ("msetnx:a", "third"))).Should().BeTrue();
         (await client.GetStringAsync("msetnx:a")).Should().Be("third");
         (await client.Keys.ExpiryAsync("msetnx:a")).HasExpiry.Should().BeTrue();
 
-        (await client.Strings.SetManyAsync(
+        (await client.Strings.SetManyExpireAsync(
             RespireExpiry.Keep, SetWhen.Exists, ("msetnx:missing", "value"))).Should().BeFalse();
         (await client.ExistsAsync("msetnx:missing")).Should().BeFalse();
     }

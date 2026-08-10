@@ -72,7 +72,7 @@ public readonly struct RespireKey : IEquatable<RespireKey>
         }
     }
 
-    public override string ToString() => _string ?? Encoding.UTF8.GetString(_bytes.Span);
+    public override string ToString() => _string ?? Internal.Utf8String.GetString(_bytes);
 
     public bool Equals(RespireKey other) => AsValue().Equals(other.AsValue());
 

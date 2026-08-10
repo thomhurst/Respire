@@ -59,8 +59,8 @@ public interface IKeyCommands
     /// <summary>The key's Redis type name ("string", "hash", …, or "none"). Redis: TYPE.</summary>
     ValueTask<string> TypeAsync(RespireKey key, CancellationToken cancellationToken = default);
 
-    /// <summary>Renames a key, overwriting any existing target. Redis: RENAME.</summary>
-    ValueTask RenameAsync(RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default);
+    /// <summary>Renames a key, returning true when Redis confirms the write. Redis: RENAME.</summary>
+    ValueTask<bool> RenameAsync(RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default);
 
     /// <summary>Touches keys (updates access time); returns how many existed. Redis: TOUCH.</summary>
     ValueTask<long> TouchAsync(params ReadOnlySpan<RespireKey> keys);
@@ -139,8 +139,9 @@ internal sealed class KeyCommands(RespireClient client) : IKeyCommands
     public ValueTask<string> TypeAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.StringAsync("TYPE", new Cmd1(Verbs.Type, client.Key(in key)), cancellationToken);
 
-    public ValueTask RenameAsync(RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default)
-        => client.OkAsync("RENAME", new Cmd2(Verbs.Rename, client.Key(in key), client.Key(in newKey)), cancellationToken);
+    public ValueTask<bool> RenameAsync(RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default)
+        => client.ConfirmedOkAsync(
+            "RENAME", new Cmd2(Verbs.Rename, client.Key(in key), client.Key(in newKey)), cancellationToken);
 
     public ValueTask<long> TouchAsync(params ReadOnlySpan<RespireKey> keys)
         => client.IntegerKeysAsync("TOUCH", Verbs.Touch, keys, CancellationToken.None);

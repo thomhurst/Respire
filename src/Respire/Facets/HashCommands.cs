@@ -1,4 +1,6 @@
 using Respire.Commands;
+using Respire.Internal;
+using Respire.Protocol;
 
 namespace Respire;
 
@@ -58,6 +60,11 @@ public interface IHashCommands
 
     /// <summary>The whole hash as a dictionary. Redis: HGETALL.</summary>
     ValueTask<Dictionary<string, string>> GetAllAsync(RespireKey key, CancellationToken cancellationToken = default);
+
+    /// <summary>Iterates fields and values incrementally. Redis: HSCAN.</summary>
+    IAsyncEnumerable<KeyValuePair<string, string>> ScanAsync(
+        RespireKey key, string? match = null, int countHint = 250,
+        CancellationToken cancellationToken = default);
 
     /// <summary>Deletes fields; returns how many existed. Redis: HDEL.</summary>
     ValueTask<long> DeleteAsync(RespireKey key, params ReadOnlySpan<string> fields);
@@ -192,6 +199,13 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
     public ValueTask<Dictionary<string, string>> GetAllAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.StringMapAsync("HGETALL", new Cmd1(Verbs.HGetAll, client.Key(in key)), cancellationToken);
 
+    public IAsyncEnumerable<KeyValuePair<string, string>> ScanAsync(
+        RespireKey key, string? match = null, int countHint = 250,
+        CancellationToken cancellationToken = default)
+        => CollectionScan.EnumerateAsync(
+            client, "HSCAN", RespireCommands.Hash.HSCAN.Verb, key, match, countHint,
+            ParseScanEntries, cancellationToken);
+
     public ValueTask<long> DeleteAsync(RespireKey key, params ReadOnlySpan<string> fields)
         => DeleteAsync(key, fields, CancellationToken.None);
 
@@ -215,6 +229,19 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
 
     public ValueTask<string[]> ValuesAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.StringArrayAsync("HVALS", new Cmd1(Verbs.HVals, client.Key(in key)), cancellationToken);
+
+    private static KeyValuePair<string, string>[] ParseScanEntries(in RespValue page)
+    {
+        var elements = page.AsArray();
+        var entries = new KeyValuePair<string, string>[elements.Length / 2];
+        for (var i = 0; i < entries.Length; i++)
+        {
+            entries[i] = new KeyValuePair<string, string>(
+                elements[i * 2].AsString(), elements[i * 2 + 1].AsString());
+        }
+
+        return entries;
+    }
 
     public ValueTask<RespireTtl[]> ExpiryAsync(RespireKey key, params ReadOnlySpan<string> fields)
         => ExpiryAsync(key, fields, CancellationToken.None);

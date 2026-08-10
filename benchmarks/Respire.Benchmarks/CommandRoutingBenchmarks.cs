@@ -27,7 +27,7 @@ public class CommandRoutingBenchmarks
     private readonly GeoAddCommand _geoAddCommand = new(
         RespireCommands.Geo.GEOADD.Verb,
         "benchmark-key",
-        GeoAddCondition.Always,
+        SetWhen.Always,
         changed: false,
         []);
     private readonly GeoSearchCommand _geoSearchCommand = new(

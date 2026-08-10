@@ -132,9 +132,9 @@ public class MultiItemCancellationOverloadTests
 
         _ = client.Strings.GetManyAsync(keys, token);
         _ = client.Strings.SetManyAsync(pairs, token);
-        _ = client.Strings.SetManyAsync(expiry, SetWhen.NotExists, pairs, token);
-        _ = client.Strings.SetManyAsync(expireAt, SetWhen.Exists, pairs, token);
-        _ = client.Strings.SetManyAsync(RespireExpiry.Keep, SetWhen.Exists, pairs, token);
+        _ = client.Strings.SetManyExpireAsync(expiry, SetWhen.NotExists, pairs, token);
+        _ = client.Strings.SetManyExpireAsync(expireAt, SetWhen.Exists, pairs, token);
+        _ = client.Strings.SetManyExpireAsync(RespireExpiry.Keep, SetWhen.Exists, pairs, token);
 
         _ = client.Hashes.SetAsync("h", fieldValues, token);
         _ = client.Hashes.GetManyAsync("h", fields, token);
@@ -177,7 +177,7 @@ public class MultiItemCancellationOverloadTests
         _ = client.Bitmaps.FieldAsync("b", operations, token);
         _ = client.Bitmaps.FieldReadOnlyAsync("b", operations, token);
 
-        _ = client.Geo.AddAsync("g", GeoAddCondition.Always, changed: false, geoEntries, token);
+        _ = client.Geo.AddAsync("g", SetWhen.Always, changed: false, geoEntries, token);
         _ = client.Geo.HashAsync("g", values, token);
         _ = client.Geo.PositionAsync("g", values, token);
 
@@ -274,7 +274,8 @@ public class MultiItemCancellationOverloadTests
         public ValueTask<string> TypeAsync(RespireKey key, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
-        public ValueTask RenameAsync(RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default)
+        public ValueTask<bool> RenameAsync(
+            RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
         public IAsyncEnumerable<string> ScanAsync(

@@ -201,8 +201,18 @@ No API returns pooled memory without `Lease` in its name.
 - **SCAN-family returns `IAsyncEnumerable`**, cursor handled internally:
 
 ```csharp
-await foreach (var key in redis.Keys.ScanAsync(match: "user:*", ct))
+await foreach (var key in redis.Keys.ScanAsync(match: "user:*", cancellationToken: ct))
+{
+    Console.WriteLine(key);
+}
+
+await foreach (var field in redis.Hashes.ScanAsync("user:1", match: "profile:*", cancellationToken: ct))
+{
+    Console.WriteLine($"{field.Key} = {field.Value}");
+}
 ```
+
+Hashes yield field/value pairs, sets yield members, and sorted sets yield members with scores.
 
 ## 5. Batching (explicit pipeline)
 

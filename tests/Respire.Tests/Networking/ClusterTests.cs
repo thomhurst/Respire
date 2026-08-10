@@ -559,10 +559,10 @@ public class ClusterTests
             transaction => transaction.Keys.Rename("foo", "bar"),
             transaction => transaction.Strings.GetMany("foo", "bar"),
             transaction => transaction.Strings.SetMany(("foo", "one"), ("bar", "two")),
-            transaction => transaction.Strings.SetMany(
+            transaction => transaction.Strings.SetManyExpire(
                 RespireExpiry.In(TimeSpan.FromMinutes(1)), SetWhen.Always,
                 ("foo", "one"), ("bar", "two")),
-            transaction => transaction.Strings.LongestCommonSubsequence("foo", "bar"),
+            transaction => transaction.Strings.Lcs("foo", "bar"),
             transaction => transaction.Lists.Move("foo", "bar"),
             transaction => transaction.Sets.Union("foo", "bar"),
             transaction => transaction.Sets.UnionStore("foo", "bar"),
