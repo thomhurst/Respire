@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
@@ -514,6 +515,8 @@ public class RespireConnectionTests
         await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", port);
         using var socket = await acceptTask;
         var secondReconnect = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var laterSubscriberThreeStates = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var laterSubscriberStates = new ConcurrentQueue<RespireConnectionState>();
         var reconnectCount = 0;
         var retryRequested = 0;
 
@@ -538,6 +541,14 @@ public class RespireConnectionTests
                 }
             }
         };
+        multiplexer.StateChanged += change =>
+        {
+            laterSubscriberStates.Enqueue(change.State);
+            if (laterSubscriberStates.Count >= 3)
+            {
+                laterSubscriberThreeStates.TrySetResult();
+            }
+        };
 
         listener.Stop();
         socket.LingerState = new LingerOption(true, 0);
@@ -551,6 +562,13 @@ public class RespireConnectionTests
 
         await Assert.That(() => multiplexer.GetConnection()).Throws<RespireConnectionException>();
         await secondReconnect.Task.WaitAsync(timeout.Token);
+        await laterSubscriberThreeStates.Task.WaitAsync(timeout.Token);
+
+        var states = laterSubscriberStates.ToArray();
+        await Assert.That(states.Length).IsGreaterThanOrEqualTo(3);
+        await Assert.That(states[0]).IsEqualTo(RespireConnectionState.Reconnecting);
+        await Assert.That(states[1]).IsEqualTo(RespireConnectionState.Disconnected);
+        await Assert.That(states[2]).IsEqualTo(RespireConnectionState.Reconnecting);
     }
 
     [Test]

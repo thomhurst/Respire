@@ -26,12 +26,15 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private readonly SemaphoreSlim _correctionIdentityGate = new(1, 1);
     private readonly SemaphoreSlim _retiredFenceGate = new(1, 1);
     private readonly ConcurrentDictionary<long, byte> _retiredServerClientIds = new();
+    private readonly object _stateNotificationGate = new();
+    private readonly Queue<StateNotification> _stateNotifications = [];
     private uint _next;
     private int _disposed;
     private int _trackServerClientIds;
     private string? _correctionOrderingFailure;
     private volatile bool _correctionOrderingReady;
     private volatile bool _connected;
+    private bool _publishingStateNotifications;
 
     public string Host { get; }
     public int Port { get; }
@@ -635,8 +638,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             return;
         }
 
-        NotifyStateChanged(RespireConnectionState.Reconnecting, error);
-        NotifySlotStateChanged(slot, RespireConnectionState.Reconnecting, error);
+        NotifyStateChanged(slot, RespireConnectionState.Reconnecting, error);
         _ = ReconnectAsync(slot);
     }
 
@@ -681,8 +683,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
             }
             else
             {
-                NotifyStateChanged(RespireConnectionState.Connected);
-                NotifySlotStateChanged(slot, RespireConnectionState.Connected);
+                NotifyStateChanged(slot, RespireConnectionState.Connected);
             }
         }
         catch (Exception ex)
@@ -706,8 +707,7 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 // this attempt's guard first so that command can schedule the promised retry.
                 Volatile.Write(ref _reconnecting[slot], 0);
                 reconnectGuardReleased = true;
-                NotifyStateChanged(RespireConnectionState.Disconnected, ex);
-                NotifySlotStateChanged(slot, RespireConnectionState.Disconnected, ex);
+                NotifyStateChanged(slot, RespireConnectionState.Disconnected, ex);
             }
         }
         finally
@@ -720,34 +720,74 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     }
 
     internal void NotifyStateChanged(RespireConnectionState state, Exception? error = null)
+        => EnqueueStateNotification(new StateNotification(null, state, error));
+
+    private void NotifyStateChanged(
+        int slot,
+        RespireConnectionState state,
+        Exception? error = null)
+        => EnqueueStateNotification(new StateNotification(slot, state, error));
+
+    private void EnqueueStateNotification(StateNotification notification)
     {
+        lock (_stateNotificationGate)
+        {
+            _stateNotifications.Enqueue(notification);
+            if (_publishingStateNotifications)
+            {
+                return;
+            }
+
+            _publishingStateNotifications = true;
+        }
+
+        while (true)
+        {
+            lock (_stateNotificationGate)
+            {
+                if (_stateNotifications.Count == 0)
+                {
+                    _publishingStateNotifications = false;
+                    return;
+                }
+
+                notification = _stateNotifications.Dequeue();
+            }
+
+            PublishStateNotification(notification);
+        }
+    }
+
+    private void PublishStateNotification(StateNotification notification)
+    {
+        var change = new RespireConnectionStateChange(
+            new RespireEndpoint(Host, Port), notification.State, notification.Error);
         try
         {
-            StateChanged?.Invoke(new RespireConnectionStateChange(
-                new RespireEndpoint(Host, Port), state, error));
+            StateChanged?.Invoke(change);
         }
         catch (Exception ex)
         {
             _logger?.LogWarning(ex, "Connection state-change handler threw");
         }
+
+        if (notification.Slot is { } slot)
+        {
+            try
+            {
+                SlotStateChanged?.Invoke(slot, change);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Connection slot state-change handler threw");
+            }
+        }
     }
 
-    private void NotifySlotStateChanged(
-        int slot,
-        RespireConnectionState state,
-        Exception? error = null)
-    {
-        try
-        {
-            SlotStateChanged?.Invoke(
-                slot,
-                new RespireConnectionStateChange(new RespireEndpoint(Host, Port), state, error));
-        }
-        catch (Exception ex)
-        {
-            _logger?.LogWarning(ex, "Connection slot state-change handler threw");
-        }
-    }
+    private readonly record struct StateNotification(
+        int? Slot,
+        RespireConnectionState State,
+        Exception? Error);
 
     public async ValueTask DisposeAsync()
     {
