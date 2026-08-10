@@ -9,12 +9,38 @@ namespace Respire;
 /// <summary>A Redis endpoint (host and port).</summary>
 public readonly record struct RespireEndpoint(string Host, int Port = 6379)
 {
-    /// <summary>Parses "host" or "host:port".</summary>
+    /// <summary>Parses "host", "host:port", or an IPv6 address.</summary>
     public static RespireEndpoint Parse(string value)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
-        var colon = value.LastIndexOf(':');
-        if (colon > 0 && int.TryParse(value.AsSpan(colon + 1), out var port))
+        value = value.Trim();
+
+        if (value[0] == '[')
+        {
+            var closingBracket = value.IndexOf(']');
+            if (closingBracket < 0)
+            {
+                throw new ArgumentException("An IPv6 endpoint is missing its closing bracket.", nameof(value));
+            }
+
+            var host = value[1..closingBracket];
+            if (closingBracket == value.Length - 1)
+            {
+                return new RespireEndpoint(host);
+            }
+
+            if (value[closingBracket + 1] != ':' ||
+                !int.TryParse(value.AsSpan(closingBracket + 2), CultureInfo.InvariantCulture, out var ipv6Port))
+            {
+                throw new ArgumentException($"Invalid IPv6 endpoint '{value}'.", nameof(value));
+            }
+
+            return new RespireEndpoint(host, ipv6Port);
+        }
+
+        var colon = value.IndexOf(':');
+        if (colon > 0 && colon == value.LastIndexOf(':') &&
+            int.TryParse(value.AsSpan(colon + 1), CultureInfo.InvariantCulture, out var port))
         {
             return new RespireEndpoint(value[..colon], port);
         }
@@ -24,7 +50,9 @@ public readonly record struct RespireEndpoint(string Host, int Port = 6379)
 
     public static implicit operator RespireEndpoint(string value) => Parse(value);
 
-    public override string ToString() => $"{Host}:{Port}";
+    public override string ToString() => Host.Contains(':', StringComparison.Ordinal)
+        ? $"[{Host}]:{Port}"
+        : $"{Host}:{Port}";
 }
 
 /// <summary>RESP protocol version negotiated during the handshake.</summary>
@@ -205,8 +233,12 @@ public sealed record RespireOptions
         };
 
     /// <summary>
-    /// Parses a connection string: "host", "host:port", or a
-    /// <c>redis://[user[:password]@]host[:port][/database]</c> URI. Recognized query parameters:
+    /// Parses a connection string: "host", "host:port", a StackExchange.Redis-compatible
+    /// comma-delimited string, or a <c>redis://[user[:password]@]host[:port][/database]</c> URI.
+    /// Comma-delimited strings support one endpoint and the options <c>user</c>,
+    /// <c>password</c>, <c>ssl</c>, <c>clientName</c>, <c>defaultDatabase</c>,
+    /// <c>connectTimeout</c>, <c>asyncTimeout</c>, <c>syncTimeout</c>, <c>protocol</c>,
+    /// and <c>allowAdmin</c>. Recognized URI query parameters:
     /// <c>clientName</c>, <c>connections</c>, <c>connectTimeoutMs</c>, <c>commandTimeoutMs</c>,
     /// <c>responseTimeoutMs</c>, <c>protocol</c> (2 or 3), <c>db</c>,
     /// <c>cluster</c> (true or false), <c>serviceName</c>, <c>sentinelUser</c>,
@@ -220,7 +252,20 @@ public sealed record RespireOptions
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
-        if (!connectionString.Contains("://", StringComparison.Ordinal))
+        var uriMarker = connectionString.IndexOf("://", StringComparison.Ordinal);
+        var optionMarker = connectionString.IndexOf(',');
+        var equalsMarker = connectionString.IndexOf('=');
+        if (optionMarker < 0 || (equalsMarker >= 0 && equalsMarker < optionMarker))
+        {
+            optionMarker = equalsMarker;
+        }
+
+        if (optionMarker >= 0 && (uriMarker < 0 || optionMarker < uriMarker))
+        {
+            return ParseStackExchangeConnectionString(connectionString);
+        }
+
+        if (uriMarker < 0)
         {
             return new RespireOptions { Endpoints = { RespireEndpoint.Parse(connectionString) } };
         }
@@ -346,6 +391,111 @@ public sealed record RespireOptions
             Protocol = protocol,
             Cluster = cluster,
             ServiceName = serviceName,
+            AllowAdmin = allowAdmin,
+        };
+    }
+
+    private static RespireOptions ParseStackExchangeConnectionString(string connectionString)
+    {
+        List<RespireEndpoint> endpoints = [];
+        string? username = null;
+        string? password = null;
+        string? clientName = null;
+        var database = 0;
+        var useTls = false;
+        var connectTimeout = TimeSpan.FromSeconds(10);
+        TimeSpan? asyncTimeout = null;
+        TimeSpan? syncTimeout = null;
+        var protocol = RespProtocol.Resp2;
+        var allowAdmin = false;
+
+        var segments = connectionString.Split(
+            ',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var segment in segments)
+        {
+            var equals = segment.IndexOf('=');
+            if (equals < 0)
+            {
+                endpoints.Add(RespireEndpoint.Parse(segment));
+                continue;
+            }
+
+            var name = segment[..equals].Trim();
+            var value = segment[(equals + 1)..].Trim();
+            switch (name.ToLowerInvariant())
+            {
+                case "user":
+                case "username":
+                    username = value;
+                    break;
+                case "password":
+                    password = value;
+                    break;
+                case "ssl":
+                    useTls = bool.Parse(value);
+                    break;
+                case "clientname":
+                    clientName = value;
+                    break;
+                case "defaultdatabase":
+                case "db":
+                    database = int.Parse(value, CultureInfo.InvariantCulture);
+                    break;
+                case "connecttimeout":
+                    connectTimeout = TimeSpan.FromMilliseconds(int.Parse(value, CultureInfo.InvariantCulture));
+                    break;
+                case "asynctimeout":
+                    asyncTimeout = TimeSpan.FromMilliseconds(int.Parse(value, CultureInfo.InvariantCulture));
+                    break;
+                case "synctimeout":
+                    syncTimeout = TimeSpan.FromMilliseconds(int.Parse(value, CultureInfo.InvariantCulture));
+                    break;
+                case "protocol":
+                    protocol = value.ToLowerInvariant() switch
+                    {
+                        "2" or "resp2" => RespProtocol.Resp2,
+                        "3" or "resp3" => RespProtocol.Resp3,
+                        _ => throw new ArgumentException(
+                            $"Unsupported protocol '{value}' in connection string.", nameof(connectionString)),
+                    };
+                    break;
+                case "allowadmin":
+                    allowAdmin = bool.Parse(value);
+                    break;
+                default:
+                    throw new ArgumentException(
+                        $"StackExchange.Redis connection string option '{name}' is not supported. " +
+                        "Use a redis:// URI or configure RespireOptions directly.",
+                        nameof(connectionString));
+            }
+        }
+
+        if (endpoints.Count == 0)
+        {
+            throw new ArgumentException(
+                "A StackExchange.Redis connection string must contain at least one endpoint.",
+                nameof(connectionString));
+        }
+
+        if (endpoints.Count > 1)
+        {
+            throw new ArgumentException(
+                "StackExchange.Redis connection strings with multiple endpoints are not supported. " +
+                "Configure RespireOptions directly and select Redis Cluster or Sentinel mode.",
+                nameof(connectionString));
+        }
+
+        return new RespireOptions
+        {
+            Endpoints = endpoints,
+            Username = username,
+            Password = password,
+            ClientName = clientName,
+            Database = database,
+            ConnectTimeout = connectTimeout,
+            UseTls = useTls,
+            CommandTimeout = asyncTimeout ?? syncTimeout,
+            Protocol = protocol,
             AllowAdmin = allowAdmin,
         };
     }
