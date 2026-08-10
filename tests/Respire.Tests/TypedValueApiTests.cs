@@ -71,15 +71,16 @@ public class TypedValueApiTests
     }
 
     [Test]
-    public async Task Value_AnnotatesMissingReferenceAsNullable()
+    public async Task NullableResultMembers_AnnotateMissingReferenceAsNullable()
     {
-        var property = typeof(RespireGet<string>).GetProperty(nameof(RespireGet<string>.Value))!;
-        var nullableContext = property.GetMethod!.CustomAttributes
-            .Single(attribute => attribute.AttributeType.FullName ==
-                "System.Runtime.CompilerServices.NullableContextAttribute");
-        var annotation = (byte)nullableContext.ConstructorArguments[0].Value!;
+        var type = typeof(RespireGet<string>);
+        var valueGetter = type.GetProperty(nameof(RespireGet<string>.Value))!.GetMethod!;
+        var deconstruct = type.GetMethod(nameof(RespireGet<string>.Deconstruct))!;
+        var getValueOrDefault = type.GetMethod(nameof(RespireGet<string>.GetValueOrDefault))!;
 
-        await Assert.That(annotation).IsEqualTo((byte)2);
+        await Assert.That(NullableContextAnnotation(valueGetter)).IsEqualTo((byte)2);
+        await Assert.That(NullableContextAnnotation(deconstruct)).IsEqualTo((byte)2);
+        await Assert.That(NullableContextAnnotation(getValueOrDefault)).IsEqualTo((byte)2);
     }
 
     [Test]
@@ -198,4 +199,10 @@ public class TypedValueApiTests
 
     private static MethodInfo BoundMethod<TFacet, TResult>(Expression<Func<TFacet, TResult>> call)
         => ((MethodCallExpression)call.Body).Method;
+
+    private static byte NullableContextAnnotation(MethodInfo method)
+        => (byte)method.CustomAttributes
+            .Single(attribute => attribute.AttributeType.FullName ==
+                "System.Runtime.CompilerServices.NullableContextAttribute")
+            .ConstructorArguments[0].Value!;
 }
