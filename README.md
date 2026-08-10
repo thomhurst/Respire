@@ -231,7 +231,7 @@ commands. Interpolated values are encoded as single arguments, so spaces stay sa
 builder.Services.AddRespire(builder.Configuration.GetConnectionString("redis")!);
 
 // Named clients are supported too.
-builder.Services.AddRespire("sessions", "redis://sessions-host");
+builder.Services.AddKeyedRespire("sessions", "redis://sessions-host");
 public sealed class CartService(
     [FromKeyedServices("sessions")] IRespireClient redis);
 ```

@@ -101,52 +101,25 @@ public interface IHashCommands
     ValueTask<RespireTtl[]> ExpiryAsync(
         RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
 
-    /// <summary>Sets field TTLs using millisecond precision. Redis: HPEXPIRE.</summary>
+    /// <summary>Sets, updates, or removes field expiry metadata. Redis: HPEXPIRE/HPEXPIREAT/HPERSIST.</summary>
     ValueTask<HashFieldExpiryResult[]> ExpireAsync(
-        RespireKey key, TimeSpan expiry, params ReadOnlySpan<string> fields);
+        RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields);
 
-    /// <summary>Sets field TTLs using millisecond precision. Redis: HPEXPIRE.</summary>
+    /// <summary>Sets, updates, or removes field expiry metadata. Redis: HPEXPIRE/HPEXPIREAT/HPERSIST.</summary>
     ValueTask<HashFieldExpiryResult[]> ExpireAsync(
-        RespireKey key, TimeSpan expiry, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
+        RespireKey key, RespireExpiry expiry, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
 
-    /// <summary>Sets field TTLs with an NX, XX, GT, or LT condition. Redis: HPEXPIRE.</summary>
+    /// <summary>Sets field expiry with an NX, XX, GT, or LT condition. Redis: HPEXPIRE/HPEXPIREAT.</summary>
     ValueTask<HashFieldExpiryResult[]> ExpireAsync(
-        RespireKey key, TimeSpan expiry, HashFieldExpireWhen when, params ReadOnlySpan<string> fields);
+        RespireKey key, RespireExpiry expiry, HashFieldExpireWhen when, params ReadOnlySpan<string> fields);
 
-    /// <summary>Sets field TTLs with an NX, XX, GT, or LT condition. Redis: HPEXPIRE.</summary>
+    /// <summary>Sets field expiry with an NX, XX, GT, or LT condition. Redis: HPEXPIRE/HPEXPIREAT.</summary>
     ValueTask<HashFieldExpiryResult[]> ExpireAsync(
         RespireKey key,
-        TimeSpan expiry,
+        RespireExpiry expiry,
         HashFieldExpireWhen when,
         ReadOnlySpan<string> fields,
         CancellationToken cancellationToken);
-
-    /// <summary>Sets absolute field expiry instants using Unix milliseconds. Redis: HPEXPIREAT.</summary>
-    ValueTask<HashFieldExpiryResult[]> ExpireAtAsync(
-        RespireKey key, DateTimeOffset expireAt, params ReadOnlySpan<string> fields);
-
-    /// <summary>Sets absolute field expiry instants using Unix milliseconds. Redis: HPEXPIREAT.</summary>
-    ValueTask<HashFieldExpiryResult[]> ExpireAtAsync(
-        RespireKey key, DateTimeOffset expireAt, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
-
-    /// <summary>Sets absolute field expiry instants with an NX, XX, GT, or LT condition. Redis: HPEXPIREAT.</summary>
-    ValueTask<HashFieldExpiryResult[]> ExpireAtAsync(
-        RespireKey key, DateTimeOffset expireAt, HashFieldExpireWhen when, params ReadOnlySpan<string> fields);
-
-    /// <summary>Sets absolute field expiry instants with an NX, XX, GT, or LT condition. Redis: HPEXPIREAT.</summary>
-    ValueTask<HashFieldExpiryResult[]> ExpireAtAsync(
-        RespireKey key,
-        DateTimeOffset expireAt,
-        HashFieldExpireWhen when,
-        ReadOnlySpan<string> fields,
-        CancellationToken cancellationToken);
-
-    /// <summary>Removes field expiry metadata. Redis: HPERSIST.</summary>
-    ValueTask<HashFieldExpiryResult[]> PersistAsync(RespireKey key, params ReadOnlySpan<string> fields);
-
-    /// <summary>Removes field expiry metadata. Redis: HPERSIST.</summary>
-    ValueTask<HashFieldExpiryResult[]> PersistAsync(
-        RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
 
     /// <summary>Gets fields and deletes them atomically. Redis: HGETDEL.</summary>
     ValueTask<string?[]> GetDeleteAsync(RespireKey key, params ReadOnlySpan<string> fields);
@@ -155,75 +128,32 @@ public interface IHashCommands
     ValueTask<string?[]> GetDeleteAsync(
         RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Gets fields and sets their TTL using PX milliseconds. Use <see cref="RespireCommands.Hash.HGETEX"/>
-    /// directly for second-precision EX/EXAT forms. Redis: HGETEX.
-    /// </summary>
-    ValueTask<string?[]> GetExpireAsync(RespireKey key, TimeSpan expiry, params ReadOnlySpan<string> fields);
+    /// <summary>Gets fields and updates or removes their expiry metadata. Redis: HGETEX.</summary>
+    ValueTask<string?[]> GetExpireAsync(RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields);
 
-    /// <summary>Gets fields and sets their TTL using PX milliseconds. Redis: HGETEX.</summary>
+    /// <summary>Gets fields and updates or removes their expiry metadata. Redis: HGETEX.</summary>
     ValueTask<string?[]> GetExpireAsync(
-        RespireKey key, TimeSpan expiry, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
+        RespireKey key, RespireExpiry expiry, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
 
-    /// <summary>Gets fields and sets their absolute expiry using PXAT Unix milliseconds. Redis: HGETEX.</summary>
-    ValueTask<string?[]> GetExpireAtAsync(RespireKey key, DateTimeOffset expireAt, params ReadOnlySpan<string> fields);
-
-    /// <summary>Gets fields and sets their absolute expiry using PXAT Unix milliseconds. Redis: HGETEX.</summary>
-    ValueTask<string?[]> GetExpireAtAsync(
-        RespireKey key, DateTimeOffset expireAt, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
-
-    /// <summary>Gets fields and removes their TTL metadata. Redis: HGETEX PERSIST.</summary>
-    ValueTask<string?[]> GetPersistAsync(RespireKey key, params ReadOnlySpan<string> fields);
-
-    /// <summary>Gets fields and removes their TTL metadata. Redis: HGETEX PERSIST.</summary>
-    ValueTask<string?[]> GetPersistAsync(
-        RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Sets fields and applies a TTL using PX milliseconds. Use <see cref="RespireCommands.Hash.HSETEX"/>
-    /// directly for second-precision EX/EXAT and KEEPTTL forms. Redis: HSETEX.
-    /// </summary>
+    /// <summary>Sets fields and applies a relative, absolute, or retained expiry. Redis: HSETEX.</summary>
     ValueTask<bool> SetExpireAsync(
-        RespireKey key, TimeSpan expiry, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
+        RespireKey key, RespireExpiry expiry, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
 
-    /// <summary>Sets fields and applies a TTL using PX milliseconds. Redis: HSETEX.</summary>
+    /// <summary>Sets fields and applies a relative, absolute, or retained expiry. Redis: HSETEX.</summary>
     ValueTask<bool> SetExpireAsync(
         RespireKey key,
-        TimeSpan expiry,
+        RespireExpiry expiry,
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         CancellationToken cancellationToken);
 
-    /// <summary>Sets fields with a FNX/FXX condition and applies a TTL using PX milliseconds. Redis: HSETEX.</summary>
+    /// <summary>Sets fields with a FNX/FXX condition and applies an expiry. Redis: HSETEX.</summary>
     ValueTask<bool> SetExpireAsync(
-        RespireKey key, TimeSpan expiry, SetWhen when, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
+        RespireKey key, RespireExpiry expiry, SetWhen when, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
 
-    /// <summary>Sets fields with a FNX/FXX condition and applies a TTL using PX milliseconds. Redis: HSETEX.</summary>
+    /// <summary>Sets fields with a FNX/FXX condition and applies an expiry. Redis: HSETEX.</summary>
     ValueTask<bool> SetExpireAsync(
         RespireKey key,
-        TimeSpan expiry,
-        SetWhen when,
-        ReadOnlySpan<(string Field, RespireValue Value)> fields,
-        CancellationToken cancellationToken);
-
-    /// <summary>Sets fields and applies an absolute expiry using PXAT Unix milliseconds. Redis: HSETEX.</summary>
-    ValueTask<bool> SetExpireAtAsync(
-        RespireKey key, DateTimeOffset expireAt, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
-
-    /// <summary>Sets fields and applies an absolute expiry using PXAT Unix milliseconds. Redis: HSETEX.</summary>
-    ValueTask<bool> SetExpireAtAsync(
-        RespireKey key,
-        DateTimeOffset expireAt,
-        ReadOnlySpan<(string Field, RespireValue Value)> fields,
-        CancellationToken cancellationToken);
-
-    /// <summary>Sets fields with a FNX/FXX condition and applies an absolute expiry using PXAT. Redis: HSETEX.</summary>
-    ValueTask<bool> SetExpireAtAsync(
-        RespireKey key, DateTimeOffset expireAt, SetWhen when, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
-
-    /// <summary>Sets fields with a FNX/FXX condition and applies an absolute expiry using PXAT. Redis: HSETEX.</summary>
-    ValueTask<bool> SetExpireAtAsync(
-        RespireKey key,
-        DateTimeOffset expireAt,
+        RespireExpiry expiry,
         SetWhen when,
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         CancellationToken cancellationToken);
@@ -333,65 +263,64 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
             cancellationToken);
 
     public ValueTask<HashFieldExpiryResult[]> ExpireAsync(
-        RespireKey key, TimeSpan expiry, params ReadOnlySpan<string> fields)
+        RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)
         => ExpireAsync(key, expiry, HashFieldExpireWhen.Always, fields, CancellationToken.None);
 
     public ValueTask<HashFieldExpiryResult[]> ExpireAsync(
-        RespireKey key, TimeSpan expiry, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
+        RespireKey key, RespireExpiry expiry, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
         => ExpireAsync(key, expiry, HashFieldExpireWhen.Always, fields, cancellationToken);
 
     public ValueTask<HashFieldExpiryResult[]> ExpireAsync(
-        RespireKey key, TimeSpan expiry, HashFieldExpireWhen when, params ReadOnlySpan<string> fields)
+        RespireKey key, RespireExpiry expiry, HashFieldExpireWhen when, params ReadOnlySpan<string> fields)
         => ExpireAsync(key, expiry, when, fields, CancellationToken.None);
 
     public ValueTask<HashFieldExpiryResult[]> ExpireAsync(
         RespireKey key,
-        TimeSpan expiry,
+        RespireExpiry expiry,
         HashFieldExpireWhen when,
         ReadOnlySpan<string> fields,
         CancellationToken cancellationToken)
-        => client.HashFieldExpiryResultArrayAsync(
-            "HPEXPIRE",
-            new Cmd1N(
-                RespireCommands.Hash.HPEXPIRE.Verb,
-                client.Key(in key),
-                ExpireFieldsBlock((long)expiry.TotalMilliseconds, when, fields)),
-            cancellationToken);
+    {
+        if (expiry.IsPersist)
+        {
+            if (when != HashFieldExpireWhen.Always)
+            {
+                throw new ArgumentException("HPERSIST does not support NX, XX, GT, or LT.", nameof(when));
+            }
 
-    public ValueTask<HashFieldExpiryResult[]> ExpireAtAsync(
-        RespireKey key, DateTimeOffset expireAt, params ReadOnlySpan<string> fields)
-        => ExpireAtAsync(key, expireAt, HashFieldExpireWhen.Always, fields, CancellationToken.None);
+            return client.HashFieldExpiryResultArrayAsync(
+                "HPERSIST",
+                new Cmd1N(RespireCommands.Hash.HPERSIST.Verb, client.Key(in key), FieldsBlock(fields)),
+                cancellationToken);
+        }
 
-    public ValueTask<HashFieldExpiryResult[]> ExpireAtAsync(
-        RespireKey key, DateTimeOffset expireAt, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
-        => ExpireAtAsync(key, expireAt, HashFieldExpireWhen.Always, fields, cancellationToken);
+        if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
+        {
+            return ExpireCore(
+                "HPEXPIRE", RespireCommands.Hash.HPEXPIRE.Verb, key, milliseconds, when, fields, cancellationToken);
+        }
 
-    public ValueTask<HashFieldExpiryResult[]> ExpireAtAsync(
-        RespireKey key, DateTimeOffset expireAt, HashFieldExpireWhen when, params ReadOnlySpan<string> fields)
-        => ExpireAtAsync(key, expireAt, when, fields, CancellationToken.None);
+        if (expiry.TryGetAbsoluteUnixMilliseconds(out var unixMilliseconds))
+        {
+            return ExpireCore(
+                "HPEXPIREAT", RespireCommands.Hash.HPEXPIREAT.Verb, key, unixMilliseconds, when, fields, cancellationToken);
+        }
 
-    public ValueTask<HashFieldExpiryResult[]> ExpireAtAsync(
+        throw new ArgumentException(
+            "Hash expiry must be relative, absolute, or RespireExpiry.Persist.", nameof(expiry));
+    }
+
+    private ValueTask<HashFieldExpiryResult[]> ExpireCore(
+        string operation,
+        Verb verb,
         RespireKey key,
-        DateTimeOffset expireAt,
+        long value,
         HashFieldExpireWhen when,
         ReadOnlySpan<string> fields,
         CancellationToken cancellationToken)
         => client.HashFieldExpiryResultArrayAsync(
-            "HPEXPIREAT",
-            new Cmd1N(
-                RespireCommands.Hash.HPEXPIREAT.Verb,
-                client.Key(in key),
-                ExpireFieldsBlock(expireAt.ToUnixTimeMilliseconds(), when, fields)),
-            cancellationToken);
-
-    public ValueTask<HashFieldExpiryResult[]> PersistAsync(RespireKey key, params ReadOnlySpan<string> fields)
-        => PersistAsync(key, fields, CancellationToken.None);
-
-    public ValueTask<HashFieldExpiryResult[]> PersistAsync(
-        RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
-        => client.HashFieldExpiryResultArrayAsync(
-            "HPERSIST",
-            new Cmd1N(RespireCommands.Hash.HPERSIST.Verb, client.Key(in key), FieldsBlock(fields)),
+            operation,
+            new Cmd1N(verb, client.Key(in key), ExpireFieldsBlock(value, when, fields)),
             cancellationToken);
 
     public ValueTask<string?[]> GetDeleteAsync(RespireKey key, params ReadOnlySpan<string> fields)
@@ -405,93 +334,92 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
             cancellationToken);
 
     public ValueTask<string?[]> GetExpireAsync(
-        RespireKey key, TimeSpan expiry, params ReadOnlySpan<string> fields)
+        RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)
         => GetExpireAsync(key, expiry, fields, CancellationToken.None);
 
     public ValueTask<string?[]> GetExpireAsync(
-        RespireKey key, TimeSpan expiry, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
-        => client.NullableStringArrayAsync(
-            "HGETEX",
-            new Cmd1N(
-                RespireCommands.Hash.HGETEX.Verb,
-                client.Key(in key),
-                GetExFieldsBlock("PX", (long)expiry.TotalMilliseconds, hasValue: true, fields)),
-            cancellationToken);
+        RespireKey key, RespireExpiry expiry, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
+    {
+        if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
+        {
+            return GetExpireCore(key, "PX", milliseconds, hasValue: true, fields, cancellationToken);
+        }
 
-    public ValueTask<string?[]> GetExpireAtAsync(
-        RespireKey key, DateTimeOffset expireAt, params ReadOnlySpan<string> fields)
-        => GetExpireAtAsync(key, expireAt, fields, CancellationToken.None);
+        if (expiry.TryGetAbsoluteUnixMilliseconds(out var unixMilliseconds))
+        {
+            return GetExpireCore(key, "PXAT", unixMilliseconds, hasValue: true, fields, cancellationToken);
+        }
 
-    public ValueTask<string?[]> GetExpireAtAsync(
-        RespireKey key, DateTimeOffset expireAt, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
-        => client.NullableStringArrayAsync(
-            "HGETEX",
-            new Cmd1N(
-                RespireCommands.Hash.HGETEX.Verb,
-                client.Key(in key),
-                GetExFieldsBlock("PXAT", expireAt.ToUnixTimeMilliseconds(), hasValue: true, fields)),
-            cancellationToken);
+        if (expiry.IsPersist)
+        {
+            return GetExpireCore(key, "PERSIST", optionValue: 0, hasValue: false, fields, cancellationToken);
+        }
 
-    public ValueTask<string?[]> GetPersistAsync(RespireKey key, params ReadOnlySpan<string> fields)
-        => GetPersistAsync(key, fields, CancellationToken.None);
-
-    public ValueTask<string?[]> GetPersistAsync(
-        RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
-        => client.NullableStringArrayAsync(
-            "HGETEX",
-            new Cmd1N(
-                RespireCommands.Hash.HGETEX.Verb,
-                client.Key(in key),
-                GetExFieldsBlock("PERSIST", optionValue: 0, hasValue: false, fields)),
-            cancellationToken);
+        throw new ArgumentException(
+            "HGETEX expiry must be relative, absolute, or RespireExpiry.Persist.", nameof(expiry));
+    }
 
     public ValueTask<bool> SetExpireAsync(
-        RespireKey key, TimeSpan expiry, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
+        RespireKey key, RespireExpiry expiry, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
         => SetExpireAsync(key, expiry, SetWhen.Always, fields, CancellationToken.None);
 
     public ValueTask<bool> SetExpireAsync(
         RespireKey key,
-        TimeSpan expiry,
+        RespireExpiry expiry,
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         CancellationToken cancellationToken)
         => SetExpireAsync(key, expiry, SetWhen.Always, fields, cancellationToken);
 
     public ValueTask<bool> SetExpireAsync(
-        RespireKey key, TimeSpan expiry, SetWhen when, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
+        RespireKey key, RespireExpiry expiry, SetWhen when, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
         => SetExpireAsync(key, expiry, when, fields, CancellationToken.None);
 
     public ValueTask<bool> SetExpireAsync(
         RespireKey key,
-        TimeSpan expiry,
+        RespireExpiry expiry,
         SetWhen when,
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         CancellationToken cancellationToken)
-        => client.FlagAsync(
-            "HSETEX",
+    {
+        if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
+        {
+            return SetExpireCore(key, "PX", milliseconds, hasValue: true, when, fields, cancellationToken);
+        }
+
+        if (expiry.TryGetAbsoluteUnixMilliseconds(out var unixMilliseconds))
+        {
+            return SetExpireCore(key, "PXAT", unixMilliseconds, hasValue: true, when, fields, cancellationToken);
+        }
+
+        if (expiry.IsKeep)
+        {
+            return SetExpireCore(key, "KEEPTTL", optionValue: 0, hasValue: false, when, fields, cancellationToken);
+        }
+
+        throw new ArgumentException(
+            "HSETEX expiry must be relative, absolute, or RespireExpiry.Keep.", nameof(expiry));
+    }
+
+    private ValueTask<string?[]> GetExpireCore(
+        RespireKey key,
+        string option,
+        long optionValue,
+        bool hasValue,
+        ReadOnlySpan<string> fields,
+        CancellationToken cancellationToken)
+        => client.NullableStringArrayAsync(
+            "HGETEX",
             new Cmd1N(
-                RespireCommands.Hash.HSETEX.Verb,
+                RespireCommands.Hash.HGETEX.Verb,
                 client.Key(in key),
-                SetExFieldsBlock("PX", (long)expiry.TotalMilliseconds, when, fields)),
+                GetExFieldsBlock(option, optionValue, hasValue, fields)),
             cancellationToken);
 
-    public ValueTask<bool> SetExpireAtAsync(
-        RespireKey key, DateTimeOffset expireAt, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
-        => SetExpireAtAsync(key, expireAt, SetWhen.Always, fields, CancellationToken.None);
-
-    public ValueTask<bool> SetExpireAtAsync(
+    private ValueTask<bool> SetExpireCore(
         RespireKey key,
-        DateTimeOffset expireAt,
-        ReadOnlySpan<(string Field, RespireValue Value)> fields,
-        CancellationToken cancellationToken)
-        => SetExpireAtAsync(key, expireAt, SetWhen.Always, fields, cancellationToken);
-
-    public ValueTask<bool> SetExpireAtAsync(
-        RespireKey key, DateTimeOffset expireAt, SetWhen when, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
-        => SetExpireAtAsync(key, expireAt, when, fields, CancellationToken.None);
-
-    public ValueTask<bool> SetExpireAtAsync(
-        RespireKey key,
-        DateTimeOffset expireAt,
+        string option,
+        long optionValue,
+        bool hasValue,
         SetWhen when,
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         CancellationToken cancellationToken)
@@ -500,7 +428,7 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
             new Cmd1N(
                 RespireCommands.Hash.HSETEX.Verb,
                 client.Key(in key),
-                SetExFieldsBlock("PXAT", expireAt.ToUnixTimeMilliseconds(), when, fields)),
+                SetExFieldsBlock(option, optionValue, hasValue, when, fields)),
             cancellationToken);
 
     /// <summary>field value… — shared with the deferred (batch/transaction) facet.</summary>
@@ -587,11 +515,15 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
     }
 
     internal static RespireValue[] SetExFieldsBlock(
-        string option, long optionValue, SetWhen when, ReadOnlySpan<(string Field, RespireValue Value)> fields)
+        string option,
+        long optionValue,
+        bool hasValue,
+        SetWhen when,
+        ReadOnlySpan<(string Field, RespireValue Value)> fields)
     {
         ValidateFieldPairs(fields);
         var condition = HashSetWhenToken(when);
-        var args = new RespireValue[(condition is null ? 0 : 1) + 4 + fields.Length * 2];
+        var args = new RespireValue[(condition is null ? 0 : 1) + 3 + (hasValue ? 1 : 0) + fields.Length * 2];
         var index = 0;
         if (condition is not null)
         {
@@ -599,7 +531,10 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
         }
 
         args[index++] = option;
-        args[index++] = optionValue;
+        if (hasValue)
+        {
+            args[index++] = optionValue;
+        }
         args[index++] = "FIELDS";
         args[index++] = fields.Length;
         for (var i = 0; i < fields.Length; i++)

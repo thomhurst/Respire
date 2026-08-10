@@ -100,7 +100,9 @@ public sealed class RespireClient : IRespireClient, IAsyncDisposable
     ValueTask<long>    DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken ct);
     ValueTask<bool>    ExistsAsync(RespireKey key, CancellationToken ct = default);
     ValueTask<long>    IncrementAsync(RespireKey key, long by = 1, CancellationToken ct = default);
-    ValueTask<bool>    ExpireAsync(RespireKey key, TimeSpan expiry, CancellationToken ct = default);
+    ValueTask<bool>    ExpireAsync(RespireKey key, RespireExpiry expiry,
+                                   ExpireWhen when = ExpireWhen.Always,
+                                   CancellationToken ct = default);
     ValueTask<TimeSpan> PingAsync(CancellationToken ct = default);   // returns measured RTT
 
     // Facets
@@ -185,8 +187,8 @@ No API returns pooled memory without `Lease` in its name.
 
 ## 4. Command conventions
 
-- **Time is `TimeSpan`/`DateTimeOffset`.** `ExpireAsync(key, TimeSpan)`,
-  `ExpireAtAsync(key, DateTimeOffset)`. Never `int seconds`.
+- **Time is `TimeSpan`/`DateTimeOffset`.** Expiry inputs use `RespireExpiry.In(TimeSpan)` or
+  `.At(DateTimeOffset)` (both also convert implicitly), plus `.Keep`/`.Persist`. Never `int seconds`.
 - **Options with more than ~3 knobs become an options struct** (e.g. `SetWhen.Always /
   NotExists / Exists`, `GetExAsync` variants), but common cases stay optional parameters.
 - **Variadic where Redis is variadic**: `DeleteAsync(params ReadOnlySpan<RespireKey> keys)`
@@ -415,8 +417,8 @@ Server errors always throw at the friendly layer — no error-as-value inspectio
 builder.Services.AddRespire(builder.Configuration.GetConnectionString("redis")!);
 
 // Multiple clients via keyed services
-builder.Services.AddRespire("cache",    o => o.Endpoints.Add(new("cache-host")));
-builder.Services.AddRespire("sessions", o => o.Endpoints.Add(new("sess-host")));
+builder.Services.AddKeyedRespire("cache",    o => o.Endpoints.Add(new("cache-host")));
+builder.Services.AddKeyedRespire("sessions", o => o.Endpoints.Add(new("sess-host")));
 
 public sealed class CartService([FromKeyedServices("cache")] IRespireClient redis) { }
 ```

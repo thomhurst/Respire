@@ -38,18 +38,19 @@ public class ModernRedisTypedCommandTests
         var expiries = await client.Hashes.ExpiryAsync("hash", "a", "b", "c");
         var expireResults = await client.Hashes.ExpireAsync(
             "hash", TimeSpan.FromMilliseconds(2500), HashFieldExpireWhen.GreaterThan, "a", "b", "c", "d");
-        var expireAtResults = await client.Hashes.ExpireAtAsync(
-            "hash", DateTimeOffset.FromUnixTimeMilliseconds(123456789), "a");
-        var persistResults = await client.Hashes.PersistAsync("hash", "a", "b", "c");
+        var expireAtResults = await client.Hashes.ExpireAsync(
+            "hash", RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(123456789)), "a");
+        var persistResults = await client.Hashes.ExpireAsync("hash", RespireExpiry.Persist, "a", "b", "c");
         var deleted = await client.Hashes.GetDeleteAsync("hash", "a", "missing");
         var getExpire = await client.Hashes.GetExpireAsync("hash", TimeSpan.FromSeconds(5), "a", "b");
-        var getExpireAt = await client.Hashes.GetExpireAtAsync(
-            "hash", DateTimeOffset.FromUnixTimeMilliseconds(987654321), "c");
-        var getPersist = await client.Hashes.GetPersistAsync("hash", "a");
+        var getExpireAt = await client.Hashes.GetExpireAsync(
+            "hash", RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(987654321)), "c");
+        var getPersist = await client.Hashes.GetExpireAsync("hash", RespireExpiry.Persist, "a");
         var setExpire = await client.Hashes.SetExpireAsync(
             "hash", TimeSpan.FromSeconds(2), SetWhen.NotExists, ("a", "one"), ("b", "two"));
-        var setExpireAt = await client.Hashes.SetExpireAtAsync(
-            "hash", DateTimeOffset.FromUnixTimeMilliseconds(987654321), SetWhen.Exists, ("a", "next"));
+        var setExpireAt = await client.Hashes.SetExpireAsync(
+            "hash", RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(987654321)),
+            SetWhen.Exists, ("a", "next"));
 
         await Assert.That(expiries[0].Exists).IsTrue();
         await Assert.That(expiries[0].HasExpiry).IsTrue();
@@ -130,6 +131,36 @@ public class ModernRedisTypedCommandTests
     }
 
     [Test]
+    public async Task UnifiedKeyAndStringExpiryCommands_WriteExpectedFrames()
+    {
+        await using var server = new FakeRespServer(
+            ":1\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray(),
+            "$5\r\nvalue\r\n"u8.ToArray(),
+            "$5\r\nvalue\r\n"u8.ToArray(),
+            "$5\r\nvalue\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await client.Keys.ExpireAsync("key", RespireExpiry.In(TimeSpan.FromSeconds(2)), ExpireWhen.GreaterThan);
+        await client.Keys.ExpireAsync(
+            "key", RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(987654321)), ExpireWhen.NotExists);
+        await client.Keys.ExpireAsync("key", RespireExpiry.Persist);
+        await client.Strings.GetExpireAsync("key", RespireExpiry.In(TimeSpan.FromSeconds(3)));
+        await client.Strings.GetExpireAsync(
+            "key", RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(123456789)));
+        await client.Strings.GetExpireAsync("key", RespireExpiry.Persist);
+
+        await AssertCommands(server.ReceivedCommands,
+            "PEXPIRE key 2000 GT",
+            "PEXPIREAT key 987654321 NX",
+            "PERSIST key",
+            "GETEX key PX 3000",
+            "GETEX key PXAT 123456789",
+            "GETEX key PERSIST");
+    }
+
+    [Test]
     public async Task ModernCommands_RejectInvalidShapesBeforeSending()
     {
         await using var server = new FakeRespServer();
@@ -146,6 +177,23 @@ public class ModernRedisTypedCommandTests
         await Assert.That(async () => await client.Hashes.SetExpireAsync(
             "hash", TimeSpan.FromSeconds(1), (SetWhen)42, ("field", "value")))
             .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.Keys.ExpireAsync("key", RespireExpiry.None))
+            .Throws<ArgumentException>();
+        await Assert.That(async () => await client.Keys.ExpireAsync(
+            "key", RespireExpiry.Persist, ExpireWhen.Exists))
+            .Throws<ArgumentException>();
+        await Assert.That(async () => await client.Strings.GetExpireAsync("key", RespireExpiry.Keep))
+            .Throws<ArgumentException>();
+        await Assert.That(async () => await client.SetAsync("key", "value", RespireExpiry.Persist))
+            .Throws<ArgumentException>();
+        await Assert.That(async () => await client.Strings.SetManyExpireAsync(
+            RespireExpiry.Persist, pairs: ("key", "value")))
+            .Throws<ArgumentException>();
+        await Assert.That(async () => await client.Hashes.GetExpireAsync("hash", RespireExpiry.None, "field"))
+            .Throws<ArgumentException>();
+        await Assert.That(async () => await client.Hashes.SetExpireAsync(
+            "hash", RespireExpiry.Persist, ("field", "value")))
+            .Throws<ArgumentException>();
         await Assert.That(async () => await client.Strings.SetManyExpireAsync(TimeSpan.FromSeconds(1)))
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Strings.SetManyExpireAsync(RespireExpiry.Keep, (SetWhen)42, ("key", "value")))

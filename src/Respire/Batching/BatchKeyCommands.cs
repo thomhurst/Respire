@@ -19,14 +19,9 @@ public interface IBatchKeyCommands
     /// <summary>Whether the key exists. Redis: EXISTS.</summary>
     RespirePending<bool> Exists(RespireKey key);
 
-    /// <summary>Sets a key's time to live. False when the key is missing. Redis: PEXPIRE.</summary>
-    RespirePending<bool> Expire(RespireKey key, TimeSpan expiry);
-
-    /// <summary>Sets an absolute expiry instant. False when the key is missing. Redis: PEXPIREAT.</summary>
-    RespirePending<bool> ExpireAt(RespireKey key, DateTimeOffset expireAt);
-
-    /// <summary>Removes a key's expiry. False when the key is missing or had none. Redis: PERSIST.</summary>
-    RespirePending<bool> Persist(RespireKey key);
+    /// <summary>Sets, updates, or removes a key's expiry. Redis: PEXPIRE/PEXPIREAT/PERSIST.</summary>
+    RespirePending<bool> Expire(
+        RespireKey key, RespireExpiry expiry, ExpireWhen when = ExpireWhen.Always);
 
     /// <summary>
     /// The key's expiry state — distinguishes missing key, no expiry, and remaining TTL. Redis: PTTL.
@@ -62,20 +57,47 @@ internal sealed class BatchKeyCommands(IPendingSink sink) : IBatchKeyCommands
             "EXISTS", new Cmd1(Verbs.Exists, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.Flag(in v));
 
-    public RespirePending<bool> Expire(RespireKey key, TimeSpan expiry)
-        => sink.Add<Cmd2, bool>(
-            "PEXPIRE", new Cmd2(Verbs.PExpire, sink.Client.Key(in key), (long)expiry.TotalMilliseconds),
-            static (c, v) => ResponseReader.Flag(in v));
+    public RespirePending<bool> Expire(
+        RespireKey key, RespireExpiry expiry, ExpireWhen when = ExpireWhen.Always)
+    {
+        var condition = KeyCommands.ExpireWhenToken(when);
+        if (expiry.IsPersist)
+        {
+            if (condition is not null)
+            {
+                throw new ArgumentException("PERSIST does not support NX, XX, GT, or LT.", nameof(when));
+            }
 
-    public RespirePending<bool> ExpireAt(RespireKey key, DateTimeOffset expireAt)
-        => sink.Add<Cmd2, bool>(
-            "PEXPIREAT", new Cmd2(Verbs.PExpireAt, sink.Client.Key(in key), expireAt.ToUnixTimeMilliseconds()),
-            static (c, v) => ResponseReader.Flag(in v));
+            return sink.Add<Cmd1, bool>(
+                "PERSIST", new Cmd1(Verbs.Persist, sink.Client.Key(in key)),
+                static (c, v) => ResponseReader.Flag(in v));
+        }
 
-    public RespirePending<bool> Persist(RespireKey key)
-        => sink.Add<Cmd1, bool>(
-            "PERSIST", new Cmd1(Verbs.Persist, sink.Client.Key(in key)),
-            static (c, v) => ResponseReader.Flag(in v));
+        if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
+        {
+            return condition is null
+                ? sink.Add<Cmd2, bool>(
+                    "PEXPIRE", new Cmd2(Verbs.PExpire, sink.Client.Key(in key), milliseconds),
+                    static (c, v) => ResponseReader.Flag(in v))
+                : sink.Add<Cmd3, bool>(
+                    "PEXPIRE", new Cmd3(Verbs.PExpire, sink.Client.Key(in key), milliseconds, condition),
+                    static (c, v) => ResponseReader.Flag(in v));
+        }
+
+        if (expiry.TryGetAbsoluteUnixMilliseconds(out var unixMilliseconds))
+        {
+            return condition is null
+                ? sink.Add<Cmd2, bool>(
+                    "PEXPIREAT", new Cmd2(Verbs.PExpireAt, sink.Client.Key(in key), unixMilliseconds),
+                    static (c, v) => ResponseReader.Flag(in v))
+                : sink.Add<Cmd3, bool>(
+                    "PEXPIREAT", new Cmd3(Verbs.PExpireAt, sink.Client.Key(in key), unixMilliseconds, condition),
+                    static (c, v) => ResponseReader.Flag(in v));
+        }
+
+        throw new ArgumentException(
+            "Key expiry must be relative, absolute, or RespireExpiry.Persist.", nameof(expiry));
+    }
 
     public RespirePending<RespireTtl> Expiry(RespireKey key)
         => sink.Add<Cmd1, RespireTtl>(

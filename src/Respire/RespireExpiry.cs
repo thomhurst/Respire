@@ -14,12 +14,14 @@ internal enum RespireExpiryKind : byte
 
     /// <summary>Retain the key's existing TTL (KEEPTTL).</summary>
     Keep,
+
+    /// <summary>Remove the existing expiry (PERSIST).</summary>
+    Persist,
 }
 
 /// <summary>
-/// The expiry to apply to a write: none, a relative TTL, an absolute instant, or "keep whatever
-/// TTL the key already has". One parameter replaces the old <c>TimeSpan? expiry</c> plus
-/// <c>bool keepTtl</c> pair, so conflicting combinations cannot be expressed.
+/// An expiry command input: none, a relative TTL, an absolute instant, "keep the current TTL",
+/// or "remove the current TTL". Individual Redis commands accept the forms meaningful to them.
 /// </summary>
 /// <remarks>
 /// This is the expiry <i>input</i> type. <see cref="RespireTtl"/> is the expiry Redis
@@ -44,6 +46,9 @@ public readonly struct RespireExpiry : IEquatable<RespireExpiry>
     /// <summary>Retains the TTL the key already has. Redis: KEEPTTL.</summary>
     public static readonly RespireExpiry Keep = new(RespireExpiryKind.Keep, 0);
 
+    /// <summary>Removes an existing expiry. Redis: PERSIST.</summary>
+    public static readonly RespireExpiry Persist = new(RespireExpiryKind.Persist, 0);
+
     /// <summary>Expires the key <paramref name="timeToLive"/> from now. Redis: PX milliseconds.</summary>
     public static RespireExpiry In(TimeSpan timeToLive)
         => new(RespireExpiryKind.Relative, (long)timeToLive.TotalMilliseconds);
@@ -57,6 +62,9 @@ public readonly struct RespireExpiry : IEquatable<RespireExpiry>
 
     /// <summary>Whether this is <see cref="Keep"/>.</summary>
     public bool IsKeep => _kind == RespireExpiryKind.Keep;
+
+    /// <summary>Whether this is <see cref="Persist"/>.</summary>
+    public bool IsPersist => _kind == RespireExpiryKind.Persist;
 
     /// <summary>The relative time to live, or null when this is not a relative expiry.</summary>
     public TimeSpan? TimeToLive
@@ -80,12 +88,12 @@ public readonly struct RespireExpiry : IEquatable<RespireExpiry>
 
     public static bool operator !=(RespireExpiry left, RespireExpiry right) => !left.Equals(right);
 
-    /// <summary>The number of command tokens this expiry contributes: 0 for none, 1 for KEEPTTL, 2 otherwise.</summary>
+    /// <summary>The number of command tokens this expiry contributes: 0 for none, 1 for KEEPTTL/PERSIST, 2 otherwise.</summary>
     internal int TokenCount
         => _kind switch
         {
             RespireExpiryKind.None => 0,
-            RespireExpiryKind.Keep => 1,
+            RespireExpiryKind.Keep or RespireExpiryKind.Persist => 1,
             _ => 2,
         };
 
@@ -113,6 +121,7 @@ public readonly struct RespireExpiry : IEquatable<RespireExpiry>
             RespireExpiryKind.Relative => TimeSpan.FromMilliseconds(_value).ToString(),
             RespireExpiryKind.Absolute => DateTimeOffset.FromUnixTimeMilliseconds(_value).ToString("O"),
             RespireExpiryKind.Keep => "(keep)",
+            RespireExpiryKind.Persist => "(persist)",
             _ => "(none)",
         };
 }

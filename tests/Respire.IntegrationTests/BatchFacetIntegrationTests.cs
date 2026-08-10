@@ -24,9 +24,9 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         var many = batch.Strings.GetMany("batch:s", "batch:missing");
         var exists = batch.Keys.Exists("batch:s");
         var type = batch.Keys.Type("batch:s");
-        var expired = batch.Keys.Expire("batch:s", TimeSpan.FromMinutes(5));
+        var expired = batch.Keys.Expire("batch:s", RespireExpiry.In(TimeSpan.FromMinutes(5)));
         var expiry = batch.Keys.Expiry("batch:s");
-        var persisted = batch.Keys.Persist("batch:s");
+        var persisted = batch.Keys.Expire("batch:s", RespireExpiry.Persist);
 
         await batch.ExecuteAsync();
 

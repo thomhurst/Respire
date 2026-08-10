@@ -4,7 +4,7 @@
     <PackageId>Respire.Extensions.DependencyInjection</PackageId>
     <Title>Respire.Extensions.DependencyInjection</Title>
     <Description>Dependency injection integration for Respire clients in Microsoft.Extensions.DependencyInjection applications.</Description>
-    <PackageTags>$(PackageTags);dependency-injection;hosting;extensions</PackageTags>
+    <PackageTags>$(PackageTags);dependency-injection;extensions</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
@@ -13,12 +13,10 @@
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
   </ItemGroup>
 
 </Project>

@@ -71,8 +71,11 @@ long removed = await redis.DeleteAsync(keys, cancellationToken);
 await redis.ExpireAsync("session:42", TimeSpan.FromMinutes(30));
 RespireTtl ttl = await redis.Keys.ExpiryAsync("session:42");
 
-await redis.Keys.PersistAsync("session:42");
-await redis.Keys.ExpireAtAsync("report", DateTimeOffset.UtcNow.AddDays(1));
+await redis.Keys.ExpireAsync("session:42", RespireExpiry.Persist);
+await redis.Keys.ExpireAsync("report", RespireExpiry.At(DateTimeOffset.UtcNow.AddDays(1)));
+await redis.Keys.ExpireAsync("lease", TimeSpan.FromMinutes(10), ExpireWhen.GreaterThan);
+
+var value = await redis.Strings.GetExpireAsync("session:42", TimeSpan.FromMinutes(30));
 ```
 
 `TypeAsync` returns `RespireKeyType` rather than a server string. Conditional rename and copy are

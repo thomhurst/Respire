@@ -89,6 +89,10 @@ public interface IStringCommands
     /// <summary>Gets a key's value and deletes the key. Redis: GETDEL.</summary>
     ValueTask<string?> GetDeleteAsync(RespireKey key, CancellationToken cancellationToken = default);
 
+    /// <summary>Gets a key's value and updates or removes its expiry. Redis: GETEX.</summary>
+    ValueTask<string?> GetExpireAsync(
+        RespireKey key, RespireExpiry expiry, CancellationToken cancellationToken = default);
+
     /// <summary>Appends to a string and returns the new length. Redis: APPEND.</summary>
     ValueTask<long> AppendAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken = default);
 
@@ -186,15 +190,21 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
     public ValueTask<bool> SetAsync(
         RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default)
-        => client.OkOrNullAsync(
+    {
+        SetCommand.ValidateExpiry(expiry);
+        return client.OkOrNullAsync(
             "SET", new SetCommand(client.Key(in key), value, expiry, when, returnOld: false), cancellationToken);
+    }
 
     public ValueTask<bool> SetAsync<T>(
         RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default)
-        => client.OkOrNullAsync(
+    {
+        SetCommand.ValidateExpiry(expiry);
+        return client.OkOrNullAsync(
             "SET", new SetCommand(client.Key(in key), client.Serialize(value), expiry, when, returnOld: false),
             cancellationToken);
+    }
 
     public ValueTask<string?> GetAndSetAsync(
         RespireKey key,
@@ -202,9 +212,12 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         RespireExpiry expiry = default,
         SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default)
-        => client.StringOrNullAsync(
+    {
+        SetCommand.ValidateExpiry(expiry);
+        return client.StringOrNullAsync(
             "SET", new SetCommand(client.Key(in key), value, expiry, when, returnOld: true),
             cancellationToken);
+    }
 
     public ValueTask<T?> GetAndSetAsync<T>(
         RespireKey key,
@@ -212,12 +225,44 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         RespireExpiry expiry = default,
         SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default)
-        => client.DeserializeAsync<T, SetCommand>(
+    {
+        SetCommand.ValidateExpiry(expiry);
+        return client.DeserializeAsync<T, SetCommand>(
             "SET", new SetCommand(client.Key(in key), client.Serialize(value), expiry, when, returnOld: true),
             cancellationToken);
+    }
 
     public ValueTask<string?> GetDeleteAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.StringOrNullAsync("GETDEL", new Cmd1(Verbs.GetDel, client.Key(in key)), cancellationToken);
+
+    public ValueTask<string?> GetExpireAsync(
+        RespireKey key, RespireExpiry expiry, CancellationToken cancellationToken = default)
+    {
+        if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
+        {
+            return client.StringOrNullAsync(
+                "GETEX",
+                new Cmd3(RespireCommands.String.GETEX.Verb, client.Key(in key), "PX", milliseconds),
+                cancellationToken);
+        }
+
+        if (expiry.TryGetAbsoluteUnixMilliseconds(out var unixMilliseconds))
+        {
+            return client.StringOrNullAsync(
+                "GETEX",
+                new Cmd3(RespireCommands.String.GETEX.Verb, client.Key(in key), "PXAT", unixMilliseconds),
+                cancellationToken);
+        }
+
+        if (expiry.IsPersist)
+        {
+            return client.StringOrNullAsync(
+                "GETEX", new Cmd2(RespireCommands.String.GETEX.Verb, client.Key(in key), "PERSIST"), cancellationToken);
+        }
+
+        throw new ArgumentException(
+            "GETEX expiry must be relative, absolute, or RespireExpiry.Persist.", nameof(expiry));
+    }
 
     public ValueTask<long> AppendAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken = default)
         => client.IntegerAsync("APPEND", new Cmd2(Verbs.Append, client.Key(in key), value), cancellationToken);
@@ -325,6 +370,13 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         SetWhen when,
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
     {
+        if (expiry.IsPersist)
+        {
+            throw new ArgumentException(
+                "MSETEX does not support RespireExpiry.Persist; use SetManyAsync without an expiry instead.",
+                nameof(expiry));
+        }
+
         ValidatePairs(pairs);
         var condition = StringSetWhenToken(when);
         var args = new RespireValue[
