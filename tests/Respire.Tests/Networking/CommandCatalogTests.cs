@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Reflection;
 using Respire.Commands;
 using Respire.Networking;
 using Respire.Protocol;
@@ -198,22 +200,50 @@ public class CommandCatalogTests
     }
 
     [Test]
-    public async Task ExecuteAsync_RejectsTheFireAndForgetFlagAcrossEveryCommandForm()
+    public async Task ExecuteSurface_HidesBinaryCompatibleStringForwarders()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var concrete = await FakeRespServer.ConnectClientAsync(server.Port);
         IRespireClient client = concrete;
-        RespireValue value = "value";
+        RespireCommand raw = "CONFIG GET";
 
-        await Assert.That(async () => await client.ExecuteAsync(
-                "SET", ["key", "value"], RespireCommandFlags.FireAndForget))
-            .Throws<ArgumentException>();
-        await Assert.That(async () => await client.ExecuteAsync(
-                RespireCommands.String.SET, ["key", "value"], RespireCommandFlags.FireAndForget))
-            .Throws<ArgumentException>();
-        await Assert.That(async () => await client.ExecuteAsync(
-                $"SET key {value}", RespireCommandFlags.FireAndForget))
-            .Throws<ArgumentException>();
+        foreach (var type in new[] { typeof(IRespireClient), typeof(RespireClient) })
+        {
+            var executeMethods = type.GetMethods(
+                    BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                .Where(static method => method.Name is nameof(IRespireClient.ExecuteAsync)
+                    or nameof(IRespireClient.ExecuteFireAndForgetAsync))
+                .ToArray();
+            var hiddenStringForwarders = executeMethods
+                .Where(static method => method.GetParameters()[0].ParameterType == typeof(string))
+                .ToArray();
+            var visibleMethods = executeMethods
+                .Except(hiddenStringForwarders)
+                .ToArray();
+
+            await Assert.That(visibleMethods.Count(static method => method.Name == nameof(IRespireClient.ExecuteAsync)))
+                .IsEqualTo(3);
+            await Assert.That(visibleMethods.Count(static method => method.Name == nameof(IRespireClient.ExecuteFireAndForgetAsync)))
+                .IsEqualTo(2);
+            await Assert.That(hiddenStringForwarders.Count(static method => method.Name == nameof(IRespireClient.ExecuteAsync)))
+                .IsEqualTo(2);
+            await Assert.That(hiddenStringForwarders.Count(static method => method.Name == nameof(IRespireClient.ExecuteFireAndForgetAsync)))
+                .IsEqualTo(2);
+            foreach (var method in hiddenStringForwarders)
+            {
+                await Assert.That(method.GetCustomAttribute<EditorBrowsableAttribute>()?.State)
+                    .IsEqualTo(EditorBrowsableState.Never);
+                await Assert.That(method.GetCustomAttribute<ObsoleteAttribute>()).IsNull();
+            }
+        }
+        await Assert.That(Enum.GetNames<RespireCommandFlags>()).IsEquivalentTo(["None", "NoRedirect"]);
+        var noRedirect = Enum.GetValues<RespireCommandFlags>()
+            .Single(static value => value.ToString() == "NoRedirect");
+        await Assert.That(Convert.ToInt32(noRedirect)).IsEqualTo(2);
+        await Assert.That(raw.Name).IsEqualTo("CONFIG GET");
+        await Assert.That(raw.Sources).IsEqualTo(RespireCommandSource.None);
+        await Assert.That(raw.Verb.Bulk).IsNull();
+        await Assert.That(raw.Verb.Tokens).IsEqualTo(0);
 
         await client.ExecuteFireAndForgetAsync("SET", "raw-key", "value");
         await client.ExecuteFireAndForgetAsync(
@@ -222,6 +252,58 @@ public class CommandCatalogTests
 
         await Assert.That(server.ReceivedCommands)
             .IsEquivalentTo(["SET raw-key value", "SET catalog-key value"]);
+    }
+
+    [Test]
+    public async Task InterpolatedCommand_HonorsInvariantFormatsAndAlignment()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var number = 1234.5m;
+        var left = 42;
+
+        using var result = await client.ExecuteAsync($"SET formatted {number,12:N2} {left,-5:D4} {"é",3}");
+
+        await Assert.That(server.ReceivedCommands.Single())
+            .IsEqualTo("SET formatted     1,234.50 0042    é");
+    }
+
+    [Test]
+    public async Task InterpolatedCommand_AlignmentPreservesSpecializedEncodings()
+    {
+        await using var server = new FakeRespServer(
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var bytes = "ab"u8.ToArray();
+        ReadOnlyMemory<byte> memory = "cd"u8.ToArray();
+        RespireValue binaryValue = new byte[] { 0xff, 0x00 };
+        RespireKey binaryKey = new byte[] { 0xfe, 0x01 };
+
+        using var booleanResult = await client.ExecuteAsync($"SET boolean {true,3}");
+        using var bytesResult = await client.ExecuteAsync($"SET bytes {bytes,-4}");
+        using var memoryResult = await client.ExecuteAsync($"SET memory {memory,4}");
+
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo([
+            "SET boolean   1",
+            "SET bytes ab  ",
+            "SET memory   cd",
+        ]);
+
+        var binaryTokens = BuildTokens($"SET binary {binaryValue,4} {binaryKey,-4}");
+        await Assert.That(binaryTokens[2]).IsEqualTo((RespireValue)new byte[] { 0x20, 0x20, 0xff, 0x00 });
+        await Assert.That(binaryTokens[3]).IsEqualTo((RespireValue)new byte[] { 0xfe, 0x01, 0x20, 0x20 });
+
+        var formattedTokens = BuildTokens($"SET format {true:X} {bytes:X} {memory:X} {binaryValue:X} {binaryKey:X}");
+        await Assert.That(formattedTokens[2]).IsEqualTo((RespireValue)new byte[] { (byte)'1' });
+        await Assert.That(formattedTokens[3]).IsEqualTo((RespireValue)bytes);
+        await Assert.That(formattedTokens[4]).IsEqualTo((RespireValue)memory);
+        await Assert.That(formattedTokens[5]).IsEqualTo(binaryValue);
+        await Assert.That(formattedTokens[6]).IsEqualTo(binaryKey.AsValue());
+
+        static RespireValue[] BuildTokens(RespireCommandInterpolatedStringHandler handler)
+            => handler.Build().Tokens;
     }
 
     [Test]

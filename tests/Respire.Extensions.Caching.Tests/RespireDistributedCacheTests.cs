@@ -1461,11 +1461,11 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             ReadOnlySpan<RespireKey> watchKeys, CancellationToken cancellationToken)
             => inner.CreateTransactionAsync(watchKeys, cancellationToken);
 
-        public ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args)
-            => inner.ExecuteAsync(command, args);
-
         public ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args)
             => inner.ExecuteAsync(command, args);
+
+        public ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args)
+            => inner.ExecuteAsync((RespireCommand)command, args);
 
         public ValueTask<RespireResult> ExecuteAsync(
             RespireCommand command,
@@ -1479,7 +1479,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             RespireValue[] args,
             RespireCommandFlags flags = RespireCommandFlags.None,
             CancellationToken cancellationToken = default)
-            => inner.ExecuteAsync(command, args, flags, cancellationToken);
+            => inner.ExecuteAsync((RespireCommand)command, args, flags, cancellationToken);
 
         public ValueTask<RespireResult> ExecuteAsync(
             RespireCommandInterpolatedStringHandler command,
@@ -1490,16 +1490,16 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ValueTask ExecuteFireAndForgetAsync(RespireCommand command, params RespireValue[] args)
             => inner.ExecuteFireAndForgetAsync(command, args);
 
+        public ValueTask ExecuteFireAndForgetAsync(string command, params RespireValue[] args)
+            => inner.ExecuteFireAndForgetAsync((RespireCommand)command, args);
+
         public ValueTask ExecuteFireAndForgetAsync(
             RespireCommand command, RespireValue[] args, CancellationToken cancellationToken = default)
             => inner.ExecuteFireAndForgetAsync(command, args, cancellationToken);
 
-        public ValueTask ExecuteFireAndForgetAsync(string command, params RespireValue[] args)
-            => inner.ExecuteFireAndForgetAsync(command, args);
-
         public ValueTask ExecuteFireAndForgetAsync(
             string command, RespireValue[] args, CancellationToken cancellationToken = default)
-            => inner.ExecuteFireAndForgetAsync(command, args, cancellationToken);
+            => inner.ExecuteFireAndForgetAsync((RespireCommand)command, args, cancellationToken);
 
         public IRespireClient WithKeyPrefix(string prefix) => inner.WithKeyPrefix(prefix);
 
