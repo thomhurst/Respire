@@ -12,7 +12,7 @@ public interface IHashCommands
     /// Sets one field to a serialized <typeparamref name="T"/>; the write partner of
     /// <see cref="GetAsync{T}"/>. Returns true when the field was newly created. Redis: HSET.
     /// <para>
-    /// Overload resolution mirrors <see cref="IStringCommands.SetAsync{T}(RespireKey, T, TimeSpan?, SetWhen, bool, CancellationToken)"/>:
+    /// Overload resolution mirrors <see cref="IStringCommands.SetAsync{T}"/>:
     /// an argument already typed as <see cref="RespireValue"/> picks the non-generic overload,
     /// while any other type (including <c>string</c>, whose implicit conversion loses to an exact
     /// match) picks this one. The two write identical bytes for strings, byte payloads, and
