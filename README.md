@@ -135,11 +135,24 @@ var mutex = attempt.Lock;
 await RunReportAsync();
 ```
 
-A lock is a lease, not a mutex: it disappears on its own when the expiry elapses, even mid-work.
-`RunReportAsync` above must finish inside the 30-second lease. For longer work, call
-`mutex.ExtendAsync(...)` before expiry and stop protected writes if it returns `false`, because the
-lock is no longer owned. Every operation compares the token on the server, so a handle whose lease
-expired never extends or deletes the next owner's lock.
+A lock is a lease, not a mutex: it disappears on its own when its `Duration` elapses, even
+mid-work. `RemainingEstimate` and `ExpiresAtEstimate` provide local best-effort deadlines. For
+longer work, start a keep-alive and pass its cancellation token into the protected operation;
+renewal failure cancels the token immediately:
+
+```csharp
+await using var keepAlive = await mutex.KeepAliveAsync(cancellationToken);
+await RunReportAsync(keepAlive.CancellationToken);
+if (keepAlive.OwnershipLost)
+{
+    // Do not publish protected output; another owner may be active.
+}
+```
+
+You can instead call `mutex.ExtendAsync(...)` directly and stop protected writes when it returns
+`false`. `ReleaseAsync` returns `LockReleaseOutcome`, distinguishing `Released`,
+`AlreadyReleased`, and `NotOwned`. Every operation compares the token on the server, so an expired
+handle never extends or deletes the next owner's lock.
 
 When contention is exceptional, `AcquireOrThrowAsync` returns the handle directly and throws
 `RespireLockNotAcquiredException` after the optional wait budget:
@@ -148,17 +161,16 @@ When contention is exceptional, `AcquireOrThrowAsync` returns the handle directl
 await using var mutex = await redis.Locks.AcquireOrThrowAsync(
     "locks:report",
     TimeSpan.FromSeconds(30),
-    wait: TimeSpan.FromSeconds(5),
-    retryEvery: TimeSpan.FromMilliseconds(250));
+    wait: TimeSpan.FromSeconds(5)); // retries every 50 ms by default
 ```
 
-`TakeAsync`, `ExtendAsync`, and `ReleaseAsync` stay available for callers that own the token
-themselves — when it has to be shared between processes, or outlive the acquiring one:
+`TryTakeAsync`, `ExtendAsync`, `ReleaseAsync`, and `GetOwnerTokenAsync` are the raw-token APIs for
+callers that must share ownership between processes or outlive the acquiring process:
 
 ```csharp
 var token = Guid.NewGuid().ToString("N");
 
-if (await redis.Locks.TakeAsync("locks:report", token, TimeSpan.FromSeconds(30)))
+if (await redis.Locks.TryTakeAsync("locks:report", token, TimeSpan.FromSeconds(30)))
 {
     try
     {

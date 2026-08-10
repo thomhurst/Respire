@@ -17,8 +17,8 @@ public class LockCommandTests
             ":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        await Assert.That(await client.Locks.TakeAsync("resource", "owner", TimeSpan.FromSeconds(30))).IsTrue();
-        var queriedToken = await client.Locks.QueryAsync("resource");
+        await Assert.That(await client.Locks.TryTakeAsync("resource", "owner", TimeSpan.FromSeconds(30))).IsTrue();
+        var queriedToken = await client.Locks.GetOwnerTokenAsync("resource");
         await Assert.That(queriedToken!.AsSpan().SequenceEqual("owner"u8)).IsTrue();
         await Assert.That(await client.Locks.ExtendAsync("resource", "owner", TimeSpan.FromSeconds(45))).IsTrue();
         await Assert.That(await client.Locks.ReleaseAsync("resource", "owner")).IsTrue();
@@ -42,21 +42,21 @@ public class LockCommandTests
             ":0\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        await Assert.That(await client.Locks.TakeAsync("resource", "owner", TimeSpan.FromSeconds(30))).IsFalse();
-        await Assert.That(await client.Locks.QueryAsync("resource")).IsNull();
+        await Assert.That(await client.Locks.TryTakeAsync("resource", "owner", TimeSpan.FromSeconds(30))).IsFalse();
+        await Assert.That(await client.Locks.GetOwnerTokenAsync("resource")).IsNull();
         await Assert.That(await client.Locks.ExtendAsync("resource", "owner", TimeSpan.FromSeconds(45))).IsFalse();
         await Assert.That(await client.Locks.ReleaseAsync("resource", "owner")).IsFalse();
     }
 
     [Test]
-    public async Task LockCommands_QueryPreservesBinaryTokenForOwnershipChecks()
+    public async Task LockCommands_GetOwnerTokenPreservesBinaryTokenForOwnershipChecks()
     {
         byte[] expectedToken = [0xFF, 0x00, 0xC3, 0x28];
         byte[] binaryTokenReply = [.. "$4\r\n"u8, .. expectedToken, .. "\r\n"u8];
         await using var server = new FakeRespServer(binaryTokenReply, ":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var token = await client.Locks.QueryAsync("resource");
+        var token = await client.Locks.GetOwnerTokenAsync("resource");
 
         await Assert.That(token!.AsSpan().SequenceEqual(expectedToken)).IsTrue();
         await Assert.That(await client.Locks.ReleaseAsync("resource", token!)).IsTrue();
@@ -73,8 +73,8 @@ public class LockCommandTests
         await using var owner = await FakeRespServer.ConnectClientAsync(server.Port);
         var client = owner.WithKeyPrefix("tenant:");
 
-        await client.Locks.TakeAsync("resource", "owner", TimeSpan.FromSeconds(30));
-        await client.Locks.QueryAsync("resource");
+        await client.Locks.TryTakeAsync("resource", "owner", TimeSpan.FromSeconds(30));
+        await client.Locks.GetOwnerTokenAsync("resource");
         await client.Locks.ExtendAsync("resource", "owner", TimeSpan.FromSeconds(45));
         await client.Locks.ReleaseAsync("resource", "owner");
 
@@ -111,13 +111,13 @@ public class LockCommandTests
         await using var server = new FakeRespServer();
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        await Assert.That(async () => await client.Locks.TakeAsync("resource", RespireValue.Null, TimeSpan.FromSeconds(1)))
+        await Assert.That(async () => await client.Locks.TryTakeAsync("resource", RespireValue.Null, TimeSpan.FromSeconds(1)))
             .Throws<ArgumentException>();
-        await Assert.That(async () => await client.Locks.TakeAsync("resource", "", TimeSpan.FromSeconds(1)))
+        await Assert.That(async () => await client.Locks.TryTakeAsync("resource", "", TimeSpan.FromSeconds(1)))
             .Throws<ArgumentException>();
-        await Assert.That(async () => await client.Locks.TakeAsync("resource", "owner", TimeSpan.Zero))
+        await Assert.That(async () => await client.Locks.TryTakeAsync("resource", "owner", TimeSpan.Zero))
             .Throws<ArgumentOutOfRangeException>();
-        await Assert.That(async () => await client.Locks.TakeAsync("resource", "owner", TimeSpan.FromTicks(1)))
+        await Assert.That(async () => await client.Locks.TryTakeAsync("resource", "owner", TimeSpan.FromTicks(1)))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Locks.ReleaseAsync("resource", RespireValue.Null))
             .Throws<ArgumentException>();
@@ -140,7 +140,11 @@ public class LockCommandTests
 
         await Assert.That(attempt.Acquired).IsTrue();
         await Assert.That(mutex.Key.ToString()).IsEqualTo("resource");
-        await Assert.That(mutex.Expiry).IsEqualTo(TimeSpan.FromSeconds(30));
+        await Assert.That(mutex.Duration).IsEqualTo(TimeSpan.FromSeconds(30));
+        await Assert.That(mutex.RemainingEstimate).IsGreaterThan(TimeSpan.Zero);
+        await Assert.That(mutex.RemainingEstimate).IsLessThanOrEqualTo(mutex.Duration);
+        await Assert.That(mutex.ExpiresAtEstimate).IsGreaterThan(DateTimeOffset.UtcNow);
+        await Assert.That(mutex.IsReleased).IsFalse();
         var token = Encoding.UTF8.GetString(mutex.Token.Span);
         await Assert.That(token.Length).IsEqualTo(32);
 
@@ -216,8 +220,10 @@ public class LockCommandTests
 
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
 
-        await Assert.That(await mutex.ReleaseAsync()).IsTrue();
-        await Assert.That(await mutex.ReleaseAsync()).IsFalse();
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.AlreadyReleased);
+        await Assert.That(mutex.IsReleased).IsTrue();
+        await Assert.That(mutex.RemainingEstimate).IsEqualTo(TimeSpan.Zero);
         await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(60))).IsFalse();
         await mutex.DisposeAsync();
 
@@ -226,21 +232,46 @@ public class LockCommandTests
     }
 
     [Test]
-    public async Task RespireLock_ExtendRecordsTheNewExpiryOnlyWhenStillOwned()
+    public async Task RespireLock_ExtendRecordsDurationAndStopsAfterOwnershipLoss()
     {
         await using var server = new FakeRespServer(
             FakeRespServer.OkReply,
-            ":0\r\n"u8.ToArray(),
-            ":1\r\n"u8.ToArray());
+            ":1\r\n"u8.ToArray(),
+            ":0\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
 
-        await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(45))).IsFalse();
-        await Assert.That(mutex.Expiry).IsEqualTo(TimeSpan.FromSeconds(30));
+        await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(45))).IsTrue();
+        await Assert.That(mutex.Duration).IsEqualTo(TimeSpan.FromSeconds(45));
 
-        await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(90))).IsTrue();
-        await Assert.That(mutex.Expiry).IsEqualTo(TimeSpan.FromSeconds(90));
+        await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(90))).IsFalse();
+        await Assert.That(mutex.Duration).IsEqualTo(TimeSpan.FromSeconds(45));
+        await Assert.That(mutex.IsReleased).IsTrue();
+        await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(90))).IsFalse();
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(3);
+    }
+
+    [Test]
+    public async Task RespireLock_KeepAliveCancelsWhenOwnershipIsLost()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply, ":0\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromMilliseconds(40));
+
+        await using var keepAlive = await mutex.KeepAliveAsync();
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(5), keepAlive.CancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        await Assert.That(keepAlive.CancellationToken.IsCancellationRequested).IsTrue();
+        await Assert.That(keepAlive.OwnershipLost).IsTrue();
+        await Assert.That(keepAlive.Failure).IsNull();
+        await Assert.That(mutex.IsReleased).IsTrue();
     }
 
     [Test]
@@ -272,6 +303,19 @@ public class LockCommandTests
             TimeSpan.FromSeconds(30),
             wait: TimeSpan.FromMilliseconds(120),
             retryEvery: TimeSpan.FromMilliseconds(50));
+
+        await Assert.That(attempt.Acquired).IsFalse();
+        await Assert.That(server.ReceivedCommands.Count).IsGreaterThan(1);
+    }
+
+    [Test]
+    public async Task RespireLock_PollingAcquireDefaultsTheRetryInterval()
+    {
+        await using var server = new FakeRespServer("$-1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var attempt = await client.Locks.AcquireAsync(
+            "resource", TimeSpan.FromSeconds(30), wait: TimeSpan.FromMilliseconds(120));
 
         await Assert.That(attempt.Acquired).IsFalse();
         await Assert.That(server.ReceivedCommands.Count).IsGreaterThan(1);
