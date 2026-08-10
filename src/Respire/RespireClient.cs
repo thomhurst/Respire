@@ -212,43 +212,15 @@ public sealed partial class RespireClient : IRespireClient
         => ExecuteCatalogAsync(command, args, RespireCommandFlags.None, CancellationToken.None);
 
     /// <summary>
-    /// Sends a catalog command whose first argument is an integer.
-    /// </summary>
-    public ValueTask<RespireResult> ExecuteAsync(
-        RespireCommand command, int firstArgument, params RespireValue[] args)
-        => ExecuteCatalogAsync(
-            command, [(RespireValue)firstArgument, .. args], RespireCommandFlags.None, CancellationToken.None);
-
-    /// <summary>
-    /// Sends a command from <see cref="RespireCommands"/> with command policy flags.
-    /// </summary>
-    public ValueTask<RespireResult> ExecuteAsync(
-        RespireCommand command, RespireCommandFlags flags, params RespireValue[] args)
-        => ExecuteCatalogAsync(command, args, flags, CancellationToken.None);
-
-    /// <summary>
-    /// Sends a command from <see cref="RespireCommands"/> with command policy flags.
-    /// </summary>
-    public ValueTask<RespireResult> ExecuteAsync(
-        RespireCommand command, RespireValue[] args, RespireCommandFlags flags)
-        => ExecuteCatalogAsync(command, args, flags, CancellationToken.None);
-
-    /// <summary>
-    /// Sends a catalog command with cancellation. Blocking descriptors use a dedicated pooled
-    /// connection; cancellation abandons that connection without stalling multiplexed traffic.
-    /// </summary>
-    public ValueTask<RespireResult> ExecuteAsync(
-        RespireCommand command, RespireValue[] args, CancellationToken cancellationToken)
-        => ExecuteCatalogAsync(command, args, RespireCommandFlags.None, cancellationToken);
-
-    /// <summary>
-    /// Sends a catalog command with command policy flags and cancellation.
+    /// Sends a command from <see cref="RespireCommands"/> with optional policy flags and
+    /// cancellation. Blocking descriptors use a dedicated pooled connection; cancellation
+    /// abandons that connection without stalling multiplexed traffic.
     /// </summary>
     public ValueTask<RespireResult> ExecuteAsync(
         RespireCommand command,
         RespireValue[] args,
-        RespireCommandFlags flags,
-        CancellationToken cancellationToken)
+        RespireCommandFlags flags = RespireCommandFlags.None,
+        CancellationToken cancellationToken = default)
         => ExecuteCatalogAsync(command, args, flags, cancellationToken);
 
     /// <summary>
@@ -269,7 +241,7 @@ public sealed partial class RespireClient : IRespireClient
     /// <c>MOVED</c> and <c>ASK</c> redirects, adding round-trip latency.
     /// </remarks>
     public ValueTask ExecuteFireAndForgetAsync(
-        RespireCommand command, RespireValue[] args, CancellationToken cancellationToken)
+        RespireCommand command, RespireValue[] args, CancellationToken cancellationToken = default)
         => ExecuteCatalogFireAndForgetAsync(command, args, cancellationToken);
 
     private async ValueTask<RespireResult> ExecuteCatalogAsync(
@@ -351,42 +323,13 @@ public sealed partial class RespireClient : IRespireClient
         => ExecuteRawAsync(command, args, RespireCommandFlags.None, CancellationToken.None);
 
     /// <summary>
-    /// Sends any command whose first argument is an integer.
-    /// </summary>
-    public ValueTask<RespireResult> ExecuteAsync(
-        string command, int firstArgument, params RespireValue[] args)
-        => ExecuteRawAsync(
-            command, [(RespireValue)firstArgument, .. args], RespireCommandFlags.None, CancellationToken.None);
-
-    /// <summary>
-    /// Sends any command with command policy flags.
-    /// </summary>
-    public ValueTask<RespireResult> ExecuteAsync(
-        string command, RespireCommandFlags flags, params RespireValue[] args)
-        => ExecuteRawAsync(command, args, flags, CancellationToken.None);
-
-    /// <summary>
-    /// Sends any command with command policy flags.
-    /// </summary>
-    public ValueTask<RespireResult> ExecuteAsync(
-        string command, RespireValue[] args, RespireCommandFlags flags)
-        => ExecuteRawAsync(command, args, flags, CancellationToken.None);
-
-    /// <summary>
-    /// Sends any command with cancellation.
-    /// </summary>
-    public ValueTask<RespireResult> ExecuteAsync(
-        string command, RespireValue[] args, CancellationToken cancellationToken)
-        => ExecuteRawAsync(command, args, RespireCommandFlags.None, cancellationToken);
-
-    /// <summary>
-    /// Sends any command with command policy flags and cancellation.
+    /// Sends any command with optional policy flags and cancellation.
     /// </summary>
     public ValueTask<RespireResult> ExecuteAsync(
         string command,
         RespireValue[] args,
-        RespireCommandFlags flags,
-        CancellationToken cancellationToken)
+        RespireCommandFlags flags = RespireCommandFlags.None,
+        CancellationToken cancellationToken = default)
         => ExecuteRawAsync(command, args, flags, cancellationToken);
 
     /// <summary>
@@ -407,7 +350,7 @@ public sealed partial class RespireClient : IRespireClient
     /// <c>MOVED</c> and <c>ASK</c> redirects, adding round-trip latency.
     /// </remarks>
     public ValueTask ExecuteFireAndForgetAsync(
-        string command, RespireValue[] args, CancellationToken cancellationToken)
+        string command, RespireValue[] args, CancellationToken cancellationToken = default)
         => ExecuteRawFireAndForgetAsync(command, args, cancellationToken);
 
     private async ValueTask<RespireResult> ExecuteRawAsync(
@@ -486,19 +429,12 @@ public sealed partial class RespireClient : IRespireClient
     /// <summary>
     /// Sends a command written as an interpolated string — <c>ExecuteAsync($"SET {key} {value} EX {60}")</c>.
     /// Literal text splits on spaces; every interpolation hole is exactly one argument and is
-    /// never re-tokenized, so values containing spaces are safe.
+    /// never re-tokenized, so values containing spaces are safe. Flags and cancellation are
+    /// optional arguments — pass them by name.
     /// </summary>
     public ValueTask<RespireResult> ExecuteAsync(
         RespireCommandInterpolatedStringHandler command,
-        CancellationToken cancellationToken = default)
-        => ExecuteInterpolatedAsync(command, RespireCommandFlags.None, cancellationToken);
-
-    /// <summary>
-    /// Sends an interpolated raw command with command policy flags.
-    /// </summary>
-    public ValueTask<RespireResult> ExecuteAsync(
-        RespireCommandInterpolatedStringHandler command,
-        RespireCommandFlags flags,
+        RespireCommandFlags flags = RespireCommandFlags.None,
         CancellationToken cancellationToken = default)
         => ExecuteInterpolatedAsync(command, flags, cancellationToken);
 
@@ -2179,30 +2115,28 @@ public sealed partial class RespireClient : IRespireClient
             static (RespireClient _, in RespValue value) => ResponseReader.Integer(in value));
 
     internal ValueTask<long> IntegerValuesAsync(
-        string operation, Verb verb, RespireValue first, ReadOnlySpan<RespireValue> rest)
+        string operation, Verb verb, RespireValue first, ReadOnlySpan<RespireValue> rest, CancellationToken ct)
         => rest.Length switch
         {
-            0 => IntegerAsync(operation, new Cmd1(verb, first), CancellationToken.None),
-            1 => IntegerAsync(operation, new Cmd2(verb, first, rest[0]), CancellationToken.None),
-            2 => IntegerAsync(operation, new Cmd3(verb, first, rest[0], rest[1]), CancellationToken.None),
-            3 => IntegerAsync(operation, new Cmd4(verb, first, rest[0], rest[1], rest[2]), CancellationToken.None),
-            4 => IntegerAsync(operation, new Cmd5(verb, first, rest[0], rest[1], rest[2], rest[3]), CancellationToken.None),
-            _ => IntegerAsync(operation, new Cmd1N(verb, first, MapValues(rest)), CancellationToken.None),
+            0 => IntegerAsync(operation, new Cmd1(verb, first), ct),
+            1 => IntegerAsync(operation, new Cmd2(verb, first, rest[0]), ct),
+            2 => IntegerAsync(operation, new Cmd3(verb, first, rest[0], rest[1]), ct),
+            3 => IntegerAsync(operation, new Cmd4(verb, first, rest[0], rest[1], rest[2]), ct),
+            4 => IntegerAsync(operation, new Cmd5(verb, first, rest[0], rest[1], rest[2], rest[3]), ct),
+            _ => IntegerAsync(operation, new Cmd1N(verb, first, MapValues(rest)), ct),
         };
 
-    internal ValueTask<long> IntegerKeysAsync(string operation, Verb verb, ReadOnlySpan<RespireKey> keys)
+    internal ValueTask<long> IntegerKeysAsync(
+        string operation, Verb verb, ReadOnlySpan<RespireKey> keys, CancellationToken ct)
         => keys.Length switch
         {
-            0 => IntegerAsync(operation, new CmdN(verb, []), CancellationToken.None),
-            1 => IntegerAsync(operation, new Cmd1(verb, Key(in keys[0])), CancellationToken.None),
-            2 => IntegerAsync(operation, new Cmd2(verb, Key(in keys[0]), Key(in keys[1])), CancellationToken.None),
-            3 => IntegerAsync(
-                operation, new Cmd3(verb, Key(in keys[0]), Key(in keys[1]), Key(in keys[2])), CancellationToken.None),
+            0 => IntegerAsync(operation, new CmdN(verb, []), ct),
+            1 => IntegerAsync(operation, new Cmd1(verb, Key(in keys[0])), ct),
+            2 => IntegerAsync(operation, new Cmd2(verb, Key(in keys[0]), Key(in keys[1])), ct),
+            3 => IntegerAsync(operation, new Cmd3(verb, Key(in keys[0]), Key(in keys[1]), Key(in keys[2])), ct),
             4 => IntegerAsync(
-                operation,
-                new Cmd4(verb, Key(in keys[0]), Key(in keys[1]), Key(in keys[2]), Key(in keys[3])),
-                CancellationToken.None),
-            _ => IntegerAsync(operation, new CmdN(verb, MapKeys(keys)), CancellationToken.None),
+                operation, new Cmd4(verb, Key(in keys[0]), Key(in keys[1]), Key(in keys[2]), Key(in keys[3])), ct),
+            _ => IntegerAsync(operation, new CmdN(verb, MapKeys(keys)), ct),
         };
 
     internal ValueTask<bool> FlagAsync<TCommand>(string operation, TCommand command, CancellationToken ct)

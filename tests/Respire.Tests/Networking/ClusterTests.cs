@@ -132,8 +132,8 @@ public class ClusterTests
         var error = await Assert.That(async () =>
                 await client.ExecuteAsync(
                     RespireCommands.String.GET,
-                    RespireCommandFlags.NoRedirect,
-                    "key"))
+                    ["key"],
+                    RespireCommandFlags.NoRedirect))
             .Throws<RespireServerException>();
 
         await Assert.That(error!.Code).IsEqualTo("MOVED");
@@ -156,7 +156,7 @@ public class ClusterTests
         });
 
         var error = await Assert.That(async () =>
-                await client.ExecuteAsync("GET", RespireCommandFlags.NoRedirect, "key"))
+                await client.ExecuteAsync("GET", ["key"], RespireCommandFlags.NoRedirect))
             .Throws<RespireServerException>();
 
         await Assert.That(error!.Code).IsEqualTo("MOVED");
@@ -322,7 +322,7 @@ public class ClusterTests
         }
 
         using var second = await client.ExecuteAsync(
-            RespireCommands.String.GET, ["key"], timeout.Token);
+            RespireCommands.String.GET, ["key"], cancellationToken: timeout.Token);
 
         await Assert.That(first.AsString()).IsEqualTo("value");
         await Assert.That(second.AsString()).IsEqualTo("second");
@@ -1163,7 +1163,9 @@ public class ClusterTests
         RespireValue flushSubcommand = "FLUSH";
         using var flush = await client.ExecuteAsync($"FUNCTION {flushSubcommand}");
         using var restore = await client.ExecuteAsync(
-            RespireCommands.Scripting.FUNCTION, ["RESTORE", "payload"], CancellationToken.None);
+            RespireCommands.Scripting.FUNCTION,
+            ["RESTORE", "payload"],
+            cancellationToken: CancellationToken.None);
 
         var expected = new[]
         {

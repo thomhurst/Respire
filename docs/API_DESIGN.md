@@ -98,6 +98,7 @@ public sealed class RespireClient : IRespireClient, IAsyncDisposable
                                 CancellationToken ct = default);
     ValueTask<bool>    SetAsync<T>(RespireKey key, T value, /* same options */);
     ValueTask<long>    DeleteAsync(params ReadOnlySpan<RespireKey> keys);
+    ValueTask<long>    DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken ct);
     ValueTask<bool>    ExistsAsync(RespireKey key, CancellationToken ct = default);
     ValueTask<long>    IncrementAsync(RespireKey key, long by = 1, CancellationToken ct = default);
     ValueTask<bool>    ExpireAsync(RespireKey key, TimeSpan expiry, CancellationToken ct = default);
@@ -190,6 +191,9 @@ No API returns pooled memory without `Lease` in its name.
   NotExists / Exists`, `GetExAsync` variants), but common cases stay optional parameters.
 - **Variadic where Redis is variadic**: `DeleteAsync(params ReadOnlySpan<RespireKey> keys)`
   (C# 13 params-span, zero alloc), `Hashes.SetAsync(key, [("name","Tom"), ("age","34")])`.
+  A `params` parameter must come last, so each variadic command also has a sibling
+  `DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken ct)` — non-params items and a
+  required token. The token is required, not optional, so the two forms never overlap.
 - **`Async` suffix stays.** Analyzer ecosystem and reader expectation beat the saved
   keystrokes.
 - **SCAN-family returns `IAsyncEnumerable`**, cursor handled internally:

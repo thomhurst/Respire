@@ -18,9 +18,9 @@ on:
         required: false
         default: '*'
       job:
-        description: 'BenchmarkDotNet job preset'
+        description: 'BenchmarkDotNet job preset (medium matches the scheduled run)'
         required: false
-        default: short
+        default: medium
         type: choice
         options:
           - short
@@ -77,11 +77,15 @@ jobs:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
           BENCH_FILTER: ${{ github.event.inputs.filter || '*' }}
-          BENCH_JOB: ${{ github.event.inputs.job || 'short' }}
+          # Pushes get a quick smoke run; the scheduled (and default manual) run uses the
+          # longer medium job, whose results are the ones published to the docs site.
+          BENCH_JOB: ${{ github.event.inputs.job || (github.event_name == 'schedule' && 'medium' || 'short') }}
         run: |
           dotnet run -c Release -f ${{ matrix.framework }} --no-build -- \
             --filter "$BENCH_FILTER" \
             --job "$BENCH_JOB" \
+            --launchCount 2 \
+            --statisticalTest 5% \
             --exporters json markdown \
             --artifacts ./BenchmarkDotNet.Artifacts
 
@@ -111,9 +115,15 @@ jobs:
   publish-to-docs:
     name: Publish benchmark documentation
     needs: comparison-benchmarks
+    # Docs are refreshed only from full, higher-iteration runs: the weekly scheduled run,
+    # or a manual dispatch with the default filter and a job preset longer than short.
+    # Push-triggered smoke runs never overwrite the published numbers.
     if: >-
       github.ref == 'refs/heads/main' &&
-      (github.event_name != 'workflow_dispatch' || github.event.inputs.filter == '*')
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' &&
+        github.event.inputs.filter == '*' &&
+        github.event.inputs.job != 'short'))
     runs-on: ubuntu-latest
 
     permissions:
