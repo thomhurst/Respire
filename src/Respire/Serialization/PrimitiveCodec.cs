@@ -171,13 +171,37 @@ internal static class PrimitiveCodec
         switch (TypeCache<T>.Kind)
         {
             case PrimitiveKind.Single:
-                result = Return<T, float>((float)value);
+                var single = (float)value;
+                if (!float.IsFinite(single))
+                {
+                    throw InvalidValue<float>();
+                }
+
+                result = Return<T, float>(single);
                 return true;
             case PrimitiveKind.Double:
+                if (!double.IsFinite(value))
+                {
+                    throw InvalidValue<double>();
+                }
+
                 result = Return<T, double>(value);
                 return true;
             case PrimitiveKind.Decimal:
-                result = Return<T, decimal>(checked((decimal)value));
+                if (!double.IsFinite(value))
+                {
+                    throw InvalidValue<decimal>();
+                }
+
+                try
+                {
+                    result = Return<T, decimal>(checked((decimal)value));
+                }
+                catch (OverflowException)
+                {
+                    throw InvalidValue<decimal>();
+                }
+
                 return true;
             default:
                 result = default;

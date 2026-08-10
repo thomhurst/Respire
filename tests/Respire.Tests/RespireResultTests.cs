@@ -46,6 +46,18 @@ public class RespireResultTests
     }
 
     [Test]
+    public async Task As_RejectsNonFiniteNativeRespDoubles()
+    {
+        using var nan = new RespireResult(RespValue.Double(double.NaN));
+        using var infinity = new RespireResult(RespValue.Double(double.PositiveInfinity));
+        using var floatOverflow = new RespireResult(RespValue.Double(1e100));
+
+        await Assert.That(() => nan.As<double>()).ThrowsExactly<FormatException>();
+        await Assert.That(() => infinity.As<double>()).ThrowsExactly<FormatException>();
+        await Assert.That(() => floatOverflow.As<float>()).ThrowsExactly<FormatException>();
+    }
+
+    [Test]
     public async Task RootAndNestedViews_ExposeDisposedLifetime()
     {
         var result = new RespireResult(RespValue.Array(RespValue.BulkString("value")));
