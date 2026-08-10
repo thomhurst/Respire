@@ -211,7 +211,8 @@ var batch = redis.CreateBatch();
 RespirePending<string?> a = batch.GetStringAsync("a");
 RespirePending<long>    n = batch.IncrementAsync("hits");
 RespirePending<long>    q = batch.Lists.RightPushAsync("queue", "job-1");
-await batch.SendAsync(ct);
+RespireBatchResult result = await batch.SendAsync(ct);
+result.ThrowIfAnyFailed();
 
 string? av = a.Result;   // valid only after SendAsync
 ```
@@ -225,6 +226,9 @@ shapes — only the return type differs, and cancellation belongs to `SendAsync`
 `RespirePendingNotReadyException` if touched before `SendAsync` — the SE.Redis
 await-before-flush deadlock becomes impossible by construction. `Status`, `HasResult`, `Error`,
 and `TryGetResult` expose pending, successful, faulted, and aborted outcomes without try/catch.
+`SendAsync` returns the batch-wide `Count`, `FailureCount`, and `FirstError`; command and
+connection-acquisition failures fault their pendings and do not throw unless the caller invokes
+`ThrowIfAnyFailed`.
 
 ## 6. Transactions
 
