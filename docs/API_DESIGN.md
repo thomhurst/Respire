@@ -409,8 +409,8 @@ Server errors always throw at the friendly layer — no error-as-value inspectio
 builder.Services.AddRespire(builder.Configuration.GetConnectionString("redis")!);
 
 // Multiple clients via keyed services
-builder.Services.AddRespire("cache",    o => o.Endpoints.Add(new("cache-host")));
-builder.Services.AddRespire("sessions", o => o.Endpoints.Add(new("sess-host")));
+builder.Services.AddKeyedRespire("cache",    o => o.Endpoints.Add(new("cache-host")));
+builder.Services.AddKeyedRespire("sessions", o => o.Endpoints.Add(new("sess-host")));
 
 public sealed class CartService([FromKeyedServices("cache")] IRespireClient redis) { }
 ```

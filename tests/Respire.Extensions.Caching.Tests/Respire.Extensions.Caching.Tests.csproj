@@ -32,6 +32,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\..\src\Respire.Extensions.Caching\Respire.Extensions.Caching.csproj" />
+        <ProjectReference Include="..\..\src\Respire.Extensions.DependencyInjection\Respire.Extensions.DependencyInjection.csproj" />
     </ItemGroup>
 
 </Project>
