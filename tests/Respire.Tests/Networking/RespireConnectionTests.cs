@@ -258,6 +258,78 @@ public class RespireConnectionTests
     }
 
     [Test]
+    public async Task FireAndForget_AwaitsWriteBeforeImmediateDisposal()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        server.SuppressReply = _ => true;
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+
+        var pending = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen == 0)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
+        await connection.SendFireAndForgetAsync(new RawCommand(FakeRespServer.PingFrame));
+        await connection.DisposeAsync();
+
+        while (server.CommandsSeen < 2)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
+        await Assert.That(server.CommandsSeen).IsEqualTo(2);
+        await Assert.That(async () => await pending).Throws<RespireConnectionException>();
+    }
+
+    [Test]
+    public async Task FireAndForget_PreCanceledCommandIsNotSent()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.That(async () => await connection.SendFireAndForgetAsync(
+                new RawCommand(FakeRespServer.PingFrame), cancellation.Token))
+            .ThrowsExactly<OperationCanceledException>();
+
+        await Task.Delay(100);
+        await Assert.That(server.CommandsSeen).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task FireAndForget_CancellationStopsWaitingButPreservesWrite()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        server.SuppressReply = _ => true;
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+
+        var pending = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen == 0)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
+        using var cancellation = new CancellationTokenSource();
+        var write = connection.SendFireAndForgetAsync(
+            new SetCommand("key", new string('x', 512 * 1024)), cancellation.Token).AsTask();
+        cancellation.Cancel();
+
+        await Assert.That(async () => await write).Throws<OperationCanceledException>();
+        while (server.CommandsSeen < 2)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
+        await Assert.That(server.CommandsSeen).IsEqualTo(2);
+        await connection.DisposeAsync();
+        await Assert.That(async () => await pending).Throws<RespireConnectionException>();
+    }
+
+    [Test]
     public async Task ServerCloses_InFlightCommandsFail()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);

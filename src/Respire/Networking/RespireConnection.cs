@@ -624,19 +624,25 @@ public sealed class RespireConnection : IAsyncDisposable
 
     /// <summary>
     /// Sends a command whose response is read from the wire but discarded. Completes once the
-    /// command is queued for sending.
+    /// command has been written to the socket.
     /// </summary>
     public ValueTask SendFireAndForgetAsync<TCommand>(in TCommand command, CancellationToken cancellationToken = default)
         where TCommand : struct, IRespCommand
     {
-        if (TryEnqueue(in command, InflightRing.DiscardSentinel, out var startedBatch))
+        cancellationToken.ThrowIfCancellationRequested();
+        if (TryEnqueueForWrite(in command, out var startedBatch, out var writeTask))
         {
             ScheduleFlush(startedBatch);
-            return ValueTask.CompletedTask;
+            return WaitForWriteAsync(writeTask, cancellationToken);
         }
 
         return SendFireAndForgetSlowAsync(command, cancellationToken);
     }
+
+    private static ValueTask WaitForWriteAsync(Task writeTask, CancellationToken cancellationToken)
+        => cancellationToken.CanBeCanceled
+            ? new ValueTask(writeTask.WaitAsync(cancellationToken))
+            : new ValueTask(writeTask);
 
     [ThreadStatic]
     private static WriteBuffer? _serializeScratch;
@@ -674,8 +680,43 @@ public sealed class RespireConnection : IAsyncDisposable
         int discardRepliesBefore = 0,
         bool retainRepliesBefore = false)
         where TCommand : struct, IRespCommand
+        => TryEnqueue(
+            in command,
+            source,
+            out startedBatch,
+            out _,
+            trackWrite: false,
+            discardRepliesBefore,
+            retainRepliesBefore);
+
+    private bool TryEnqueueForWrite<TCommand>(
+        in TCommand command,
+        out bool startedBatch,
+        out Task writeTask)
+        where TCommand : struct, IRespCommand
+    {
+        var enqueued = TryEnqueue(
+            in command,
+            InflightRing.DiscardSentinel,
+            out startedBatch,
+            out var trackedWrite,
+            trackWrite: true);
+        writeTask = trackedWrite ?? Task.CompletedTask;
+        return enqueued;
+    }
+
+    private bool TryEnqueue<TCommand>(
+        in TCommand command,
+        PendingResponse source,
+        out bool startedBatch,
+        out Task? writeTask,
+        bool trackWrite,
+        int discardRepliesBefore = 0,
+        bool retainRepliesBefore = false)
+        where TCommand : struct, IRespCommand
     {
         startedBatch = false;
+        writeTask = null;
 
         // Racy pre-check; the authoritative one runs under the gate below. This keeps the
         // ring-full retry loop from re-serializing the frame on every attempt.
@@ -688,7 +729,13 @@ public sealed class RespireConnection : IAsyncDisposable
         {
             _directPathBudget--;
             return TryEnqueueDirect(
-                in command, source, out startedBatch, discardRepliesBefore, retainRepliesBefore);
+                in command,
+                source,
+                out startedBatch,
+                out writeTask,
+                trackWrite,
+                discardRepliesBefore,
+                retainRepliesBefore);
         }
 
         var scratch = _serializeScratch ??= new WriteBuffer(ScratchInitialSize);
@@ -728,6 +775,11 @@ public sealed class RespireConnection : IAsyncDisposable
                 }
 
                 _inflight.TryEnqueue(source);
+                if (trackWrite)
+                {
+                    writeTask = _activeBuffer.WriteCompletion;
+                }
+
                 return true;
             }
         }
@@ -753,11 +805,14 @@ public sealed class RespireConnection : IAsyncDisposable
         in TCommand command,
         PendingResponse source,
         out bool startedBatch,
+        out Task? writeTask,
+        bool trackWrite,
         int discardRepliesBefore,
         bool retainRepliesBefore)
         where TCommand : struct, IRespCommand
     {
         startedBatch = false;
+        writeTask = null;
         lock (_writeGate)
         {
             if (_dead)
@@ -799,6 +854,11 @@ public sealed class RespireConnection : IAsyncDisposable
             }
 
             _inflight.TryEnqueue(source);
+            if (trackWrite)
+            {
+                writeTask = _activeBuffer.WriteCompletion;
+            }
+
             return true;
         }
     }
@@ -876,8 +936,23 @@ public sealed class RespireConnection : IAsyncDisposable
     private async ValueTask SendFireAndForgetSlowAsync<TCommand>(TCommand command, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
-        var startedBatch = await WaitForInflightCapacityAsync(command, InflightRing.DiscardSentinel, 0, cancellationToken).ConfigureAwait(false);
+        bool startedBatch;
+        Task writeTask;
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var capacityAvailable = _capacitySignal.WaitAsync(cancellationToken);
+            if (TryEnqueueForWrite(in command, out startedBatch, out writeTask))
+            {
+                break;
+            }
+
+            ScheduleFlush(startedBatch: false);
+            await capacityAvailable.ConfigureAwait(false);
+        }
+
         ScheduleFlush(startedBatch);
+        await WaitForWriteAsync(writeTask, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -958,6 +1033,7 @@ public sealed class RespireConnection : IAsyncDisposable
     /// </summary>
     private async Task FlushLoopAsync()
     {
+        WriteBuffer? sending = null;
         try
         {
             var synchronousBatches = 0;
@@ -967,7 +1043,6 @@ public sealed class RespireConnection : IAsyncDisposable
 
                 while (true)
                 {
-                    WriteBuffer sending;
                     int sendingReplyCount;
                     lock (_writeGate)
                     {
@@ -1022,7 +1097,9 @@ public sealed class RespireConnection : IAsyncDisposable
 
                     MarkRepliesSent(sendingReplyCount);
 
+                    sending.CompleteWrite();
                     sending.Reset();
+                    sending = null;
 
                     if (++synchronousBatches >= MaxSynchronousBatchesBeforeYield)
                     {
@@ -1035,7 +1112,9 @@ public sealed class RespireConnection : IAsyncDisposable
         catch (Exception ex)
         {
             _logger?.LogDebug(ex, "Send failed for {Host}:{Port}; aborting connection", Host, Port);
-            Abort();
+            var failure = new RespireConnectionException($"Send failed for {Host}:{Port}: {ex.Message}", ex);
+            sending?.FailWrite(failure);
+            Abort(failure);
         }
     }
 
@@ -1527,6 +1606,9 @@ public sealed class RespireConnection : IAsyncDisposable
 
             _dead = true;
             _abortReason = reason;
+            var writeFailure = reason
+                ?? new RespireConnectionException($"Connection to {Host}:{Port} closed before writing completed.");
+            _activeBuffer.FailWrite(writeFailure);
         }
 
         try

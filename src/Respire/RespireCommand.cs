@@ -31,7 +31,7 @@ public readonly struct RespireCommand
 
     public override string ToString() => Name;
 
-    private static RespireCommandBehavior Classify(string name) => name switch
+    internal static RespireCommandBehavior Classify(string name) => name switch
     {
         "BLMOVE" or "BLMOVEM" or "BLMPOP" or "BLPOP" or "BRPOP" or "BRPOPLPUSH" or
         "BZMPOP" or "BZPOPMAX" or "BZPOPMIN" => RespireCommandBehavior.Blocking,
@@ -51,21 +51,66 @@ public readonly struct RespireCommand
         _ => RespireCommandBehavior.Multiplexed,
     };
 
-    internal bool IsBlocking(RespireValue[] args)
+    internal static bool MayCloseWithoutReply(string name) => name == "SHUTDOWN";
+
+    internal bool IsBlocking(RespireValue[] args) => IsBlocking(Name, Behavior, args);
+
+    internal static bool IsBlocking(
+        string name,
+        RespireCommandBehavior behavior,
+        ReadOnlySpan<RespireValue> args)
+        => IsBlocking(name, behavior, ReadOnlySpan<string>.Empty, args);
+
+    internal static bool IsBlocking(
+        string name,
+        RespireCommandBehavior behavior,
+        ReadOnlySpan<string> inlineArguments,
+        ReadOnlySpan<RespireValue> arguments)
     {
-        if (Behavior == RespireCommandBehavior.Blocking)
+        if (behavior == RespireCommandBehavior.Blocking)
         {
             return true;
         }
 
-        if (Behavior != RespireCommandBehavior.BlockingWhenRequested)
+        if (behavior != RespireCommandBehavior.BlockingWhenRequested)
         {
             return false;
         }
 
-        foreach (var arg in args)
+        var firstOptionIndex = name == "XREADGROUP" ? 3 : 0;
+        var stopsAtStreams = name is "XREAD" or "XREADGROUP";
+        var index = 0;
+        foreach (var argument in inlineArguments)
         {
-            if (arg.EqualsAsciiIgnoreCase("BLOCK"))
+            if (index++ < firstOptionIndex)
+            {
+                continue;
+            }
+
+            if (stopsAtStreams && argument.Equals("STREAMS", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (argument.Equals("BLOCK", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        foreach (var argument in arguments)
+        {
+            if (index++ < firstOptionIndex)
+            {
+                continue;
+            }
+
+            if (stopsAtStreams && argument.EqualsAsciiIgnoreCase("STREAMS"))
+            {
+                return false;
+            }
+
+            if (argument.EqualsAsciiIgnoreCase("BLOCK"))
             {
                 return true;
             }

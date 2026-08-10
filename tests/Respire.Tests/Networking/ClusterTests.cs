@@ -68,6 +68,127 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task FireAndForget_MovedRedirect_IsFollowedAndSlotIsCached()
+    {
+        await using var target = new FakeRespServer(
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply);
+        var slot = ClusterHash.GetSlot("key");
+        await using var seed = new FakeRespServer(
+            "*0\r\n"u8.ToArray(),
+            Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        await client.ExecuteFireAndForgetAsync(RespireCommands.String.SET, "key", "first");
+        await client.ExecuteFireAndForgetAsync(RespireCommands.String.SET, "key", "second");
+        await WaitForCommandsAsync(target, 2);
+
+        await Assert.That(seed.ReceivedCommands)
+            .IsEquivalentTo(["CLUSTER SLOTS", "SET key first"]);
+        await Assert.That(target.ReceivedCommands)
+            .IsEquivalentTo(["SET key first", "SET key second"]);
+    }
+
+    [Test]
+    public async Task FireAndForget_ShutdownCompletesWhenClusterNodeClosesWithoutReply()
+    {
+        await using var server = new FakeRespServer("*0\r\n"u8.ToArray())
+        {
+            CloseConnectionAfterCommand = 2,
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+        });
+
+        await client.ExecuteFireAndForgetAsync(RespireCommands.Server.SHUTDOWN)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
+        await WaitForCommandsAsync(server, 2);
+
+        await Assert.That(server.ReceivedCommands)
+            .IsEquivalentTo(["CLUSTER SLOTS", "SHUTDOWN"]);
+    }
+
+    [Test]
+    public async Task CatalogNoRedirect_SurfacesMovedRedirect()
+    {
+        await using var target = new FakeRespServer("$5\r\nvalue\r\n"u8.ToArray());
+        var slot = ClusterHash.GetSlot("key");
+        await using var seed = new FakeRespServer(
+            "*0\r\n"u8.ToArray(),
+            Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        var error = await Assert.That(async () =>
+                await client.ExecuteAsync(
+                    RespireCommands.String.GET,
+                    RespireCommandFlags.NoRedirect,
+                    "key"))
+            .Throws<RespireServerException>();
+
+        await Assert.That(error!.Code).IsEqualTo("MOVED");
+        await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS", "GET key"]);
+        await Assert.That(target.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task RawNoRedirect_SurfacesMovedRedirect()
+    {
+        await using var target = new FakeRespServer("$5\r\nvalue\r\n"u8.ToArray());
+        var slot = ClusterHash.GetSlot("key");
+        await using var seed = new FakeRespServer(
+            "*0\r\n"u8.ToArray(),
+            Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        var error = await Assert.That(async () =>
+                await client.ExecuteAsync("GET", RespireCommandFlags.NoRedirect, "key"))
+            .Throws<RespireServerException>();
+
+        await Assert.That(error!.Code).IsEqualTo("MOVED");
+        await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS", "GET key"]);
+        await Assert.That(target.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task InterpolatedNoRedirect_SurfacesMovedRedirect()
+    {
+        await using var target = new FakeRespServer("$5\r\nvalue\r\n"u8.ToArray());
+        var slot = ClusterHash.GetSlot("key");
+        await using var seed = new FakeRespServer(
+            "*0\r\n"u8.ToArray(),
+            Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        RespireKey key = "key";
+
+        var error = await Assert.That(async () =>
+                await client.ExecuteAsync($"GET {key}", RespireCommandFlags.NoRedirect))
+            .Throws<RespireServerException>();
+
+        await Assert.That(error!.Code).IsEqualTo("MOVED");
+        await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS", "GET key"]);
+        await Assert.That(target.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
     public async Task AskRedirect_SendsAskingOnTargetWithoutCachingSlot()
     {
         await using var target = new FakeRespServer(
@@ -982,6 +1103,33 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task ClusterWideMutations_RejectCommandFlags()
+    {
+        var topology = "*0\r\n"u8.ToArray();
+        await using var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        await Assert.That(async () => await client.ExecuteAsync(
+                RespireCommands.Scripting.FUNCTION_LOAD,
+                ["#!lua name=library"],
+                RespireCommandFlags.NoRedirect))
+            .Throws<NotSupportedException>();
+        await Assert.That(async () => await client.ExecuteAsync(
+                "SCRIPT FLUSH", [], RespireCommandFlags.NoRedirect))
+            .Throws<NotSupportedException>();
+        RespireValue subcommand = "FLUSH";
+        await Assert.That(async () => await client.ExecuteAsync(
+                $"FUNCTION {subcommand}", RespireCommandFlags.NoRedirect))
+            .Throws<NotSupportedException>();
+
+        await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
+    }
+
+    [Test]
     public async Task ScriptCacheMutations_VisitEveryMaster()
     {
         await using var firstNode = new FakeRespServer(
@@ -1022,6 +1170,30 @@ public class ClusterTests
         };
         await Assert.That(firstNode.ReceivedCommands).IsEquivalentTo(expected);
         await Assert.That(secondNode.ReceivedCommands).IsEquivalentTo(expected);
+    }
+
+    [Test]
+    public async Task SplitRawScriptFlushFireAndForget_VisitsEveryMaster()
+    {
+        await using var firstNode = new FakeRespServer(FakeRespServer.OkReply);
+        await using var secondNode = new FakeRespServer(FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*2\r\n" +
+            $"*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{firstNode.Port}\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{secondNode.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        await client.ExecuteFireAndForgetAsync("SCRIPT", "FLUSH");
+        await WaitForCommandsAsync(firstNode, 1);
+        await WaitForCommandsAsync(secondNode, 1);
+
+        await Assert.That(firstNode.ReceivedCommands).IsEquivalentTo(["SCRIPT FLUSH"]);
+        await Assert.That(secondNode.ReceivedCommands).IsEquivalentTo(["SCRIPT FLUSH"]);
     }
 
     [Test]
@@ -1183,6 +1355,15 @@ public class ClusterTests
     private static bool TryGetSlot<TCommand>(TCommand command, out int slot)
         where TCommand : struct, IRespCommand
         => command.TryGetClusterSlot(out slot);
+
+    private static async Task WaitForCommandsAsync(FakeRespServer server, int count)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen < count)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+    }
 
     private static int? RawSlot(string operation, RespireValue[] tokens, int firstArgumentIndex)
     {
