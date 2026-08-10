@@ -18,9 +18,10 @@ public interface ISortedSetCommands
     /// member was new. Redis: ZADD.
     /// <para>
     /// An argument already typed as <see cref="RespireValue"/> picks the non-generic overload;
-    /// any other type picks this one, which encodes the member exactly as
-    /// <see cref="IHashCommands.SetAsync{T}"/> would write it. <paramref name="score"/> has no
-    /// default, so a lone <see cref="SortedSetEntry"/> still binds to the <c>params</c> overload.
+    /// any other type picks this one. Boolean members retain the Redis-native <c>1</c>/<c>0</c>
+    /// encoding used by the other member APIs; other types use normal typed serialization.
+    /// <paramref name="score"/> has no default, so a lone <see cref="SortedSetEntry"/> still binds
+    /// to the <c>params</c> overload.
     /// </para>
     /// </summary>
     ValueTask<bool> AddAsync<T>(RespireKey key, T member, double score, CancellationToken cancellationToken = default);
@@ -66,7 +67,9 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
 
     public ValueTask<bool> AddAsync<T>(RespireKey key, T member, double score, CancellationToken cancellationToken = default)
         => client.FlagAsync(
-            "ZADD", new Cmd3(Verbs.ZAdd, client.Key(in key), score, client.Serialize(member)), cancellationToken);
+            "ZADD",
+            new Cmd3(Verbs.ZAdd, client.Key(in key), score, client.SerializeCollectionMember(member)),
+            cancellationToken);
 
     public ValueTask<long> AddAsync(RespireKey key, params ReadOnlySpan<SortedSetEntry> entries)
     {

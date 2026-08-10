@@ -888,6 +888,9 @@ public sealed partial class RespireClient : IRespireClient
         return buffer.WrittenMemory;
     }
 
+    internal RespireValue SerializeCollectionMember<T>(T value)
+        => value is bool boolean ? boolean : Serialize(value);
+
     /// <summary>
     /// Reads a value the caller does not own, keeping "reply was null" distinct from a
     /// deserialized <c>default(T)</c>.

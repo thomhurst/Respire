@@ -107,6 +107,9 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
         (await client.Sets.ContainsAsync<int>("typed:set", 7)).Should().BeTrue();
         (await client.Sets.ContainsAsync<int>("typed:set", 8)).Should().BeFalse();
 
+        await client.Sets.AddAsync("typed:set:bool", true);
+        (await client.Sets.ContainsAsync("typed:set:bool", true)).Should().BeTrue();
+
         await client.Sets.AddAsync("typed:set:json", JsonSerializer.Serialize(payload));
         (await client.Sets.ContainsAsync("typed:set:json", payload)).Should().BeTrue();
     }
@@ -119,6 +122,12 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
 
         (await client.SortedSets.AddAsync("typed:zset", 7, 1.5)).Should().BeTrue();
         (await client.SortedSets.ScoreAsync("typed:zset", 7)).Should().Be(1.5);
+
+        (await client.SortedSets.AddAsync("typed:zset:bool", true, 1.5)).Should().BeTrue();
+        (await client.SortedSets.ScoreAsync("typed:zset:bool", true)).Should().Be(1.5);
+        (await client.SortedSets.RankAsync("typed:zset:bool", true)).Should().Be(0);
+        (await client.SortedSets.IncrementAsync("typed:zset:bool", true, 0.5)).Should().Be(2.0);
+        (await client.SortedSets.RemoveAsync("typed:zset:bool", true)).Should().Be(1);
 
         (await client.SortedSets.AddAsync("typed:zset", payload, 2.5)).Should().BeTrue();
         (await client.SortedSets.ScoreAsync("typed:zset", JsonSerializer.Serialize(payload))).Should().Be(2.5);

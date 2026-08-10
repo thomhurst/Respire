@@ -18,9 +18,8 @@ public interface ISetCommands
     /// Whether a serialized <typeparamref name="T"/> is in the set. Redis: SISMEMBER.
     /// <para>
     /// An argument already typed as <see cref="RespireValue"/> picks the non-generic overload;
-    /// any other type picks this one, which encodes the member exactly as
-    /// <see cref="IHashCommands.SetAsync{T}"/> would write it — so match the write path when a
-    /// <c>bool</c> member is at stake.
+    /// any other type picks this one. Boolean members retain the Redis-native <c>1</c>/<c>0</c>
+    /// encoding used by <see cref="AddAsync"/>; other types use normal typed serialization.
     /// </para>
     /// </summary>
     ValueTask<bool> ContainsAsync<T>(RespireKey key, T member, CancellationToken cancellationToken = default);
@@ -66,7 +65,9 @@ internal sealed class SetCommands(RespireClient client) : ISetCommands
 
     public ValueTask<bool> ContainsAsync<T>(RespireKey key, T member, CancellationToken cancellationToken = default)
         => client.FlagAsync(
-            "SISMEMBER", new Cmd2(Verbs.SIsMember, client.Key(in key), client.Serialize(member)), cancellationToken);
+            "SISMEMBER",
+            new Cmd2(Verbs.SIsMember, client.Key(in key), client.SerializeCollectionMember(member)),
+            cancellationToken);
 
     public ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.IntegerAsync("SCARD", new Cmd1(Verbs.SCard, client.Key(in key)), cancellationToken);
