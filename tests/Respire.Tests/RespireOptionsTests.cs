@@ -40,6 +40,84 @@ public class RespireOptionsTests
     }
 
     [Test]
+    [Arguments(nameof(RespireOptions.Database))]
+    [Arguments(nameof(RespireOptions.ConnectTimeout))]
+    [Arguments(nameof(RespireOptions.CommandTimeout))]
+    [Arguments(nameof(RespireOptions.ConnectionIdleReadTimeout))]
+    [Arguments(nameof(RespireOptions.ReceiveBufferSize))]
+    [Arguments(nameof(RespireOptions.WriteBufferSize))]
+    [Arguments(nameof(RespireOptions.MaxInflightCommands))]
+    [Arguments(nameof(RespireOptions.SubscriptionBufferSize))]
+    [Arguments(nameof(RespireOptions.TcpKeepAliveTime))]
+    [Arguments(nameof(RespireOptions.TcpKeepAliveInterval))]
+    [Arguments(nameof(RespireOptions.TcpKeepAliveRetryCount))]
+    public async Task Create_RejectsInvalidOptionRanges(string optionName)
+    {
+        var options = optionName switch
+        {
+            nameof(RespireOptions.Database) => ValidOptions() with { Database = -1 },
+            nameof(RespireOptions.ConnectTimeout) => ValidOptions() with { ConnectTimeout = TimeSpan.Zero },
+            nameof(RespireOptions.CommandTimeout) => ValidOptions() with { CommandTimeout = TimeSpan.Zero },
+            nameof(RespireOptions.ConnectionIdleReadTimeout) => ValidOptions() with
+            {
+                ConnectionIdleReadTimeout = TimeSpan.Zero,
+            },
+            nameof(RespireOptions.ReceiveBufferSize) => ValidOptions() with { ReceiveBufferSize = 0 },
+            nameof(RespireOptions.WriteBufferSize) => ValidOptions() with { WriteBufferSize = 0 },
+            nameof(RespireOptions.MaxInflightCommands) => ValidOptions() with { MaxInflightCommands = 0 },
+            nameof(RespireOptions.SubscriptionBufferSize) => ValidOptions() with { SubscriptionBufferSize = 0 },
+            nameof(RespireOptions.TcpKeepAliveTime) => ValidOptions() with
+            {
+                TcpKeepAliveTime = TimeSpan.FromMilliseconds(999),
+            },
+            nameof(RespireOptions.TcpKeepAliveInterval) => ValidOptions() with
+            {
+                TcpKeepAliveTime = TimeSpan.FromSeconds(1),
+                TcpKeepAliveInterval = TimeSpan.FromMilliseconds(999),
+            },
+            nameof(RespireOptions.TcpKeepAliveRetryCount) => ValidOptions() with
+            {
+                TcpKeepAliveTime = TimeSpan.FromSeconds(1),
+                TcpKeepAliveRetryCount = 0,
+            },
+            _ => throw new ArgumentOutOfRangeException(nameof(optionName)),
+        };
+
+        var exception = Assert.Throws<RespireConfigurationException>(() => RespireClient.Create(options));
+
+        await Assert.That(exception.Message).Contains($"RespireOptions.{optionName}");
+    }
+
+    [Test]
+    [Arguments("localhost:notaport")]
+    [Arguments("localhost:")]
+    [Arguments("localhost:0")]
+    [Arguments("localhost:65536")]
+    [Arguments("[::1]:0")]
+    [Arguments("[::1]:65536")]
+    public async Task Endpoint_RejectsInvalidPorts(string endpoint)
+    {
+        var exception = Assert.Throws<ArgumentException>(() => RespireEndpoint.Parse(endpoint));
+
+        await Assert.That(exception.Message).Contains("port");
+    }
+
+    [Test]
+    [Arguments(0)]
+    [Arguments(65536)]
+    public async Task Create_RejectsEndpointPortOutsideTcpRange(int port)
+    {
+        var options = new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("localhost", port) },
+        };
+
+        var exception = Assert.Throws<RespireConfigurationException>(() => RespireClient.Create(options));
+
+        await Assert.That(exception.Message).Contains("RespireOptions.Endpoints");
+    }
+
+    [Test]
     public async Task Create_SnapshotsMutableEndpoints()
     {
         List<RespireEndpoint> endpoints = [new RespireEndpoint("first", 6379)];
@@ -171,4 +249,9 @@ public class RespireOptionsTests
         await Assert.That(enabled.AllowAdmin).IsTrue();
         await Assert.That(disabled.AllowAdmin).IsFalse();
     }
+
+    private static RespireOptions ValidOptions() => new()
+    {
+        Endpoints = { new RespireEndpoint("localhost") },
+    };
 }
