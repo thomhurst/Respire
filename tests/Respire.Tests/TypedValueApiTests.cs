@@ -60,14 +60,30 @@ public class TypedValueApiTests
     }
 
     [Test]
-    public async Task TryGetValue_AnnotatesMissingReferenceAsMaybeNull()
+    public async Task TryGetValue_AnnotatesReferenceAsNullableRegardlessOfFound()
     {
-        var parameter = typeof(RespireGet<>).GetMethod(nameof(RespireGet<int>.TryGetValue))!
+        var parameter = typeof(RespireGet<string>).GetMethod(nameof(RespireGet<string>.TryGetValue))!
             .GetParameters()[0];
-        var attribute = parameter.GetCustomAttribute<MaybeNullWhenAttribute>();
+        var nullability = new NullabilityInfoContext().Create(parameter);
 
-        await Assert.That(attribute).IsNotNull();
-        await Assert.That(attribute!.ReturnValue).IsFalse();
+        await Assert.That(nullability.WriteState).IsEqualTo(NullabilityState.Nullable);
+        await Assert.That(parameter.GetCustomAttribute<MaybeNullWhenAttribute>()).IsNull();
+    }
+
+    [Test]
+    public async Task NullableResultMembers_AnnotateReferenceValuesAsNullable()
+    {
+        var type = typeof(RespireGet<string>);
+        var nullability = new NullabilityInfoContext();
+        var value = type.GetProperty(nameof(RespireGet<string>.Value))!;
+        var deconstruct = type.GetMethod(nameof(RespireGet<string>.Deconstruct))!;
+        var getValueOrDefault = type.GetMethod(nameof(RespireGet<string>.GetValueOrDefault))!;
+
+        await Assert.That(nullability.Create(value).ReadState).IsEqualTo(NullabilityState.Nullable);
+        await Assert.That(nullability.Create(deconstruct.GetParameters()[1]).WriteState)
+            .IsEqualTo(NullabilityState.Nullable);
+        await Assert.That(nullability.Create(getValueOrDefault.ReturnParameter).ReadState)
+            .IsEqualTo(NullabilityState.Nullable);
     }
 
     [Test]
@@ -90,6 +106,8 @@ public class TypedValueApiTests
         await Assert.That(foundNull.Found).IsTrue();
         await Assert.That(missing.Found).IsFalse();
         await Assert.That(foundNull.Equals(missing)).IsFalse();
+        await Assert.That(foundNull.TryGetValue(out var value)).IsTrue();
+        await Assert.That(value).IsNull();
     }
 
     [Test]
