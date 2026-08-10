@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Buffers.Text;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -41,17 +42,26 @@ public ref struct RespWriter
     /// <summary>Writes a string as a bulk string, encoding UTF-8 directly into the buffer.</summary>
     public void WriteBulkString(string value)
     {
+        if (value.Length == 0 || value[0] <= 0x7f)
+        {
+            var mark = _buffer.Count;
+            WritePrefixedLine(RespConstants.BulkStringPrefix, value.Length);
+            var asciiSpan = _buffer.GetSpan(value.Length + 2);
+            if (Ascii.FromUtf16(value, asciiSpan, out var asciiBytes) == OperationStatus.Done)
+            {
+                asciiSpan[asciiBytes] = RespConstants.CarriageReturn;
+                asciiSpan[asciiBytes + 1] = RespConstants.LineFeed;
+                _buffer.Advance(asciiBytes + 2);
+                return;
+            }
+
+            _buffer.TruncateTo(mark);
+        }
+
         var byteCount = Encoding.UTF8.GetByteCount(value);
         WritePrefixedLine(RespConstants.BulkStringPrefix, byteCount);
         var span = _buffer.GetSpan(byteCount + 2);
-        if (byteCount == value.Length)
-        {
-            Ascii.FromUtf16(value, span, out _);
-        }
-        else
-        {
-            Encoding.UTF8.GetBytes(value, span);
-        }
+        Encoding.UTF8.GetBytes(value, span);
 
         span[byteCount] = RespConstants.CarriageReturn;
         span[byteCount + 1] = RespConstants.LineFeed;
