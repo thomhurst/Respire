@@ -29,8 +29,8 @@ internal sealed class BatchScriptCommands(IPendingSink sink) : IBatchScriptComma
     {
         ArgumentNullException.ThrowIfNull(script);
         var tail = sink.Client.BuildScriptTail(keys, args);
-        var command = new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]);
-        return sink.Add<Cmd2N, RespireResult>(
+        var command = new BatchScriptCommand(Verbs.Eval, script.Source, tail, keys?.Length ?? 0);
+        return sink.Add<BatchScriptCommand, RespireResult>(
             "EVAL",
             command,
             keys.AsSpan(),
@@ -39,5 +39,31 @@ internal sealed class BatchScriptCommands(IPendingSink sink) : IBatchScriptComma
                 var owned = value.ToOwned();
                 return new RespireResult(in owned);
             });
+    }
+}
+
+internal readonly struct BatchScriptCommand(
+    Verb verb, RespireValue source, RespireValue[] tail, int keyCount) : IRespCommand
+{
+    public bool TryGetClusterSlot(out int slot)
+    {
+        if (keyCount > 0 && tail.Length > 1)
+        {
+            return tail[1].TryGetClusterSlot(out slot);
+        }
+
+        slot = 0;
+        return false;
+    }
+
+    public void Write(ref RespWriter writer)
+    {
+        writer.WriteArrayHeader(verb.Tokens + 1 + tail.Length);
+        writer.WriteRaw(verb.Bulk);
+        source.WriteTo(ref writer);
+        foreach (var value in tail)
+        {
+            value.WriteTo(ref writer);
+        }
     }
 }
