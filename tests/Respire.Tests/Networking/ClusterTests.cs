@@ -926,6 +926,7 @@ public class ClusterTests
         {
             Cluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+            AllowAdmin = true,
         });
 
         await Assert.That(await client.Server.DatabaseSizeAsync()).IsEqualTo(5);

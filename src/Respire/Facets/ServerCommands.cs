@@ -13,10 +13,10 @@ public interface IServerCommands
     /// <summary>Number of keys in the current database. Redis: DBSIZE.</summary>
     ValueTask<long> DatabaseSizeAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>Deletes every key in the current database. Redis: FLUSHDB.</summary>
+    /// <summary>Deletes every key in the current database. Requires <see cref="RespireOptions.AllowAdmin"/>. Redis: FLUSHDB.</summary>
     ValueTask FlushDatabaseAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>Deletes every key in every database. Redis: FLUSHALL.</summary>
+    /// <summary>Deletes every key in every database. Requires <see cref="RespireOptions.AllowAdmin"/>. Redis: FLUSHALL.</summary>
     ValueTask FlushAllAsync(CancellationToken cancellationToken = default);
 
     /// <summary>The server's clock. Redis: TIME.</summary>
@@ -25,7 +25,7 @@ public interface IServerCommands
     /// <summary>Configuration values matching a glob pattern. Redis: CONFIG GET.</summary>
     ValueTask<Dictionary<string, string>> ConfigGetAsync(string pattern, CancellationToken cancellationToken = default);
 
-    /// <summary>Sets a configuration value. Redis: CONFIG SET.</summary>
+    /// <summary>Sets a configuration value. Requires <see cref="RespireOptions.AllowAdmin"/>. Redis: CONFIG SET.</summary>
     ValueTask ConfigSetAsync(string name, RespireValue value, CancellationToken cancellationToken = default);
 }
 
@@ -42,14 +42,20 @@ internal sealed class ServerCommands(RespireClient client) : IServerCommands
             : DatabaseSizeClusterAsync(cancellationToken);
 
     public ValueTask FlushDatabaseAsync(CancellationToken cancellationToken = default)
-        => client.Core.Cluster is null
+    {
+        EnsureAdminAllowed("FLUSHDB");
+        return client.Core.Cluster is null
             ? client.OkAsync("FLUSHDB", new RawCommand(RespCommands.FlushDb), cancellationToken)
             : FlushClusterAsync("FLUSHDB", RespCommands.FlushDb, cancellationToken);
+    }
 
     public ValueTask FlushAllAsync(CancellationToken cancellationToken = default)
-        => client.Core.Cluster is null
+    {
+        EnsureAdminAllowed("FLUSHALL");
+        return client.Core.Cluster is null
             ? client.OkAsync("FLUSHALL", new RawCommand(RespCommands.FlushAll), cancellationToken)
             : FlushClusterAsync("FLUSHALL", RespCommands.FlushAll, cancellationToken);
+    }
 
     private async ValueTask<long> DatabaseSizeClusterAsync(CancellationToken cancellationToken)
     {
@@ -109,5 +115,18 @@ internal sealed class ServerCommands(RespireClient client) : IServerCommands
         => client.StringMapAsync("CONFIG GET", new Cmd1(Verbs.ConfigGet, pattern), cancellationToken);
 
     public ValueTask ConfigSetAsync(string name, RespireValue value, CancellationToken cancellationToken = default)
-        => client.OkAsync("CONFIG SET", new Cmd2(Verbs.ConfigSet, name, value), cancellationToken);
+    {
+        EnsureAdminAllowed("CONFIG SET");
+        return client.OkAsync("CONFIG SET", new Cmd2(Verbs.ConfigSet, name, value), cancellationToken);
+    }
+
+    private void EnsureAdminAllowed(string operation)
+    {
+        if (!client.Core.Options.AllowAdmin)
+        {
+            throw new NotSupportedException(
+                $"{operation} is disabled by default because it is an administrative command. " +
+                $"Set {nameof(RespireOptions)}.{nameof(RespireOptions.AllowAdmin)} to true to enable it.");
+        }
+    }
 }
