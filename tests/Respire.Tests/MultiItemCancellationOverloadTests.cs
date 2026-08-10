@@ -131,6 +131,7 @@ public class MultiItemCancellationOverloadTests
         _ = client.Keys.TouchAsync(keys, token);
 
         _ = client.Strings.GetManyAsync(keys, token);
+        _ = client.Strings.GetManyAsync<int>(keys, token);
         _ = client.Strings.SetManyAsync(pairs, token);
         _ = client.Strings.SetManyExpireAsync(expiry, SetWhen.NotExists, pairs, token);
         _ = client.Strings.SetManyExpireAsync(expireAt, SetWhen.Exists, pairs, token);

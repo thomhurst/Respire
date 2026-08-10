@@ -72,6 +72,9 @@ public interface IBatchStringCommands
     /// <summary>Gets many keys in one round trip; missing keys yield null. Redis: MGET.</summary>
     RespirePending<string?[]> GetMany(params ReadOnlySpan<RespireKey> keys);
 
+    /// <summary>Gets and deserializes many keys; missing keys yield default. Redis: MGET.</summary>
+    RespirePending<T?[]> GetMany<T>(params ReadOnlySpan<RespireKey> keys);
+
     /// <summary>Sets many keys atomically; the pending is true once the server replies OK. Redis: MSET.</summary>
     RespirePending<bool> SetMany(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
 
@@ -176,6 +179,14 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
             "MGET", new CmdN(Verbs.MGet, sink.Client.MapKeys(keys)),
             keys,
             static (c, v) => ResponseReader.NullableStringArray(in v));
+    }
+
+    public RespirePending<T?[]> GetMany<T>(params ReadOnlySpan<RespireKey> keys)
+    {
+        return sink.Add<CmdN, T?[]>(
+            "MGET", new CmdN(Verbs.MGet, sink.Client.MapKeys(keys)),
+            keys,
+            static (c, v) => c.DeserializeNullableArray<T>(in v));
     }
 
     public RespirePending<bool> SetMany(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
