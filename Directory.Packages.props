@@ -18,6 +18,7 @@
     <PackageVersion Include="Microsoft.Extensions.ObjectPool" Version="10.0.10" />
     <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.10" />
     <PackageVersion Include="ModularPipelines.DotNet" Version="3.2.8" />
+    <PackageVersion Include="Polyfill" Version="11.0.2" />
     <PackageVersion Include="ModularPipelines.GitHub" Version="3.2.8" />
     <PackageVersion Include="StackExchange.Redis" Version="3.1.13" />
     <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="10.0.10" />

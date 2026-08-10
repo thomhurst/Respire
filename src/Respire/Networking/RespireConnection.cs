@@ -46,7 +46,7 @@ public sealed class RespireConnection : IAsyncDisposable
 
     private readonly Socket _socket;
     private readonly SslStream? _tlsStream;
-    private readonly object _writeGate = new();
+    private readonly Lock _writeGate = new();
     private readonly InflightRing _inflight;
     private readonly PendingResponsePool _sourcePool;
     private readonly int _receiveBufferSize;
@@ -61,9 +61,10 @@ public sealed class RespireConnection : IAsyncDisposable
     private readonly TimeSpan? _responseTimeout;
     // Sent/received counters and the deadline are one state transition: a reply must not clear
     // a deadline concurrently armed for a later batch.
-    private readonly object _receiveDeadlineGate = new();
+    private readonly Lock _receiveDeadlineGate = new();
     private readonly AsyncFlushSignal _flushSignal = new();
     private readonly AsyncCapacitySignal _capacitySignal = new();
+    private readonly CompletionScheduler _completions = new();
 
     private WriteBuffer _activeBuffer;
     private WriteBuffer _spareBuffer;
@@ -1125,6 +1126,9 @@ public sealed class RespireConnection : IAsyncDisposable
                                     $"Response exceeds the {MaxResponseSize} byte limit.");
                             }
 
+                            // Flush before awaiting so already-parsed replies don't wait on
+                            // the rest of a large frame.
+                            _completions.Flush();
                             var filled = await ReceiveLargeBulkAsync(
                                     buffer, start, end, directFill.Type, directFill.PayloadLength)
                                 .ConfigureAwait(false);
@@ -1175,6 +1179,7 @@ public sealed class RespireConnection : IAsyncDisposable
                     }
                 }
 
+                _completions.Flush();
                 var received = await ReceiveAsync(buffer.AsMemory(end)).ConfigureAwait(false);
                 if (received == 0)
                 {
@@ -1194,6 +1199,8 @@ public sealed class RespireConnection : IAsyncDisposable
         {
             parser.Dispose();
             RespirePools.ResponsePayloads.Return(buffer);
+            // Replies parsed before the fault still complete normally.
+            _completions.Flush();
             Abort();
             FailAllPending(Volatile.Read(ref _abortReason)
                 ?? fault
@@ -1310,13 +1317,9 @@ public sealed class RespireConnection : IAsyncDisposable
             return;
         }
 
-        if (!source.TrySetResult(in value))
-        {
-            // Caller already cancelled; the response still had to be consumed from the wire.
-            value.Dispose();
-        }
-
-        source.ReleaseRef();
+        // Deferred: the scheduler runs TrySetResult + ReleaseRef on a pool thread, one work
+        // item per receive drain rather than one per reply.
+        _completions.Add(source, in value);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

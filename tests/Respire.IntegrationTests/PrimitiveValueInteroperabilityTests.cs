@@ -303,7 +303,9 @@ public class PrimitiveValueInteroperabilityTests(RedisTestContainer fixture)
     {
         const string key = "interop:hash";
         var stackExchangeBytes = new byte[] { 0, 1, 127, 128, 254, 255 };
-        var respireBytes = stackExchangeBytes.Reverse().ToArray();
+        // C# 14 first-class spans would bind bare .Reverse() to the in-place void
+        // MemoryExtensions overload; keep the LINQ copy semantics explicit.
+        var respireBytes = Enumerable.Reverse(stackExchangeBytes).ToArray();
 
         await _stackExchangeDb.HashSetAsync(key,
         [
