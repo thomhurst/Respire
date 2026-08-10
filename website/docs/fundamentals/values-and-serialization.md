@@ -20,7 +20,7 @@ await redis.SetAsync(key, value);
 
 These small readonly structs keep command overloads manageable without forcing a protocol union type on every result.
 
-Keys and values use value equality. `RespireValue` compares the exact bulk-string payload sent to Redis, so `5`, `"5"`, and the UTF-8 bytes for `5` are equal and share a hash code. GUIDs use the invariant `D` format, `DateTimeOffset` uses the invariant round-trip `O` format, `TimeSpan` uses the invariant constant `c` format, and `char` uses its unsigned UTF-16 code-unit value.
+Keys and values use value equality. `RespireValue` compares the exact bulk-string payload sent to Redis, so `5`, `"5"`, and the UTF-8 bytes for `5` are equal and share a hash code. GUIDs use the invariant `D` format, `DateTimeOffset` uses the invariant round-trip `O` format, `TimeSpan` uses the invariant constant `c` format, and `char` uses its one-character textual representation.
 
 ## Typed output
 
@@ -59,11 +59,11 @@ var options = new RespireOptions
 };
 ```
 
-Typed `string`, `byte[]`, Boolean, and numeric primitive values bypass object serialization. Numbers use invariant Redis text. Boolean writes use Redis-native `1`/`0`; reads also accept `true`/`false` for interoperability with existing data. Nullable forms use the same fast path when they contain a value.
+Typed `string`, `byte[]`, `char`, Boolean, and numeric primitive values bypass object serialization. Numbers use invariant Redis text. Boolean writes use Redis-native `1`/`0`; reads also accept `true`/`false` for interoperability with existing data. Nullable forms use the same fast path when they contain a value.
 
 Objects, enums, and other types use the configured serializer. Custom serializers therefore do not control primitive encoding. Pass a `RespireValue` explicitly when a command input must use raw Redis scalar conventions, as shown in [Keys and input values](#keys-and-input-values).
 
-Serializing overloads sit next to the `RespireValue` ones wherever a facet takes a single payload — `Hashes.SetAsync<T>`, `Sets.ContainsAsync<T>`, `SortedSets.AddAsync<T>`, and the `Lists.LeftPopAsync<T>` / `RightPopAsync<T>` reads. An argument already typed as `RespireValue` selects the raw overload; anything else selects the generic one. The new facet overloads preserve raw `ReadOnlyMemory<byte>`, character code units, and non-finite floating-point arguments because those previously bound to `RespireValue`. Boolean values use the same `1`/`0` encoding on generic, raw, and collection-member paths.
+Serializing overloads sit next to the `RespireValue` ones wherever a facet takes a single payload — `Hashes.SetAsync<T>`, `Sets.ContainsAsync<T>`, `SortedSets.AddAsync<T>`, and the `Lists.LeftPopAsync<T>` / `RightPopAsync<T>` reads. An argument already typed as `RespireValue` selects the raw overload; anything else selects the generic one. The new facet overloads preserve raw `ReadOnlyMemory<byte>`, textual characters, and non-finite floating-point arguments because those previously bound to `RespireValue`. Boolean values use the same `1`/`0` encoding on generic, raw, and collection-member paths.
 
 ## Zero-copy leased reads
 

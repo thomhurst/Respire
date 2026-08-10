@@ -51,6 +51,31 @@ public class PrimitiveCodecTests
     }
 
     [Test]
+    public async Task Character_BypassesSerializer_OnWriteAndRead()
+    {
+        var serializer = new CountingSerializer();
+        await using var client = CreateClient(serializer);
+        char? nullable = '£';
+
+        await Assert.That(client.Serialize('£').ToString()).IsEqualTo("£");
+        await Assert.That(client.Serialize(nullable).ToString()).IsEqualTo("£");
+        await Assert.That(client.DeserializeBorrowed<char>(Bulk("£"))).IsEqualTo('£');
+        await Assert.That(client.DeserializeBorrowed<char?>(Bulk("£"))).IsEqualTo('£');
+        await Assert.That(serializer.SerializeCalls).IsEqualTo(0);
+        await Assert.That(serializer.DeserializeCalls).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task CharacterRead_RejectsPayloadThatIsNotOneUtf16CodeUnit()
+    {
+        await using var client = CreateClient(new CountingSerializer());
+
+        await Assert.That(() => client.DeserializeBorrowed<char>(Bulk(""))).Throws<FormatException>();
+        await Assert.That(() => client.DeserializeBorrowed<char>(Bulk("AB"))).Throws<FormatException>();
+        await Assert.That(() => client.DeserializeBorrowed<char>(Bulk("😀"))).Throws<FormatException>();
+    }
+
+    [Test]
     public async Task ReadOnlyMemory_UsesConfiguredSerializer_OnWriteAndRead()
     {
         var serializer = new CountingSerializer();

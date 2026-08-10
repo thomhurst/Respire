@@ -1,15 +1,19 @@
 using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Text;
 using Respire.Protocol;
 
 namespace Respire.Serialization;
 
 internal static class PrimitiveCodec
 {
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
+
     private enum PrimitiveKind : byte
     {
         None,
         Boolean,
+        Character,
         Byte,
         SByte,
         Int16,
@@ -29,6 +33,9 @@ internal static class PrimitiveCodec
         {
             case PrimitiveKind.Boolean:
                 result = Read<T, bool>(ref value);
+                return true;
+            case PrimitiveKind.Character:
+                result = Read<T, char>(ref value);
                 return true;
             case PrimitiveKind.Byte:
                 result = (int)Read<T, byte>(ref value);
@@ -88,6 +95,9 @@ internal static class PrimitiveCodec
         {
             case PrimitiveKind.Boolean:
                 result = Return<T, bool>(ParseBoolean(payload));
+                return true;
+            case PrimitiveKind.Character:
+                result = Return<T, char>(ParseCharacter(payload));
                 return true;
             case PrimitiveKind.Byte:
                 result = Return<T, byte>(Parse<byte>(payload));
@@ -163,7 +173,7 @@ internal static class PrimitiveCodec
             PrimitiveKind.Decimal => Return<T, decimal>(value),
             _ => default,
         };
-        return kind != PrimitiveKind.None;
+        return kind is not (PrimitiveKind.None or PrimitiveKind.Character);
     }
 
     private static bool TryDeserializeDouble<T>(double value, out T? result)
@@ -241,6 +251,25 @@ internal static class PrimitiveCodec
         }
 
         throw InvalidValue<bool>();
+    }
+
+    private static char ParseCharacter(ReadOnlySpan<byte> payload)
+    {
+        try
+        {
+            if (StrictUtf8.GetCharCount(payload) != 1)
+            {
+                throw InvalidValue<char>();
+            }
+
+            Span<char> character = stackalloc char[1];
+            _ = StrictUtf8.GetChars(payload, character);
+            return character[0];
+        }
+        catch (DecoderFallbackException)
+        {
+            throw InvalidValue<char>();
+        }
     }
 
     private static bool TryParseBooleanToken(ReadOnlySpan<byte> payload, out bool value)
@@ -353,6 +382,7 @@ internal static class PrimitiveCodec
     private static PrimitiveKind GetKind(Type type)
     {
         if (type == typeof(bool)) return PrimitiveKind.Boolean;
+        if (type == typeof(char)) return PrimitiveKind.Character;
         if (type == typeof(byte)) return PrimitiveKind.Byte;
         if (type == typeof(sbyte)) return PrimitiveKind.SByte;
         if (type == typeof(short)) return PrimitiveKind.Int16;
