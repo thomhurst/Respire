@@ -1547,7 +1547,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ValueTask<RespireKeyType> TypeAsync(RespireKey key, CancellationToken cancellationToken = default)
             => inner.TypeAsync(key, cancellationToken);
 
-        public ValueTask<bool> RenameAsync(
+        public ValueTask RenameAsync(
             RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default)
             => inner.RenameAsync(key, newKey, cancellationToken);
 
