@@ -573,14 +573,20 @@ public sealed class RespireConnection : IAsyncDisposable
     public ValueTask SendFireAndForgetAsync<TCommand>(in TCommand command, CancellationToken cancellationToken = default)
         where TCommand : struct, IRespCommand
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (TryEnqueueForWrite(in command, out var startedBatch, out var writeTask))
         {
             ScheduleFlush(startedBatch);
-            return new ValueTask(writeTask);
+            return WaitForWriteAsync(writeTask, cancellationToken);
         }
 
         return SendFireAndForgetSlowAsync(command, cancellationToken);
     }
+
+    private static ValueTask WaitForWriteAsync(Task writeTask, CancellationToken cancellationToken)
+        => cancellationToken.CanBeCanceled
+            ? new ValueTask(writeTask.WaitAsync(cancellationToken))
+            : new ValueTask(writeTask);
 
     [ThreadStatic]
     private static WriteBuffer? _serializeScratch;
@@ -890,7 +896,7 @@ public sealed class RespireConnection : IAsyncDisposable
         }
 
         ScheduleFlush(startedBatch);
-        await writeTask.ConfigureAwait(false);
+        await WaitForWriteAsync(writeTask, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
