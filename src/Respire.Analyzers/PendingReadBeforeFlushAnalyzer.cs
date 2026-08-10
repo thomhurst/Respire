@@ -242,6 +242,11 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
     {
         foreach (var reference in ScopeWalker.FindReferences(scope, local, context.SemanticModel, context.CancellationToken))
         {
+            if (ScopeWalker.IsInsideNameOf(context.SemanticModel, reference, context.CancellationToken))
+            {
+                continue;
+            }
+
             if (ScopeWalker.IsNestedInLambda(reference, scope))
             {
                 return true;
@@ -347,7 +352,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             return true;
         }
 
-        if (invocation.Parent is not EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax declarator }
+        if (GetOutermostAwaitableExpression(invocation).Parent
+                is not EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax declarator }
             || context.SemanticModel.GetDeclaredSymbol(declarator, context.CancellationToken) is not ILocalSymbol flush)
         {
             return false;
@@ -381,6 +387,15 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
     private static AwaitExpressionSyntax? GetAwaitExpression(ExpressionSyntax expression)
     {
+        expression = GetOutermostAwaitableExpression(expression);
+        return expression.Parent is AwaitExpressionSyntax awaitExpression
+               && ScopeWalker.IsSame(awaitExpression.Expression, expression)
+            ? awaitExpression
+            : null;
+    }
+
+    private static ExpressionSyntax GetOutermostAwaitableExpression(ExpressionSyntax expression)
+    {
         while (true)
         {
             if (expression.Parent is ParenthesizedExpressionSyntax parenthesized)
@@ -400,10 +415,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            return expression.Parent is AwaitExpressionSyntax awaitExpression
-                   && ScopeWalker.IsSame(awaitExpression.Expression, expression)
-                ? awaitExpression
-                : null;
+            return expression;
         }
     }
 

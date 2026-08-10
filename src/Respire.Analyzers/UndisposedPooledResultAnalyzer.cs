@@ -155,10 +155,24 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         LocalDeclarationStatementSyntax declaration,
         ILocalSymbol local)
     {
-        foreach (var reference in ScopeWalker.FindReferences(scope, local, context.SemanticModel, context.CancellationToken))
+        var references = ScopeWalker.FindReferences(
+            scope, local, context.SemanticModel, context.CancellationToken).ToArray();
+        var firstReassignment = references
+            .Where(reference => reference.Parent is AssignmentExpressionSyntax assignment
+                                && ScopeWalker.IsSame(assignment.Left, reference))
+            .Select(reference => (int?)reference.SpanStart)
+            .Min();
+
+        foreach (var reference in references)
         {
             if (ScopeWalker.IsInsideNameOf(context.SemanticModel, reference, context.CancellationToken))
             {
+                continue;
+            }
+
+            if (firstReassignment is { } reassignment && reference.SpanStart > reassignment)
+            {
+                // Later uses refer to the replacement, not the acquired pooled owner.
                 continue;
             }
 
