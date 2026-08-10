@@ -3,6 +3,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Microsoft.CodeAnalysis.Operations;
 
 namespace Respire.Analyzers;
 
@@ -199,7 +200,8 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             scope, local, context.SemanticModel, context.CancellationToken).ToArray();
         var reassignments = references
             .Where(reference => reference.Parent is AssignmentExpressionSyntax assignment
-                                && ScopeWalker.IsSame(assignment.Left, reference))
+                                && ScopeWalker.IsSame(assignment.Left, reference)
+                                && !assignment.IsKind(SyntaxKind.CoalesceAssignmentExpression))
             .Select(static reference => (AssignmentExpressionSyntax)reference.Parent!)
             .ToArray();
         var releases = new List<SyntaxNode>();
@@ -352,6 +354,10 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             case ExpressionStatementSyntax:
             case ForStatementSyntax:
                 return false;
+
+            case AssignmentExpressionSyntax outerAssignment when ScopeWalker.IsSame(outerAssignment.Right, use):
+                return context.SemanticModel.GetOperation(
+                    outerAssignment.Left, context.CancellationToken) is not IDiscardOperation;
 
             default:
                 // using, return, argument, or assignment source transfers or disposes ownership.
