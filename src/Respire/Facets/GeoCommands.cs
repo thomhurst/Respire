@@ -1,3 +1,4 @@
+using System.Text;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
@@ -31,10 +32,53 @@ public readonly record struct GeoEntry(double Longitude, double Latitude, Respir
 public readonly record struct GeoPosition(double Longitude, double Latitude);
 
 public readonly record struct GeoSearchResult(
-    byte[] Member,
+    string Member,
     double? Distance = null,
     long? Hash = null,
-    GeoPosition? Position = null);
+    GeoPosition? Position = null)
+{
+    private readonly string _member = Member;
+    private readonly byte[]? _memberBytes = Member is null ? null : Encoding.UTF8.GetBytes(Member);
+
+    public string Member
+    {
+        get => _member;
+        init
+        {
+            _member = value;
+            _memberBytes = value is null ? null : Encoding.UTF8.GetBytes(value);
+        }
+    }
+
+    /// <summary>The exact Redis member payload, for binary-safe follow-up commands.</summary>
+    public ReadOnlyMemory<byte> MemberBytes => _memberBytes ?? Array.Empty<byte>();
+
+    internal GeoSearchResult(
+        ReadOnlySpan<byte> memberBytes,
+        double? distance = null,
+        long? hash = null,
+        GeoPosition? position = null)
+        : this(Encoding.UTF8.GetString(memberBytes), distance, hash, position)
+        => _memberBytes = memberBytes.ToArray();
+
+    public bool Equals(GeoSearchResult other)
+        => Member == other.Member
+            && Distance == other.Distance
+            && Hash == other.Hash
+            && Position == other.Position
+            && MemberBytes.Span.SequenceEqual(other.MemberBytes.Span);
+
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(Member);
+        hash.Add(Distance);
+        hash.Add(Hash);
+        hash.Add(Position);
+        hash.AddBytes(MemberBytes.Span);
+        return hash.ToHashCode();
+    }
+}
 
 public readonly struct GeoSearchOrigin
 {
@@ -274,7 +318,7 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
         {
             if (!detailed)
             {
-                results[i] = new GeoSearchResult(values[i].AsSpan().ToArray());
+                results[i] = new GeoSearchResult(values[i].AsSpan());
                 continue;
             }
 
@@ -290,7 +334,7 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
                     ResponseReader.Double(in coordinates[0]), ResponseReader.Double(in coordinates[1]));
             }
 
-            results[i] = new GeoSearchResult(item[0].AsSpan().ToArray(), distance, hash, position);
+            results[i] = new GeoSearchResult(item[0].AsSpan(), distance, hash, position);
         }
 
         return results;
