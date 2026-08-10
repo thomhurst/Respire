@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 
@@ -41,7 +42,7 @@ public sealed class RespirePending<T>
     public Exception? Error => Status == RespirePendingStatus.Faulted ? _error : null;
 
     /// <summary>Gets a successful result without throwing; returns false for every other state.</summary>
-    public bool TryGetResult(out T value)
+    public bool TryGetResult([MaybeNullWhen(false)] out T value)
     {
         if (Status == RespirePendingStatus.Succeeded)
         {
