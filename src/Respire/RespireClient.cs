@@ -962,6 +962,11 @@ public sealed partial class RespireClient : IRespireClient
         return Serialize(value);
     }
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    internal RespireValue SerializeCollectionMember<T>(T value)
+        => value is bool boolean ? boolean : SerializeRawCompatible(value);
+
     /// <summary>
     /// Reads a value the caller does not own, keeping "reply was null" distinct from a
     /// deserialized <c>default(T)</c>.

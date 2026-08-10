@@ -104,7 +104,7 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
     public ValueTask<bool> AddAsync<T>(RespireKey key, T member, double score, CancellationToken cancellationToken = default)
         => client.FlagAsync(
             "ZADD",
-            new Cmd3(Verbs.ZAdd, client.Key(in key), score, client.SerializeRawCompatible(member)),
+            new Cmd3(Verbs.ZAdd, client.Key(in key), score, client.SerializeCollectionMember(member)),
             cancellationToken);
 
     public ValueTask<long> AddAsync(RespireKey key, params ReadOnlySpan<SortedSetEntry> entries)

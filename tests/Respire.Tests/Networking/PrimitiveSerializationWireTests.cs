@@ -34,15 +34,19 @@ public class PrimitiveSerializationWireTests
     [Test]
     public async Task BooleanWrites_UseSameEncodingAcrossOverloadShapes()
     {
-        await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+        await using var server = new FakeRespServer(
+            ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        object boxed = true;
 
         await client.Hashes.SetAsync("flags", "generic", true);
         await client.Hashes.SetAsync("flags", ("tuple", true));
+        await client.Sets.ContainsAsync("flags", boxed);
 
         await Assert.That(server.ReceivedCommands).IsEquivalentTo([
             "HSET flags generic 1",
             "HSET flags tuple 1",
+            "SISMEMBER flags 1",
         ]);
     }
 
