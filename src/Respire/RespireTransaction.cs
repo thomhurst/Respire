@@ -114,6 +114,8 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
 
     RespireClient IPendingSink.Client => _client;
 
+    // Multi-key validation is read-only. Add applies the command's representative routing slot
+    // only after serialization succeeds, so a rejected command cannot pin the transaction.
     internal void ValidateClusterKeys(ReadOnlySpan<RespireKey> keys)
     {
         if (!TryBeginClusterKeyValidation(out var slot))
@@ -125,8 +127,6 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
         {
             ValidateClusterKey(in key, ref slot);
         }
-
-        ApplyClusterSlot(slot);
     }
 
     internal void ValidateClusterKeys(RespireKey first, RespireKey second)
@@ -138,7 +138,6 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
 
         ValidateClusterKey(in first, ref slot);
         ValidateClusterKey(in second, ref slot);
-        ApplyClusterSlot(slot);
     }
 
     internal void ValidateClusterKeys(RespireKey first, ReadOnlySpan<RespireKey> rest)
@@ -153,8 +152,6 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
         {
             ValidateClusterKey(in key, ref slot);
         }
-
-        ApplyClusterSlot(slot);
     }
 
     internal void ValidateClusterKeys(ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
@@ -168,8 +165,6 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
         {
             ValidateClusterKey(in pair.Key, ref slot);
         }
-
-        ApplyClusterSlot(slot);
     }
 
     RespirePending<T> IPendingSink.Add<TCommand, T>(
