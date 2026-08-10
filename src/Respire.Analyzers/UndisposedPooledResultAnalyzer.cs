@@ -174,8 +174,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
     }
 
     /// <summary>
-    /// True when the local is disposed, or when it leaves this scope in any way — both mean the
-    /// rule has nothing to say.
+    /// True when disposal or ownership transfer covers every path from acquisition to scope exit.
     /// </summary>
     private static bool IsDisposedOrEscapes(
         SyntaxNodeAnalysisContext context,
@@ -223,7 +222,12 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
 
             if (ScopeWalker.IsNestedInLambda(reference, scope))
             {
-                return true;
+                if (CoversEveryExit(context, scope, acquisition, reference))
+                {
+                    return true;
+                }
+
+                continue;
             }
 
             switch (reference.Parent)
@@ -231,14 +235,16 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 // result.AsString(), result.Type, result.Dispose()
                 case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, reference):
                     if (member.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
-                        && member.Parent is not InvocationExpressionSyntax)
+                        && member.Parent is not InvocationExpressionSyntax
+                        && CoversEveryExit(context, scope, acquisition, member))
                     {
                         return true;
                     }
 
                     if (member.Parent is InvocationExpressionSyntax extensionInvocation
                         && context.SemanticModel.GetSymbolInfo(extensionInvocation, context.CancellationToken).Symbol
-                            is IMethodSymbol { ReducedFrom: not null })
+                            is IMethodSymbol { ReducedFrom: not null }
+                        && CoversEveryExit(context, scope, acquisition, extensionInvocation))
                     {
                         return true;
                     }
@@ -246,8 +252,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                     if (member.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
                         && member.Parent is InvocationExpressionSyntax invocation
                         && ScopeWalker.IsSame(invocation.Expression, member)
-                        && ScopeWalker.PostDominates(
-                            context.SemanticModel, scope, acquisition, invocation, context.CancellationToken))
+                        && CoversEveryExit(context, scope, acquisition, invocation))
                     {
                         return true;
                     }
@@ -264,8 +269,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                         .Any(binding => binding.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
                                         && binding.Parent is InvocationExpressionSyntax invocation
                                         && ScopeWalker.IsSame(invocation.Expression, binding)
-                                        && ScopeWalker.PostDominates(
-                                            context.SemanticModel, scope, acquisition, invocation, context.CancellationToken)))
+                                        && CoversEveryExit(context, scope, acquisition, invocation)))
                     {
                         return true;
                     }
@@ -275,8 +279,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 // using (result) { … }
                 case UsingStatementSyntax usingStatement when usingStatement.Expression is not null
                                                               && ScopeWalker.IsSame(usingStatement.Expression, reference):
-                    if (ScopeWalker.PostDominates(
-                            context.SemanticModel, scope, acquisition, usingStatement, context.CancellationToken))
+                    if (CoversEveryExit(context, scope, acquisition, usingStatement))
                     {
                         return true;
                     }
@@ -289,10 +292,20 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
 
                 // Anything else — an argument, a return, or an assignment source — hands ownership away.
                 default:
-                    return true;
+                    if (CoversEveryExit(context, scope, acquisition, reference))
+                    {
+                        return true;
+                    }
+
+                    break;
             }
         }
 
         return false;
     }
+
+    private static bool CoversEveryExit(
+        SyntaxNodeAnalysisContext context, SyntaxNode scope, SyntaxNode acquisition, SyntaxNode release)
+        => ScopeWalker.PostDominates(
+            context.SemanticModel, scope, acquisition, release, context.CancellationToken);
 }

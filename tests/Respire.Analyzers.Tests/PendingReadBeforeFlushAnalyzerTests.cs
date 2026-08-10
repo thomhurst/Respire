@@ -765,4 +765,49 @@ public class PendingReadBeforeFlushAnalyzerTests
             private static void Consume(object value) { }
         }
         """);
+
+    [Test]
+    public async Task ConditionalEscapeBeforeRead_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool handled)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                if (handled)
+                {
+                    Consume(batch);
+                }
+
+                Console.WriteLine({|RESP002:pending.Result|});
+                await batch.SendAsync();
+            }
+
+            private static void Consume(RespireBatch batch) { }
+        }
+        """);
+
+    [Test]
+    public async Task ManualGetResultBeforeSend_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                Console.WriteLine({|RESP002:pending.GetAwaiter().GetResult()|});
+                await batch.SendAsync();
+            }
+        }
+        """);
 }

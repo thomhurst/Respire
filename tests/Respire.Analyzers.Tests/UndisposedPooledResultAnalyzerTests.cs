@@ -606,4 +606,25 @@ public class UndisposedPooledResultAnalyzerTests
             }
         }
         """);
+
+    [Test]
+    public async Task ConditionalOwnershipTransfer_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool transfer)
+            {
+                var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                if (transfer)
+                {
+                    Consume(result);
+                }
+            }
+
+            private static void Consume(RespireResult result) { }
+        }
+        """);
 }

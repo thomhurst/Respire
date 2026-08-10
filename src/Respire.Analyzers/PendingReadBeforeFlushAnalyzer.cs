@@ -25,6 +25,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
     private const string SendAsync = "SendAsync";
     private const string CommitAsync = "CommitAsync";
     private const string ResultPropertyName = "Result";
+    private const string GetAwaiter = "GetAwaiter";
+    private const string GetResult = "GetResult";
 
     internal static readonly DiagnosticDescriptor Rule = new(
         DiagnosticIds.PendingReadBeforeFlush,
@@ -68,6 +70,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 nodeContext => AnalyzeResultBinding(nodeContext, known), SyntaxKind.MemberBindingExpression);
             compilationStart.RegisterSyntaxNodeAction(
                 nodeContext => AnalyzeAwait(nodeContext, known), SyntaxKind.AwaitExpression);
+            compilationStart.RegisterSyntaxNodeAction(
+                nodeContext => AnalyzeManualGetResult(nodeContext, known), SyntaxKind.InvocationExpression);
         });
     }
 
@@ -120,6 +124,29 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         }
 
         AnalyzeRead(context, read: awaitExpression, pending: awaited, known);
+    }
+
+    private static void AnalyzeManualGetResult(SyntaxNodeAnalysisContext context, KnownTypes known)
+    {
+        var invocation = (InvocationExpressionSyntax)context.Node;
+        if (ScopeWalker.Unwrap(invocation.Expression) is not MemberAccessExpressionSyntax
+            {
+                Name.Identifier.ValueText: GetResult,
+            } getResult
+            || ScopeWalker.Unwrap(getResult.Expression) is not InvocationExpressionSyntax getAwaiterInvocation
+            || ScopeWalker.Unwrap(getAwaiterInvocation.Expression) is not MemberAccessExpressionSyntax
+            {
+                Name.Identifier.ValueText: GetAwaiter,
+            } getAwaiter
+            || context.SemanticModel.GetSymbolInfo(getAwaiter, context.CancellationToken).Symbol
+                is not IMethodSymbol getAwaiterMethod
+            || !SymbolEqualityComparer.Default.Equals(
+                getAwaiterMethod.ContainingType.OriginalDefinition, known.Pending))
+        {
+            return;
+        }
+
+        AnalyzeRead(context, read: invocation, pending: getAwaiter.Expression, known);
     }
 
     private static void AnalyzeRead(SyntaxNodeAnalysisContext context, ExpressionSyntax read, ExpressionSyntax pending, KnownTypes known)
@@ -260,7 +287,12 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
             if (ScopeWalker.IsNestedInLambda(reference, scope))
             {
-                return true;
+                if (DominatesRead(context, scope, reference, before))
+                {
+                    return true;
+                }
+
+                continue;
             }
 
             ExpressionSyntax use = reference;
@@ -288,14 +320,16 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             {
                 case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, use):
                     if (member.Parent is not InvocationExpressionSyntax
-                        && context.SemanticModel.GetSymbolInfo(member, context.CancellationToken).Symbol is IMethodSymbol)
+                        && context.SemanticModel.GetSymbolInfo(member, context.CancellationToken).Symbol is IMethodSymbol
+                        && DominatesRead(context, scope, member, before))
                     {
                         return true;
                     }
 
                     if (member.Parent is InvocationExpressionSyntax invocation
                         && context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol
-                            is IMethodSymbol { ReducedFrom: not null })
+                            is IMethodSymbol { ReducedFrom: not null }
+                        && DominatesRead(context, scope, invocation, before))
                     {
                         return true;
                     }
@@ -315,7 +349,12 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                     break;
 
                 default:
-                    return true;
+                    if (DominatesRead(context, scope, use, before))
+                    {
+                        return true;
+                    }
+
+                    break;
             }
         }
 
@@ -359,6 +398,12 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
         return false;
     }
+
+    private static bool DominatesRead(
+        SyntaxNodeAnalysisContext context, SyntaxNode scope, SyntaxNode escape, SyntaxNode? read)
+        => read is null
+           || ScopeWalker.Dominates(
+               context.SemanticModel, scope, escape, read, context.CancellationToken);
 
     private static bool IsReassignedBetween(
         SyntaxNodeAnalysisContext context,
