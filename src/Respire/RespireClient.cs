@@ -826,24 +826,24 @@ public sealed partial class RespireClient : IRespireClient
             return RespireValue.Null;
         }
 
-        if (value is ReadOnlyMemory<byte> memory)
+        if (typeof(T) == typeof(ReadOnlyMemory<byte>))
         {
-            return memory;
+            return (ReadOnlyMemory<byte>)(object)value!;
         }
 
-        if (value is char character)
+        if (typeof(T) == typeof(char))
         {
-            return (ushort)character;
+            return (ushort)(char)(object)value!;
         }
 
-        if (value is float single && !float.IsFinite(single))
+        if (typeof(T) == typeof(float) && !float.IsFinite((float)(object)value!))
         {
-            return single;
+            return (float)(object)value!;
         }
 
-        if (value is double number && !double.IsFinite(number))
+        if (typeof(T) == typeof(double) && !double.IsFinite((double)(object)value!))
         {
-            return number;
+            return (double)(object)value!;
         }
 
         return Serialize(value);

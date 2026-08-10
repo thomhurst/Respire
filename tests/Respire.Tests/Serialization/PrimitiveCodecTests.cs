@@ -83,6 +83,24 @@ public class PrimitiveCodecTests
     }
 
     [Test]
+    public async Task RawCompatibility_UsesSerializerForErasedTypes()
+    {
+        var serializer = new CountingSerializer();
+        await using var client = CreateClient(serializer);
+        object memory = (ReadOnlyMemory<byte>)new byte[] { 0, 1, 254, 255 };
+        object character = 'A';
+        object single = float.NaN;
+        object number = double.PositiveInfinity;
+
+        _ = client.SerializeRawCompatible(memory);
+        _ = client.SerializeRawCompatible(character);
+        _ = client.SerializeRawCompatible(single);
+        _ = client.SerializeRawCompatible(number);
+
+        await Assert.That(serializer.SerializeCalls).IsEqualTo(4);
+    }
+
+    [Test]
     public async Task FloatingPointReads_RejectNonFiniteValues()
     {
         await using var client = CreateClient(new CountingSerializer());
