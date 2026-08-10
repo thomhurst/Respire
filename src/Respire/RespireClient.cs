@@ -1715,11 +1715,13 @@ public sealed partial class RespireClient : IRespireClient
         RespireScript script,
         RespireKey[] keys,
         RespireValue[] args,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool requireReliableCorrectionOrdering = false)
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        var requiresIdentity = RequiresReliableCorrectionOrdering(cancellationToken);
+        var requiresIdentity = requireReliableCorrectionOrdering
+            || RequiresReliableCorrectionOrdering(cancellationToken);
         var tail = BuildScriptTail(keys, args);
 
         RespireConnection connection;
@@ -1739,7 +1741,8 @@ public sealed partial class RespireClient : IRespireClient
                     "Reliable correction ordering must be initialized before a tracked script starts.");
             }
 
-            connection = core.Multiplexer.GetConnection();
+            connection = await GetTrackedConnectionAsync(core.Multiplexer, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         var identity = GetTrackedConnectionIdentity(
@@ -1750,6 +1753,27 @@ public sealed partial class RespireClient : IRespireClient
                 execution, router, connection, script, tail, requiresIdentity, cancellationToken)
             : ExecuteScriptOnConnectionAsync(connection, script, tail, cancellationToken);
         return execution;
+    }
+
+    private async ValueTask<RespireConnection> GetTrackedConnectionAsync(
+        Infrastructure.RespireConnectionMultiplexer multiplexer,
+        CancellationToken cancellationToken)
+    {
+        if (_core.Options.CommandTimeout is not { } timeout)
+        {
+            return await multiplexer.GetHealthyConnectionAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(timeout);
+        try
+        {
+            return await multiplexer.GetHealthyConnectionAsync(timeoutSource.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout);
+        }
     }
 
     private async ValueTask<RespireConnection> GetTrackedClusterConnectionAsync(

@@ -4,7 +4,10 @@ using Respire.Protocol;
 
 namespace Respire;
 
-/// <summary>StackExchange.Redis-style distributed lock helper commands.</summary>
+/// <summary>
+/// Distributed lock commands. Prefer <see cref="AcquireAsync(RespireKey, TimeSpan, CancellationToken)"/>
+/// for managed locks. Use the token-based methods only when ownership must cross process boundaries.
+/// </summary>
 public interface ILockCommands
 {
     /// <summary>
@@ -25,9 +28,16 @@ public interface ILockCommands
 
     /// <summary>
     /// Acquires a lock as <see cref="AcquireAsync(RespireKey, TimeSpan, CancellationToken)"/> does,
-    /// but retries every <paramref name="retryEvery"/> until <paramref name="wait"/> elapses.
-    /// Returns an unsuccessful attempt when the lock was still held at the end of that budget.
+    /// but retries every 50 milliseconds until <paramref name="wait"/> elapses. Returns an
+    /// unsuccessful attempt when the lock was still held at the end of that budget.
     /// </summary>
+    ValueTask<RespireLockAttempt> AcquireAsync(
+        RespireKey key,
+        TimeSpan expiry,
+        TimeSpan wait,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Polls at <paramref name="retryEvery"/> until <paramref name="wait"/> elapses.</summary>
     ValueTask<RespireLockAttempt> AcquireAsync(
         RespireKey key,
         TimeSpan expiry,
@@ -52,6 +62,13 @@ public interface ILockCommands
         RespireKey key,
         TimeSpan expiry,
         TimeSpan wait,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Polls at <paramref name="retryEvery"/> and throws when the wait budget elapses.</summary>
+    ValueTask<RespireLock> AcquireOrThrowAsync(
+        RespireKey key,
+        TimeSpan expiry,
+        TimeSpan wait,
         TimeSpan retryEvery,
         CancellationToken cancellationToken = default);
 
@@ -59,7 +76,7 @@ public interface ILockCommands
     /// Acquires a lock when it does not already exist. The token identifies the owner and is
     /// required for later release or extension. Redis: SET ... NX PX.
     /// </summary>
-    ValueTask<bool> TakeAsync(
+    ValueTask<bool> TryTakeAsync(
         RespireKey key,
         RespireValue token,
         TimeSpan expiry,
@@ -84,12 +101,27 @@ public interface ILockCommands
         TimeSpan expiry,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Returns the lock's current token bytes, or null when missing. Redis: GET.</summary>
-    ValueTask<byte[]?> QueryAsync(RespireKey key, CancellationToken cancellationToken = default);
+    /// <summary>Returns the lock's current owner token, or null when missing. Redis: GET.</summary>
+    ValueTask<byte[]?> GetOwnerTokenAsync(RespireKey key, CancellationToken cancellationToken = default);
+
+    /// <summary>Whether <paramref name="mutex"/> still owns its key according to Redis.</summary>
+    ValueTask<bool> IsHeldByAsync(RespireLock mutex, CancellationToken cancellationToken = default);
 }
 
-internal sealed class LockCommands(RespireClient client) : ILockCommands
+internal interface IManagedLockCommands
 {
+    ValueTask<bool> ExtendManagedAsync(
+        RespireKey key,
+        RespireValue token,
+        TimeSpan expiry,
+        Action? onOutcomeUncertain,
+        CancellationToken cancellationToken);
+}
+
+internal sealed class LockCommands(RespireClient client) : ILockCommands, IManagedLockCommands
+{
+    private static readonly TimeSpan DefaultRetryInterval = TimeSpan.FromMilliseconds(50);
+
     internal static readonly RespireScript ReleaseScript = RespireScript.Create("""
         if redis.call('GET', KEYS[1]) == ARGV[1] then
           return redis.call('DEL', KEYS[1])
@@ -109,12 +141,21 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands
         TimeSpan expiry,
         CancellationToken cancellationToken = default)
     {
+        var normalizedExpiry = TimeSpan.FromMilliseconds(ValidateExpiry(expiry));
         var token = RespireLock.NewToken();
-        var mutex = await TakeAsync(key, token, expiry, cancellationToken).ConfigureAwait(false)
-            ? new RespireLock(this, key, token, expiry)
+        var acquiredTimestamp = Stopwatch.GetTimestamp();
+        var mutex = await TryTakeAsync(key, token, normalizedExpiry, cancellationToken).ConfigureAwait(false)
+            ? new RespireLock(this, key, token, normalizedExpiry, acquiredTimestamp)
             : null;
         return new RespireLockAttempt(mutex);
     }
+
+    public ValueTask<RespireLockAttempt> AcquireAsync(
+        RespireKey key,
+        TimeSpan expiry,
+        TimeSpan wait,
+        CancellationToken cancellationToken = default)
+        => AcquireAsync(key, expiry, wait, DefaultRetryInterval, cancellationToken);
 
     public async ValueTask<RespireLockAttempt> AcquireAsync(
         RespireKey key,
@@ -161,6 +202,13 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands
     public async ValueTask<RespireLock> AcquireOrThrowAsync(
         RespireKey key,
         TimeSpan expiry,
+        TimeSpan wait,
+        CancellationToken cancellationToken = default)
+        => (await AcquireAsync(key, expiry, wait, DefaultRetryInterval, cancellationToken).ConfigureAwait(false)).Lock;
+
+    public async ValueTask<RespireLock> AcquireOrThrowAsync(
+        RespireKey key,
+        TimeSpan expiry,
         CancellationToken cancellationToken = default)
         => (await AcquireAsync(key, expiry, cancellationToken).ConfigureAwait(false)).Lock;
 
@@ -172,7 +220,7 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands
         CancellationToken cancellationToken = default)
         => (await AcquireAsync(key, expiry, wait, retryEvery, cancellationToken).ConfigureAwait(false)).Lock;
 
-    public ValueTask<bool> TakeAsync(
+    public ValueTask<bool> TryTakeAsync(
         RespireKey key,
         RespireValue token,
         TimeSpan expiry,
@@ -206,8 +254,49 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands
         return ExecuteBooleanScriptAsync(ExtendScript, key, [token, milliseconds], cancellationToken);
     }
 
-    public ValueTask<byte[]?> QueryAsync(RespireKey key, CancellationToken cancellationToken = default)
+    async ValueTask<bool> IManagedLockCommands.ExtendManagedAsync(
+        RespireKey key,
+        RespireValue token,
+        TimeSpan expiry,
+        Action? onOutcomeUncertain,
+        CancellationToken cancellationToken)
+    {
+        ValidateToken(token);
+        var milliseconds = ValidateExpiry(expiry);
+        await client.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
+        RespireClient.TrackedScriptExecution? execution = null;
+        try
+        {
+            execution = await client.StartTrackedScriptExecutionAsync(
+                    ExtendScript, [key], [token, milliseconds], cancellationToken,
+                    requireReliableCorrectionOrdering: true)
+                .ConfigureAwait(false);
+            using var result = await execution.Response.ConfigureAwait(false);
+            return result.AsInteger() >= 1;
+        }
+        catch (Exception ex) when (
+            ex is OperationCanceledException or RespireTimeoutException or RespireConnectionException)
+        {
+            onOutcomeUncertain?.Invoke();
+            if (execution?.ConnectionIdentity.ServerClientId > 0)
+            {
+                await client.FenceCorrectionConnectionAsync(execution.ConnectionIdentity).ConfigureAwait(false);
+            }
+
+            throw;
+        }
+    }
+
+    public ValueTask<byte[]?> GetOwnerTokenAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.BytesOrNullAsync("GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken);
+
+    public async ValueTask<bool> IsHeldByAsync(
+        RespireLock mutex,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(mutex);
+        return await mutex.IsHeldByOriginAsync(cancellationToken).ConfigureAwait(false);
+    }
 
     private async ValueTask<bool> ExecuteBooleanScriptAsync(
         RespireScript script,
