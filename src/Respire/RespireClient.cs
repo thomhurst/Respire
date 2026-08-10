@@ -2258,9 +2258,24 @@ public sealed partial class RespireClient : IRespireClient
 
     internal ValueTask<string?> StringOrNullAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
-        => ConvertAsync(
-            operation, command, ct,
-            static (RespireClient _, in RespValue value) => ResponseReader.StringOrNull(in value));
+    {
+        var core = _core;
+        ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (core.Options.CommandTimeout is null
+            && !RespireTelemetry.IsEnabled
+            && core.Cluster is null
+            && core.Multiplexer.IsInitialized)
+        {
+            // Specialized bulk-string source: small buffered replies decode straight from the
+            // receive buffer instead of round-tripping through a pooled RespValue payload.
+            return core.Multiplexer.GetConnection().SendStringAsync(in command, ct, operation);
+        }
+
+        return PooledResponseSource<RespireClient, string?>.Create(
+            SendAsync(operation, command, ct), this,
+            static (RespireClient _, in RespValue value) => ResponseReader.StringOrNull(in value),
+            transferOwnership: false);
+    }
 
     internal ValueTask<byte[]?> BytesOrNullAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand

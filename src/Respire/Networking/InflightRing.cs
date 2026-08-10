@@ -52,6 +52,22 @@ internal sealed class InflightRing
         return true;
     }
 
+    /// <summary>Consumer only. Returns the head source without consuming it, so the receive
+    /// loop can choose a specialized completion path before dequeuing.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool TryPeek(out PendingResponse source)
+    {
+        var head = _head;
+        if (Volatile.Read(ref _tail) == head)
+        {
+            source = null!;
+            return false;
+        }
+
+        source = _slots[head & _mask]!;
+        return true;
+    }
+
     /// <summary>Consumer only (receive loop, or the fail-all drain after the loop exits).</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryDequeue(out PendingResponse source)
