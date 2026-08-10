@@ -124,6 +124,34 @@ public class GeoCommandTests
     }
 
     [Test]
+    public async Task GeoSearch_PreservesBinaryMemberBytesInEveryResponseShape()
+    {
+        byte[] compactResponse =
+        [
+            .. "*1\r\n$2\r\n"u8,
+            0xff, 0x00,
+            .. "\r\n"u8,
+        ];
+        byte[] detailedResponse =
+        [
+            .. "*1\r\n*2\r\n$2\r\n"u8,
+            0xff, 0x00,
+            .. "\r\n$3\r\n1.5\r\n"u8,
+        ];
+        await using var server = new FakeRespServer(compactResponse, detailedResponse);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var compact = await client.Geo.SearchAsync(
+            "places", GeoSearchOrigin.FromMember("origin"), GeoSearchShape.Circle(1));
+        var detailed = await client.Geo.SearchAsync(
+            "places", GeoSearchOrigin.FromMember("origin"), GeoSearchShape.Circle(1),
+            new GeoSearchOptions { IncludeDistance = true });
+
+        await Assert.That(compact[0].MemberBytes.Span.SequenceEqual(new byte[] { 0xff, 0x00 })).IsTrue();
+        await Assert.That(detailed[0].MemberBytes.Span.SequenceEqual(new byte[] { 0xff, 0x00 })).IsTrue();
+    }
+
+    [Test]
     public async Task GeoCommands_ValidateConflictingOptions()
     {
         await using var server = new FakeRespServer();
