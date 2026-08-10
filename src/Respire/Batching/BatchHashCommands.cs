@@ -1,5 +1,7 @@
+using System.Diagnostics.CodeAnalysis;
 using Respire.Commands;
 using Respire.Internal;
+using Respire.Serialization;
 
 namespace Respire;
 
@@ -20,6 +22,8 @@ public interface IBatchHashCommands
     RespirePending<string?> GetString(RespireKey key, string field);
 
     /// <summary>Gets a field deserialized as <typeparamref name="T"/>. Redis: HGET.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     RespirePending<T?> Get<T>(RespireKey key, string field);
 
     /// <summary>Gets a field's raw bytes, or null when missing. Redis: HGET.</summary>
@@ -32,6 +36,8 @@ public interface IBatchHashCommands
     RespirePending<Dictionary<string, string>> GetAll(RespireKey key);
 
     /// <summary>The whole hash with values deserialized as <typeparamref name="T"/>. Redis: HGETALL.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     RespirePending<Dictionary<string, T>> GetAll<T>(RespireKey key);
 
     /// <summary>Deletes fields; returns how many existed. Redis: HDEL.</summary>
@@ -101,6 +107,8 @@ internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
             "HGET", new Cmd2(Verbs.HGet, sink.Client.Key(in key), field),
             static (c, v) => ResponseReader.StringOrNull(in v));
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public RespirePending<T?> Get<T>(RespireKey key, string field)
         => sink.Add<Cmd2, T?>(
             "HGET", new Cmd2(Verbs.HGet, sink.Client.Key(in key), field),
@@ -121,6 +129,8 @@ internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
             "HGETALL", new Cmd1(Verbs.HGetAll, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.StringMap(in v));
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public RespirePending<Dictionary<string, T>> GetAll<T>(RespireKey key)
         => sink.Add<Cmd1, Dictionary<string, T>>(
             "HGETALL", new Cmd1(Verbs.HGetAll, sink.Client.Key(in key)),

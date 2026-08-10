@@ -238,6 +238,41 @@ public sealed class CartService(
 
 Registration is lazy, so Redis availability never blocks application startup.
 
+### NativeAOT and trimming
+
+Typed values use reflection-based System.Text.Json metadata by default. For a trimmed or NativeAOT
+application, generate metadata for every stored type and pass that context to Respire:
+
+```csharp
+using System.Text.Json.Serialization;
+using Respire;
+using Respire.Serialization;
+
+var options = new RespireOptions
+{
+    Endpoints = { new RespireEndpoint("localhost") },
+    Serializer = new SystemTextJsonSerializer(AppJsonContext.Default),
+};
+
+await using var redis = await RespireClient.ConnectAsync(options);
+
+// The generic APIs are conservatively annotated because IRespireSerializer can be
+// reflection-based. This configured context makes these two calls AOT-safe.
+#pragma warning disable IL2026, IL3050
+await redis.SetAsync("user:1", new User("Ada", 36));
+User? user = await redis.GetAsync<User>("user:1");
+#pragma warning restore IL2026, IL3050
+
+[JsonSerializable(typeof(User))]
+internal partial class AppJsonContext : JsonSerializerContext
+{
+}
+```
+
+Add a `[JsonSerializable]` entry for each non-primitive type. Strings, byte arrays, Boolean values,
+and numeric values use Respire's built-in codecs and do not need generated JSON metadata. Custom
+serializers can also override the `Type`-based `IRespireSerializer` members for polymorphic adapters.
+
 ### IDistributedCache and HybridCache
 
 `Respire.Extensions.Caching` provides `IDistributedCache` and `IBufferDistributedCache`.

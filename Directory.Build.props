@@ -23,6 +23,7 @@
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(IsRespirePackageProject)' == 'true'">
+    <IsAotCompatible>true</IsAotCompatible>
     <Authors>Tom Hurst</Authors>
     <Company>Respire</Company>
     <Product>Respire</Product>

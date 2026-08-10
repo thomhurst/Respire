@@ -1,4 +1,5 @@
 using System.Text;
+using System.Diagnostics.CodeAnalysis;
 using Respire.Serialization;
 
 namespace Respire;
@@ -32,6 +33,8 @@ public readonly struct RespireMessage
     public string Text => Internal.Utf8String.GetString(Payload);
 
     /// <summary>The typed payload; strings, bytes, Boolean values, and numbers bypass the serializer.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public T? As<T>()
     {
         if (typeof(T) == typeof(string))

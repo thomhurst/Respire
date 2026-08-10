@@ -1,6 +1,8 @@
+using System.Diagnostics.CodeAnalysis;
 using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
+using Respire.Serialization;
 
 namespace Respire;
 
@@ -87,9 +89,13 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
     public RespirePending<string?> GetString(RespireKey key) => Strings.GetString(key);
 
     /// <inheritdoc cref="IBatchStringCommands.Get{T}"/>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public RespirePending<T?> Get<T>(RespireKey key) => Strings.Get<T>(key);
 
     /// <inheritdoc cref="IBatchStringCommands.TryGet{T}"/>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public RespirePending<RespireGet<T>> TryGet<T>(RespireKey key) => Strings.TryGet<T>(key);
 
     /// <inheritdoc cref="IBatchStringCommands.GetBytes"/>
@@ -101,6 +107,8 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
         => Strings.Set(key, value, expiry, when);
 
     /// <inheritdoc cref="IBatchStringCommands.Set{T}(RespireKey, T, RespireExpiry, SetWhen)"/>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public RespirePending<bool> Set<T>(
         RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
         => Strings.Set(key, value, expiry, when);

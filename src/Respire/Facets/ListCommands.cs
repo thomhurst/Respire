@@ -1,6 +1,8 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
+using Respire.Serialization;
 
 namespace Respire;
 
@@ -51,9 +53,13 @@ public interface IListCommands
     /// empty. Always call with an explicit type argument — that is what separates it from the
     /// <c>string?</c> overload. Redis: LPOP / BLPOP.
     /// </summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<T?> LeftPopAsync<T>(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default);
 
     /// <summary>Pops from the tail and deserializes as <typeparamref name="T"/>. Redis: RPOP / BRPOP.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<T?> RightPopAsync<T>(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -75,6 +81,8 @@ public interface IListCommands
     ValueTask<string[]> RangeAsync(RespireKey key, long start = 0, long stop = -1, CancellationToken cancellationToken = default);
 
     /// <summary>Deserialized elements between two indexes inclusive. Redis: LRANGE.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<T[]> RangeAsync<T>(
         RespireKey key, long start = 0, long stop = -1, CancellationToken cancellationToken = default);
 
@@ -139,12 +147,18 @@ internal sealed class ListCommands(RespireClient client) : IListCommands
         return popped;
     }
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?> LeftPopAsync<T>(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
         => PopAsync<T>(key, waitFor, Verbs.LPop, Verbs.BLPop, "LPOP", "BLPOP", cancellationToken);
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?> RightPopAsync<T>(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
         => PopAsync<T>(key, waitFor, Verbs.RPop, Verbs.BRPop, "RPOP", "BRPOP", cancellationToken);
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     private ValueTask<T?> PopAsync<T>(
         RespireKey key, TimeSpan? waitFor, Verb plain, Verb blocking, string plainName, string blockingName,
         CancellationToken cancellationToken)
@@ -160,6 +174,8 @@ internal sealed class ListCommands(RespireClient client) : IListCommands
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     private async ValueTask<T?> PopBlockingAsync<T>(
         RespireKey key, TimeSpan wait, Verb blocking, string blockingName, CancellationToken cancellationToken)
     {
@@ -214,6 +230,8 @@ internal sealed class ListCommands(RespireClient client) : IListCommands
     public ValueTask<string[]> RangeAsync(RespireKey key, long start = 0, long stop = -1, CancellationToken cancellationToken = default)
         => client.StringArrayAsync("LRANGE", new Cmd3(Verbs.LRange, client.Key(in key), start, stop), cancellationToken);
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T[]> RangeAsync<T>(
         RespireKey key, long start = 0, long stop = -1, CancellationToken cancellationToken = default)
         => client.DeserializeArrayAsync<T, Cmd3>(
