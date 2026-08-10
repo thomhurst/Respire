@@ -775,6 +775,22 @@ public class UndisposedPooledResultAnalyzerTests
         """);
 
     [Test]
+    public async Task WaitAsyncResultNeverDisposed_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System.Threading;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, CancellationToken cancellationToken)
+            {
+                var {|RESP001:result|} = await client.ExecuteAsync("PING").AsTask().WaitAsync(cancellationToken);
+            }
+        }
+        """);
+
+    [Test]
     public async Task DiscardedNestedAssignmentWithoutDispose_IsFlagged() => await Verify.VerifyAsync(
         """
         using System.Threading.Tasks;

@@ -563,6 +563,24 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         while (true)
         {
             expression = GetOutermostAwaitableExpression(context, expression);
+
+            if (expression.Parent is InitializerExpressionSyntax initializer
+                && initializer.Expressions.Any(candidate => ScopeWalker.IsSame(candidate, expression))
+                && initializer.Parent is ExpressionSyntax collection)
+            {
+                expression = collection;
+                continue;
+            }
+
+            if (expression.Parent is ExpressionElementSyntax
+                {
+                    Parent: CollectionExpressionSyntax collectionExpression,
+                })
+            {
+                expression = collectionExpression;
+                continue;
+            }
+
             if (expression.Parent is not ArgumentSyntax { Parent.Parent: InvocationExpressionSyntax combinator }
                 || context.SemanticModel.GetSymbolInfo(combinator, context.CancellationToken).Symbol
                     is not IMethodSymbol { Name: nameof(Task.WhenAll) } method

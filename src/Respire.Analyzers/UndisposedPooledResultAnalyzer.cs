@@ -154,12 +154,11 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
     {
         var expression = ScopeWalker.Unwrap(awaitedExpression);
 
-        // await client.ExecuteAsync(...).AsTask().ConfigureAwait(false)
+        // await client.ExecuteAsync(...).AsTask().WaitAsync(token).ConfigureAwait(false)
         while (expression is InvocationExpressionSyntax adapter
-               && context.SemanticModel.GetSymbolInfo(adapter, context.CancellationToken).Symbol is IMethodSymbol
-               {
-                   Name: nameof(Task.ConfigureAwait) or "AsTask",
-               }
+               && context.SemanticModel.GetSymbolInfo(adapter, context.CancellationToken).Symbol
+                   is IMethodSymbol adapterMethod
+               && IsAwaitAdapter(adapterMethod)
                && ScopeWalker.GetReceiver(adapter.Expression) is { } adaptedReceiver)
         {
             expression = ScopeWalker.Unwrap(adaptedReceiver);
@@ -185,6 +184,15 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             _ => false,
         };
     }
+
+    private static bool IsAwaitAdapter(IMethodSymbol method)
+        => method.Name switch
+        {
+            nameof(Task.ConfigureAwait) or "AsTask" => true,
+            "WaitAsync" => method.ContainingType.Name == nameof(Task)
+                           && method.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks",
+            _ => false,
+        };
 
     /// <summary>
     /// True when disposal or ownership transfer covers every path from acquisition to scope exit.

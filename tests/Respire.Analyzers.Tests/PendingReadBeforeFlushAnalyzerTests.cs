@@ -801,6 +801,26 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    public async Task StoredCollectionWhenAllFlushBeforeRead_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                var flushes = new[] { batch.SendAsync().AsTask() };
+                await Task.WhenAll(flushes);
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
     public async Task WaitAsyncFlushBeforeRead_IsNotFlagged() => await Verify.VerifyAsync(
         """
         using System;
