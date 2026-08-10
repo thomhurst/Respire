@@ -48,7 +48,7 @@ await redis.Strings.SetManyAsync(
     ("feature:b", "off"));
 
 // One shared expiry (and optional NX/XX) for every pair — Redis MSETEX.
-await redis.Strings.SetManyAsync(
+await redis.Strings.SetManyExpireAsync(
     TimeSpan.FromMinutes(5),
     SetWhen.NotExists,
     ("feature:a", "on"),

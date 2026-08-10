@@ -83,6 +83,46 @@ public class SetExpiryWireTests
     }
 
     [Test]
+    public async Task GetAndSet_WithOptionsAndGenericValue_ReturnsPreviousValues()
+    {
+        await using var server = new FakeRespServer(
+            "$3\r\nold\r\n"u8.ToArray(),
+            "$2\r\n42\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var previous = await client.Strings.GetAndSetAsync(
+            "key", "new", TimeSpan.FromSeconds(5), SetWhen.Exists);
+        var typedPrevious = await client.Strings.GetAndSetAsync(
+            "number", 43, RespireExpiry.Keep, SetWhen.NotExists);
+
+        await Assert.That(previous).IsEqualTo("old");
+        await Assert.That(typedPrevious).IsEqualTo(42);
+        await Assert.That(server.ReceivedCommands[0]).IsEqualTo("SET key new PX 5000 XX GET");
+        await Assert.That(server.ReceivedCommands[1]).IsEqualTo("SET number 43 NX KEEPTTL GET");
+    }
+
+    [Test]
+    public async Task BatchGetAndSet_WithOptionsAndGenericValue_MirrorsClient()
+    {
+        await using var server = new FakeRespServer(
+            "$3\r\nold\r\n"u8.ToArray(),
+            "$2\r\n42\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var batch = client.CreateBatch();
+        var previous = batch.Strings.GetAndSet(
+            "key", "new", TimeSpan.FromSeconds(5), SetWhen.Exists);
+        var typedPrevious = batch.Strings.GetAndSet(
+            "number", 43, RespireExpiry.Keep, SetWhen.NotExists);
+        await batch.ExecuteAsync();
+
+        await Assert.That(previous.Result).IsEqualTo("old");
+        await Assert.That(typedPrevious.Result).IsEqualTo(42);
+        await Assert.That(server.ReceivedCommands[0]).IsEqualTo("SET key new PX 5000 XX GET");
+        await Assert.That(server.ReceivedCommands[1]).IsEqualTo("SET number 43 NX KEEPTTL GET");
+    }
+
+    [Test]
     public async Task Batch_CarriesTheExpiryUnion()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.OkReply);
@@ -133,10 +173,10 @@ public class SetExpiryWireTests
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        await client.Strings.SetManyAsync(TimeSpan.FromSeconds(3), pairs: ("a", "1"));
-        await client.Strings.SetManyAsync(RespireExpiry.At(Instant), SetWhen.Exists, ("b", "2"));
-        await client.Strings.SetManyAsync(RespireExpiry.Keep, SetWhen.NotExists, ("c", "3"));
-        await client.Strings.SetManyAsync(RespireExpiry.None, SetWhen.NotExists, ("d", "4"));
+        await client.Strings.SetManyExpireAsync(TimeSpan.FromSeconds(3), pairs: ("a", "1"));
+        await client.Strings.SetManyExpireAsync(RespireExpiry.At(Instant), SetWhen.Exists, ("b", "2"));
+        await client.Strings.SetManyExpireAsync(RespireExpiry.Keep, SetWhen.NotExists, ("c", "3"));
+        await client.Strings.SetManyExpireAsync(RespireExpiry.None, SetWhen.NotExists, ("d", "4"));
 
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("MSETEX 1 a 1 PX 3000");
         await Assert.That(server.ReceivedCommands[1]).IsEqualTo("MSETEX 1 b 2 XX PXAT 1700000000123");

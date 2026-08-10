@@ -44,6 +44,54 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    public async Task CollectionScanCommands_RoundTripAgainstRedis()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        var suffix = Guid.NewGuid().ToString("N");
+        var hashKey = $"scan:hash:{suffix}";
+        var setKey = $"scan:set:{suffix}";
+        var sortedSetKey = $"scan:zset:{suffix}";
+
+        await client.Hashes.SetAsync(
+            hashKey, ("profile:name", "Ada"), ("profile:role", "admin"), ("other", "ignored"));
+        await client.Sets.AddAsync(setKey, "alpha", "beta", "alpine");
+        await client.SortedSets.AddAsync(
+            sortedSetKey, new SortedSetEntry("ada", 1.5), new SortedSetEntry("grace", 2.5));
+
+        var hashEntries = new List<KeyValuePair<string, string>>();
+        await foreach (var entry in client.Hashes.ScanAsync(hashKey, "profile:*", countHint: 1))
+        {
+            hashEntries.Add(entry);
+        }
+
+        var setMembers = new List<string>();
+        await foreach (var member in client.Sets.ScanAsync(setKey, "a*", countHint: 1))
+        {
+            setMembers.Add(member);
+        }
+
+        var sortedEntries = new List<SortedSetEntry>();
+        await foreach (var entry in client.SortedSets.ScanAsync(sortedSetKey, countHint: 1))
+        {
+            sortedEntries.Add(entry);
+        }
+
+        hashEntries.Should().BeEquivalentTo(new[]
+        {
+            new KeyValuePair<string, string>("profile:name", "Ada"),
+            new KeyValuePair<string, string>("profile:role", "admin"),
+        });
+        setMembers.Should().BeEquivalentTo("alpha", "alpine");
+        sortedEntries.Should().BeEquivalentTo(new[]
+        {
+            new SortedSetEntry("ada", 1.5),
+            new SortedSetEntry("grace", 2.5),
+        });
+
+        await client.DeleteAsync(hashKey, setKey, sortedSetKey);
+    }
+
+    [Test]
     public async Task GeoCommands_RoundTripAgainstRedis()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
