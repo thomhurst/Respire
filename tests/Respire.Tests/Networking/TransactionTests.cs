@@ -110,6 +110,27 @@ public class TransactionTests
     }
 
     [Test]
+    public async Task RejectedCommand_DoesNotCorruptFollowingTransaction()
+    {
+        await using var server = new FakeRespServer(
+            FakeRespServer.OkReply, QueuedReply, "*1\r\n+OK\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server.Port);
+
+        var transaction = client.CreateTransaction();
+
+        await Assert.That(() => transaction.SetAsync("invalid", RespireValue.Null))
+            .Throws<ArgumentException>();
+        var pending = transaction.SetAsync("valid", "value");
+        var committed = await transaction.CommitAsync();
+
+        await Assert.That(transaction.Count).IsEqualTo(1);
+        await Assert.That(committed).IsTrue();
+        await Assert.That(pending.Result).IsTrue();
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(
+            ["MULTI", "SET valid value", "EXEC"]);
+    }
+
+    [Test]
     public async Task ConcurrentCommands_DoNotInterleaveIntoTransaction()
     {
         // Every command gets +OK; the point of the assertion is ordering on the wire: the

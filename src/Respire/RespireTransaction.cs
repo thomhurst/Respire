@@ -370,13 +370,27 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
         where TCommand : struct, IRespCommand
     {
         ThrowIfCompleted();
-        if (_client.Core.Cluster is not null && command.TryGetClusterSlot(out var slot))
+        var bufferMark = _buffer.Count;
+        var clusterSlot = _clusterSlot;
+        var hasClusterSlot = _hasClusterSlot;
+        try
         {
-            ValidateClusterSlot(slot);
+            if (_client.Core.Cluster is not null && command.TryGetClusterSlot(out var slot))
+            {
+                ValidateClusterSlot(slot);
+            }
+
+            var writer = new RespWriter(_buffer);
+            command.Write(ref writer);
+        }
+        catch
+        {
+            _buffer.TruncateTo(bufferMark);
+            _clusterSlot = clusterSlot;
+            _hasClusterSlot = hasClusterSlot;
+            throw;
         }
 
-        var writer = new RespWriter(_buffer);
-        command.Write(ref writer);
         var pending = new RespirePending<T>();
         _ops.Add(new TxOp<T>(operation, pending, convert));
         return pending;
