@@ -197,6 +197,7 @@ public class MultiItemCancellationOverloadTests
         _ = client.SubscribePatternAsync(channels, token);
         _ = client.SubscribeShardedAsync(channels, token);
         _ = client.CreateTransactionAsync(keys, token);
+        _ = client.CreateTransactionAsync(keys.AsSpan(), token);
         _ = client.Geo.HashAsync("g", values, token);
         _ = client.Geo.PositionAsync("g", values, token);
 

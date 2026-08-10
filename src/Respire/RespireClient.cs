@@ -760,6 +760,14 @@ public sealed partial class RespireClient : IRespireClient
     /// For read-modify-write loops, prefer a Lua script (<see cref="Scripts"/>) — one round
     /// trip, no retry loop.
     /// </summary>
+    public ValueTask<RespireTransaction> CreateTransactionAsync(
+        RespireKey[] watchKeys, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(watchKeys);
+        return CreateTransactionAsync(watchKeys.AsSpan(), cancellationToken);
+    }
+
+    /// <inheritdoc cref="CreateTransactionAsync(ReadOnlySpan{RespireKey}, CancellationToken)"/>
     public ValueTask<RespireTransaction> CreateTransactionAsync(params ReadOnlySpan<RespireKey> watchKeys)
         => CreateTransactionAsync(watchKeys, CancellationToken.None);
 

@@ -83,6 +83,8 @@ public interface IRespireClient : IAsyncDisposable
     // Batches and transactions.
     RespireBatch CreateBatch();
     RespireTransaction CreateTransaction();
+    ValueTask<RespireTransaction> CreateTransactionAsync(
+        RespireKey[] watchKeys, CancellationToken cancellationToken = default);
     ValueTask<RespireTransaction> CreateTransactionAsync(params ReadOnlySpan<RespireKey> watchKeys);
     ValueTask<RespireTransaction> CreateTransactionAsync(
         ReadOnlySpan<RespireKey> watchKeys, CancellationToken cancellationToken);

@@ -1444,6 +1444,9 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public RespireBatch CreateBatch() => inner.CreateBatch();
         public RespireTransaction CreateTransaction() => inner.CreateTransaction();
 
+        public ValueTask<RespireTransaction> CreateTransactionAsync(
+            RespireKey[] watchKeys, CancellationToken cancellationToken = default)
+            => inner.CreateTransactionAsync(watchKeys, cancellationToken);
         public ValueTask<RespireTransaction> CreateTransactionAsync(params ReadOnlySpan<RespireKey> watchKeys)
             => inner.CreateTransactionAsync(watchKeys);
         public ValueTask<RespireTransaction> CreateTransactionAsync(
