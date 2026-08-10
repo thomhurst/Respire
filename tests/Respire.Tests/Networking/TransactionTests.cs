@@ -50,6 +50,7 @@ public class TransactionTests
         var pending = transaction.GetStringAsync("k");
 
         await Assert.That(pending.Status).IsEqualTo(RespirePendingStatus.Pending);
+        await Assert.That(pending.IsCompleted).IsFalse();
         await Assert.That(() => _ = pending.Result).ThrowsExactly<RespirePendingNotReadyException>();
         await transaction.DisposeAsync();
     }
@@ -68,6 +69,7 @@ public class TransactionTests
 
         await Assert.That(committed).IsFalse();
         await Assert.That(pending.Status).IsEqualTo(RespirePendingStatus.Aborted);
+        await Assert.That(pending.IsCompleted).IsTrue();
         await Assert.That(pending.HasResult).IsFalse();
         await Assert.That(pending.Error).IsNull();
         await Assert.That(pending.TryGetResult(out _)).IsFalse();

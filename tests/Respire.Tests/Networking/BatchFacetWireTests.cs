@@ -113,6 +113,7 @@ public class BatchFacetWireTests
         var pending = batch.Hashes.GetStringAsync("user", "name");
 
         await Assert.That(pending.Status).IsEqualTo(RespirePendingStatus.Pending);
+        await Assert.That(pending.IsCompleted).IsFalse();
         await Assert.That(pending.HasResult).IsFalse();
         await Assert.That(pending.Error).IsNull();
         await Assert.That(pending.TryGetResult(out _)).IsFalse();
@@ -135,6 +136,8 @@ public class BatchFacetWireTests
         await Assert.That(batch.IsSent).IsFalse();
         await Assert.That(first.Status).IsEqualTo(RespirePendingStatus.Faulted);
         await Assert.That(second.Status).IsEqualTo(RespirePendingStatus.Faulted);
+        await Assert.That(first.IsCompleted).IsTrue();
+        await Assert.That(second.IsCompleted).IsTrue();
         await Assert.That(first.HasResult).IsFalse();
         await Assert.That(second.HasResult).IsFalse();
         await Assert.That(first.Error).IsTypeOf<RespireBatchDiscardedException>();
@@ -163,6 +166,7 @@ public class BatchFacetWireTests
         await Assert.That(batch.IsSent).IsTrue();
         await Assert.That(pending.Result).IsEqualTo("value");
         await Assert.That(pending.Status).IsEqualTo(RespirePendingStatus.Succeeded);
+        await Assert.That(pending.IsCompleted).IsTrue();
         await Assert.That(pending.HasResult).IsTrue();
         await Assert.That(pending.Error).IsNull();
         await Assert.That(pending.TryGetResult(out var value)).IsTrue();

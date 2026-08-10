@@ -31,6 +31,9 @@ public sealed class RespirePending<T>
     /// <summary>The pending result's current lifecycle state.</summary>
     public RespirePendingStatus Status => (RespirePendingStatus)Volatile.Read(ref _state);
 
+    /// <summary>Whether the command has reached a terminal state.</summary>
+    public bool IsCompleted => Status != RespirePendingStatus.Pending;
+
     /// <summary>Whether the command completed successfully and its result is available.</summary>
     public bool HasResult => Status == RespirePendingStatus.Succeeded;
 
