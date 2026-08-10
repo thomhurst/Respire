@@ -210,6 +210,12 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             switch (reference.Parent)
             {
                 case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, reference):
+                    if (member.Parent is not InvocationExpressionSyntax
+                        && context.SemanticModel.GetSymbolInfo(member, context.CancellationToken).Symbol is IMethodSymbol)
+                    {
+                        return true;
+                    }
+
                     if (member.Parent is InvocationExpressionSyntax invocation
                         && context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol
                             is IMethodSymbol { ReducedFrom: not null })

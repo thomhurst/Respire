@@ -104,8 +104,12 @@ internal static class ScopeWalker
         CancellationToken cancellationToken)
     {
         var graph = CreateControlFlowGraph(semanticModel, scope, cancellationToken);
-        if (graph is null
-            || FindBlock(graph, before) is not { } beforeBlock
+        if (graph is null)
+        {
+            return IsUnconditionalTopLevelSequence(scope, before, after, requireExitCoverage: false);
+        }
+
+        if (FindBlock(graph, before) is not { } beforeBlock
             || FindBlock(graph, after) is not { } afterBlock)
         {
             return false;
@@ -128,8 +132,12 @@ internal static class ScopeWalker
         CancellationToken cancellationToken)
     {
         var graph = CreateControlFlowGraph(semanticModel, scope, cancellationToken);
-        if (graph is null
-            || FindBlock(graph, before) is not { } beforeBlock
+        if (graph is null)
+        {
+            return IsUnconditionalTopLevelSequence(scope, before, after, requireExitCoverage: true);
+        }
+
+        if (FindBlock(graph, before) is not { } beforeBlock
             || FindBlock(graph, after) is not { } afterBlock)
         {
             return false;
@@ -141,6 +149,33 @@ internal static class ScopeWalker
         }
 
         return ComputeDominators(graph, reverse: true)[beforeBlock.Ordinal].Contains(afterBlock.Ordinal);
+    }
+
+    private static bool IsUnconditionalTopLevelSequence(
+        SyntaxNode scope, SyntaxNode before, SyntaxNode after, bool requireExitCoverage)
+    {
+        if (scope is not CompilationUnitSyntax
+            || before.FirstAncestorOrSelf<GlobalStatementSyntax>() is not { } beforeGlobal
+            || after.FirstAncestorOrSelf<GlobalStatementSyntax>() is not { } afterGlobal
+            || before.FirstAncestorOrSelf<StatementSyntax>() is not { } beforeStatement
+            || after.FirstAncestorOrSelf<StatementSyntax>() is not { } afterStatement
+            || !IsSame(beforeStatement, beforeGlobal.Statement)
+            || !IsSame(afterStatement, afterGlobal.Statement))
+        {
+            return false;
+        }
+
+        if (beforeGlobal.SpanStart >= afterGlobal.SpanStart)
+        {
+            return false;
+        }
+
+        return !requireExitCoverage
+               || !((CompilationUnitSyntax)scope).Members.OfType<GlobalStatementSyntax>()
+                   .Where(statement => statement.SpanStart > beforeGlobal.SpanStart
+                                       && statement.SpanStart < afterGlobal.SpanStart)
+                   .Any(statement => statement.DescendantNodesAndSelf().Any(static node =>
+                       node is ReturnStatementSyntax or ThrowStatementSyntax));
     }
 
     private static ControlFlowGraph? CreateControlFlowGraph(

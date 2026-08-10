@@ -350,6 +350,39 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    public async Task BatchFlushedByMethodGroup_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                Func<ValueTask> flush = batch.SendAsync;
+                await flush();
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    public async Task TopLevelSendThenRead_IsNotFlagged() => await Verify.VerifyTopLevelAsync(
+        """
+        using System;
+        using Respire;
+
+        var client = new RespireClient();
+        var batch = client.CreateBatch();
+        var pending = batch.GetStringAsync("key");
+        await batch.SendAsync();
+        Console.WriteLine(pending.Result);
+        """);
+
+    [Test]
     public async Task PendingReturnedFromMethod_IsNotFlagged() => await Verify.VerifyAsync(
         """
         using System.Threading.Tasks;

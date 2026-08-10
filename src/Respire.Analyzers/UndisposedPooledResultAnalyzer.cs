@@ -160,6 +160,12 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             {
                 // result.AsString(), result.Type, result.Dispose()
                 case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, reference):
+                    if (member.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
+                        && member.Parent is not InvocationExpressionSyntax)
+                    {
+                        return true;
+                    }
+
                     if (member.Parent is InvocationExpressionSyntax extensionInvocation
                         && context.SemanticModel.GetSymbolInfo(extensionInvocation, context.CancellationToken).Symbol
                             is IMethodSymbol { ReducedFrom: not null })

@@ -178,6 +178,34 @@ public class UndisposedPooledResultAnalyzerTests
         """);
 
     [Test]
+    public async Task DisposeMethodGroup_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var result = await client.ExecuteAsync("PING");
+                Action dispose = result.Dispose;
+                dispose();
+            }
+        }
+        """);
+
+    [Test]
+    public async Task TopLevelDispose_IsNotFlagged() => await Verify.VerifyTopLevelAsync(
+        """
+        using Respire;
+
+        var client = new RespireClient();
+        var result = await client.ExecuteAsync("PING");
+        result.Dispose();
+        """);
+
+    [Test]
     public async Task EarlyReturnBeforeDispose_IsFlagged() => await Verify.VerifyAsync(
         """
         using System;

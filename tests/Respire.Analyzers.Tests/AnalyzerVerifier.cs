@@ -13,12 +13,19 @@ internal static class AnalyzerVerifier<TAnalyzer>
     where TAnalyzer : DiagnosticAnalyzer, new()
 {
     public static Task VerifyAsync(string source)
+        => VerifyAsync(source, Microsoft.CodeAnalysis.OutputKind.DynamicallyLinkedLibrary);
+
+    public static Task VerifyTopLevelAsync(string source)
+        => VerifyAsync(source, Microsoft.CodeAnalysis.OutputKind.ConsoleApplication);
+
+    private static Task VerifyAsync(string source, Microsoft.CodeAnalysis.OutputKind outputKind)
     {
         var test = new CSharpAnalyzerTest<TAnalyzer, DefaultVerifier>
         {
             ReferenceAssemblies = TestReferences.Assemblies,
         };
 
+        test.TestState.OutputKind = outputKind;
         test.TestState.Sources.Add(source);
         test.TestState.Sources.Add(RespireApiStub.Source);
 
