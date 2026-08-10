@@ -48,6 +48,25 @@ public class RespireOptionsTests
     }
 
     [Test]
+    public async Task StackExchangeConnectionString_AllowsUriMarkerInsideOptionValue()
+    {
+        var options = RespireOptions.Parse("localhost,password=p://secret");
+
+        await Assert.That(options.Endpoints).IsEquivalentTo([new RespireEndpoint("localhost")]);
+        await Assert.That(options.Password).IsEqualTo("p://secret");
+    }
+
+    [Test]
+    public async Task StackExchangeConnectionString_AsyncTimeoutTakesPrecedenceRegardlessOfOrder()
+    {
+        var asyncFirst = RespireOptions.Parse("localhost,asyncTimeout=1500,syncTimeout=2500");
+        var asyncLast = RespireOptions.Parse("localhost,syncTimeout=2500,asyncTimeout=1500");
+
+        await Assert.That(asyncFirst.CommandTimeout).IsEqualTo(TimeSpan.FromMilliseconds(1500));
+        await Assert.That(asyncLast.CommandTimeout).IsEqualTo(TimeSpan.FromMilliseconds(1500));
+    }
+
+    [Test]
     public async Task Endpoint_ParsesBareAndBracketedIpv6()
     {
         await Assert.That(RespireEndpoint.Parse("::1")).IsEqualTo(new RespireEndpoint("::1"));

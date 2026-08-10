@@ -252,13 +252,21 @@ public sealed record RespireOptions
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
-        if (!connectionString.Contains("://", StringComparison.Ordinal))
+        var uriMarker = connectionString.IndexOf("://", StringComparison.Ordinal);
+        var optionMarker = connectionString.IndexOf(',');
+        var equalsMarker = connectionString.IndexOf('=');
+        if (optionMarker < 0 || (equalsMarker >= 0 && equalsMarker < optionMarker))
         {
-            if (connectionString.Contains(',') || connectionString.Contains('='))
-            {
-                return ParseStackExchangeConnectionString(connectionString);
-            }
+            optionMarker = equalsMarker;
+        }
 
+        if (optionMarker >= 0 && (uriMarker < 0 || optionMarker < uriMarker))
+        {
+            return ParseStackExchangeConnectionString(connectionString);
+        }
+
+        if (uriMarker < 0)
+        {
             return new RespireOptions { Endpoints = { RespireEndpoint.Parse(connectionString) } };
         }
 
@@ -396,7 +404,8 @@ public sealed record RespireOptions
         var database = 0;
         var useTls = false;
         var connectTimeout = TimeSpan.FromSeconds(10);
-        TimeSpan? commandTimeout = null;
+        TimeSpan? asyncTimeout = null;
+        TimeSpan? syncTimeout = null;
         var protocol = RespProtocol.Resp2;
         var allowAdmin = false;
         TimeSpan? keepAlive = null;
@@ -437,8 +446,10 @@ public sealed record RespireOptions
                     connectTimeout = TimeSpan.FromMilliseconds(int.Parse(value, CultureInfo.InvariantCulture));
                     break;
                 case "asynctimeout":
+                    asyncTimeout = TimeSpan.FromMilliseconds(int.Parse(value, CultureInfo.InvariantCulture));
+                    break;
                 case "synctimeout":
-                    commandTimeout = TimeSpan.FromMilliseconds(int.Parse(value, CultureInfo.InvariantCulture));
+                    syncTimeout = TimeSpan.FromMilliseconds(int.Parse(value, CultureInfo.InvariantCulture));
                     break;
                 case "protocol":
                     protocol = value.ToLowerInvariant() switch
@@ -480,7 +491,7 @@ public sealed record RespireOptions
             Database = database,
             ConnectTimeout = connectTimeout,
             UseTls = useTls,
-            CommandTimeout = commandTimeout,
+            CommandTimeout = asyncTimeout ?? syncTimeout,
             Protocol = protocol,
             AllowAdmin = allowAdmin,
             TcpKeepAliveTime = keepAlive,
