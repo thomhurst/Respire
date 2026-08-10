@@ -1,5 +1,6 @@
 using System.Text;
 using BenchmarkDotNet.Attributes;
+using Respire.Internal;
 using Respire.Commands;
 using Respire.Networking;
 using Respire.Protocol;
@@ -18,6 +19,8 @@ public class ProtocolBenchmarks
     private byte[] _nestedArrayData = null!;
     private byte[] _mixedTypesData = null!;
     private byte[] _fragmentedArrayData = null!;
+    private RespValue _asciiBulkValue;
+    private RespValue _unicodeBulkValue;
     private readonly RespParseState _parseState = new(int.MaxValue);
     private readonly WriteBuffer _commandBuffer = new(512);
 
@@ -40,6 +43,8 @@ public class ProtocolBenchmarks
 
         _nestedArrayData = "*2\r\n*3\r\n:1\r\n:2\r\n:3\r\n*2\r\n+OK\r\n$4\r\ntest\r\n"u8.ToArray();
         _mixedTypesData = "*6\r\n+OK\r\n:42\r\n$4\r\ntest\r\n_\r\n#t\r\n,3.14\r\n"u8.ToArray();
+        _asciiBulkValue = RespValue.BulkString("Hello World");
+        _unicodeBulkValue = RespValue.BulkString("Hello \u00A3 World");
 
         var fragmentedArrayBuilder = new StringBuilder();
         fragmentedArrayBuilder.Append("*1000\r\n");
@@ -207,6 +212,24 @@ public class ProtocolBenchmarks
         value.Dispose();
         return type;
     }
+
+    // ===== RESPONSE CONVERSION BENCHMARKS =====
+
+    [Benchmark(Description = "Decode ASCII bulk string")]
+    [BenchmarkCategory("GET", "Conversion")]
+    public string DecodeAsciiBulkString() => _asciiBulkValue.AsString();
+
+    [Benchmark(Description = "Read ASCII bulk string")]
+    [BenchmarkCategory("GET", "Conversion")]
+    public string? ReadAsciiBulkString() => ResponseReader.StringOrNull(in _asciiBulkValue);
+
+    [Benchmark(Description = "Decode Unicode bulk string")]
+    [BenchmarkCategory("GET", "Conversion")]
+    public string DecodeUnicodeBulkString() => _unicodeBulkValue.AsString();
+
+    [Benchmark(Description = "Read Unicode bulk string")]
+    [BenchmarkCategory("GET", "Conversion")]
+    public string? ReadUnicodeBulkString() => ResponseReader.StringOrNull(in _unicodeBulkValue);
 
     // ===== COMMAND BUILDING BENCHMARKS =====
 
