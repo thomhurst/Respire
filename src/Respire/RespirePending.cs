@@ -3,6 +3,15 @@ using System.Runtime.ExceptionServices;
 
 namespace Respire;
 
+/// <summary>The lifecycle state of a deferred batch or transaction result.</summary>
+public enum RespirePendingStatus
+{
+    Pending,
+    Succeeded,
+    Faulted,
+    Aborted,
+}
+
 /// <summary>
 /// The future result of a command queued on a <see cref="RespireBatch"/> or
 /// <see cref="RespireTransaction"/>. Readable (or awaitable) only after the batch is sent /
@@ -11,11 +20,6 @@ namespace Respire;
 /// </summary>
 public sealed class RespirePending<T>
 {
-    private const int StatePending = 0;
-    private const int StateSucceeded = 1;
-    private const int StateFaulted = 2;
-    private const int StateAborted = 3;
-
     private int _state;
     private T? _value;
     private Exception? _error;
@@ -24,29 +28,47 @@ public sealed class RespirePending<T>
     {
     }
 
-    public bool IsCompleted => Volatile.Read(ref _state) != StatePending;
+    /// <summary>The pending result's current lifecycle state.</summary>
+    public RespirePendingStatus Status => (RespirePendingStatus)Volatile.Read(ref _state);
+
+    /// <summary>Whether the command completed successfully and its result is available.</summary>
+    public bool HasResult => Status == RespirePendingStatus.Succeeded;
+
+    /// <summary>The command failure when <see cref="Status"/> is <see cref="RespirePendingStatus.Faulted"/>.</summary>
+    public Exception? Error => Status == RespirePendingStatus.Faulted ? _error : null;
+
+    /// <summary>Gets a successful result without throwing; returns false for every other state.</summary>
+    public bool TryGetResult(out T value)
+    {
+        if (Status == RespirePendingStatus.Succeeded)
+        {
+            value = _value!;
+            return true;
+        }
+
+        value = default!;
+        return false;
+    }
 
     /// <summary>
-    /// The command's result. Throws <see cref="InvalidOperationException"/> if the batch has not
-    /// been sent, or if the transaction was aborted because a watched key changed.
+    /// The command's result. Throws <see cref="RespirePendingNotReadyException"/> if execution has
+    /// not started, or <see cref="RespireTransactionAbortedException"/> if a watched key changed.
     /// </summary>
     public T Result
     {
         get
         {
-            switch (Volatile.Read(ref _state))
+            switch (Status)
             {
-                case StateSucceeded:
+                case RespirePendingStatus.Succeeded:
                     return _value!;
-                case StateFaulted:
+                case RespirePendingStatus.Faulted:
                     ExceptionDispatchInfo.Capture(_error!).Throw();
                     return default!;
-                case StateAborted:
-                    throw new InvalidOperationException(
-                        "The transaction was aborted — a watched key changed, so no command ran.");
+                case RespirePendingStatus.Aborted:
+                    throw new RespireTransactionAbortedException();
                 default:
-                    throw new InvalidOperationException(
-                        "This result is not available yet: send the batch (SendAsync) or commit the transaction (CommitAsync) first.");
+                    throw new RespirePendingNotReadyException();
             }
         }
     }
@@ -54,16 +76,16 @@ public sealed class RespirePending<T>
     internal void Succeed(T value)
     {
         _value = value;
-        Volatile.Write(ref _state, StateSucceeded);
+        Volatile.Write(ref _state, (int)RespirePendingStatus.Succeeded);
     }
 
     internal void Fail(Exception error)
     {
         _error = error;
-        Volatile.Write(ref _state, StateFaulted);
+        Volatile.Write(ref _state, (int)RespirePendingStatus.Faulted);
     }
 
-    internal void Abort() => Volatile.Write(ref _state, StateAborted);
+    internal void Abort() => Volatile.Write(ref _state, (int)RespirePendingStatus.Aborted);
 
     public RespirePendingAwaiter<T> GetAwaiter() => new(this);
 }

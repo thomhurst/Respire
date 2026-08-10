@@ -20,7 +20,10 @@ await batch.SendAsync();
 Console.WriteLine($"{name.Result}: {visits.Result}");
 ```
 
-`RespirePending<T>` is awaitable and exposes `.Result`. Access before `SendAsync` throws `InvalidOperationException` instead of waiting forever for a batch that was never flushed.
+`RespirePending<T>` is awaitable and exposes `.Result`. Inspect `Status`, `HasResult`, `Error`, or
+use `TryGetResult` when exception-free state handling is preferable. Access before `SendAsync`
+throws `RespirePendingNotReadyException` instead of waiting forever for a batch that was never
+flushed; command failures set `Status` to `Faulted` and expose the exception through `Error`.
 
 ## The same facets as the client
 
@@ -75,4 +78,7 @@ transaction.IncrementAsync("balance", -100);
 bool committed = await transaction.CommitAsync();
 ```
 
-`false` means a watched key changed before `EXEC`. Re-read state and retry with a deliberate policy. For complex compare-and-set behavior, a Lua script often reduces round trips and makes atomic intent clearer.
+`false` means a watched key changed before `EXEC`. Each pending then has `Status ==
+RespirePendingStatus.Aborted`; reading its result throws `RespireTransactionAbortedException`.
+Re-read state and retry with a deliberate policy. For complex compare-and-set behavior, a Lua
+script often reduces round trips and makes atomic intent clearer.
