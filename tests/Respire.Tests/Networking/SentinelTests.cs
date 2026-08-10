@@ -162,6 +162,37 @@ public class SentinelTests
     }
 
     [Test]
+    public async Task ConnectAsync_GivesPrimaryFreshConnectTimeoutAfterSlowDiscovery()
+    {
+        await using var primary = new FakeRespServer(
+            FakeRespServer.OkReply,
+            FakeRespServer.PongReply);
+        primary.DelayReply(0, 400);
+        await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port));
+        sentinel.DelayReply(0, 500);
+
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", sentinel.Port) },
+            ServiceName = "mymaster",
+            Password = "redis-secret",
+            SentinelPassword = string.Empty,
+            CommandTimeout = TimeSpan.FromMilliseconds(750),
+            ConnectTimeout = TimeSpan.FromSeconds(2),
+        });
+
+        _ = await client.PingAsync();
+
+        await Assert.That(sentinel.ReceivedCommands).IsEquivalentTo(
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(
+        [
+            "AUTH redis-secret",
+            "PING",
+        ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+    }
+
+    [Test]
     public async Task ConnectAsync_FallsBackWhenSentinelReportsUnreachablePrimary()
     {
         await using var stalePrimary = new FakeRespServer(FakeRespServer.PongReply);

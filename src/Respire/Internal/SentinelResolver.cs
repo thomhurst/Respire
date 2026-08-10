@@ -40,8 +40,8 @@ internal static class SentinelResolver
 
         foreach (var endpoint in sentinelEndpoints)
         {
-            using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutSource.CancelAfter(options.CommandTimeout ?? options.ConnectTimeout);
+            using var discoveryTimeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            discoveryTimeoutSource.CancelAfter(options.CommandTimeout ?? options.ConnectTimeout);
             try
             {
                 var primary = await QueryPrimaryAsync(
@@ -49,14 +49,16 @@ internal static class SentinelResolver
                         options.ServiceName!,
                         sentinelOptions,
                         logger,
-                        timeoutSource.Token)
+                        discoveryTimeoutSource.Token)
                     .ConfigureAwait(false);
                 var primaryOptions = options with
                 {
                     Endpoints = new List<RespireEndpoint> { primary },
                     ServiceName = null,
                 };
-                return await connectPrimaryAsync(primaryOptions, timeoutSource.Token).ConfigureAwait(false);
+                using var connectTimeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                connectTimeoutSource.CancelAfter(options.ConnectTimeout);
+                return await connectPrimaryAsync(primaryOptions, connectTimeoutSource.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
