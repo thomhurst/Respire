@@ -1367,7 +1367,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             => inner.GetBytesAsync(key, cancellationToken);
 
         public async ValueTask<bool> SetAsync(
-            RespireKey key, RespireValue value, RespireTtl expiry = default, SetWhen when = SetWhen.Always,
+            RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always,
             CancellationToken cancellationToken = default)
         {
             _lastSetKey = key;
@@ -1376,7 +1376,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         }
 
         public async ValueTask<bool> SetAsync<T>(
-            RespireKey key, T value, RespireTtl expiry = default, SetWhen when = SetWhen.Always,
+            RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always,
             CancellationToken cancellationToken = default)
         {
             _lastSetKey = key;
@@ -1517,7 +1517,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ValueTask<bool> PersistAsync(RespireKey key, CancellationToken cancellationToken = default)
             => inner.PersistAsync(key, cancellationToken);
 
-        public ValueTask<RespireExpiry> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
+        public ValueTask<RespireTtl> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
             => inner.ExpiryAsync(key, cancellationToken);
 
         public ValueTask<string> TypeAsync(RespireKey key, CancellationToken cancellationToken = default)

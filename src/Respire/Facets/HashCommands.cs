@@ -84,10 +84,10 @@ public interface IHashCommands
     ValueTask<string[]> ValuesAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Expiry state for fields, in milliseconds. Redis: HPTTL.</summary>
-    ValueTask<HashFieldExpiry[]> ExpiryAsync(RespireKey key, params ReadOnlySpan<string> fields);
+    ValueTask<RespireTtl[]> ExpiryAsync(RespireKey key, params ReadOnlySpan<string> fields);
 
     /// <summary>Expiry state for fields, in milliseconds. Redis: HPTTL.</summary>
-    ValueTask<HashFieldExpiry[]> ExpiryAsync(
+    ValueTask<RespireTtl[]> ExpiryAsync(
         RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
 
     /// <summary>Sets field TTLs using millisecond precision. Redis: HPEXPIRE.</summary>
@@ -286,12 +286,12 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
     public ValueTask<string[]> ValuesAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.StringArrayAsync("HVALS", new Cmd1(Verbs.HVals, client.Key(in key)), cancellationToken);
 
-    public ValueTask<HashFieldExpiry[]> ExpiryAsync(RespireKey key, params ReadOnlySpan<string> fields)
+    public ValueTask<RespireTtl[]> ExpiryAsync(RespireKey key, params ReadOnlySpan<string> fields)
         => ExpiryAsync(key, fields, CancellationToken.None);
 
-    public ValueTask<HashFieldExpiry[]> ExpiryAsync(
+    public ValueTask<RespireTtl[]> ExpiryAsync(
         RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
-        => client.HashFieldExpiryArrayAsync(
+        => client.TtlArrayAsync(
             "HPTTL",
             new Cmd1N(RespireCommands.Hash.HPTTL.Verb, client.Key(in key), FieldsBlock(fields)),
             cancellationToken);

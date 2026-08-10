@@ -80,12 +80,12 @@ The memory remains valid only until `Dispose`. The `Lease` name makes that owner
 
 ## Expiry without sentinels
 
-Redis represents missing keys and persistent keys with negative TTL values. Respire returns `RespireExpiry` instead:
+Redis represents missing keys and persistent keys with negative TTL values. Respire returns `RespireTtl` instead:
 
 ```csharp
-RespireExpiry expiry = await redis.Keys.ExpiryAsync("session:42");
+RespireTtl expiry = await redis.Keys.ExpiryAsync("session:42");
 
-if (!expiry.KeyExists) { /* missing */ }
+if (!expiry.Exists) { /* missing */ }
 else if (!expiry.HasExpiry) { /* persistent */ }
 else Console.WriteLine(expiry.TimeToLive);
 ```

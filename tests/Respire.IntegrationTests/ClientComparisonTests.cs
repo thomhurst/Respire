@@ -212,7 +212,7 @@ public class ClientComparisonTests
         var ttl = await _respireClient.Keys.ExpiryAsync(key);
 
         // Assert
-        ttl.KeyExists.Should().BeTrue();
+        ttl.Exists.Should().BeTrue();
         ttl.HasExpiry.Should().BeTrue();
         ttl.TimeToLive!.Value.TotalSeconds.Should().BeInRange(5, expireSeconds); // Allow some time variance
 

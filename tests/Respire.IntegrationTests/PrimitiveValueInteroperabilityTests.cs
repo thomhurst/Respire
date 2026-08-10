@@ -291,7 +291,7 @@ public class PrimitiveValueInteroperabilityTests(RedisTestContainer fixture)
 
         (await _respireClient.GetStringAsync("interop:ttl:stackexchange")).Should().Be("from-stackexchange");
         var respireTtl = await _respireClient.Keys.ExpiryAsync("interop:ttl:stackexchange");
-        respireTtl.KeyExists.Should().BeTrue();
+        respireTtl.Exists.Should().BeTrue();
         respireTtl.HasExpiry.Should().BeTrue();
         respireTtl.TimeToLive.Should().NotBeNull();
         respireTtl.TimeToLive.Should().BeGreaterThan(TimeSpan.FromMinutes(4));

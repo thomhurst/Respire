@@ -21,7 +21,7 @@ public class BatchFacetWireTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         await client.Strings.SetManyAsync(
-            RespireTtl.In(TimeSpan.FromSeconds(1)), SetWhen.NotExists, ("a", "1"), ("b", "2"));
+            RespireExpiry.In(TimeSpan.FromSeconds(1)), SetWhen.NotExists, ("a", "1"), ("b", "2"));
         await client.Keys.DeleteAsync("k1", "k2", "k3");
         await client.Keys.ExpireAtAsync("k1", DateTimeOffset.FromUnixTimeMilliseconds(987654321));
         await client.Hashes.SetAsync("h", ("f1", "v1"), ("f2", "v2"));
@@ -41,7 +41,7 @@ public class BatchFacetWireTests
 
         var batch = client.CreateBatch();
         _ = batch.Strings.SetManyAsync(
-            RespireTtl.In(TimeSpan.FromSeconds(1)), SetWhen.NotExists, ("a", "1"), ("b", "2"));
+            RespireExpiry.In(TimeSpan.FromSeconds(1)), SetWhen.NotExists, ("a", "1"), ("b", "2"));
         _ = batch.Keys.DeleteAsync("k1", "k2", "k3");
         _ = batch.Keys.ExpireAtAsync("k1", DateTimeOffset.FromUnixTimeMilliseconds(987654321));
         _ = batch.Hashes.SetAsync("h", ("f1", "v1"), ("f2", "v2"));

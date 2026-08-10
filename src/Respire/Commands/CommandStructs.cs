@@ -465,7 +465,7 @@ internal readonly struct IncrementCommand(Verb one, Verb by, RespireValue key, l
 
 /// <summary>SET key value [PX ms | PXAT unix-ms] [NX|XX] [KEEPTTL] [GET].</summary>
 internal readonly struct SetCommand(
-    RespireValue key, RespireValue value, RespireTtl expiry, SetWhen when, bool returnOld) : IRespCommand
+    RespireValue key, RespireValue value, RespireExpiry expiry, SetWhen when, bool returnOld) : IRespCommand
 {
     public bool TryGetClusterSlot(out int slot) => key.TryGetClusterSlot(out slot);
 

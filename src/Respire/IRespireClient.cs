@@ -42,14 +42,14 @@ public interface IRespireClient : IAsyncDisposable
     ValueTask<bool> SetAsync(
         RespireKey key,
         RespireValue value,
-        RespireTtl expiry = default,
+        RespireExpiry expiry = default,
         SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default);
 
     ValueTask<bool> SetAsync<T>(
         RespireKey key,
         T value,
-        RespireTtl expiry = default,
+        RespireExpiry expiry = default,
         SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default);
 

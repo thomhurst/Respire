@@ -84,14 +84,14 @@ public sealed class RespireBatch : IDisposable, IPendingSink
     /// <inheritdoc cref="IBatchStringCommands.GetBytesAsync"/>
     public RespirePending<byte[]?> GetBytesAsync(RespireKey key) => Strings.GetBytesAsync(key);
 
-    /// <inheritdoc cref="IBatchStringCommands.SetAsync(RespireKey, RespireValue, RespireTtl, SetWhen)"/>
+    /// <inheritdoc cref="IBatchStringCommands.SetAsync(RespireKey, RespireValue, RespireExpiry, SetWhen)"/>
     public RespirePending<bool> SetAsync(
-        RespireKey key, RespireValue value, RespireTtl expiry = default, SetWhen when = SetWhen.Always)
+        RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
         => Strings.SetAsync(key, value, expiry, when);
 
-    /// <inheritdoc cref="IBatchStringCommands.SetAsync{T}(RespireKey, T, RespireTtl, SetWhen)"/>
+    /// <inheritdoc cref="IBatchStringCommands.SetAsync{T}(RespireKey, T, RespireExpiry, SetWhen)"/>
     public RespirePending<bool> SetAsync<T>(
-        RespireKey key, T value, RespireTtl expiry = default, SetWhen when = SetWhen.Always)
+        RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
         => Strings.SetAsync(key, value, expiry, when);
 
     /// <inheritdoc cref="IBatchKeyCommands.DeleteAsync(ReadOnlySpan{RespireKey})"/>

@@ -51,12 +51,12 @@ public class ModernRedisTypedCommandTests
         var setExpireAt = await client.Hashes.SetExpireAtAsync(
             "hash", DateTimeOffset.FromUnixTimeMilliseconds(987654321), SetWhen.Exists, ("a", "next"));
 
-        await Assert.That(expiries[0].FieldExists).IsTrue();
+        await Assert.That(expiries[0].Exists).IsTrue();
         await Assert.That(expiries[0].HasExpiry).IsTrue();
         await Assert.That(expiries[0].TimeToLive).IsEqualTo(TimeSpan.FromMilliseconds(1234));
-        await Assert.That(expiries[1].FieldExists).IsTrue();
+        await Assert.That(expiries[1].Exists).IsTrue();
         await Assert.That(expiries[1].HasExpiry).IsFalse();
-        await Assert.That(expiries[2].FieldExists).IsFalse();
+        await Assert.That(expiries[2].Exists).IsFalse();
         await Assert.That(expireResults).IsEquivalentTo(
             new[]
             {
@@ -110,8 +110,8 @@ public class ModernRedisTypedCommandTests
         var setExpire = await client.Strings.SetManyAsync(
             TimeSpan.FromSeconds(3), SetWhen.Exists, ("a", "1"), ("b", "2"));
         var setExpireAt = await client.Strings.SetManyAsync(
-            RespireTtl.At(DateTimeOffset.FromUnixTimeMilliseconds(1111111111)), pairs: ("c", "3"));
-        var keepExpiry = await client.Strings.SetManyAsync(RespireTtl.Keep, SetWhen.NotExists, ("d", "4"));
+            RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(1111111111)), pairs: ("c", "3"));
+        var keepExpiry = await client.Strings.SetManyAsync(RespireExpiry.Keep, SetWhen.NotExists, ("d", "4"));
         var lcs = await client.Strings.LongestCommonSubsequenceAsync("a", "b");
         var lcsLength = await client.Strings.LongestCommonSubsequenceLengthAsync("a", "b");
 
@@ -148,7 +148,7 @@ public class ModernRedisTypedCommandTests
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Strings.SetManyAsync(TimeSpan.FromSeconds(1)))
             .Throws<ArgumentException>();
-        await Assert.That(async () => await client.Strings.SetManyAsync(RespireTtl.Keep, (SetWhen)42, ("key", "value")))
+        await Assert.That(async () => await client.Strings.SetManyAsync(RespireExpiry.Keep, (SetWhen)42, ("key", "value")))
             .Throws<ArgumentOutOfRangeException>();
 
         await Assert.That(server.ReceivedCommands).IsEmpty();

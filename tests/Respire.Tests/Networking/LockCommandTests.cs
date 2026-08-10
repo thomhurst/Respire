@@ -154,7 +154,7 @@ public class LockCommandTests
     }
 
     [Test]
-    public async Task RespireLock_AcquireReturnsUnacquiredAttemptAndIssuesNothingElseWhenTheKeyExists()
+    public async Task RespireLock_AcquireReturnsUnacquiredAttemptAndIssuesNothingElseWhenTheExists()
     {
         await using var server = new FakeRespServer("$-1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
@@ -167,7 +167,7 @@ public class LockCommandTests
     }
 
     [Test]
-    public async Task RespireLock_AcquireOrThrowThrowsWhenTheKeyExists()
+    public async Task RespireLock_AcquireOrThrowThrowsWhenTheExists()
     {
         await using var server = new FakeRespServer("$-1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);

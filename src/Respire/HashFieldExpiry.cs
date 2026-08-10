@@ -37,36 +37,3 @@ public enum HashFieldExpiryResult
     /// <summary>The field was deleted because the requested expiry time is already due. Redis: 2.</summary>
     Deleted = 2,
 }
-
-/// <summary>
-/// The expiry state of one hash field, distinguishing a missing field from a persistent field.
-/// Redis: HPTTL.
-/// </summary>
-public readonly struct HashFieldExpiry
-{
-    private HashFieldExpiry(bool fieldExists, TimeSpan? timeToLive)
-    {
-        FieldExists = fieldExists;
-        TimeToLive = timeToLive;
-    }
-
-    /// <summary>Whether the field exists in the hash.</summary>
-    public bool FieldExists { get; }
-
-    /// <summary>Whether the field exists and has an expiry set.</summary>
-    public bool HasExpiry => TimeToLive.HasValue;
-
-    /// <summary>Remaining time to live, or null when the field is missing or has no expiry.</summary>
-    public TimeSpan? TimeToLive { get; }
-
-    internal static HashFieldExpiry FromHpttl(long milliseconds)
-        => milliseconds switch
-        {
-            -2 => new HashFieldExpiry(fieldExists: false, timeToLive: null),
-            -1 => new HashFieldExpiry(fieldExists: true, timeToLive: null),
-            _ => new HashFieldExpiry(fieldExists: true, timeToLive: TimeSpan.FromMilliseconds(milliseconds)),
-        };
-
-    public override string ToString()
-        => !FieldExists ? "(missing field)" : TimeToLive is { } ttl ? ttl.ToString() : "(no expiry)";
-}
