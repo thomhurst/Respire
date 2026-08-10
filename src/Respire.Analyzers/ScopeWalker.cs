@@ -551,7 +551,7 @@ internal static class ScopeWalker
             ? member.Expression
             : null;
 
-    /// <summary>Strips parentheses so <c>(x)</c> analyses the same as <c>x</c>.</summary>
+    /// <summary>Strips parentheses and null-forgiving operators around an expression.</summary>
     public static ExpressionSyntax Unwrap(ExpressionSyntax expression)
     {
         while (true)
@@ -564,6 +564,28 @@ internal static class ScopeWalker
                 case PostfixUnaryExpressionSyntax suppression
                     when suppression.IsKind(SyntaxKind.SuppressNullableWarningExpression):
                     expression = suppression.Operand;
+                    break;
+                default:
+                    return expression;
+            }
+        }
+    }
+
+    /// <summary>Expands from an expression through enclosing parentheses and null-forgiving operators.</summary>
+    public static ExpressionSyntax GetOutermostTransparentExpression(ExpressionSyntax expression)
+    {
+        while (true)
+        {
+            switch (expression.Parent)
+            {
+                case ParenthesizedExpressionSyntax parenthesized
+                    when IsSame(parenthesized.Expression, expression):
+                    expression = parenthesized;
+                    break;
+                case PostfixUnaryExpressionSyntax suppression
+                    when suppression.IsKind(SyntaxKind.SuppressNullableWarningExpression)
+                         && IsSame(suppression.Operand, expression):
+                    expression = suppression;
                     break;
                 default:
                     return expression;

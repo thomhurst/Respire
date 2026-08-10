@@ -743,6 +743,25 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    public async Task WrappedBatchFlushBeforeRead_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                await (batch!).SendAsync();
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
     public async Task DiscardedBatchAndPending_DoNotSuppressDiagnostic() => await Verify.VerifyAsync(
         """
         using System;

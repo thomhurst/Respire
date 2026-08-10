@@ -241,10 +241,11 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            switch (reference.Parent)
+            var use = ScopeWalker.GetOutermostTransparentExpression(reference);
+            switch (use.Parent)
             {
                 // result.AsString(), result.Type, result.Dispose()
-                case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, reference):
+                case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, use):
                     if (member.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
                         && member.Parent is not InvocationExpressionSyntax)
                     {
@@ -268,11 +269,11 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                     break;
 
                 // result[0] — a non-owning view of an element.
-                case ElementAccessExpressionSyntax element when ScopeWalker.IsSame(element.Expression, reference):
+                case ElementAccessExpressionSyntax element when ScopeWalker.IsSame(element.Expression, use):
                     break;
 
                 // result?.Dispose()
-                case ConditionalAccessExpressionSyntax conditional when ScopeWalker.IsSame(conditional.Expression, reference):
+                case ConditionalAccessExpressionSyntax conditional when ScopeWalker.IsSame(conditional.Expression, use):
                     var conditionalDispose = conditional.WhenNotNull.DescendantNodesAndSelf()
                         .OfType<MemberBindingExpressionSyntax>()
                         .Where(binding => binding.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
@@ -289,17 +290,17 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
 
                 // using (result) { … }
                 case UsingStatementSyntax usingStatement when usingStatement.Expression is not null
-                                                              && ScopeWalker.IsSame(usingStatement.Expression, reference):
+                                                              && ScopeWalker.IsSame(usingStatement.Expression, use):
                     releases.Add(usingStatement);
                     break;
 
                 // result = … drops the acquired owner; it does not transfer ownership elsewhere.
-                case AssignmentExpressionSyntax assignment when ScopeWalker.IsSame(assignment.Left, reference):
+                case AssignmentExpressionSyntax assignment when ScopeWalker.IsSame(assignment.Left, use):
                     break;
 
                 // Anything else — an argument, a return, or an assignment source — hands ownership away.
                 default:
-                    releases.Add(reference);
+                    releases.Add(use);
                     break;
             }
         }

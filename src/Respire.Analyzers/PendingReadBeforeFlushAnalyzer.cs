@@ -311,26 +311,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            ExpressionSyntax use = reference;
-            while (true)
-            {
-                if (use.Parent is ParenthesizedExpressionSyntax parenthesized
-                    && ScopeWalker.IsSame(parenthesized.Expression, use))
-                {
-                    use = parenthesized;
-                    continue;
-                }
-
-                if (use.Parent is PostfixUnaryExpressionSyntax suppression
-                    && suppression.IsKind(SyntaxKind.SuppressNullableWarningExpression)
-                    && ScopeWalker.IsSame(suppression.Operand, use))
-                {
-                    use = suppression;
-                    continue;
-                }
-
-                break;
-            }
+            var use = ScopeWalker.GetOutermostTransparentExpression(reference);
 
             switch (use.Parent)
             {
@@ -400,7 +381,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            if (context.SemanticModel.GetSymbolInfo(member.Expression, context.CancellationToken).Symbol is not ILocalSymbol target
+            if (context.SemanticModel.GetSymbolInfo(
+                    ScopeWalker.Unwrap(member.Expression), context.CancellationToken).Symbol is not ILocalSymbol target
                 || !SymbolEqualityComparer.Default.Equals(target, batch))
             {
                 continue;
