@@ -105,7 +105,8 @@ are released. `await using` protects early-return and command-queuing failure pa
 a no-op after a successful commit.
 
 Use `CreateTransactionAsync(["balance"])` for optimistic concurrency with `WATCH`. Read the
-current value, queue the conditional update, then retry when `CommitAsync` returns `false`:
+current value through the client—not a deferred transaction read—queue the conditional update,
+then recreate and retry the whole attempt when `CommitAsync` returns `false`:
 
 ```csharp
 bool applied;

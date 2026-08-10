@@ -803,6 +803,28 @@ public sealed partial class RespireClient : IRespireClient
     /// For read-modify-write loops, prefer a Lua script (<see cref="Scripts"/>) — one round
     /// trip, no retry loop.
     /// </summary>
+    /// <remarks>
+    /// In an optimistic retry loop, read watched values through this client after creating the
+    /// transaction, then queue writes on the transaction. Transaction reads are deferred and
+    /// cannot be inspected before commit. A failed commit ends that attempt, so create a new
+    /// watched transaction and re-read the values before retrying.
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// var committed = false;
+    /// for (var attempt = 0; attempt &lt; 5 &amp;&amp; !committed; attempt++)
+    /// {
+    ///     await using var transaction = await redis.CreateTransactionAsync(["balance"], ct);
+    ///     var current = await redis.GetAsync&lt;long&gt;("balance", ct);
+    ///     transaction.Set("balance", current - 100);
+    ///     committed = await transaction.CommitAsync(ct);
+    /// }
+    /// if (!committed)
+    /// {
+    ///     throw new InvalidOperationException("Balance changed too often; retry later.");
+    /// }
+    /// </code>
+    /// </example>
     public ValueTask<RespireTransaction> CreateTransactionAsync(
         RespireKey[] watchKeys, CancellationToken cancellationToken = default)
     {
@@ -810,11 +832,11 @@ public sealed partial class RespireClient : IRespireClient
         return CreateTransactionAsync(watchKeys.AsSpan(), cancellationToken);
     }
 
-    /// <inheritdoc cref="CreateTransactionAsync(ReadOnlySpan{RespireKey}, CancellationToken)"/>
+    /// <inheritdoc cref="CreateTransactionAsync(RespireKey[], CancellationToken)"/>
     public ValueTask<RespireTransaction> CreateTransactionAsync(params ReadOnlySpan<RespireKey> watchKeys)
         => CreateTransactionAsync(watchKeys, CancellationToken.None);
 
-    /// <inheritdoc cref="CreateTransactionAsync(ReadOnlySpan{RespireKey}, CancellationToken)"/>
+    /// <inheritdoc cref="CreateTransactionAsync(RespireKey[], CancellationToken)"/>
     public ValueTask<RespireTransaction> CreateTransactionAsync(
         ReadOnlySpan<RespireKey> watchKeys, CancellationToken cancellationToken)
     {
