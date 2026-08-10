@@ -42,6 +42,9 @@ public interface ISetCommands
     /// <summary>All members. Redis: SMEMBERS.</summary>
     ValueTask<string[]> MembersAsync(RespireKey key, CancellationToken cancellationToken = default);
 
+    /// <summary>All members deserialized as <typeparamref name="T"/>. Redis: SMEMBERS.</summary>
+    ValueTask<T[]> MembersAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
+
     /// <summary>Iterates members incrementally. Redis: SSCAN.</summary>
     IAsyncEnumerable<string> ScanAsync(
         RespireKey key, string? match = null, int countHint = 250,
@@ -49,6 +52,15 @@ public interface ISetCommands
 
     /// <summary>Removes and returns a random member, or null when empty. Redis: SPOP.</summary>
     ValueTask<string?> PopAsync(RespireKey key, CancellationToken cancellationToken = default);
+
+    /// <summary>Removes and returns up to <paramref name="count"/> random members. Redis: SPOP.</summary>
+    ValueTask<string[]> PopAsync(RespireKey key, long count, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Returns random members without removing them. Negative counts allow duplicates. Redis: SRANDMEMBER.
+    /// </summary>
+    ValueTask<string[]> RandomMembersAsync(
+        RespireKey key, long count, CancellationToken cancellationToken = default);
 
     /// <summary>The intersection of the given sets. Redis: SINTER.</summary>
     ValueTask<string[]> IntersectAsync(params ReadOnlySpan<RespireKey> keys);
@@ -119,6 +131,10 @@ internal sealed class SetCommands(RespireClient client) : ISetCommands
     public ValueTask<string[]> MembersAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.StringArrayAsync("SMEMBERS", new Cmd1(Verbs.SMembers, client.Key(in key)), cancellationToken);
 
+    public ValueTask<T[]> MembersAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
+        => client.DeserializeArrayAsync<T, Cmd1>(
+            "SMEMBERS", new Cmd1(Verbs.SMembers, client.Key(in key)), cancellationToken);
+
     public IAsyncEnumerable<string> ScanAsync(
         RespireKey key, string? match = null, int countHint = 250,
         CancellationToken cancellationToken = default)
@@ -128,6 +144,19 @@ internal sealed class SetCommands(RespireClient client) : ISetCommands
 
     public ValueTask<string?> PopAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.StringOrNullAsync("SPOP", new Cmd1(Verbs.SPop, client.Key(in key)), cancellationToken);
+
+    public ValueTask<string[]> PopAsync(
+        RespireKey key, long count, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        return client.StringArrayAsync(
+            "SPOP", new Cmd2(Verbs.SPop, client.Key(in key), count), cancellationToken);
+    }
+
+    public ValueTask<string[]> RandomMembersAsync(
+        RespireKey key, long count, CancellationToken cancellationToken = default)
+        => client.StringArrayAsync(
+            "SRANDMEMBER", new Cmd2(Verbs.SRandMember, client.Key(in key), count), cancellationToken);
 
     private static string[] ParseScanMembers(in RespValue page) => ResponseReader.StringArray(in page);
 

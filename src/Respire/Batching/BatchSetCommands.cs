@@ -25,8 +25,17 @@ public interface IBatchSetCommands
     /// <summary>All members. Redis: SMEMBERS.</summary>
     RespirePending<string[]> Members(RespireKey key);
 
+    /// <summary>All members deserialized as <typeparamref name="T"/>. Redis: SMEMBERS.</summary>
+    RespirePending<T[]> Members<T>(RespireKey key);
+
     /// <summary>Removes and returns a random member, or null when empty. Redis: SPOP.</summary>
     RespirePending<string?> Pop(RespireKey key);
+
+    /// <summary>Removes and returns up to <paramref name="count"/> random members. Redis: SPOP.</summary>
+    RespirePending<string[]> Pop(RespireKey key, long count);
+
+    /// <summary>Returns random members without removing them. Negative counts allow duplicates. Redis: SRANDMEMBER.</summary>
+    RespirePending<string[]> RandomMembers(RespireKey key, long count);
 
     /// <summary>The intersection of the given sets. Redis: SINTER.</summary>
     RespirePending<string[]> Intersect(params ReadOnlySpan<RespireKey> keys);
@@ -74,10 +83,28 @@ internal sealed class BatchSetCommands(IPendingSink sink) : IBatchSetCommands
             "SMEMBERS", new Cmd1(Verbs.SMembers, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.StringArray(in v));
 
+    public RespirePending<T[]> Members<T>(RespireKey key)
+        => sink.Add<Cmd1, T[]>(
+            "SMEMBERS", new Cmd1(Verbs.SMembers, sink.Client.Key(in key)),
+            static (c, v) => c.DeserializeArray<T>(in v));
+
     public RespirePending<string?> Pop(RespireKey key)
         => sink.Add<Cmd1, string?>(
             "SPOP", new Cmd1(Verbs.SPop, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.StringOrNull(in v));
+
+    public RespirePending<string[]> Pop(RespireKey key, long count)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        return sink.Add<Cmd2, string[]>(
+            "SPOP", new Cmd2(Verbs.SPop, sink.Client.Key(in key), count),
+            static (c, v) => ResponseReader.StringArray(in v));
+    }
+
+    public RespirePending<string[]> RandomMembers(RespireKey key, long count)
+        => sink.Add<Cmd2, string[]>(
+            "SRANDMEMBER", new Cmd2(Verbs.SRandMember, sink.Client.Key(in key), count),
+            static (c, v) => ResponseReader.StringArray(in v));
 
     public RespirePending<string[]> Intersect(params ReadOnlySpan<RespireKey> keys)
         => StringArrayKeys("SINTER", Verbs.SInter, keys);

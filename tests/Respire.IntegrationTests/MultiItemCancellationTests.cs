@@ -29,6 +29,7 @@ public class MultiItemCancellationTests(RedisTestContainer fixture)
         await Throws(() => client.Keys.UnlinkAsync(keys, token));
         await Throws(() => client.Keys.TouchAsync(keys, token));
         await Throws(() => client.Strings.GetManyAsync(keys, token));
+        await Throws(() => client.Strings.GetManyAsync<int>(keys, token));
         await Throws(() => client.Strings.SetManyAsync(pairs, token));
         await Throws(() => client.Strings.SetManyExpireAsync(
             TimeSpan.FromMinutes(1), SetWhen.Always, pairs, token));

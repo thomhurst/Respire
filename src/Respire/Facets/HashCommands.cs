@@ -61,6 +61,10 @@ public interface IHashCommands
     /// <summary>The whole hash as a dictionary. Redis: HGETALL.</summary>
     ValueTask<Dictionary<string, string>> GetAllAsync(RespireKey key, CancellationToken cancellationToken = default);
 
+    /// <summary>The whole hash with values deserialized as <typeparamref name="T"/>. Redis: HGETALL.</summary>
+    ValueTask<Dictionary<string, T>> GetAllAsync<T>(
+        RespireKey key, CancellationToken cancellationToken = default);
+
     /// <summary>Iterates fields and values incrementally. Redis: HSCAN.</summary>
     IAsyncEnumerable<KeyValuePair<string, string>> ScanAsync(
         RespireKey key, string? match = null, int countHint = 250,
@@ -268,6 +272,11 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
 
     public ValueTask<Dictionary<string, string>> GetAllAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.StringMapAsync("HGETALL", new Cmd1(Verbs.HGetAll, client.Key(in key)), cancellationToken);
+
+    public ValueTask<Dictionary<string, T>> GetAllAsync<T>(
+        RespireKey key, CancellationToken cancellationToken = default)
+        => client.DeserializeMapAsync<T, Cmd1>(
+            "HGETALL", new Cmd1(Verbs.HGetAll, client.Key(in key)), cancellationToken);
 
     public IAsyncEnumerable<KeyValuePair<string, string>> ScanAsync(
         RespireKey key, string? match = null, int countHint = 250,
