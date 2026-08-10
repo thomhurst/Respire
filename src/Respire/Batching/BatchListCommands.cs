@@ -26,20 +26,20 @@ public interface IBatchListCommands
     RespirePending<string?> RightPop(RespireKey key);
 
     /// <summary>Removes and returns up to <paramref name="count"/> elements from the head. Redis: LPOP.</summary>
-    RespirePending<string[]> LeftPop(RespireKey key, long count);
+    RespirePending<string[]> LeftPopMany(RespireKey key, long count);
 
     /// <summary>Removes and returns up to <paramref name="count"/> elements from the tail. Redis: RPOP.</summary>
-    RespirePending<string[]> RightPop(RespireKey key, long count);
+    RespirePending<string[]> RightPopMany(RespireKey key, long count);
 
     /// <summary>Removes and deserializes up to <paramref name="count"/> elements from the head. Redis: LPOP.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    RespirePending<T[]> LeftPop<T>(RespireKey key, long count);
+    RespirePending<T[]> LeftPopMany<T>(RespireKey key, long count);
 
     /// <summary>Removes and deserializes up to <paramref name="count"/> elements from the tail. Redis: RPOP.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    RespirePending<T[]> RightPop<T>(RespireKey key, long count);
+    RespirePending<T[]> RightPopMany<T>(RespireKey key, long count);
 
     /// <summary>
     /// Atomically moves an element between lists and returns it; null when the source is empty.
@@ -94,10 +94,10 @@ internal sealed class BatchListCommands(IPendingSink sink) : IBatchListCommands
             "RPOP", new Cmd1(Verbs.RPop, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.StringOrNull(in v));
 
-    public RespirePending<string[]> LeftPop(RespireKey key, long count)
+    public RespirePending<string[]> LeftPopMany(RespireKey key, long count)
         => Pop(key, count, Verbs.LPop, "LPOP");
 
-    public RespirePending<string[]> RightPop(RespireKey key, long count)
+    public RespirePending<string[]> RightPopMany(RespireKey key, long count)
         => Pop(key, count, Verbs.RPop, "RPOP");
 
     private RespirePending<string[]> Pop(RespireKey key, long count, Verb verb, string operation)
@@ -110,12 +110,12 @@ internal sealed class BatchListCommands(IPendingSink sink) : IBatchListCommands
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public RespirePending<T[]> LeftPop<T>(RespireKey key, long count)
+    public RespirePending<T[]> LeftPopMany<T>(RespireKey key, long count)
         => Pop<T>(key, count, Verbs.LPop, "LPOP");
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public RespirePending<T[]> RightPop<T>(RespireKey key, long count)
+    public RespirePending<T[]> RightPopMany<T>(RespireKey key, long count)
         => Pop<T>(key, count, Verbs.RPop, "RPOP");
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]

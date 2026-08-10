@@ -16,10 +16,10 @@ public class ListCountPopTests
             "*1\r\n$1\r\n3\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var left = await client.Lists.LeftPopAsync("jobs", 2);
-        var right = await client.Lists.RightPopAsync("jobs", 1);
-        var typedLeft = await client.Lists.LeftPopAsync<int>("numbers", 2);
-        var typedRight = await client.Lists.RightPopAsync<int>("numbers", 1);
+        var left = await client.Lists.LeftPopManyAsync("jobs", 2);
+        var right = await client.Lists.RightPopManyAsync("jobs", 1);
+        var typedLeft = await client.Lists.LeftPopManyAsync<int>("numbers", 2);
+        var typedRight = await client.Lists.RightPopManyAsync<int>("numbers", 1);
 
         await Assert.That(left).IsEquivalentTo(new[] { "one", "two" });
         await Assert.That(right).IsEquivalentTo(new[] { "three" });
@@ -45,10 +45,10 @@ public class ListCountPopTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var batch = client.CreateBatch();
 
-        var left = batch.Lists.LeftPop("jobs", 2);
-        var right = batch.Lists.RightPop("jobs", 1);
-        var typedLeft = batch.Lists.LeftPop<int>("numbers", 2);
-        var typedRight = batch.Lists.RightPop<int>("numbers", 1);
+        var left = batch.Lists.LeftPopMany("jobs", 2);
+        var right = batch.Lists.RightPopMany("jobs", 1);
+        var typedLeft = batch.Lists.LeftPopMany<int>("numbers", 2);
+        var typedRight = batch.Lists.RightPopMany<int>("numbers", 1);
         await batch.ExecuteAsync();
 
         await Assert.That(left.Result).IsEquivalentTo(new[] { "one", "two" });
@@ -70,15 +70,15 @@ public class ListCountPopTests
         await using var server = new FakeRespServer();
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        await Assert.That(async () => await client.Lists.LeftPopAsync("jobs", -1))
+        await Assert.That(async () => await client.Lists.LeftPopManyAsync("jobs", -1))
             .ThrowsExactly<ArgumentOutOfRangeException>();
-        await Assert.That(async () => await client.Lists.RightPopAsync<int>("jobs", -1))
+        await Assert.That(async () => await client.Lists.RightPopManyAsync<int>("jobs", -1))
             .ThrowsExactly<ArgumentOutOfRangeException>();
 
         var batch = client.CreateBatch();
-        await Assert.That(() => batch.Lists.LeftPop("jobs", -1))
+        await Assert.That(() => batch.Lists.LeftPopMany("jobs", -1))
             .ThrowsExactly<ArgumentOutOfRangeException>();
-        await Assert.That(() => batch.Lists.RightPop<int>("jobs", -1))
+        await Assert.That(() => batch.Lists.RightPopMany<int>("jobs", -1))
             .ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }

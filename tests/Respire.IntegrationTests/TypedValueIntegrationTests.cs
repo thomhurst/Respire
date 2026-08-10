@@ -129,9 +129,9 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
 
         await client.Lists.RightPushAsync("typed:list:count", 1, 2, 3);
 
-        (await client.Lists.LeftPopAsync<int>("typed:list:count", 2)).Should().Equal(1, 2);
-        (await client.Lists.RightPopAsync<int>("typed:list:count", 2)).Should().Equal(3);
-        (await client.Lists.LeftPopAsync<int>("typed:list:count", 1)).Should().BeEmpty();
+        (await client.Lists.LeftPopManyAsync<int>("typed:list:count", 2)).Should().Equal(1, 2);
+        (await client.Lists.RightPopManyAsync<int>("typed:list:count", 2)).Should().Equal(3);
+        (await client.Lists.LeftPopManyAsync<int>("typed:list:count", 1)).Should().BeEmpty();
     }
 
     [Test]

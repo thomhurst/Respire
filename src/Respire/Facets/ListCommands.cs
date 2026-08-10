@@ -49,10 +49,10 @@ public interface IListCommands
     ValueTask<string?> RightPopAsync(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default);
 
     /// <summary>Removes and returns up to <paramref name="count"/> elements from the head. Redis: LPOP.</summary>
-    ValueTask<string[]> LeftPopAsync(RespireKey key, long count, CancellationToken cancellationToken = default);
+    ValueTask<string[]> LeftPopManyAsync(RespireKey key, long count, CancellationToken cancellationToken = default);
 
     /// <summary>Removes and returns up to <paramref name="count"/> elements from the tail. Redis: RPOP.</summary>
-    ValueTask<string[]> RightPopAsync(RespireKey key, long count, CancellationToken cancellationToken = default);
+    ValueTask<string[]> RightPopManyAsync(RespireKey key, long count, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Pops from the head and deserializes as <typeparamref name="T"/>; default when the list is
@@ -74,7 +74,7 @@ public interface IListCommands
     /// </summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    ValueTask<T[]> LeftPopAsync<T>(RespireKey key, long count, CancellationToken cancellationToken = default);
+    ValueTask<T[]> LeftPopManyAsync<T>(RespireKey key, long count, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Removes up to <paramref name="count"/> elements from the tail and deserializes them as
@@ -82,7 +82,7 @@ public interface IListCommands
     /// </summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    ValueTask<T[]> RightPopAsync<T>(RespireKey key, long count, CancellationToken cancellationToken = default);
+    ValueTask<T[]> RightPopManyAsync<T>(RespireKey key, long count, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Atomically moves an element between lists and returns it; null when the source is empty.
@@ -143,11 +143,11 @@ internal sealed class ListCommands(RespireClient client) : IListCommands
     public ValueTask<string?> RightPopAsync(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
         => PopAsync(key, waitFor, Verbs.RPop, Verbs.BRPop, "RPOP", "BRPOP", cancellationToken);
 
-    public ValueTask<string[]> LeftPopAsync(
+    public ValueTask<string[]> LeftPopManyAsync(
         RespireKey key, long count, CancellationToken cancellationToken = default)
         => PopAsync(key, count, Verbs.LPop, "LPOP", cancellationToken);
 
-    public ValueTask<string[]> RightPopAsync(
+    public ValueTask<string[]> RightPopManyAsync(
         RespireKey key, long count, CancellationToken cancellationToken = default)
         => PopAsync(key, count, Verbs.RPop, "RPOP", cancellationToken);
 
@@ -197,13 +197,13 @@ internal sealed class ListCommands(RespireClient client) : IListCommands
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public ValueTask<T[]> LeftPopAsync<T>(
+    public ValueTask<T[]> LeftPopManyAsync<T>(
         RespireKey key, long count, CancellationToken cancellationToken = default)
         => PopAsync<T>(key, count, Verbs.LPop, "LPOP", cancellationToken);
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public ValueTask<T[]> RightPopAsync<T>(
+    public ValueTask<T[]> RightPopManyAsync<T>(
         RespireKey key, long count, CancellationToken cancellationToken = default)
         => PopAsync<T>(key, count, Verbs.RPop, "RPOP", cancellationToken);
 

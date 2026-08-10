@@ -25,7 +25,7 @@ Dictionary<string, string> profile = await redis.Hashes.GetAllAsync("user:42");
 ```csharp
 await redis.Lists.RightPushAsync("jobs", "invoice:42", "invoice:43");
 string? next = await redis.Lists.LeftPopAsync("jobs");
-string[] nextBatch = await redis.Lists.LeftPopAsync("jobs", count: 128);
+string[] nextBatch = await redis.Lists.LeftPopManyAsync("jobs", count: 128);
 string[] pending = await redis.Lists.RangeAsync("jobs", 0, 99);
 ```
 
