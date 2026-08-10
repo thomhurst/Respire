@@ -231,8 +231,13 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             }
 
             if (reassignments.Any(reassignment =>
-                    ScopeWalker.CanReach(
-                        context.SemanticModel, scope, acquisition, reassignment, context.CancellationToken)
+                    ScopeWalker.CanReachWithoutCrossing(
+                        context.SemanticModel,
+                        scope,
+                        acquisition,
+                        reassignment,
+                        [reference],
+                        context.CancellationToken)
                     && ScopeWalker.CanReach(
                         context.SemanticModel, scope, reassignment, reference, context.CancellationToken)))
             {

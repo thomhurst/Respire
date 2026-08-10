@@ -390,7 +390,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
             if (!IsReassignedBetween(context, scope, batch, origin, invocation))
             {
-                completions.AddRange(GetAwaitExpressions(context, scope, invocation));
+                completions.AddRange(GetAwaitExpressions(context, scope, invocation, batch, origin));
             }
         }
 
@@ -429,7 +429,9 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
     private static IEnumerable<AwaitExpressionSyntax> GetAwaitExpressions(
         SyntaxNodeAnalysisContext context,
         SyntaxNode scope,
-        InvocationExpressionSyntax invocation)
+        InvocationExpressionSyntax invocation,
+        ILocalSymbol batch,
+        InvocationExpressionSyntax origin)
     {
         if (GetAwaitExpression(context, invocation) is { } directAwait)
         {
@@ -446,7 +448,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                      scope, flush, context.SemanticModel, context.CancellationToken))
         {
             if (GetAwaitExpression(context, reference) is { } awaitExpression
-                && !IsReassignedBeforeAwait(context, scope, flush, invocation, awaitExpression))
+                && HasOnlyMatchingReachingDefinitions(context, scope, flush, batch, origin, awaitExpression))
             {
                 yield return awaitExpression;
             }
@@ -467,17 +469,77 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             _ => null,
         };
 
-    private static bool IsReassignedBeforeAwait(
+    private static bool HasOnlyMatchingReachingDefinitions(
         SyntaxNodeAnalysisContext context,
         SyntaxNode scope,
         ILocalSymbol flush,
-        InvocationExpressionSyntax initialization,
+        ILocalSymbol batch,
+        InvocationExpressionSyntax origin,
         AwaitExpressionSyntax awaitExpression)
-        => ScopeWalker.FindReferences(scope, flush, context.SemanticModel, context.CancellationToken)
-            .Where(reference => reference.SpanStart > initialization.SpanStart
-                                && reference.SpanStart < awaitExpression.SpanStart)
-            .Any(reference => reference.Parent is AssignmentExpressionSyntax assignment
-                              && assignment.Left.Span.Contains(reference.Span));
+    {
+        var definitions = FindStoredValueDefinitions(context, scope, flush).ToArray();
+        var reachingDefinitions = definitions.Where(definition =>
+            ScopeWalker.CanReachWithoutCrossing(
+                context.SemanticModel,
+                scope,
+                definition,
+                awaitExpression,
+                definitions.Where(candidate => !ScopeWalker.IsSame(candidate, definition)),
+                context.CancellationToken)).ToArray();
+
+        return reachingDefinitions.Length > 0
+               && reachingDefinitions.All(definition =>
+                   IsMatchingFlushDefinition(context, scope, definition, batch, origin));
+    }
+
+    private static IEnumerable<ExpressionSyntax> FindStoredValueDefinitions(
+        SyntaxNodeAnalysisContext context, SyntaxNode scope, ILocalSymbol flush)
+    {
+        if (flush.DeclaringSyntaxReferences.Length == 1
+            && flush.DeclaringSyntaxReferences[0].GetSyntax(context.CancellationToken)
+                is VariableDeclaratorSyntax { Initializer.Value: { } initializer })
+        {
+            yield return initializer;
+        }
+
+        foreach (var reference in ScopeWalker.FindReferences(
+                     scope, flush, context.SemanticModel, context.CancellationToken))
+        {
+            if (reference.Parent is AssignmentExpressionSyntax assignment
+                && ScopeWalker.IsSame(assignment.Left, reference))
+            {
+                yield return assignment.Right;
+            }
+        }
+    }
+
+    private static bool IsMatchingFlushDefinition(
+        SyntaxNodeAnalysisContext context,
+        SyntaxNode scope,
+        ExpressionSyntax definition,
+        ILocalSymbol batch,
+        InvocationExpressionSyntax origin)
+    {
+        var unwrappedDefinition = ScopeWalker.Unwrap(definition);
+        foreach (var invocation in definition.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>())
+        {
+            if (!ScopeWalker.IsSame(
+                    ScopeWalker.Unwrap(GetOutermostAwaitableExpression(context, invocation)),
+                    unwrappedDefinition)
+                || ScopeWalker.Unwrap(invocation.Expression) is not MemberAccessExpressionSyntax member
+                || member.Name.Identifier.ValueText is not (SendAsync or CommitAsync)
+                || context.SemanticModel.GetSymbolInfo(
+                    ScopeWalker.Unwrap(member.Expression), context.CancellationToken).Symbol is not ILocalSymbol target
+                || !SymbolEqualityComparer.Default.Equals(target, batch))
+            {
+                continue;
+            }
+
+            return !IsReassignedBetween(context, scope, batch, origin, invocation);
+        }
+
+        return false;
+    }
 
     private static AwaitExpressionSyntax? GetAwaitExpression(
         SyntaxNodeAnalysisContext context, ExpressionSyntax expression)

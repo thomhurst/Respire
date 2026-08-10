@@ -200,6 +200,64 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    public async Task SiblingDefaultFlushDefinition_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool condition)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                ValueTask flush;
+                if (condition)
+                {
+                    flush = default;
+                }
+                else
+                {
+                    flush = batch.SendAsync();
+                }
+
+                await flush;
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
+    public async Task MatchingFlushDefinitionsInEveryBranch_AreNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool condition)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                ValueTask flush;
+                if (condition)
+                {
+                    flush = batch.SendAsync();
+                }
+                else
+                {
+                    flush = batch.SendAsync();
+                }
+
+                await flush;
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
     public async Task ConfigureAwaitSendBeforeRead_IsNotFlagged() => await Verify.VerifyAsync(
         """
         using System;
