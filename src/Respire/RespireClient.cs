@@ -287,7 +287,7 @@ public sealed partial class RespireClient : IRespireClient
                 .ConfigureAwait(false);
         }
 
-        return new RespireResult(in response);
+        return new RespireResult(in response, _core.Options.Serializer);
     }
 
     private async ValueTask ExecuteCatalogFireAndForgetAsync(
@@ -401,7 +401,7 @@ public sealed partial class RespireClient : IRespireClient
                 .ConfigureAwait(false);
         }
 
-        return new RespireResult(in response);
+        return new RespireResult(in response, _core.Options.Serializer);
     }
 
     private async ValueTask ExecuteRawFireAndForgetAsync(
@@ -483,7 +483,7 @@ public sealed partial class RespireClient : IRespireClient
                 .ConfigureAwait(false);
         }
 
-        return new RespireResult(in response);
+        return new RespireResult(in response, _core.Options.Serializer);
     }
 
     private void ValidateCatalogCommand(RespireCommand command)
@@ -880,6 +880,9 @@ public sealed partial class RespireClient : IRespireClient
         return buffer.WrittenMemory;
     }
 
+    internal RespireResult CreateResult(in RespValue value)
+        => new(in value, _core.Options.Serializer);
+
     internal RespireValue SerializeRawCompatible<T>(T value)
     {
         if (value is null && (typeof(T) == typeof(string) || typeof(T) == typeof(byte[])))
@@ -938,7 +941,7 @@ public sealed partial class RespireClient : IRespireClient
             return (T)(object)value.AsSpan().ToArray();
         }
 
-        if (PrimitiveCodec.TryDeserialize<T>(value.AsSpan(), out var primitive))
+        if (PrimitiveCodec.TryDeserialize<T>(in value, out var primitive))
         {
             return primitive;
         }
@@ -1648,7 +1651,7 @@ public sealed partial class RespireClient : IRespireClient
                     .ConfigureAwait(false);
             }
 
-            return new RespireResult(in clusterReply);
+            return new RespireResult(in clusterReply, _core.Options.Serializer);
         }
 
         var telemetry = RespireTelemetry.StartOperation(
@@ -1831,7 +1834,7 @@ public sealed partial class RespireClient : IRespireClient
                         operation, connection, new Cmd2N(verb, body, tail[0], tail[1..]),
                         cancellationToken, storedProcedureName, sendAsking)
                     .ConfigureAwait(false);
-                return new RespireResult(in reply);
+                return new RespireResult(in reply, _core.Options.Serializer);
             }
             catch (RespireServerException error)
                 when (attempt < ClusterRouter.RedirectLimit && ClusterRouter.IsRedirect(error))
@@ -1885,14 +1888,14 @@ public sealed partial class RespireClient : IRespireClient
             var reply = await SendOnConnectionCoreAsync(
                     "EVALSHA", connection, new Cmd2N(Verbs.EvalSha, script.Sha1, tail[0], tail[1..]), cancellationToken)
                 .ConfigureAwait(false);
-            return new RespireResult(in reply);
+            return new RespireResult(in reply, _core.Options.Serializer);
         }
         catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.NoScript)
         {
             var reply = await SendOnConnectionCoreAsync(
                     "EVAL", connection, new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]), cancellationToken)
                 .ConfigureAwait(false);
-            return new RespireResult(in reply);
+            return new RespireResult(in reply, _core.Options.Serializer);
         }
     }
 
@@ -1940,19 +1943,23 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     internal RespireValue[] BuildScriptTail(RespireKey[]? keys, RespireValue[]? args)
+        => BuildScriptTailFromSpans(keys.AsSpan(), args.AsSpan());
+
+    internal RespireValue[] BuildScriptTailFromSpans(
+        ReadOnlySpan<RespireKey> keys, ReadOnlySpan<RespireValue> args)
     {
-        var keyCount = keys?.Length ?? 0;
-        var argCount = args?.Length ?? 0;
+        var keyCount = keys.Length;
+        var argCount = args.Length;
         var tail = new RespireValue[1 + keyCount + argCount];
         tail[0] = keyCount;
         for (var i = 0; i < keyCount; i++)
         {
-            tail[1 + i] = Key(in keys![i]);
+            tail[1 + i] = Key(in keys[i]);
         }
 
         for (var i = 0; i < argCount; i++)
         {
-            tail[1 + keyCount + i] = args![i];
+            tail[1 + keyCount + i] = args[i];
         }
 
         return tail;

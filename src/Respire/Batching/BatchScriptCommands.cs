@@ -34,10 +34,10 @@ internal sealed class BatchScriptCommands(IPendingSink sink) : IBatchScriptComma
             "EVAL",
             command,
             keys.AsSpan(),
-            static (c, value) =>
+            static (client, value) =>
             {
                 var owned = value.ToOwned();
-                return new RespireResult(in owned);
+                return client.CreateResult(in owned);
             });
     }
 }

@@ -82,6 +82,50 @@ public interface IScriptCommands
         RespireValue[]? args = null,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Executes a script from span-based key and argument collections. The result owns pooled
+    /// memory and must be disposed. Redis: EVALSHA / EVAL.
+    /// </summary>
+    ValueTask<RespireResult> ExecuteSpanAsync(
+        RespireScript script,
+        ReadOnlySpan<RespireKey> keys,
+        ReadOnlySpan<RespireValue> args,
+        CancellationToken cancellationToken = default)
+        => ExecuteAsync(script, keys.ToArray(), args.ToArray(), cancellationToken);
+
+    /// <summary>Executes a script and deserializes its scalar result. Redis: EVALSHA / EVAL.</summary>
+    async ValueTask<T?> ExecuteAsync<T>(
+        RespireScript script,
+        RespireKey[]? keys = null,
+        RespireValue[]? args = null,
+        CancellationToken cancellationToken = default)
+    {
+        using var result = await ExecuteAsync(script, keys, args, cancellationToken).ConfigureAwait(false);
+        return result.As<T>();
+    }
+
+    /// <summary>Executes a script and reads its integer result. Redis: EVALSHA / EVAL.</summary>
+    async ValueTask<long> ExecuteIntegerAsync(
+        RespireScript script,
+        RespireKey[]? keys = null,
+        RespireValue[]? args = null,
+        CancellationToken cancellationToken = default)
+    {
+        using var result = await ExecuteAsync(script, keys, args, cancellationToken).ConfigureAwait(false);
+        return result.AsInteger();
+    }
+
+    /// <summary>Executes a script and reads its string result, or null. Redis: EVALSHA / EVAL.</summary>
+    async ValueTask<string?> ExecuteStringAsync(
+        RespireScript script,
+        RespireKey[]? keys = null,
+        RespireValue[]? args = null,
+        CancellationToken cancellationToken = default)
+    {
+        using var result = await ExecuteAsync(script, keys, args, cancellationToken).ConfigureAwait(false);
+        return result.IsNull ? null : result.AsString();
+    }
+
     /// <summary>Loads a script into the server cache and returns its SHA1. Redis: SCRIPT LOAD.</summary>
     ValueTask<string> LoadAsync(RespireScript script, CancellationToken cancellationToken = default);
 }
@@ -95,6 +139,65 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         ArgumentNullException.ThrowIfNull(script);
         var tail = client.BuildScriptTail(keys, args);
         return await client.ExecuteScriptAsync(script, tail, cancellationToken).ConfigureAwait(false);
+    }
+
+    public ValueTask<RespireResult> ExecuteSpanAsync(
+        RespireScript script,
+        ReadOnlySpan<RespireKey> keys,
+        ReadOnlySpan<RespireValue> args,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(script);
+        var tail = client.BuildScriptTailFromSpans(keys, args);
+        return client.ExecuteScriptAsync(script, tail, cancellationToken);
+    }
+
+    public ValueTask<T?> ExecuteAsync<T>(
+        RespireScript script, RespireKey[]? keys = null, RespireValue[]? args = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(script);
+        var tail = client.BuildScriptTail(keys, args);
+        return ExecuteTypedCoreAsync<T>(script, tail, cancellationToken);
+    }
+
+    public ValueTask<long> ExecuteIntegerAsync(
+        RespireScript script, RespireKey[]? keys = null, RespireValue[]? args = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(script);
+        var tail = client.BuildScriptTail(keys, args);
+        return ExecuteIntegerCoreAsync(script, tail, cancellationToken);
+    }
+
+    public ValueTask<string?> ExecuteStringAsync(
+        RespireScript script, RespireKey[]? keys = null, RespireValue[]? args = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(script);
+        var tail = client.BuildScriptTail(keys, args);
+        return ExecuteStringCoreAsync(script, tail, cancellationToken);
+    }
+
+    private async ValueTask<T?> ExecuteTypedCoreAsync<T>(
+        RespireScript script, RespireValue[] tail, CancellationToken cancellationToken)
+    {
+        using var result = await client.ExecuteScriptAsync(script, tail, cancellationToken).ConfigureAwait(false);
+        return result.As<T>();
+    }
+
+    private async ValueTask<long> ExecuteIntegerCoreAsync(
+        RespireScript script, RespireValue[] tail, CancellationToken cancellationToken)
+    {
+        using var result = await client.ExecuteScriptAsync(script, tail, cancellationToken).ConfigureAwait(false);
+        return result.AsInteger();
+    }
+
+    private async ValueTask<string?> ExecuteStringCoreAsync(
+        RespireScript script, RespireValue[] tail, CancellationToken cancellationToken)
+    {
+        using var result = await client.ExecuteScriptAsync(script, tail, cancellationToken).ConfigureAwait(false);
+        return result.IsNull ? null : result.AsString();
     }
 
     public ValueTask<string> LoadAsync(RespireScript script, CancellationToken cancellationToken = default)
