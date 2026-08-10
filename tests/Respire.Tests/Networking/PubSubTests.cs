@@ -50,6 +50,10 @@ public class PubSubTests
         var channel = new string("ch".AsSpan());
         await using var subscription = await client.SubscribeAsync(channel);
 
+        await Assert.That(subscription.Kind).IsEqualTo(SubscriptionKind.Channel);
+        await Assert.That(subscription.Channels).IsEquivalentTo([channel]);
+        await Assert.That(subscription.IsDisposed).IsFalse();
+
         // Returning already implies the confirmation arrived — no waiting for the command to show up.
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(["SUBSCRIBE ch"]);
 
@@ -65,6 +69,62 @@ public class PubSubTests
         // Enumeration streams the buffer; it never resubscribes.
         await Assert.That(server.CommandsSeen).IsEqualTo(1);
         await enumerator.DisposeAsync();
+    }
+
+    [Test]
+    public async Task Subscription_AllowsOnlyOneActiveEnumerator()
+    {
+        await using var server = new FakeRespServer(SubscribeConfirmation);
+        await using var client = CreateLazyClient(server.Port);
+        await using var subscription = await client.SubscribeAsync("ch");
+        await using var enumerator = subscription.GetAsyncEnumerator();
+
+        _ = Assert.Throws<InvalidOperationException>(() => subscription.GetAsyncEnumerator());
+    }
+
+    [Test]
+    public async Task Subscription_AllowsAnotherEnumeratorAfterDisposal()
+    {
+        await using var server = new FakeRespServer(SubscribeConfirmation);
+        await using var client = CreateLazyClient(server.Port);
+        await using var subscription = await client.SubscribeAsync("ch");
+        var first = subscription.GetAsyncEnumerator();
+
+        await first.DisposeAsync();
+        await using var second = subscription.GetAsyncEnumerator();
+    }
+
+    [Test]
+    [Arguments(SubscriptionOverflow.DropOldest, "c")]
+    [Arguments(SubscriptionOverflow.DropNewest, "a")]
+    public async Task FullBuffer_CountsDroppedMessages_AndAppliesPolicy(
+        SubscriptionOverflow overflow,
+        string retainedMessage)
+    {
+        await using var server = new FakeRespServer(SubscribeConfirmation);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            SubscriptionBufferSize = 1,
+            SubscriptionOverflow = overflow,
+        });
+        await using var subscription = await client.SubscribeAsync("ch");
+
+        await server.SendRawAsync(
+            "*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$1\r\na\r\n"u8.ToArray());
+        await server.SendRawAsync(
+            "*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$1\r\nb\r\n"u8.ToArray());
+        await server.SendRawAsync(
+            "*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$1\r\nc\r\n"u8.ToArray());
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (subscription.DroppedMessages != 2)
+        {
+            await Task.Delay(10, cts.Token);
+        }
+
+        await using var enumerator = subscription.GetAsyncEnumerator();
+        await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+        await Assert.That(enumerator.Current.Text).IsEqualTo(retainedMessage);
     }
 
     [Test]
@@ -243,7 +303,27 @@ public class PubSubTests
         // The stream ends (no message ever arrived) and UNSUBSCRIBE went to the server.
         await Assert.That(await moveTask.AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
         await Assert.That(server.ReceivedCommands[1]).IsEqualTo("UNSUBSCRIBE ch");
+        await Assert.That(subscription.IsDisposed).IsTrue();
+        await Assert.That(await subscription.Completion).IsEqualTo(RespireSubscriptionEndReason.Disposed);
         await enumerator.DisposeAsync();
+    }
+
+    [Test]
+    public async Task ClientDisposal_EndsSubscriptionWithDistinctReason()
+    {
+        await using var server = new FakeRespServer(SubscribeConfirmation);
+        var client = CreateLazyClient(server.Port);
+        var subscription = await client.SubscribeAsync("ch");
+        var enumerator = subscription.GetAsyncEnumerator();
+        var moveTask = enumerator.MoveNextAsync();
+
+        await client.DisposeAsync();
+
+        await Assert.That(await moveTask.AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsFalse();
+        await Assert.That(subscription.IsDisposed).IsTrue();
+        await Assert.That(await subscription.Completion).IsEqualTo(RespireSubscriptionEndReason.ClientDisposed);
+        await enumerator.DisposeAsync();
+        await subscription.DisposeAsync();
     }
 
     [Test]

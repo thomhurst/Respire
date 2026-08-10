@@ -32,7 +32,19 @@ internal static class RespireTelemetry
             HistogramBucketBoundaries = [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10],
         });
 
+    public static readonly Counter<long> SubscriptionMessagesDropped = Meter.CreateCounter<long>(
+        "respire.pubsub.messages.dropped",
+        unit: "{message}",
+        description: "Messages discarded because a subscription buffer was full.");
+
     public static bool IsEnabled => Source.HasListeners() || OperationDuration.Enabled;
+
+    public static void RecordSubscriptionMessageDropped(
+        SubscriptionKind kind,
+        SubscriptionOverflow overflow)
+        => SubscriptionMessagesDropped.Add(1,
+            new KeyValuePair<string, object?>("respire.subscription.kind", kind.ToString()),
+            new KeyValuePair<string, object?>("respire.subscription.overflow", overflow.ToString()));
 
     public static OperationScope StartOperation(
         string operation,

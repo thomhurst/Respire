@@ -1,5 +1,4 @@
 using System.Text;
-using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Respire.Commands;
 using Respire.Networking;
@@ -51,19 +50,15 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             Utf8RouteName.Validate(name);
         }
 
-        var buffer = Channel.CreateBounded<RespireMessage>(new BoundedChannelOptions(core.Options.SubscriptionBufferSize)
-        {
-            FullMode = core.Options.SubscriptionOverflow == SubscriptionOverflow.DropOldest
-                ? BoundedChannelFullMode.DropOldest
-                : BoundedChannelFullMode.DropWrite,
-            SingleWriter = true,
-            SingleReader = false,
-        });
-
         // Defensive copy (unsubscription must look up the names that were registered, not
         // whatever the caller later wrote into their array), deduplicated so one published
         // message is never delivered twice through duplicate route entries.
-        return new RespireSubscription(this, kind, [.. names.Distinct(StringComparer.Ordinal)], buffer);
+        return new RespireSubscription(
+            this,
+            kind,
+            [.. names.Distinct(StringComparer.Ordinal)],
+            core.Options.SubscriptionBufferSize,
+            core.Options.SubscriptionOverflow);
     }
 
     /// <summary>
@@ -598,7 +593,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
 
             foreach (var subscription in subscriptions)
             {
-                subscription.Buffer.Writer.TryComplete();
+                subscription.CompleteFromClientDisposal();
             }
 
             // Synchronize with a racing first connect: once the gate is ours, any connection an
