@@ -14,7 +14,7 @@ public class GeoCommandTests
         var add = new GeoAddCommand(
             RespireCommands.Geo.GEOADD.Verb,
             "geo-key",
-            GeoAddCondition.Always,
+            SetWhen.Always,
             changed: false,
             []);
         var search = new GeoSearchCommand(
@@ -65,7 +65,7 @@ public class GeoCommandTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         await Assert.That(await client.Geo.AddAsync(
-            "places", GeoAddCondition.NotExists, changed: true,
+            "places", SetWhen.NotExists, changed: true,
             new GeoEntry(1.5, 2.5, "cafe"), new GeoEntry(3.5, 4.5, "park"))).IsEqualTo(2);
         await Assert.That(await client.Geo.DistanceAsync("places", "cafe", "park", GeoUnit.Kilometers))
             .IsEqualTo(12.5);

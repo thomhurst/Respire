@@ -8,10 +8,16 @@ public enum SetWhen
     /// <summary>Unconditional write.</summary>
     Always,
 
-    /// <summary>Only set if the key does not exist (NX).</summary>
+    /// <summary>
+    /// Only write when the target does not exist. Maps to NX for string and geo commands, and
+    /// FNX for hash-field writes (none of the supplied fields may exist).
+    /// </summary>
     NotExists,
 
-    /// <summary>Only set if the key already exists (XX).</summary>
+    /// <summary>
+    /// Only write when the target exists. Maps to XX for string and geo commands, and FXX for
+    /// hash-field writes (all supplied fields must exist).
+    /// </summary>
     Exists,
 }
 
@@ -62,7 +68,23 @@ public interface IStringCommands
         CancellationToken cancellationToken = default);
 
     /// <summary>Sets a key and returns its previous value. Redis: SET … GET.</summary>
-    ValueTask<string?> GetSetAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken = default);
+    ValueTask<string?> GetAndSetAsync(
+        RespireKey key,
+        RespireValue value,
+        RespireExpiry expiry = default,
+        SetWhen when = SetWhen.Always,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets a serialized <typeparamref name="T"/> and deserializes the previous value.
+    /// Redis: SET … GET.
+    /// </summary>
+    ValueTask<T?> GetAndSetAsync<T>(
+        RespireKey key,
+        T value,
+        RespireExpiry expiry = default,
+        SetWhen when = SetWhen.Always,
+        CancellationToken cancellationToken = default);
 
     /// <summary>Gets a key's value and deletes the key. Redis: GETDEL.</summary>
     ValueTask<string?> GetDeleteAsync(RespireKey key, CancellationToken cancellationToken = default);
@@ -103,13 +125,13 @@ public interface IStringCommands
     /// <see cref="RespireCommands.String.MSETEX"/> directly for second-precision EX/EXAT forms.
     /// Redis: MSETEX.
     /// </summary>
-    ValueTask<bool> SetManyAsync(
+    ValueTask<bool> SetManyExpireAsync(
         RespireExpiry expiry,
         SetWhen when = SetWhen.Always,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
 
     /// <summary>Atomically sets many keys with a shared expiry and optional NX/XX condition. Redis: MSETEX.</summary>
-    ValueTask<bool> SetManyAsync(
+    ValueTask<bool> SetManyExpireAsync(
         RespireExpiry expiry,
         SetWhen when,
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
@@ -119,11 +141,11 @@ public interface IStringCommands
     /// Returns the longest common subsequence. Use <see cref="RespireCommands.String.LCS"/> directly
     /// for the IDX range-reporting shape. Redis: LCS.
     /// </summary>
-    ValueTask<string> LongestCommonSubsequenceAsync(
+    ValueTask<string> LcsAsync(
         RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken = default);
 
     /// <summary>Returns the length of the longest common subsequence. Redis: LCS LEN.</summary>
-    ValueTask<long> LongestCommonSubsequenceLengthAsync(
+    ValueTask<long> LcsLengthAsync(
         RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken = default);
 }
 
@@ -157,9 +179,24 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
             "SET", new SetCommand(client.Key(in key), client.Serialize(value), expiry, when, returnOld: false),
             cancellationToken);
 
-    public ValueTask<string?> GetSetAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken = default)
+    public ValueTask<string?> GetAndSetAsync(
+        RespireKey key,
+        RespireValue value,
+        RespireExpiry expiry = default,
+        SetWhen when = SetWhen.Always,
+        CancellationToken cancellationToken = default)
         => client.StringOrNullAsync(
-            "SET", new SetCommand(client.Key(in key), value, RespireExpiry.None, SetWhen.Always, returnOld: true),
+            "SET", new SetCommand(client.Key(in key), value, expiry, when, returnOld: true),
+            cancellationToken);
+
+    public ValueTask<T?> GetAndSetAsync<T>(
+        RespireKey key,
+        T value,
+        RespireExpiry expiry = default,
+        SetWhen when = SetWhen.Always,
+        CancellationToken cancellationToken = default)
+        => client.DeserializeAsync<T, SetCommand>(
+            "SET", new SetCommand(client.Key(in key), client.Serialize(value), expiry, when, returnOld: true),
             cancellationToken);
 
     public ValueTask<string?> GetDeleteAsync(RespireKey key, CancellationToken cancellationToken = default)
@@ -201,12 +238,12 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         => client.ConfirmedOkAsync(
             "MSET", new CmdN(Verbs.MSet, SetManyArgs(client, pairs)), cancellationToken);
 
-    public ValueTask<bool> SetManyAsync(
+    public ValueTask<bool> SetManyExpireAsync(
         RespireExpiry expiry, SetWhen when = SetWhen.Always,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
-        => SetManyAsync(expiry, when, pairs, CancellationToken.None);
+        => SetManyExpireAsync(expiry, when, pairs, CancellationToken.None);
 
-    public ValueTask<bool> SetManyAsync(
+    public ValueTask<bool> SetManyExpireAsync(
         RespireExpiry expiry,
         SetWhen when,
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
@@ -218,14 +255,14 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
                 SetManyExpireArgs(client, expiry, when, pairs)),
             cancellationToken);
 
-    public ValueTask<string> LongestCommonSubsequenceAsync(
+    public ValueTask<string> LcsAsync(
         RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken = default)
         => client.StringAsync(
             "LCS",
             new Cmd2(RespireCommands.String.LCS.Verb, client.Key(in firstKey), client.Key(in secondKey)),
             cancellationToken);
 
-    public ValueTask<long> LongestCommonSubsequenceLengthAsync(
+    public ValueTask<long> LcsLengthAsync(
         RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken = default)
         => client.IntegerAsync(
             "LCS",
