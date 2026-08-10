@@ -212,43 +212,15 @@ public sealed partial class RespireClient : IRespireClient
         => ExecuteCatalogAsync(command, args, RespireCommandFlags.None, CancellationToken.None);
 
     /// <summary>
-    /// Sends a catalog command whose first argument is an integer.
-    /// </summary>
-    public ValueTask<RespireResult> ExecuteAsync(
-        RespireCommand command, int firstArgument, params RespireValue[] args)
-        => ExecuteCatalogAsync(
-            command, [(RespireValue)firstArgument, .. args], RespireCommandFlags.None, CancellationToken.None);
-
-    /// <summary>
-    /// Sends a command from <see cref="RespireCommands"/> with command policy flags.
-    /// </summary>
-    public ValueTask<RespireResult> ExecuteAsync(
-        RespireCommand command, RespireCommandFlags flags, params RespireValue[] args)
-        => ExecuteCatalogAsync(command, args, flags, CancellationToken.None);
-
-    /// <summary>
-    /// Sends a command from <see cref="RespireCommands"/> with command policy flags.
-    /// </summary>
-    public ValueTask<RespireResult> ExecuteAsync(
-        RespireCommand command, RespireValue[] args, RespireCommandFlags flags)
-        => ExecuteCatalogAsync(command, args, flags, CancellationToken.None);
-
-    /// <summary>
-    /// Sends a catalog command with cancellation. Blocking descriptors use a dedicated pooled
-    /// connection; cancellation abandons that connection without stalling multiplexed traffic.
-    /// </summary>
-    public ValueTask<RespireResult> ExecuteAsync(
-        RespireCommand command, RespireValue[] args, CancellationToken cancellationToken)
-        => ExecuteCatalogAsync(command, args, RespireCommandFlags.None, cancellationToken);
-
-    /// <summary>
-    /// Sends a catalog command with command policy flags and cancellation.
+    /// Sends a command from <see cref="RespireCommands"/> with optional policy flags and
+    /// cancellation. Blocking descriptors use a dedicated pooled connection; cancellation
+    /// abandons that connection without stalling multiplexed traffic.
     /// </summary>
     public ValueTask<RespireResult> ExecuteAsync(
         RespireCommand command,
         RespireValue[] args,
-        RespireCommandFlags flags,
-        CancellationToken cancellationToken)
+        RespireCommandFlags flags = RespireCommandFlags.None,
+        CancellationToken cancellationToken = default)
         => ExecuteCatalogAsync(command, args, flags, cancellationToken);
 
     /// <summary>
@@ -269,7 +241,7 @@ public sealed partial class RespireClient : IRespireClient
     /// <c>MOVED</c> and <c>ASK</c> redirects, adding round-trip latency.
     /// </remarks>
     public ValueTask ExecuteFireAndForgetAsync(
-        RespireCommand command, RespireValue[] args, CancellationToken cancellationToken)
+        RespireCommand command, RespireValue[] args, CancellationToken cancellationToken = default)
         => ExecuteCatalogFireAndForgetAsync(command, args, cancellationToken);
 
     private async ValueTask<RespireResult> ExecuteCatalogAsync(
@@ -351,42 +323,13 @@ public sealed partial class RespireClient : IRespireClient
         => ExecuteRawAsync(command, args, RespireCommandFlags.None, CancellationToken.None);
 
     /// <summary>
-    /// Sends any command whose first argument is an integer.
-    /// </summary>
-    public ValueTask<RespireResult> ExecuteAsync(
-        string command, int firstArgument, params RespireValue[] args)
-        => ExecuteRawAsync(
-            command, [(RespireValue)firstArgument, .. args], RespireCommandFlags.None, CancellationToken.None);
-
-    /// <summary>
-    /// Sends any command with command policy flags.
-    /// </summary>
-    public ValueTask<RespireResult> ExecuteAsync(
-        string command, RespireCommandFlags flags, params RespireValue[] args)
-        => ExecuteRawAsync(command, args, flags, CancellationToken.None);
-
-    /// <summary>
-    /// Sends any command with command policy flags.
-    /// </summary>
-    public ValueTask<RespireResult> ExecuteAsync(
-        string command, RespireValue[] args, RespireCommandFlags flags)
-        => ExecuteRawAsync(command, args, flags, CancellationToken.None);
-
-    /// <summary>
-    /// Sends any command with cancellation.
-    /// </summary>
-    public ValueTask<RespireResult> ExecuteAsync(
-        string command, RespireValue[] args, CancellationToken cancellationToken)
-        => ExecuteRawAsync(command, args, RespireCommandFlags.None, cancellationToken);
-
-    /// <summary>
-    /// Sends any command with command policy flags and cancellation.
+    /// Sends any command with optional policy flags and cancellation.
     /// </summary>
     public ValueTask<RespireResult> ExecuteAsync(
         string command,
         RespireValue[] args,
-        RespireCommandFlags flags,
-        CancellationToken cancellationToken)
+        RespireCommandFlags flags = RespireCommandFlags.None,
+        CancellationToken cancellationToken = default)
         => ExecuteRawAsync(command, args, flags, cancellationToken);
 
     /// <summary>
@@ -407,7 +350,7 @@ public sealed partial class RespireClient : IRespireClient
     /// <c>MOVED</c> and <c>ASK</c> redirects, adding round-trip latency.
     /// </remarks>
     public ValueTask ExecuteFireAndForgetAsync(
-        string command, RespireValue[] args, CancellationToken cancellationToken)
+        string command, RespireValue[] args, CancellationToken cancellationToken = default)
         => ExecuteRawFireAndForgetAsync(command, args, cancellationToken);
 
     private async ValueTask<RespireResult> ExecuteRawAsync(
@@ -486,19 +429,12 @@ public sealed partial class RespireClient : IRespireClient
     /// <summary>
     /// Sends a command written as an interpolated string — <c>ExecuteAsync($"SET {key} {value} EX {60}")</c>.
     /// Literal text splits on spaces; every interpolation hole is exactly one argument and is
-    /// never re-tokenized, so values containing spaces are safe.
+    /// never re-tokenized, so values containing spaces are safe. Flags and cancellation are
+    /// optional arguments — pass them by name.
     /// </summary>
     public ValueTask<RespireResult> ExecuteAsync(
         RespireCommandInterpolatedStringHandler command,
-        CancellationToken cancellationToken = default)
-        => ExecuteInterpolatedAsync(command, RespireCommandFlags.None, cancellationToken);
-
-    /// <summary>
-    /// Sends an interpolated raw command with command policy flags.
-    /// </summary>
-    public ValueTask<RespireResult> ExecuteAsync(
-        RespireCommandInterpolatedStringHandler command,
-        RespireCommandFlags flags,
+        RespireCommandFlags flags = RespireCommandFlags.None,
         CancellationToken cancellationToken = default)
         => ExecuteInterpolatedAsync(command, flags, cancellationToken);
 

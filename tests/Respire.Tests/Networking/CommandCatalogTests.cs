@@ -152,18 +152,76 @@ public class CommandCatalogTests
             .IsEqualTo("JSON.SET document $ {\"message\":\"hello world\"}");
     }
 
+    /// <summary>
+    /// Compile-coverage for the collapsed execute surface: every shape below must bind through the
+    /// interface alone, and a literal <c>0</c> must stay an argument rather than becoming
+    /// <see cref="RespireCommandFlags.None"/>.
+    /// </summary>
     [Test]
-    public async Task ZeroArguments_DoNotBindToCommandFlagsOverloads()
+    public async Task ExecuteOverloads_BindWithoutAmbiguityThroughTheInterface()
     {
-        await using var server = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.OkReply);
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var concrete = await FakeRespServer.ConnectClientAsync(server.Port);
         IRespireClient client = concrete;
+        using var cancellation = new CancellationTokenSource();
+        RespireValue interpolatedValue = "interpolated-value";
 
-        using var raw = await client.ExecuteAsync("SET", 0, "raw-key");
-        using var catalog = await client.ExecuteAsync(RespireCommands.String.SET, 0, "catalog-key");
+        using var rawZero = await client.ExecuteAsync("SET", 0, "raw-key");
+        using var catalogZero = await client.ExecuteAsync(RespireCommands.String.SET, 0, "catalog-key");
+        using var rawParams = await client.ExecuteAsync("SET", "raw-params", "value");
+        using var catalogParams = await client.ExecuteAsync(
+            RespireCommands.String.SET, "catalog-params", "value");
+        using var rawFlags = await client.ExecuteAsync(
+            "SET", ["raw-flags", "value"], RespireCommandFlags.NoRedirect);
+        using var catalogFlags = await client.ExecuteAsync(
+            RespireCommands.String.SET, ["catalog-flags", "value"], flags: RespireCommandFlags.NoRedirect);
+        using var rawCancellation = await client.ExecuteAsync(
+            "SET", ["raw-cancellation", "value"], cancellationToken: cancellation.Token);
+        using var catalogCancellation = await client.ExecuteAsync(
+            RespireCommands.String.SET, ["catalog-cancellation", "value"], cancellationToken: cancellation.Token);
+        using var interpolated = await client.ExecuteAsync($"SET interpolated {interpolatedValue}");
+        using var interpolatedCancellation = await client.ExecuteAsync(
+            $"SET interpolated-cancellation {interpolatedValue}", cancellationToken: cancellation.Token);
+
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo([
+            "SET 0 raw-key",
+            "SET 0 catalog-key",
+            "SET raw-params value",
+            "SET catalog-params value",
+            "SET raw-flags value",
+            "SET catalog-flags value",
+            "SET raw-cancellation value",
+            "SET catalog-cancellation value",
+            "SET interpolated interpolated-value",
+            "SET interpolated-cancellation interpolated-value",
+        ]);
+    }
+
+    [Test]
+    public async Task ExecuteAsync_RejectsTheFireAndForgetFlagAcrossEveryCommandForm()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var concrete = await FakeRespServer.ConnectClientAsync(server.Port);
+        IRespireClient client = concrete;
+        RespireValue value = "value";
+
+        await Assert.That(async () => await client.ExecuteAsync(
+                "SET", ["key", "value"], RespireCommandFlags.FireAndForget))
+            .Throws<ArgumentException>();
+        await Assert.That(async () => await client.ExecuteAsync(
+                RespireCommands.String.SET, ["key", "value"], RespireCommandFlags.FireAndForget))
+            .Throws<ArgumentException>();
+        await Assert.That(async () => await client.ExecuteAsync(
+                $"SET key {value}", RespireCommandFlags.FireAndForget))
+            .Throws<ArgumentException>();
+
+        await client.ExecuteFireAndForgetAsync("SET", "raw-key", "value");
+        await client.ExecuteFireAndForgetAsync(
+            RespireCommands.String.SET, ["catalog-key", "value"], CancellationToken.None);
+        await WaitForCommandsAsync(server, 2);
 
         await Assert.That(server.ReceivedCommands)
-            .IsEquivalentTo(["SET 0 raw-key", "SET 0 catalog-key"]);
+            .IsEquivalentTo(["SET raw-key value", "SET catalog-key value"]);
     }
 
     [Test]
@@ -233,7 +291,7 @@ public class CommandCatalogTests
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        using var response = await client.ExecuteAsync("PING", [], CancellationToken.None);
+        using var response = await client.ExecuteAsync("PING", [], cancellationToken: CancellationToken.None);
 
         await Assert.That(response.AsString()).IsEqualTo("PONG");
     }
@@ -248,7 +306,8 @@ public class CommandCatalogTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         using var rawCancellation = new CancellationTokenSource();
-        var raw = client.ExecuteAsync("BLPOP", ["raw-key", 0], rawCancellation.Token).AsTask();
+        var raw = client.ExecuteAsync(
+            "BLPOP", ["raw-key", 0], cancellationToken: rawCancellation.Token).AsTask();
         await WaitForCommandsAsync(server, 1);
         rawCancellation.Cancel();
         await Assert.That(async () => await raw.WaitAsync(TimeSpan.FromSeconds(5)))
@@ -257,7 +316,7 @@ public class CommandCatalogTests
         using var interpolatedCancellation = new CancellationTokenSource();
         RespireKey interpolatedKey = "interpolated-key";
         var interpolated = client.ExecuteAsync(
-            $"BLPOP {interpolatedKey} {0}", interpolatedCancellation.Token).AsTask();
+            $"BLPOP {interpolatedKey} {0}", cancellationToken: interpolatedCancellation.Token).AsTask();
         await WaitForCommandsAsync(server, 2);
         interpolatedCancellation.Cancel();
         await Assert.That(async () => await interpolated.WaitAsync(TimeSpan.FromSeconds(5)))
