@@ -68,8 +68,9 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 
 - `ConnectAsync` connects eagerly. `Create(...)` defers connection to the first command for
   hosts that start before Redis. `ConnectTimeout` bounds socket and TLS setup; the Redis
-  handshake and command use `CommandTimeout` and caller cancellation. Standalone clients
-  surface setup exceptions directly, while cluster clients wrap seed failures in
+  handshake and non-blocking commands use `CommandTimeout`. Blocking commands use their
+  explicit wait timeout, and caller cancellation applies throughout. Standalone clients surface
+  setup exceptions directly, while cluster clients wrap seed failures in
   `RespireConnectionException`. A later command starts a new connection attempt.
 - URI carries the common knobs:
   `redis://user:pass@host:6379/2?clientName=api&commandTimeoutMs=2000`.
@@ -425,8 +426,9 @@ public sealed class CartService([FromKeyedServices("cache")] IRespireClient redi
 ```
 
 - Registers `IRespireClient` + `RespireClient` singleton; connection happens on first use.
-  `ConnectTimeout` bounds socket and TLS setup; the Redis handshake and command use
-  `CommandTimeout` and caller cancellation. Cluster seed failures are wrapped in
+  `ConnectTimeout` bounds socket and TLS setup; the Redis handshake uses `CommandTimeout`, as do
+  non-blocking commands. Blocking commands use their explicit wait timeout, and caller
+  cancellation applies throughout. Cluster seed failures are wrapped in
   `RespireConnectionException`, and the next command retries connection.
 - Configuration accepts a connection string, an `Action<RespireOptionsBuilder>`, or a
   service-provider factory returning `RespireOptions`; the package does not bind `IOptions`.

@@ -147,9 +147,10 @@ public sealed partial class RespireClient : IRespireClient
     /// </summary>
     /// <remarks>
     /// <see cref="RespireOptions.ConnectTimeout"/> bounds socket and TLS setup; the Redis handshake
-    /// and command use <see cref="RespireOptions.CommandTimeout"/> and caller cancellation.
-    /// Standalone clients surface setup exceptions directly, while cluster clients wrap seed
-    /// failures in <see cref="RespireConnectionException"/>. A later command starts a new attempt.
+    /// and non-blocking commands use <see cref="RespireOptions.CommandTimeout"/>. Blocking commands
+    /// use their explicit wait timeout, and caller cancellation applies throughout. Standalone
+    /// clients surface setup exceptions directly, while cluster clients wrap seed failures in
+    /// <see cref="RespireConnectionException"/>. A later command starts a new attempt.
     /// </remarks>
     public static RespireClient Create(string connectionString) => Create(RespireOptions.Parse(connectionString));
 
@@ -158,9 +159,10 @@ public sealed partial class RespireClient : IRespireClient
     /// </summary>
     /// <remarks>
     /// <see cref="RespireOptions.ConnectTimeout"/> bounds socket and TLS setup; the Redis handshake
-    /// and command use <see cref="RespireOptions.CommandTimeout"/> and caller cancellation.
-    /// Standalone clients surface setup exceptions directly, while cluster clients wrap seed
-    /// failures in <see cref="RespireConnectionException"/>. A later command starts a new attempt.
+    /// and non-blocking commands use <see cref="RespireOptions.CommandTimeout"/>. Blocking commands
+    /// use their explicit wait timeout, and caller cancellation applies throughout. Standalone
+    /// clients surface setup exceptions directly, while cluster clients wrap seed failures in
+    /// <see cref="RespireConnectionException"/>. A later command starts a new attempt.
     /// </remarks>
     public static RespireClient Create(RespireOptions options)
     {

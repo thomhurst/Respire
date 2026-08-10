@@ -251,9 +251,10 @@ public sealed class CartService(
 ```
 
 Registration is lazy, so Redis availability never blocks application startup. `ConnectTimeout`
-bounds socket and TLS setup; the Redis handshake and command use `CommandTimeout` and caller
-cancellation. Standalone clients surface setup exceptions directly, while cluster clients wrap
-seed failures in `RespireConnectionException`. The next command starts a new connection attempt.
+bounds socket and TLS setup; the Redis handshake and non-blocking commands use `CommandTimeout`.
+Blocking commands use their explicit wait timeout, and caller cancellation applies throughout.
+Standalone clients surface setup exceptions directly, while cluster clients wrap seed failures in
+`RespireConnectionException`. The next command starts a new connection attempt.
 
 ### NativeAOT and trimming
 
