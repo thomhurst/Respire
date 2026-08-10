@@ -44,7 +44,10 @@ public sealed class RespireConnectionMultiplexer : IAsyncDisposable
     /// <summary>The options every connection (and any subscriber) is built from.</summary>
     public RespireConnectionOptions Options => _options;
 
-    /// <summary>Raised when any client-owned connection is reconnecting or restored.</summary>
+    /// <summary>
+    /// Raised when any client-owned connection begins reconnecting, reconnects, or disconnects
+    /// because of failure or disposal.
+    /// </summary>
     public event Action<RespireConnectionStateChange>? StateChanged;
     internal event Action<int, RespireConnectionStateChange>? SlotStateChanged;
 

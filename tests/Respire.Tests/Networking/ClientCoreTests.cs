@@ -114,23 +114,35 @@ public class ClientCoreTests
     }
 
     [Test]
-    public async Task ClusterRecovery_WaitsForEveryReconnectingNode()
+    public async Task ClusterRecovery_PublishesEachEndpointTransition()
     {
         await using var core = new ClientCore(new RespireOptions { Cluster = true });
-        var secondNode = core.Cluster!.GetMultiplexer(new RespireEndpoint("127.0.0.1", 6380));
-        var states = new List<RespireConnectionState>();
-        core.ConnectionStateChanged += change => states.Add(change.State);
+        var primaryEndpoint = core.Options.PrimaryEndpoint;
+        var secondEndpoint = new RespireEndpoint("127.0.0.1", 6380);
+        var secondNode = core.Cluster!.GetMultiplexer(secondEndpoint);
+        var changes = new List<RespireConnectionStateChange>();
+        core.ConnectionStateChanged += changes.Add;
 
         core.NotifyCommandStateChanged(core.Multiplexer, 0, RespireConnectionState.Reconnecting);
         core.NotifyCommandStateChanged(secondNode, 0, RespireConnectionState.Reconnecting);
         core.NotifyCommandStateChanged(core.Multiplexer, 0, RespireConnectionState.Connected);
 
-        await Assert.That(states).IsEquivalentTo([RespireConnectionState.Reconnecting]);
+        await Assert.That(changes.Select(change => (change.Endpoint, change.State))).IsEquivalentTo(
+            [
+                (primaryEndpoint, RespireConnectionState.Reconnecting),
+                (secondEndpoint, RespireConnectionState.Reconnecting),
+                (primaryEndpoint, RespireConnectionState.Connected),
+            ]);
 
         core.NotifyCommandStateChanged(secondNode, 0, RespireConnectionState.Connected);
 
-        await Assert.That(states).IsEquivalentTo(
-            [RespireConnectionState.Reconnecting, RespireConnectionState.Connected]);
+        await Assert.That(changes.Select(change => (change.Endpoint, change.State))).IsEquivalentTo(
+            [
+                (primaryEndpoint, RespireConnectionState.Reconnecting),
+                (secondEndpoint, RespireConnectionState.Reconnecting),
+                (primaryEndpoint, RespireConnectionState.Connected),
+                (secondEndpoint, RespireConnectionState.Connected),
+            ]);
     }
 
     [Test]
