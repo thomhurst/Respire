@@ -117,7 +117,7 @@ public interface IKeyCommands
     IAsyncEnumerable<string> ScanAsync(
         string? match = null,
         int countHint = 250,
-        string? type = null,
+        RespireKeyType? type = null,
         CancellationToken cancellationToken = default);
 }
 
@@ -231,14 +231,11 @@ internal sealed class KeyCommands(RespireClient client) : IKeyCommands
     public async IAsyncEnumerable<string> ScanAsync(
         string? match = null,
         int countHint = 250,
-        string? type = null,
+        RespireKeyType? type = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(countHint);
-        if (type is not null)
-        {
-            ArgumentException.ThrowIfNullOrWhiteSpace(type);
-        }
+        var typeToken = FormatKeyType(type);
 
         // A key-prefixed view scans inside its prefix and returns keys with the prefix stripped,
         // so results round-trip through the same view's commands. The prefix is glob-escaped —
@@ -272,12 +269,12 @@ internal sealed class KeyCommands(RespireClient client) : IKeyCommands
             var cursor = "0";
             do
             {
-                var args = (effectiveMatch, type) switch
+                var args = (effectiveMatch, typeToken) switch
                 {
                     (null, null) => new RespireValue[] { cursor, "COUNT", countHint },
                     (not null, null) => [cursor, "MATCH", effectiveMatch, "COUNT", countHint],
-                    (null, not null) => [cursor, "COUNT", countHint, "TYPE", type],
-                    _ => [cursor, "MATCH", effectiveMatch, "COUNT", countHint, "TYPE", type],
+                    (null, not null) => [cursor, "COUNT", countHint, "TYPE", typeToken],
+                    _ => [cursor, "MATCH", effectiveMatch, "COUNT", countHint, "TYPE", typeToken],
                 };
                 var command = new CmdN(Verbs.Scan, args);
                 var reply = connection is null
@@ -319,6 +316,21 @@ internal sealed class KeyCommands(RespireClient client) : IKeyCommands
             "stream" => RespireKeyType.Stream,
             "vectorset" => RespireKeyType.VectorSet,
             _ => RespireKeyType.Unknown,
+        };
+
+    private static string? FormatKeyType(RespireKeyType? type)
+        => type switch
+        {
+            null => null,
+            RespireKeyType.String => "string",
+            RespireKeyType.List => "list",
+            RespireKeyType.Set => "set",
+            RespireKeyType.SortedSet => "zset",
+            RespireKeyType.Hash => "hash",
+            RespireKeyType.Stream => "stream",
+            RespireKeyType.VectorSet => "vectorset",
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(type), type, "SCAN TYPE requires a concrete Redis key type."),
         };
 
     /// <summary>Escapes Redis glob metacharacters so the text matches itself literally.</summary>

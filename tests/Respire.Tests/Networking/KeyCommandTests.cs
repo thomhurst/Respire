@@ -28,7 +28,8 @@ public class KeyCommandTests
         await Assert.That(await client.Keys.TryRenameAsync("old", "new")).IsTrue();
         await Assert.That(await client.Keys.CopyAsync("source", "target")).IsFalse();
         await Assert.That(await client.Keys.CopyAsync("source", "target", replace: true)).IsTrue();
-        var keys = await CollectAsync(client.Keys.ScanAsync("user:*", countHint: 12, type: "hash"));
+        var keys = await CollectAsync(client.Keys.ScanAsync(
+            "user:*", countHint: 12, type: RespireKeyType.Hash));
 
         await Assert.That(keys).IsEquivalentTo(["k1", "k2"]);
         await Assert.That(server.ReceivedCommands).IsEquivalentTo([
@@ -44,6 +45,24 @@ public class KeyCommandTests
     }
 
     [Test]
+    [Arguments(RespireKeyType.String, "string")]
+    [Arguments(RespireKeyType.List, "list")]
+    [Arguments(RespireKeyType.Set, "set")]
+    [Arguments(RespireKeyType.SortedSet, "zset")]
+    [Arguments(RespireKeyType.Hash, "hash")]
+    [Arguments(RespireKeyType.Stream, "stream")]
+    [Arguments(RespireKeyType.VectorSet, "vectorset")]
+    public async Task Scan_TypeFilterUsesRedisToken(RespireKeyType type, string token)
+    {
+        await using var server = new FakeRespServer("*2\r\n$1\r\n0\r\n*0\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        _ = await CollectAsync(client.Keys.ScanAsync(type: type));
+
+        await Assert.That(server.ReceivedCommands[0]).IsEqualTo($"SCAN 0 COUNT 250 TYPE {token}");
+    }
+
+    [Test]
     public async Task Scan_RejectsInvalidHintsAndTypesBeforeSending()
     {
         await using var server = new FakeRespServer();
@@ -51,8 +70,12 @@ public class KeyCommandTests
 
         await Assert.That(async () => await CollectAsync(client.Keys.ScanAsync(countHint: 0)))
             .ThrowsExactly<ArgumentOutOfRangeException>();
-        await Assert.That(async () => await CollectAsync(client.Keys.ScanAsync(type: " ")))
-            .ThrowsExactly<ArgumentException>();
+        await Assert.That(async () => await CollectAsync(client.Keys.ScanAsync(type: RespireKeyType.None)))
+            .ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await CollectAsync(client.Keys.ScanAsync(type: RespireKeyType.Unknown)))
+            .ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await CollectAsync(client.Keys.ScanAsync(type: (RespireKeyType)999)))
+            .ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 
