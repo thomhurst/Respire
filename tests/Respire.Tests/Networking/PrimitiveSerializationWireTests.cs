@@ -60,16 +60,24 @@ public class PrimitiveSerializationWireTests
     }
 
     [Test]
-    public async Task NullRawValue_IsRejectedBeforeSending()
+    public async Task NullRawStringValues_AreRejectedBeforeSending()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var exception = await Assert.That(
-                async () => await client.SetAsync("key", RespireValue.Null))
-            .Throws<ArgumentException>();
+        var setException = await Assert.That(
+                async () => await client.Strings.SetAsync("key", RespireValue.Null))
+            .ThrowsExactly<ArgumentNullException>();
+        var getAndSetException = await Assert.That(
+                async () => await client.Strings.GetAndSetAsync("key", RespireValue.Null))
+            .ThrowsExactly<ArgumentNullException>();
+        var appendException = await Assert.That(
+                async () => await client.Strings.AppendAsync("key", RespireValue.Null))
+            .ThrowsExactly<ArgumentNullException>();
 
-        await Assert.That(exception!.Message).Contains("null value cannot be sent as a Redis argument");
+        await Assert.That(setException!.ParamName).IsEqualTo("value");
+        await Assert.That(getAndSetException!.ParamName).IsEqualTo("value");
+        await Assert.That(appendException!.ParamName).IsEqualTo("value");
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 

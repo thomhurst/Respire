@@ -209,6 +209,7 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default)
     {
+        RespireValue.ThrowIfNull(value, nameof(value));
         SetCommand.ValidateExpiry(expiry);
         return client.OkOrNullAsync(
             "SET", new SetCommand(client.Key(in key), value, expiry, when, returnOld: false), cancellationToken);
@@ -233,6 +234,7 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default)
     {
+        RespireValue.ThrowIfNull(value, nameof(value));
         SetCommand.ValidateExpiry(expiry);
         return client.StringOrNullAsync(
             "SET", new SetCommand(client.Key(in key), value, expiry, when, returnOld: true),
@@ -287,7 +289,10 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
     }
 
     public ValueTask<long> AppendAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken = default)
-        => client.IntegerAsync("APPEND", new Cmd2(Verbs.Append, client.Key(in key), value), cancellationToken);
+    {
+        RespireValue.ThrowIfNull(value, nameof(value));
+        return client.IntegerAsync("APPEND", new Cmd2(Verbs.Append, client.Key(in key), value), cancellationToken);
+    }
 
     public ValueTask<long> LengthAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.IntegerAsync("STRLEN", new Cmd1(Verbs.StrLen, client.Key(in key)), cancellationToken);
