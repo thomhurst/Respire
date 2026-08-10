@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Respire.Commands;
@@ -231,6 +232,12 @@ public sealed partial class RespireClient : IRespireClient
     public ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args)
         => ExecuteCommandAsync(command, args, RespireCommandFlags.None, CancellationToken.None);
 
+    /// <summary>Compatibility forwarder for the former string command overload.</summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    [Obsolete("Use the RespireCommand overload; string commands convert implicitly.", false)]
+    public ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args)
+        => ExecuteCommandAsync(command, args, RespireCommandFlags.None, CancellationToken.None);
+
     /// <summary>
     /// Sends a command with optional policy flags and cancellation. Blocking commands use a
     /// dedicated pooled connection; cancellation abandons that connection without stalling
@@ -238,6 +245,16 @@ public sealed partial class RespireClient : IRespireClient
     /// </summary>
     public ValueTask<RespireResult> ExecuteAsync(
         RespireCommand command,
+        RespireValue[] args,
+        RespireCommandFlags flags = RespireCommandFlags.None,
+        CancellationToken cancellationToken = default)
+        => ExecuteCommandAsync(command, args, flags, cancellationToken);
+
+    /// <summary>Compatibility forwarder for the former string command overload.</summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    [Obsolete("Use the RespireCommand overload; string commands convert implicitly.", false)]
+    public ValueTask<RespireResult> ExecuteAsync(
+        string command,
         RespireValue[] args,
         RespireCommandFlags flags = RespireCommandFlags.None,
         CancellationToken cancellationToken = default)
@@ -253,6 +270,12 @@ public sealed partial class RespireClient : IRespireClient
     public ValueTask ExecuteFireAndForgetAsync(RespireCommand command, params RespireValue[] args)
         => ExecuteCommandFireAndForgetAsync(command, args, CancellationToken.None);
 
+    /// <summary>Compatibility forwarder for the former string command overload.</summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    [Obsolete("Use the RespireCommand overload; string commands convert implicitly.", false)]
+    public ValueTask ExecuteFireAndForgetAsync(string command, params RespireValue[] args)
+        => ExecuteCommandFireAndForgetAsync(command, args, CancellationToken.None);
+
     /// <summary>
     /// Queues a command and discards its reply once it arrives.
     /// </summary>
@@ -262,6 +285,13 @@ public sealed partial class RespireClient : IRespireClient
     /// </remarks>
     public ValueTask ExecuteFireAndForgetAsync(
         RespireCommand command, RespireValue[] args, CancellationToken cancellationToken = default)
+        => ExecuteCommandFireAndForgetAsync(command, args, cancellationToken);
+
+    /// <summary>Compatibility forwarder for the former string command overload.</summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    [Obsolete("Use the RespireCommand overload; string commands convert implicitly.", false)]
+    public ValueTask ExecuteFireAndForgetAsync(
+        string command, RespireValue[] args, CancellationToken cancellationToken = default)
         => ExecuteCommandFireAndForgetAsync(command, args, cancellationToken);
 
     private ValueTask<RespireResult> ExecuteCommandAsync(
