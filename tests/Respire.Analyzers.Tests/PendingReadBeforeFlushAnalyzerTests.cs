@@ -721,4 +721,48 @@ public class PendingReadBeforeFlushAnalyzerTests
             }
         }
         """);
+
+    [Test]
+    public async Task DiscardedBatchAndPending_DoNotSuppressDiagnostic() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                _ = batch;
+                _ = pending;
+                Console.WriteLine({|RESP002:pending.Result|});
+                await batch.SendAsync();
+            }
+        }
+        """);
+
+    [Test]
+    public async Task EscapesAfterRead_DoNotSuppressDiagnostic() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                Console.WriteLine({|RESP002:pending.Result|});
+                Consume(batch);
+                Consume(pending);
+                await batch.SendAsync();
+            }
+
+            private static void Consume(object value) { }
+        }
+        """);
 }

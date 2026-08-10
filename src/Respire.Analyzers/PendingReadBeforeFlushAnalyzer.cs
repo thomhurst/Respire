@@ -150,7 +150,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             return;
         }
 
-        if (Escapes(context, scope, batch, allowReassignment: true)
+        if (Escapes(context, scope, batch, allowReassignment: true, before: read)
             || HasFlushBefore(context, scope, batch, origin, read))
         {
             return;
@@ -183,7 +183,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
                 if (declarator.Initializer is not null)
                 {
-                    return !Escapes(context, scope, local)
+                    return !Escapes(context, scope, local, before: identifier)
                         ? ScopeWalker.Unwrap(declarator.Initializer.Value) as InvocationExpressionSyntax
                         : null;
                 }
@@ -201,7 +201,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 }
 
                 var assignment = assignments[0];
-                if (Escapes(context, scope, local, assignment))
+                if (Escapes(context, scope, local, assignment, before: identifier))
                 {
                     return null;
                 }
@@ -238,11 +238,22 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         SyntaxNode scope,
         ILocalSymbol local,
         AssignmentExpressionSyntax? allowedAssignment = null,
-        bool allowReassignment = false)
+        bool allowReassignment = false,
+        SyntaxNode? before = null)
     {
         foreach (var reference in ScopeWalker.FindReferences(scope, local, context.SemanticModel, context.CancellationToken))
         {
+            if (before is not null && reference.SpanStart > before.SpanStart)
+            {
+                continue;
+            }
+
             if (ScopeWalker.IsInsideNameOf(context.SemanticModel, reference, context.CancellationToken))
+            {
+                continue;
+            }
+
+            if (ScopeWalker.IsDiscarded(reference))
             {
                 continue;
             }
@@ -253,11 +264,24 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             }
 
             ExpressionSyntax use = reference;
-            while (use.Parent is PostfixUnaryExpressionSyntax suppression
-                   && suppression.IsKind(SyntaxKind.SuppressNullableWarningExpression)
-                   && ScopeWalker.IsSame(suppression.Operand, use))
+            while (true)
             {
-                use = suppression;
+                if (use.Parent is ParenthesizedExpressionSyntax parenthesized
+                    && ScopeWalker.IsSame(parenthesized.Expression, use))
+                {
+                    use = parenthesized;
+                    continue;
+                }
+
+                if (use.Parent is PostfixUnaryExpressionSyntax suppression
+                    && suppression.IsKind(SyntaxKind.SuppressNullableWarningExpression)
+                    && ScopeWalker.IsSame(suppression.Operand, use))
+                {
+                    use = suppression;
+                    continue;
+                }
+
+                break;
             }
 
             switch (use.Parent)

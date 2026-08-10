@@ -210,6 +210,11 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
+            if (ScopeWalker.IsDiscarded(reference))
+            {
+                continue;
+            }
+
             if (firstReassignment is { } reassignment && reference.SpanStart > reassignment)
             {
                 // Later uses refer to the replacement, not the acquired pooled owner.

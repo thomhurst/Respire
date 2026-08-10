@@ -590,4 +590,20 @@ public class UndisposedPooledResultAnalyzerTests
             };
         }
         """);
+
+    [Test]
+    public async Task DiscardedResultWithoutDispose_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                _ = result;
+            }
+        }
+        """);
 }

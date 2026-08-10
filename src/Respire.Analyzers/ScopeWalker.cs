@@ -91,6 +91,12 @@ internal static class ScopeWalker
         return false;
     }
 
+    /// <summary>True when the expression is assigned directly to the discard identifier.</summary>
+    public static bool IsDiscarded(ExpressionSyntax expression)
+        => expression.FirstAncestorOrSelf<AssignmentExpressionSyntax>() is { } assignment
+           && assignment.Left is IdentifierNameSyntax { Identifier.ValueText: "_" }
+           && IsSame(Unwrap(assignment.Right), expression);
+
     /// <summary>Identity for two nodes of the same syntax tree.</summary>
     public static bool IsSame(SyntaxNode left, SyntaxNode right)
         => left.RawKind == right.RawKind && left.FullSpan == right.FullSpan;
