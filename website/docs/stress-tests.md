@@ -6,7 +6,7 @@ description: Latest sustained Respire and StackExchange.Redis stress-test result
 # Stress tests
 
 :::info Automated results
-Generated 2026-08-10 21:04 UTC from commit `9c86e4a041aa`. See the [GitHub Actions run](https://github.com/thomhurst/Respire/actions/runs/31428466315) for logs, JSON results, and downloadable artifacts.
+Generated 2026-08-10 22:44 UTC from commit `83347ad6092d`. See the [GitHub Actions run](https://github.com/thomhurst/Respire/actions/runs/31436343216) for logs, JSON results, and downloadable artifacts.
 :::
 
 3 min measured (+10s warmup) per scenario/client pass, 50 concurrent workers, 1,024 B values, .NET 10.0.10, Ubuntu 24.04.4 LTS.
@@ -15,13 +15,13 @@ Generated 2026-08-10 21:04 UTC from commit `9c86e4a041aa`. See the [GitHub Actio
 
 | Scenario | StackExchange.Redis ops/s | Respire ops/s | Respire / StackExchange |
 |---|---:|---:|---:|
-| ping | 223,862 | 274,110 | 1.22x |
-| get | 137,705 | 214,742 | 1.56x |
-| set | 155,975 | 211,513 | 1.36x |
-| incr | 188,746 | 248,086 | 1.31x |
-| hash | 68,590 | 102,451 | 1.49x |
-| list | 65,806 | 95,856 | 1.46x |
-| mixed | 126,003 | 203,885 | 1.62x |
+| ping | 164,490 | 230,960 | 1.40x |
+| get | 116,543 | 164,385 | 1.41x |
+| set | 132,793 | 181,243 | 1.36x |
+| incr | 146,433 | 196,072 | 1.34x |
+| hash | 56,600 | 88,607 | 1.57x |
+| list | 55,117 | 84,236 | 1.53x |
+| mixed | 109,975 | 175,831 | 1.60x |
 
 A ratio above 1.00x means Respire sustained more operations per second.
 
@@ -29,20 +29,20 @@ A ratio above 1.00x means Respire sustained more operations per second.
 
 | Scenario | Client | Ops/s | p50 ms | p95 ms | p99 ms | p99.9 ms | Max ms | Errors | Alloc/op | Gen0/1/2 | GC pause s | CPU µs/op | Drift % | Status |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| ping | StackExchange.Redis | 223,862 | 0.210 | 0.360 | 0.720 | 1.120 | 8.4 | 0 | 356 B | 863/432/2 | 1.24 | 8.7 | +9.2 | OK |
-| ping | Respire | 274,110 | 0.180 | 0.260 | 0.310 | 0.630 | 2.8 | 0 | 409 B | 1209/78/1 | 0.54 | 7.2 | +2.1 | OK |
-| get | StackExchange.Redis | 137,705 | 0.350 | 0.580 | 0.930 | 1.230 | 5.3 | 0 | 3.55 KB | 5699/2845/2 | 2.88 | 14.4 | +3.3 | OK |
-| get | Respire | 214,742 | 0.230 | 0.330 | 0.430 | 0.670 | 2.6 | 0 | 2.43 KB | 5824/1065/2 | 1.86 | 8.8 | -3.0 | OK |
-| set | StackExchange.Redis | 155,975 | 0.300 | 0.560 | 0.910 | 1.230 | 6.5 | 0 | 384 B | 648/218/2 | 1.02 | 12.1 | -5.7 | OK |
-| set | Respire | 211,513 | 0.230 | 0.340 | 0.400 | 0.720 | 4.9 | 0 | 417 B | 955/60/2 | 0.45 | 9.1 | +1.7 | OK |
-| incr | StackExchange.Redis | 188,746 | 0.250 | 0.430 | 0.770 | 1.140 | 4.4 | 0 | 494 B | 1010/469/2 | 1.33 | 10.3 | +3.6 | OK |
-| incr | Respire | 248,086 | 0.200 | 0.290 | 0.340 | 0.640 | 2.4 | 0 | 417 B | 1118/84/2 | 0.50 | 7.7 | +0.8 | OK |
-| hash | StackExchange.Redis | 68,590 | 0.700 | 1.160 | 1.550 | 2.110 | 4.8 | 0 | 3.99 KB | 3179/1347/2 | 2.42 | 28.3 | +1.3 | OK |
-| hash | Respire | 102,451 | 0.480 | 0.660 | 0.840 | 1.090 | 3.2 | 0 | 3.42 KB | 3920/712/2 | 1.52 | 18.7 | -1.8 | OK |
-| list | StackExchange.Redis | 65,806 | 0.710 | 1.240 | 1.610 | 2.120 | 5.0 | 0 | 3.94 KB | 3002/1203/1 | 2.20 | 28.0 | +8.2 | OK |
-| list | Respire | 95,856 | 0.510 | 0.700 | 0.890 | 1.180 | 4.4 | 0 | 3.35 KB | 3595/631/1 | 1.46 | 18.4 | -0.6 | OK |
-| mixed | StackExchange.Redis | 126,003 | 0.360 | 0.780 | 1.140 | 2.070 | 8.0 | 0 | 2.68 KB | 3894/1937/2 | 2.51 | 14.6 | -20.6 | OK |
-| mixed | Respire | 203,885 | 0.250 | 0.340 | 0.450 | 0.770 | 5.3 | 0 | 1.99 KB | 4518/926/2 | 1.84 | 8.5 | +2.8 | OK |
+| ping | StackExchange.Redis | 164,490 | 0.260 | 0.690 | 0.980 | 1.390 | 7.2 | 0 | 355 B | 633/317/2 | 0.66 | 10.2 | +7.4 | OK |
+| ping | Respire | 230,960 | 0.220 | 0.290 | 0.350 | 0.540 | 5.8 | 0 | 121 B | 303/18/2 | 0.11 | 7.7 | -0.9 | OK |
+| get | StackExchange.Redis | 116,543 | 0.410 | 0.720 | 1.110 | 1.450 | 5.7 | 0 | 3.55 KB | 4803/2348/2 | 2.74 | 16.4 | -2.8 | OK |
+| get | Respire | 164,385 | 0.310 | 0.380 | 0.480 | 0.720 | 7.9 | 0 | 2.15 KB | 3927/590/2 | 1.21 | 9.6 | -+0.0 | OK |
+| set | StackExchange.Redis | 132,793 | 0.350 | 0.670 | 1.050 | 1.470 | 5.9 | 0 | 383 B | 551/186/2 | 0.66 | 13.7 | +4.0 | OK |
+| set | Respire | 181,243 | 0.270 | 0.390 | 0.470 | 0.650 | 3.9 | 0 | 129 B | 255/18/2 | 0.11 | 9.7 | -0.2 | OK |
+| incr | StackExchange.Redis | 146,433 | 0.320 | 0.630 | 0.990 | 1.420 | 6.2 | 0 | 495 B | 784/344/2 | 0.96 | 12.5 | +5.8 | OK |
+| incr | Respire | 196,072 | 0.260 | 0.330 | 0.390 | 0.570 | 4.6 | 0 | 129 B | 275/18/2 | 0.11 | 8.7 | +1.3 | OK |
+| hash | StackExchange.Redis | 56,600 | 0.840 | 1.410 | 1.820 | 2.420 | 6.6 | 0 | 3.99 KB | 2614/836/2 | 1.87 | 32.9 | +4.5 | OK |
+| hash | Respire | 88,607 | 0.560 | 0.740 | 0.890 | 1.180 | 4.9 | 0 | 2.30 KB | 2291/154/1 | 0.88 | 20.3 | -1.0 | OK |
+| list | StackExchange.Redis | 55,117 | 0.850 | 1.450 | 1.850 | 2.510 | 8.2 | 0 | 3.94 KB | 2506/837/2 | 1.59 | 32.6 | -1.3 | OK |
+| list | Respire | 84,236 | 0.590 | 0.770 | 0.920 | 1.210 | 3.8 | 0 | 2.30 KB | 2177/178/2 | 0.80 | 20.6 | +0.4 | OK |
+| mixed | StackExchange.Redis | 109,975 | 0.430 | 0.820 | 1.210 | 1.580 | 6.9 | 0 | 2.68 KB | 3395/1100/2 | 2.04 | 16.7 | -3.5 | OK |
+| mixed | Respire | 175,831 | 0.280 | 0.390 | 0.480 | 0.740 | 5.8 | 0 | 1.61 KB | 3147/321/2 | 1.11 | 9.0 | +0.4 | OK |
 
 ## Notes
 
