@@ -1072,6 +1072,80 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    public async Task CoalescingPendingReadBeforeSend_IsFlagged() => await Verify.VerifyAsync(
+        """
+        #nullable enable
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, RespirePending<string>? fallback)
+            {
+                var batch = client.CreateBatch();
+                Console.WriteLine({|RESP002:(fallback ?? batch.GetStringAsync("key")).Result|});
+                await batch.SendAsync();
+            }
+        }
+        """);
+
+    [Test]
+    public async Task BranchSelectedPendingWithMatchingFlush_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool condition)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = condition
+                    ? first.GetStringAsync("a")
+                    : second.GetStringAsync("b");
+
+                if (condition)
+                {
+                    await first.SendAsync();
+                }
+                else
+                {
+                    await second.SendAsync();
+                }
+
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    public async Task SameNamedExtensionDoesNotCountAsFlush() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public static class Extensions
+        {
+            public static ValueTask SendAsync(this RespireBatch batch, bool ignored) => default;
+        }
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                await batch.SendAsync(false);
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
     public async Task SwitchPendingReadBeforeSend_IsFlagged() => await Verify.VerifyAsync(
         """
         using System;

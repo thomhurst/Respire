@@ -179,7 +179,13 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            if (Escapes(context, scope, batch, allowReassignment: true, before: read)
+            if (Escapes(
+                    context,
+                    scope,
+                    batch,
+                    allowReassignment: true,
+                    allowNamedFlushExtension: true,
+                    before: read)
                 || HasFlushBefore(context, scope, batch, origin, read))
             {
                 continue;
@@ -213,6 +219,19 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
                 foreach (var origin in ResolveOriginatingCalls(
                              context, scope, conditional.WhenFalse, read))
+                {
+                    yield return origin;
+                }
+
+                yield break;
+
+            case BinaryExpressionSyntax coalesce when coalesce.IsKind(SyntaxKind.CoalesceExpression):
+                foreach (var origin in ResolveOriginatingCalls(context, scope, coalesce.Left, read))
+                {
+                    yield return origin;
+                }
+
+                foreach (var origin in ResolveOriginatingCalls(context, scope, coalesce.Right, read))
                 {
                     yield return origin;
                 }
@@ -273,8 +292,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                     var otherWrites = writes.Where(write =>
                         !ScopeWalker.IsSame(write, definition.Write)
                         && !write.IsKind(SyntaxKind.CoalesceAssignmentExpression));
-                    if (ScopeWalker.Unwrap(definition.Value) is InvocationExpressionSyntax invocation
-                        && ScopeWalker.CanReachWithoutCrossing(
+                    if (!ScopeWalker.CanReachWithoutCrossing(
                             context.SemanticModel,
                             scope,
                             definition.Write,
@@ -282,7 +300,12 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                             otherWrites,
                             context.CancellationToken))
                     {
-                        yield return invocation;
+                        continue;
+                    }
+
+                    foreach (var origin in ResolveAlternativeCalls(definition.Value))
+                    {
+                        yield return origin;
                     }
                 }
 
@@ -290,6 +313,53 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
             default:
                 yield break;
+        }
+    }
+
+    private static IEnumerable<InvocationExpressionSyntax> ResolveAlternativeCalls(ExpressionSyntax expression)
+    {
+        switch (ScopeWalker.Unwrap(expression))
+        {
+            case InvocationExpressionSyntax invocation:
+                yield return invocation;
+                break;
+
+            case ConditionalExpressionSyntax conditional:
+                foreach (var origin in ResolveAlternativeCalls(conditional.WhenTrue))
+                {
+                    yield return origin;
+                }
+
+                foreach (var origin in ResolveAlternativeCalls(conditional.WhenFalse))
+                {
+                    yield return origin;
+                }
+
+                break;
+
+            case BinaryExpressionSyntax coalesce when coalesce.IsKind(SyntaxKind.CoalesceExpression):
+                foreach (var origin in ResolveAlternativeCalls(coalesce.Left))
+                {
+                    yield return origin;
+                }
+
+                foreach (var origin in ResolveAlternativeCalls(coalesce.Right))
+                {
+                    yield return origin;
+                }
+
+                break;
+
+            case SwitchExpressionSyntax switchExpression:
+                foreach (var arm in switchExpression.Arms)
+                {
+                    foreach (var origin in ResolveAlternativeCalls(arm.Expression))
+                    {
+                        yield return origin;
+                    }
+                }
+
+                break;
         }
     }
 
@@ -350,6 +420,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         ILocalSymbol local,
         AssignmentExpressionSyntax? allowedAssignment = null,
         bool allowReassignment = false,
+        bool allowNamedFlushExtension = false,
         SyntaxNode? before = null)
     {
         foreach (var reference in ScopeWalker.FindReferences(scope, local, context.SemanticModel, context.CancellationToken))
@@ -394,6 +465,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                     if (member.Parent is InvocationExpressionSyntax invocation
                         && context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol
                             is IMethodSymbol { ReducedFrom: not null }
+                        && (!allowNamedFlushExtension
+                            || member.Name.Identifier.ValueText is not (SendAsync or CommitAsync))
                         && DominatesRead(context, scope, invocation, before))
                     {
                         return true;
@@ -433,25 +506,17 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         InvocationExpressionSyntax origin,
         ExpressionSyntax read)
     {
+        if (HasBranchCorrelatedFlush(context, scope, batch, origin, read))
+        {
+            return true;
+        }
+
         var completions = new List<SyntaxNode>();
         foreach (var invocation in scope.DescendantNodes().OfType<InvocationExpressionSyntax>())
         {
             context.CancellationToken.ThrowIfCancellationRequested();
 
-            if (ScopeWalker.Unwrap(invocation.Expression) is not MemberAccessExpressionSyntax member)
-            {
-                continue;
-            }
-
-            var name = member.Name.Identifier.ValueText;
-            if (name != SendAsync && name != CommitAsync)
-            {
-                continue;
-            }
-
-            if (context.SemanticModel.GetSymbolInfo(
-                    ScopeWalker.Unwrap(member.Expression), context.CancellationToken).Symbol is not ILocalSymbol target
-                || !SymbolEqualityComparer.Default.Equals(target, batch))
+            if (!IsFlushInvocation(context, invocation, batch))
             {
                 continue;
             }
@@ -462,8 +527,56 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             }
         }
 
-        return ScopeWalker.CollectivelyDominates(
-            context.SemanticModel, scope, completions, read, context.CancellationToken);
+        return completions.Count > 0
+               && ScopeWalker.CanReach(
+                   context.SemanticModel, scope, origin, read, context.CancellationToken)
+               && !ScopeWalker.CanReachWithoutCrossing(
+                   context.SemanticModel, scope, origin, read, completions, context.CancellationToken);
+    }
+
+    private static bool HasBranchCorrelatedFlush(
+        SyntaxNodeAnalysisContext context,
+        SyntaxNode scope,
+        ILocalSymbol batch,
+        InvocationExpressionSyntax origin,
+        ExpressionSyntax read)
+    {
+        var conditional = origin.Ancestors().OfType<ConditionalExpressionSyntax>().FirstOrDefault();
+        if (conditional is null)
+        {
+            return false;
+        }
+
+        var selectedWhenTrue = conditional.WhenTrue.Span.Contains(origin.Span);
+        foreach (var ifStatement in scope.DescendantNodes().OfType<IfStatementSyntax>())
+        {
+            if (ifStatement.SpanStart <= conditional.SpanStart
+                || ifStatement.SpanStart >= read.SpanStart
+                || !SyntaxFactory.AreEquivalent(
+                    ScopeWalker.Unwrap(conditional.Condition),
+                    ScopeWalker.Unwrap(ifStatement.Condition)))
+            {
+                continue;
+            }
+
+            var branch = selectedWhenTrue ? ifStatement.Statement : ifStatement.Else?.Statement;
+            if (branch is null)
+            {
+                continue;
+            }
+
+            foreach (var flush in branch.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>())
+            {
+                if (IsFlushInvocation(context, flush, batch)
+                    && GetCompletionExpression(context, flush) is not null
+                    && !IsReassignedBetween(context, scope, batch, origin, flush))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static bool DominatesRead(
@@ -594,11 +707,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             if (!ScopeWalker.IsSame(
                     ScopeWalker.Unwrap(GetOutermostCompletionExpression(context, invocation)),
                     unwrappedDefinition)
-                || ScopeWalker.Unwrap(invocation.Expression) is not MemberAccessExpressionSyntax member
-                || member.Name.Identifier.ValueText is not (SendAsync or CommitAsync)
-                || context.SemanticModel.GetSymbolInfo(
-                    ScopeWalker.Unwrap(member.Expression), context.CancellationToken).Symbol is not ILocalSymbol target
-                || !SymbolEqualityComparer.Default.Equals(target, batch))
+                || !IsFlushInvocation(context, invocation, batch))
             {
                 continue;
             }
@@ -607,6 +716,21 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         }
 
         return false;
+    }
+
+    private static bool IsFlushInvocation(
+        SyntaxNodeAnalysisContext context, InvocationExpressionSyntax invocation, ILocalSymbol batch)
+    {
+        var expectedName = batch.Type.ToDisplayString() == TransactionTypeName ? CommitAsync : SendAsync;
+        return ScopeWalker.Unwrap(invocation.Expression) is MemberAccessExpressionSyntax member
+               && member.Name.Identifier.ValueText == expectedName
+               && context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol
+                   is IMethodSymbol method
+               && method.Name == expectedName
+               && SymbolEqualityComparer.Default.Equals(method.ContainingType, batch.Type)
+               && context.SemanticModel.GetSymbolInfo(
+                   ScopeWalker.Unwrap(member.Expression), context.CancellationToken).Symbol is ILocalSymbol target
+               && SymbolEqualityComparer.Default.Equals(target, batch);
     }
 
     private static ExpressionSyntax? GetCompletionExpression(

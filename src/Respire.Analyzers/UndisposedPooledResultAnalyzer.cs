@@ -146,6 +146,10 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 return ContainsRespireAcquisition(context, conditional.WhenTrue)
                        || ContainsRespireAcquisition(context, conditional.WhenFalse);
 
+            case BinaryExpressionSyntax coalesce when coalesce.IsKind(SyntaxKind.CoalesceExpression):
+                return ContainsRespireAcquisition(context, coalesce.Left)
+                       || ContainsRespireAcquisition(context, coalesce.Right);
+
             case SwitchExpressionSyntax switchExpression:
                 return switchExpression.Arms.Any(arm =>
                     ContainsRespireAcquisition(context, arm.Expression));

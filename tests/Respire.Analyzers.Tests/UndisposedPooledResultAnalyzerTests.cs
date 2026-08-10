@@ -808,6 +808,23 @@ public class UndisposedPooledResultAnalyzerTests
         """);
 
     [Test]
+    public async Task CoalescingAcquisitionWithoutDispose_IsFlagged() => await Verify.VerifyAsync(
+        """
+        #nullable enable
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, RespireResult? existing)
+            {
+                var {|RESP001:result|} = existing ?? await client.ExecuteAsync("PING");
+                _ = result.AsString();
+            }
+        }
+        """);
+
+    [Test]
     public async Task SwitchAcquisitionWithoutDispose_IsFlagged() => await Verify.VerifyAsync(
         """
         using System.Threading.Tasks;
