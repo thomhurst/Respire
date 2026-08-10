@@ -214,7 +214,8 @@ public sealed class RespireLock : IAsyncDisposable
     /// <summary>
     /// Releases the lock, only while this handle is still the owner. Redis: compare-and-DEL.
     /// Idempotent: later calls return <see cref="LockReleaseOutcome.AlreadyReleased"/> without
-    /// touching the server.
+    /// touching the server. Concurrent callers share one in-flight release, governed by the
+    /// cancellation token of the caller that starts it.
     /// </summary>
     /// <returns>
     /// Distinguishes a successful delete, a repeat call, and lost ownership.
@@ -256,14 +257,15 @@ public sealed class RespireLock : IAsyncDisposable
         }
         catch
         {
-            // The delete is undecided, so stay releasable: a retry (or DisposeAsync) may still
-            // land, and a duplicate compare-and-DEL is harmless.
+            // The delete is undecided and may still execute after the caller stops waiting.
+            // Conservatively stop protected work instead of claiming this handle remains held.
             lock (_releaseSync)
             {
-                Volatile.Write(ref _state, StateHeld);
+                Volatile.Write(ref _state, StateNotOwned);
                 _releaseTask = null;
             }
 
+            SignalLeaseChanged();
             throw;
         }
     }
@@ -285,11 +287,14 @@ public sealed class RespireLock : IAsyncDisposable
         {
             await ReleaseAsync().ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is RespireConnectionException or RespireTimeoutException or ObjectDisposedException)
+        catch (Exception ex) when (ex is RespireConnectionException
+            or RespireTimeoutException
+            or ObjectDisposedException
+            or OperationCanceledException)
         {
             // The release could not be delivered. Swallowed so cleanup never masks the caller's
-            // own failure; expiry still frees the lock, and the handle stays releasable for a
-            // caller that wants to retry it explicitly.
+            // own failure; expiry still frees the lock, and uncertain ownership stops protected
+            // work conservatively.
         }
     }
 
@@ -322,6 +327,8 @@ public sealed class RespireLock : IAsyncDisposable
 /// </summary>
 public sealed class RespireLockKeepAlive : IAsyncDisposable
 {
+    private static readonly TimeSpan MinimumRenewalDelay = TimeSpan.FromMilliseconds(10);
+
     private readonly RespireLock _lock;
     private readonly CancellationTokenSource _stop = new();
     private readonly CancellationTokenSource _lifetime;
@@ -397,7 +404,7 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
     internal static TimeSpan GetRenewalDelay(TimeSpan duration, TimeSpan remaining)
     {
         var delay = remaining - TimeSpan.FromTicks(duration.Ticks / 2);
-        return delay > TimeSpan.Zero ? delay : TimeSpan.Zero;
+        return delay > MinimumRenewalDelay ? delay : MinimumRenewalDelay;
     }
 
     /// <summary>Stops renewal and waits for the background renewal loop to finish.</summary>

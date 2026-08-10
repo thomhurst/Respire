@@ -62,6 +62,9 @@ lock without returning its handle or generated owner token; the lock then remain
 The lock disappears when `Duration` elapses, even if protected work is still running. Keep work
 shorter than the lease or extend it before expiry:
 
+`RemainingEstimate` and `ExpiresAtEstimate` are approximate timing values, not ownership checks.
+Use `IsHeldByAsync` when current ownership must be verified.
+
 ```csharp
 if (!await mutex.ExtendAsync(TimeSpan.FromSeconds(30), cancellationToken))
 {
@@ -79,10 +82,14 @@ await using var keepAlive = await mutex.KeepAliveAsync(cancellationToken);
 await RunReportAsync(keepAlive.CancellationToken);
 ```
 
-`await using` is the normal release path. Call `ReleaseAsync` explicitly when release success must
-be observed; it returns `LockReleaseOutcome.Released`, `AlreadyReleased`, or `NotOwned`. Disposal
-suppresses connection, timeout, and disposed-client cleanup failures because expiry remains the
-final safety net.
+The keep-alive token is cancelled when renewal fails or ownership is lost. Protected operations
+must honor it and stop protected writes after cancellation. Disposing `keepAlive` stops renewal;
+it does not release `mutex`, which remains held until `ReleaseAsync`, mutex disposal, or expiry.
+
+Disposing `mutex` is the normal release path. Call `ReleaseAsync` explicitly when release success
+must be observed; it returns `LockReleaseOutcome.Released`, `AlreadyReleased`, or `NotOwned`.
+Disposal suppresses connection, timeout, cancellation, and disposed-client cleanup failures because
+expiry remains the final safety net.
 
 ## Manage owner tokens directly
 

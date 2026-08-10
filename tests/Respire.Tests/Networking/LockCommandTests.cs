@@ -236,7 +236,7 @@ public class LockCommandTests
     public async Task RespireLock_ConcurrentReleasesShareTheInFlightResult()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
-        server.DelayReply(1, 100);
+        server.DelayReply(1, 1000);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
 
@@ -247,6 +247,36 @@ public class LockCommandTests
         await Assert.That(await first).IsEqualTo(LockReleaseOutcome.Released);
         await Assert.That(await second).IsEqualTo(LockReleaseOutcome.Released);
         await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task RespireLock_CancelledReleaseConservativelyStopsProtectedWork()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
+        server.DelayReply(1, 500);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
+        await using var keepAlive = await mutex.KeepAliveAsync();
+        using var cancellation = new CancellationTokenSource();
+
+        var release = mutex.ReleaseAsync(cancellation.Token).AsTask();
+        await WaitForCommandsAsync(server, 2);
+        var dispose = mutex.DisposeAsync().AsTask();
+        await cancellation.CancelAsync();
+
+        await Assert.That(async () => await release)
+            .Throws<OperationCanceledException>();
+        await dispose;
+        await Assert.That(mutex.IsReleased).IsTrue();
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.NotOwned);
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!keepAlive.CancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
+        await Assert.That(keepAlive.OwnershipLost).IsTrue();
     }
 
     [Test]
@@ -433,10 +463,10 @@ public class LockCommandTests
             .IsEqualTo(TimeSpan.FromSeconds(10));
         await Assert.That(RespireLockKeepAlive.GetRenewalDelay(
                 TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(15)))
-            .IsEqualTo(TimeSpan.Zero);
+            .IsEqualTo(TimeSpan.FromMilliseconds(10));
         await Assert.That(RespireLockKeepAlive.GetRenewalDelay(
                 TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5)))
-            .IsEqualTo(TimeSpan.Zero);
+            .IsEqualTo(TimeSpan.FromMilliseconds(10));
     }
 
     [Test]
