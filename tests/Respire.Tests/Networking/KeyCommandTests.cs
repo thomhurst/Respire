@@ -24,7 +24,7 @@ public class KeyCommandTests
         await Assert.That(await client.Keys.TypeAsync("missing")).IsEqualTo(RespireKeyType.None);
         await Assert.That(await client.Keys.TypeAsync("sorted")).IsEqualTo(RespireKeyType.SortedSet);
         await Assert.That(await client.Keys.TypeAsync("future")).IsEqualTo(RespireKeyType.Unknown);
-        await Assert.That(await client.Keys.RenameAsync("old", "new")).IsTrue();
+        await client.Keys.RenameAsync("old", "new");
         await Assert.That(await client.Keys.TryRenameAsync("old", "new")).IsTrue();
         await Assert.That(await client.Keys.CopyAsync("source", "target")).IsFalse();
         await Assert.That(await client.Keys.CopyAsync("source", "target", replace: true)).IsTrue();

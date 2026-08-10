@@ -90,8 +90,8 @@ public interface IKeyCommands
     /// <summary>The data structure stored at a key, or <see cref="RespireKeyType.None"/>. Redis: TYPE.</summary>
     ValueTask<RespireKeyType> TypeAsync(RespireKey key, CancellationToken cancellationToken = default);
 
-    /// <summary>Renames a key, returning true when Redis confirms the write. Redis: RENAME.</summary>
-    ValueTask<bool> RenameAsync(RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default);
+    /// <summary>Renames a key. Redis: RENAME.</summary>
+    ValueTask RenameAsync(RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default);
 
     /// <summary>Renames a key only when the target does not exist. Redis: RENAMENX.</summary>
     ValueTask<bool> TryRenameAsync(RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default);
@@ -187,8 +187,8 @@ internal sealed class KeyCommands(RespireClient client) : IKeyCommands
         => ParseKeyType(await client.StringAsync(
             "TYPE", new Cmd1(Verbs.Type, client.Key(in key)), cancellationToken).ConfigureAwait(false));
 
-    public ValueTask<bool> RenameAsync(RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default)
-        => client.ConfirmedOkAsync(
+    public ValueTask RenameAsync(RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default)
+        => client.OkAsync(
             "RENAME", new Cmd2(Verbs.Rename, client.Key(in key), client.Key(in newKey)), cancellationToken);
 
     public ValueTask<bool> TryRenameAsync(
