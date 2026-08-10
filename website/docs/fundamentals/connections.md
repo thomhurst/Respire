@@ -116,7 +116,7 @@ connecting:
 await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 {
     Endpoints = { new RespireEndpoint("sentinel-1", 26379) },
-    ServiceName = "mymaster",
+    SentinelPrimaryName = "mymaster",
     Password = configuration["Redis:Password"],
     SentinelPassword = configuration["Redis:SentinelPassword"],
 });
