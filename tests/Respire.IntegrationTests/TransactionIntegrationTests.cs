@@ -39,7 +39,7 @@ public class TransactionIntegrationTests
 
         // Queued results are unreadable until the transaction commits.
         var readEarly = () => getPending.Result;
-        readEarly.Should().Throw<InvalidOperationException>();
+        readEarly.Should().Throw<RespirePendingNotReadyException>();
 
         var committed = await transaction.CommitAsync();
 
@@ -143,7 +143,7 @@ public class TransactionIntegrationTests
 
         committed.Should().BeFalse();
         var readAborted = () => setPending.Result;
-        readAborted.Should().Throw<InvalidOperationException>();
+        readAborted.Should().Throw<RespireTransactionAbortedException>();
         (await _client.GetStringAsync("tx:watched")).Should().Be("from-interloper");
     }
 
