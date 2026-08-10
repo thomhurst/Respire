@@ -56,6 +56,41 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         return new RespireSubscription(this, kind, [.. names.Distinct(StringComparer.Ordinal)], buffer);
     }
 
+    /// <summary>
+    /// Creates a subscription and activates it up front, so it is live server-side before the
+    /// caller sees it. Enumeration later finds it already activated and streams straight from the
+    /// buffer.
+    /// </summary>
+    public async ValueTask<RespireSubscription> CreateActivatedSubscriptionAsync(
+        SubscriptionKind kind, string[] names, CancellationToken cancellationToken)
+    {
+        var subscription = CreateSubscription(kind, names);
+        try
+        {
+            await ActivateAsync(subscription, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Cancellation can land after some SUBSCRIBEs already reached the server. Activation
+            // only rolls its own routing back, so dispose to unsubscribe whatever took effect —
+            // the caller never receives this subscription and must not keep paying for it.
+            try
+            {
+                await subscription.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception cleanupFailure)
+            {
+                // Cleanup runs on a connection that is already failing; the activation error is
+                // the one the caller needs, so surface that one and only log this.
+                core.Logger?.LogDebug(cleanupFailure, "Cleaning up a failed subscription activation failed");
+            }
+
+            throw;
+        }
+
+        return subscription;
+    }
+
     /// <summary>Registers the subscription's routes and sends SUBSCRIBE; idempotent per subscription.</summary>
     public async ValueTask ActivateAsync(RespireSubscription subscription, CancellationToken cancellationToken)
     {

@@ -14,12 +14,14 @@ internal enum SubscriptionKind
 /// <summary>
 /// An active subscription, consumed as an async stream:
 /// <code>
-/// await using var sub = client.Subscribe("news");
+/// await using var sub = await client.SubscribeAsync("news");
 /// await foreach (var message in sub.WithCancellation(token)) { … }
 /// </code>
-/// The SUBSCRIBE command is sent when enumeration starts; disposing unsubscribes. If the
-/// pub/sub connection drops, Respire reconnects and resubscribes automatically — the stream
-/// just keeps going (messages published while disconnected are lost, as with any Redis pub/sub).
+/// <c>SubscribeAsync</c> returns once the server has acknowledged the SUBSCRIBE, so a publish
+/// issued right after it reaches this subscriber; the lazy <c>Subscribe</c> overloads send it when
+/// enumeration starts instead. Disposing unsubscribes. If the pub/sub connection drops, Respire
+/// reconnects and resubscribes automatically — the stream just keeps going (messages published
+/// while disconnected are lost, as with any Redis pub/sub).
 /// </summary>
 public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsyncDisposable
 {

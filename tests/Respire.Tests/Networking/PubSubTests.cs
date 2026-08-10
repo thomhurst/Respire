@@ -72,6 +72,49 @@ public class PubSubTests
     }
 
     [Test]
+    public async Task SubscribeAsync_ReturnsOnlyAfterConfirmation_AndEnumerationDoesNotResubscribe()
+    {
+        await using var server = new FakeRespServer(SubscribeConfirmation);
+        await using var client = CreateLazyClient(server.Port);
+
+        await using var subscription = await client.SubscribeAsync("ch");
+
+        // Returning already implies the confirmation arrived — no waiting for the command to show up.
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(["SUBSCRIBE ch"]);
+
+        var enumerator = subscription.GetAsyncEnumerator();
+        var moveTask = enumerator.MoveNextAsync();
+        await server.SendRawAsync(MessageFrame);
+
+        await Assert.That(await moveTask.AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        await Assert.That(enumerator.Current.Text).IsEqualTo("hello");
+        await Assert.That(server.CommandsSeen).IsEqualTo(1);
+        await enumerator.DisposeAsync();
+    }
+
+    [Test]
+    public async Task SubscribeAsync_Cancelled_UnsubscribesInsteadOfLeaking()
+    {
+        await using var server = new FakeRespServer(
+            "*3\r\n$9\r\nsubscribe\r\n$4\r\nwarm\r\n:1\r\n"u8.ToArray(),
+            SubscribeConfirmation,
+            "*3\r\n$11\r\nunsubscribe\r\n$2\r\nch\r\n:0\r\n"u8.ToArray());
+        await using var client = CreateLazyClient(server.Port);
+
+        // A live subscription first, so cancellation races the SUBSCRIBE rather than the connect.
+        await using var warm = await client.SubscribeAsync("warm");
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Assert.That(async () => await client.SubscribeAsync("ch", cts.Token))
+            .Throws<OperationCanceledException>();
+
+        // Cleanup is awaited before the cancellation surfaces, so the channel cannot be left
+        // subscribed server-side even though the SUBSCRIBE had already gone out.
+        await Assert.That(server.ReceivedCommands).Contains("UNSUBSCRIBE ch");
+    }
+
+    [Test]
     public async Task MultipleMessages_AllDelivered_InOrder()
     {
         await using var server = new FakeRespServer(SubscribeConfirmation);

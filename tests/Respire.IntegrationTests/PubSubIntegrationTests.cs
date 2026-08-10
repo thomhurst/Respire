@@ -72,6 +72,85 @@ public class PubSubIntegrationTests
     }
 
     [Test]
+    public async Task SubscribeAsync_IsLiveOnReturn_SinglePublishIsReceived()
+    {
+        var channel = IsolatedChannel("it:await:chan");
+        await using var subscription = await _client.SubscribeAsync(channel);
+        var firstMessage = ReadFirstAsync(subscription);
+
+        // No retry loop: awaiting the SUBSCRIBE means the server already counts this subscriber.
+        var receivers = await _client.PublishAsync(channel, "awaited-payload");
+
+        receivers.Should().Be(1);
+        (await firstMessage.WaitAsync(TimeSpan.FromSeconds(5))).Text.Should().Be("awaited-payload");
+    }
+
+    [Test]
+    public async Task SubscribeAsync_MultipleChannels_AllLiveOnReturn()
+    {
+        var first = IsolatedChannel("it:await:multi1");
+        var second = IsolatedChannel("it:await:multi2");
+        await using var subscription = await _client.SubscribeAsync([first, second]);
+        var messages = ReadAsync(subscription, 2);
+
+        (await _client.PublishAsync(first, "one")).Should().Be(1);
+        (await _client.PublishAsync(second, "two")).Should().Be(1);
+
+        var received = await messages.WaitAsync(TimeSpan.FromSeconds(5));
+        received.Select(message => message.Text).Should().BeEquivalentTo(["one", "two"]);
+    }
+
+    [Test]
+    public async Task SubscribePatternAsync_IsLiveOnReturn_SinglePublishIsReceived()
+    {
+        var pattern = IsolatedChannel("it:await:p:*");
+        var channel = IsolatedChannel("it:await:p:orders");
+        await using var subscription = await _client.SubscribePatternAsync(pattern);
+        var firstMessage = ReadFirstAsync(subscription);
+
+        (await _client.PublishAsync(channel, "awaited-pattern")).Should().Be(1);
+
+        var message = await firstMessage.WaitAsync(TimeSpan.FromSeconds(5));
+        message.Channel.Should().Be(channel);
+        message.Pattern.Should().Be(pattern);
+        message.Text.Should().Be("awaited-pattern");
+    }
+
+    [Test]
+    public async Task SubscribeShardedAsync_IsLiveOnReturn_SinglePublishIsReceived()
+    {
+        var channel = IsolatedChannel("it:await:shard");
+        await using var subscription = await _client.SubscribeShardedAsync(channel);
+        var firstMessage = ReadFirstAsync(subscription);
+
+        (await _client.PublishShardedAsync(channel, "awaited-sharded")).Should().Be(1);
+
+        (await firstMessage.WaitAsync(TimeSpan.FromSeconds(5))).Text.Should().Be("awaited-sharded");
+    }
+
+    [Test]
+    public async Task SubscribeAsync_Cancelled_LeavesNothingSubscribed()
+    {
+        var live = IsolatedChannel("it:await:live");
+        var cancelled = IsolatedChannel("it:await:cancelled");
+
+        // A live subscription first, so the pub/sub connection is already up and cancellation
+        // races the SUBSCRIBE itself rather than the connect.
+        await using var subscription = await _client.SubscribeAsync(live);
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        var subscribe = async () => await _client.SubscribeAsync(cancelled, cts.Token);
+
+        await subscribe.Should().ThrowAsync<OperationCanceledException>();
+
+        // The cancelled subscription left no server-side registration behind, and the connection
+        // it shared is still healthy.
+        (await _client.PublishAsync(cancelled, "orphaned")).Should().Be(0);
+        (await _client.PublishAsync(live, "still-delivered")).Should().Be(1);
+    }
+
+    [Test]
     public async Task Unsubscribe_StopsDelivery()
     {
         var channel = IsolatedChannel("it:bye");
@@ -202,6 +281,23 @@ public class PubSubIntegrationTests
             }
 
             throw new InvalidOperationException("The subscription ended before a message arrived.");
+        });
+
+    /// <summary>Starts consuming the subscription and completes with the first <paramref name="count"/> messages.</summary>
+    private static Task<List<RespireMessage>> ReadAsync(RespireSubscription subscription, int count)
+        => Task.Run(async () =>
+        {
+            var messages = new List<RespireMessage>(count);
+            await foreach (var message in subscription)
+            {
+                messages.Add(message);
+                if (messages.Count == count)
+                {
+                    return messages;
+                }
+            }
+
+            throw new InvalidOperationException($"The subscription ended after {messages.Count} of {count} messages.");
         });
 
     private static string IsolatedChannel(string channel)

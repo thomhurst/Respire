@@ -57,9 +57,12 @@ using (var encoding = await redis.ExecuteAsync($"OBJECT ENCODING {"greeting"}"))
 
 // ── Pub/sub as an async stream ───────────────────────────────────────────────
 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+
+// SubscribeAsync returns once the server has acknowledged the SUBSCRIBE, so one publish is
+// enough — no polling for the subscriber to show up.
+await using var subscription = await redis.SubscribeAsync("news");
 var listener = Task.Run(async () =>
 {
-    await using var subscription = redis.Subscribe("news");
     try
     {
         await foreach (var message in subscription.WithCancellation(cts.Token))
@@ -73,12 +76,7 @@ var listener = Task.Run(async () =>
     }
 });
 
-// Retry until the subscriber is registered (PublishAsync returns the receiver count).
-while (await redis.PublishAsync("news", "respire 1.0 shipped") == 0 && !cts.IsCancellationRequested)
-{
-    await Task.Delay(50);
-}
-
+Console.WriteLine($"published to {await redis.PublishAsync("news", "respire 1.0 shipped")} subscriber(s)");
 await listener;
 
 Console.WriteLine("done.");

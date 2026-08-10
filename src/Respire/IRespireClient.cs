@@ -62,6 +62,15 @@ public interface IRespireClient : IAsyncDisposable
     RespireSubscription SubscribePattern(params string[] patterns);
     RespireSubscription SubscribeSharded(params string[] channels);
 
+    // Awaited activation: the subscription is live on the server when the task completes, so a
+    // publish that follows is guaranteed to reach it. Prefer these over the lazy overloads above.
+    ValueTask<RespireSubscription> SubscribeAsync(string channel, CancellationToken cancellationToken = default);
+    ValueTask<RespireSubscription> SubscribeAsync(string[] channels, CancellationToken cancellationToken = default);
+    ValueTask<RespireSubscription> SubscribePatternAsync(string pattern, CancellationToken cancellationToken = default);
+    ValueTask<RespireSubscription> SubscribePatternAsync(string[] patterns, CancellationToken cancellationToken = default);
+    ValueTask<RespireSubscription> SubscribeShardedAsync(string channel, CancellationToken cancellationToken = default);
+    ValueTask<RespireSubscription> SubscribeShardedAsync(string[] channels, CancellationToken cancellationToken = default);
+
     // Batches and transactions.
     RespireBatch CreateBatch();
     RespireTransaction CreateTransaction();
