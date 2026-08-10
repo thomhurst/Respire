@@ -16,9 +16,11 @@ public struct RespireCommandInterpolatedStringHandler
     private readonly List<RespireValue> _tokens;
     private string? _operation;
 
+    /// <summary>Initializes storage for an interpolated raw command.</summary>
     public RespireCommandInterpolatedStringHandler(int literalLength, int formattedCount)
         => _tokens = new List<RespireValue>(formattedCount + 2);
 
+    /// <summary>Appends literal command text, splitting it into space-delimited tokens.</summary>
     public void AppendLiteral(string value)
     {
         foreach (var word in value.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
@@ -28,24 +30,34 @@ public struct RespireCommandInterpolatedStringHandler
         }
     }
 
+    /// <summary>Appends one protocol argument.</summary>
     public void AppendFormatted(RespireValue value) => _tokens.Add(value);
 
+    /// <summary>Appends one text argument.</summary>
     public void AppendFormatted(string? value) => _tokens.Add(value ?? RespireValue.Null);
 
+    /// <summary>Appends one signed 64-bit integer argument.</summary>
     public void AppendFormatted(long value) => _tokens.Add(value);
 
+    /// <summary>Appends one signed 32-bit integer argument.</summary>
     public void AppendFormatted(int value) => _tokens.Add(value);
 
+    /// <summary>Appends one double-precision argument.</summary>
     public void AppendFormatted(double value) => _tokens.Add(value);
 
+    /// <summary>Appends one boolean argument.</summary>
     public void AppendFormatted(bool value) => _tokens.Add(value);
 
+    /// <summary>Appends one binary-safe argument.</summary>
     public void AppendFormatted(byte[] value) => _tokens.Add(value);
 
+    /// <summary>Appends one binary-safe argument.</summary>
     public void AppendFormatted(ReadOnlyMemory<byte> value) => _tokens.Add(value);
 
+    /// <summary>Appends one Redis key argument.</summary>
     public void AppendFormatted(RespireKey value) => _tokens.Add(value.AsValue());
 
+    /// <summary>Appends one invariant-formatted argument.</summary>
     public void AppendFormatted<T>(T value)
         => _tokens.Add(value switch
         {

@@ -50,17 +50,22 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
     /// <summary>Gets whether the root result owning this view has been disposed.</summary>
     public bool IsDisposed => Lifetime is null || Lifetime.IsDisposed;
 
+    /// <summary>The RESP wire type of this result.</summary>
     public RespDataType Type => Value.Type;
 
+    /// <summary>Whether the server returned RESP null.</summary>
     public bool IsNull => Value.IsNull;
 
     /// <summary>True for a RESP error element (top-level errors throw instead).</summary>
     public bool IsError => Value.IsError;
 
+    /// <summary>The server error text.</summary>
     public string ErrorMessage => Value.GetErrorMessage();
 
+    /// <summary>Decodes a string-like result as UTF-8.</summary>
     public string AsString() => Value.AsString();
 
+    /// <summary>Reads an integer result.</summary>
     public long AsInteger() => Value.AsInteger();
 
     /// <summary>
@@ -82,14 +87,17 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
             : throw new FormatException($"The {value.Type} reply '{text}' is not a valid double.");
     }
 
+    /// <summary>Reads a RESP boolean or integer flag.</summary>
     public bool AsBoolean()
     {
         var value = Value;
         return value.Type == RespDataType.Boolean ? value.AsBoolean() : value.AsInteger() != 0;
     }
 
+    /// <summary>Returns the borrowed raw bytes for a string-like result.</summary>
     public ReadOnlySpan<byte> AsSpan() => Value.AsSpan();
 
+    /// <summary>Copies a string-like result into a byte array.</summary>
     public byte[] AsBytes() => Value.AsSpan().ToArray();
 
     /// <summary>
@@ -136,11 +144,13 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
 
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
+    /// <inheritdoc/>
     public override string ToString() => Value.ToString();
 
     /// <summary>Returns pooled buffers (root results only). Safe to call more than once.</summary>
     public void Dispose() => _owner?.Dispose();
 
+    /// <summary>Enumerates non-owning views over an aggregate result's elements.</summary>
     public struct Enumerator : IEnumerator<RespireResult>
     {
         private readonly RespireResult _result;
@@ -152,10 +162,12 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
             _index = -1;
         }
 
+        /// <summary>Gets the element at the current enumerator position.</summary>
         public readonly RespireResult Current => _result[_index];
 
         readonly object IEnumerator.Current => Current;
 
+        /// <summary>Advances to the next aggregate element.</summary>
         public bool MoveNext()
         {
             var next = _index + 1;
@@ -168,8 +180,10 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
             return true;
         }
 
+        /// <summary>Resets the enumerator to its initial position.</summary>
         public void Reset() => _index = -1;
 
+        /// <summary>Releases the enumerator. No resources are owned.</summary>
         public readonly void Dispose()
         {
         }

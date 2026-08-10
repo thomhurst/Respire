@@ -29,6 +29,7 @@ public readonly struct RespireLease : IDisposable
     /// <summary>True when the key was missing.</summary>
     public bool IsNull => Value.IsNull;
 
+    /// <summary>The leased payload length in bytes, or zero for a null or disposed lease.</summary>
     public int Length => Span.Length;
 
     /// <summary>The payload. Do not use after <see cref="Dispose"/>.</summary>

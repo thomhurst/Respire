@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Respire.Extensions.DependencyInjection;
 
+/// <summary>Dependency-injection registrations for Respire clients.</summary>
 public static class RespireServiceCollectionExtensions
 {
     /// <summary>
@@ -27,6 +28,9 @@ public static class RespireServiceCollectionExtensions
         return AddRespireCore(services, _ => Build(configure));
     }
 
+    /// <summary>
+    /// Registers a singleton Respire client using options resolved from the service provider.
+    /// </summary>
     public static IServiceCollection AddRespire(this IServiceCollection services, Func<IServiceProvider, RespireOptions> configure)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -66,6 +70,9 @@ public static class RespireServiceCollectionExtensions
         return AddKeyedRespireCore(services, serviceKey, _ => Build(configure));
     }
 
+    /// <summary>
+    /// Registers a keyed singleton client using options resolved from the service provider.
+    /// </summary>
     public static IServiceCollection AddKeyedRespire(
         this IServiceCollection services, string serviceKey, Func<IServiceProvider, RespireOptions> configure)
     {

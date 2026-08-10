@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Respire.Extensions.Caching.Hybrid;
 
+/// <summary>Dependency-injection registrations for HybridCache backed by Respire.</summary>
 public static class RespireHybridCacheServiceCollectionExtensions
 {
     /// <summary>

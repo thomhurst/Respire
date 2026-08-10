@@ -7,9 +7,13 @@ namespace Respire;
 /// <summary>The lifecycle state of a deferred batch or transaction result.</summary>
 public enum RespirePendingStatus
 {
+    /// <summary>The containing batch or transaction has not completed.</summary>
     Pending,
+    /// <summary>The command produced a result.</summary>
     Succeeded,
+    /// <summary>The command or connection failed.</summary>
     Faulted,
+    /// <summary>A watched transaction was aborted before commands ran.</summary>
     Aborted,
 }
 
@@ -91,17 +95,22 @@ public sealed class RespirePending<T>
 
     internal void Abort() => Volatile.Write(ref _state, (int)RespirePendingStatus.Aborted);
 
+    /// <summary>Returns the synchronous awaiter for this deferred result.</summary>
     public RespirePendingAwaiter<T> GetAwaiter() => new(this);
 }
 
 /// <summary>Awaiter for <see cref="RespirePending{T}"/>; completes synchronously.</summary>
 public readonly struct RespirePendingAwaiter<T>(RespirePending<T> pending) : ICriticalNotifyCompletion
 {
+    /// <summary>Always true; reading before execution throws instead of suspending.</summary>
     public bool IsCompleted => true;
 
+    /// <summary>Returns the deferred result or throws its terminal error.</summary>
     public T GetResult() => pending.Result;
 
+    /// <summary>Runs a continuation synchronously.</summary>
     public void OnCompleted(Action continuation) => continuation();
 
+    /// <summary>Runs a continuation synchronously without execution-context flow.</summary>
     public void UnsafeOnCompleted(Action continuation) => continuation();
 }

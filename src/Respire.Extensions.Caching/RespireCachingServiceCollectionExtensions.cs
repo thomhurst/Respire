@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 
 namespace Respire.Extensions.Caching;
 
+/// <summary>Dependency-injection registrations for Respire-backed distributed caching.</summary>
 public static class RespireCachingServiceCollectionExtensions
 {
     /// <summary>

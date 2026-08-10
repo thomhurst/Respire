@@ -50,6 +50,7 @@ public sealed partial class RespireClient : IRespireClient
     public static ValueTask<RespireClient> ConnectAsync(string connectionString, CancellationToken cancellationToken = default)
         => ConnectAsync(RespireOptions.Parse(connectionString), cancellationToken);
 
+    /// <summary>Connects eagerly using structured client options.</summary>
     public static async ValueTask<RespireClient> ConnectAsync(RespireOptions options, CancellationToken cancellationToken = default)
     {
         options = (options ?? throw new ArgumentNullException(nameof(options))).ValidateAndSnapshot();
@@ -144,6 +145,7 @@ public sealed partial class RespireClient : IRespireClient
     /// </summary>
     public static RespireClient Create(string connectionString) => Create(RespireOptions.Parse(connectionString));
 
+    /// <summary>Creates a lazy client using structured options; the first command connects.</summary>
     public static RespireClient Create(RespireOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -158,8 +160,10 @@ public sealed partial class RespireClient : IRespireClient
         return new RespireClient(new ClientCore(options), keyPrefix: null, ownsCore: true);
     }
 
+    /// <inheritdoc/>
     public RespireEndpoint Endpoint => new(_core.Multiplexer.Host, _core.Multiplexer.Port);
 
+    /// <inheritdoc/>
     public bool IsConnected
         => !_core.Disposed && (_core.Cluster?.IsConnected ?? _core.Multiplexer.IsConnected);
 
@@ -170,18 +174,31 @@ public sealed partial class RespireClient : IRespireClient
         remove => _core.ConnectionStateChanged -= value;
     }
 
+    /// <inheritdoc/>
     public IStringCommands Strings { get; }
+    /// <inheritdoc/>
     public IKeyCommands Keys { get; }
+    /// <inheritdoc/>
     public ILockCommands Locks { get; }
+    /// <inheritdoc/>
     public IHashCommands Hashes { get; }
+    /// <inheritdoc/>
     public IListCommands Lists { get; }
+    /// <inheritdoc/>
     public ISetCommands Sets { get; }
+    /// <inheritdoc/>
     public ISortedSetCommands SortedSets { get; }
+    /// <inheritdoc/>
     public IStreamCommands Streams { get; }
+    /// <inheritdoc/>
     public IBitmapCommands Bitmaps { get; }
+    /// <inheritdoc/>
     public IHyperLogLogCommands HyperLogLog { get; }
+    /// <inheritdoc/>
     public IGeoCommands Geo { get; }
+    /// <inheritdoc/>
     public IScriptCommands Scripts { get; }
+    /// <inheritdoc/>
     public IServerCommands Server { get; }
 
     /// <summary>
@@ -813,6 +830,7 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
+    /// <inheritdoc/>
     public async ValueTask DisposeAsync()
     {
         if (_ownsCore)
@@ -827,6 +845,7 @@ public sealed partial class RespireClient : IRespireClient
 
     internal string? KeyPrefix => _keyPrefix;
 
+    /// <inheritdoc/>
     public RespireKey ResolveKey(RespireKey key)
         => _keyPrefix is null ? key : key.Prepend(_keyPrefix);
 

@@ -136,6 +136,7 @@ $builder = [System.Text.StringBuilder]::new()
 $allReferences = [System.Collections.Generic.List[string]]::new()
 foreach ($group in ($merged | Group-Object Group | Sort-Object { Get-ClassName $_.Name })) {
     $className = Get-ClassName $group.Name
+    [void] $builder.AppendLine("    /// <summary>Pre-encoded $className command descriptors.</summary>")
     [void] $builder.AppendLine("    public static class $className")
     [void] $builder.AppendLine('    {')
     foreach ($command in ($group.Group | Sort-Object Name)) {

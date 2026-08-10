@@ -4,31 +4,58 @@ using System.Globalization;
 
 namespace Respire;
 
+/// <summary>The unit used by Redis bitmap range offsets.</summary>
 public enum BitIndexUnit
 {
+    /// <summary>Interpret offsets as byte indexes.</summary>
     Byte,
+
+    /// <summary>Interpret offsets as bit indexes.</summary>
     Bit,
 }
 
+/// <summary>A Redis BITOP operation.</summary>
 public enum BitOperation
 {
+    /// <summary>Bitwise AND of all source strings.</summary>
     And,
+
+    /// <summary>Bitwise OR of all source strings.</summary>
     Or,
+
+    /// <summary>Bitwise XOR of all source strings.</summary>
     Xor,
+
+    /// <summary>Bitwise NOT of one source string.</summary>
     Not,
+
+    /// <summary>Redis 8.2: bits set in the first source and absent from every later source.</summary>
     Diff,
+
+    /// <summary>Redis 8.2: bits absent from the first source and set in any later source.</summary>
     Diff1,
+
+    /// <summary>Redis 8.2: first source AND the OR of all later sources.</summary>
     AndOr,
+
+    /// <summary>Redis 8.2: bits set in exactly one source.</summary>
     One,
 }
 
+/// <summary>Overflow behavior for subsequent Redis BITFIELD writes.</summary>
 public enum BitFieldOverflow
 {
+    /// <summary>Wrap overflowing values modulo the field width.</summary>
     Wrap,
+
+    /// <summary>Clamp overflowing values to the field's minimum or maximum.</summary>
     Saturate,
+
+    /// <summary>Return null and leave the field unchanged on overflow.</summary>
     Fail,
 }
 
+/// <summary>One GET, SET, INCRBY, or OVERFLOW operation inside Redis BITFIELD.</summary>
 public readonly struct BitFieldOperation
 {
     private BitFieldOperation(string command, string? encoding, string? offset, long value, BitFieldOverflow? overflow)
@@ -47,15 +74,19 @@ public readonly struct BitFieldOperation
     internal BitFieldOverflow? Overflow { get; }
     internal int TokenCount => Command == "OVERFLOW" ? 2 : Command == "GET" ? 3 : 4;
 
+    /// <summary>Reads a signed or unsigned field. Redis: BITFIELD GET.</summary>
     public static BitFieldOperation Get(string encoding, string offset)
         => ValueOperation("GET", encoding, offset, 0);
 
+    /// <summary>Writes a field and returns its previous value. Redis: BITFIELD SET.</summary>
     public static BitFieldOperation Set(string encoding, string offset, long value)
         => ValueOperation("SET", encoding, offset, value);
 
+    /// <summary>Increments a field and returns its new value. Redis: BITFIELD INCRBY.</summary>
     public static BitFieldOperation Increment(string encoding, string offset, long by)
         => ValueOperation("INCRBY", encoding, offset, by);
 
+    /// <summary>Changes overflow behavior for later writes. Redis: BITFIELD OVERFLOW.</summary>
     public static BitFieldOperation SetOverflow(BitFieldOverflow overflow)
     {
         if (!Enum.IsDefined(overflow))
@@ -106,33 +137,51 @@ public readonly struct BitFieldOperation
     }
 }
 
+/// <summary>Redis bitmap and bit-field commands.</summary>
 public interface IBitmapCommands
 {
+    /// <summary>Returns the bit stored at an offset. Redis: GETBIT.</summary>
     ValueTask<bool> GetAsync(RespireKey key, long offset, CancellationToken cancellationToken = default);
 
     /// <summary>Sets the bit at an offset and returns its previous value. Redis: SETBIT.</summary>
     ValueTask<bool> GetAndSetAsync(
         RespireKey key, long offset, bool value, CancellationToken cancellationToken = default);
 
+    /// <summary>Counts set bits across the whole value. Redis: BITCOUNT.</summary>
     ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default);
+
+    /// <summary>Counts set bits in an inclusive byte or bit range. Redis: BITCOUNT.</summary>
     ValueTask<long> CountAsync(
         RespireKey key, long start, long end, BitIndexUnit unit = BitIndexUnit.Byte,
         CancellationToken cancellationToken = default);
+
     /// <summary>The first offset holding <paramref name="value"/>, or null when none is found. Redis: BITPOS.</summary>
     ValueTask<long?> PositionAsync(
         RespireKey key, bool value, long? start = null, long? end = null,
         BitIndexUnit unit = BitIndexUnit.Byte, CancellationToken cancellationToken = default);
+
+    /// <summary>Combines source bitmaps into a destination and returns its byte length. Redis: BITOP.</summary>
     ValueTask<long> OperateAsync(
         BitOperation operation, RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys);
+
+    /// <summary>Combines source bitmaps into a destination and returns its byte length. Redis: BITOP.</summary>
     ValueTask<long> OperateAsync(
         BitOperation operation,
         RespireKey destination,
         ReadOnlySpan<RespireKey> sourceKeys,
         CancellationToken cancellationToken);
+
+    /// <summary>Executes bit-field reads and writes. Redis: BITFIELD.</summary>
     ValueTask<long?[]> FieldAsync(RespireKey key, params ReadOnlySpan<BitFieldOperation> operations);
+
+    /// <summary>Executes bit-field reads and writes. Redis: BITFIELD.</summary>
     ValueTask<long?[]> FieldAsync(
         RespireKey key, ReadOnlySpan<BitFieldOperation> operations, CancellationToken cancellationToken);
+
+    /// <summary>Executes read-only bit-field GET operations. Redis: BITFIELD_RO.</summary>
     ValueTask<long?[]> FieldReadOnlyAsync(RespireKey key, params ReadOnlySpan<BitFieldOperation> gets);
+
+    /// <summary>Executes read-only bit-field GET operations. Redis: BITFIELD_RO.</summary>
     ValueTask<long?[]> FieldReadOnlyAsync(
         RespireKey key, ReadOnlySpan<BitFieldOperation> gets, CancellationToken cancellationToken);
 }
