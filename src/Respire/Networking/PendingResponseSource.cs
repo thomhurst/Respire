@@ -41,7 +41,7 @@ internal abstract class PendingResponse
             return false;
         }
 
-        SetExceptionCore(exception);
+        DispatchException(exception);
         return true;
     }
 
@@ -52,9 +52,20 @@ internal abstract class PendingResponse
             return false;
         }
 
-        SetExceptionCore(new OperationCanceledException(cancellationToken));
+        DispatchException(new OperationCanceledException(cancellationToken));
         return true;
     }
+
+    /// <summary>
+    /// Cores run continuations inline (see <see cref="CompletionScheduler"/>), so failure
+    /// paths — cancellation callbacks on arbitrary user threads, connection teardown — must
+    /// hop to the pool themselves rather than run caller continuations where they stand.
+    /// </summary>
+    private void DispatchException(Exception exception)
+        => ThreadPool.UnsafeQueueUserWorkItem(
+            static state => state.Self.SetExceptionCore(state.Exception),
+            (Self: this, Exception: exception),
+            preferLocal: false);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void RegisterCancellation(CancellationToken cancellationToken)
@@ -105,7 +116,7 @@ internal sealed class TransactionPendingResponseSource : PendingResponse, IValue
     private const int MaxPoolSize = 4096;
     private static readonly LockFreeStack<TransactionPendingResponseSource> Pool = new(MaxPoolSize);
 
-    private ManualResetValueTaskSourceCore<RespValue> _core = new() { RunContinuationsAsynchronously = true };
+    private ManualResetValueTaskSourceCore<RespValue> _core = new() { RunContinuationsAsynchronously = false };
     private RespValue _queueError;
     private int _replyCount;
     private int _firstQueueReply;
@@ -212,7 +223,7 @@ internal sealed class TransactionPendingResponseSource : PendingResponse, IValue
 /// <summary>Poolable raw RESP response source.</summary>
 internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<RespValue>
 {
-    private ManualResetValueTaskSourceCore<RespValue> _core = new() { RunContinuationsAsynchronously = true };
+    private ManualResetValueTaskSourceCore<RespValue> _core = new() { RunContinuationsAsynchronously = false };
     private PendingResponsePool? _pool;
     private bool _throwOnError;
 
@@ -272,7 +283,7 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
     private const int MaxPoolSize = 4096;
     private static readonly LockFreeStack<ConvertedPendingResponseSource<TState, TResult>> Pool = new(MaxPoolSize);
 
-    private ManualResetValueTaskSourceCore<bool> _core = new() { RunContinuationsAsynchronously = true };
+    private ManualResetValueTaskSourceCore<bool> _core = new() { RunContinuationsAsynchronously = false };
     private RespValue _response;
     private ResponseConverter<TState, TResult>? _converter;
     private TState _state = default!;
