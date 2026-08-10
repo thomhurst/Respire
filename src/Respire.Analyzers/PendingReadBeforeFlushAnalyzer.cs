@@ -150,7 +150,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             return;
         }
 
-        if (Escapes(context, scope, batch) || HasFlushBefore(context, scope, batch, read))
+        if (Escapes(context, scope, batch, allowReassignment: true)
+            || HasFlushBefore(context, scope, batch, origin, read))
         {
             return;
         }
@@ -236,7 +237,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         SyntaxNodeAnalysisContext context,
         SyntaxNode scope,
         ILocalSymbol local,
-        AssignmentExpressionSyntax? allowedAssignment = null)
+        AssignmentExpressionSyntax? allowedAssignment = null,
+        bool allowReassignment = false)
     {
         foreach (var reference in ScopeWalker.FindReferences(scope, local, context.SemanticModel, context.CancellationToken))
         {
@@ -270,7 +272,9 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                     break;
 
                 case AssignmentExpressionSyntax assignment
-                    when allowedAssignment is not null && ScopeWalker.IsSame(assignment, allowedAssignment):
+                    when ScopeWalker.IsSame(assignment.Left, reference)
+                         && (allowReassignment
+                             || allowedAssignment is not null && ScopeWalker.IsSame(assignment, allowedAssignment)):
                     break;
 
                 default:
@@ -281,7 +285,12 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         return false;
     }
 
-    private static bool HasFlushBefore(SyntaxNodeAnalysisContext context, SyntaxNode scope, ILocalSymbol batch, ExpressionSyntax read)
+    private static bool HasFlushBefore(
+        SyntaxNodeAnalysisContext context,
+        SyntaxNode scope,
+        ILocalSymbol batch,
+        InvocationExpressionSyntax origin,
+        ExpressionSyntax read)
     {
         foreach (var invocation in scope.DescendantNodes().OfType<InvocationExpressionSyntax>())
         {
@@ -304,7 +313,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            if (IsAwaitedBefore(context, scope, invocation, read))
+            if (!IsReassignedBetween(context, scope, batch, origin, invocation)
+                && IsAwaitedBefore(context, scope, invocation, read))
             {
                 return true;
             }
@@ -312,6 +322,18 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
         return false;
     }
+
+    private static bool IsReassignedBetween(
+        SyntaxNodeAnalysisContext context,
+        SyntaxNode scope,
+        ILocalSymbol batch,
+        InvocationExpressionSyntax origin,
+        InvocationExpressionSyntax flush)
+        => ScopeWalker.FindReferences(scope, batch, context.SemanticModel, context.CancellationToken)
+            .Any(reference => reference.SpanStart > origin.SpanStart
+                              && reference.SpanStart < flush.SpanStart
+                              && reference.Parent is AssignmentExpressionSyntax assignment
+                              && ScopeWalker.IsSame(assignment.Left, reference));
 
     private static bool IsAwaitedBefore(
         SyntaxNodeAnalysisContext context,

@@ -540,4 +540,44 @@ public class PendingReadBeforeFlushAnalyzerTests
             }
         }
         """);
+
+    [Test]
+    public async Task BatchReassignedAfterRead_DoesNotSuppressDiagnostic() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                Console.WriteLine({|RESP002:pending.Result|});
+                batch = client.CreateBatch();
+                await batch.SendAsync();
+            }
+        }
+        """);
+
+    [Test]
+    public async Task ReassignedBatchFlush_DoesNotFlushOriginalBatch() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                batch = client.CreateBatch();
+                await batch.SendAsync();
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
 }

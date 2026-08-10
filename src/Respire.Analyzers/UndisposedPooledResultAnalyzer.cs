@@ -224,7 +224,11 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
 
                     break;
 
-                // Anything else — an argument, a return, an assignment — hands ownership away.
+                // result = … drops the acquired owner; it does not transfer ownership elsewhere.
+                case AssignmentExpressionSyntax assignment when ScopeWalker.IsSame(assignment.Left, reference):
+                    break;
+
+                // Anything else — an argument, a return, or an assignment source — hands ownership away.
                 default:
                     return true;
             }
