@@ -1,12 +1,16 @@
 using System.Buffers.Text;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Protocol;
 
 namespace Respire;
 
-/// <summary>A stream entry id ("1526919030474-55"). Comparable as Redis compares them.</summary>
-public readonly struct RespireStreamId : IEquatable<RespireStreamId>
+/// <summary>
+/// A stream entry id ("1526919030474-55"). Entry ids compare by unsigned milliseconds, then
+/// sequence; <see cref="Min"/> and <see cref="Max"/> sort outside every numeric id.
+/// </summary>
+public readonly struct RespireStreamId : IEquatable<RespireStreamId>, IComparable<RespireStreamId>
 {
     private readonly string? _value;
 
@@ -33,6 +37,48 @@ public readonly struct RespireStreamId : IEquatable<RespireStreamId>
     /// <inheritdoc/>
     public override string ToString() => Value;
 
+    /// <summary>Compares this stream id with another using Redis's numeric entry-id ordering.</summary>
+    /// <exception cref="InvalidOperationException">
+    /// Either id is <see cref="New"/>, whose value depends on server state.
+    /// </exception>
+    /// <exception cref="FormatException">Either id is not numeric or a range sentinel.</exception>
+    public int CompareTo(RespireStreamId other)
+    {
+        var left = Value;
+        var right = other.Value;
+        var leftParts = ParseComparable(left);
+        var rightParts = ParseComparable(right);
+
+        var rankComparison = leftParts.Rank.CompareTo(rightParts.Rank);
+        if (rankComparison != 0)
+        {
+            return rankComparison;
+        }
+
+        var millisecondComparison = leftParts.Milliseconds.CompareTo(rightParts.Milliseconds);
+        return millisecondComparison != 0
+            ? millisecondComparison
+            : leftParts.Sequence.CompareTo(rightParts.Sequence);
+    }
+
+    /// <summary>Tests whether one stream id sorts before another.</summary>
+    public static bool operator <(RespireStreamId left, RespireStreamId right) => left.CompareTo(right) < 0;
+
+    /// <summary>Tests whether one stream id sorts after another.</summary>
+    public static bool operator >(RespireStreamId left, RespireStreamId right) => left.CompareTo(right) > 0;
+
+    /// <summary>Tests whether one stream id sorts before or equally to another.</summary>
+    public static bool operator <=(RespireStreamId left, RespireStreamId right) => left.CompareTo(right) <= 0;
+
+    /// <summary>Tests whether one stream id sorts after or equally to another.</summary>
+    public static bool operator >=(RespireStreamId left, RespireStreamId right) => left.CompareTo(right) >= 0;
+
+    /// <summary>Tests two stream ids for exact token equality.</summary>
+    public static bool operator ==(RespireStreamId left, RespireStreamId right) => left.Equals(right);
+
+    /// <summary>Tests two stream ids for exact token inequality.</summary>
+    public static bool operator !=(RespireStreamId left, RespireStreamId right) => !left.Equals(right);
+
     /// <inheritdoc/>
     public bool Equals(RespireStreamId other) => string.Equals(Value, other.Value, StringComparison.Ordinal);
 
@@ -41,6 +87,40 @@ public readonly struct RespireStreamId : IEquatable<RespireStreamId>
 
     /// <inheritdoc/>
     public override int GetHashCode() => StringComparer.Ordinal.GetHashCode(Value);
+
+    private static (int Rank, ulong Milliseconds, ulong Sequence) ParseComparable(string value)
+    {
+        if (value == "-")
+        {
+            return (-1, 0, 0);
+        }
+
+        if (value == "+")
+        {
+            return (1, 0, 0);
+        }
+
+        if (value == "$")
+        {
+            throw new InvalidOperationException(
+                "The '$' stream id depends on server state and cannot be compared to another id.");
+        }
+
+        var separator = value.IndexOf('-');
+        var millisecondsText = separator < 0 ? value.AsSpan() : value.AsSpan(0, separator);
+        var sequenceText = separator < 0 ? ReadOnlySpan<char>.Empty : value.AsSpan(separator + 1);
+        var parsedSequence = 0UL;
+        if (!ulong.TryParse(
+                millisecondsText, NumberStyles.None, CultureInfo.InvariantCulture, out var milliseconds)
+            || (!sequenceText.IsEmpty
+                && !ulong.TryParse(sequenceText, NumberStyles.None, CultureInfo.InvariantCulture, out parsedSequence))
+            || separator >= 0 && sequenceText.IsEmpty)
+        {
+            throw new FormatException($"'{value}' is not a comparable Redis stream id.");
+        }
+
+        return (0, milliseconds, parsedSequence);
+    }
 }
 
 /// <summary>
