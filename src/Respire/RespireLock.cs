@@ -262,6 +262,18 @@ public sealed class RespireLock : IAsyncDisposable
             SignalLeaseChanged();
             return released ? LockReleaseOutcome.Released : LockReleaseOutcome.NotOwned;
         }
+        catch (RespireServerException)
+        {
+            // A server error is a definitive reply: the compare-and-DEL did not complete, so
+            // this handle may still own the key and can safely retry.
+            lock (_releaseSync)
+            {
+                Volatile.Write(ref _state, StateHeld);
+                _releaseTask = null;
+            }
+
+            throw;
+        }
         catch
         {
             // The delete is undecided and may still execute after the caller stops waiting.
@@ -412,7 +424,19 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
     internal static TimeSpan GetRenewalDelay(TimeSpan duration, TimeSpan remaining)
     {
         var delay = remaining - TimeSpan.FromTicks(duration.Ticks / 2);
-        return delay > MinimumRenewalDelay ? delay : MinimumRenewalDelay;
+        if (delay > MinimumRenewalDelay)
+        {
+            return delay;
+        }
+
+        if (remaining <= TimeSpan.Zero)
+        {
+            return TimeSpan.Zero;
+        }
+
+        return remaining > MinimumRenewalDelay
+            ? MinimumRenewalDelay
+            : TimeSpan.FromTicks(Math.Max(1, remaining.Ticks / 2));
     }
 
     private void MarkOwnershipUncertain()

@@ -280,6 +280,21 @@ public class LockCommandTests
     }
 
     [Test]
+    public async Task RespireLock_ServerRejectedReleaseRemainsRetryable()
+    {
+        await using var server = new FakeRespServer(
+            FakeRespServer.OkReply,
+            "-NOPERM release denied\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
+
+        await Assert.That(async () => await mutex.ReleaseAsync()).Throws<RespireServerException>();
+        await Assert.That(mutex.IsReleased).IsFalse();
+        await Assert.That(async () => await mutex.ReleaseAsync()).Throws<RespireServerException>();
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(3);
+    }
+
+    [Test]
     public async Task RespireLock_ExtendRecordsDurationAndStopsAfterOwnershipLoss()
     {
         await using var server = new FakeRespServer(
@@ -489,6 +504,12 @@ public class LockCommandTests
         await Assert.That(RespireLockKeepAlive.GetRenewalDelay(
                 TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5)))
             .IsEqualTo(TimeSpan.FromMilliseconds(10));
+        await Assert.That(RespireLockKeepAlive.GetRenewalDelay(
+                TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(10)))
+            .IsEqualTo(TimeSpan.FromMilliseconds(5));
+        await Assert.That(RespireLockKeepAlive.GetRenewalDelay(
+                TimeSpan.FromTicks(1), TimeSpan.FromTicks(1)))
+            .IsEqualTo(TimeSpan.FromTicks(1));
     }
 
     [Test]
