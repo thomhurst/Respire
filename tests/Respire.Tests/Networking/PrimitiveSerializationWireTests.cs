@@ -25,10 +25,25 @@ public class PrimitiveSerializationWireTests
 
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("SET count 42");
         await Assert.That(server.ReceivedCommands[1]).IsEqualTo("GET count");
-        await Assert.That(server.ReceivedCommands[2]).IsEqualTo("SET enabled true");
+        await Assert.That(server.ReceivedCommands[2]).IsEqualTo("SET enabled 1");
         await Assert.That(server.ReceivedCommands[3]).IsEqualTo("GET enabled");
         await Assert.That(count).IsEqualTo(42);
         await Assert.That(enabled).IsTrue();
+    }
+
+    [Test]
+    public async Task BooleanWrites_UseSameEncodingAcrossOverloadShapes()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await client.Hashes.SetAsync("flags", "generic", true);
+        await client.Hashes.SetAsync("flags", ("tuple", true));
+
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo([
+            "HSET flags generic 1",
+            "HSET flags tuple 1",
+        ]);
     }
 
     [Test]

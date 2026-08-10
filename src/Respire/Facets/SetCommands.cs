@@ -130,7 +130,7 @@ internal sealed class SetCommands(RespireClient client) : ISetCommands
     public ValueTask<bool> ContainsAsync<T>(RespireKey key, T member, CancellationToken cancellationToken = default)
         => client.FlagAsync(
             "SISMEMBER",
-            new Cmd2(Verbs.SIsMember, client.Key(in key), client.SerializeCollectionMember(member)),
+            new Cmd2(Verbs.SIsMember, client.Key(in key), client.SerializeRawCompatible(member)),
             cancellationToken);
 
     public ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default)

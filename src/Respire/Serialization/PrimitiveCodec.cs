@@ -28,7 +28,7 @@ internal static class PrimitiveCodec
         switch (TypeCache<T>.Kind)
         {
             case PrimitiveKind.Boolean:
-                result = Read<T, bool>(ref value) ? "true" : "false";
+                result = Read<T, bool>(ref value);
                 return true;
             case PrimitiveKind.Byte:
                 result = (int)Read<T, byte>(ref value);

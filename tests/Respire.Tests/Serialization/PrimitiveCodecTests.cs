@@ -127,13 +127,13 @@ public class PrimitiveCodecTests
     }
 
     [Test]
-    public async Task Boolean_FastPath_PreservesJsonWrites_AndAcceptsRedisValues()
+    public async Task Boolean_FastPath_UsesRedisIntegerWrites_AndAcceptsRedisValues()
     {
         var serializer = new CountingSerializer();
         await using var client = CreateClient(serializer);
 
-        await Assert.That(client.Serialize(true).ToString()).IsEqualTo("true");
-        await Assert.That(client.Serialize(false).ToString()).IsEqualTo("false");
+        await Assert.That(client.Serialize(true).ToString()).IsEqualTo("1");
+        await Assert.That(client.Serialize(false).ToString()).IsEqualTo("0");
         await Assert.That(client.DeserializeBorrowed<bool>(Bulk("true"))).IsTrue();
         await Assert.That(client.DeserializeBorrowed<bool>(Bulk("false"))).IsFalse();
         await Assert.That(client.DeserializeBorrowed<bool>(Bulk("1"))).IsTrue();
