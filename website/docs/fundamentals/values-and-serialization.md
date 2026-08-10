@@ -59,11 +59,11 @@ var options = new RespireOptions
 };
 ```
 
-Typed `string`, `byte[]`, Boolean, and numeric primitive values bypass object serialization. Numbers use invariant Redis text. Generic Boolean writes retain the default JSON-compatible `true`/`false` representation; reads also accept Redis-style `1`/`0`. Nullable forms use the same fast path when they contain a value.
+Typed `string`, `byte[]`, Boolean, and numeric primitive values bypass object serialization. Numbers use invariant Redis text. Boolean writes use Redis-native `1`/`0`; reads also accept `true`/`false` for interoperability with existing data. Nullable forms use the same fast path when they contain a value.
 
 Objects, enums, and other types use the configured serializer. Custom serializers therefore do not control primitive encoding. Pass a `RespireValue` explicitly when a command input must use raw Redis scalar conventions, as shown in [Keys and input values](#keys-and-input-values).
 
-Serializing overloads sit next to the `RespireValue` ones wherever a facet takes a single payload — `Hashes.SetAsync<T>`, `Sets.ContainsAsync<T>`, `SortedSets.AddAsync<T>`, and the `Lists.LeftPopAsync<T>` / `RightPopAsync<T>` reads. An argument already typed as `RespireValue` selects the raw overload; anything else selects the generic one. The new facet overloads preserve raw `ReadOnlyMemory<byte>`, character code units, and non-finite floating-point arguments because those previously bound to `RespireValue`. Collection member identity is also an exception to generic Boolean encoding: set lookups and sorted-set writes use Redis-native `1`/`0` so they remain compatible with the existing `RespireValue` member APIs.
+Serializing overloads sit next to the `RespireValue` ones wherever a facet takes a single payload — `Hashes.SetAsync<T>`, `Sets.ContainsAsync<T>`, `SortedSets.AddAsync<T>`, and the `Lists.LeftPopAsync<T>` / `RightPopAsync<T>` reads. An argument already typed as `RespireValue` selects the raw overload; anything else selects the generic one. The new facet overloads preserve raw `ReadOnlyMemory<byte>`, character code units, and non-finite floating-point arguments because those previously bound to `RespireValue`. Boolean values use the same `1`/`0` encoding on generic, raw, and collection-member paths.
 
 ## Zero-copy leased reads
 
