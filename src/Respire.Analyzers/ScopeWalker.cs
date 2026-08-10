@@ -157,6 +157,57 @@ internal static class ScopeWalker
         return ComputeDominators(graph, reverse: true)[beforeBlock.Ordinal].Contains(afterBlock.Ordinal);
     }
 
+    /// <summary>True when control can flow from <paramref name="before"/> to <paramref name="after"/>.</summary>
+    public static bool CanReach(
+        SemanticModel semanticModel,
+        SyntaxNode scope,
+        SyntaxNode before,
+        SyntaxNode after,
+        CancellationToken cancellationToken)
+    {
+        var graph = CreateControlFlowGraph(semanticModel, scope, cancellationToken);
+        if (graph is null)
+        {
+            return IsUnconditionalTopLevelSequence(scope, before, after, requireExitCoverage: false);
+        }
+
+        if (FindBlock(graph, before) is not { } beforeBlock
+            || FindBlock(graph, after) is not { } afterBlock)
+        {
+            return false;
+        }
+
+        if (beforeBlock.Ordinal == afterBlock.Ordinal)
+        {
+            return before.SpanStart < after.SpanStart;
+        }
+
+        var pending = new Stack<BasicBlock>();
+        var visited = new HashSet<int> { beforeBlock.Ordinal };
+        pending.Push(beforeBlock);
+
+        while (pending.Count > 0)
+        {
+            var block = pending.Pop();
+            foreach (var successor in GetSuccessors(block))
+            {
+                if (!successor.IsReachable || !visited.Add(successor.Ordinal))
+                {
+                    continue;
+                }
+
+                if (successor.Ordinal == afterBlock.Ordinal)
+                {
+                    return true;
+                }
+
+                pending.Push(successor);
+            }
+        }
+
+        return false;
+    }
+
     private static bool IsUnconditionalTopLevelSequence(
         SyntaxNode scope, SyntaxNode before, SyntaxNode after, bool requireExitCoverage)
     {

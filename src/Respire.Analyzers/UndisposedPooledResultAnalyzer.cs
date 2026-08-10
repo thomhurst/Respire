@@ -135,7 +135,18 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
     }
 
     private static INamedTypeSymbol? Match(ITypeSymbol candidate, INamedTypeSymbol? pooledType)
-        => pooledType is not null && SymbolEqualityComparer.Default.Equals(candidate, pooledType) ? pooledType : null;
+    {
+        if (candidate is INamedTypeSymbol nullable
+            && nullable.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T
+            && nullable.TypeArguments.Length == 1)
+        {
+            candidate = nullable.TypeArguments[0];
+        }
+
+        return pooledType is not null && SymbolEqualityComparer.Default.Equals(candidate, pooledType)
+            ? pooledType
+            : null;
+    }
 
     private static bool IsRespireAcquisition(SyntaxNodeAnalysisContext context, ExpressionSyntax awaitedExpression)
     {
@@ -185,14 +196,13 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
     {
         var references = ScopeWalker.FindReferences(
             scope, local, context.SemanticModel, context.CancellationToken).ToArray();
-        var firstReassignment = references
-            .Where(reference => reference.SpanStart > acquisition.SpanStart
-                                && reference.Parent is AssignmentExpressionSyntax assignment
+        var reassignments = references
+            .Where(reference => reference.Parent is AssignmentExpressionSyntax assignment
                                 && (acquisitionAssignment is null
                                     || !ScopeWalker.IsSame(assignment, acquisitionAssignment))
                                 && ScopeWalker.IsSame(assignment.Left, reference))
-            .Select(reference => (int?)reference.SpanStart)
-            .Min();
+            .Select(static reference => (AssignmentExpressionSyntax)reference.Parent!)
+            .ToArray();
 
         foreach (var reference in references)
         {
@@ -214,7 +224,11 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            if (firstReassignment is { } reassignment && reference.SpanStart > reassignment)
+            if (reassignments.Any(reassignment =>
+                    ScopeWalker.CanReach(
+                        context.SemanticModel, scope, acquisition, reassignment, context.CancellationToken)
+                    && ScopeWalker.CanReach(
+                        context.SemanticModel, scope, reassignment, reference, context.CancellationToken)))
             {
                 // Later uses refer to the replacement, not the acquired pooled owner.
                 continue;

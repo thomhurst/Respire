@@ -429,7 +429,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             return true;
         }
 
-        if (ResolveStoredFlushLocal(context, GetOutermostAwaitableExpression(invocation)) is not { } flush)
+        if (ResolveStoredFlushLocal(context, GetOutermostAwaitableExpression(context, invocation)) is not { } flush)
         {
             return false;
         }
@@ -479,7 +479,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
     {
         while (true)
         {
-            expression = GetOutermostAwaitableExpression(expression);
+            expression = GetOutermostAwaitableExpression(context, expression);
             if (expression.Parent is ArgumentSyntax { Parent.Parent: InvocationExpressionSyntax combinator }
                 && context.SemanticModel.GetSymbolInfo(combinator, context.CancellationToken).Symbol
                     is IMethodSymbol { Name: nameof(Task.WhenAll) } method
@@ -496,7 +496,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         }
     }
 
-    private static ExpressionSyntax GetOutermostAwaitableExpression(ExpressionSyntax expression)
+    private static ExpressionSyntax GetOutermostAwaitableExpression(
+        SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
     {
         while (true)
         {
@@ -507,18 +508,36 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             }
 
             if (expression.Parent is MemberAccessExpressionSyntax
-            {
-                Name.Identifier.ValueText: "ConfigureAwait" or "AsTask",
-                Parent: InvocationExpressionSyntax configureAwait,
+                {
+                    Parent: InvocationExpressionSyntax adapter,
                 } member
-                && ScopeWalker.IsSame(member.Expression, expression))
+                && ScopeWalker.IsSame(member.Expression, expression)
+                && IsAwaitAdapter(context, adapter))
             {
-                expression = configureAwait;
+                expression = adapter;
                 continue;
             }
 
             return expression;
         }
+    }
+
+    private static bool IsAwaitAdapter(
+        SyntaxNodeAnalysisContext context, InvocationExpressionSyntax invocation)
+    {
+        if (context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol
+            is not IMethodSymbol method)
+        {
+            return false;
+        }
+
+        return method.Name switch
+        {
+            "ConfigureAwait" or "AsTask" => true,
+            "WaitAsync" => method.ContainingType.Name == nameof(Task)
+                           && method.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks",
+            _ => false,
+        };
     }
 
     private sealed class KnownTypes(INamedTypeSymbol pending, INamedTypeSymbol? batch, INamedTypeSymbol? transaction)

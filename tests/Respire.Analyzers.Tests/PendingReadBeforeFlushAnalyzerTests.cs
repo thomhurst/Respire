@@ -723,6 +723,26 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    public async Task WaitAsyncFlushBeforeRead_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, CancellationToken cancellationToken)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                await batch.SendAsync().AsTask().WaitAsync(cancellationToken);
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
     public async Task DiscardedBatchAndPending_DoNotSuppressDiagnostic() => await Verify.VerifyAsync(
         """
         using System;
