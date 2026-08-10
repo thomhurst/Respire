@@ -2298,7 +2298,9 @@ public sealed partial class RespireClient : IRespireClient
                     operation)
                 .ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (
+            !cancellationToken.IsCancellationRequested
+            && timeoutCancellation.Token.IsCancellationRequested)
         {
             throw new RespireTimeoutException(operation, timeout);
         }
