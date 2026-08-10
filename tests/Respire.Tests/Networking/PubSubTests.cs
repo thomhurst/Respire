@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Respire.Commands;
 using Respire.Networking;
 using Respire.Protocol;
@@ -65,25 +66,49 @@ public class PubSubTests
     }
 
     [Test]
-    public async Task SubscribeAsync_Cancelled_UnsubscribesInsteadOfLeaking()
+    public async Task SubscribeAsync_Cancelled_AbandonsStalledConnectionBeforeReplacement()
     {
         await using var server = new FakeRespServer(
+            2,
             "*3\r\n$9\r\nsubscribe\r\n$4\r\nwarm\r\n:1\r\n"u8.ToArray(),
-            SubscribeConfirmation,
-            "*3\r\n$11\r\nunsubscribe\r\n$2\r\nch\r\n:0\r\n"u8.ToArray());
+            SubscribeConfirmation);
+        var suppressFirstChannelReply = 1;
+        server.SuppressReply = command => command == "SUBSCRIBE ch"
+            && Interlocked.Exchange(ref suppressFirstChannelReply, 0) == 1;
         await using var client = CreateLazyClient(server.Port);
 
-        // A live subscription first, so cancellation races the SUBSCRIBE rather than the connect.
         await using var warm = await client.SubscribeAsync("warm");
         using var cts = new CancellationTokenSource();
+        var failedSubscription = client.SubscribeAsync("ch", cts.Token).AsTask();
+        await WaitForCommandsAsync(server, 2);
+
+        var cancellationStarted = Stopwatch.GetTimestamp();
         await cts.CancelAsync();
-
-        await Assert.That(async () => await client.SubscribeAsync("ch", cts.Token))
+        await Assert.That(async () => await failedSubscription.WaitAsync(TimeSpan.FromSeconds(1)))
             .Throws<OperationCanceledException>();
+        await Assert.That(Stopwatch.GetElapsedTime(cancellationStarted)).IsLessThan(TimeSpan.FromSeconds(1));
 
-        // Cleanup is awaited before the cancellation surfaces, so the channel cannot be left
-        // subscribed server-side even though the SUBSCRIBE had already gone out.
-        await Assert.That(server.ReceivedCommands).Contains("UNSUBSCRIBE ch");
+        // Failed cleanup closes the uncertain connection instead of queueing an UNSUBSCRIBE on
+        // its stalled response stream. Existing routes reconnect, then replacement activation is
+        // serialized behind that recovery and remains subscribed.
+        await using var replacement = await client.SubscribeAsync("ch").AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(server.ReceivedCommands).DoesNotContain("UNSUBSCRIBE ch");
+        await Assert.That(server.ReceivedCommands.Count(command => command == "SUBSCRIBE ch")).IsEqualTo(2);
+        var channelConnectionIds = server.ReceivedCommands
+            .Select((command, index) => (command, connectionId: server.ReceivedConnectionIds[index]))
+            .Where(entry => entry.command == "SUBSCRIBE ch")
+            .Select(entry => entry.connectionId)
+            .ToArray();
+        await Assert.That(channelConnectionIds[0]).IsNotEqualTo(channelConnectionIds[1]);
+    }
+
+    private static async Task WaitForCommandsAsync(FakeRespServer server, int count)
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen < count)
+        {
+            await Task.Delay(10, cts.Token);
+        }
     }
 
     [Test]

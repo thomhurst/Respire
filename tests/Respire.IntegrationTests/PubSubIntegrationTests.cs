@@ -113,28 +113,19 @@ public class PubSubIntegrationTests
     {
         var channel = IsolatedChannel("it:bye");
         var subscription = await _client.SubscribeAsync(channel);
-
-        var deliveries = 0;
-        var reader = Task.Run(async () =>
-        {
-            await foreach (var _ in subscription)
-            {
-                Interlocked.Increment(ref deliveries);
-            }
-        });
+        await using var reader = subscription.GetAsyncEnumerator();
 
         (await _client.PublishAsync(channel, "warm-up")).Should().Be(1);
+        (await reader.MoveNextAsync()).Should().BeTrue();
+        var pendingRead = reader.MoveNextAsync();
         await subscription.DisposeAsync();
 
-        // Disposal ends the enumeration; once the reader finishes, nothing can deliver anymore.
-        await reader.WaitAsync(TimeSpan.FromSeconds(5));
-        var deliveredBeforeUnsubscribe = Volatile.Read(ref deliveries);
+        // Disposal ends an already-active enumeration before returning.
+        (await pendingRead.AsTask().WaitAsync(TimeSpan.FromSeconds(5))).Should().BeFalse();
 
         var receivers = await _client.PublishAsync(channel, "should-not-arrive");
 
         receivers.Should().Be(0);
-        await Task.Delay(200);
-        Volatile.Read(ref deliveries).Should().Be(deliveredBeforeUnsubscribe);
     }
 
     [Test]
