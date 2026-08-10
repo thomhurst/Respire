@@ -59,7 +59,7 @@ lock without returning its handle or generated owner token; the lock then remain
 
 ## Treat the lock as a lease
 
-The lock disappears when `Expiry` elapses, even if protected work is still running. Keep work
+The lock disappears when `Duration` elapses, even if protected work is still running. Keep work
 shorter than the lease or extend it before expiry:
 
 ```csharp
@@ -72,19 +72,27 @@ if (!await mutex.ExtendAsync(TimeSpan.FromSeconds(30), cancellationToken))
 `ExtendAsync` returns `false` after expiry, release, or ownership loss. Do not retry protected
 writes after that result: another process may now own the lock.
 
+For longer work, use a keep-alive and pass its cancellation token to the protected operation:
+
+```csharp
+await using var keepAlive = await mutex.KeepAliveAsync(cancellationToken);
+await RunReportAsync(keepAlive.CancellationToken);
+```
+
 `await using` is the normal release path. Call `ReleaseAsync` explicitly when release success must
-be observed; it returns whether this call deleted the lock. Disposal suppresses connection,
-timeout, and disposed-client cleanup failures because the expiry remains the final safety net.
+be observed; it returns `LockReleaseOutcome.Released`, `AlreadyReleased`, or `NotOwned`. Disposal
+suppresses connection, timeout, and disposed-client cleanup failures because expiry remains the
+final safety net.
 
 ## Manage owner tokens directly
 
-Use `TakeAsync`, `ExtendAsync`, `ReleaseAsync`, and `QueryAsync` when the token must be shared with
-another process or outlive the acquiring process:
+Use `TryTakeAsync`, `ExtendAsync`, `ReleaseAsync`, and `GetOwnerTokenAsync` when the token must be
+shared with another process or outlive the acquiring process:
 
 ```csharp
 var token = Guid.NewGuid().ToString("N");
 
-if (await redis.Locks.TakeAsync("locks:report", token, TimeSpan.FromSeconds(30), cancellationToken))
+if (await redis.Locks.TryTakeAsync("locks:report", token, TimeSpan.FromSeconds(30), cancellationToken))
 {
     try
     {

@@ -296,6 +296,30 @@ public class LockCommandTests
     }
 
     [Test]
+    public async Task RespireLock_QueuedRenewalUsesTheLatestDuration()
+    {
+        var commands = new CoordinatedLockCommands();
+        var mutex = new RespireLock(
+            commands,
+            "resource",
+            "owner"u8.ToArray(),
+            TimeSpan.FromSeconds(30),
+            Stopwatch.GetTimestamp());
+
+        var extension = mutex.ExtendAsync(TimeSpan.FromMinutes(5)).AsTask();
+        await commands.FirstExtensionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var renewal = mutex.RenewAsync(CancellationToken.None).AsTask();
+
+        await Assert.That(commands.ExtensionCount).IsEqualTo(1);
+        commands.CompleteFirstExtension();
+
+        await Assert.That(await extension).IsTrue();
+        await Assert.That(await renewal).IsTrue();
+        await Assert.That(commands.Expiries).IsEquivalentTo(
+            [TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5)]);
+    }
+
+    [Test]
     public async Task RespireLock_KeepAliveCancelsWhenOwnershipIsLost()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply, ":0\r\n"u8.ToArray());
@@ -315,6 +339,25 @@ public class LockCommandTests
         await Assert.That(keepAlive.OwnershipLost).IsTrue();
         await Assert.That(keepAlive.Failure).IsNull();
         await Assert.That(mutex.IsReleased).IsTrue();
+    }
+
+    [Test]
+    public async Task RespireLock_ManualShorteningReschedulesKeepAlive()
+    {
+        var commands = new CoordinatedLockCommands(blockFirstExtension: false);
+        var mutex = new RespireLock(
+            commands,
+            "resource",
+            "owner"u8.ToArray(),
+            TimeSpan.FromSeconds(30),
+            Stopwatch.GetTimestamp());
+
+        await using var keepAlive = await mutex.KeepAliveAsync();
+        await Assert.That(await mutex.ExtendAsync(TimeSpan.FromMilliseconds(200))).IsTrue();
+
+        await commands.SecondExtensionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(commands.Expiries).IsEquivalentTo(
+            [TimeSpan.FromMilliseconds(200), TimeSpan.FromMilliseconds(200)]);
     }
 
     [Test]
@@ -422,11 +465,18 @@ public class LockCommandTests
 
     private sealed class CoordinatedLockCommands : ILockCommands
     {
+        private readonly bool _blockFirstExtension;
         private readonly TaskCompletionSource<bool> _firstExtension =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly List<TimeSpan> _expiries = [];
 
+        public CoordinatedLockCommands(bool blockFirstExtension = true)
+            => _blockFirstExtension = blockFirstExtension;
+
         public TaskCompletionSource FirstExtensionStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource SecondExtensionStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public int ExtensionCount
@@ -469,8 +519,12 @@ public class LockCommandTests
             if (call == 1)
             {
                 FirstExtensionStarted.TrySetResult();
-                return new ValueTask<bool>(_firstExtension.Task);
+                return _blockFirstExtension
+                    ? new ValueTask<bool>(_firstExtension.Task)
+                    : ValueTask.FromResult(true);
             }
+
+            SecondExtensionStarted.TrySetResult();
 
             return ValueTask.FromResult(true);
         }

@@ -57,6 +57,7 @@ public sealed class RespireLock : IAsyncDisposable
 
     private readonly ILockCommands _locks;
     private readonly SemaphoreSlim _extendSync = new(1, 1);
+    private CancellationTokenSource _leaseChanged = new();
     private long _durationTicks;
     private long _renewedTimestamp;
     private int _state;
@@ -127,7 +128,18 @@ public sealed class RespireLock : IAsyncDisposable
     /// <see langword="false"/> when the lock is no longer owned — it expired, it was released, or
     /// another owner took it — in which case protected work must stop rather than retry.
     /// </returns>
-    public async ValueTask<bool> ExtendAsync(TimeSpan expiry, CancellationToken cancellationToken = default)
+    public ValueTask<bool> ExtendAsync(TimeSpan expiry, CancellationToken cancellationToken = default)
+        => ExtendCoreAsync(expiry, signalLeaseChanged: true, cancellationToken);
+
+    internal ValueTask<bool> RenewAsync(CancellationToken cancellationToken)
+        => ExtendCoreAsync(expiry: null, signalLeaseChanged: false, cancellationToken);
+
+    internal CancellationToken LeaseChanged => Volatile.Read(ref _leaseChanged).Token;
+
+    private async ValueTask<bool> ExtendCoreAsync(
+        TimeSpan? expiry,
+        bool signalLeaseChanged,
+        CancellationToken cancellationToken)
     {
         if (IsReleased)
         {
@@ -136,6 +148,7 @@ public sealed class RespireLock : IAsyncDisposable
         }
 
         await _extendSync.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var changed = false;
         try
         {
             if (IsReleased)
@@ -143,20 +156,26 @@ public sealed class RespireLock : IAsyncDisposable
                 return false;
             }
 
+            var effectiveExpiry = expiry ?? Duration;
             var renewedTimestamp = Stopwatch.GetTimestamp();
-            if (!await _locks.ExtendAsync(Key, Token, expiry, cancellationToken).ConfigureAwait(false))
+            if (!await _locks.ExtendAsync(Key, Token, effectiveExpiry, cancellationToken).ConfigureAwait(false))
             {
                 Interlocked.CompareExchange(ref _state, StateNotOwned, StateHeld);
                 return false;
             }
 
-            Interlocked.Exchange(ref _durationTicks, expiry.Ticks);
+            Interlocked.Exchange(ref _durationTicks, effectiveExpiry.Ticks);
             Interlocked.Exchange(ref _renewedTimestamp, renewedTimestamp);
+            changed = signalLeaseChanged;
             return true;
         }
         finally
         {
             _extendSync.Release();
+            if (changed)
+            {
+                Interlocked.Exchange(ref _leaseChanged, new CancellationTokenSource()).Cancel();
+            }
         }
     }
 
@@ -320,15 +339,25 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
         {
             while (true)
             {
+                var leaseChanged = _lock.LeaseChanged;
                 var duration = _lock.Duration;
                 var delay = GetRenewalDelay(duration, _lock.RemainingEstimate);
                 if (delay > TimeSpan.Zero)
                 {
-                    await Task.Delay(delay, _lifetime.Token).ConfigureAwait(false);
+                    using var delayCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                        _lifetime.Token, leaseChanged);
+                    try
+                    {
+                        await Task.Delay(delay, delayCancellation.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (
+                        leaseChanged.IsCancellationRequested && !_lifetime.IsCancellationRequested)
+                    {
+                        continue;
+                    }
                 }
 
-                duration = _lock.Duration;
-                if (!await _lock.ExtendAsync(duration, _lifetime.Token).ConfigureAwait(false))
+                if (!await _lock.RenewAsync(_lifetime.Token).ConfigureAwait(false))
                 {
                     Volatile.Write(ref _ownershipLost, 1);
                     await _lifetime.CancelAsync().ConfigureAwait(false);
