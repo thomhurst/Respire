@@ -1,3 +1,4 @@
+using System.Text;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -123,6 +124,173 @@ public class LockCommandTests
         await Assert.That(async () => await client.Locks.ExtendAsync("resource", "", TimeSpan.FromSeconds(1)))
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Locks.ExtendAsync("resource", "owner", TimeSpan.Zero))
+            .Throws<ArgumentOutOfRangeException>();
+
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task RespireLock_AcquireGeneratesTokenAndDisposeCompareAndDeletes()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var mutex = await client.Locks.AcquireAsync("resource", TimeSpan.FromSeconds(30));
+
+        await Assert.That(mutex).IsNotNull();
+        await Assert.That(mutex!.Key.ToString()).IsEqualTo("resource");
+        await Assert.That(mutex.Expiry).IsEqualTo(TimeSpan.FromSeconds(30));
+        var token = Encoding.UTF8.GetString(mutex.Token.Span);
+        await Assert.That(token.Length).IsEqualTo(32);
+
+        await mutex.DisposeAsync();
+
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        {
+            $"SET resource {token} NX PX 30000",
+            $"EVALSHA {LockCommands.ReleaseScript.Sha1} 1 resource {token}",
+        });
+    }
+
+    [Test]
+    public async Task RespireLock_AcquireReturnsNullAndIssuesNothingElseWhenTheKeyExists()
+    {
+        await using var server = new FakeRespServer("$-1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var mutex = await client.Locks.AcquireAsync("resource", TimeSpan.FromSeconds(30));
+
+        await Assert.That(mutex).IsNull();
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task RespireLock_EachAcquisitionGetsItsOwnToken()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var first = await client.Locks.AcquireAsync("resource", TimeSpan.FromSeconds(30));
+        var second = await client.Locks.AcquireAsync("other", TimeSpan.FromSeconds(30));
+
+        await Assert.That(first!.Token.Span.SequenceEqual(second!.Token.Span)).IsFalse();
+    }
+
+    [Test]
+    public async Task RespireLock_SnapshotsByteBackedKeyForHandleOperations()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var key = "resource"u8.ToArray();
+
+        var mutex = await client.Locks.AcquireAsync(key, TimeSpan.FromSeconds(30));
+        key.AsSpan().Fill((byte)'x');
+        await mutex!.DisposeAsync();
+
+        var token = Encoding.UTF8.GetString(mutex.Token.Span);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        {
+            $"SET resource {token} NX PX 30000",
+            $"EVALSHA {LockCommands.ReleaseScript.Sha1} 1 resource {token}",
+        });
+    }
+
+    [Test]
+    public async Task RespireLock_ReleaseAndExtendStopAtTheHandleOnceReleased()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var mutex = await client.Locks.AcquireAsync("resource", TimeSpan.FromSeconds(30));
+
+        await Assert.That(await mutex!.ReleaseAsync()).IsTrue();
+        await Assert.That(await mutex.ReleaseAsync()).IsFalse();
+        await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(60))).IsFalse();
+        await mutex.DisposeAsync();
+
+        // SET plus one compare-and-DEL: the repeat release, the extend, and dispose never reach the wire.
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task RespireLock_ExtendRecordsTheNewExpiryOnlyWhenStillOwned()
+    {
+        await using var server = new FakeRespServer(
+            FakeRespServer.OkReply,
+            ":0\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var mutex = await client.Locks.AcquireAsync("resource", TimeSpan.FromSeconds(30));
+
+        await Assert.That(await mutex!.ExtendAsync(TimeSpan.FromSeconds(45))).IsFalse();
+        await Assert.That(mutex.Expiry).IsEqualTo(TimeSpan.FromSeconds(30));
+
+        await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(90))).IsTrue();
+        await Assert.That(mutex.Expiry).IsEqualTo(TimeSpan.FromSeconds(90));
+    }
+
+    [Test]
+    public async Task RespireLock_AcquireAppliesTheKeyPrefixToBothTheSetAndTheReleaseScript()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
+        await using var owner = await FakeRespServer.ConnectClientAsync(server.Port);
+        var client = owner.WithKeyPrefix("tenant:");
+
+        var mutex = await client.Locks.AcquireAsync("resource", TimeSpan.FromSeconds(30));
+        var token = Encoding.UTF8.GetString(mutex!.Token.Span);
+        await mutex.DisposeAsync();
+
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        {
+            $"SET tenant:resource {token} NX PX 30000",
+            $"EVALSHA {LockCommands.ReleaseScript.Sha1} 1 tenant:resource {token}",
+        });
+    }
+
+    [Test]
+    public async Task RespireLock_PollingAcquireRetriesUntilTheWaitBudgetIsSpent()
+    {
+        await using var server = new FakeRespServer("$-1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var mutex = await client.Locks.AcquireAsync(
+            "resource",
+            TimeSpan.FromSeconds(30),
+            wait: TimeSpan.FromMilliseconds(120),
+            retryEvery: TimeSpan.FromMilliseconds(50));
+
+        await Assert.That(mutex).IsNull();
+        await Assert.That(server.ReceivedCommands.Count).IsGreaterThan(1);
+    }
+
+    [Test]
+    public async Task RespireLock_PollingAcquireUsesShortRemainingBudgetForFinalAttempt()
+    {
+        await using var server = new FakeRespServer("$-1\r\n"u8.ToArray(), FakeRespServer.OkReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var mutex = await client.Locks.AcquireAsync(
+            "resource",
+            TimeSpan.FromSeconds(30),
+            wait: TimeSpan.FromMilliseconds(50),
+            retryEvery: TimeSpan.FromSeconds(1));
+
+        await Assert.That(mutex).IsNotNull();
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task RespireLock_PollingAcquireValidatesItsWaitArguments()
+    {
+        await using var server = new FakeRespServer();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await Assert.That(async () => await client.Locks.AcquireAsync(
+                "resource", TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(-1), TimeSpan.FromMilliseconds(50)))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.Locks.AcquireAsync(
+                "resource", TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(1), TimeSpan.Zero))
             .Throws<ArgumentOutOfRangeException>();
 
         await Assert.That(server.ReceivedCommands).IsEmpty();
