@@ -1742,7 +1742,8 @@ public sealed partial class RespireClient : IRespireClient
                     "Reliable correction ordering must be initialized before a tracked script starts.");
             }
 
-            connection = core.Multiplexer.GetConnection();
+            connection = await core.Multiplexer.GetHealthyConnectionAsync(cancellationToken)
+                .ConfigureAwait(false);
         }
 
         var identity = GetTrackedConnectionIdentity(

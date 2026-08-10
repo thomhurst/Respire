@@ -576,7 +576,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
-    private async ValueTask<RespireConnection> GetHealthyConnectionAsync(CancellationToken cancellationToken)
+    internal async ValueTask<RespireConnection> GetHealthyConnectionAsync(CancellationToken cancellationToken)
     {
         while (true)
         {
