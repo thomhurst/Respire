@@ -831,6 +831,11 @@ public sealed partial class RespireClient : IRespireClient
             return memory;
         }
 
+        if (value is char character)
+        {
+            return (ushort)character;
+        }
+
         if (value is float single && !float.IsFinite(single))
         {
             return single;

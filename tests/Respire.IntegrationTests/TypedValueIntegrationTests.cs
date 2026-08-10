@@ -88,6 +88,8 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
         (await client.Hashes.GetStringAsync("typed:hash", "null-bytes")).Should().BeEmpty();
         await client.Hashes.SetAsync("typed:hash", "nan", double.NaN);
         (await client.Hashes.GetStringAsync("typed:hash", "nan")).Should().Be("NaN");
+        await client.Hashes.SetAsync("typed:hash", "char", 'A');
+        (await client.Hashes.GetStringAsync("typed:hash", "char")).Should().Be("65");
 
         var storedDefault = await client.Hashes.TryGetAsync<int>("typed:hash", "count");
         storedDefault.Found.Should().BeTrue();
@@ -142,6 +144,9 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
         await client.Sets.AddAsync("typed:set:nan", double.NaN);
         (await client.Sets.ContainsAsync("typed:set:nan", double.NaN)).Should().BeTrue();
 
+        await client.Sets.AddAsync("typed:set:char", 'A');
+        (await client.Sets.ContainsAsync("typed:set:char", 'A')).Should().BeTrue();
+
         await client.Sets.AddAsync("typed:set:json", JsonSerializer.Serialize(payload));
         (await client.Sets.ContainsAsync("typed:set:json", payload)).Should().BeTrue();
     }
@@ -171,6 +176,9 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
 
         (await client.SortedSets.AddAsync("typed:zset:nan", double.NaN, 1.5)).Should().BeTrue();
         (await client.SortedSets.ScoreAsync("typed:zset:nan", double.NaN)).Should().Be(1.5);
+
+        (await client.SortedSets.AddAsync("typed:zset:char", 'A', 1.5)).Should().BeTrue();
+        (await client.SortedSets.ScoreAsync("typed:zset:char", 'A')).Should().Be(1.5);
 
         (await client.SortedSets.AddAsync("typed:zset", payload, 2.5)).Should().BeTrue();
         (await client.SortedSets.ScoreAsync("typed:zset", JsonSerializer.Serialize(payload))).Should().Be(2.5);
