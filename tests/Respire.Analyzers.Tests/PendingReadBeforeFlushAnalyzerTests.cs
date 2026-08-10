@@ -813,6 +813,58 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    public async Task ConditionalPendingOverwriteFromUnflushedBatch_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool overwrite)
+            {
+                var batch = client.CreateBatch();
+                var otherBatch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                await batch.SendAsync();
+                if (overwrite)
+                {
+                    pending = otherBatch.GetStringAsync("other");
+                }
+
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
+    public async Task ExhaustiveBranchFlushesBeforeRead_AreNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool firstPath)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                if (firstPath)
+                {
+                    await batch.SendAsync();
+                }
+                else
+                {
+                    await batch.SendAsync();
+                }
+
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
     public async Task ManualGetResultBeforeSend_IsFlagged() => await Verify.VerifyAsync(
         """
         using System;

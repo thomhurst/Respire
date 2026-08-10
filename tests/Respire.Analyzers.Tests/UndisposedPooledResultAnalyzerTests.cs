@@ -667,4 +667,29 @@ public class UndisposedPooledResultAnalyzerTests
             private static void Consume(RespireResult result) { }
         }
         """);
+
+    [Test]
+    public async Task ExhaustiveBranchReleaseOrTransfer_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool transfer)
+            {
+                var result = await client.ExecuteAsync("PING");
+                if (transfer)
+                {
+                    Consume(result);
+                }
+                else
+                {
+                    result.Dispose();
+                }
+            }
+
+            private static void Consume(RespireResult result) { }
+        }
+        """);
 }

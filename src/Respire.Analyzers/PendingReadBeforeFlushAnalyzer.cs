@@ -157,47 +157,52 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             return;
         }
 
-        var origin = ResolveOriginatingCall(context, scope, pending);
-        if (origin is null)
+        var origins = ResolveOriginatingCalls(context, scope, pending, read).ToArray();
+        if (origins.Length == 0)
         {
             return;
         }
 
-        if (ScopeWalker.GetReceiver(origin.Expression) is not { } batchExpression
-            || ResolveRootLocal(context, batchExpression) is not { } batch
-            || IsDeclaredOutside(scope, batch))
+        foreach (var origin in origins)
         {
-            // A field, a parameter, or a batch built further out: it outlives this scope, so stay silent.
+            if (ScopeWalker.GetReceiver(origin.Expression) is not { } batchExpression
+                || ResolveRootLocal(context, batchExpression) is not { } batch
+                || IsDeclaredOutside(scope, batch))
+            {
+                // A field, a parameter, or a batch built further out: it outlives this scope.
+                continue;
+            }
+
+            var isTransaction = SymbolEqualityComparer.Default.Equals(batch.Type, known.Transaction);
+            if (!isTransaction && !SymbolEqualityComparer.Default.Equals(batch.Type, known.Batch))
+            {
+                continue;
+            }
+
+            if (Escapes(context, scope, batch, allowReassignment: true, before: read)
+                || HasFlushBefore(context, scope, batch, origin, read))
+            {
+                continue;
+            }
+
+            context.ReportDiagnostic(Diagnostic.Create(
+                Rule, read.GetLocation(), batch.Name, isTransaction ? CommitAsync : SendAsync));
             return;
         }
-
-        var isTransaction = SymbolEqualityComparer.Default.Equals(batch.Type, known.Transaction);
-        if (!isTransaction && !SymbolEqualityComparer.Default.Equals(batch.Type, known.Batch))
-        {
-            return;
-        }
-
-        if (Escapes(context, scope, batch, allowReassignment: true, before: read)
-            || HasFlushBefore(context, scope, batch, origin, read))
-        {
-            return;
-        }
-
-        context.ReportDiagnostic(Diagnostic.Create(
-            Rule, read.GetLocation(), batch.Name, isTransaction ? CommitAsync : SendAsync));
     }
 
     /// <summary>
     /// The <c>batch.SomethingAsync(…)</c> call that produced the pending being read, whether it was
     /// read inline or through a local that never leaves this scope.
     /// </summary>
-    private static InvocationExpressionSyntax? ResolveOriginatingCall(
-        SyntaxNodeAnalysisContext context, SyntaxNode scope, ExpressionSyntax pending)
+    private static IEnumerable<InvocationExpressionSyntax> ResolveOriginatingCalls(
+        SyntaxNodeAnalysisContext context, SyntaxNode scope, ExpressionSyntax pending, SyntaxNode read)
     {
         switch (ScopeWalker.Unwrap(pending))
         {
             case InvocationExpressionSyntax inlineCall:
-                return inlineCall;
+                yield return inlineCall;
+                yield break;
 
             case IdentifierNameSyntax identifier:
                 if (context.SemanticModel.GetSymbolInfo(identifier, context.CancellationToken).Symbol is not ILocalSymbol local
@@ -205,38 +210,49 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                     || local.DeclaringSyntaxReferences[0].GetSyntax(context.CancellationToken)
                         is not VariableDeclaratorSyntax declarator)
                 {
-                    return null;
+                    yield break;
                 }
 
+                if (Escapes(context, scope, local, allowReassignment: true, before: read))
+                {
+                    yield break;
+                }
+
+                var definitions = new List<(SyntaxNode Write, ExpressionSyntax Value)>();
                 if (declarator.Initializer is not null)
                 {
-                    return !Escapes(context, scope, local, before: identifier)
-                        ? ScopeWalker.Unwrap(declarator.Initializer.Value) as InvocationExpressionSyntax
-                        : null;
+                    definitions.Add((declarator, declarator.Initializer.Value));
                 }
 
-                var assignments = scope.DescendantNodes().OfType<AssignmentExpressionSyntax>()
-                    .Where(assignment => assignment.SpanStart < identifier.SpanStart
+                definitions.AddRange(scope.DescendantNodes().OfType<AssignmentExpressionSyntax>()
+                    .Where(assignment => assignment.IsKind(SyntaxKind.SimpleAssignmentExpression)
                                          && context.SemanticModel.GetSymbolInfo(
                                                  ScopeWalker.Unwrap(assignment.Left), context.CancellationToken).Symbol
                                              is ILocalSymbol assigned
                                          && SymbolEqualityComparer.Default.Equals(assigned, local))
-                    .ToArray();
-                if (assignments.Length != 1)
+                    .Select(static assignment => ((SyntaxNode)assignment, assignment.Right)));
+
+                var writes = definitions.Select(static definition => definition.Write).ToArray();
+                foreach (var definition in definitions)
                 {
-                    return null;
+                    var otherWrites = writes.Where(write => !ScopeWalker.IsSame(write, definition.Write));
+                    if (ScopeWalker.Unwrap(definition.Value) is InvocationExpressionSyntax invocation
+                        && ScopeWalker.CanReachWithoutCrossing(
+                            context.SemanticModel,
+                            scope,
+                            definition.Write,
+                            read,
+                            otherWrites,
+                            context.CancellationToken))
+                    {
+                        yield return invocation;
+                    }
                 }
 
-                var assignment = assignments[0];
-                if (Escapes(context, scope, local, assignment, before: identifier))
-                {
-                    return null;
-                }
-
-                return ScopeWalker.Unwrap(assignment.Right) as InvocationExpressionSyntax;
+                yield break;
 
             default:
-                return null;
+                yield break;
         }
     }
 
@@ -368,6 +384,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         InvocationExpressionSyntax origin,
         ExpressionSyntax read)
     {
+        var completions = new List<SyntaxNode>();
         foreach (var invocation in scope.DescendantNodes().OfType<InvocationExpressionSyntax>())
         {
             context.CancellationToken.ThrowIfCancellationRequested();
@@ -389,14 +406,14 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            if (!IsReassignedBetween(context, scope, batch, origin, invocation)
-                && IsAwaitedBefore(context, scope, invocation, read))
+            if (!IsReassignedBetween(context, scope, batch, origin, invocation))
             {
-                return true;
+                completions.AddRange(GetAwaitExpressions(context, scope, invocation));
             }
         }
 
-        return false;
+        return ScopeWalker.CollectivelyDominates(
+            context.SemanticModel, scope, completions, read, context.CancellationToken);
     }
 
     private static bool DominatesRead(
@@ -417,35 +434,31 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                               && reference.Parent is AssignmentExpressionSyntax assignment
                               && ScopeWalker.IsSame(assignment.Left, reference));
 
-    private static bool IsAwaitedBefore(
+    private static IEnumerable<AwaitExpressionSyntax> GetAwaitExpressions(
         SyntaxNodeAnalysisContext context,
         SyntaxNode scope,
-        InvocationExpressionSyntax invocation,
-        SyntaxNode read)
+        InvocationExpressionSyntax invocation)
     {
-        if (GetAwaitExpression(context, invocation) is { } directAwait
-            && ScopeWalker.Dominates(context.SemanticModel, scope, directAwait, read, context.CancellationToken))
+        if (GetAwaitExpression(context, invocation) is { } directAwait)
         {
-            return true;
+            yield return directAwait;
+            yield break;
         }
 
         if (ResolveStoredFlushLocal(context, GetOutermostAwaitableExpression(context, invocation)) is not { } flush)
         {
-            return false;
+            yield break;
         }
 
         foreach (var reference in ScopeWalker.FindReferences(
                      scope, flush, context.SemanticModel, context.CancellationToken))
         {
             if (GetAwaitExpression(context, reference) is { } awaitExpression
-                && !IsReassignedBeforeAwait(context, scope, flush, invocation, awaitExpression)
-                && ScopeWalker.Dominates(context.SemanticModel, scope, awaitExpression, read, context.CancellationToken))
+                && !IsReassignedBeforeAwait(context, scope, flush, invocation, awaitExpression))
             {
-                return true;
+                yield return awaitExpression;
             }
         }
-
-        return false;
     }
 
     private static ILocalSymbol? ResolveStoredFlushLocal(

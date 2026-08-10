@@ -203,6 +203,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                                 && ScopeWalker.IsSame(assignment.Left, reference))
             .Select(static reference => (AssignmentExpressionSyntax)reference.Parent!)
             .ToArray();
+        var releases = new List<SyntaxNode>();
 
         foreach (var reference in references)
         {
@@ -236,11 +237,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
 
             if (ScopeWalker.IsNestedInLambda(reference, scope))
             {
-                if (CoversEveryExit(context, scope, acquisition, reference))
-                {
-                    return true;
-                }
-
+                releases.Add(reference);
                 continue;
             }
 
@@ -249,26 +246,23 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 // result.AsString(), result.Type, result.Dispose()
                 case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, reference):
                     if (member.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
-                        && member.Parent is not InvocationExpressionSyntax
-                        && CoversEveryExit(context, scope, acquisition, member))
+                        && member.Parent is not InvocationExpressionSyntax)
                     {
-                        return true;
+                        releases.Add(member);
                     }
 
                     if (member.Parent is InvocationExpressionSyntax extensionInvocation
                         && context.SemanticModel.GetSymbolInfo(extensionInvocation, context.CancellationToken).Symbol
-                            is IMethodSymbol { ReducedFrom: not null }
-                        && CoversEveryExit(context, scope, acquisition, extensionInvocation))
+                            is IMethodSymbol { ReducedFrom: not null })
                     {
-                        return true;
+                        releases.Add(extensionInvocation);
                     }
 
                     if (member.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
                         && member.Parent is InvocationExpressionSyntax invocation
-                        && ScopeWalker.IsSame(invocation.Expression, member)
-                        && CoversEveryExit(context, scope, acquisition, invocation))
+                        && ScopeWalker.IsSame(invocation.Expression, member))
                     {
-                        return true;
+                        releases.Add(invocation);
                     }
 
                     break;
@@ -279,13 +273,16 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
 
                 // result?.Dispose()
                 case ConditionalAccessExpressionSyntax conditional when ScopeWalker.IsSame(conditional.Expression, reference):
-                    if (conditional.WhenNotNull.DescendantNodesAndSelf().OfType<MemberBindingExpressionSyntax>()
-                        .Any(binding => binding.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
-                                        && binding.Parent is InvocationExpressionSyntax invocation
-                                        && ScopeWalker.IsSame(invocation.Expression, binding)
-                                        && CoversEveryExit(context, scope, acquisition, invocation)))
+                    var conditionalDispose = conditional.WhenNotNull.DescendantNodesAndSelf()
+                        .OfType<MemberBindingExpressionSyntax>()
+                        .Where(binding => binding.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
+                                          && binding.Parent is InvocationExpressionSyntax invocation
+                                          && ScopeWalker.IsSame(invocation.Expression, binding))
+                        .Select(static binding => (InvocationExpressionSyntax)binding.Parent!)
+                        .FirstOrDefault();
+                    if (conditionalDispose is not null)
                     {
-                        return true;
+                        releases.Add(conditionalDispose);
                     }
 
                     break;
@@ -293,11 +290,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 // using (result) { … }
                 case UsingStatementSyntax usingStatement when usingStatement.Expression is not null
                                                               && ScopeWalker.IsSame(usingStatement.Expression, reference):
-                    if (CoversEveryExit(context, scope, acquisition, usingStatement))
-                    {
-                        return true;
-                    }
-
+                    releases.Add(usingStatement);
                     break;
 
                 // result = … drops the acquired owner; it does not transfer ownership elsewhere.
@@ -306,20 +299,12 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
 
                 // Anything else — an argument, a return, or an assignment source — hands ownership away.
                 default:
-                    if (CoversEveryExit(context, scope, acquisition, reference))
-                    {
-                        return true;
-                    }
-
+                    releases.Add(reference);
                     break;
             }
         }
 
-        return false;
+        return ScopeWalker.CollectivelyPostDominates(
+            context.SemanticModel, scope, acquisition, releases, context.CancellationToken);
     }
-
-    private static bool CoversEveryExit(
-        SyntaxNodeAnalysisContext context, SyntaxNode scope, SyntaxNode acquisition, SyntaxNode release)
-        => ScopeWalker.PostDominates(
-            context.SemanticModel, scope, acquisition, release, context.CancellationToken);
 }

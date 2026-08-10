@@ -177,31 +177,166 @@ internal static class ScopeWalker
             return false;
         }
 
-        if (beforeBlock.Ordinal == afterBlock.Ordinal)
+        return PathExistsAvoiding(
+            graph, beforeBlock, before.SpanStart, afterBlock, after.SpanStart, []);
+    }
+
+    /// <summary>
+    /// True when control can flow from <paramref name="before"/> to <paramref name="after"/>
+    /// without crossing any node in <paramref name="barriers"/>.
+    /// </summary>
+    public static bool CanReachWithoutCrossing(
+        SemanticModel semanticModel,
+        SyntaxNode scope,
+        SyntaxNode before,
+        SyntaxNode after,
+        IEnumerable<SyntaxNode> barriers,
+        CancellationToken cancellationToken)
+    {
+        var graph = CreateControlFlowGraph(semanticModel, scope, cancellationToken);
+        if (graph is null)
         {
-            return before.SpanStart < after.SpanStart;
+            return IsUnconditionalTopLevelSequence(scope, before, after, requireExitCoverage: false)
+                   && !barriers.Any(barrier => barrier.SpanStart > before.SpanStart
+                                               && barrier.SpanStart < after.SpanStart);
         }
 
-        var pending = new Stack<BasicBlock>();
-        var visited = new HashSet<int> { beforeBlock.Ordinal };
-        pending.Push(beforeBlock);
+        if (FindBlock(graph, before) is not { } beforeBlock
+            || FindBlock(graph, after) is not { } afterBlock)
+        {
+            return false;
+        }
+
+        return PathExistsAvoiding(
+            graph, beforeBlock, before.SpanStart, afterBlock, after.SpanStart, barriers);
+    }
+
+    /// <summary>True when every path to <paramref name="after"/> crosses one of <paramref name="barriers"/>.</summary>
+    public static bool CollectivelyDominates(
+        SemanticModel semanticModel,
+        SyntaxNode scope,
+        IEnumerable<SyntaxNode> barriers,
+        SyntaxNode after,
+        CancellationToken cancellationToken)
+    {
+        var barrierArray = barriers.ToArray();
+        if (barrierArray.Length == 0)
+        {
+            return false;
+        }
+
+        var graph = CreateControlFlowGraph(semanticModel, scope, cancellationToken);
+        if (graph is null)
+        {
+            return barrierArray.Any(barrier => Dominates(
+                semanticModel, scope, barrier, after, cancellationToken));
+        }
+
+        if (FindBlock(graph, after) is not { } afterBlock)
+        {
+            return false;
+        }
+
+        return !PathExistsAvoiding(
+            graph, graph.Blocks[0], int.MinValue, afterBlock, after.SpanStart, barrierArray);
+    }
+
+    /// <summary>True when every path from <paramref name="before"/> to exit crosses one of <paramref name="barriers"/>.</summary>
+    public static bool CollectivelyPostDominates(
+        SemanticModel semanticModel,
+        SyntaxNode scope,
+        SyntaxNode before,
+        IEnumerable<SyntaxNode> barriers,
+        CancellationToken cancellationToken)
+    {
+        var barrierArray = barriers.ToArray();
+        if (barrierArray.Length == 0)
+        {
+            return false;
+        }
+
+        var graph = CreateControlFlowGraph(semanticModel, scope, cancellationToken);
+        if (graph is null)
+        {
+            return barrierArray.Any(barrier => PostDominates(
+                semanticModel, scope, before, barrier, cancellationToken));
+        }
+
+        if (FindBlock(graph, before) is not { } beforeBlock)
+        {
+            return false;
+        }
+
+        return !PathExistsAvoiding(
+            graph,
+            beforeBlock,
+            before.SpanStart,
+            graph.Blocks[graph.Blocks.Length - 1],
+            int.MaxValue,
+            barrierArray);
+    }
+
+    private static bool PathExistsAvoiding(
+        ControlFlowGraph graph,
+        BasicBlock startBlock,
+        int startPosition,
+        BasicBlock targetBlock,
+        int targetPosition,
+        IEnumerable<SyntaxNode> barriers)
+    {
+        var barrierPositions = new Dictionary<int, List<int>>();
+        foreach (var barrier in barriers)
+        {
+            if (FindBlock(graph, barrier) is not { } block)
+            {
+                continue;
+            }
+
+            if (!barrierPositions.TryGetValue(block.Ordinal, out var positions))
+            {
+                positions = [];
+                barrierPositions.Add(block.Ordinal, positions);
+            }
+
+            positions.Add(barrier.SpanStart);
+        }
+
+        var pending = new Stack<(BasicBlock Block, int EntryPosition)>();
+        var visited = new HashSet<int>();
+        pending.Push((startBlock, startPosition));
 
         while (pending.Count > 0)
         {
-            var block = pending.Pop();
+            var (block, entryPosition) = pending.Pop();
+            if (!visited.Add(block.Ordinal))
+            {
+                continue;
+            }
+
+            var firstBarrier = barrierPositions.TryGetValue(block.Ordinal, out var positions)
+                ? positions.Where(position => position > entryPosition).DefaultIfEmpty(int.MaxValue).Min()
+                : int.MaxValue;
+
+            if (block.Ordinal == targetBlock.Ordinal
+                && targetPosition > entryPosition
+                && targetPosition <= firstBarrier)
+            {
+                return true;
+            }
+
+            if (firstBarrier != int.MaxValue)
+            {
+                continue;
+            }
+
             foreach (var successor in GetSuccessors(block))
             {
-                if (!successor.IsReachable || !visited.Add(successor.Ordinal))
+                if (!successor.IsReachable || visited.Contains(successor.Ordinal))
                 {
                     continue;
                 }
 
-                if (successor.Ordinal == afterBlock.Ordinal)
-                {
-                    return true;
-                }
-
-                pending.Push(successor);
+                pending.Push((successor, int.MinValue));
             }
         }
 
