@@ -29,24 +29,32 @@ public readonly record struct RespireEndpoint(string Host, int Port = 6379)
                 return new RespireEndpoint(host);
             }
 
-            if (value[closingBracket + 1] != ':' ||
-                !int.TryParse(value.AsSpan(closingBracket + 2), CultureInfo.InvariantCulture, out var ipv6Port))
+            if (value[closingBracket + 1] != ':'
+                || !int.TryParse(value.AsSpan(closingBracket + 2), CultureInfo.InvariantCulture, out var ipv6Port)
+                || !IsValidPort(ipv6Port))
             {
-                throw new ArgumentException($"Invalid IPv6 endpoint '{value}'.", nameof(value));
+                throw new ArgumentException($"Invalid port in IPv6 endpoint '{value}'.", nameof(value));
             }
 
             return new RespireEndpoint(host, ipv6Port);
         }
 
         var colon = value.IndexOf(':');
-        if (colon > 0 && colon == value.LastIndexOf(':') &&
-            int.TryParse(value.AsSpan(colon + 1), CultureInfo.InvariantCulture, out var port))
+        if (colon > 0 && colon == value.LastIndexOf(':'))
         {
+            if (!int.TryParse(value.AsSpan(colon + 1), CultureInfo.InvariantCulture, out var port)
+                || !IsValidPort(port))
+            {
+                throw new ArgumentException($"Invalid port in endpoint '{value}'.", nameof(value));
+            }
+
             return new RespireEndpoint(value[..colon], port);
         }
 
         return new RespireEndpoint(value);
     }
+
+    private static bool IsValidPort(int port) => port is >= 1 and <= 65535;
 
     /// <summary>Parses a host or host-and-port string.</summary>
     public static implicit operator RespireEndpoint(string value) => Parse(value);
@@ -241,12 +249,60 @@ public sealed record RespireOptions
             throw new RespireConfigurationException("At least one Redis endpoint is required.");
         }
 
-        if (Connections < 1)
+        Require(Connections >= 1, nameof(Connections), "must be at least one");
+        Require(Database >= 0, nameof(Database), "cannot be negative");
+        Require(ConnectTimeout > TimeSpan.Zero, nameof(ConnectTimeout), "must be positive");
+        Require(
+            CommandTimeout is null || CommandTimeout >= TimeSpan.FromMilliseconds(1),
+            nameof(CommandTimeout),
+            "must be at least one millisecond");
+        Require(
+            ConnectionIdleReadTimeout is null || ConnectionIdleReadTimeout >= TimeSpan.FromMilliseconds(1),
+            nameof(ConnectionIdleReadTimeout),
+            "must be at least one millisecond");
+        Require(ReceiveBufferSize >= 1, nameof(ReceiveBufferSize), "must be at least one");
+        Require(WriteBufferSize >= 1, nameof(WriteBufferSize), "must be at least one");
+        Require(MaxInflightCommands >= 1, nameof(MaxInflightCommands), "must be at least one");
+        Require(SubscriptionBufferSize >= 1, nameof(SubscriptionBufferSize), "must be at least one");
+        Require(
+            TcpKeepAliveTime is null || TcpKeepAliveTime >= TimeSpan.FromSeconds(1),
+            nameof(TcpKeepAliveTime),
+            "must be at least one second");
+        Require(
+            TcpKeepAliveInterval is null || TcpKeepAliveInterval >= TimeSpan.FromSeconds(1),
+            nameof(TcpKeepAliveInterval),
+            "must be at least one second");
+        Require(
+            TcpKeepAliveRetryCount is null or >= 1,
+            nameof(TcpKeepAliveRetryCount),
+            "must be at least one");
+
+        if (TcpKeepAliveTime is null
+            && (TcpKeepAliveInterval is not null || TcpKeepAliveRetryCount is not null))
         {
-            throw new RespireConfigurationException("RespireOptions.Connections must be at least one.");
+            throw new RespireConfigurationException(
+                "RespireOptions.TcpKeepAliveInterval and RespireOptions.TcpKeepAliveRetryCount " +
+                "require RespireOptions.TcpKeepAliveTime.");
+        }
+
+        foreach (var endpoint in Endpoints)
+        {
+            if (endpoint.Port is < 1 or > 65535)
+            {
+                throw new RespireConfigurationException(
+                    $"RespireOptions.Endpoints contains invalid TCP port {endpoint.Port}.");
+            }
         }
 
         return this with { Endpoints = new List<RespireEndpoint>(Endpoints) };
+    }
+
+    private static void Require(bool condition, string optionName, string requirement)
+    {
+        if (!condition)
+        {
+            throw new RespireConfigurationException($"RespireOptions.{optionName} {requirement}.");
+        }
     }
 
     internal ILogger? CreateLogger(string category) => LoggerFactory?.CreateLogger(category);
