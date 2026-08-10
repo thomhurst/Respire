@@ -56,7 +56,8 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 SyntaxKind.LocalDeclarationStatement);
             compilationStart.RegisterSyntaxNodeAction(
                 nodeContext => AnalyzeAssignment(nodeContext, resultType, leaseType),
-                SyntaxKind.SimpleAssignmentExpression);
+                SyntaxKind.SimpleAssignmentExpression,
+                SyntaxKind.CoalesceAssignmentExpression);
         });
     }
 
@@ -126,7 +127,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         }
 
         var pooledType = Match(local.Type, resultType) ?? Match(local.Type, leaseType);
-        if (pooledType is null || IsDisposedOrEscapes(context, scope, assignment, assignment, local))
+        if (pooledType is null || IsDisposedOrEscapes(context, scope, awaitExpression, assignment, local))
         {
             return;
         }
@@ -205,9 +206,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         if (acquisitionAssignment is not null
             && IsImmediatelyReleasedOrTransferred(context, acquisitionAssignment))
         {
-            // The assignment's value is consumed immediately. Use its RHS as the barrier because
-            // return/using syntax begins before the assignment even though consumption happens after it.
-            releases.Add(acquisitionAssignment.Right);
+            return true;
         }
 
         foreach (var reference in references)
@@ -293,7 +292,9 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                         .FirstOrDefault();
                     if (conditionalDispose is not null)
                     {
-                        releases.Add(conditionalDispose);
+                        // A Respire acquisition always supplies a value. Treat the whole conditional
+                        // access as the release barrier so nullable flow does not invent a null branch.
+                        releases.Add(conditional);
                     }
 
                     break;

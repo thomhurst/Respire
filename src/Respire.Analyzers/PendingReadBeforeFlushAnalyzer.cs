@@ -225,7 +225,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 }
 
                 definitions.AddRange(scope.DescendantNodes().OfType<AssignmentExpressionSyntax>()
-                    .Where(assignment => assignment.IsKind(SyntaxKind.SimpleAssignmentExpression)
+                    .Where(assignment => (assignment.IsKind(SyntaxKind.SimpleAssignmentExpression)
+                                          || assignment.IsKind(SyntaxKind.CoalesceAssignmentExpression))
                                          && context.SemanticModel.GetSymbolInfo(
                                                  ScopeWalker.Unwrap(assignment.Left), context.CancellationToken).Symbol
                                              is ILocalSymbol assigned
@@ -390,7 +391,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
             if (!IsReassignedBetween(context, scope, batch, origin, invocation))
             {
-                completions.AddRange(GetAwaitExpressions(context, scope, invocation, batch, origin));
+                completions.AddRange(GetCompletionExpressions(context, scope, invocation, batch, origin));
             }
         }
 
@@ -426,16 +427,16 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                                   flush,
                                   context.CancellationToken));
 
-    private static IEnumerable<AwaitExpressionSyntax> GetAwaitExpressions(
+    private static IEnumerable<ExpressionSyntax> GetCompletionExpressions(
         SyntaxNodeAnalysisContext context,
         SyntaxNode scope,
         InvocationExpressionSyntax invocation,
         ILocalSymbol batch,
         InvocationExpressionSyntax origin)
     {
-        if (GetAwaitExpression(context, invocation) is { } directAwait)
+        if (GetCompletionExpression(context, invocation) is { } directCompletion)
         {
-            yield return directAwait;
+            yield return directCompletion;
             yield break;
         }
 
@@ -447,10 +448,10 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         foreach (var reference in ScopeWalker.FindReferences(
                      scope, flush, context.SemanticModel, context.CancellationToken))
         {
-            if (GetAwaitExpression(context, reference) is { } awaitExpression
-                && HasOnlyMatchingReachingDefinitions(context, scope, flush, batch, origin, awaitExpression))
+            if (GetCompletionExpression(context, reference) is { } completion
+                && HasOnlyMatchingReachingDefinitions(context, scope, flush, batch, origin, completion))
             {
-                yield return awaitExpression;
+                yield return completion;
             }
         }
     }
@@ -475,7 +476,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         ILocalSymbol flush,
         ILocalSymbol batch,
         InvocationExpressionSyntax origin,
-        AwaitExpressionSyntax awaitExpression)
+        ExpressionSyntax completion)
     {
         var definitions = FindStoredValueDefinitions(context, scope, flush).ToArray();
         var reachingDefinitions = definitions.Where(definition =>
@@ -483,7 +484,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 context.SemanticModel,
                 scope,
                 definition,
-                awaitExpression,
+                completion,
                 definitions.Where(candidate => !ScopeWalker.IsSame(candidate, definition)),
                 context.CancellationToken)).ToArray();
 
@@ -541,7 +542,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         return false;
     }
 
-    private static AwaitExpressionSyntax? GetAwaitExpression(
+    private static ExpressionSyntax? GetCompletionExpression(
         SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
     {
         while (true)
@@ -556,11 +557,36 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            return expression.Parent is AwaitExpressionSyntax awaitExpression
-                   && ScopeWalker.IsSame(awaitExpression.Expression, expression)
-                ? awaitExpression
-                : null;
+            if (expression.Parent is AwaitExpressionSyntax awaitExpression
+                && ScopeWalker.IsSame(awaitExpression.Expression, expression))
+            {
+                return awaitExpression;
+            }
+
+            return GetSynchronousGetResult(context, expression);
         }
+    }
+
+    private static InvocationExpressionSyntax? GetSynchronousGetResult(
+        SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
+    {
+        if (expression.Parent is not MemberAccessExpressionSyntax getAwaiterMember
+            || !ScopeWalker.IsSame(getAwaiterMember.Expression, expression)
+            || getAwaiterMember.Parent is not InvocationExpressionSyntax getAwaiterInvocation
+            || getAwaiterInvocation.ArgumentList.Arguments.Count != 0
+            || context.SemanticModel.GetSymbolInfo(getAwaiterInvocation, context.CancellationToken).Symbol
+                is not IMethodSymbol { Name: GetAwaiter }
+            || getAwaiterInvocation.Parent is not MemberAccessExpressionSyntax getResultMember
+            || !ScopeWalker.IsSame(getResultMember.Expression, getAwaiterInvocation)
+            || getResultMember.Parent is not InvocationExpressionSyntax getResultInvocation
+            || getResultInvocation.ArgumentList.Arguments.Count != 0
+            || context.SemanticModel.GetSymbolInfo(getResultInvocation, context.CancellationToken).Symbol
+                is not IMethodSymbol { Name: GetResult })
+        {
+            return null;
+        }
+
+        return getResultInvocation;
     }
 
     private static ExpressionSyntax GetOutermostAwaitableExpression(
