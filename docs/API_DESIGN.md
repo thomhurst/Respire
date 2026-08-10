@@ -6,7 +6,7 @@ inflight ring, auto-pipelining, persistent flush task) stays as-is; this spec is
 users touch.
 
 > **Status:** implemented, with these deltas from the original draft:
-> - Connection sizing is one `Connections` knob (0 = auto), not `Min`/`MaxConnections` — the
+> - Connection sizing is one `Connections` knob (minimum 1), not `Min`/`MaxConnections` — the
 >   multiplexer pool is fixed-size, and the option should say what the code does.
 > - Lazy connect is `RespireClient.Create(...)` (used by the DI package) rather than a
 >   `lazy:` flag on `ConnectAsync`.
@@ -60,21 +60,20 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
     Database = 0,
     ConnectTimeout = TimeSpan.FromSeconds(5),
     CommandTimeout = TimeSpan.FromSeconds(2),
-    MinConnections = 1,
-    MaxConnections = 4,
+    Connections = 4,
     Serializer = SystemTextJsonSerializer.FromContext(AppJsonContext.Default),
-    Reconnect = ReconnectPolicy.ExponentialBackoff(
-        initial: TimeSpan.FromMilliseconds(100),
-        max: TimeSpan.FromSeconds(10)),
     LoggerFactory = loggerFactory,
 });
 ```
 
-- `ConnectAsync` (not `CreateAsync`) — it says what happens. It fails fast with
-  `RespireConnectionException` if the server is unreachable; an overload
-  `ConnectAsync(..., lazy: true)` defers connection to first command for hosts that start
-  before their Redis does.
-- URI carries the common knobs: `redis://user:pass@host:6379/2?clientName=api&commandTimeout=2s`.
+- `ConnectAsync` connects eagerly. `Create(...)` defers connection to the first command for
+  hosts that start before Redis. `ConnectTimeout` bounds socket and TLS setup; the Redis
+  handshake and non-blocking commands use `CommandTimeout`. Blocking commands use their
+  explicit wait timeout, and caller cancellation applies throughout. Standalone clients surface
+  setup exceptions directly, while cluster clients wrap seed failures in
+  `RespireConnectionException`. A later command starts a new connection attempt.
+- URI carries the common knobs:
+  `redis://user:pass@host:6379/2?clientName=api&commandTimeoutMs=2000`.
 - Connection count, logger, TLS all live in `RespireOptions` — no five-parameter factory.
 - `redis.IsConnected`, `redis.ConnectionStateChanged` event (`Connected`, `Reconnecting`,
   `Disconnected`) with endpoint and error context for health surfacing.
@@ -426,10 +425,15 @@ builder.Services.AddKeyedRespire("sessions", o => o.Endpoints.Add(new("sess-host
 public sealed class CartService([FromKeyedServices("cache")] IRespireClient redis) { }
 ```
 
-- Registers `IRespireClient` + `RespireClient` singleton; connection happens on first use
-  (lazy) with an option for eager connect via hosted service.
-- Binds `RespireOptions` through `IOptions` so config sections/validation work.
-- `AddRespireHealthCheck()` in the same package.
+- Registers `IRespireClient` + `RespireClient` singleton; connection happens on first use.
+  `ConnectTimeout` bounds socket and TLS setup; the Redis handshake uses `CommandTimeout`, as do
+  non-blocking commands. Blocking commands use their explicit wait timeout, and caller
+  cancellation applies throughout. Cluster seed failures are wrapped in
+  `RespireConnectionException`, and the next command retries connection.
+- Configuration accepts a connection string, an `Action<RespireOptionsBuilder>`, or a
+  service-provider factory returning `RespireOptions`; the package does not bind `IOptions`.
+- Health integrations can inspect `IsConnected` and subscribe to `ConnectionStateChanged`;
+  the package does not register a health check.
 
 ## 17. Testing story
 
