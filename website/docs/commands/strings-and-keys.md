@@ -27,10 +27,30 @@ bool created = await redis.SetAsync(
     when: SetWhen.NotExists);
 ```
 
+## Expiry
+
+`RespireTtl` is the single expiry argument: nothing, a relative TTL, an absolute instant, or "keep the TTL the key already has". A `TimeSpan` or `DateTimeOffset` converts implicitly.
+
+```csharp
+await redis.SetAsync("session:42", token);                                  // no TTL (clears any existing one)
+await redis.SetAsync("session:42", token, TimeSpan.FromMinutes(30));        // PX
+await redis.SetAsync("session:42", token, RespireTtl.At(midnight));         // PXAT
+await redis.SetAsync("session:42", token, RespireTtl.Keep);                 // KEEPTTL
+```
+
+`RespireTtl` is the expiry you *send*; `RespireExpiry` (returned by `Keys.ExpiryAsync`) is the expiry Redis *reports*.
+
 ## Bulk operations
 
 ```csharp
 await redis.Strings.SetManyAsync(
+    ("feature:a", "on"),
+    ("feature:b", "off"));
+
+// One shared expiry (and optional NX/XX) for every pair — Redis MSETEX.
+await redis.Strings.SetManyAsync(
+    TimeSpan.FromMinutes(5),
+    SetWhen.NotExists,
     ("feature:a", "on"),
     ("feature:b", "off"));
 

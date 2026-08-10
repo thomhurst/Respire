@@ -463,28 +463,32 @@ internal readonly struct IncrementCommand(Verb one, Verb by, RespireValue key, l
     }
 }
 
-/// <summary>SET key value [PX ms] [NX|XX] [KEEPTTL] [GET].</summary>
+/// <summary>SET key value [PX ms | PXAT unix-ms] [NX|XX] [KEEPTTL] [GET].</summary>
 internal readonly struct SetCommand(
-    RespireValue key, RespireValue value, TimeSpan? expiry, SetWhen when, bool keepTtl, bool returnOld) : IRespCommand
+    RespireValue key, RespireValue value, RespireTtl expiry, SetWhen when, bool returnOld) : IRespCommand
 {
     public bool TryGetClusterSlot(out int slot) => key.TryGetClusterSlot(out slot);
 
     public void Write(ref RespWriter writer)
     {
         var count = 3
-            + (expiry.HasValue ? 2 : 0)
+            + expiry.TokenCount
             + (when != SetWhen.Always ? 1 : 0)
-            + (keepTtl ? 1 : 0)
             + (returnOld ? 1 : 0);
         writer.WriteArrayHeader(count);
         writer.WriteRaw(Verbs.Set.Bulk);
         key.WriteTo(ref writer);
         value.WriteTo(ref writer);
 
-        if (expiry is { } ttl)
+        if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
         {
             writer.WriteBulkString("PX"u8);
-            writer.WriteBulkInteger((long)ttl.TotalMilliseconds);
+            writer.WriteBulkInteger(milliseconds);
+        }
+        else if (expiry.TryGetAbsoluteUnixMilliseconds(out var unixMilliseconds))
+        {
+            writer.WriteBulkString("PXAT"u8);
+            writer.WriteBulkInteger(unixMilliseconds);
         }
 
         if (when == SetWhen.NotExists)
@@ -496,7 +500,7 @@ internal readonly struct SetCommand(
             writer.WriteBulkString("XX"u8);
         }
 
-        if (keepTtl)
+        if (expiry.IsKeep)
         {
             writer.WriteBulkString("KEEPTTL"u8);
         }
