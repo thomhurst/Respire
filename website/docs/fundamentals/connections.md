@@ -109,7 +109,7 @@ The first command triggers connection. Dependency-injection registration uses th
 
 ## Redis Sentinel
 
-Set `ServiceName` to resolve the current primary from one or more Sentinel endpoints before
+Set `SentinelPrimaryName` to resolve the current primary from one or more Sentinel endpoints before
 connecting:
 
 ```csharp
