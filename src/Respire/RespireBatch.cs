@@ -8,7 +8,8 @@ namespace Respire;
 /// An explicit pipeline: queue commands, then <see cref="SendAsync"/> flushes them to one
 /// connection together and completes every queued <see cref="RespirePending{T}"/>. Not atomic —
 /// use <see cref="RespireTransaction"/> for MULTI/EXEC semantics. Single-shot and not
-/// thread-safe: build, send once, discard.
+/// thread-safe: build, send once, discard. Dispose an unsent batch to fault its queued pendings
+/// with <see cref="RespireBatchDiscardedException"/>.
 /// </summary>
 /// <remarks>
 /// Commands are grouped into the same facets as the client — <c>batch.Hashes.SetAsync</c>
@@ -17,10 +18,11 @@ namespace Respire;
 /// <see cref="SendAsync"/> owns cancellation. Members that block (a <c>waitFor</c> argument) or
 /// stream (<c>ScanAsync</c>, <c>GetLeaseAsync</c>) have no deferred form.
 /// </remarks>
-public sealed class RespireBatch : IPendingSink
+public sealed class RespireBatch : IDisposable, IPendingSink
 {
     private readonly RespireClient _client;
     private readonly List<Op> _ops = [];
+    private bool _disposed;
     private bool _sent;
 
     private IBatchStringCommands? _strings;
@@ -35,6 +37,10 @@ public sealed class RespireBatch : IPendingSink
 
     internal RespireBatch(RespireClient client) => _client = client;
 
+    /// <summary>Gets whether <see cref="SendAsync"/> has started.</summary>
+    public bool IsSent => _sent;
+
+    /// <summary>Gets the number of queued commands.</summary>
     public int Count => _ops.Count;
 
     // Deferred command facets, grouped exactly like the client's — same names, same parameter
@@ -121,6 +127,7 @@ public sealed class RespireBatch : IPendingSink
     /// </summary>
     public async ValueTask SendAsync(CancellationToken cancellationToken = default)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         if (_sent)
         {
             throw new InvalidOperationException("This batch has already been sent.");
@@ -219,6 +226,30 @@ public sealed class RespireBatch : IPendingSink
             batchSize: _ops.Count == 1 ? null : _ops.Count);
     }
 
+    /// <summary>
+    /// Discards an unsent batch and faults every queued pending with
+    /// <see cref="RespireBatchDiscardedException"/>.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        if (_sent)
+        {
+            return;
+        }
+
+        var error = new RespireBatchDiscardedException();
+        foreach (var operation in _ops)
+        {
+            operation.Fail(error);
+        }
+    }
+
     private async Task<Exception?> RunClusterGroupAsync(
         int? slot,
         List<Op> operations,
@@ -268,6 +299,7 @@ public sealed class RespireBatch : IPendingSink
     private RespirePending<T> Add<TCommand, T>(string operation, in TCommand command, Func<RespireClient, RespValue, T> convert)
         where TCommand : struct, IRespCommand
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         if (_sent)
         {
             throw new InvalidOperationException("This batch has already been sent.");

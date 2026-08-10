@@ -114,4 +114,43 @@ public class BatchFacetWireTests
 
         await Assert.That(() => _ = pending.Result).Throws<InvalidOperationException>();
     }
+
+    [Test]
+    public async Task DisposingUnsentBatch_FaultsEveryPending()
+    {
+        await using var client = RespireClient.Create("localhost:6379");
+        var batch = client.CreateBatch();
+        var first = batch.GetStringAsync("first");
+        var second = batch.ExistsAsync("second");
+
+        await Assert.That(batch.IsSent).IsFalse();
+
+        batch.Dispose();
+        batch.Dispose();
+
+        await Assert.That(batch.IsSent).IsFalse();
+        await Assert.That(first.IsCompleted).IsTrue();
+        await Assert.That(second.IsCompleted).IsTrue();
+        await Assert.That(() => _ = first.Result).ThrowsExactly<RespireBatchDiscardedException>();
+        await Assert.That(() => _ = second.Result).ThrowsExactly<RespireBatchDiscardedException>();
+        await Assert.That(() => batch.GetStringAsync("third")).ThrowsExactly<ObjectDisposedException>();
+        await Assert.That(async () => await batch.SendAsync()).ThrowsExactly<ObjectDisposedException>();
+    }
+
+    [Test]
+    public async Task SendingBatch_SetsIsSentAndDisposePreservesResult()
+    {
+        await using var server = new FakeRespServer("$5\r\nvalue\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var batch = client.CreateBatch();
+        var pending = batch.GetStringAsync("key");
+
+        await Assert.That(batch.IsSent).IsFalse();
+
+        await batch.SendAsync();
+        batch.Dispose();
+
+        await Assert.That(batch.IsSent).IsTrue();
+        await Assert.That(pending.Result).IsEqualTo("value");
+    }
 }

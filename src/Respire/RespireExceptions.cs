@@ -31,6 +31,10 @@ public sealed class RespireProtocolException(string message) : RespireException(
 public sealed class RespireLockNotAcquiredException() : RespireException(
     "The distributed lock was not acquired because another owner holds it.");
 
+/// <summary>An unsent batch was disposed, so none of its queued commands ran.</summary>
+public sealed class RespireBatchDiscardedException() : InvalidOperationException(
+    "The batch was disposed before SendAsync; its queued commands were discarded.");
+
 /// <summary>The server answered a command with a RESP error reply ("-WRONGTYPE ...").</summary>
 public sealed class RespireServerException : RespireException
 {
