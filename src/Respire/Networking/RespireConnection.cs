@@ -1661,9 +1661,10 @@ internal sealed class RespireConnection : IAsyncDisposable
                 }
 
                 var elapsed = Stopwatch.GetElapsedTime(deadlineStart);
-                if (elapsed < timeout)
+                var delay = GetWatchdogDelay(timeout, elapsed);
+                if (delay > TimeSpan.Zero)
                 {
-                    await DelayWatchdogAsync(timeout - elapsed, cancellationToken).ConfigureAwait(false);
+                    await DelayWatchdogAsync(delay, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
@@ -1691,6 +1692,9 @@ internal sealed class RespireConnection : IAsyncDisposable
 
     private static Task DelayWatchdogAsync(TimeSpan delay, CancellationToken cancellationToken)
         => Task.Delay(delay > MaxWatchdogSleep ? MaxWatchdogSleep : delay, cancellationToken);
+
+    internal static TimeSpan GetWatchdogDelay(TimeSpan timeout, TimeSpan elapsed)
+        => elapsed < timeout ? timeout - elapsed : TimeSpan.Zero;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void ResetReceiveDeadline()

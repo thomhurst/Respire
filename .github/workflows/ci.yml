@@ -47,6 +47,14 @@ jobs:
             -c Release \
             -f ${{ matrix.framework }} \
             --no-build
+
+      - name: Run Analyzer Tests
+        if: matrix.framework == 'net10.0'
+        run: |
+          dotnet run --project tests/Respire.Analyzers.Tests/Respire.Analyzers.Tests.csproj \
+            -c Release \
+            -f net10.0 \
+            --no-build
       
       - name: Run Integration Tests
         run: |
