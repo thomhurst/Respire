@@ -152,6 +152,15 @@ public class GeoCommandTests
     }
 
     [Test]
+    public async Task GeoSearchResult_CopyWithMember_RefreshesMemberBytes()
+    {
+        var result = new GeoSearchResult("old") with { Member = "new" };
+
+        await Assert.That(result.Member).IsEqualTo("new");
+        await Assert.That(result.MemberBytes.Span.SequenceEqual("new"u8)).IsTrue();
+    }
+
+    [Test]
     public async Task GeoCommands_ValidateConflictingOptions()
     {
         await using var server = new FakeRespServer();

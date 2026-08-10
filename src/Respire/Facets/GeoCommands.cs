@@ -37,7 +37,18 @@ public readonly record struct GeoSearchResult(
     long? Hash = null,
     GeoPosition? Position = null)
 {
+    private readonly string _member = Member;
     private readonly byte[]? _memberBytes = Member is null ? null : Encoding.UTF8.GetBytes(Member);
+
+    public string Member
+    {
+        get => _member;
+        init
+        {
+            _member = value;
+            _memberBytes = value is null ? null : Encoding.UTF8.GetBytes(value);
+        }
+    }
 
     /// <summary>The exact Redis member payload, for binary-safe follow-up commands.</summary>
     public ReadOnlyMemory<byte> MemberBytes => _memberBytes ?? Array.Empty<byte>();
