@@ -9,10 +9,12 @@ public static class RespireServiceCollectionExtensions
     /// <summary>
     /// Registers a singleton <see cref="IRespireClient"/> (and <see cref="RespireClient"/>).
     /// Construction is lazy — nothing connects until the first command — so startup never
-    /// blocks on Redis. A failed attempt surfaces its socket or TLS exception, or
-    /// <see cref="OperationCanceledException"/> when <see cref="RespireOptions.ConnectTimeout"/>
-    /// elapses; a later command retries connection. The client picks up the container's
-    /// <see cref="ILoggerFactory"/> unless the options set one explicitly.
+    /// blocks on Redis. <see cref="RespireOptions.ConnectTimeout"/> bounds socket and TLS setup;
+    /// the Redis handshake and command use <see cref="RespireOptions.CommandTimeout"/> and caller
+    /// cancellation. Standalone clients surface setup exceptions directly, while cluster clients
+    /// wrap seed failures in <see cref="RespireConnectionException"/>. A later command retries
+    /// connection. The client picks up the container's <see cref="ILoggerFactory"/> unless the
+    /// options set one explicitly.
     /// </summary>
     public static IServiceCollection AddRespire(this IServiceCollection services, string connectionString)
     {

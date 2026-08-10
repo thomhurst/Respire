@@ -250,10 +250,10 @@ public sealed class CartService(
     [FromKeyedServices("sessions")] IRespireClient redis);
 ```
 
-Registration is lazy, so Redis availability never blocks application startup. If the first
-command cannot connect, the socket or TLS exception surfaces immediately, or an
-`OperationCanceledException` surfaces when `ConnectTimeout` elapses. The next command starts a
-new connection attempt.
+Registration is lazy, so Redis availability never blocks application startup. `ConnectTimeout`
+bounds socket and TLS setup; the Redis handshake and command use `CommandTimeout` and caller
+cancellation. Standalone clients surface setup exceptions directly, while cluster clients wrap
+seed failures in `RespireConnectionException`. The next command starts a new connection attempt.
 
 ### NativeAOT and trimming
 

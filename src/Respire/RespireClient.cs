@@ -143,18 +143,25 @@ public sealed partial class RespireClient : IRespireClient
 
     /// <summary>
     /// Creates a client without connecting; the first command connects. Useful for dependency
-    /// injection, where construction should not block on the network. A failed connection attempt
-    /// surfaces its socket or TLS exception, or <see cref="OperationCanceledException"/> when
-    /// <see cref="RespireOptions.ConnectTimeout"/> elapses. A later command starts a new attempt.
+    /// injection, where construction should not block on the network.
     /// </summary>
+    /// <remarks>
+    /// <see cref="RespireOptions.ConnectTimeout"/> bounds socket and TLS setup; the Redis handshake
+    /// and command use <see cref="RespireOptions.CommandTimeout"/> and caller cancellation.
+    /// Standalone clients surface setup exceptions directly, while cluster clients wrap seed
+    /// failures in <see cref="RespireConnectionException"/>. A later command starts a new attempt.
+    /// </remarks>
     public static RespireClient Create(string connectionString) => Create(RespireOptions.Parse(connectionString));
 
     /// <summary>
-    /// Creates a lazy client using structured options; the first command connects. A failed
-    /// attempt surfaces its socket or TLS exception, or <see cref="OperationCanceledException"/>
-    /// when <see cref="RespireOptions.ConnectTimeout"/> elapses. A later command starts a new
-    /// connection attempt.
+    /// Creates a lazy client using structured options; the first command connects.
     /// </summary>
+    /// <remarks>
+    /// <see cref="RespireOptions.ConnectTimeout"/> bounds socket and TLS setup; the Redis handshake
+    /// and command use <see cref="RespireOptions.CommandTimeout"/> and caller cancellation.
+    /// Standalone clients surface setup exceptions directly, while cluster clients wrap seed
+    /// failures in <see cref="RespireConnectionException"/>. A later command starts a new attempt.
+    /// </remarks>
     public static RespireClient Create(RespireOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
