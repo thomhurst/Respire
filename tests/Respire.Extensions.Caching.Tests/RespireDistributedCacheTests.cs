@@ -1392,6 +1392,9 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
 
         public ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys) => inner.DeleteAsync(keys);
 
+        public ValueTask<long> DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
+            => inner.DeleteAsync(keys, cancellationToken);
+
         public ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default)
             => inner.ExistsAsync(key, cancellationToken);
 
@@ -1507,7 +1510,14 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public void Complete() => _unlink.TrySetResult(0);
 
         public ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys) => inner.DeleteAsync(keys);
+
+        public ValueTask<long> DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
+            => inner.DeleteAsync(keys, cancellationToken);
+
         public ValueTask<long> UnlinkAsync(params ReadOnlySpan<RespireKey> keys) => new(_unlink.Task);
+
+        public ValueTask<long> UnlinkAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
+            => new(_unlink.Task);
 
         public ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default)
             => inner.ExistsAsync(key, cancellationToken);
@@ -1534,6 +1544,9 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             => inner.RenameAsync(key, newKey, cancellationToken);
 
         public ValueTask<long> TouchAsync(params ReadOnlySpan<RespireKey> keys) => inner.TouchAsync(keys);
+
+        public ValueTask<long> TouchAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
+            => inner.TouchAsync(keys, cancellationToken);
 
         public IAsyncEnumerable<string> ScanAsync(
             string? match = null,

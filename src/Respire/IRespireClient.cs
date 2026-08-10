@@ -49,6 +49,7 @@ public interface IRespireClient : IAsyncDisposable
         CancellationToken cancellationToken = default);
 
     ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys);
+    ValueTask<long> DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
     ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default);
     ValueTask<long> IncrementAsync(RespireKey key, long by = 1, CancellationToken cancellationToken = default);
     ValueTask<long> DecrementAsync(RespireKey key, long by = 1, CancellationToken cancellationToken = default);
