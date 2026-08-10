@@ -1607,11 +1607,15 @@ public sealed record RespireConnectionOptions
     /// <summary>Initial size of each of the two coalescing write buffers.</summary>
     public int WriteBufferSize { get; init; } = 64 * 1024;
 
-    /// <summary>Kernel socket receive buffer size; 0 keeps the OS default.</summary>
-    public int SocketReceiveBufferSize { get; init; } = 64 * 1024;
+    /// <summary>
+    /// Kernel socket receive buffer size; 0 (the default) keeps the OS default. Setting an
+    /// explicit size disables Linux receive-window autotuning, capping single-connection
+    /// throughput on high-latency links, so only pin a size when profiling demands it.
+    /// </summary>
+    public int SocketReceiveBufferSize { get; init; }
 
-    /// <summary>Kernel socket send buffer size; 0 keeps the OS default.</summary>
-    public int SocketSendBufferSize { get; init; } = 64 * 1024;
+    /// <summary>Kernel socket send buffer size; 0 (the default) keeps the OS default.</summary>
+    public int SocketSendBufferSize { get; init; }
 
     /// <summary>Maximum commands awaiting responses on one connection (rounded up to a power of two).</summary>
     public int MaxInflightCommands { get; init; } = 16 * 1024;
