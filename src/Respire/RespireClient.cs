@@ -1715,11 +1715,13 @@ public sealed partial class RespireClient : IRespireClient
         RespireScript script,
         RespireKey[] keys,
         RespireValue[] args,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool requireReliableCorrectionOrdering = false)
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        var requiresIdentity = RequiresReliableCorrectionOrdering(cancellationToken);
+        var requiresIdentity = requireReliableCorrectionOrdering
+            || RequiresReliableCorrectionOrdering(cancellationToken);
         var tail = BuildScriptTail(keys, args);
 
         RespireConnection connection;

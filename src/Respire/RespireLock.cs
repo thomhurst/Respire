@@ -418,7 +418,20 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
                     }
                 }
 
-                if (!await _lock.RenewAsync(MarkOwnershipUncertain, _lifetime.Token).ConfigureAwait(false))
+                var remaining = _lock.RemainingEstimate;
+                if (remaining <= TimeSpan.Zero)
+                {
+                    MarkOwnershipUncertain();
+                    return;
+                }
+
+                using var deadline = new CancellationTokenSource(remaining);
+                using var deadlineRegistration = deadline.Token.Register(
+                    static state => ((RespireLockKeepAlive)state!).MarkOwnershipUncertain(), this);
+                using var renewalCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                    _lifetime.Token, deadline.Token);
+                if (!await _lock.RenewAsync(MarkOwnershipUncertain, renewalCancellation.Token)
+                        .ConfigureAwait(false))
                 {
                     Volatile.Write(ref _ownershipLost, 1);
                     await _lifetime.CancelAsync().ConfigureAwait(false);

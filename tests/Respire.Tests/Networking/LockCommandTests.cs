@@ -299,6 +299,8 @@ public class LockCommandTests
     {
         await using var server = new FakeRespServer(
             FakeRespServer.OkReply,
+            ":41\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray(),
             ":1\r\n"u8.ToArray(),
             ":0\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
@@ -317,7 +319,34 @@ public class LockCommandTests
         await Assert.That(mutex.Duration).IsEqualTo(TimeSpan.FromSeconds(45));
         await Assert.That(mutex.IsReleased).IsTrue();
         await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(90))).IsFalse();
-        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(3);
+        await Assert.That(server.ReceivedCommands).Count().IsEqualTo(5);
+        await Assert.That(server.ReceivedCommands[1]).IsEqualTo("CLIENT ID");
+    }
+
+    [Test]
+    public async Task RespireLock_NoTimeoutExtensionConnectionLossMarksOwnershipLost()
+    {
+        await using var server = new FakeRespServer(
+            3,
+            FakeRespServer.OkReply,
+            ":41\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray());
+        server.CloseConnectionAfterCommand = 4;
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+            CommandTimeout = null,
+        });
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
+
+        await Assert.That(async () => await mutex.ExtendAsync(TimeSpan.FromSeconds(5)))
+            .Throws<RespireConnectionException>();
+
+        await Assert.That(mutex.IsReleased).IsTrue();
+        await Assert.That(server.ReceivedCommands).Contains("CLIENT ID");
+        await Assert.That(server.ReceivedCommands.Any(
+            command => command.StartsWith("CLIENT KILL ID 41", StringComparison.Ordinal))).IsTrue();
     }
 
     [Test]
@@ -449,6 +478,32 @@ public class LockCommandTests
         await commands.SecondExtensionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(commands.Expiries).IsEquivalentTo(
             [TimeSpan.FromMilliseconds(200), TimeSpan.FromMilliseconds(200)]);
+    }
+
+    [Test]
+    public async Task RespireLock_KeepAliveCancelsAtLeaseDeadlineWhileRenewalIsInFlight()
+    {
+        var commands = new CoordinatedLockCommands(waitForCancellation: true);
+        var mutex = new RespireLock(
+            commands,
+            "resource",
+            "owner"u8.ToArray(),
+            TimeSpan.FromMilliseconds(200),
+            Stopwatch.GetTimestamp());
+        await using var keepAlive = await mutex.KeepAliveAsync();
+
+        await commands.FirstExtensionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, keepAlive.CancellationToken)
+                .WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        await Assert.That(keepAlive.OwnershipLost).IsTrue();
+        await Assert.That(mutex.IsReleased).IsTrue();
     }
 
     [Test]
@@ -679,6 +734,7 @@ public class LockCommandTests
         private readonly bool _blockFirstExtension;
         private readonly bool _reportUncertain;
         private readonly bool _raceOwnershipLoss;
+        private readonly bool _waitForCancellation;
         private readonly TaskCompletionSource<bool> _firstExtension =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _fence =
@@ -692,11 +748,13 @@ public class LockCommandTests
         public CoordinatedLockCommands(
             bool blockFirstExtension = true,
             bool reportUncertain = false,
-            bool raceOwnershipLoss = false)
+            bool raceOwnershipLoss = false,
+            bool waitForCancellation = false)
         {
             _blockFirstExtension = blockFirstExtension;
             _reportUncertain = reportUncertain;
             _raceOwnershipLoss = raceOwnershipLoss;
+            _waitForCancellation = waitForCancellation;
         }
 
         public TaskCompletionSource FirstExtensionStarted { get; } =
@@ -754,6 +812,12 @@ public class LockCommandTests
             Action? onOutcomeUncertain,
             CancellationToken cancellationToken)
         {
+            if (_waitForCancellation)
+            {
+                FirstExtensionStarted.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+
             if (_raceOwnershipLoss)
             {
                 RaceExtensionStarted.TrySetResult();

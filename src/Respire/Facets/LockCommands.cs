@@ -262,19 +262,13 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
     {
         ValidateToken(token);
         var milliseconds = ValidateExpiry(expiry);
-        if (!client.RequiresReliableCorrectionOrdering(cancellationToken))
-        {
-            return await ExecuteBooleanScriptAsync(
-                    ExtendScript, key, [token, milliseconds], cancellationToken)
-                .ConfigureAwait(false);
-        }
-
         await client.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
         RespireClient.TrackedScriptExecution? execution = null;
         try
         {
             execution = await client.StartTrackedScriptExecutionAsync(
-                    ExtendScript, [key], [token, milliseconds], cancellationToken)
+                    ExtendScript, [key], [token, milliseconds], cancellationToken,
+                    requireReliableCorrectionOrdering: true)
                 .ConfigureAwait(false);
             using var result = await execution.Response.ConfigureAwait(false);
             return result.AsInteger() >= 1;
