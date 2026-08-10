@@ -179,7 +179,7 @@ internal sealed class TransactionPendingResponseSource : PendingResponse, IValue
     {
     }
 
-    internal override string? CommandName => "EXEC";
+    internal override string? CommandName => "MULTI/EXEC";
 
     internal ValueTask<RespValue> Task => new(this, _core.Version);
 

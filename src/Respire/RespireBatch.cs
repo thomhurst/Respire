@@ -443,7 +443,8 @@ public sealed class RespireBatch : IDisposable, IPendingSink
         {
             try
             {
-                var value = await connection.SendAsync(in command, effectiveToken).ConfigureAwait(false);
+                var value = await connection.SendAsync(in command, effectiveToken, commandName: Operation)
+                    .ConfigureAwait(false);
                 return Complete(client, value);
             }
             catch (OperationCanceledException) when (timeout is { } expired && !callerToken.IsCancellationRequested)

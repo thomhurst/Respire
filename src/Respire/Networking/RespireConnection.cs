@@ -446,11 +446,12 @@ internal sealed class RespireConnection : IAsyncDisposable
     public ValueTask<RespValue> SendAsync<TCommand>(
         in TCommand command,
         CancellationToken cancellationToken = default,
-        bool armCommandDeadline = true)
+        bool armCommandDeadline = true,
+        string? commandName = null)
         where TCommand : struct, IRespCommand
         => SendCoreAsync(
             in command, discardRepliesBefore: 0, throwOnError: false, cancellationToken,
-            commandName: null, armCommandDeadline);
+            commandName, armCommandDeadline);
 
     /// <summary>Sends an intentionally blocking command without applying the receive watchdog
     /// or the command deadline (a BLPOP-style wait may legitimately outlast both).</summary>

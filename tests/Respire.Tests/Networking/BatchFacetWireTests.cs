@@ -37,6 +37,28 @@ public class BatchFacetWireTests
     }
 
     [Test]
+    public async Task ExecuteAsync_CommandTimeout_CarriesOperationName()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
+        server.SuppressReply = static command => command == "GET key";
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+            CommandTimeout = TimeSpan.FromMilliseconds(100)
+        });
+
+        var batch = client.CreateBatch();
+        var timedOut = batch.GetString("key");
+
+        var result = await batch.ExecuteAsync();
+
+        await Assert.That(result.FailureCount).IsEqualTo(1);
+        var error = await Assert.That(timedOut.Error).IsTypeOf<RespireTimeoutException>();
+        await Assert.That(error!.CommandName).IsEqualTo("GET");
+    }
+
+    [Test]
     public async Task ExecuteAsync_EmptyBatchReturnsEmptySummary()
     {
         await using var client = RespireClient.Create("localhost:6379");
