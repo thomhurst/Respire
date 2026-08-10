@@ -132,7 +132,7 @@ public sealed partial class RespireClient : IRespireClient
     /// Sends a command from <see cref="RespireCommands"/> with command policy flags.
     /// </summary>
     public ValueTask<RespireResult> ExecuteAsync(
-        RespireCommand command, RespireCommandFlags flags, params RespireValue[] args)
+        RespireCommand command, RespireValue[] args, RespireCommandFlags flags)
         => ExecuteCatalogAsync(command, args, flags, CancellationToken.None);
 
     /// <summary>
@@ -253,7 +253,7 @@ public sealed partial class RespireClient : IRespireClient
     /// Sends any command with command policy flags.
     /// </summary>
     public ValueTask<RespireResult> ExecuteAsync(
-        string command, RespireCommandFlags flags, params RespireValue[] args)
+        string command, RespireValue[] args, RespireCommandFlags flags)
         => ExecuteRawAsync(command, args, flags, CancellationToken.None);
 
     /// <summary>

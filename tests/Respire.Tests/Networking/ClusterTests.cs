@@ -132,8 +132,8 @@ public class ClusterTests
         var error = await Assert.That(async () =>
                 await client.ExecuteAsync(
                     RespireCommands.String.GET,
-                    RespireCommandFlags.NoRedirect,
-                    "key"))
+                    ["key"],
+                    RespireCommandFlags.NoRedirect))
             .Throws<RespireServerException>();
 
         await Assert.That(error!.Code).IsEqualTo("MOVED");
@@ -156,7 +156,31 @@ public class ClusterTests
         });
 
         var error = await Assert.That(async () =>
-                await client.ExecuteAsync("GET", RespireCommandFlags.NoRedirect, "key"))
+                await client.ExecuteAsync("GET", ["key"], RespireCommandFlags.NoRedirect))
+            .Throws<RespireServerException>();
+
+        await Assert.That(error!.Code).IsEqualTo("MOVED");
+        await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS", "GET key"]);
+        await Assert.That(target.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task InterpolatedNoRedirect_SurfacesMovedRedirect()
+    {
+        await using var target = new FakeRespServer("$5\r\nvalue\r\n"u8.ToArray());
+        var slot = ClusterHash.GetSlot("key");
+        await using var seed = new FakeRespServer(
+            "*0\r\n"u8.ToArray(),
+            Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        RespireKey key = "key";
+
+        var error = await Assert.That(async () =>
+                await client.ExecuteAsync($"GET {key}", RespireCommandFlags.NoRedirect))
             .Throws<RespireServerException>();
 
         await Assert.That(error!.Code).IsEqualTo("MOVED");
@@ -1090,11 +1114,11 @@ public class ClusterTests
 
         await Assert.That(async () => await client.ExecuteAsync(
                 RespireCommands.Scripting.FUNCTION_LOAD,
-                RespireCommandFlags.NoRedirect,
-                "#!lua name=library"))
+                ["#!lua name=library"],
+                RespireCommandFlags.NoRedirect))
             .Throws<NotSupportedException>();
         await Assert.That(async () => await client.ExecuteAsync(
-                "SCRIPT FLUSH", RespireCommandFlags.NoRedirect))
+                "SCRIPT FLUSH", [], RespireCommandFlags.NoRedirect))
             .Throws<NotSupportedException>();
         RespireValue subcommand = "FLUSH";
         await Assert.That(async () => await client.ExecuteAsync(

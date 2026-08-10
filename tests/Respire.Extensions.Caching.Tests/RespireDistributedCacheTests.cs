@@ -1429,8 +1429,8 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             => inner.ExecuteAsync(command, args);
 
         public ValueTask<RespireResult> ExecuteAsync(
-            RespireCommand command, RespireCommandFlags flags, params RespireValue[] args)
-            => inner.ExecuteAsync(command, flags, args);
+            RespireCommand command, RespireValue[] args, RespireCommandFlags flags)
+            => inner.ExecuteAsync(command, args, flags);
 
         public ValueTask<RespireResult> ExecuteAsync(
             RespireCommand command, RespireValue[] args, CancellationToken cancellationToken)
@@ -1444,8 +1444,8 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             => inner.ExecuteAsync(command, args, flags, cancellationToken);
 
         public ValueTask<RespireResult> ExecuteAsync(
-            string command, RespireCommandFlags flags, params RespireValue[] args)
-            => inner.ExecuteAsync(command, flags, args);
+            string command, RespireValue[] args, RespireCommandFlags flags)
+            => inner.ExecuteAsync(command, args, flags);
 
         public ValueTask<RespireResult> ExecuteAsync(
             string command, RespireValue[] args, CancellationToken cancellationToken)

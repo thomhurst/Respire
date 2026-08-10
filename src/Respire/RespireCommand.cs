@@ -59,34 +59,7 @@ public readonly struct RespireCommand
         string name,
         RespireCommandBehavior behavior,
         ReadOnlySpan<RespireValue> args)
-    {
-        if (behavior == RespireCommandBehavior.Blocking)
-        {
-            return true;
-        }
-
-        if (behavior != RespireCommandBehavior.BlockingWhenRequested)
-        {
-            return false;
-        }
-
-        var firstOptionIndex = name == "XREADGROUP" ? 3 : 0;
-        var stopsAtStreams = name is "XREAD" or "XREADGROUP";
-        for (var index = firstOptionIndex; index < args.Length; index++)
-        {
-            if (stopsAtStreams && args[index].EqualsAsciiIgnoreCase("STREAMS"))
-            {
-                return false;
-            }
-
-            if (args[index].EqualsAsciiIgnoreCase("BLOCK"))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+        => IsBlocking(name, behavior, ReadOnlySpan<string>.Empty, args);
 
     internal static bool IsBlocking(
         string name,

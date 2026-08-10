@@ -73,7 +73,7 @@ public interface IRespireClient : IAsyncDisposable
     ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args);
 
     ValueTask<RespireResult> ExecuteAsync(
-        RespireCommand command, RespireCommandFlags flags, params RespireValue[] args)
+        RespireCommand command, RespireValue[] args, RespireCommandFlags flags)
         => throw new NotSupportedException("Command flags are not supported by this client implementation.");
 
     ValueTask<RespireResult> ExecuteAsync(
@@ -89,7 +89,7 @@ public interface IRespireClient : IAsyncDisposable
     ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args);
 
     ValueTask<RespireResult> ExecuteAsync(
-        string command, RespireCommandFlags flags, params RespireValue[] args)
+        string command, RespireValue[] args, RespireCommandFlags flags)
         => throw new NotSupportedException("Command flags are not supported by this client implementation.");
 
     ValueTask<RespireResult> ExecuteAsync(

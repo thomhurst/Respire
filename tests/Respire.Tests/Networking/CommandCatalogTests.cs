@@ -153,6 +153,20 @@ public class CommandCatalogTests
     }
 
     [Test]
+    public async Task ZeroArguments_DoNotBindToCommandFlagsOverloads()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.OkReply);
+        await using var concrete = await FakeRespServer.ConnectClientAsync(server.Port);
+        IRespireClient client = concrete;
+
+        using var raw = await client.ExecuteAsync("SET", 0, "raw-key");
+        using var catalog = await client.ExecuteAsync(RespireCommands.String.SET, 0, "catalog-key");
+
+        await Assert.That(server.ReceivedCommands)
+            .IsEquivalentTo(["SET 0 raw-key", "SET 0 catalog-key"]);
+    }
+
+    [Test]
     public async Task RawFireAndForget_CompletesWithoutPendingResultAndDiscardsReply()
     {
         await using var server = new FakeRespServer(
