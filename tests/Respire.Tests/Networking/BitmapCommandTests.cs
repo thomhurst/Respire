@@ -42,18 +42,20 @@ public class BitmapCommandTests
             ":8\r\n"u8.ToArray(),
             ":9\r\n"u8.ToArray(),
             ":10\r\n"u8.ToArray(),
+            ":-1\r\n"u8.ToArray(),
             ":4\r\n"u8.ToArray(),
             "*4\r\n:1\r\n:2\r\n$-1\r\n:3\r\n"u8.ToArray(),
             "*4\r\n:7\r\n:8\r\n:9\r\n:10\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         await Assert.That(await client.Bitmaps.GetAsync("bits", 4)).IsTrue();
-        await Assert.That(await client.Bitmaps.SetAsync("bits", 4, true)).IsFalse();
+        await Assert.That(await client.Bitmaps.GetAndSetAsync("bits", 4, true)).IsFalse();
         await Assert.That(await client.Bitmaps.CountAsync("bits")).IsEqualTo(3);
         await Assert.That(await client.Bitmaps.CountAsync("bits", 1, 9, BitIndexUnit.Bit)).IsEqualTo(2);
         await Assert.That(await client.Bitmaps.PositionAsync("bits", true)).IsEqualTo(8);
         await Assert.That(await client.Bitmaps.PositionAsync("bits", false, 2)).IsEqualTo(9);
         await Assert.That(await client.Bitmaps.PositionAsync("bits", true, 2, 8, BitIndexUnit.Bit)).IsEqualTo(10);
+        await Assert.That(await client.Bitmaps.PositionAsync("missing", true)).IsNull();
         await Assert.That(await client.Bitmaps.OperateAsync(BitOperation.Xor, "dest", "one", "two")).IsEqualTo(4);
         await Assert.That(await client.Bitmaps.FieldAsync(
             "bits",
@@ -78,6 +80,7 @@ public class BitmapCommandTests
             "BITPOS bits 1",
             "BITPOS bits 0 2",
             "BITPOS bits 1 2 8 BIT",
+            "BITPOS missing 1",
             "BITOP XOR dest one two",
             "BITFIELD bits GET u8 0 OVERFLOW FAIL INCRBY i8 #1 2 SET u4 12 3",
             "BITFIELD_RO bits GET i1 0 GET i64 1 GET u1 #2 GET u63 #9223372036854775807");

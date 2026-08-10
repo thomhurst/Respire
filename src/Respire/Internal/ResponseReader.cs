@@ -59,6 +59,12 @@ internal static class ResponseReader
 
     public static long? IntegerOrNull(in RespValue value) => value.IsNull ? null : value.AsInteger();
 
+    public static long? IntegerMinusOneOrNull(in RespValue value)
+    {
+        var result = value.AsInteger();
+        return result == -1 ? null : result;
+    }
+
     public static string[] StringArray(in RespValue value)
     {
         var elements = value.AsArray();

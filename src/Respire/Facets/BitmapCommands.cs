@@ -109,12 +109,17 @@ public readonly struct BitFieldOperation
 public interface IBitmapCommands
 {
     ValueTask<bool> GetAsync(RespireKey key, long offset, CancellationToken cancellationToken = default);
-    ValueTask<bool> SetAsync(RespireKey key, long offset, bool value, CancellationToken cancellationToken = default);
+
+    /// <summary>Sets the bit at an offset and returns its previous value. Redis: SETBIT.</summary>
+    ValueTask<bool> GetAndSetAsync(
+        RespireKey key, long offset, bool value, CancellationToken cancellationToken = default);
+
     ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default);
     ValueTask<long> CountAsync(
         RespireKey key, long start, long end, BitIndexUnit unit = BitIndexUnit.Byte,
         CancellationToken cancellationToken = default);
-    ValueTask<long> PositionAsync(
+    /// <summary>The first offset holding <paramref name="value"/>, or null when none is found. Redis: BITPOS.</summary>
+    ValueTask<long?> PositionAsync(
         RespireKey key, bool value, long? start = null, long? end = null,
         BitIndexUnit unit = BitIndexUnit.Byte, CancellationToken cancellationToken = default);
     ValueTask<long> OperateAsync(
@@ -141,7 +146,7 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
             "GETBIT", new Cmd2(RespireCommands.Bitmap.GETBIT.Verb, client.Key(in key), offset), cancellationToken);
     }
 
-    public ValueTask<bool> SetAsync(
+    public ValueTask<bool> GetAndSetAsync(
         RespireKey key, long offset, bool value, CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(offset);
@@ -161,18 +166,18 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
             new Cmd4(RespireCommands.Bitmap.BITCOUNT.Verb, client.Key(in key), start, end, Unit(unit)),
             cancellationToken);
 
-    public ValueTask<long> PositionAsync(
+    public ValueTask<long?> PositionAsync(
         RespireKey key, bool value, long? start = null, long? end = null,
         BitIndexUnit unit = BitIndexUnit.Byte, CancellationToken cancellationToken = default)
     {
         ValidatePosition(start, end, unit);
         return (start, end) switch
         {
-            (null, _) => client.IntegerAsync(
+            (null, _) => client.IntegerMinusOneOrNullAsync(
                 "BITPOS", new Cmd2(RespireCommands.Bitmap.BITPOS.Verb, client.Key(in key), value), cancellationToken),
-            ({ } from, null) => client.IntegerAsync(
+            ({ } from, null) => client.IntegerMinusOneOrNullAsync(
                 "BITPOS", new Cmd3(RespireCommands.Bitmap.BITPOS.Verb, client.Key(in key), value, from), cancellationToken),
-            ({ } from, { } to) => client.IntegerAsync(
+            ({ } from, { } to) => client.IntegerMinusOneOrNullAsync(
                 "BITPOS", new Cmd5(
                     RespireCommands.Bitmap.BITPOS.Verb, client.Key(in key), value, from, to, Unit(unit)),
                 cancellationToken),
