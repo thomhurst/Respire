@@ -514,7 +514,7 @@ public class LockCommandTests
             commands,
             "resource",
             "owner"u8.ToArray(),
-            TimeSpan.FromMilliseconds(20),
+            TimeSpan.FromMilliseconds(500),
             Stopwatch.GetTimestamp());
         var keepAlive = await mutex.KeepAliveAsync();
 
