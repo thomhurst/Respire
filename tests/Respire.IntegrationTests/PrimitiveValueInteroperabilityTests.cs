@@ -32,8 +32,8 @@ public class PrimitiveValueInteroperabilityTests(RedisTestContainer fixture)
     [Test]
     public async Task RespireTypedWrites_AreReadableByBothClients()
     {
-        await AssertRespireWriteAsync("bool-true", true, "true");
-        await AssertRespireWriteAsync("bool-false", false, "false");
+        await AssertRespireWriteAsync("bool-true", true, "1");
+        await AssertRespireWriteAsync("bool-false", false, "0");
         await AssertRespireWriteAsync("byte-zero", byte.MinValue, "0");
         await AssertRespireWriteAsync("byte", byte.MaxValue, "255");
         await AssertRespireWriteAsync("sbyte-min", sbyte.MinValue, "-128");
@@ -331,9 +331,9 @@ public class PrimitiveValueInteroperabilityTests(RedisTestContainer fixture)
         byte[]? binaryReadByStackExchange = await _stackExchangeDb.HashGetAsync(key, "binary");
         binaryReadByStackExchange.Should().Equal(respireBytes);
         (await _stackExchangeDb.HashGetAsync(key, "integer")).ToString().Should().Be("-9223372036854775808");
-        // A bare bool binds to Hashes.SetAsync<T>, matching Strings.SetAsync<bool> ("true"/"false");
-        // an explicit RespireValue keeps the Redis-native "1"/"0". Both read back as bool.
-        (await _stackExchangeDb.HashGetAsync(key, "boolean")).ToString().Should().Be("true");
+        // Generic and explicit RespireValue Boolean writes share the Redis-native "1"/"0"
+        // encoding. Both read back as bool.
+        (await _stackExchangeDb.HashGetAsync(key, "boolean")).ToString().Should().Be("1");
         (await _stackExchangeDb.HashGetAsync(key, "boolean-raw")).ToString().Should().Be("1");
         (await _respireClient.Hashes.GetAsync<bool>(key, "boolean")).Should().BeTrue();
         (await _respireClient.Hashes.GetAsync<bool>(key, "boolean-raw")).Should().BeTrue();

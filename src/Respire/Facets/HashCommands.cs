@@ -21,10 +21,9 @@ public interface IHashCommands
     /// Overload resolution mirrors <see cref="IStringCommands.SetAsync{T}"/>:
     /// an argument already typed as <see cref="RespireValue"/> picks the non-generic overload,
     /// while any other type (including <c>string</c>, whose implicit conversion loses to an exact
-    /// match) picks this one. The two write identical bytes for strings, byte payloads, and
-    /// numbers. <c>bool</c> is the exception — this overload writes <c>true</c>/<c>false</c> like
-    /// every other typed write, a <see cref="RespireValue"/> writes Redis-native <c>1</c>/<c>0</c>,
-    /// and <see cref="GetAsync{T}"/> reads both.
+    /// match) picks this one. The two write identical bytes for strings, byte payloads, numbers,
+    /// and booleans. Boolean writes use Redis-native <c>1</c>/<c>0</c>; <see cref="GetAsync{T}"/>
+    /// also reads <c>true</c>/<c>false</c> for compatibility with existing data.
     /// </para>
     /// </summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
