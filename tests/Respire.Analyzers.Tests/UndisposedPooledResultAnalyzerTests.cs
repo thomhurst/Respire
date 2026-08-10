@@ -574,6 +574,61 @@ public class UndisposedPooledResultAnalyzerTests
         """);
 
     [Test]
+    public async Task RepeatedAssignmentInLoop_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool condition)
+            {
+                RespireResult result = default;
+                while (condition)
+                {
+                    {|RESP001:result|} = await client.ExecuteAsync("PING");
+                }
+
+                result.Dispose();
+            }
+        }
+        """);
+
+    [Test]
+    public async Task AssignmentConsumedByUsing_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                RespireResult result;
+                using (result = await client.ExecuteAsync("PING"))
+                {
+                }
+            }
+        }
+        """);
+
+    [Test]
+    public async Task AssignmentConsumedByReturn_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task<RespireResult> RunAsync(RespireClient client)
+            {
+                RespireResult result;
+                return result = await client.ExecuteAsync("PING");
+            }
+        }
+        """);
+
+    [Test]
     public async Task NullableResultWithoutDispose_IsFlagged() => await Verify.VerifyAsync(
         """
         using System.Threading.Tasks;

@@ -411,10 +411,20 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         InvocationExpressionSyntax origin,
         InvocationExpressionSyntax flush)
         => ScopeWalker.FindReferences(scope, batch, context.SemanticModel, context.CancellationToken)
-            .Any(reference => reference.SpanStart > origin.SpanStart
-                              && reference.SpanStart < flush.SpanStart
-                              && reference.Parent is AssignmentExpressionSyntax assignment
-                              && ScopeWalker.IsSame(assignment.Left, reference));
+            .Any(reference => reference.Parent is AssignmentExpressionSyntax assignment
+                              && ScopeWalker.IsSame(assignment.Left, reference)
+                              && ScopeWalker.CanReach(
+                                  context.SemanticModel,
+                                  scope,
+                                  origin,
+                                  assignment,
+                                  context.CancellationToken)
+                              && ScopeWalker.CanReach(
+                                  context.SemanticModel,
+                                  scope,
+                                  assignment,
+                                  flush,
+                                  context.CancellationToken));
 
     private static IEnumerable<AwaitExpressionSyntax> GetAwaitExpressions(
         SyntaxNodeAnalysisContext context,

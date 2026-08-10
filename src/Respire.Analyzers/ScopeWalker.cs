@@ -302,16 +302,19 @@ internal static class ScopeWalker
         }
 
         var pending = new Stack<(BasicBlock Block, int EntryPosition)>();
-        var visited = new HashSet<int>();
+        var earliestEntries = new Dictionary<int, int>();
         pending.Push((startBlock, startPosition));
 
         while (pending.Count > 0)
         {
             var (block, entryPosition) = pending.Pop();
-            if (!visited.Add(block.Ordinal))
+            if (earliestEntries.TryGetValue(block.Ordinal, out var earliestEntry)
+                && earliestEntry <= entryPosition)
             {
                 continue;
             }
+
+            earliestEntries[block.Ordinal] = entryPosition;
 
             var firstBarrier = barrierPositions.TryGetValue(block.Ordinal, out var positions)
                 ? positions.Where(position => position > entryPosition).DefaultIfEmpty(int.MaxValue).Min()
@@ -331,7 +334,7 @@ internal static class ScopeWalker
 
             foreach (var successor in GetSuccessors(block))
             {
-                if (!successor.IsReachable || visited.Contains(successor.Ordinal))
+                if (!successor.IsReachable)
                 {
                     continue;
                 }

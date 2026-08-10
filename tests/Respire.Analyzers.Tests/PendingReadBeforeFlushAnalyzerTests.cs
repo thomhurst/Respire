@@ -884,6 +884,36 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    public async Task SiblingBranchBatchAssignmentsThenFlush_AreNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, bool firstPath)
+            {
+                RespireBatch batch;
+                RespirePending<string> pending;
+                if (firstPath)
+                {
+                    batch = client.CreateBatch();
+                    pending = batch.GetStringAsync("first");
+                }
+                else
+                {
+                    batch = client.CreateBatch();
+                    pending = batch.GetStringAsync("second");
+                }
+
+                await batch.SendAsync();
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
     public async Task ManualGetResultBeforeSend_IsFlagged() => await Verify.VerifyAsync(
         """
         using System;

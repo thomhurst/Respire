@@ -198,12 +198,17 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             scope, local, context.SemanticModel, context.CancellationToken).ToArray();
         var reassignments = references
             .Where(reference => reference.Parent is AssignmentExpressionSyntax assignment
-                                && (acquisitionAssignment is null
-                                    || !ScopeWalker.IsSame(assignment, acquisitionAssignment))
                                 && ScopeWalker.IsSame(assignment.Left, reference))
             .Select(static reference => (AssignmentExpressionSyntax)reference.Parent!)
             .ToArray();
         var releases = new List<SyntaxNode>();
+        if (acquisitionAssignment is not null
+            && IsImmediatelyReleasedOrTransferred(context, acquisitionAssignment))
+        {
+            // The assignment's value is consumed immediately. Use its RHS as the barrier because
+            // return/using syntax begins before the assignment even though consumption happens after it.
+            releases.Add(acquisitionAssignment.Right);
+        }
 
         foreach (var reference in references)
         {
@@ -307,5 +312,44 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
 
         return ScopeWalker.CollectivelyPostDominates(
             context.SemanticModel, scope, acquisition, releases, context.CancellationToken);
+    }
+
+    private static bool IsImmediatelyReleasedOrTransferred(
+        SyntaxNodeAnalysisContext context, AssignmentExpressionSyntax assignment)
+    {
+        var use = ScopeWalker.GetOutermostTransparentExpression(assignment);
+        switch (use.Parent)
+        {
+            case MemberAccessExpressionSyntax member when ScopeWalker.IsSame(member.Expression, use):
+                if (member.Parent is InvocationExpressionSyntax invocation
+                    && ScopeWalker.IsSame(invocation.Expression, member))
+                {
+                    return member.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
+                           || context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol
+                               is IMethodSymbol { ReducedFrom: not null };
+                }
+
+                return member.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
+                       && member.Parent is not InvocationExpressionSyntax;
+
+            case ElementAccessExpressionSyntax element when ScopeWalker.IsSame(element.Expression, use):
+                return false;
+
+            case ConditionalAccessExpressionSyntax conditional when ScopeWalker.IsSame(conditional.Expression, use):
+                return conditional.WhenNotNull.DescendantNodesAndSelf()
+                    .OfType<MemberBindingExpressionSyntax>()
+                    .Any(binding => binding.Name.Identifier.ValueText == nameof(IDisposable.Dispose)
+                                    && binding.Parent is InvocationExpressionSyntax invocation
+                                    && ScopeWalker.IsSame(invocation.Expression, binding));
+
+            case AssignmentExpressionSyntax outerAssignment when ScopeWalker.IsSame(outerAssignment.Left, use):
+            case ExpressionStatementSyntax:
+            case ForStatementSyntax:
+                return false;
+
+            default:
+                // using, return, argument, or assignment source transfers or disposes ownership.
+                return true;
+        }
     }
 }
