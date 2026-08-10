@@ -79,8 +79,15 @@ public interface IStringCommands
     /// <summary>Gets many keys in one round trip; missing keys yield null. Redis: MGET.</summary>
     ValueTask<string?[]> GetManyAsync(params ReadOnlySpan<RespireKey> keys);
 
+    /// <summary>Gets many keys in one round trip; missing keys yield null. Redis: MGET.</summary>
+    ValueTask<string?[]> GetManyAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
+
     /// <summary>Sets many keys in one atomic round trip. Redis: MSET.</summary>
     ValueTask SetManyAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
+
+    /// <summary>Sets many keys in one atomic round trip. Redis: MSET.</summary>
+    ValueTask SetManyAsync(
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs, CancellationToken cancellationToken);
 
     /// <summary>
     /// Atomically sets many keys with a shared TTL using PX milliseconds. Use
@@ -89,24 +96,60 @@ public interface IStringCommands
     /// </summary>
     ValueTask<bool> SetManyExpireAsync(TimeSpan expiry, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
 
+    /// <summary>Atomically sets many keys with a shared TTL using PX milliseconds. Redis: MSETEX.</summary>
+    ValueTask<bool> SetManyExpireAsync(
+        TimeSpan expiry,
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
+        CancellationToken cancellationToken);
+
     /// <summary>Atomically sets many keys with NX/XX and a shared TTL using PX milliseconds. Redis: MSETEX.</summary>
     ValueTask<bool> SetManyExpireAsync(
         TimeSpan expiry, SetWhen when, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
+
+    /// <summary>Atomically sets many keys with NX/XX and a shared TTL using PX milliseconds. Redis: MSETEX.</summary>
+    ValueTask<bool> SetManyExpireAsync(
+        TimeSpan expiry,
+        SetWhen when,
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
+        CancellationToken cancellationToken);
 
     /// <summary>Atomically sets many keys with a shared PXAT Unix-millisecond expiry. Redis: MSETEX.</summary>
     ValueTask<bool> SetManyExpireAtAsync(
         DateTimeOffset expireAt, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
 
+    /// <summary>Atomically sets many keys with a shared PXAT Unix-millisecond expiry. Redis: MSETEX.</summary>
+    ValueTask<bool> SetManyExpireAtAsync(
+        DateTimeOffset expireAt,
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
+        CancellationToken cancellationToken);
+
     /// <summary>Atomically sets many keys with NX/XX and a shared PXAT Unix-millisecond expiry. Redis: MSETEX.</summary>
     ValueTask<bool> SetManyExpireAtAsync(
         DateTimeOffset expireAt, SetWhen when, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
 
+    /// <summary>Atomically sets many keys with NX/XX and a shared PXAT Unix-millisecond expiry. Redis: MSETEX.</summary>
+    ValueTask<bool> SetManyExpireAtAsync(
+        DateTimeOffset expireAt,
+        SetWhen when,
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
+        CancellationToken cancellationToken);
+
     /// <summary>Atomically sets many keys while retaining existing TTLs. Redis: MSETEX KEEPTTL.</summary>
     ValueTask<bool> SetManyKeepExpiryAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
+
+    /// <summary>Atomically sets many keys while retaining existing TTLs. Redis: MSETEX KEEPTTL.</summary>
+    ValueTask<bool> SetManyKeepExpiryAsync(
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs, CancellationToken cancellationToken);
 
     /// <summary>Atomically sets many keys with NX/XX while retaining existing TTLs. Redis: MSETEX KEEPTTL.</summary>
     ValueTask<bool> SetManyKeepExpiryAsync(
         SetWhen when, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
+
+    /// <summary>Atomically sets many keys with NX/XX while retaining existing TTLs. Redis: MSETEX KEEPTTL.</summary>
+    ValueTask<bool> SetManyKeepExpiryAsync(
+        SetWhen when,
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
+        CancellationToken cancellationToken);
 
     /// <summary>
     /// Returns the longest common subsequence. Use <see cref="RespireCommands.String.LCS"/> directly
@@ -178,9 +221,16 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
             new IncrementCommand(Verbs.Decr, Verbs.DecrBy, client.Key(in key), by), cancellationToken);
 
     public ValueTask<string?[]> GetManyAsync(params ReadOnlySpan<RespireKey> keys)
-        => client.NullableStringArrayAsync("MGET", new CmdN(Verbs.MGet, client.MapKeys(keys)), CancellationToken.None);
+        => GetManyAsync(keys, CancellationToken.None);
+
+    public ValueTask<string?[]> GetManyAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
+        => client.NullableStringArrayAsync("MGET", new CmdN(Verbs.MGet, client.MapKeys(keys)), cancellationToken);
 
     public ValueTask SetManyAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+        => SetManyAsync(pairs, CancellationToken.None);
+
+    public ValueTask SetManyAsync(
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs, CancellationToken cancellationToken)
     {
         var args = new RespireValue[pairs.Length * 2];
         for (var i = 0; i < pairs.Length; i++)
@@ -189,31 +239,68 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
             args[i * 2 + 1] = pairs[i].Value;
         }
 
-        return client.OkAsync("MSET", new CmdN(Verbs.MSet, args), CancellationToken.None);
+        return client.OkAsync("MSET", new CmdN(Verbs.MSet, args), cancellationToken);
     }
 
     public ValueTask<bool> SetManyExpireAsync(
         TimeSpan expiry, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
-        => SetManyExpireAsync(expiry, SetWhen.Always, pairs);
+        => SetManyExpireAsync(expiry, SetWhen.Always, pairs, CancellationToken.None);
+
+    public ValueTask<bool> SetManyExpireAsync(
+        TimeSpan expiry,
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
+        CancellationToken cancellationToken)
+        => SetManyExpireAsync(expiry, SetWhen.Always, pairs, cancellationToken);
 
     public ValueTask<bool> SetManyExpireAsync(
         TimeSpan expiry, SetWhen when, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
-        => SetManyExpireCore("PX", (long)expiry.TotalMilliseconds, hasValue: true, when, pairs);
+        => SetManyExpireAsync(expiry, when, pairs, CancellationToken.None);
+
+    public ValueTask<bool> SetManyExpireAsync(
+        TimeSpan expiry,
+        SetWhen when,
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
+        CancellationToken cancellationToken)
+        => SetManyExpireCore("PX", (long)expiry.TotalMilliseconds, hasValue: true, when, pairs, cancellationToken);
 
     public ValueTask<bool> SetManyExpireAtAsync(
         DateTimeOffset expireAt, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
-        => SetManyExpireAtAsync(expireAt, SetWhen.Always, pairs);
+        => SetManyExpireAtAsync(expireAt, SetWhen.Always, pairs, CancellationToken.None);
+
+    public ValueTask<bool> SetManyExpireAtAsync(
+        DateTimeOffset expireAt,
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
+        CancellationToken cancellationToken)
+        => SetManyExpireAtAsync(expireAt, SetWhen.Always, pairs, cancellationToken);
 
     public ValueTask<bool> SetManyExpireAtAsync(
         DateTimeOffset expireAt, SetWhen when, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
-        => SetManyExpireCore("PXAT", expireAt.ToUnixTimeMilliseconds(), hasValue: true, when, pairs);
+        => SetManyExpireAtAsync(expireAt, when, pairs, CancellationToken.None);
+
+    public ValueTask<bool> SetManyExpireAtAsync(
+        DateTimeOffset expireAt,
+        SetWhen when,
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
+        CancellationToken cancellationToken)
+        => SetManyExpireCore(
+            "PXAT", expireAt.ToUnixTimeMilliseconds(), hasValue: true, when, pairs, cancellationToken);
 
     public ValueTask<bool> SetManyKeepExpiryAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
-        => SetManyKeepExpiryAsync(SetWhen.Always, pairs);
+        => SetManyKeepExpiryAsync(SetWhen.Always, pairs, CancellationToken.None);
+
+    public ValueTask<bool> SetManyKeepExpiryAsync(
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs, CancellationToken cancellationToken)
+        => SetManyKeepExpiryAsync(SetWhen.Always, pairs, cancellationToken);
 
     public ValueTask<bool> SetManyKeepExpiryAsync(
         SetWhen when, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
-        => SetManyExpireCore("KEEPTTL", optionValue: 0, hasValue: false, when, pairs);
+        => SetManyKeepExpiryAsync(when, pairs, CancellationToken.None);
+
+    public ValueTask<bool> SetManyKeepExpiryAsync(
+        SetWhen when,
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
+        CancellationToken cancellationToken)
+        => SetManyExpireCore("KEEPTTL", optionValue: 0, hasValue: false, when, pairs, cancellationToken);
 
     public ValueTask<string> LongestCommonSubsequenceAsync(
         RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken = default)
@@ -234,7 +321,8 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         long optionValue,
         bool hasValue,
         SetWhen when,
-        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs,
+        CancellationToken cancellationToken)
     {
         ValidatePairs(pairs);
         var condition = StringSetWhenToken(when);
@@ -262,7 +350,7 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         return client.FlagAsync(
             "MSETEX",
             new MSetExCommand(RespireCommands.String.MSETEX.Verb, args),
-            CancellationToken.None);
+            cancellationToken);
     }
 
     private static string? StringSetWhenToken(SetWhen when)

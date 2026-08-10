@@ -16,6 +16,9 @@ public interface ISortedSetCommands
     /// <summary>Adds or updates many members; returns how many were new. Redis: ZADD.</summary>
     ValueTask<long> AddAsync(RespireKey key, params ReadOnlySpan<SortedSetEntry> entries);
 
+    /// <summary>Adds or updates many members; returns how many were new. Redis: ZADD.</summary>
+    ValueTask<long> AddAsync(RespireKey key, ReadOnlySpan<SortedSetEntry> entries, CancellationToken cancellationToken);
+
     /// <summary>The member's score, or null when absent. Redis: ZSCORE.</summary>
     ValueTask<double?> ScoreAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken = default);
 
@@ -24,6 +27,9 @@ public interface ISortedSetCommands
 
     /// <summary>Removes members; returns how many existed. Redis: ZREM.</summary>
     ValueTask<long> RemoveAsync(RespireKey key, params ReadOnlySpan<RespireValue> members);
+
+    /// <summary>Removes members; returns how many existed. Redis: ZREM.</summary>
+    ValueTask<long> RemoveAsync(RespireKey key, ReadOnlySpan<RespireValue> members, CancellationToken cancellationToken);
 
     /// <summary>Number of members. Redis: ZCARD.</summary>
     ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default);
@@ -53,6 +59,9 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
         => client.FlagAsync("ZADD", new Cmd3(Verbs.ZAdd, client.Key(in key), score, member), cancellationToken);
 
     public ValueTask<long> AddAsync(RespireKey key, params ReadOnlySpan<SortedSetEntry> entries)
+        => AddAsync(key, entries, CancellationToken.None);
+
+    public ValueTask<long> AddAsync(RespireKey key, ReadOnlySpan<SortedSetEntry> entries, CancellationToken cancellationToken)
     {
         var args = new RespireValue[entries.Length * 2];
         for (var i = 0; i < entries.Length; i++)
@@ -61,7 +70,7 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
             args[i * 2 + 1] = entries[i].Member;
         }
 
-        return client.IntegerAsync("ZADD", new Cmd1N(Verbs.ZAdd, client.Key(in key), args), CancellationToken.None);
+        return client.IntegerAsync("ZADD", new Cmd1N(Verbs.ZAdd, client.Key(in key), args), cancellationToken);
     }
 
     public ValueTask<double?> ScoreAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken = default)
@@ -71,7 +80,10 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
         => client.DoubleAsync("ZINCRBY", new Cmd3(Verbs.ZIncrBy, client.Key(in key), by, member), cancellationToken);
 
     public ValueTask<long> RemoveAsync(RespireKey key, params ReadOnlySpan<RespireValue> members)
-        => client.IntegerValuesAsync("ZREM", Verbs.ZRem, client.Key(in key), members);
+        => RemoveAsync(key, members, CancellationToken.None);
+
+    public ValueTask<long> RemoveAsync(RespireKey key, ReadOnlySpan<RespireValue> members, CancellationToken cancellationToken)
+        => client.IntegerValuesAsync("ZREM", Verbs.ZRem, client.Key(in key), members, cancellationToken);
 
     public ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.IntegerAsync("ZCARD", new Cmd1(Verbs.ZCard, client.Key(in key)), cancellationToken);
