@@ -293,6 +293,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                      scope, flush, context.SemanticModel, context.CancellationToken))
         {
             if (GetAwaitExpression(reference) is { } awaitExpression
+                && !IsReassignedBeforeAwait(context, scope, flush, invocation, awaitExpression)
                 && ScopeWalker.Dominates(context.SemanticModel, scope, awaitExpression, read, context.CancellationToken))
             {
                 return true;
@@ -301,6 +302,18 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
         return false;
     }
+
+    private static bool IsReassignedBeforeAwait(
+        SyntaxNodeAnalysisContext context,
+        SyntaxNode scope,
+        ILocalSymbol flush,
+        InvocationExpressionSyntax initialization,
+        AwaitExpressionSyntax awaitExpression)
+        => ScopeWalker.FindReferences(scope, flush, context.SemanticModel, context.CancellationToken)
+            .Where(reference => reference.SpanStart > initialization.SpanStart
+                                && reference.SpanStart < awaitExpression.SpanStart)
+            .Any(reference => reference.Parent is AssignmentExpressionSyntax assignment
+                              && assignment.Left.Span.Contains(reference.Span));
 
     private static AwaitExpressionSyntax? GetAwaitExpression(ExpressionSyntax expression)
     {

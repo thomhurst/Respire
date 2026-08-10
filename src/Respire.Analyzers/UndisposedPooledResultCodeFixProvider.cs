@@ -41,6 +41,12 @@ public sealed class UndisposedPooledResultCodeFixProvider : CodeFixProvider
                 continue;
             }
 
+            // A using declaration cannot be placed directly in a switch section (CS8647).
+            if (declaration.Parent is SwitchSectionSyntax)
+            {
+                continue;
+            }
+
             context.RegisterCodeFix(
                 CodeAction.Create(
                     Title,

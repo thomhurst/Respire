@@ -289,6 +289,23 @@ public class UndisposedPooledResultAnalyzerTests
         """);
 
     [Test]
+    public async Task AsTaskResultNeverDisposed_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var {|RESP001:result|} = await client.ExecuteAsync("PING").AsTask();
+                Console.WriteLine(result.AsString());
+            }
+        }
+        """);
+
+    [Test]
     public async Task DisposeInsideNameOf_IsFlagged() => await Verify.VerifyAsync(
         """
         using System;
@@ -421,6 +438,28 @@ public class UndisposedPooledResultAnalyzerTests
             {
                 using var result = await client.ExecuteAsync("PING");
                 Console.WriteLine(result.AsString());
+            }
+        }
+        """);
+
+    [Test]
+    public async Task CodeFix_IsNotOfferedInSwitchSection() => await VerifyFix.VerifyNoFixAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, int value)
+            {
+                switch (value)
+                {
+                    case 1:
+                        var {|RESP001:result|} = await client.ExecuteAsync("PING");
+                        Console.WriteLine(result.AsString());
+                        break;
+                }
             }
         }
         """);

@@ -117,7 +117,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         if (expression is InvocationExpressionSyntax configureAwait
             && context.SemanticModel.GetSymbolInfo(configureAwait, context.CancellationToken).Symbol is IMethodSymbol
             {
-                Name: nameof(Task.ConfigureAwait),
+                Name: nameof(Task.ConfigureAwait) or "AsTask",
             }
             && ScopeWalker.GetReceiver(configureAwait.Expression) is { } configuredReceiver)
         {

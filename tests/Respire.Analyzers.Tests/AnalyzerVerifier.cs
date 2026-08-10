@@ -38,12 +38,18 @@ internal static class CodeFixVerifier<TAnalyzer, TCodeFix>
     where TAnalyzer : DiagnosticAnalyzer, new()
     where TCodeFix : CodeFixProvider, new()
 {
+    public static Task VerifyNoFixAsync(string source)
+    {
+        var test = CreateTest();
+        test.TestState.Sources.Add(source);
+        test.TestState.Sources.Add(RespireApiStub.Source);
+
+        return test.RunAsync(CancellationToken.None);
+    }
+
     public static Task VerifyAsync(string source, string fixedSource)
     {
-        var test = new CSharpCodeFixTest<TAnalyzer, TCodeFix, DefaultVerifier>
-        {
-            ReferenceAssemblies = TestReferences.Assemblies,
-        };
+        var test = CreateTest();
 
         test.TestState.Sources.Add(source);
         test.TestState.Sources.Add(RespireApiStub.Source);
@@ -52,6 +58,12 @@ internal static class CodeFixVerifier<TAnalyzer, TCodeFix>
 
         return test.RunAsync(CancellationToken.None);
     }
+
+    private static CSharpCodeFixTest<TAnalyzer, TCodeFix, DefaultVerifier> CreateTest()
+        => new()
+        {
+            ReferenceAssemblies = TestReferences.Assemblies,
+        };
 }
 
 internal static class TestReferences

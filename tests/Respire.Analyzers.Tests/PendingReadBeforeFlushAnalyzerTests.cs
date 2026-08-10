@@ -179,6 +179,27 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    public async Task ReassignedSendLocalBeforeRead_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                var flush = batch.SendAsync();
+                flush = default;
+                await flush;
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
     public async Task ConfigureAwaitSendBeforeRead_IsNotFlagged() => await Verify.VerifyAsync(
         """
         using System;
