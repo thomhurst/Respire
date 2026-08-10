@@ -258,6 +258,32 @@ public class RespireConnectionTests
     }
 
     [Test]
+    public async Task FireAndForget_AwaitsWriteBeforeImmediateDisposal()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        server.SuppressReply = _ => true;
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+
+        var pending = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen == 0)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
+        await connection.SendFireAndForgetAsync(new RawCommand(FakeRespServer.PingFrame));
+        await connection.DisposeAsync();
+
+        while (server.CommandsSeen < 2)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
+        await Assert.That(server.CommandsSeen).IsEqualTo(2);
+        await Assert.That(async () => await pending).Throws<RespireConnectionException>();
+    }
+
+    [Test]
     public async Task ServerCloses_InFlightCommandsFail()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);

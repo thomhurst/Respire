@@ -11,6 +11,7 @@ internal sealed class WriteBuffer
 {
     private byte[] _array;
     private int _count;
+    private TaskCompletionSource? _writeCompletion;
 
     public WriteBuffer(int initialCapacity)
     {
@@ -22,6 +23,9 @@ internal sealed class WriteBuffer
     public int Capacity => _array.Length;
 
     public ReadOnlyMemory<byte> WrittenMemory => _array.AsMemory(0, _count);
+
+    public Task WriteCompletion
+        => (_writeCompletion ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Append(ReadOnlySpan<byte> bytes)
@@ -45,6 +49,11 @@ internal sealed class WriteBuffer
     public void Advance(int count) => _count += count;
 
     public void Reset() => _count = 0;
+
+    public void CompleteWrite() => Interlocked.Exchange(ref _writeCompletion, null)?.TrySetResult();
+
+    public void FailWrite(Exception exception)
+        => Interlocked.Exchange(ref _writeCompletion, null)?.TrySetException(exception);
 
     /// <summary>Truncates back to a marked position (used to undo a partially written command).</summary>
     public void TruncateTo(int position) => _count = position;
