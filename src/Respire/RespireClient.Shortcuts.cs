@@ -1,26 +1,27 @@
+using Respire.Commands;
+
 namespace Respire;
 
 /// <summary>
-/// Root-level shortcuts for the operations that dominate real usage. Each delegates to the
-/// matching facet, which carries the full command set.
+/// Root-level shortcuts for the operations that dominate real usage.
 /// </summary>
 public sealed partial class RespireClient
 {
     /// <inheritdoc cref="IStringCommands.GetStringAsync"/>
     public ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken cancellationToken = default)
-        => Strings.GetStringAsync(key, cancellationToken);
+        => StringOrNullAsync("GET", new Cmd1(Verbs.Get, Key(in key)), cancellationToken);
 
     /// <inheritdoc cref="IStringCommands.GetAsync{T}"/>
     public ValueTask<T?> GetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
-        => Strings.GetAsync<T>(key, cancellationToken);
+        => DeserializeAsync<T, Cmd1>("GET", new Cmd1(Verbs.Get, Key(in key)), cancellationToken);
 
     /// <inheritdoc cref="IStringCommands.TryGetAsync{T}"/>
     public ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
-        => Strings.TryGetAsync<T>(key, cancellationToken);
+        => TryDeserializeAsync<T, Cmd1>("GET", new Cmd1(Verbs.Get, Key(in key)), cancellationToken);
 
     /// <inheritdoc cref="IStringCommands.GetBytesAsync"/>
     public ValueTask<byte[]?> GetBytesAsync(RespireKey key, CancellationToken cancellationToken = default)
-        => Strings.GetBytesAsync(key, cancellationToken);
+        => BytesOrNullAsync("GET", new Cmd1(Verbs.Get, Key(in key)), cancellationToken);
 
     /// <inheritdoc cref="IStringCommands.SetAsync(RespireKey, RespireValue, RespireExpiry, SetWhen, CancellationToken)"/>
     public ValueTask<bool> SetAsync(
