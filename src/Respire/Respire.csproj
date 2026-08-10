@@ -25,6 +25,27 @@
     <PackageReference Include="Polyfill" PrivateAssets="all" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Build-order only: the analyzers ride along in this package (see _PackRespireAnalyzers),
+         they are neither a dependency nor a compile reference of the library. -->
+    <ProjectReference Include="..\Respire.Analyzers\Respire.Analyzers.csproj"
+                      PrivateAssets="all"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!-- Ship RESP001/RESP002 inside the Respire package so every consumer gets them automatically.
+       The path is TFM-independent, so this runs once on the outer (cross-targeting) build. -->
+  <Target Name="_PackRespireAnalyzers" BeforeTargets="_GetPackageFiles">
+    <MSBuild Projects="..\Respire.Analyzers\Respire.Analyzers.csproj"
+             Targets="GetTargetPath"
+             Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" ItemName="_RespireAnalyzerAssembly" />
+    </MSBuild>
+    <ItemGroup>
+      <None Include="@(_RespireAnalyzerAssembly)" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    </ItemGroup>
+  </Target>
+
   <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
     <PackageReference Include="System.IO.Pipelines" />
     <!-- InstrumentAdvice<T> first shipped in 9.x with net8.0 assets. -->

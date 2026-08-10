@@ -12,12 +12,14 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="benchmarks/Respire.Benchmarks/Respire.Benchmarks.csproj" />
+    <Project Path="src/Respire.Analyzers/Respire.Analyzers.csproj" />
     <Project Path="src/Respire.Extensions.Caching.Hybrid/Respire.Extensions.Caching.Hybrid.csproj" />
     <Project Path="src/Respire.Extensions.Caching/Respire.Extensions.Caching.csproj" />
     <Project Path="src/Respire.Extensions.DependencyInjection/Respire.Extensions.DependencyInjection.csproj" />
     <Project Path="src/Respire/Respire.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Respire.Analyzers.Tests/Respire.Analyzers.Tests.csproj" />
     <Project Path="tests/Respire.Extensions.Caching.Hybrid.Tests/Respire.Extensions.Caching.Hybrid.Tests.csproj" />
     <Project Path="tests/Respire.Extensions.Caching.Tests/Respire.Extensions.Caching.Tests.csproj" />
     <Project Path="tests/Respire.IntegrationTests/Respire.IntegrationTests.csproj" />
