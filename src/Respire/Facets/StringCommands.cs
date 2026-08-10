@@ -91,6 +91,12 @@ public interface IStringCommands
     /// <summary>Gets many keys in one round trip; missing keys yield null. Redis: MGET.</summary>
     ValueTask<string?[]> GetManyAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
 
+    /// <summary>Gets and deserializes many keys; missing keys yield default. Redis: MGET.</summary>
+    ValueTask<T?[]> GetManyAsync<T>(params ReadOnlySpan<RespireKey> keys);
+
+    /// <summary>Gets and deserializes many keys; missing keys yield default. Redis: MGET.</summary>
+    ValueTask<T?[]> GetManyAsync<T>(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
+
     /// <summary>Sets many keys in one atomic round trip. Redis: MSET.</summary>
     ValueTask SetManyAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
 
@@ -192,6 +198,13 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
 
     public ValueTask<string?[]> GetManyAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
         => client.NullableStringArrayAsync("MGET", new CmdN(Verbs.MGet, client.MapKeys(keys)), cancellationToken);
+
+    public ValueTask<T?[]> GetManyAsync<T>(params ReadOnlySpan<RespireKey> keys)
+        => GetManyAsync<T>(keys, CancellationToken.None);
+
+    public ValueTask<T?[]> GetManyAsync<T>(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
+        => client.DeserializeNullableArrayAsync<T, CmdN>(
+            "MGET", new CmdN(Verbs.MGet, client.MapKeys(keys)), cancellationToken);
 
     public ValueTask SetManyAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
         => SetManyAsync(pairs, CancellationToken.None);

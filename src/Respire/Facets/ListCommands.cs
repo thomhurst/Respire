@@ -71,6 +71,10 @@ public interface IListCommands
     /// <summary>Elements between two indexes inclusive (negative counts from the end). Redis: LRANGE.</summary>
     ValueTask<string[]> RangeAsync(RespireKey key, long start = 0, long stop = -1, CancellationToken cancellationToken = default);
 
+    /// <summary>Deserialized elements between two indexes inclusive. Redis: LRANGE.</summary>
+    ValueTask<T[]> RangeAsync<T>(
+        RespireKey key, long start = 0, long stop = -1, CancellationToken cancellationToken = default);
+
     /// <summary>The element at an index, or null out of range. Redis: LINDEX.</summary>
     ValueTask<string?> IndexAsync(RespireKey key, long index, CancellationToken cancellationToken = default);
 
@@ -206,6 +210,11 @@ internal sealed class ListCommands(RespireClient client) : IListCommands
 
     public ValueTask<string[]> RangeAsync(RespireKey key, long start = 0, long stop = -1, CancellationToken cancellationToken = default)
         => client.StringArrayAsync("LRANGE", new Cmd3(Verbs.LRange, client.Key(in key), start, stop), cancellationToken);
+
+    public ValueTask<T[]> RangeAsync<T>(
+        RespireKey key, long start = 0, long stop = -1, CancellationToken cancellationToken = default)
+        => client.DeserializeArrayAsync<T, Cmd3>(
+            "LRANGE", new Cmd3(Verbs.LRange, client.Key(in key), start, stop), cancellationToken);
 
     public ValueTask<string?> IndexAsync(RespireKey key, long index, CancellationToken cancellationToken = default)
         => client.StringOrNullAsync("LINDEX", new Cmd2(Verbs.LIndex, client.Key(in key), index), cancellationToken);

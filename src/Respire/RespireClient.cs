@@ -2313,6 +2313,20 @@ public sealed partial class RespireClient : IRespireClient
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.NullableStringArray(in value));
 
+    internal ValueTask<T[]> DeserializeArrayAsync<T, TCommand>(
+        string operation, TCommand command, CancellationToken ct)
+        where TCommand : struct, IRespCommand
+        => ConvertAsync<TCommand, T[]>(
+            operation, command, ct,
+            static (RespireClient client, in RespValue value) => client.DeserializeArray<T>(in value));
+
+    internal ValueTask<T?[]> DeserializeNullableArrayAsync<T, TCommand>(
+        string operation, TCommand command, CancellationToken ct)
+        where TCommand : struct, IRespCommand
+        => ConvertAsync<TCommand, T?[]>(
+            operation, command, ct,
+            static (RespireClient client, in RespValue value) => client.DeserializeNullableArray<T>(in value));
+
     internal ValueTask<long?[]> NullableIntegerArrayAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertResponseAsync(
@@ -2324,6 +2338,13 @@ public sealed partial class RespireClient : IRespireClient
         => ConvertAsync(
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.StringMap(in value));
+
+    internal ValueTask<Dictionary<string, T>> DeserializeMapAsync<T, TCommand>(
+        string operation, TCommand command, CancellationToken ct)
+        where TCommand : struct, IRespCommand
+        => ConvertAsync<TCommand, Dictionary<string, T>>(
+            operation, command, ct,
+            static (RespireClient client, in RespValue value) => client.DeserializeMap<T>(in value));
 
     internal ValueTask<T?> DeserializeAsync<T, TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
@@ -2343,4 +2364,40 @@ public sealed partial class RespireClient : IRespireClient
             operation, command, ct,
             static (RespireClient _, in RespValue value) => new RespireLease(in value),
             transferOwnership: true);
+
+    private T[] DeserializeArray<T>(in RespValue value)
+    {
+        var elements = value.AsArray();
+        var result = new T[elements.Length];
+        for (var i = 0; i < elements.Length; i++)
+        {
+            result[i] = DeserializeBorrowed<T>(in elements[i])!;
+        }
+
+        return result;
+    }
+
+    private T?[] DeserializeNullableArray<T>(in RespValue value)
+    {
+        var elements = value.AsArray();
+        var result = new T?[elements.Length];
+        for (var i = 0; i < elements.Length; i++)
+        {
+            result[i] = DeserializeBorrowed<T>(in elements[i]);
+        }
+
+        return result;
+    }
+
+    private Dictionary<string, T> DeserializeMap<T>(in RespValue value)
+    {
+        var elements = value.AsArray();
+        var result = new Dictionary<string, T>(elements.Length / 2);
+        for (var i = 0; i + 1 < elements.Length; i += 2)
+        {
+            result[elements[i].AsString()] = DeserializeBorrowed<T>(in elements[i + 1])!;
+        }
+
+        return result;
+    }
 }

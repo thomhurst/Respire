@@ -59,6 +59,10 @@ public interface IHashCommands
     /// <summary>The whole hash as a dictionary. Redis: HGETALL.</summary>
     ValueTask<Dictionary<string, string>> GetAllAsync(RespireKey key, CancellationToken cancellationToken = default);
 
+    /// <summary>The whole hash with values deserialized as <typeparamref name="T"/>. Redis: HGETALL.</summary>
+    ValueTask<Dictionary<string, T>> GetAllAsync<T>(
+        RespireKey key, CancellationToken cancellationToken = default);
+
     /// <summary>Deletes fields; returns how many existed. Redis: HDEL.</summary>
     ValueTask<long> DeleteAsync(RespireKey key, params ReadOnlySpan<string> fields);
 
@@ -261,6 +265,11 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
 
     public ValueTask<Dictionary<string, string>> GetAllAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.StringMapAsync("HGETALL", new Cmd1(Verbs.HGetAll, client.Key(in key)), cancellationToken);
+
+    public ValueTask<Dictionary<string, T>> GetAllAsync<T>(
+        RespireKey key, CancellationToken cancellationToken = default)
+        => client.DeserializeMapAsync<T, Cmd1>(
+            "HGETALL", new Cmd1(Verbs.HGetAll, client.Key(in key)), cancellationToken);
 
     public ValueTask<long> DeleteAsync(RespireKey key, params ReadOnlySpan<string> fields)
         => DeleteAsync(key, fields, CancellationToken.None);

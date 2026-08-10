@@ -40,6 +40,9 @@ public interface ISetCommands
     /// <summary>All members. Redis: SMEMBERS.</summary>
     ValueTask<string[]> MembersAsync(RespireKey key, CancellationToken cancellationToken = default);
 
+    /// <summary>All members deserialized as <typeparamref name="T"/>. Redis: SMEMBERS.</summary>
+    ValueTask<T[]> MembersAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
+
     /// <summary>Removes and returns a random member, or null when empty. Redis: SPOP.</summary>
     ValueTask<string?> PopAsync(RespireKey key, CancellationToken cancellationToken = default);
 
@@ -111,6 +114,10 @@ internal sealed class SetCommands(RespireClient client) : ISetCommands
 
     public ValueTask<string[]> MembersAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.StringArrayAsync("SMEMBERS", new Cmd1(Verbs.SMembers, client.Key(in key)), cancellationToken);
+
+    public ValueTask<T[]> MembersAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
+        => client.DeserializeArrayAsync<T, Cmd1>(
+            "SMEMBERS", new Cmd1(Verbs.SMembers, client.Key(in key)), cancellationToken);
 
     public ValueTask<string?> PopAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.StringOrNullAsync("SPOP", new Cmd1(Verbs.SPop, client.Key(in key)), cancellationToken);
