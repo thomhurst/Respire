@@ -562,6 +562,33 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task Transaction_RejectedMultiKeySerializationDoesNotPinSlot()
+    {
+        await using var client = RespireClient.Create(new RespireOptions { Cluster = true });
+        await using var transaction = client.CreateTransaction();
+
+        _ = Assert.Throws<ArgumentException>(() => transaction.Strings.SetManyAsync(
+            ("{rejected}one", RespireValue.Null),
+            ("{rejected}two", "value")));
+        _ = transaction.SetAsync("{accepted}key", "value");
+
+        await Assert.That(transaction.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task Transaction_SuccessfulMultiKeyCommandPinsSlot()
+    {
+        await using var client = RespireClient.Create(new RespireOptions { Cluster = true });
+        await using var transaction = client.CreateTransaction();
+
+        _ = transaction.Strings.GetManyAsync("{account}one", "{account}two");
+
+        _ = Assert.Throws<InvalidOperationException>(
+            () => transaction.SetAsync("{other}key", "value"));
+        await Assert.That(transaction.Count).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task TrackedScript_RoutesByKeyAndUpdatesIdentityAfterMoved()
     {
         var slot = ClusterHash.GetSlot("cache-key");
