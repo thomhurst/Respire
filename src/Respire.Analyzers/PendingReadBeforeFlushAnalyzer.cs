@@ -236,6 +236,13 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 var writes = definitions.Select(static definition => definition.Write).ToArray();
                 foreach (var definition in definitions)
                 {
+                    if (definition.Write is AssignmentExpressionSyntax coalesceAssignment
+                        && coalesceAssignment.IsKind(SyntaxKind.CoalesceAssignmentExpression)
+                        && !CanCoalesceAssignmentExecute(context, scope, definition, definitions))
+                    {
+                        continue;
+                    }
+
                     var otherWrites = writes.Where(write =>
                         !ScopeWalker.IsSame(write, definition.Write)
                         && !write.IsKind(SyntaxKind.CoalesceAssignmentExpression));
@@ -258,6 +265,37 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 yield break;
         }
     }
+
+    private static bool CanCoalesceAssignmentExecute(
+        SyntaxNodeAnalysisContext context,
+        SyntaxNode scope,
+        (SyntaxNode Write, ExpressionSyntax Value) coalesce,
+        IReadOnlyList<(SyntaxNode Write, ExpressionSyntax Value)> definitions)
+    {
+        var reachingDefinitions = definitions.Where(candidate =>
+            !ScopeWalker.IsSame(candidate.Write, coalesce.Write)
+            && ScopeWalker.CanReachWithoutCrossing(
+                context.SemanticModel,
+                scope,
+                candidate.Write,
+                coalesce.Write,
+                definitions.Where(barrier =>
+                        !ScopeWalker.IsSame(barrier.Write, candidate.Write)
+                        && !ScopeWalker.IsSame(barrier.Write, coalesce.Write))
+                    .Select(static barrier => barrier.Write),
+                context.CancellationToken)).ToArray();
+
+        return reachingDefinitions.Length == 0
+               || reachingDefinitions.Any(definition => !IsDefinitelyNonNullPending(context, definition.Value));
+    }
+
+    private static bool IsDefinitelyNonNullPending(
+        SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
+        => ScopeWalker.Unwrap(expression) is InvocationExpressionSyntax
+           && context.SemanticModel.GetTypeInfo(expression, context.CancellationToken).Type
+               is INamedTypeSymbol { OriginalDefinition: { } definition }
+           && definition.MetadataName == "RespirePending`1"
+           && definition.ContainingNamespace.ToDisplayString() == "Respire";
 
     /// <summary>True when the local is declared somewhere this scope cannot see all of its uses.</summary>
     private static bool IsDeclaredOutside(SyntaxNode scope, ILocalSymbol local)
@@ -508,8 +546,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         foreach (var reference in ScopeWalker.FindReferences(
                      scope, flush, context.SemanticModel, context.CancellationToken))
         {
-            if (reference.Parent is AssignmentExpressionSyntax assignment
-                && ScopeWalker.IsSame(assignment.Left, reference))
+            if (reference.FirstAncestorOrSelf<AssignmentExpressionSyntax>() is { } assignment
+                && assignment.Left.Span.Contains(reference.Span))
             {
                 yield return assignment.Right;
             }

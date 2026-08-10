@@ -821,6 +821,27 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    public async Task MutatedStoredCollectionWhenAllBeforeRead_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                var flushes = new[] { batch.SendAsync().AsTask() };
+                flushes[0] = Task.CompletedTask;
+                await Task.WhenAll(flushes);
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
     public async Task WaitAsyncFlushBeforeRead_IsNotFlagged() => await Verify.VerifyAsync(
         """
         using System;
@@ -1068,6 +1089,49 @@ public class PendingReadBeforeFlushAnalyzerTests
                 await batch2.SendAsync();
                 Console.WriteLine({|RESP002:pending.Result|});
                 await batch1.SendAsync();
+            }
+        }
+        """);
+
+    [Test]
+    public async Task ImpossibleCoalesceAssignmentDoesNotAddPendingOrigin() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch1 = client.CreateBatch();
+                var batch2 = client.CreateBatch();
+                RespirePending<string>? pending = batch1.GetStringAsync("first");
+                await batch1.SendAsync();
+                pending ??= batch2.GetStringAsync("second");
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    public async Task LaterCoalesceAssignmentIsImpossibleAfterSuccessfulCoalesce() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch1 = client.CreateBatch();
+                var batch2 = client.CreateBatch();
+                RespirePending<string>? pending = null;
+                pending ??= batch1.GetStringAsync("first");
+                await batch1.SendAsync();
+                pending ??= batch2.GetStringAsync("second");
+                Console.WriteLine(pending.Result);
             }
         }
         """);
