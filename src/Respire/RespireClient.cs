@@ -156,7 +156,8 @@ public sealed partial class RespireClient : IRespireClient
 
     public RespireEndpoint Endpoint => new(_core.Multiplexer.Host, _core.Multiplexer.Port);
 
-    public bool IsConnected => _core.Cluster?.IsConnected ?? _core.Multiplexer.IsConnected;
+    public bool IsConnected
+        => !_core.Disposed && (_core.Cluster?.IsConnected ?? _core.Multiplexer.IsConnected);
 
     /// <summary>Raised when connection health changes, including endpoint and error context.</summary>
     public event Action<RespireConnectionStateChange>? ConnectionStateChanged

@@ -77,6 +77,47 @@ public class ClientCoreTests
     }
 
     [Test]
+    public async Task DisposeAsync_DisconnectsEveryActiveClusterEndpoint()
+    {
+        var core = new ClientCore(new RespireOptions { Cluster = true });
+        var primaryEndpoint = core.Options.PrimaryEndpoint;
+        var secondEndpoint = new RespireEndpoint("127.0.0.1", 6380);
+        var secondNode = core.Cluster!.GetMultiplexer(secondEndpoint);
+        var changes = new List<RespireConnectionStateChange>();
+        core.ConnectionStateChanged += changes.Add;
+        core.NotifyCommandStateChanged(secondNode, 0, RespireConnectionState.Reconnecting);
+        core.NotifyCommandStateChanged(secondNode, 0, RespireConnectionState.Connected);
+        changes.Clear();
+
+        await core.DisposeAsync();
+
+        await Assert.That(changes.Select(change => (change.Endpoint, change.State))).IsEquivalentTo(
+            [
+                (primaryEndpoint, RespireConnectionState.Disconnected),
+                (secondEndpoint, RespireConnectionState.Disconnected),
+            ]);
+    }
+
+    [Test]
+    public async Task DisposeEvent_ObservesClientAsDisconnected()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        bool? isConnectedDuringEvent = null;
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.State == RespireConnectionState.Disconnected)
+            {
+                isConnectedDuringEvent = client.IsConnected;
+            }
+        };
+
+        await client.DisposeAsync();
+
+        await Assert.That(isConnectedDuringEvent).IsFalse();
+    }
+
+    [Test]
     public async Task SubscriberRecovery_WaitsForCommandRecoveryBeforePublishingConnected()
     {
         await using var core = new ClientCore(new RespireOptions());

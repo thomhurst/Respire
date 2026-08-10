@@ -58,6 +58,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             return false;
         }
     }
+
     internal event Action<RespireConnectionMultiplexer, int, RespireConnectionStateChange>? SlotStateChanged;
     internal event Action<RespireConnectionMultiplexer>? NodeRetired;
 
@@ -70,6 +71,16 @@ internal sealed class ClusterRouter : IAsyncDisposable
         {
             var seed = Volatile.Read(ref _seed) ?? _primary;
             return new RespireEndpoint(seed.Host, seed.Port);
+        }
+    }
+
+    internal RespireEndpoint[] GetActiveEndpoints()
+    {
+        lock (_nodesGate)
+        {
+            return _nodeStateHandlers.Keys
+                .Select(node => new RespireEndpoint(node.Host, node.Port))
+                .ToArray();
         }
     }
 

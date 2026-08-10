@@ -180,6 +180,11 @@ internal sealed class ClientCore : IAsyncDisposable
 
     private RespireConnectionState GetEndpointStateLocked(RespireEndpoint endpoint)
     {
+        if (Disposed)
+        {
+            return RespireConnectionState.Disconnected;
+        }
+
         var isSubscriptionEndpoint = endpoint == _subscriptionEndpoint;
         if (_disconnectedCommandSlots.Any(commandSlot => IsEndpoint(commandSlot.Node, endpoint))
             || isSubscriptionEndpoint && _subscriptionState == RespireConnectionState.Disconnected)
@@ -262,19 +267,20 @@ internal sealed class ClientCore : IAsyncDisposable
         }
 
         Disposed = true;
+        var commandEndpoints = Cluster?.GetActiveEndpoints() ?? [Options.PrimaryEndpoint];
         lock (_stateGate)
         {
-            var primaryEndpoint = Options.PrimaryEndpoint;
-            var subscriptionEndpoint = _subscriptionEndpoint ?? primaryEndpoint;
-            _subscriptionEndpoint = subscriptionEndpoint;
             _subscriptionState = RespireConnectionState.Disconnected;
-            QueueEndpointStateLocked(new RespireConnectionStateChange(
-                subscriptionEndpoint, RespireConnectionState.Disconnected, null));
-            if (subscriptionEndpoint != primaryEndpoint)
+            if (_subscriptionEndpoint is { } subscriptionEndpoint)
             {
-                _subscriptionEndpoint = primaryEndpoint;
                 QueueEndpointStateLocked(new RespireConnectionStateChange(
-                    primaryEndpoint, RespireConnectionState.Disconnected, null));
+                    subscriptionEndpoint, RespireConnectionState.Disconnected, null));
+            }
+
+            foreach (var endpoint in commandEndpoints)
+            {
+                QueueEndpointStateLocked(new RespireConnectionStateChange(
+                    endpoint, RespireConnectionState.Disconnected, null));
             }
         }
 
