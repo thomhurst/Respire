@@ -52,12 +52,16 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             }
 
             compilationStart.RegisterSyntaxNodeAction(
-                nodeContext => Analyze(nodeContext, resultType, leaseType),
+                nodeContext => AnalyzeDeclaration(nodeContext, resultType, leaseType),
                 SyntaxKind.LocalDeclarationStatement);
+            compilationStart.RegisterSyntaxNodeAction(
+                nodeContext => AnalyzeAssignment(nodeContext, resultType, leaseType),
+                SyntaxKind.SimpleAssignmentExpression);
         });
     }
 
-    private static void Analyze(SyntaxNodeAnalysisContext context, INamedTypeSymbol? resultType, INamedTypeSymbol? leaseType)
+    private static void AnalyzeDeclaration(
+        SyntaxNodeAnalysisContext context, INamedTypeSymbol? resultType, INamedTypeSymbol? leaseType)
     {
         var declaration = (LocalDeclarationStatementSyntax)context.Node;
 
@@ -97,13 +101,37 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            if (IsDisposedOrEscapes(context, scope, declaration, local))
+            if (IsDisposedOrEscapes(context, scope, declaration, acquisitionAssignment: null, local))
             {
                 continue;
             }
 
             context.ReportDiagnostic(Diagnostic.Create(Rule, variable.Identifier.GetLocation(), local.Name, pooledType.Name));
         }
+    }
+
+    private static void AnalyzeAssignment(
+        SyntaxNodeAnalysisContext context, INamedTypeSymbol? resultType, INamedTypeSymbol? leaseType)
+    {
+        var assignment = (AssignmentExpressionSyntax)context.Node;
+        if (ScopeWalker.Unwrap(assignment.Left) is not IdentifierNameSyntax identifier
+            || context.SemanticModel.GetSymbolInfo(identifier, context.CancellationToken).Symbol is not ILocalSymbol local
+            || ScopeWalker.Unwrap(assignment.Right) is not AwaitExpressionSyntax awaitExpression
+            || !IsRespireAcquisition(context, awaitExpression.Expression)
+            || ScopeWalker.GetEnclosingScope(assignment) is not { } scope
+            || local.DeclaringSyntaxReferences.Length != 1
+            || !scope.Span.Contains(local.DeclaringSyntaxReferences[0].Span))
+        {
+            return;
+        }
+
+        var pooledType = Match(local.Type, resultType) ?? Match(local.Type, leaseType);
+        if (pooledType is null || IsDisposedOrEscapes(context, scope, assignment, assignment, local))
+        {
+            return;
+        }
+
+        context.ReportDiagnostic(Diagnostic.Create(Rule, identifier.GetLocation(), local.Name, pooledType.Name));
     }
 
     private static INamedTypeSymbol? Match(ITypeSymbol candidate, INamedTypeSymbol? pooledType)
@@ -152,19 +180,31 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
     private static bool IsDisposedOrEscapes(
         SyntaxNodeAnalysisContext context,
         SyntaxNode scope,
-        LocalDeclarationStatementSyntax declaration,
+        SyntaxNode acquisition,
+        AssignmentExpressionSyntax? acquisitionAssignment,
         ILocalSymbol local)
     {
         var references = ScopeWalker.FindReferences(
             scope, local, context.SemanticModel, context.CancellationToken).ToArray();
         var firstReassignment = references
-            .Where(reference => reference.Parent is AssignmentExpressionSyntax assignment
+            .Where(reference => reference.SpanStart > acquisition.SpanStart
+                                && reference.Parent is AssignmentExpressionSyntax assignment
+                                && (acquisitionAssignment is null
+                                    || !ScopeWalker.IsSame(assignment, acquisitionAssignment))
                                 && ScopeWalker.IsSame(assignment.Left, reference))
             .Select(reference => (int?)reference.SpanStart)
             .Min();
 
         foreach (var reference in references)
         {
+            if (reference.SpanStart < acquisition.SpanStart
+                || acquisitionAssignment is not null
+                && reference.Parent is AssignmentExpressionSyntax acquisitionWrite
+                && ScopeWalker.IsSame(acquisitionWrite, acquisitionAssignment))
+            {
+                continue;
+            }
+
             if (ScopeWalker.IsInsideNameOf(context.SemanticModel, reference, context.CancellationToken))
             {
                 continue;
@@ -202,7 +242,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                         && member.Parent is InvocationExpressionSyntax invocation
                         && ScopeWalker.IsSame(invocation.Expression, member)
                         && ScopeWalker.PostDominates(
-                            context.SemanticModel, scope, declaration, invocation, context.CancellationToken))
+                            context.SemanticModel, scope, acquisition, invocation, context.CancellationToken))
                     {
                         return true;
                     }
@@ -220,7 +260,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                                         && binding.Parent is InvocationExpressionSyntax invocation
                                         && ScopeWalker.IsSame(invocation.Expression, binding)
                                         && ScopeWalker.PostDominates(
-                                            context.SemanticModel, scope, declaration, invocation, context.CancellationToken)))
+                                            context.SemanticModel, scope, acquisition, invocation, context.CancellationToken)))
                     {
                         return true;
                     }
@@ -231,7 +271,7 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
                 case UsingStatementSyntax usingStatement when usingStatement.Expression is not null
                                                               && ScopeWalker.IsSame(usingStatement.Expression, reference):
                     if (ScopeWalker.PostDominates(
-                            context.SemanticModel, scope, declaration, usingStatement, context.CancellationToken))
+                            context.SemanticModel, scope, acquisition, usingStatement, context.CancellationToken))
                     {
                         return true;
                     }

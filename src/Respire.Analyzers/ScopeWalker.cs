@@ -329,11 +329,20 @@ internal static class ScopeWalker
     /// <summary>Strips parentheses so <c>(x)</c> analyses the same as <c>x</c>.</summary>
     public static ExpressionSyntax Unwrap(ExpressionSyntax expression)
     {
-        while (expression is ParenthesizedExpressionSyntax parenthesized)
+        while (true)
         {
-            expression = parenthesized.Expression;
+            switch (expression)
+            {
+                case ParenthesizedExpressionSyntax parenthesized:
+                    expression = parenthesized.Expression;
+                    break;
+                case PostfixUnaryExpressionSyntax suppression
+                    when suppression.IsKind(SyntaxKind.SuppressNullableWarningExpression):
+                    expression = suppression.Operand;
+                    break;
+                default:
+                    return expression;
+            }
         }
-
-        return expression;
     }
 }

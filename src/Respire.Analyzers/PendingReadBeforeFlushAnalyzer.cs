@@ -276,6 +276,11 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 case AwaitExpressionSyntax awaitExpression when ScopeWalker.IsSame(awaitExpression.Expression, reference):
                     break;
 
+                case PostfixUnaryExpressionSyntax suppression
+                    when suppression.IsKind(SyntaxKind.SuppressNullableWarningExpression)
+                         && ScopeWalker.IsSame(suppression.Operand, reference):
+                    break;
+
                 case AssignmentExpressionSyntax assignment
                     when ScopeWalker.IsSame(assignment.Left, reference)
                          && (allowReassignment
@@ -352,9 +357,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             return true;
         }
 
-        if (GetOutermostAwaitableExpression(invocation).Parent
-                is not EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax declarator }
-            || context.SemanticModel.GetDeclaredSymbol(declarator, context.CancellationToken) is not ILocalSymbol flush)
+        if (ResolveStoredFlushLocal(context, GetOutermostAwaitableExpression(invocation)) is not { } flush)
         {
             return false;
         }
@@ -372,6 +375,20 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
         return false;
     }
+
+    private static ILocalSymbol? ResolveStoredFlushLocal(
+        SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
+        => expression.Parent switch
+        {
+            EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax declarator } =>
+                context.SemanticModel.GetDeclaredSymbol(declarator, context.CancellationToken) as ILocalSymbol,
+            AssignmentExpressionSyntax assignment
+                when assignment.IsKind(SyntaxKind.SimpleAssignmentExpression)
+                     && ScopeWalker.IsSame(assignment.Right, expression) =>
+                context.SemanticModel.GetSymbolInfo(
+                    ScopeWalker.Unwrap(assignment.Left), context.CancellationToken).Symbol as ILocalSymbol,
+            _ => null,
+        };
 
     private static bool IsReassignedBeforeAwait(
         SyntaxNodeAnalysisContext context,

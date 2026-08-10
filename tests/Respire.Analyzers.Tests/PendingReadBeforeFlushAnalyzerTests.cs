@@ -620,4 +620,45 @@ public class PendingReadBeforeFlushAnalyzerTests
             }
         }
         """);
+
+    [Test]
+    public async Task FlushAssignedAfterDeclarationBeforeRead_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                ValueTask flush;
+                flush = batch.SendAsync();
+                await flush;
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    public async Task NullForgivingPendingReadBeforeSend_IsFlagged() => await Verify.VerifyAsync(
+        """
+        #nullable enable
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                RespirePending<string>? pending = batch.GetStringAsync("key");
+                Console.WriteLine({|RESP002:pending!.Result|});
+                await batch.SendAsync();
+            }
+        }
+        """);
 }
