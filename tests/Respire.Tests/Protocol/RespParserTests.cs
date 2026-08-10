@@ -318,7 +318,7 @@ public class RespParserTests
     [Arguments("$5\r\nhell", RespParseStatus.NeedMoreData, 0)]
     [Arguments("$5\r\nhelloXX", RespParseStatus.InvalidData, 0)]
     [Arguments("$-1\r\n", RespParseStatus.Done, 5)]
-    public async Task BulkHeader_CanBeReusedForParsing(
+    internal async Task BulkHeader_CanBeReusedForParsing(
         string frame, RespParseStatus expectedStatus, int expectedConsumed)
     {
         var data = Encoding.UTF8.GetBytes(frame);

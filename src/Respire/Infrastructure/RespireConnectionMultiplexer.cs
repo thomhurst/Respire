@@ -15,7 +15,7 @@ namespace Respire.Infrastructure;
 /// connection is skipped and replaced in the background. Supports lazy start: create unconnected,
 /// then <see cref="EnsureConnectedAsync"/> before first use (idempotent, thread-safe).
 /// </summary>
-public sealed class RespireConnectionMultiplexer : IAsyncDisposable
+internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 {
     private readonly RespireConnection?[] _connections;
     private readonly int _connectionMask;
