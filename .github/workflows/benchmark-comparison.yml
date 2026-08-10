@@ -1,14 +1,6 @@
 name: Respire vs StackExchange.Redis Benchmarks
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'src/**'
-      - 'benchmarks/Respire.ComparisonBenchmarks/**'
-      - '.github/scripts/benchmark_docs.py'
-      - '.github/workflows/benchmark-comparison.yml'
   schedule:
     - cron: '0 3 * * 0'
   workflow_dispatch:
