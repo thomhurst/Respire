@@ -142,15 +142,25 @@ public readonly record struct GeoSearchOptions
     public bool IncludeCoordinates { get; init; }
 }
 
+/// <summary>Options controlling GEOADD conditional writes and changed-count reporting.</summary>
+public readonly record struct GeoAddOptions
+{
+    public SetWhen When { get; init; }
+    public bool Changed { get; init; }
+}
+
 public interface IGeoCommands
 {
-    ValueTask<long> AddAsync(
-        RespireKey key, SetWhen when = SetWhen.Always, bool changed = false,
-        params ReadOnlySpan<GeoEntry> entries);
+    ValueTask<long> AddAsync(RespireKey key, params ReadOnlySpan<GeoEntry> entries);
     ValueTask<long> AddAsync(
         RespireKey key,
-        SetWhen when,
-        bool changed,
+        ReadOnlySpan<GeoEntry> entries,
+        CancellationToken cancellationToken);
+    ValueTask<long> AddAsync(
+        RespireKey key, GeoAddOptions options, params ReadOnlySpan<GeoEntry> entries);
+    ValueTask<long> AddAsync(
+        RespireKey key,
+        GeoAddOptions options,
         ReadOnlySpan<GeoEntry> entries,
         CancellationToken cancellationToken);
     ValueTask<double?> DistanceAsync(
@@ -173,23 +183,34 @@ public interface IGeoCommands
 
 internal sealed class GeoCommands(RespireClient client) : IGeoCommands
 {
-    public ValueTask<long> AddAsync(
-        RespireKey key, SetWhen when = SetWhen.Always, bool changed = false,
-        params ReadOnlySpan<GeoEntry> entries)
-        => AddAsync(key, when, changed, entries, CancellationToken.None);
+    public ValueTask<long> AddAsync(RespireKey key, params ReadOnlySpan<GeoEntry> entries)
+        => AddAsync(key, default, entries, CancellationToken.None);
 
     public ValueTask<long> AddAsync(
         RespireKey key,
-        SetWhen when,
-        bool changed,
+        ReadOnlySpan<GeoEntry> entries,
+        CancellationToken cancellationToken)
+        => AddAsync(key, default, entries, cancellationToken);
+
+    public ValueTask<long> AddAsync(
+        RespireKey key, GeoAddOptions options, params ReadOnlySpan<GeoEntry> entries)
+        => AddAsync(key, options, entries, CancellationToken.None);
+
+    public ValueTask<long> AddAsync(
+        RespireKey key,
+        GeoAddOptions options,
         ReadOnlySpan<GeoEntry> entries,
         CancellationToken cancellationToken)
     {
-        ValidateAdd(when, entries);
+        ValidateAdd(options.When, entries);
         return client.IntegerAsync(
             "GEOADD",
             new GeoAddCommand(
-                RespireCommands.Geo.GEOADD.Verb, client.Key(in key), when, changed, entries.ToArray()),
+                RespireCommands.Geo.GEOADD.Verb,
+                client.Key(in key),
+                options.When,
+                options.Changed,
+                entries.ToArray()),
             cancellationToken);
     }
 

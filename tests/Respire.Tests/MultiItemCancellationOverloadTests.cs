@@ -133,6 +133,7 @@ public class MultiItemCancellationOverloadTests
         _ = client.Strings.GetManyAsync(keys, token);
         _ = client.Strings.GetManyAsync<int>(keys, token);
         _ = client.Strings.SetManyAsync(pairs, token);
+        _ = client.Strings.SetManyExpireAsync(expiry, pairs, token);
         _ = client.Strings.SetManyExpireAsync(expiry, SetWhen.NotExists, pairs, token);
         _ = client.Strings.SetManyExpireAsync(expireAt, SetWhen.Exists, pairs, token);
         _ = client.Strings.SetManyExpireAsync(RespireExpiry.Keep, SetWhen.Exists, pairs, token);
@@ -178,7 +179,26 @@ public class MultiItemCancellationOverloadTests
         _ = client.Bitmaps.FieldAsync("b", operations, token);
         _ = client.Bitmaps.FieldReadOnlyAsync("b", operations, token);
 
-        _ = client.Geo.AddAsync("g", SetWhen.Always, changed: false, geoEntries, token);
+        _ = client.Geo.AddAsync("g", geoEntries, token);
+        _ = client.Geo.AddAsync(
+            "g", new GeoAddOptions { When = SetWhen.NotExists, Changed = true }, geoEntries, token);
+
+        _ = client.Strings.SetManyExpireAsync(expiry, ("a", "x"), ("b", "y"));
+        _ = client.Geo.AddAsync("g", new GeoEntry(0, 0, "a"), new GeoEntry(1, 1, "b"));
+        _ = client.Geo.AddAsync(
+            "g", new GeoAddOptions { When = SetWhen.NotExists },
+            new GeoEntry(0, 0, "a"), new GeoEntry(1, 1, "b"));
+
+        string[] channels = ["a", "b"];
+        _ = client.SubscribeAsync("a", "b");
+        _ = client.SubscribePatternAsync("a:*", "b:*");
+        _ = client.SubscribeShardedAsync("a", "b");
+        _ = client.CreateTransactionAsync("a", "b");
+        _ = client.SubscribeAsync(channels, token);
+        _ = client.SubscribePatternAsync(channels, token);
+        _ = client.SubscribeShardedAsync(channels, token);
+        _ = client.CreateTransactionAsync(keys, token);
+        _ = client.CreateTransactionAsync(keys.AsSpan(), token);
         _ = client.Geo.HashAsync("g", values, token);
         _ = client.Geo.PositionAsync("g", values, token);
 

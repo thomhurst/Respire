@@ -11,6 +11,16 @@ namespace Respire.Tests.Networking;
 /// </summary>
 public class TransactionTests
 {
+    [Test]
+    public async Task CreateWatchedTransaction_NullArray_Throws()
+    {
+        await using var client = RespireClient.Create(new RespireOptions());
+        RespireKey[]? watchKeys = null;
+
+        await Assert.That(async () => await client.CreateTransactionAsync(watchKeys!))
+            .ThrowsExactly<ArgumentNullException>();
+    }
+
     private static readonly byte[] QueuedReply = "+QUEUED\r\n"u8.ToArray();
 
     private static ValueTask<RespireClient> ConnectAsync(int port)

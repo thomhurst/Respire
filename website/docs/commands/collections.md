@@ -81,8 +81,7 @@ long? firstActive = await redis.Bitmaps.PositionAsync("active:2026-08-09", true)
 await redis.HyperLogLog.AddAsync("visitors", sessionId);
 long estimate = await redis.HyperLogLog.CountAsync("visitors");
 
-await redis.Geo.AddAsync("cafes", entries:
-    [new GeoEntry(-0.1276, 51.5072, "london")]);
+await redis.Geo.AddAsync("cafes", new GeoEntry(-0.1276, 51.5072, "london"));
 GeoSearchResult[] nearby = await redis.Geo.SearchAsync(
     "cafes",
     GeoSearchOrigin.FromCoordinates(-0.1, 51.5),

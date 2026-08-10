@@ -1421,21 +1421,36 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
 
         public ValueTask<RespireSubscription> SubscribeAsync(string channel, CancellationToken cancellationToken = default)
             => inner.SubscribeAsync(channel, cancellationToken);
-        public ValueTask<RespireSubscription> SubscribeAsync(string[] channels, CancellationToken cancellationToken = default)
+        public ValueTask<RespireSubscription> SubscribeAsync(params ReadOnlySpan<string> channels)
+            => inner.SubscribeAsync(channels);
+        public ValueTask<RespireSubscription> SubscribeAsync(
+            ReadOnlySpan<string> channels, CancellationToken cancellationToken)
             => inner.SubscribeAsync(channels, cancellationToken);
         public ValueTask<RespireSubscription> SubscribePatternAsync(string pattern, CancellationToken cancellationToken = default)
             => inner.SubscribePatternAsync(pattern, cancellationToken);
-        public ValueTask<RespireSubscription> SubscribePatternAsync(string[] patterns, CancellationToken cancellationToken = default)
+        public ValueTask<RespireSubscription> SubscribePatternAsync(params ReadOnlySpan<string> patterns)
+            => inner.SubscribePatternAsync(patterns);
+        public ValueTask<RespireSubscription> SubscribePatternAsync(
+            ReadOnlySpan<string> patterns, CancellationToken cancellationToken)
             => inner.SubscribePatternAsync(patterns, cancellationToken);
         public ValueTask<RespireSubscription> SubscribeShardedAsync(string channel, CancellationToken cancellationToken = default)
             => inner.SubscribeShardedAsync(channel, cancellationToken);
-        public ValueTask<RespireSubscription> SubscribeShardedAsync(string[] channels, CancellationToken cancellationToken = default)
+        public ValueTask<RespireSubscription> SubscribeShardedAsync(params ReadOnlySpan<string> channels)
+            => inner.SubscribeShardedAsync(channels);
+        public ValueTask<RespireSubscription> SubscribeShardedAsync(
+            ReadOnlySpan<string> channels, CancellationToken cancellationToken)
             => inner.SubscribeShardedAsync(channels, cancellationToken);
 
         public RespireBatch CreateBatch() => inner.CreateBatch();
         public RespireTransaction CreateTransaction() => inner.CreateTransaction();
 
-        public ValueTask<RespireTransaction> CreateTransactionAsync(RespireKey[] watchKeys, CancellationToken cancellationToken = default)
+        public ValueTask<RespireTransaction> CreateTransactionAsync(
+            RespireKey[] watchKeys, CancellationToken cancellationToken = default)
+            => inner.CreateTransactionAsync(watchKeys, cancellationToken);
+        public ValueTask<RespireTransaction> CreateTransactionAsync(params ReadOnlySpan<RespireKey> watchKeys)
+            => inner.CreateTransactionAsync(watchKeys);
+        public ValueTask<RespireTransaction> CreateTransactionAsync(
+            ReadOnlySpan<RespireKey> watchKeys, CancellationToken cancellationToken)
             => inner.CreateTransactionAsync(watchKeys, cancellationToken);
 
         public ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args)

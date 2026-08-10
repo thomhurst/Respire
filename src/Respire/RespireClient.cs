@@ -694,8 +694,13 @@ public sealed partial class RespireClient : IRespireClient
         => SubscribeCoreAsync(SubscriptionKind.Channel, [channel], cancellationToken);
 
     /// <inheritdoc cref="SubscribeAsync(string, CancellationToken)"/>
-    public ValueTask<RespireSubscription> SubscribeAsync(string[] channels, CancellationToken cancellationToken = default)
-        => SubscribeCoreAsync(SubscriptionKind.Channel, channels, cancellationToken);
+    public ValueTask<RespireSubscription> SubscribeAsync(params ReadOnlySpan<string> channels)
+        => SubscribeAsync(channels, CancellationToken.None);
+
+    /// <inheritdoc cref="SubscribeAsync(string, CancellationToken)"/>
+    public ValueTask<RespireSubscription> SubscribeAsync(
+        ReadOnlySpan<string> channels, CancellationToken cancellationToken)
+        => SubscribeCoreAsync(SubscriptionKind.Channel, channels.ToArray(), cancellationToken);
 
     /// <summary>
     /// Subscribes to a glob pattern ("news.*") and returns once the server has acknowledged.
@@ -705,8 +710,13 @@ public sealed partial class RespireClient : IRespireClient
         => SubscribeCoreAsync(SubscriptionKind.Pattern, [pattern], cancellationToken);
 
     /// <inheritdoc cref="SubscribePatternAsync(string, CancellationToken)"/>
-    public ValueTask<RespireSubscription> SubscribePatternAsync(string[] patterns, CancellationToken cancellationToken = default)
-        => SubscribeCoreAsync(SubscriptionKind.Pattern, patterns, cancellationToken);
+    public ValueTask<RespireSubscription> SubscribePatternAsync(params ReadOnlySpan<string> patterns)
+        => SubscribePatternAsync(patterns, CancellationToken.None);
+
+    /// <inheritdoc cref="SubscribePatternAsync(string, CancellationToken)"/>
+    public ValueTask<RespireSubscription> SubscribePatternAsync(
+        ReadOnlySpan<string> patterns, CancellationToken cancellationToken)
+        => SubscribeCoreAsync(SubscriptionKind.Pattern, patterns.ToArray(), cancellationToken);
 
     /// <summary>
     /// Subscribes to a sharded channel (Redis 7+) and returns once the server has acknowledged.
@@ -716,8 +726,13 @@ public sealed partial class RespireClient : IRespireClient
         => SubscribeCoreAsync(SubscriptionKind.Sharded, [channel], cancellationToken);
 
     /// <inheritdoc cref="SubscribeShardedAsync(string, CancellationToken)"/>
-    public ValueTask<RespireSubscription> SubscribeShardedAsync(string[] channels, CancellationToken cancellationToken = default)
-        => SubscribeCoreAsync(SubscriptionKind.Sharded, channels, cancellationToken);
+    public ValueTask<RespireSubscription> SubscribeShardedAsync(params ReadOnlySpan<string> channels)
+        => SubscribeShardedAsync(channels, CancellationToken.None);
+
+    /// <inheritdoc cref="SubscribeShardedAsync(string, CancellationToken)"/>
+    public ValueTask<RespireSubscription> SubscribeShardedAsync(
+        ReadOnlySpan<string> channels, CancellationToken cancellationToken)
+        => SubscribeCoreAsync(SubscriptionKind.Sharded, channels.ToArray(), cancellationToken);
 
     private ValueTask<RespireSubscription> SubscribeCoreAsync(
         SubscriptionKind kind, string[] names, CancellationToken cancellationToken)
@@ -745,15 +760,32 @@ public sealed partial class RespireClient : IRespireClient
     /// For read-modify-write loops, prefer a Lua script (<see cref="Scripts"/>) — one round
     /// trip, no retry loop.
     /// </summary>
-    public async ValueTask<RespireTransaction> CreateTransactionAsync(
+    public ValueTask<RespireTransaction> CreateTransactionAsync(
         RespireKey[] watchKeys, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(watchKeys);
+        return CreateTransactionAsync(watchKeys.AsSpan(), cancellationToken);
+    }
+
+    /// <inheritdoc cref="CreateTransactionAsync(ReadOnlySpan{RespireKey}, CancellationToken)"/>
+    public ValueTask<RespireTransaction> CreateTransactionAsync(params ReadOnlySpan<RespireKey> watchKeys)
+        => CreateTransactionAsync(watchKeys, CancellationToken.None);
+
+    /// <inheritdoc cref="CreateTransactionAsync(ReadOnlySpan{RespireKey}, CancellationToken)"/>
+    public ValueTask<RespireTransaction> CreateTransactionAsync(
+        ReadOnlySpan<RespireKey> watchKeys, CancellationToken cancellationToken)
+    {
         if (watchKeys.Length == 0)
         {
-            return CreateTransaction();
+            return new ValueTask<RespireTransaction>(CreateTransaction());
         }
 
+        return CreateWatchedTransactionAsync(watchKeys.ToArray(), cancellationToken);
+    }
+
+    private async ValueTask<RespireTransaction> CreateWatchedTransactionAsync(
+        RespireKey[] watchKeys, CancellationToken cancellationToken)
+    {
         ObjectDisposedException.ThrowIf(_core.Disposed, this);
         if (_core.Cluster is not null)
         {
