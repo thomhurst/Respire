@@ -185,12 +185,6 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
     {
         ThrowIfCompleted();
         _completed = true;
-        if (_ops.Count == 0)
-        {
-            await ReleaseAsync().ConfigureAwait(false);
-            return true;
-        }
-
         var core = _client.Core;
         var telemetry = RespireTelemetry.StartBatchOperation(
             "MULTI",
@@ -204,6 +198,11 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
         Exception? operationError = null;
         try
         {
+            if (_ops.Count == 0)
+            {
+                return true;
+            }
+
             RespValue result;
             try
             {
