@@ -781,6 +781,26 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    public async Task StoredWhenAllFlushBeforeRead_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                var flush = Task.WhenAll(batch.SendAsync().AsTask());
+                await flush;
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
     public async Task WaitAsyncFlushBeforeRead_IsNotFlagged() => await Verify.VerifyAsync(
         """
         using System;
@@ -1006,6 +1026,28 @@ public class PendingReadBeforeFlushAnalyzerTests
                 pending ??= batch.GetStringAsync("key");
                 Console.WriteLine({|RESP002:pending.Result|});
                 await batch.SendAsync();
+            }
+        }
+        """);
+
+    [Test]
+    public async Task SkippedCoalesceAssignmentPreservesEarlierPendingOrigin() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch1 = client.CreateBatch();
+                var batch2 = client.CreateBatch();
+                RespirePending<string>? pending = batch1.GetStringAsync("first");
+                pending ??= batch2.GetStringAsync("second");
+                await batch2.SendAsync();
+                Console.WriteLine({|RESP002:pending.Result|});
+                await batch1.SendAsync();
             }
         }
         """);

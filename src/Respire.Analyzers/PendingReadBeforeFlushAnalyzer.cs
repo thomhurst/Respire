@@ -236,7 +236,9 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 var writes = definitions.Select(static definition => definition.Write).ToArray();
                 foreach (var definition in definitions)
                 {
-                    var otherWrites = writes.Where(write => !ScopeWalker.IsSame(write, definition.Write));
+                    var otherWrites = writes.Where(write =>
+                        !ScopeWalker.IsSame(write, definition.Write)
+                        && !write.IsKind(SyntaxKind.CoalesceAssignmentExpression));
                     if (ScopeWalker.Unwrap(definition.Value) is InvocationExpressionSyntax invocation
                         && ScopeWalker.CanReachWithoutCrossing(
                             context.SemanticModel,
@@ -440,7 +442,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             yield break;
         }
 
-        if (ResolveStoredFlushLocal(context, GetOutermostAwaitableExpression(context, invocation)) is not { } flush)
+        if (ResolveStoredFlushLocal(context, GetOutermostCompletionExpression(context, invocation)) is not { } flush)
         {
             yield break;
         }
@@ -525,7 +527,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         foreach (var invocation in definition.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>())
         {
             if (!ScopeWalker.IsSame(
-                    ScopeWalker.Unwrap(GetOutermostAwaitableExpression(context, invocation)),
+                    ScopeWalker.Unwrap(GetOutermostCompletionExpression(context, invocation)),
                     unwrappedDefinition)
                 || ScopeWalker.Unwrap(invocation.Expression) is not MemberAccessExpressionSyntax member
                 || member.Name.Identifier.ValueText is not (SendAsync or CommitAsync)
@@ -545,25 +547,31 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
     private static ExpressionSyntax? GetCompletionExpression(
         SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
     {
+        expression = GetOutermostCompletionExpression(context, expression);
+        if (expression.Parent is AwaitExpressionSyntax awaitExpression
+            && ScopeWalker.IsSame(awaitExpression.Expression, expression))
+        {
+            return awaitExpression;
+        }
+
+        return GetSynchronousGetResult(context, expression);
+    }
+
+    private static ExpressionSyntax GetOutermostCompletionExpression(
+        SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
+    {
         while (true)
         {
             expression = GetOutermostAwaitableExpression(context, expression);
-            if (expression.Parent is ArgumentSyntax { Parent.Parent: InvocationExpressionSyntax combinator }
-                && context.SemanticModel.GetSymbolInfo(combinator, context.CancellationToken).Symbol
-                    is IMethodSymbol { Name: nameof(Task.WhenAll) } method
-                && method.ContainingType.ToDisplayString() == typeof(Task).FullName)
+            if (expression.Parent is not ArgumentSyntax { Parent.Parent: InvocationExpressionSyntax combinator }
+                || context.SemanticModel.GetSymbolInfo(combinator, context.CancellationToken).Symbol
+                    is not IMethodSymbol { Name: nameof(Task.WhenAll) } method
+                || method.ContainingType.ToDisplayString() != typeof(Task).FullName)
             {
-                expression = combinator;
-                continue;
+                return expression;
             }
 
-            if (expression.Parent is AwaitExpressionSyntax awaitExpression
-                && ScopeWalker.IsSame(awaitExpression.Expression, expression))
-            {
-                return awaitExpression;
-            }
-
-            return GetSynchronousGetResult(context, expression);
+            expression = combinator;
         }
     }
 
