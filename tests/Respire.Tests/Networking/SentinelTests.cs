@@ -20,6 +20,15 @@ public class SentinelTests
     }
 
     [Test]
+    public async Task ConnectionString_RejectsEmptyServiceName()
+    {
+        var error = Assert.Throws<ArgumentException>(
+            () => RespireOptions.Parse("redis://sentinel.example?serviceName=%20%20"));
+
+        await Assert.That(error.Message).Contains("serviceName");
+    }
+
+    [Test]
     public async Task ConnectAsync_DiscoversPrimaryFromSentinel()
     {
         await using var primary = new FakeRespServer(FakeRespServer.PongReply);
@@ -42,7 +51,9 @@ public class SentinelTests
     [Test]
     public async Task ConnectAsync_UsesSentinelCredentialsForDiscovery()
     {
-        await using var primary = new FakeRespServer(FakeRespServer.PongReply);
+        await using var primary = new FakeRespServer(
+            FakeRespServer.OkReply,
+            FakeRespServer.PongReply);
         await using var sentinel = new FakeRespServer(
             FakeRespServer.OkReply,
             PrimaryReply(primary.Port));
@@ -65,6 +76,67 @@ public class SentinelTests
             "AUTH sentinel-user sentinel-secret",
             "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster",
         ]);
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(
+        [
+            "AUTH redis-user redis-secret",
+            "PING",
+        ]);
+    }
+
+    [Test]
+    public async Task ConnectAsync_FallsBackWhenSentinelReturnsInvalidPort()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.PongReply);
+        await using var invalidSentinel = new FakeRespServer(PrimaryReply(65536));
+        await using var validSentinel = new FakeRespServer(PrimaryReply(primary.Port));
+
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints =
+            {
+                new RespireEndpoint("127.0.0.1", invalidSentinel.Port),
+                new RespireEndpoint("127.0.0.1", validSentinel.Port),
+            },
+            ServiceName = "mymaster",
+            ConnectTimeout = TimeSpan.FromSeconds(1),
+        });
+
+        _ = await client.PingAsync();
+
+        await Assert.That(invalidSentinel.ReceivedCommands).IsEquivalentTo(
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
+        await Assert.That(validSentinel.ReceivedCommands).IsEquivalentTo(
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["PING"]);
+    }
+
+    [Test]
+    public async Task ConnectAsync_TimesOutUnresponsiveSentinelAndFallsBack()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.PongReply);
+        await using var unresponsiveSentinel = new FakeRespServer(PrimaryReply(primary.Port));
+        unresponsiveSentinel.DelayReply(0, 2_000);
+        await using var responsiveSentinel = new FakeRespServer(PrimaryReply(primary.Port));
+
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints =
+            {
+                new RespireEndpoint("127.0.0.1", unresponsiveSentinel.Port),
+                new RespireEndpoint("127.0.0.1", responsiveSentinel.Port),
+            },
+            ServiceName = "mymaster",
+            ConnectTimeout = TimeSpan.FromSeconds(1),
+            CommandTimeout = TimeSpan.FromMilliseconds(100),
+        });
+
+        _ = await client.PingAsync();
+
+        await Assert.That(unresponsiveSentinel.ReceivedCommands).IsEquivalentTo(
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
+        await Assert.That(responsiveSentinel.ReceivedCommands).IsEquivalentTo(
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["PING"]);
     }
 
     [Test]

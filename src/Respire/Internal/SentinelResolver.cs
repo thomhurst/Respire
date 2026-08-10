@@ -38,6 +38,8 @@ internal static class SentinelResolver
 
         foreach (var endpoint in sentinelEndpoints)
         {
+            using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutSource.CancelAfter(options.CommandTimeout ?? options.ConnectTimeout);
             try
             {
                 var primary = await QueryPrimaryAsync(
@@ -45,7 +47,7 @@ internal static class SentinelResolver
                         options.ServiceName!,
                         sentinelOptions,
                         logger,
-                        cancellationToken)
+                        timeoutSource.Token)
                     .ConfigureAwait(false);
                 return options with
                 {
@@ -115,7 +117,8 @@ internal static class SentinelResolver
 
             var host = parts[0].AsString();
             var portText = parts[1].AsString();
-            if (!int.TryParse(portText, NumberStyles.None, CultureInfo.InvariantCulture, out var port))
+            if (!int.TryParse(portText, NumberStyles.None, CultureInfo.InvariantCulture, out var port)
+                || port is < 1 or > 65535)
             {
                 throw new RespireProtocolException(
                     $"Redis Sentinel returned invalid port '{portText}' for service '{serviceName}'.");

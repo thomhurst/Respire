@@ -257,6 +257,13 @@ public sealed record RespireOptions
                     cluster = bool.Parse(value);
                     break;
                 case "servicename":
+                    if (string.IsNullOrWhiteSpace(value))
+                    {
+                        throw new ArgumentException(
+                            "Connection string parameter 'serviceName' cannot be empty.",
+                            nameof(connectionString));
+                    }
+
                     serviceName = value;
                     break;
                 case "sentineluser":
