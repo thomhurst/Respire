@@ -50,6 +50,11 @@ public interface ISortedSetCommands
     /// <summary>Number of members. Redis: ZCARD.</summary>
     ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default);
 
+    /// <summary>Iterates members and scores incrementally. Redis: ZSCAN.</summary>
+    IAsyncEnumerable<SortedSetEntry> ScanAsync(
+        RespireKey key, string? match = null, int countHint = 250,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Members with scores within the inclusive range. Redis: ZCOUNT.</summary>
     ValueTask<long> CountByScoreAsync(RespireKey key, double min, double max, CancellationToken cancellationToken = default);
 
@@ -115,6 +120,13 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
 
     public ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.IntegerAsync("ZCARD", new Cmd1(Verbs.ZCard, client.Key(in key)), cancellationToken);
+
+    public IAsyncEnumerable<SortedSetEntry> ScanAsync(
+        RespireKey key, string? match = null, int countHint = 250,
+        CancellationToken cancellationToken = default)
+        => CollectionScan.EnumerateAsync(
+            client, "ZSCAN", RespireCommands.SortedSet.ZSCAN.Verb, key, match, countHint,
+            ParseEntries, cancellationToken);
 
     public ValueTask<long> CountByScoreAsync(RespireKey key, double min, double max, CancellationToken cancellationToken = default)
         => client.IntegerAsync("ZCOUNT", new Cmd3(Verbs.ZCount, client.Key(in key), min, max), cancellationToken);
