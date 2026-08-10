@@ -35,8 +35,8 @@ public interface ILockCommands
         TimeSpan expiry,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Returns the lock's current token, or null when missing. Redis: GET.</summary>
-    ValueTask<string?> QueryAsync(RespireKey key, CancellationToken cancellationToken = default);
+    /// <summary>Returns the lock's current token bytes, or null when missing. Redis: GET.</summary>
+    ValueTask<byte[]?> QueryAsync(RespireKey key, CancellationToken cancellationToken = default);
 }
 
 internal sealed class LockCommands(RespireClient client) : ILockCommands
@@ -89,8 +89,8 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands
         return ExecuteBooleanScriptAsync(ExtendScript, key, [token, milliseconds], cancellationToken);
     }
 
-    public ValueTask<string?> QueryAsync(RespireKey key, CancellationToken cancellationToken = default)
-        => client.StringOrNullAsync("GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken);
+    public ValueTask<byte[]?> QueryAsync(RespireKey key, CancellationToken cancellationToken = default)
+        => client.BytesOrNullAsync("GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken);
 
     private async ValueTask<bool> ExecuteBooleanScriptAsync(
         RespireScript script,

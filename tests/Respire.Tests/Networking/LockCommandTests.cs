@@ -17,7 +17,8 @@ public class LockCommandTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         await Assert.That(await client.Locks.TakeAsync("resource", "owner", TimeSpan.FromSeconds(30))).IsTrue();
-        await Assert.That(await client.Locks.QueryAsync("resource")).IsEqualTo("owner");
+        var queriedToken = await client.Locks.QueryAsync("resource");
+        await Assert.That(queriedToken!.AsSpan().SequenceEqual("owner"u8)).IsTrue();
         await Assert.That(await client.Locks.ExtendAsync("resource", "owner", TimeSpan.FromSeconds(45))).IsTrue();
         await Assert.That(await client.Locks.ReleaseAsync("resource", "owner")).IsTrue();
 
@@ -44,6 +45,20 @@ public class LockCommandTests
         await Assert.That(await client.Locks.QueryAsync("resource")).IsNull();
         await Assert.That(await client.Locks.ExtendAsync("resource", "owner", TimeSpan.FromSeconds(45))).IsFalse();
         await Assert.That(await client.Locks.ReleaseAsync("resource", "owner")).IsFalse();
+    }
+
+    [Test]
+    public async Task LockCommands_QueryPreservesBinaryTokenForOwnershipChecks()
+    {
+        byte[] expectedToken = [0xFF, 0x00, 0xC3, 0x28];
+        byte[] binaryTokenReply = [.. "$4\r\n"u8, .. expectedToken, .. "\r\n"u8];
+        await using var server = new FakeRespServer(binaryTokenReply, ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var token = await client.Locks.QueryAsync("resource");
+
+        await Assert.That(token!.AsSpan().SequenceEqual(expectedToken)).IsTrue();
+        await Assert.That(await client.Locks.ReleaseAsync("resource", token!)).IsTrue();
     }
 
     [Test]
