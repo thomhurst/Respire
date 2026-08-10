@@ -853,6 +853,14 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
+        if (RespireCommand.MayCloseWithoutReply(operation))
+        {
+            var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
+            var connection = await cluster.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
+            await connection.SendFireAndForgetAsync(in command, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         try
         {
             using var response = await SendClusterAsync(

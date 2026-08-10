@@ -38,6 +38,9 @@ internal sealed class FakeRespServer : IAsyncDisposable
     /// </summary>
     public int MinimumCommandsBeforeReply { get; set; } = 1;
 
+    /// <summary>Closes the connection after receiving this many commands, without sending a reply.</summary>
+    public int? CloseConnectionAfterCommand { get; set; }
+
     public IReadOnlyList<string> ReceivedCommands
     {
         get
@@ -143,7 +146,12 @@ internal sealed class FakeRespServer : IAsyncDisposable
                 {
                     RecordCommand(in command, connectionId);
                     command.Dispose();
-                    Interlocked.Increment(ref _commandsSeen);
+                    var commandsSeen = Interlocked.Increment(ref _commandsSeen);
+                    if (commandsSeen == CloseConnectionAfterCommand)
+                    {
+                        return;
+                    }
+
                     if (_replyDelays.TryGetValue(replyIndex, out var delay))
                     {
                         await Task.Delay(delay, _cts.Token);

@@ -93,6 +93,28 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task FireAndForget_ShutdownCompletesWhenClusterNodeClosesWithoutReply()
+    {
+        await using var server = new FakeRespServer("*0\r\n"u8.ToArray())
+        {
+            CloseConnectionAfterCommand = 2,
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+        });
+
+        await client.ExecuteFireAndForgetAsync(RespireCommands.Server.SHUTDOWN)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
+        await WaitForCommandsAsync(server, 2);
+
+        await Assert.That(server.ReceivedCommands)
+            .IsEquivalentTo(["CLUSTER SLOTS", "SHUTDOWN"]);
+    }
+
+    [Test]
     public async Task CatalogNoRedirect_SurfacesMovedRedirect()
     {
         await using var target = new FakeRespServer("$5\r\nvalue\r\n"u8.ToArray());
@@ -1256,6 +1278,15 @@ public class ClusterTests
     private static bool TryGetSlot<TCommand>(TCommand command, out int slot)
         where TCommand : struct, IRespCommand
         => command.TryGetClusterSlot(out slot);
+
+    private static async Task WaitForCommandsAsync(FakeRespServer server, int count)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen < count)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+    }
 
     private static int? RawSlot(string operation, RespireValue[] tokens, int firstArgumentIndex)
     {

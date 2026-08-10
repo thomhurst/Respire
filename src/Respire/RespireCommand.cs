@@ -51,6 +51,8 @@ public readonly struct RespireCommand
         _ => RespireCommandBehavior.Multiplexed,
     };
 
+    internal static bool MayCloseWithoutReply(string name) => name == "SHUTDOWN";
+
     internal bool IsBlocking(RespireValue[] args) => IsBlocking(Behavior, args);
 
     internal static bool IsBlocking(
