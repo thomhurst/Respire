@@ -51,18 +51,17 @@ public class PrimitiveCodecTests
     }
 
     [Test]
-    public async Task ReadOnlyMemory_BypassesSerializer_OnWriteAndRead()
+    public async Task ReadOnlyMemory_UsesConfiguredSerializer_OnWriteAndRead()
     {
         var serializer = new CountingSerializer();
         await using var client = CreateClient(serializer);
         ReadOnlyMemory<byte> payload = new byte[] { 0, 1, 254, 255 };
 
         _ = client.Serialize(payload);
-        var deserialized = client.DeserializeBorrowed<ReadOnlyMemory<byte>>(RespValue.BulkString(payload));
+        _ = client.DeserializeBorrowed<ReadOnlyMemory<byte>>(Bulk("{}"));
 
-        await Assert.That(deserialized.ToArray()).IsEquivalentTo(payload.ToArray());
-        await Assert.That(serializer.SerializeCalls).IsEqualTo(0);
-        await Assert.That(serializer.DeserializeCalls).IsEqualTo(0);
+        await Assert.That(serializer.SerializeCalls).IsEqualTo(1);
+        await Assert.That(serializer.DeserializeCalls).IsEqualTo(1);
     }
 
     [Test]

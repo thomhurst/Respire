@@ -873,11 +873,6 @@ public sealed partial class RespireClient : IRespireClient
             return (RespireValue)(object)value;
         }
 
-        if (typeof(T) == typeof(ReadOnlyMemory<byte>))
-        {
-            return (ReadOnlyMemory<byte>)(object)value;
-        }
-
         if (PrimitiveCodec.TrySerialize(value, out var primitive))
         {
             return primitive;
@@ -888,8 +883,13 @@ public sealed partial class RespireClient : IRespireClient
         return buffer.WrittenMemory;
     }
 
+    internal RespireValue SerializeRawCompatible<T>(T value)
+        => value is null && (typeof(T) == typeof(string) || typeof(T) == typeof(byte[]))
+            ? RespireValue.Null
+            : Serialize(value);
+
     internal RespireValue SerializeCollectionMember<T>(T value)
-        => value is bool boolean ? boolean : Serialize(value);
+        => value is bool boolean ? boolean : SerializeRawCompatible(value);
 
     /// <summary>
     /// Reads a value the caller does not own, keeping "reply was null" distinct from a
@@ -914,11 +914,6 @@ public sealed partial class RespireClient : IRespireClient
         if (typeof(T) == typeof(byte[]))
         {
             return (T)(object)value.AsSpan().ToArray();
-        }
-
-        if (typeof(T) == typeof(ReadOnlyMemory<byte>))
-        {
-            return (T)(object)new ReadOnlyMemory<byte>(value.AsSpan().ToArray());
         }
 
         if (PrimitiveCodec.TryDeserialize<T>(value.AsSpan(), out var primitive))

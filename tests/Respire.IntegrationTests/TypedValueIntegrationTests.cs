@@ -65,19 +65,23 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
         await client.Hashes.SetAsync("typed:hash", "count", 0);
         (await client.Hashes.GetStringAsync("typed:hash", "count")).Should().Be("0");
 
-        // Payload types are passed straight through rather than serialized, so forcing the typed
-        // overload on an argument that is already a command argument still writes raw bytes.
-        ReadOnlyMemory<byte> bytes = new byte[] { 0, 1, 254, 255 };
+        var bytes = new byte[] { 0, 1, 254, 255 };
         await client.Hashes.SetAsync("typed:hash", "bytes", bytes);
-        (await client.Hashes.GetBytesAsync("typed:hash", "bytes")).Should().Equal(bytes.ToArray());
-        (await client.Hashes.GetAsync<ReadOnlyMemory<byte>>("typed:hash", "bytes")).ToArray()
-            .Should().Equal(bytes.ToArray());
+        (await client.Hashes.GetBytesAsync("typed:hash", "bytes")).Should().Equal(bytes);
+
+        ReadOnlyMemory<byte> memory = bytes;
+        await client.Hashes.SetAsync("typed:hash", "memory", memory);
+        (await client.Hashes.GetAsync<ReadOnlyMemory<byte>>("typed:hash", "memory")).ToArray()
+            .Should().Equal(bytes);
         await client.Hashes.SetAsync<RespireValue>("typed:hash", "raw", "text");
         (await client.Hashes.GetStringAsync("typed:hash", "raw")).Should().Be("text");
 
         string? nullText = null;
         await client.Hashes.SetAsync("typed:hash", "null-text", nullText);
         (await client.Hashes.GetStringAsync("typed:hash", "null-text")).Should().BeEmpty();
+        byte[]? nullBytes = null;
+        await client.Hashes.SetAsync("typed:hash", "null-bytes", nullBytes);
+        (await client.Hashes.GetStringAsync("typed:hash", "null-bytes")).Should().BeEmpty();
 
         var storedDefault = await client.Hashes.TryGetAsync<int>("typed:hash", "count");
         storedDefault.Found.Should().BeTrue();
@@ -121,6 +125,10 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
         await client.Sets.AddAsync("typed:set:bool", true);
         (await client.Sets.ContainsAsync("typed:set:bool", true)).Should().BeTrue();
 
+        string? nullMember = null;
+        await client.Sets.AddAsync("typed:set:null", nullMember);
+        (await client.Sets.ContainsAsync("typed:set:null", nullMember)).Should().BeTrue();
+
         await client.Sets.AddAsync("typed:set:json", JsonSerializer.Serialize(payload));
         (await client.Sets.ContainsAsync("typed:set:json", payload)).Should().BeTrue();
     }
@@ -139,6 +147,10 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
         (await client.SortedSets.RankAsync("typed:zset:bool", true)).Should().Be(0);
         (await client.SortedSets.IncrementAsync("typed:zset:bool", true, 0.5)).Should().Be(2.0);
         (await client.SortedSets.RemoveAsync("typed:zset:bool", true)).Should().Be(1);
+
+        string? nullMember = null;
+        (await client.SortedSets.AddAsync("typed:zset:null", nullMember, 1.5)).Should().BeTrue();
+        (await client.SortedSets.ScoreAsync("typed:zset:null", nullMember)).Should().Be(1.5);
 
         (await client.SortedSets.AddAsync("typed:zset", payload, 2.5)).Should().BeTrue();
         (await client.SortedSets.ScoreAsync("typed:zset", JsonSerializer.Serialize(payload))).Should().Be(2.5);

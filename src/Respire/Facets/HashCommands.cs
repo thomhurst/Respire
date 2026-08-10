@@ -131,13 +131,10 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
         => client.FlagAsync("HSET", new Cmd3(Verbs.HSet, client.Key(in key), field, value), cancellationToken);
 
     public ValueTask<bool> SetAsync<T>(RespireKey key, string field, T value, CancellationToken cancellationToken = default)
-    {
-        var serialized = value is null && typeof(T) == typeof(string)
-            ? RespireValue.Null
-            : client.Serialize(value);
-        return client.FlagAsync(
-            "HSET", new Cmd3(Verbs.HSet, client.Key(in key), field, serialized), cancellationToken);
-    }
+        => client.FlagAsync(
+            "HSET",
+            new Cmd3(Verbs.HSet, client.Key(in key), field, client.SerializeRawCompatible(value)),
+            cancellationToken);
 
     public ValueTask<long> SetAsync(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
     {
