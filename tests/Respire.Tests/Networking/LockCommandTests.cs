@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -270,6 +271,31 @@ public class LockCommandTests
     }
 
     [Test]
+    public async Task RespireLock_ConcurrentExtensionsPublishMetadataInRequestOrder()
+    {
+        var commands = new CoordinatedLockCommands();
+        var mutex = new RespireLock(
+            commands,
+            "resource",
+            "owner"u8.ToArray(),
+            TimeSpan.FromSeconds(30),
+            Stopwatch.GetTimestamp());
+
+        var first = mutex.ExtendAsync(TimeSpan.FromSeconds(45)).AsTask();
+        await commands.FirstExtensionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var second = mutex.ExtendAsync(TimeSpan.FromSeconds(90)).AsTask();
+
+        await Assert.That(commands.ExtensionCount).IsEqualTo(1);
+        commands.CompleteFirstExtension();
+
+        await Assert.That(await first).IsTrue();
+        await Assert.That(await second).IsTrue();
+        await Assert.That(commands.Expiries).IsEquivalentTo(
+            [TimeSpan.FromSeconds(45), TimeSpan.FromSeconds(90)]);
+        await Assert.That(mutex.Duration).IsEqualTo(TimeSpan.FromSeconds(90));
+    }
+
+    [Test]
     public async Task RespireLock_KeepAliveCancelsWhenOwnershipIsLost()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply, ":0\r\n"u8.ToArray());
@@ -392,5 +418,116 @@ public class LockCommandTests
         {
             await Task.Delay(10, timeout.Token);
         }
+    }
+
+    private sealed class CoordinatedLockCommands : ILockCommands
+    {
+        private readonly TaskCompletionSource<bool> _firstExtension =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly List<TimeSpan> _expiries = [];
+
+        public TaskCompletionSource FirstExtensionStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int ExtensionCount
+        {
+            get
+            {
+                lock (_expiries)
+                {
+                    return _expiries.Count;
+                }
+            }
+        }
+
+        public IReadOnlyList<TimeSpan> Expiries
+        {
+            get
+            {
+                lock (_expiries)
+                {
+                    return _expiries.ToArray();
+                }
+            }
+        }
+
+        public void CompleteFirstExtension() => _firstExtension.TrySetResult(true);
+
+        public ValueTask<bool> ExtendAsync(
+            RespireKey key,
+            RespireValue token,
+            TimeSpan expiry,
+            CancellationToken cancellationToken = default)
+        {
+            int call;
+            lock (_expiries)
+            {
+                _expiries.Add(expiry);
+                call = _expiries.Count;
+            }
+
+            if (call == 1)
+            {
+                FirstExtensionStarted.TrySetResult();
+                return new ValueTask<bool>(_firstExtension.Task);
+            }
+
+            return ValueTask.FromResult(true);
+        }
+
+        public ValueTask<RespireLockAttempt> AcquireAsync(
+            RespireKey key,
+            TimeSpan expiry,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public ValueTask<RespireLockAttempt> AcquireAsync(
+            RespireKey key,
+            TimeSpan expiry,
+            TimeSpan wait,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public ValueTask<RespireLockAttempt> AcquireAsync(
+            RespireKey key,
+            TimeSpan expiry,
+            TimeSpan wait,
+            TimeSpan retryEvery,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public ValueTask<RespireLock> AcquireOrThrowAsync(
+            RespireKey key,
+            TimeSpan expiry,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public ValueTask<RespireLock> AcquireOrThrowAsync(
+            RespireKey key,
+            TimeSpan expiry,
+            TimeSpan wait,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public ValueTask<RespireLock> AcquireOrThrowAsync(
+            RespireKey key,
+            TimeSpan expiry,
+            TimeSpan wait,
+            TimeSpan retryEvery,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public ValueTask<bool> TryTakeAsync(
+            RespireKey key,
+            RespireValue token,
+            TimeSpan expiry,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public ValueTask<bool> ReleaseAsync(
+            RespireKey key,
+            RespireValue token,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public ValueTask<byte[]?> GetOwnerTokenAsync(
+            RespireKey key,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public ValueTask<bool> IsHeldByAsync(
+            RespireLock mutex,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 }

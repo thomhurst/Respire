@@ -56,6 +56,7 @@ public sealed class RespireLock : IAsyncDisposable
     private const int StateNotOwned = 3;
 
     private readonly ILockCommands _locks;
+    private readonly SemaphoreSlim _extendSync = new(1, 1);
     private long _durationTicks;
     private long _renewedTimestamp;
     private int _state;
@@ -134,16 +135,29 @@ public sealed class RespireLock : IAsyncDisposable
             return false;
         }
 
-        var renewedTimestamp = Stopwatch.GetTimestamp();
-        if (!await _locks.ExtendAsync(Key, Token, expiry, cancellationToken).ConfigureAwait(false))
+        await _extendSync.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            Interlocked.CompareExchange(ref _state, StateNotOwned, StateHeld);
-            return false;
-        }
+            if (IsReleased)
+            {
+                return false;
+            }
 
-        Interlocked.Exchange(ref _durationTicks, expiry.Ticks);
-        Interlocked.Exchange(ref _renewedTimestamp, renewedTimestamp);
-        return true;
+            var renewedTimestamp = Stopwatch.GetTimestamp();
+            if (!await _locks.ExtendAsync(Key, Token, expiry, cancellationToken).ConfigureAwait(false))
+            {
+                Interlocked.CompareExchange(ref _state, StateNotOwned, StateHeld);
+                return false;
+            }
+
+            Interlocked.Exchange(ref _durationTicks, expiry.Ticks);
+            Interlocked.Exchange(ref _renewedTimestamp, renewedTimestamp);
+            return true;
+        }
+        finally
+        {
+            _extendSync.Release();
+        }
     }
 
     /// <summary>
