@@ -1360,6 +1360,9 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ValueTask<T?> GetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
             => inner.GetAsync<T>(key, cancellationToken);
 
+        public ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
+            => inner.TryGetAsync<T>(key, cancellationToken);
+
         public ValueTask<byte[]?> GetBytesAsync(RespireKey key, CancellationToken cancellationToken = default)
             => inner.GetBytesAsync(key, cancellationToken);
 
