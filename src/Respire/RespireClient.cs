@@ -1329,12 +1329,12 @@ public sealed partial class RespireClient : IRespireClient
         bool sendAsking)
         where TCommand : struct, IRespCommand
     {
-        using var timeoutCancellation = PooledCommandCancellation.Rent(cancellationToken, timeout);
+        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
         try
         {
             return await (sendAsking
-                    ? ClusterRouter.SendAskingAsync(connection, in command, timeoutCancellation.Token, operation)
-                    : connection.SendCheckedAsync(in command, timeoutCancellation.Token, operation))
+                    ? ClusterRouter.SendAskingAsync(connection, in command, timeoutSource.Token, operation)
+                    : connection.SendCheckedAsync(in command, timeoutSource.Token, operation))
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -1616,10 +1616,10 @@ public sealed partial class RespireClient : IRespireClient
             return;
         }
 
-        using var timeoutCancellation = PooledCommandCancellation.Rent(cancellationToken, timeout);
+        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
         try
         {
-            await core.Multiplexer.EnsureReliableCorrectionOrderingAsync(timeoutCancellation.Token).ConfigureAwait(false);
+            await core.Multiplexer.EnsureReliableCorrectionOrderingAsync(timeoutSource.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -1762,10 +1762,10 @@ public sealed partial class RespireClient : IRespireClient
             return await multiplexer.GetHealthyConnectionAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        using var timeoutCancellation = PooledCommandCancellation.Rent(cancellationToken, timeout);
+        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
         try
         {
-            return await multiplexer.GetHealthyConnectionAsync(timeoutCancellation.Token).ConfigureAwait(false);
+            return await multiplexer.GetHealthyConnectionAsync(timeoutSource.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -1785,10 +1785,10 @@ public sealed partial class RespireClient : IRespireClient
                 .ConfigureAwait(false);
         }
 
-        using var timeoutCancellation = PooledCommandCancellation.Rent(cancellationToken, timeout);
+        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
         try
         {
-            return await cluster.GetTrackedConnectionAsync(slot, requireIdentity, timeoutCancellation.Token)
+            return await cluster.GetTrackedConnectionAsync(slot, requireIdentity, timeoutSource.Token)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -1811,11 +1811,11 @@ public sealed partial class RespireClient : IRespireClient
                 .ConfigureAwait(false);
         }
 
-        using var timeoutCancellation = PooledCommandCancellation.Rent(cancellationToken, timeout);
+        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
         try
         {
             return await cluster.GetTrackedRedirectConnectionAsync(
-                    error, source, requireIdentity, timeoutCancellation.Token)
+                    error, source, requireIdentity, timeoutSource.Token)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -2062,10 +2062,10 @@ public sealed partial class RespireClient : IRespireClient
     internal async ValueTask UnlinkGuardedAsync(RespireKey key, CancellationToken cancellationToken)
     {
         var timeout = _core.Options.CommandTimeout ?? RemovalLeaseTtl;
-        using var timeoutCancellation = PooledCommandCancellation.Rent(cancellationToken, timeout);
+        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
         try
         {
-            await UnlinkLeasedAsync(key, timeoutCancellation.Token).ConfigureAwait(false);
+            await UnlinkLeasedAsync(key, timeoutSource.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -2286,7 +2286,7 @@ public sealed partial class RespireClient : IRespireClient
         TimeSpan timeout)
         where TCommand : struct, IRespCommand
     {
-        using var timeoutCancellation = PooledCommandCancellation.Rent(cancellationToken, timeout);
+        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
         try
         {
             return await connection.SendConvertedAsync(
@@ -2294,13 +2294,13 @@ public sealed partial class RespireClient : IRespireClient
                     state,
                     converter,
                     transferOwnership,
-                    timeoutCancellation.Token,
+                    timeoutSource.Token,
                     operation)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (
             !cancellationToken.IsCancellationRequested
-            && timeoutCancellation.Token.IsCancellationRequested)
+            && timeoutSource.IsCancellationRequested)
         {
             throw new RespireTimeoutException(operation, timeout);
         }
@@ -2412,11 +2412,11 @@ public sealed partial class RespireClient : IRespireClient
         TimeSpan timeout)
         where TCommand : struct, IRespCommand
     {
-        using var timeoutCancellation = PooledCommandCancellation.Rent(cancellationToken, timeout);
+        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
         try
         {
             return await connection.SendStringAsync(
-                    in command, timeoutCancellation.Token, operation)
+                    in command, timeoutSource.Token, operation)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
