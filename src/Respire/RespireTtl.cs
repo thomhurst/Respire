@@ -29,6 +29,7 @@ public readonly struct RespireTtl
             _ => new RespireTtl(exists: true, timeToLive: TimeSpan.FromMilliseconds(milliseconds)),
         };
 
+    /// <inheritdoc/>
     public override string ToString()
         => !Exists ? "(missing)" : TimeToLive is { } ttl ? ttl.ToString() : "(no expiry)";
 }

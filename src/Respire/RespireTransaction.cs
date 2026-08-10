@@ -45,6 +45,7 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
         _watchConnection = watchConnection;
     }
 
+    /// <summary>The number of commands queued for the transaction.</summary>
     public int Count => _ops.Count;
 
     // Deferred command facets, grouped exactly like the client's — and the same interfaces a

@@ -48,8 +48,10 @@ public readonly record struct RespireEndpoint(string Host, int Port = 6379)
         return new RespireEndpoint(value);
     }
 
+    /// <summary>Parses a host or host-and-port string.</summary>
     public static implicit operator RespireEndpoint(string value) => Parse(value);
 
+    /// <inheritdoc/>
     public override string ToString() => Host.Contains(':', StringComparison.Ordinal)
         ? $"[{Host}]:{Port}"
         : $"{Host}:{Port}";
@@ -58,6 +60,7 @@ public readonly record struct RespireEndpoint(string Host, int Port = 6379)
 /// <summary>RESP protocol version negotiated during the handshake.</summary>
 public enum RespProtocol
 {
+    /// <summary>RESP2, supported by Redis 2.0 and later.</summary>
     Resp2 = 2,
 
     /// <summary>HELLO 3 — required for push-based features such as client-side caching. Redis 6+.</summary>
@@ -102,6 +105,7 @@ public sealed record RespireOptions
     /// <summary>ACL username. Defaults to Redis's "default" user when only a password is set.</summary>
     public string? Username { get; init; }
 
+    /// <summary>Password sent by AUTH or HELLO during connection setup.</summary>
     public string? Password { get; init; }
 
     /// <summary>Optional ACL username for Sentinel endpoints; falls back to <see cref="Username"/>.</summary>
@@ -133,6 +137,7 @@ public sealed record RespireOptions
     /// <summary>Allows high-risk administrative commands such as FLUSHDB, FLUSHALL, and CONFIG SET.</summary>
     public bool AllowAdmin { get; init; }
 
+    /// <summary>RESP protocol version negotiated during connection setup.</summary>
     public RespProtocol Protocol { get; init; } = RespProtocol.Resp2;
 
     /// <summary>Timeout for the initial TCP connect (per connection).</summary>
@@ -167,6 +172,7 @@ public sealed record RespireOptions
     /// <summary>Serializer behind non-primitive typed values. System.Text.Json by default.</summary>
     public IRespireSerializer Serializer { get; init; } = RespireSerializer.Default;
 
+    /// <summary>Optional factory for Respire diagnostic logs.</summary>
     public ILoggerFactory? LoggerFactory { get; init; }
 
     /// <summary>
@@ -193,6 +199,7 @@ public sealed record RespireOptions
     /// <summary>Buffered messages per subscription before <see cref="SubscriptionOverflow"/> applies.</summary>
     public int SubscriptionBufferSize { get; init; } = 1024;
 
+    /// <summary>Policy used when a subscription consumer falls behind.</summary>
     public SubscriptionOverflow SubscriptionOverflow { get; init; } = SubscriptionOverflow.DropOldest;
 
     // Advanced wire tuning — the defaults are right for almost everyone.

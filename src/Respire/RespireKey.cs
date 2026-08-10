@@ -13,13 +13,16 @@ public readonly struct RespireKey : IEquatable<RespireKey>
     private readonly string? _string;
     private readonly ReadOnlyMemory<byte> _bytes;
 
+    /// <summary>Creates a UTF-8 Redis key.</summary>
     public RespireKey(string key) => _string = key ?? throw new ArgumentNullException(nameof(key));
 
+    /// <summary>Creates a binary-safe Redis key.</summary>
     public RespireKey(ReadOnlyMemory<byte> key) => _bytes = key;
 
     /// <summary>An empty Redis key. The default value.</summary>
     public static readonly RespireKey Empty = default;
 
+    /// <summary>Whether this key has zero bytes.</summary>
     public bool IsEmpty => _string is null or "" && _bytes.IsEmpty;
 
     /// <summary>The Redis Cluster hash slot for this key, including {...} hash-tag semantics.</summary>
@@ -27,14 +30,19 @@ public readonly struct RespireKey : IEquatable<RespireKey>
         ? Internal.ClusterHash.GetSlot(_string)
         : Internal.ClusterHash.GetSlot(_bytes.Span);
 
+    /// <summary>Converts text to a UTF-8 Redis key.</summary>
     public static implicit operator RespireKey(string key) => new(key);
 
+    /// <summary>Converts a byte array to a binary-safe Redis key.</summary>
     public static implicit operator RespireKey(byte[] key) => new(key.AsMemory());
 
+    /// <summary>Converts read-only bytes to a binary-safe Redis key.</summary>
     public static implicit operator RespireKey(ReadOnlyMemory<byte> key) => new(key);
 
+    /// <summary>Tests two keys for byte equality.</summary>
     public static bool operator ==(RespireKey left, RespireKey right) => left.Equals(right);
 
+    /// <summary>Tests two keys for byte inequality.</summary>
     public static bool operator !=(RespireKey left, RespireKey right) => !left.Equals(right);
 
     /// <summary>The key as a command argument.</summary>
@@ -72,11 +80,15 @@ public readonly struct RespireKey : IEquatable<RespireKey>
         }
     }
 
+    /// <inheritdoc/>
     public override string ToString() => _string ?? Internal.Utf8String.GetString(_bytes);
 
+    /// <inheritdoc/>
     public bool Equals(RespireKey other) => AsValue().Equals(other.AsValue());
 
+    /// <inheritdoc/>
     public override bool Equals(object? obj) => obj is RespireKey other && Equals(other);
 
+    /// <inheritdoc/>
     public override int GetHashCode() => AsValue().GetHashCode();
 }

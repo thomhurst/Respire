@@ -3,10 +3,12 @@ namespace Respire;
 /// <summary>Base exception for all Respire failures.</summary>
 public class RespireException : Exception
 {
+    /// <summary>Creates a Respire exception.</summary>
     public RespireException(string message) : base(message)
     {
     }
 
+    /// <summary>Creates a Respire exception with its underlying cause.</summary>
     public RespireException(string message, Exception innerException) : base(message, innerException)
     {
     }
@@ -15,10 +17,12 @@ public class RespireException : Exception
 /// <summary>The connection failed, was closed by the peer, or was disposed with commands in flight.</summary>
 public class RespireConnectionException : RespireException
 {
+    /// <summary>Creates a connection exception.</summary>
     public RespireConnectionException(string message) : base(message)
     {
     }
 
+    /// <summary>Creates a connection exception with its underlying cause.</summary>
     public RespireConnectionException(string message, Exception innerException) : base(message, innerException)
     {
     }
@@ -27,10 +31,12 @@ public class RespireConnectionException : RespireException
 /// <summary>The byte stream violated the RESP protocol; the connection is no longer usable.</summary>
 public sealed class RespireProtocolException : RespireException
 {
+    /// <summary>Creates a protocol exception.</summary>
     public RespireProtocolException(string message) : base(message)
     {
     }
 
+    /// <summary>Creates a protocol exception with its underlying cause.</summary>
     public RespireProtocolException(string message, Exception innerException) : base(message, innerException)
     {
     }
@@ -39,10 +45,12 @@ public sealed class RespireProtocolException : RespireException
 /// <summary>Respire configuration prevents the requested operation from being used.</summary>
 public sealed class RespireConfigurationException : RespireException
 {
+    /// <summary>Creates a configuration exception.</summary>
     public RespireConfigurationException(string message) : base(message)
     {
     }
 
+    /// <summary>Creates a configuration exception with its underlying cause.</summary>
     public RespireConfigurationException(string message, Exception innerException) : base(message, innerException)
     {
     }
@@ -67,10 +75,12 @@ public sealed class RespireTransactionAbortedException() : InvalidOperationExcep
 /// <summary>The server answered a command with a RESP error reply ("-WRONGTYPE ...").</summary>
 public sealed class RespireServerException : RespireException
 {
+    /// <summary>Creates a server exception when the originating command is unknown.</summary>
     public RespireServerException(string message) : this(message, commandName: null)
     {
     }
 
+    /// <summary>Creates a server exception for a named Redis command.</summary>
     public RespireServerException(string message, string? commandName) : base(message)
     {
         Code = ParseCode(message);
@@ -113,22 +123,39 @@ public sealed class RespireServerException : RespireException
 /// <summary>Known Redis error reply codes.</summary>
 public static class RespireErrorCodes
 {
+    /// <summary>Generic server error.</summary>
     public const string Err = "ERR";
+    /// <summary>Command used against the wrong data type.</summary>
     public const string WrongType = "WRONGTYPE";
+    /// <summary>Referenced Lua script is not cached.</summary>
     public const string NoScript = "NOSCRIPT";
+    /// <summary>Consumer group already exists.</summary>
     public const string BusyGroup = "BUSYGROUP";
+    /// <summary>Authentication is required.</summary>
     public const string NoAuth = "NOAUTH";
+    /// <summary>The authenticated user lacks permission.</summary>
     public const string NoPerm = "NOPERM";
+    /// <summary>The server is loading data.</summary>
     public const string Loading = "LOADING";
+    /// <summary>A script or function is busy.</summary>
     public const string Busy = "BUSY";
+    /// <summary>The cluster is unavailable.</summary>
     public const string ClusterDown = "CLUSTERDOWN";
+    /// <summary>The cluster asks the client to retry.</summary>
     public const string TryAgain = "TRYAGAIN";
+    /// <summary>The master is unavailable.</summary>
     public const string MasterDown = "MASTERDOWN";
+    /// <summary>Permanent Redis Cluster slot redirect.</summary>
     public const string Moved = "MOVED";
+    /// <summary>Temporary Redis Cluster slot redirect.</summary>
     public const string Ask = "ASK";
+    /// <summary>A replica rejected a write.</summary>
     public const string ReadOnly = "READONLY";
+    /// <summary>The server rejected a write because of memory policy.</summary>
     public const string Oom = "OOM";
+    /// <summary>A transaction was discarded because queueing failed.</summary>
     public const string ExecAbort = "EXECABORT";
+    /// <summary>Keys do not hash to one Redis Cluster slot.</summary>
     public const string CrossSlot = "CROSSSLOT";
 }
 
@@ -139,6 +166,7 @@ public static class RespireErrorCodes
 /// </summary>
 public sealed class RespireTimeoutException : RespireException
 {
+    /// <summary>Creates a command timeout exception.</summary>
     public RespireTimeoutException(string commandName, TimeSpan timeout)
         : base(CreateMessage(commandName, timeout))
     {
@@ -146,6 +174,7 @@ public sealed class RespireTimeoutException : RespireException
         Timeout = timeout;
     }
 
+    /// <summary>Creates a command timeout exception with its underlying cause.</summary>
     public RespireTimeoutException(string commandName, TimeSpan timeout, Exception innerException)
         : base(CreateMessage(commandName, timeout), innerException)
     {
@@ -153,8 +182,10 @@ public sealed class RespireTimeoutException : RespireException
         Timeout = timeout;
     }
 
+    /// <summary>The Redis command whose response timed out.</summary>
     public string CommandName { get; }
 
+    /// <summary>The response timeout that elapsed.</summary>
     public TimeSpan Timeout { get; }
 
     private static string CreateMessage(string commandName, TimeSpan timeout)
