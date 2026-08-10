@@ -388,7 +388,9 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
         }
     }
 
-    /// <summary>Releases the buffer (and any watch connection) of an uncommitted transaction.</summary>
+    /// <summary>
+    /// Discards an uncommitted transaction, faults its queued pendings, and releases its resources.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
         if (_completed)
@@ -397,6 +399,12 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
         }
 
         _completed = true;
+        var error = new RespireTransactionDiscardedException();
+        foreach (var operation in _ops)
+        {
+            operation.Fail(error);
+        }
+
         await ReleaseAsync().ConfigureAwait(false);
     }
 

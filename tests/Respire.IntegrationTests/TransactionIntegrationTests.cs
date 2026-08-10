@@ -53,6 +53,25 @@ public class TransactionIntegrationTests
     }
 
     [Test]
+    public async Task Transaction_DisposeWithoutCommit_FaultsQueuedPendings()
+    {
+        await _client.DeleteAsync("tx:discarded");
+        var transaction = _client.CreateTransaction();
+        var setPending = transaction.Set("tx:discarded", "value");
+        var getPending = transaction.GetString("tx:discarded");
+
+        await transaction.DisposeAsync();
+
+        setPending.Status.Should().Be(RespirePendingStatus.Faulted);
+        getPending.Status.Should().Be(RespirePendingStatus.Faulted);
+        setPending.Error.Should().BeOfType<RespireTransactionDiscardedException>();
+        getPending.Error.Should().BeOfType<RespireTransactionDiscardedException>();
+        var readDiscarded = () => getPending.Result;
+        readDiscarded.Should().ThrowExactly<RespireTransactionDiscardedException>();
+        (await _client.ExistsAsync("tx:discarded")).Should().BeFalse();
+    }
+
+    [Test]
     public async Task Transaction_RuntimeError_FaultsOnlyThatCommand()
     {
         await _client.DeleteAsync("tx:err:applied");
