@@ -31,6 +31,9 @@ public interface IBatchHashCommands
     /// <summary>The whole hash as a dictionary. Redis: HGETALL.</summary>
     RespirePending<Dictionary<string, string>> GetAll(RespireKey key);
 
+    /// <summary>The whole hash with values deserialized as <typeparamref name="T"/>. Redis: HGETALL.</summary>
+    RespirePending<Dictionary<string, T>> GetAll<T>(RespireKey key);
+
     /// <summary>Deletes fields; returns how many existed. Redis: HDEL.</summary>
     RespirePending<long> Delete(RespireKey key, params ReadOnlySpan<string> fields);
 
@@ -142,6 +145,11 @@ internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
         => sink.Add<Cmd1, Dictionary<string, string>>(
             "HGETALL", new Cmd1(Verbs.HGetAll, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.StringMap(in v));
+
+    public RespirePending<Dictionary<string, T>> GetAll<T>(RespireKey key)
+        => sink.Add<Cmd1, Dictionary<string, T>>(
+            "HGETALL", new Cmd1(Verbs.HGetAll, sink.Client.Key(in key)),
+            static (c, v) => c.DeserializeMap<T>(in v));
 
     public RespirePending<long> Delete(RespireKey key, params ReadOnlySpan<string> fields)
         => sink.Add<Cmd1N, long>(

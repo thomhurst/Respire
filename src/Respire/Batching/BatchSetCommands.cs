@@ -25,6 +25,9 @@ public interface IBatchSetCommands
     /// <summary>All members. Redis: SMEMBERS.</summary>
     RespirePending<string[]> Members(RespireKey key);
 
+    /// <summary>All members deserialized as <typeparamref name="T"/>. Redis: SMEMBERS.</summary>
+    RespirePending<T[]> Members<T>(RespireKey key);
+
     /// <summary>Removes and returns a random member, or null when empty. Redis: SPOP.</summary>
     RespirePending<string?> Pop(RespireKey key);
 
@@ -73,6 +76,11 @@ internal sealed class BatchSetCommands(IPendingSink sink) : IBatchSetCommands
         => sink.Add<Cmd1, string[]>(
             "SMEMBERS", new Cmd1(Verbs.SMembers, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.StringArray(in v));
+
+    public RespirePending<T[]> Members<T>(RespireKey key)
+        => sink.Add<Cmd1, T[]>(
+            "SMEMBERS", new Cmd1(Verbs.SMembers, sink.Client.Key(in key)),
+            static (c, v) => c.DeserializeArray<T>(in v));
 
     public RespirePending<string?> Pop(RespireKey key)
         => sink.Add<Cmd1, string?>(

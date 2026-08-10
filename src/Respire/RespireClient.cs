@@ -2371,7 +2371,7 @@ public sealed partial class RespireClient : IRespireClient
             static (RespireClient _, in RespValue value) => new RespireLease(in value),
             transferOwnership: true);
 
-    private T[] DeserializeArray<T>(in RespValue value)
+    internal T[] DeserializeArray<T>(in RespValue value)
     {
         var elements = value.AsArray();
         var result = new T[elements.Length];
@@ -2383,7 +2383,7 @@ public sealed partial class RespireClient : IRespireClient
         return result;
     }
 
-    private T?[] DeserializeNullableArray<T>(in RespValue value)
+    internal T?[] DeserializeNullableArray<T>(in RespValue value)
     {
         var elements = value.AsArray();
         var result = new T?[elements.Length];
@@ -2395,7 +2395,7 @@ public sealed partial class RespireClient : IRespireClient
         return result;
     }
 
-    private Dictionary<string, T> DeserializeMap<T>(in RespValue value)
+    internal Dictionary<string, T> DeserializeMap<T>(in RespValue value)
     {
         var elements = value.AsArray();
         var result = new Dictionary<string, T>(elements.Length / 2);

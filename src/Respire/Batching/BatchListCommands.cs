@@ -36,6 +36,9 @@ public interface IBatchListCommands
     /// <summary>Elements between two indexes inclusive (negative counts from the end). Redis: LRANGE.</summary>
     RespirePending<string[]> Range(RespireKey key, long start = 0, long stop = -1);
 
+    /// <summary>Deserialized elements between two indexes inclusive. Redis: LRANGE.</summary>
+    RespirePending<T[]> Range<T>(RespireKey key, long start = 0, long stop = -1);
+
     /// <summary>The element at an index, or null out of range. Redis: LINDEX.</summary>
     RespirePending<string?> Index(RespireKey key, long index);
 
@@ -92,6 +95,11 @@ internal sealed class BatchListCommands(IPendingSink sink) : IBatchListCommands
         => sink.Add<Cmd3, string[]>(
             "LRANGE", new Cmd3(Verbs.LRange, sink.Client.Key(in key), start, stop),
             static (c, v) => ResponseReader.StringArray(in v));
+
+    public RespirePending<T[]> Range<T>(RespireKey key, long start = 0, long stop = -1)
+        => sink.Add<Cmd3, T[]>(
+            "LRANGE", new Cmd3(Verbs.LRange, sink.Client.Key(in key), start, stop),
+            static (c, v) => c.DeserializeArray<T>(in v));
 
     public RespirePending<string?> Index(RespireKey key, long index)
         => sink.Add<Cmd2, string?>(
