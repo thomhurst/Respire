@@ -5,7 +5,8 @@ namespace Respire;
 
 /// <summary>
 /// Set (unordered, unique members) commands queued on a <see cref="RespireBatch"/> or
-/// <see cref="RespireTransaction"/>. Mirrors <see cref="ISetCommands"/>.
+/// <see cref="RespireTransaction"/>. Mirrors <see cref="ISetCommands"/>; collection cardinality
+/// uses <see cref="CountAsync"/>.
 /// </summary>
 public interface IBatchSetCommands
 {

@@ -142,7 +142,10 @@ public readonly record struct RespireStreamConsumerInfo(
     TimeSpan IdleTime,
     TimeSpan? InactiveTime);
 
-/// <summary>Stream commands. Group reading is exposed as an endless async stream of entries.</summary>
+/// <summary>
+/// Stream commands. Collection cardinality uses <see cref="CountAsync"/>. Group reading is
+/// exposed as an endless async stream of entries.
+/// </summary>
 public interface IStreamCommands
 {
     /// <summary>Appends an entry (id auto-generated) and returns its id. Redis: XADD.</summary>
@@ -155,7 +158,7 @@ public interface IStreamCommands
         CancellationToken cancellationToken);
 
     /// <summary>Number of entries. Redis: XLEN.</summary>
-    ValueTask<long> LengthAsync(RespireKey key, CancellationToken cancellationToken = default);
+    ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Entries in an inclusive id range. Redis: XRANGE.</summary>
     ValueTask<RespireStreamEntry[]> RangeAsync(
@@ -293,7 +296,7 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
     private async ValueTask<RespireStreamId> AddCoreAsync(Cmd1N command, CancellationToken cancellationToken)
         => new(await client.StringAsync("XADD", command, cancellationToken).ConfigureAwait(false));
 
-    public ValueTask<long> LengthAsync(RespireKey key, CancellationToken cancellationToken = default)
+    public ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.IntegerAsync("XLEN", new Cmd1(Verbs.XLen, client.Key(in key)), cancellationToken);
 
     public async ValueTask<RespireStreamEntry[]> RangeAsync(

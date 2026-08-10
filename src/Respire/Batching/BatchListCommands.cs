@@ -6,7 +6,8 @@ namespace Respire;
 /// <summary>
 /// List commands queued on a <see cref="RespireBatch"/> or <see cref="RespireTransaction"/>.
 /// Mirrors <see cref="IListCommands"/> without its <c>waitFor</c> parameters: the blocking
-/// variants (BLPOP, BLMOVE, …) have no deferred form because a batch cannot block.
+/// variants (BLPOP, BLMOVE, …) have no deferred form because a batch cannot block. Collection
+/// cardinality uses <see cref="CountAsync"/>.
 /// </summary>
 public interface IBatchListCommands
 {
@@ -29,8 +30,8 @@ public interface IBatchListCommands
     RespirePending<string?> MoveAsync(
         RespireKey source, RespireKey destination, ListSide from = ListSide.Left, ListSide to = ListSide.Right);
 
-    /// <summary>List length (0 when missing). Redis: LLEN.</summary>
-    RespirePending<long> LengthAsync(RespireKey key);
+    /// <summary>Number of elements in the list (0 when missing). Redis: LLEN.</summary>
+    RespirePending<long> CountAsync(RespireKey key);
 
     /// <summary>Elements between two indexes inclusive (negative counts from the end). Redis: LRANGE.</summary>
     RespirePending<string[]> RangeAsync(RespireKey key, long start = 0, long stop = -1);
@@ -82,7 +83,7 @@ internal sealed class BatchListCommands(IPendingSink sink) : IBatchListCommands
             static (c, v) => ResponseReader.StringOrNull(in v));
     }
 
-    public RespirePending<long> LengthAsync(RespireKey key)
+    public RespirePending<long> CountAsync(RespireKey key)
         => sink.Add<Cmd1, long>(
             "LLEN", new Cmd1(Verbs.LLen, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.Integer(in v));

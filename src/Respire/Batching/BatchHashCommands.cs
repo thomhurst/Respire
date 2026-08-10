@@ -5,7 +5,8 @@ namespace Respire;
 
 /// <summary>
 /// Hash (field → value map) commands queued on a <see cref="RespireBatch"/> or
-/// <see cref="RespireTransaction"/>. Mirrors <see cref="IHashCommands"/>.
+/// <see cref="RespireTransaction"/>. Mirrors <see cref="IHashCommands"/>; collection cardinality
+/// uses <see cref="CountAsync"/>.
 /// </summary>
 public interface IBatchHashCommands
 {
@@ -37,7 +38,7 @@ public interface IBatchHashCommands
     RespirePending<bool> ExistsAsync(RespireKey key, string field);
 
     /// <summary>Number of fields in the hash. Redis: HLEN.</summary>
-    RespirePending<long> LengthAsync(RespireKey key);
+    RespirePending<long> CountAsync(RespireKey key);
 
     /// <summary>Atomically adds to a numeric field and returns the new value. Redis: HINCRBY.</summary>
     RespirePending<long> IncrementAsync(RespireKey key, string field, long by = 1);
@@ -152,7 +153,7 @@ internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
             "HEXISTS", new Cmd2(Verbs.HExists, sink.Client.Key(in key), field),
             static (c, v) => ResponseReader.Flag(in v));
 
-    public RespirePending<long> LengthAsync(RespireKey key)
+    public RespirePending<long> CountAsync(RespireKey key)
         => sink.Add<Cmd1, long>(
             "HLEN", new Cmd1(Verbs.HLen, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.Integer(in v));

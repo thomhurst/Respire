@@ -9,6 +9,16 @@ namespace Respire.Tests.Networking;
 public class StreamManagementCommandTests
 {
     [Test]
+    public async Task Count_WritesXLenAndParsesTheEntryCount()
+    {
+        await using var server = new FakeRespServer(Integer(2));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await Assert.That(await client.Streams.CountAsync("events")).IsEqualTo(2);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "XLEN events" });
+    }
+
+    [Test]
     public async Task StreamManagementCommands_WriteExpectedFramesAndParseReplies()
     {
         await using var server = new FakeRespServer(

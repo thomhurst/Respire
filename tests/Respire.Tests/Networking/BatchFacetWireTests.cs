@@ -26,8 +26,10 @@ public class BatchFacetWireTests
         await client.Keys.ExpireAtAsync("k1", DateTimeOffset.FromUnixTimeMilliseconds(987654321));
         await client.Hashes.SetAsync("h", ("f1", "v1"), ("f2", "v2"));
         await client.Hashes.SetExpireAsync("h", TimeSpan.FromSeconds(2), SetWhen.NotExists, ("a", "one"));
+        await client.Hashes.CountAsync("h");
         await client.Lists.RightPushAsync("l", "x", "y");
         await client.Lists.RemoveAsync("l", "x", count: -1);
+        await client.Lists.CountAsync("l");
         await client.Sets.IntersectStoreAsync("dest", "s1", "s2");
         await client.SortedSets.AddAsync("z", new SortedSetEntry("ada", 42), new SortedSetEntry("grace", 58));
         await client.SortedSets.CountByScoreAsync("z", 10, 50);
@@ -44,8 +46,10 @@ public class BatchFacetWireTests
         _ = batch.Keys.ExpireAtAsync("k1", DateTimeOffset.FromUnixTimeMilliseconds(987654321));
         _ = batch.Hashes.SetAsync("h", ("f1", "v1"), ("f2", "v2"));
         _ = batch.Hashes.SetExpireAsync("h", TimeSpan.FromSeconds(2), SetWhen.NotExists, ("a", "one"));
+        _ = batch.Hashes.CountAsync("h");
         _ = batch.Lists.RightPushAsync("l", "x", "y");
         _ = batch.Lists.RemoveAsync("l", "x", count: -1);
+        _ = batch.Lists.CountAsync("l");
         _ = batch.Sets.IntersectStoreAsync("dest", "s1", "s2");
         _ = batch.SortedSets.AddAsync("z", new SortedSetEntry("ada", 42), new SortedSetEntry("grace", 58));
         _ = batch.SortedSets.CountByScoreAsync("z", 10, 50);

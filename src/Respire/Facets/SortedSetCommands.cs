@@ -7,7 +7,10 @@ namespace Respire;
 /// <summary>A sorted-set member with its score.</summary>
 public readonly record struct SortedSetEntry(string Member, double Score);
 
-/// <summary>Sorted set (score-ordered members) commands.</summary>
+/// <summary>
+/// Sorted set (score-ordered members) commands. Collection cardinality uses
+/// <see cref="CountAsync"/>; score-range cardinality uses <see cref="CountByScoreAsync"/>.
+/// </summary>
 public interface ISortedSetCommands
 {
     /// <summary>Adds or updates one member. Returns true when the member was new. Redis: ZADD.</summary>

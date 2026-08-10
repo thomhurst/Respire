@@ -2,7 +2,9 @@ using Respire.Commands;
 
 namespace Respire;
 
-/// <summary>Hash (field → value map) commands.</summary>
+/// <summary>
+/// Hash (field → value map) commands. Collection cardinality uses <see cref="CountAsync"/>.
+/// </summary>
 public interface IHashCommands
 {
     /// <summary>Sets one field. Returns true when the field was newly created. Redis: HSET.</summary>
@@ -67,7 +69,7 @@ public interface IHashCommands
     ValueTask<bool> ExistsAsync(RespireKey key, string field, CancellationToken cancellationToken = default);
 
     /// <summary>Number of fields in the hash. Redis: HLEN.</summary>
-    ValueTask<long> LengthAsync(RespireKey key, CancellationToken cancellationToken = default);
+    ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Atomically adds to a numeric field and returns the new value. Redis: HINCRBY.</summary>
     ValueTask<long> IncrementAsync(RespireKey key, string field, long by = 1, CancellationToken cancellationToken = default);
@@ -269,7 +271,7 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
     public ValueTask<bool> ExistsAsync(RespireKey key, string field, CancellationToken cancellationToken = default)
         => client.FlagAsync("HEXISTS", new Cmd2(Verbs.HExists, client.Key(in key), field), cancellationToken);
 
-    public ValueTask<long> LengthAsync(RespireKey key, CancellationToken cancellationToken = default)
+    public ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.IntegerAsync("HLEN", new Cmd1(Verbs.HLen, client.Key(in key)), cancellationToken);
 
     public ValueTask<long> IncrementAsync(RespireKey key, string field, long by = 1, CancellationToken cancellationToken = default)
