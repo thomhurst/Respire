@@ -1172,6 +1172,30 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task SplitRawScriptFlushFireAndForget_VisitsEveryMaster()
+    {
+        await using var firstNode = new FakeRespServer(FakeRespServer.OkReply);
+        await using var secondNode = new FakeRespServer(FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*2\r\n" +
+            $"*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{firstNode.Port}\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{secondNode.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        await client.ExecuteFireAndForgetAsync("SCRIPT", "FLUSH");
+        await WaitForCommandsAsync(firstNode, 1);
+        await WaitForCommandsAsync(secondNode, 1);
+
+        await Assert.That(firstNode.ReceivedCommands).IsEquivalentTo(["SCRIPT FLUSH"]);
+        await Assert.That(secondNode.ReceivedCommands).IsEquivalentTo(["SCRIPT FLUSH"]);
+    }
+
+    [Test]
     public async Task BlockingServerError_ReturnsHealthyConnectionToNodePool()
     {
         await using var target = new FakeRespServer(

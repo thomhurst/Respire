@@ -290,6 +290,10 @@ public class CommandCatalogTests
             .Throws<NotSupportedException>()
             .WithMessage(
                 "SCRIPT DEBUG requires connection affinity and cannot run through ExecuteFireAndForgetAsync.");
+        await Assert.That(async () => await client.ExecuteFireAndForgetAsync("SCRIPT", "DEBUG", "YES"))
+            .Throws<NotSupportedException>()
+            .WithMessage(
+                "SCRIPT requires connection affinity and cannot run through ExecuteFireAndForgetAsync.");
 
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
@@ -301,6 +305,8 @@ public class CommandCatalogTests
             FakeRespServer.OkReply,
             FakeRespServer.OkReply,
             FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
             FakeRespServer.OkReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
@@ -308,10 +314,19 @@ public class CommandCatalogTests
         await client.ExecuteFireAndForgetAsync("SCRIPT EXISTS", "sha1");
         await client.ExecuteFireAndForgetAsync("SCRIPT HELP");
         await client.ExecuteFireAndForgetAsync("SCRIPT SHOW", "sha1");
-        await WaitForCommandsAsync(server, 4);
+        await client.ExecuteFireAndForgetAsync("SCRIPT", "KILL");
+        await client.ExecuteFireAndForgetAsync("SCRIPT", "HELP");
+        await WaitForCommandsAsync(server, 6);
 
         await Assert.That(server.ReceivedCommands)
-            .IsEquivalentTo(["SCRIPT KILL", "SCRIPT EXISTS sha1", "SCRIPT HELP", "SCRIPT SHOW sha1"]);
+            .IsEquivalentTo([
+                "SCRIPT KILL",
+                "SCRIPT EXISTS sha1",
+                "SCRIPT HELP",
+                "SCRIPT SHOW sha1",
+                "SCRIPT KILL",
+                "SCRIPT HELP",
+            ]);
     }
 
     [Test]

@@ -514,6 +514,11 @@ public sealed partial class RespireClient : IRespireClient
         ReadOnlySpan<RespireValue> arguments)
     {
         var behavior = RespireCommand.Classify(operation);
+        if (operation == "SCRIPT" && arguments.Length > 0 && IsMultiplexedScriptSubcommand(arguments[0]))
+        {
+            behavior = RespireCommandBehavior.Multiplexed;
+        }
+
         if (behavior == RespireCommandBehavior.ConnectionScoped)
         {
             throw new NotSupportedException(
@@ -526,6 +531,14 @@ public sealed partial class RespireClient : IRespireClient
                 $"{operation} can block and cannot run through ExecuteFireAndForgetAsync.");
         }
     }
+
+    private static bool IsMultiplexedScriptSubcommand(RespireValue candidate)
+        => candidate.EqualsAsciiIgnoreCase("EXISTS")
+           || candidate.EqualsAsciiIgnoreCase("FLUSH")
+           || candidate.EqualsAsciiIgnoreCase("HELP")
+           || candidate.EqualsAsciiIgnoreCase("KILL")
+           || candidate.EqualsAsciiIgnoreCase("LOAD")
+           || candidate.EqualsAsciiIgnoreCase("SHOW");
 
     private static (string Operation, string[] Words, int FirstArgumentIndex) ParseRawCommand(string command)
     {
