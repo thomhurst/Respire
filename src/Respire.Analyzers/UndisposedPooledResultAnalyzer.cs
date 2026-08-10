@@ -113,15 +113,15 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
     {
         var expression = ScopeWalker.Unwrap(awaitedExpression);
 
-        // await client.ExecuteAsync(...).ConfigureAwait(false)
-        if (expression is InvocationExpressionSyntax configureAwait
-            && context.SemanticModel.GetSymbolInfo(configureAwait, context.CancellationToken).Symbol is IMethodSymbol
-            {
-                Name: nameof(Task.ConfigureAwait) or "AsTask",
-            }
-            && ScopeWalker.GetReceiver(configureAwait.Expression) is { } configuredReceiver)
+        // await client.ExecuteAsync(...).AsTask().ConfigureAwait(false)
+        while (expression is InvocationExpressionSyntax adapter
+               && context.SemanticModel.GetSymbolInfo(adapter, context.CancellationToken).Symbol is IMethodSymbol
+               {
+                   Name: nameof(Task.ConfigureAwait) or "AsTask",
+               }
+               && ScopeWalker.GetReceiver(adapter.Expression) is { } adaptedReceiver)
         {
-            expression = ScopeWalker.Unwrap(configuredReceiver);
+            expression = ScopeWalker.Unwrap(adaptedReceiver);
         }
 
         if (expression is not InvocationExpressionSyntax invocation
@@ -130,8 +130,19 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
             return false;
         }
 
-        var containingNamespace = method.ContainingNamespace?.ToDisplayString();
-        return containingNamespace is "Respire" || containingNamespace?.StartsWith("Respire.", StringComparison.Ordinal) == true;
+        var containingType = method.ContainingType?.ToDisplayString();
+        return method.Name switch
+        {
+            "ExecuteAsync" => containingType is "Respire.RespireClient"
+                or "Respire.IRespireClient"
+                or "Respire.ScriptCommands"
+                or "Respire.IScriptCommands",
+            "GetLeaseAsync" => containingType is "Respire.RespireClient"
+                or "Respire.IRespireClient"
+                or "Respire.StringCommands"
+                or "Respire.IStringCommands",
+            _ => false,
+        };
     }
 
     /// <summary>

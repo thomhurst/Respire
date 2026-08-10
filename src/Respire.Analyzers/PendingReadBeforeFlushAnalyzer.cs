@@ -137,7 +137,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         }
 
         if (ScopeWalker.GetReceiver(origin.Expression) is not { } batchExpression
-            || context.SemanticModel.GetSymbolInfo(batchExpression, context.CancellationToken).Symbol is not ILocalSymbol batch
+            || ResolveRootLocal(context, batchExpression) is not { } batch
             || IsDeclaredOutside(scope, batch))
         {
             // A field, a parameter, or a batch built further out: it outlives this scope, so stay silent.
@@ -174,15 +174,38 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             case IdentifierNameSyntax identifier:
                 if (context.SemanticModel.GetSymbolInfo(identifier, context.CancellationToken).Symbol is not ILocalSymbol local
                     || IsDeclaredOutside(scope, local)
-                    || Escapes(context, scope, local))
+                    || local.DeclaringSyntaxReferences[0].GetSyntax(context.CancellationToken)
+                        is not VariableDeclaratorSyntax declarator)
                 {
                     return null;
                 }
 
-                return local.DeclaringSyntaxReferences[0].GetSyntax(context.CancellationToken) is VariableDeclaratorSyntax declarator
-                       && declarator.Initializer is not null
-                    ? ScopeWalker.Unwrap(declarator.Initializer.Value) as InvocationExpressionSyntax
-                    : null;
+                if (declarator.Initializer is not null)
+                {
+                    return !Escapes(context, scope, local)
+                        ? ScopeWalker.Unwrap(declarator.Initializer.Value) as InvocationExpressionSyntax
+                        : null;
+                }
+
+                var assignments = scope.DescendantNodes().OfType<AssignmentExpressionSyntax>()
+                    .Where(assignment => assignment.SpanStart < identifier.SpanStart
+                                         && context.SemanticModel.GetSymbolInfo(
+                                                 ScopeWalker.Unwrap(assignment.Left), context.CancellationToken).Symbol
+                                             is ILocalSymbol assigned
+                                         && SymbolEqualityComparer.Default.Equals(assigned, local))
+                    .ToArray();
+                if (assignments.Length != 1)
+                {
+                    return null;
+                }
+
+                var assignment = assignments[0];
+                if (Escapes(context, scope, local, assignment))
+                {
+                    return null;
+                }
+
+                return ScopeWalker.Unwrap(assignment.Right) as InvocationExpressionSyntax;
 
             default:
                 return null;
@@ -194,11 +217,26 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         => local.DeclaringSyntaxReferences.Length != 1
            || !scope.Span.Contains(local.DeclaringSyntaxReferences[0].Span);
 
+    private static ILocalSymbol? ResolveRootLocal(SyntaxNodeAnalysisContext context, ExpressionSyntax expression)
+    {
+        expression = ScopeWalker.Unwrap(expression);
+        while (expression is MemberAccessExpressionSyntax member)
+        {
+            expression = ScopeWalker.Unwrap(member.Expression);
+        }
+
+        return context.SemanticModel.GetSymbolInfo(expression, context.CancellationToken).Symbol as ILocalSymbol;
+    }
+
     /// <summary>
     /// True when the local is used in any way other than reading a member off it (or awaiting it) —
     /// passed on, returned, assigned or captured — which puts the flush out of this rule's reach.
     /// </summary>
-    private static bool Escapes(SyntaxNodeAnalysisContext context, SyntaxNode scope, ILocalSymbol local)
+    private static bool Escapes(
+        SyntaxNodeAnalysisContext context,
+        SyntaxNode scope,
+        ILocalSymbol local,
+        AssignmentExpressionSyntax? allowedAssignment = null)
     {
         foreach (var reference in ScopeWalker.FindReferences(scope, local, context.SemanticModel, context.CancellationToken))
         {
@@ -229,6 +267,10 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                     break;
 
                 case AwaitExpressionSyntax awaitExpression when ScopeWalker.IsSame(awaitExpression.Expression, reference):
+                    break;
+
+                case AssignmentExpressionSyntax assignment
+                    when allowedAssignment is not null && ScopeWalker.IsSame(assignment, allowedAssignment):
                     break;
 
                 default:

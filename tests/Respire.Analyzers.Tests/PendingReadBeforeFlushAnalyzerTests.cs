@@ -501,4 +501,43 @@ public class PendingReadBeforeFlushAnalyzerTests
             }
         }
         """);
+
+    [Test]
+    public async Task BatchFacetResultReadBeforeSend_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.Hashes.GetStringAsync("key", "field");
+                Console.WriteLine({|RESP002:pending.Result|});
+                await batch.SendAsync();
+            }
+        }
+        """);
+
+    [Test]
+    public async Task AssignedTransactionFacetReadBeforeCommit_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                await using var transaction = client.CreateTransaction();
+                RespirePending<string> pending;
+                pending = transaction.Hashes.GetStringAsync("key", "field");
+                Console.WriteLine({|RESP002:pending.Result|});
+                await transaction.CommitAsync();
+            }
+        }
+        """);
 }
