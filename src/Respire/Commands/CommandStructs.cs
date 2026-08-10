@@ -220,6 +220,8 @@ internal readonly struct Cmd2N(Verb verb, RespireValue a1, RespireValue a2, Resp
 /// <summary>An entire command whose tokens (verb included) are caller-supplied — the raw escape hatch.</summary>
 internal readonly struct DynamicCommand(RespireValue[] tokens, int routingKeyIndex) : IRespCommand
 {
+    internal ReadOnlySpan<RespireValue> Arguments => tokens.AsSpan(1);
+
     public bool TryGetClusterSlot(out int slot)
     {
         if ((uint)routingKeyIndex < (uint)tokens.Length)

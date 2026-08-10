@@ -51,14 +51,21 @@ public readonly struct RespireCommand
         _ => RespireCommandBehavior.Multiplexed,
     };
 
-    internal bool IsBlocking(RespireValue[] args)
+    internal bool IsBlocking(RespireValue[] args) => IsBlocking(Behavior, args);
+
+    internal static bool IsBlocking(string name, ReadOnlySpan<RespireValue> args)
+        => IsBlocking(Classify(name), args);
+
+    private static bool IsBlocking(
+        RespireCommandBehavior behavior,
+        ReadOnlySpan<RespireValue> args)
     {
-        if (Behavior == RespireCommandBehavior.Blocking)
+        if (behavior == RespireCommandBehavior.Blocking)
         {
             return true;
         }
 
-        if (Behavior != RespireCommandBehavior.BlockingWhenRequested)
+        if (behavior != RespireCommandBehavior.BlockingWhenRequested)
         {
             return false;
         }

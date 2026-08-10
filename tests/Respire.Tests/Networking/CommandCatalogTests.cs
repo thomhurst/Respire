@@ -171,6 +171,23 @@ public class CommandCatalogTests
     }
 
     [Test]
+    public async Task RawFireAndForget_BlockingCommandsAreRejectedBeforeSending()
+    {
+        await using var server = new FakeRespServer();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await Assert.That(async () => await client.ExecuteFireAndForgetAsync("blpop key 0"))
+            .Throws<NotSupportedException>()
+            .WithMessage("BLPOP can block and cannot run through ExecuteFireAndForgetAsync.");
+        await Assert.That(async () => await client.ExecuteFireAndForgetAsync(
+                "XREAD", "BLOCK", 0, "STREAMS", "events", "$"))
+            .Throws<NotSupportedException>()
+            .WithMessage("XREAD can block and cannot run through ExecuteFireAndForgetAsync.");
+
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
     public async Task CatalogFireAndForget_CompletesWithoutPendingResultAndDiscardsReply()
     {
         await using var server = new FakeRespServer(

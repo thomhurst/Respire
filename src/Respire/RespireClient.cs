@@ -306,6 +306,12 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken)
     {
         var (operation, _, commandValue) = CreateRawCommand(command, args);
+        if (RespireCommand.IsBlocking(operation, commandValue.Arguments))
+        {
+            throw new NotSupportedException(
+                $"{operation} can block and cannot run through ExecuteFireAndForgetAsync.");
+        }
+
         if (_core.Cluster is { } cluster
             && DynamicCommandRouting.IsClusterWideMutation(operation, args))
         {
