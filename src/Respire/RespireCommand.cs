@@ -19,6 +19,15 @@ public readonly struct RespireCommand
         Behavior = Classify(name);
     }
 
+    private RespireCommand(string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        Name = name;
+        Sources = RespireCommandSource.None;
+        _verb = default;
+        Behavior = default;
+    }
+
     /// <summary>Canonical command name, including any subcommand (for example, <c>CONFIG GET</c>).</summary>
     public string Name { get; }
 
@@ -33,7 +42,7 @@ public readonly struct RespireCommand
 
     /// <summary>Creates a caller-supplied command descriptor from a command name.</summary>
     public static implicit operator RespireCommand(string name)
-        => new(name, RespireCommandSource.None);
+        => new(name);
 
     public override string ToString() => Name;
 

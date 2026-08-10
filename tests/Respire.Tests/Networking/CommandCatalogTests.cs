@@ -213,8 +213,13 @@ public class CommandCatalogTests
         await Assert.That(methods.Count(static method => method.Name == nameof(IRespireClient.ExecuteFireAndForgetAsync)))
             .IsEqualTo(2);
         await Assert.That(Enum.GetNames<RespireCommandFlags>()).IsEquivalentTo(["None", "NoRedirect"]);
+        var noRedirect = Enum.GetValues<RespireCommandFlags>()
+            .Single(static value => value.ToString() == "NoRedirect");
+        await Assert.That(Convert.ToInt32(noRedirect)).IsEqualTo(2);
         await Assert.That(raw.Name).IsEqualTo("CONFIG GET");
         await Assert.That(raw.Sources).IsEqualTo(RespireCommandSource.None);
+        await Assert.That(raw.Verb.Bulk).IsNull();
+        await Assert.That(raw.Verb.Tokens).IsEqualTo(0);
 
         await client.ExecuteFireAndForgetAsync("SET", "raw-key", "value");
         await client.ExecuteFireAndForgetAsync(

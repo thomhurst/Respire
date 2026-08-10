@@ -10,5 +10,5 @@ public enum RespireCommandFlags
     /// <summary>
     /// In Redis Cluster mode, surface MOVED and ASK replies instead of following them.
     /// </summary>
-    NoRedirect = 1,
+    NoRedirect = 2,
 }
