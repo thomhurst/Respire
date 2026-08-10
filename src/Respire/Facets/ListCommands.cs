@@ -43,6 +43,16 @@ public interface IListCommands
     ValueTask<string?> RightPopAsync(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Pops from the head and deserializes as <typeparamref name="T"/>; default when the list is
+    /// empty. Always call with an explicit type argument — that is what separates it from the
+    /// <c>string?</c> overload. Redis: LPOP / BLPOP.
+    /// </summary>
+    ValueTask<T?> LeftPopAsync<T>(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default);
+
+    /// <summary>Pops from the tail and deserializes as <typeparamref name="T"/>. Redis: RPOP / BRPOP.</summary>
+    ValueTask<T?> RightPopAsync<T>(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Atomically moves an element between lists and returns it; null when the source is empty.
     /// Redis: LMOVE / BLMOVE.
     /// </summary>
@@ -119,6 +129,43 @@ internal sealed class ListCommands(RespireClient client) : IListCommands
         var popped = reply.IsNull ? null : reply.AsArray()[1].AsString();
         reply.Dispose();
         return popped;
+    }
+
+    public ValueTask<T?> LeftPopAsync<T>(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
+        => PopAsync<T>(key, waitFor, Verbs.LPop, Verbs.BLPop, "LPOP", "BLPOP", cancellationToken);
+
+    public ValueTask<T?> RightPopAsync<T>(RespireKey key, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
+        => PopAsync<T>(key, waitFor, Verbs.RPop, Verbs.BRPop, "RPOP", "BRPOP", cancellationToken);
+
+    private ValueTask<T?> PopAsync<T>(
+        RespireKey key, TimeSpan? waitFor, Verb plain, Verb blocking, string plainName, string blockingName,
+        CancellationToken cancellationToken)
+    {
+        if (waitFor is not { } wait)
+        {
+            return client.DeserializeAsync<T, Cmd1>(plainName, new Cmd1(plain, client.Key(in key)), cancellationToken);
+        }
+
+        return PopBlockingAsync<T>(key, wait, blocking, blockingName, cancellationToken);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<T?> PopBlockingAsync<T>(
+        RespireKey key, TimeSpan wait, Verb blocking, string blockingName, CancellationToken cancellationToken)
+    {
+        // BLPOP replies [key, value], or null on timeout.
+        var reply = await client.SendBlockingAsync(
+            blockingName, new Cmd2(blocking, client.Key(in key), ToSeconds(wait)), cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return reply.IsNull ? default : client.DeserializeBorrowed<T>(in reply.AsArray()[1]);
+        }
+        finally
+        {
+            reply.Dispose();
+        }
     }
 
     public ValueTask<string?> MoveAsync(

@@ -8,6 +8,21 @@ public interface IHashCommands
     /// <summary>Sets one field. Returns true when the field was newly created. Redis: HSET.</summary>
     ValueTask<bool> SetAsync(RespireKey key, string field, RespireValue value, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Sets one field to a serialized <typeparamref name="T"/>; the write partner of
+    /// <see cref="GetAsync{T}"/>. Returns true when the field was newly created. Redis: HSET.
+    /// <para>
+    /// Overload resolution mirrors <see cref="IStringCommands.SetAsync{T}"/>:
+    /// an argument already typed as <see cref="RespireValue"/> picks the non-generic overload,
+    /// while any other type (including <c>string</c>, whose implicit conversion loses to an exact
+    /// match) picks this one. The two write identical bytes for strings, byte payloads, and
+    /// numbers. <c>bool</c> is the exception — this overload writes <c>true</c>/<c>false</c> like
+    /// every other typed write, a <see cref="RespireValue"/> writes Redis-native <c>1</c>/<c>0</c>,
+    /// and <see cref="GetAsync{T}"/> reads both.
+    /// </para>
+    /// </summary>
+    ValueTask<bool> SetAsync<T>(RespireKey key, string field, T value, CancellationToken cancellationToken = default);
+
     /// <summary>Sets many fields in one round trip; returns how many were newly created. Redis: HSET.</summary>
     ValueTask<long> SetAsync(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
 
@@ -22,6 +37,12 @@ public interface IHashCommands
 
     /// <summary>Gets a field deserialized as <typeparamref name="T"/>. Redis: HGET.</summary>
     ValueTask<T?> GetAsync<T>(RespireKey key, string field, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets a field deserialized as <typeparamref name="T"/>, reporting presence separately so a
+    /// missing field is distinguishable from a stored <c>default(T)</c>. Redis: HGET.
+    /// </summary>
+    ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, string field, CancellationToken cancellationToken = default);
 
     /// <summary>Gets a field's raw bytes, or null when missing. Redis: HGET.</summary>
     ValueTask<byte[]?> GetBytesAsync(RespireKey key, string field, CancellationToken cancellationToken = default);
@@ -200,6 +221,12 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
     public ValueTask<bool> SetAsync(RespireKey key, string field, RespireValue value, CancellationToken cancellationToken = default)
         => client.FlagAsync("HSET", new Cmd3(Verbs.HSet, client.Key(in key), field, value), cancellationToken);
 
+    public ValueTask<bool> SetAsync<T>(RespireKey key, string field, T value, CancellationToken cancellationToken = default)
+        => client.FlagAsync(
+            "HSET",
+            new Cmd3(Verbs.HSet, client.Key(in key), field, client.SerializeRawCompatible(value)),
+            cancellationToken);
+
     public ValueTask<long> SetAsync(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
         => SetAsync(key, fields, CancellationToken.None);
 
@@ -215,6 +242,9 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
 
     public ValueTask<T?> GetAsync<T>(RespireKey key, string field, CancellationToken cancellationToken = default)
         => client.DeserializeAsync<T, Cmd2>("HGET", new Cmd2(Verbs.HGet, client.Key(in key), field), cancellationToken);
+
+    public ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, string field, CancellationToken cancellationToken = default)
+        => client.TryDeserializeAsync<T, Cmd2>("HGET", new Cmd2(Verbs.HGet, client.Key(in key), field), cancellationToken);
 
     public ValueTask<byte[]?> GetBytesAsync(RespireKey key, string field, CancellationToken cancellationToken = default)
         => client.BytesOrNullAsync("HGET", new Cmd2(Verbs.HGet, client.Key(in key), field), cancellationToken);

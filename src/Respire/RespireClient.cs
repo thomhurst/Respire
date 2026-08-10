@@ -825,6 +825,13 @@ public sealed partial class RespireClient : IRespireClient
             return (byte[])(object)value;
         }
 
+        // Pass payload types straight through: the typed overloads sit next to RespireValue ones,
+        // so an argument that is already a command argument must not be run through the serializer.
+        if (typeof(T) == typeof(RespireValue))
+        {
+            return (RespireValue)(object)value;
+        }
+
         if (PrimitiveCodec.TrySerialize(value, out var primitive))
         {
             return primitive;
@@ -834,6 +841,46 @@ public sealed partial class RespireClient : IRespireClient
         _core.Options.Serializer.Serialize(buffer, value);
         return buffer.WrittenMemory;
     }
+
+    internal RespireValue SerializeRawCompatible<T>(T value)
+    {
+        if (value is null && (typeof(T) == typeof(string) || typeof(T) == typeof(byte[])))
+        {
+            return RespireValue.Null;
+        }
+
+        if (typeof(T) == typeof(ReadOnlyMemory<byte>))
+        {
+            return (ReadOnlyMemory<byte>)(object)value!;
+        }
+
+        if (typeof(T) == typeof(char))
+        {
+            return (ushort)(char)(object)value!;
+        }
+
+        if (typeof(T) == typeof(float) && !float.IsFinite((float)(object)value!))
+        {
+            return (float)(object)value!;
+        }
+
+        if (typeof(T) == typeof(double) && !double.IsFinite((double)(object)value!))
+        {
+            return (double)(object)value!;
+        }
+
+        return Serialize(value);
+    }
+
+    internal RespireValue SerializeCollectionMember<T>(T value)
+        => value is bool boolean ? boolean : SerializeRawCompatible(value);
+
+    /// <summary>
+    /// Reads a value the caller does not own, keeping "reply was null" distinct from a
+    /// deserialized <c>default(T)</c>.
+    /// </summary>
+    internal RespireGet<T> TryDeserializeBorrowed<T>(in RespValue value)
+        => value.IsNull ? default : new RespireGet<T>(true, DeserializeBorrowed<T>(in value)!);
 
     /// <summary>Reads a value the caller does not own (e.g. a transaction-array element).</summary>
     internal T? DeserializeBorrowed<T>(in RespValue value)
@@ -2270,6 +2317,12 @@ public sealed partial class RespireClient : IRespireClient
         => ConvertAsync<TCommand, T?>(
             operation, command, ct,
             static (RespireClient client, in RespValue value) => client.DeserializeBorrowed<T>(in value));
+
+    internal ValueTask<RespireGet<T>> TryDeserializeAsync<T, TCommand>(string operation, TCommand command, CancellationToken ct)
+        where TCommand : struct, IRespCommand
+        => ConvertAsync<TCommand, RespireGet<T>>(
+            operation, command, ct,
+            static (RespireClient client, in RespValue value) => client.TryDeserializeBorrowed<T>(in value));
 
     internal ValueTask<RespireLease> LeaseAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand

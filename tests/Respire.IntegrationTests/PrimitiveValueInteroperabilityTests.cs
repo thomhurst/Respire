@@ -325,12 +325,18 @@ public class PrimitiveValueInteroperabilityTests(RedisTestContainer fixture)
         await _respireClient.Hashes.SetAsync(key, "binary", respireBytes);
         await _respireClient.Hashes.SetAsync(key, "integer", long.MinValue);
         await _respireClient.Hashes.SetAsync(key, "boolean", true);
+        await _respireClient.Hashes.SetAsync(key, "boolean-raw", (RespireValue)true);
 
         (await _stackExchangeDb.HashGetAsync(key, "text")).ToString().Should().Be("respire-value");
         byte[]? binaryReadByStackExchange = await _stackExchangeDb.HashGetAsync(key, "binary");
         binaryReadByStackExchange.Should().Equal(respireBytes);
         (await _stackExchangeDb.HashGetAsync(key, "integer")).ToString().Should().Be("-9223372036854775808");
-        (await _stackExchangeDb.HashGetAsync(key, "boolean")).ToString().Should().Be("1");
+        // A bare bool binds to Hashes.SetAsync<T>, matching Strings.SetAsync<bool> ("true"/"false");
+        // an explicit RespireValue keeps the Redis-native "1"/"0". Both read back as bool.
+        (await _stackExchangeDb.HashGetAsync(key, "boolean")).ToString().Should().Be("true");
+        (await _stackExchangeDb.HashGetAsync(key, "boolean-raw")).ToString().Should().Be("1");
+        (await _respireClient.Hashes.GetAsync<bool>(key, "boolean")).Should().BeTrue();
+        (await _respireClient.Hashes.GetAsync<bool>(key, "boolean-raw")).Should().BeTrue();
     }
 
     [Test]

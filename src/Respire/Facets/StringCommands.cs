@@ -24,6 +24,14 @@ public interface IStringCommands
     /// <summary>Gets a key's value deserialized as <typeparamref name="T"/>, or default when missing. Redis: GET.</summary>
     ValueTask<T?> GetAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Gets a key's value deserialized as <typeparamref name="T"/>, reporting presence separately
+    /// so a missing key is distinguishable from a stored <c>default(T)</c> — unlike
+    /// <see cref="GetAsync{T}"/>, whose <c>T?</c> cannot tell an absent <c>int</c> key from a
+    /// stored <c>0</c>. Redis: GET.
+    /// </summary>
+    ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
+
     /// <summary>Gets a key's raw bytes, or null when missing. Redis: GET.</summary>
     ValueTask<byte[]?> GetBytesAsync(RespireKey key, CancellationToken cancellationToken = default);
 
@@ -123,6 +131,9 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
 
     public ValueTask<T?> GetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
         => client.DeserializeAsync<T, Cmd1>("GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken);
+
+    public ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
+        => client.TryDeserializeAsync<T, Cmd1>("GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken);
 
     public ValueTask<byte[]?> GetBytesAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.BytesOrNullAsync("GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken);

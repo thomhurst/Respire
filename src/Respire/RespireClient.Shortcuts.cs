@@ -14,6 +14,10 @@ public sealed partial class RespireClient
     public ValueTask<T?> GetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
         => Strings.GetAsync<T>(key, cancellationToken);
 
+    /// <inheritdoc cref="IStringCommands.TryGetAsync{T}"/>
+    public ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
+        => Strings.TryGetAsync<T>(key, cancellationToken);
+
     /// <inheritdoc cref="IStringCommands.GetBytesAsync"/>
     public ValueTask<byte[]?> GetBytesAsync(RespireKey key, CancellationToken cancellationToken = default)
         => Strings.GetBytesAsync(key, cancellationToken);
