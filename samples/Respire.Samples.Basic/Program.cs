@@ -21,6 +21,11 @@ Console.WriteLine($"user:1 = {user}");
 var claimed = await redis.SetAsync("lock:job42", "worker-a", expiry: TimeSpan.FromSeconds(30), when: SetWhen.NotExists);
 Console.WriteLine($"lock claimed: {claimed}");
 
+// Expiry is one argument: a TimeSpan (PX), an instant (PXAT), or "keep what's there" (KEEPTTL).
+await redis.SetAsync("greeting", "hello again", expiry: RespireTtl.Keep);
+await redis.SetAsync("daily:report", "pending", expiry: RespireTtl.At(DateTimeOffset.UtcNow.AddHours(1)));
+Console.WriteLine($"greeting ttl = {await redis.Keys.ExpiryAsync("greeting")}");
+
 // ── Facets: one group per data type ──────────────────────────────────────────
 await redis.Hashes.SetAsync("user:1:profile", ("name", "Ada"), ("lang", "en"));
 Console.WriteLine($"profile.name = {await redis.Hashes.GetStringAsync("user:1:profile", "name")}");

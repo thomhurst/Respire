@@ -31,15 +31,15 @@ public sealed class RespireBatch
         => Add<Cmd1, byte[]?>("GET", new Cmd1(Verbs.Get, _client.Key(in key)), static (c, v) => ResponseReader.BytesOrNull(in v));
 
     public RespirePending<bool> SetAsync(
-        RespireKey key, RespireValue value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always, bool keepTtl = false)
+        RespireKey key, RespireValue value, RespireTtl expiry = default, SetWhen when = SetWhen.Always)
         => Add<SetCommand, bool>(
-            "SET", new SetCommand(_client.Key(in key), value, expiry, when, keepTtl, returnOld: false),
+            "SET", new SetCommand(_client.Key(in key), value, expiry, when, returnOld: false),
             static (c, v) => ResponseReader.OkOrNull(in v));
 
     public RespirePending<bool> SetAsync<T>(
-        RespireKey key, T value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always, bool keepTtl = false)
+        RespireKey key, T value, RespireTtl expiry = default, SetWhen when = SetWhen.Always)
         => Add<SetCommand, bool>(
-            "SET", new SetCommand(_client.Key(in key), _client.Serialize(value), expiry, when, keepTtl, returnOld: false),
+            "SET", new SetCommand(_client.Key(in key), _client.Serialize(value), expiry, when, returnOld: false),
             static (c, v) => ResponseReader.OkOrNull(in v));
 
     public RespirePending<long> DeleteAsync(RespireKey key)
