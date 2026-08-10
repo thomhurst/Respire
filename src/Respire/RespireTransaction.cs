@@ -114,14 +114,62 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
 
     RespireClient IPendingSink.Client => _client;
 
-    void IPendingSink.ValidateClusterKey(in RespireKey key)
+    internal void ValidateClusterKeys(ReadOnlySpan<RespireKey> keys)
     {
-        ThrowIfCompleted();
-        if (_client.Core.Cluster is not null
-            && _client.Key(in key).TryGetClusterSlot(out var slot))
+        if (!TryBeginClusterKeyValidation(out var slot))
         {
-            ValidateClusterSlot(slot);
+            return;
         }
+
+        foreach (ref readonly var key in keys)
+        {
+            ValidateClusterKey(in key, ref slot);
+        }
+
+        ApplyClusterSlot(slot);
+    }
+
+    internal void ValidateClusterKeys(RespireKey first, RespireKey second)
+    {
+        if (!TryBeginClusterKeyValidation(out var slot))
+        {
+            return;
+        }
+
+        ValidateClusterKey(in first, ref slot);
+        ValidateClusterKey(in second, ref slot);
+        ApplyClusterSlot(slot);
+    }
+
+    internal void ValidateClusterKeys(RespireKey first, ReadOnlySpan<RespireKey> rest)
+    {
+        if (!TryBeginClusterKeyValidation(out var slot))
+        {
+            return;
+        }
+
+        ValidateClusterKey(in first, ref slot);
+        foreach (ref readonly var key in rest)
+        {
+            ValidateClusterKey(in key, ref slot);
+        }
+
+        ApplyClusterSlot(slot);
+    }
+
+    internal void ValidateClusterKeys(ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+    {
+        if (!TryBeginClusterKeyValidation(out var slot))
+        {
+            return;
+        }
+
+        foreach (ref readonly var pair in pairs)
+        {
+            ValidateClusterKey(in pair.Key, ref slot);
+        }
+
+        ApplyClusterSlot(slot);
     }
 
     RespirePending<T> IPendingSink.Add<TCommand, T>(
@@ -336,14 +384,46 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
 
     private void ValidateClusterSlot(int slot)
     {
-        if (_hasClusterSlot && _clusterSlot != slot)
+        int? candidate = _hasClusterSlot ? _clusterSlot : null;
+        ValidateClusterSlot(slot, ref candidate);
+        ApplyClusterSlot(candidate);
+    }
+
+    private bool TryBeginClusterKeyValidation(out int? slot)
+    {
+        ThrowIfCompleted();
+        slot = _hasClusterSlot ? _clusterSlot : null;
+        return _client.Core.Cluster is not null;
+    }
+
+    private void ValidateClusterKey(in RespireKey key, ref int? candidate)
+    {
+        if (_client.Key(in key).TryGetClusterSlot(out var slot))
+        {
+            ValidateClusterSlot(slot, ref candidate);
+        }
+    }
+
+    private static void ValidateClusterSlot(int slot, ref int? candidate)
+    {
+        if (candidate is { } current && current != slot)
         {
             throw new InvalidOperationException(
                 "Redis Cluster transactions require every key to use the same hash slot. " +
                 "Use matching {...} hash tags for related keys.");
         }
 
-        _clusterSlot = slot;
+        candidate = slot;
+    }
+
+    private void ApplyClusterSlot(int? slot)
+    {
+        if (slot is not { } value)
+        {
+            return;
+        }
+
+        _clusterSlot = value;
         _hasClusterSlot = true;
     }
 

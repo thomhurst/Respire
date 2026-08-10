@@ -548,6 +548,19 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task Transaction_CrossSlotRejectionDoesNotPinSlot()
+    {
+        await using var client = RespireClient.Create(new RespireOptions { Cluster = true });
+        await using var transaction = client.CreateTransaction();
+
+        _ = Assert.Throws<InvalidOperationException>(
+            () => transaction.Keys.DeleteAsync("foo", "bar"));
+        _ = transaction.SetAsync("bar", "two");
+
+        await Assert.That(transaction.Count).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task TrackedScript_RoutesByKeyAndUpdatesIdentityAfterMoved()
     {
         var slot = ClusterHash.GetSlot("cache-key");
