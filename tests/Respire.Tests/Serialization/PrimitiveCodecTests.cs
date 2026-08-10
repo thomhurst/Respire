@@ -247,7 +247,11 @@ public class PrimitiveCodecTests
     }
 
     private static RespireClient CreateClient(IRespireSerializer serializer)
-        => RespireClient.Create(new RespireOptions { Serializer = serializer });
+        => RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("localhost") },
+            Serializer = serializer,
+        });
 
     private static RespValue Bulk(string value) => RespValue.BulkString(value);
 

@@ -14,7 +14,10 @@ public class TransactionTests
     [Test]
     public async Task CreateWatchedTransaction_NullArray_Throws()
     {
-        await using var client = RespireClient.Create(new RespireOptions());
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("localhost") },
+        });
         RespireKey[]? watchKeys = null;
 
         await Assert.That(async () => await client.CreateTransactionAsync(watchKeys!))

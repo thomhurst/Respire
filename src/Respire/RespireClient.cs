@@ -53,8 +53,9 @@ public sealed partial class RespireClient : IRespireClient
     /// <summary>Connects eagerly using structured client options.</summary>
     public static async ValueTask<RespireClient> ConnectAsync(RespireOptions options, CancellationToken cancellationToken = default)
     {
+        options = (options ?? throw new ArgumentNullException(nameof(options))).ValidateAndSnapshot();
         return await SentinelResolver.ResolveAndConnectPrimaryAsync(
-            options ?? throw new ArgumentNullException(nameof(options)),
+            options,
             ConnectPrimaryAsync,
             cancellationToken).ConfigureAwait(false);
     }
@@ -135,7 +136,7 @@ public sealed partial class RespireClient : IRespireClient
 
     private static string FormatCandidateEndpoints(RespireOptions options)
         => options.Endpoints.Count == 0
-            ? options.PrimaryEndpoint.ToString()
+            ? "(no endpoints)"
             : string.Join(", ", options.Endpoints);
 
     /// <summary>
@@ -148,7 +149,8 @@ public sealed partial class RespireClient : IRespireClient
     public static RespireClient Create(RespireOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        if (!string.IsNullOrWhiteSpace(options.ServiceName))
+        options = options.ValidateAndSnapshot();
+        if (!string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
         {
             throw new RespireConfigurationException(
                 "Redis Sentinel discovery requires RespireClient.ConnectAsync because it must query Sentinel " +

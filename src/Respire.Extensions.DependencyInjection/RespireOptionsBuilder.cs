@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Net.Security;
 using Microsoft.Extensions.Logging;
 using Respire.Serialization;
@@ -10,14 +11,42 @@ namespace Respire.Extensions.DependencyInjection;
 /// </summary>
 public sealed class RespireOptionsBuilder
 {
+    private bool _useCluster;
+    private string? _sentinelPrimaryName;
+    private TimeSpan? _connectionIdleReadTimeout;
+
     /// <inheritdoc cref="RespireOptions.Endpoints"/>
     public IList<RespireEndpoint> Endpoints { get; } = [];
 
+    /// <inheritdoc cref="RespireOptions.UseCluster"/>
+    public bool UseCluster
+    {
+        get => _useCluster;
+        set => _useCluster = value;
+    }
+
     /// <inheritdoc cref="RespireOptions.Cluster"/>
-    public bool Cluster { get; set; }
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public bool Cluster
+    {
+        get => _useCluster;
+        set => _useCluster = value;
+    }
+
+    /// <inheritdoc cref="RespireOptions.SentinelPrimaryName"/>
+    public string? SentinelPrimaryName
+    {
+        get => _sentinelPrimaryName;
+        set => _sentinelPrimaryName = value;
+    }
 
     /// <inheritdoc cref="RespireOptions.ServiceName"/>
-    public string? ServiceName { get; set; }
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public string? ServiceName
+    {
+        get => _sentinelPrimaryName;
+        set => _sentinelPrimaryName = value;
+    }
 
     /// <inheritdoc cref="RespireOptions.Username"/>
     public string? Username { get; set; }
@@ -58,14 +87,26 @@ public sealed class RespireOptionsBuilder
     /// <inheritdoc cref="RespireOptions.TlsOptions"/>
     public SslClientAuthenticationOptions? TlsOptions { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.ConnectionIdleReadTimeout"/>
+    public TimeSpan? ConnectionIdleReadTimeout
+    {
+        get => _connectionIdleReadTimeout;
+        set => _connectionIdleReadTimeout = value;
+    }
+
     /// <inheritdoc cref="RespireOptions.ResponseTimeout"/>
-    public TimeSpan? ResponseTimeout { get; set; }
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public TimeSpan? ResponseTimeout
+    {
+        get => _connectionIdleReadTimeout;
+        set => _connectionIdleReadTimeout = value;
+    }
 
     /// <inheritdoc cref="RespireOptions.CommandTimeout"/>
-    public TimeSpan? CommandTimeout { get; set; }
+    public TimeSpan? CommandTimeout { get; set; } = TimeSpan.FromSeconds(10);
 
     /// <inheritdoc cref="RespireOptions.Connections"/>
-    public int Connections { get; set; }
+    public int Connections { get; set; } = 1;
 
     /// <inheritdoc cref="RespireOptions.Serializer"/>
     public IRespireSerializer Serializer { get; set; } = RespireSerializer.Default;
@@ -100,8 +141,8 @@ public sealed class RespireOptionsBuilder
     internal RespireOptions Build() => new()
     {
         Endpoints = Endpoints.ToArray(),
-        Cluster = Cluster,
-        ServiceName = ServiceName,
+        UseCluster = UseCluster,
+        SentinelPrimaryName = SentinelPrimaryName,
         Username = Username,
         Password = Password,
         SentinelUsername = SentinelUsername,
@@ -115,7 +156,7 @@ public sealed class RespireOptionsBuilder
         ConnectTimeout = ConnectTimeout,
         UseTls = UseTls,
         TlsOptions = TlsOptions,
-        ResponseTimeout = ResponseTimeout,
+        ConnectionIdleReadTimeout = ConnectionIdleReadTimeout,
         CommandTimeout = CommandTimeout,
         Connections = Connections,
         Serializer = Serializer,

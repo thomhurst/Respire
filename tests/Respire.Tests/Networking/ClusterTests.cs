@@ -10,6 +10,12 @@ namespace Respire.Tests.Networking;
 
 public class ClusterTests
 {
+    private static RespireClient CreateLazyClusterClient() => RespireClient.Create(new RespireOptions
+    {
+        UseCluster = true,
+        Endpoints = { new RespireEndpoint("localhost") },
+    });
+
     private static readonly TimeSpan TestConnectTimeout = TimeSpan.FromSeconds(1);
 
     [Test]
@@ -540,7 +546,7 @@ public class ClusterTests
     [Test]
     public async Task Transaction_RejectsKeysFromDifferentHashSlots()
     {
-        await using var client = RespireClient.Create(new RespireOptions { Cluster = true });
+        await using var client = CreateLazyClusterClient();
         await using var transaction = client.CreateTransaction();
         _ = transaction.Set("foo", "one");
 
@@ -552,7 +558,7 @@ public class ClusterTests
     [Test]
     public async Task Transaction_ZeroKeyScriptDoesNotRouteByArgument()
     {
-        await using var client = RespireClient.Create(new RespireOptions { Cluster = true });
+        await using var client = CreateLazyClusterClient();
         await using var transaction = client.CreateTransaction();
         var script = RespireScript.Create("return ARGV[1]");
 
@@ -565,7 +571,7 @@ public class ClusterTests
     [Test]
     public async Task Transaction_RejectsCrossSlotKeysWithinFacetCommands()
     {
-        await using var client = RespireClient.Create(new RespireOptions { Cluster = true });
+        await using var client = CreateLazyClusterClient();
         Action<RespireTransaction>[] queueCommands =
         [
             transaction => transaction.Keys.Delete("foo", "bar"),
@@ -600,7 +606,7 @@ public class ClusterTests
     [Test]
     public async Task Transaction_CrossSlotRejectionDoesNotPinSlot()
     {
-        await using var client = RespireClient.Create(new RespireOptions { Cluster = true });
+        await using var client = CreateLazyClusterClient();
         await using var transaction = client.CreateTransaction();
 
         _ = Assert.Throws<InvalidOperationException>(
@@ -613,7 +619,7 @@ public class ClusterTests
     [Test]
     public async Task Transaction_RejectedMultiKeySerializationDoesNotPinSlot()
     {
-        await using var client = RespireClient.Create(new RespireOptions { Cluster = true });
+        await using var client = CreateLazyClusterClient();
         await using var transaction = client.CreateTransaction();
 
         _ = Assert.Throws<ArgumentException>(() => transaction.Strings.SetMany(
@@ -627,7 +633,7 @@ public class ClusterTests
     [Test]
     public async Task Transaction_SuccessfulMultiKeyCommandPinsSlot()
     {
-        await using var client = RespireClient.Create(new RespireOptions { Cluster = true });
+        await using var client = CreateLazyClusterClient();
         await using var transaction = client.CreateTransaction();
 
         _ = transaction.Strings.GetMany("{account}one", "{account}two");
@@ -1490,8 +1496,9 @@ public class ClusterTests
     {
         var error = Assert.Throws<RespireConfigurationException>(() => RespireClient.Create(new RespireOptions
         {
-            Cluster = true,
+            UseCluster = true,
             Database = 1,
+            Endpoints = { new RespireEndpoint("localhost") },
         }));
 
         await Assert.That(error.Message).Contains("database 0");
