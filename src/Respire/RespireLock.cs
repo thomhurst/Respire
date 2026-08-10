@@ -158,9 +158,12 @@ public sealed class RespireLock : IAsyncDisposable
 
             var effectiveExpiry = expiry ?? Duration;
             var renewedTimestamp = Stopwatch.GetTimestamp();
-            if (!await _locks.ExtendAsync(Key, Token, effectiveExpiry, cancellationToken).ConfigureAwait(false))
+            var extended = _locks is IManagedLockCommands managed
+                ? await managed.ExtendManagedAsync(Key, Token, effectiveExpiry, cancellationToken).ConfigureAwait(false)
+                : await _locks.ExtendAsync(Key, Token, effectiveExpiry, cancellationToken).ConfigureAwait(false);
+            if (!extended)
             {
-                Interlocked.CompareExchange(ref _state, StateNotOwned, StateHeld);
+                changed = Interlocked.CompareExchange(ref _state, StateNotOwned, StateHeld) == StateHeld;
                 return false;
             }
 
@@ -174,7 +177,7 @@ public sealed class RespireLock : IAsyncDisposable
             _extendSync.Release();
             if (changed)
             {
-                Interlocked.Exchange(ref _leaseChanged, new CancellationTokenSource()).Cancel();
+                SignalLeaseChanged();
             }
         }
     }
@@ -248,6 +251,7 @@ public sealed class RespireLock : IAsyncDisposable
         {
             var released = await _locks.ReleaseAsync(Key, Token, cancellationToken).ConfigureAwait(false);
             Volatile.Write(ref _state, released ? StateReleased : StateNotOwned);
+            SignalLeaseChanged();
             return released ? LockReleaseOutcome.Released : LockReleaseOutcome.NotOwned;
         }
         catch
@@ -298,6 +302,15 @@ public sealed class RespireLock : IAsyncDisposable
     }
 
     internal void KeepAliveStopped() => Volatile.Write(ref _keepAlive, 0);
+
+    internal async ValueTask<bool> IsHeldByOriginAsync(CancellationToken cancellationToken)
+    {
+        var token = await _locks.GetOwnerTokenAsync(Key, cancellationToken).ConfigureAwait(false);
+        return token is not null && token.AsSpan().SequenceEqual(Token.Span);
+    }
+
+    private void SignalLeaseChanged()
+        => Interlocked.Exchange(ref _leaseChanged, new CancellationTokenSource()).Cancel();
 
     internal void MarkOwnershipLost()
         => Interlocked.CompareExchange(ref _state, StateNotOwned, StateHeld);

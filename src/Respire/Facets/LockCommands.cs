@@ -108,7 +108,16 @@ public interface ILockCommands
     ValueTask<bool> IsHeldByAsync(RespireLock mutex, CancellationToken cancellationToken = default);
 }
 
-internal sealed class LockCommands(RespireClient client) : ILockCommands
+internal interface IManagedLockCommands
+{
+    ValueTask<bool> ExtendManagedAsync(
+        RespireKey key,
+        RespireValue token,
+        TimeSpan expiry,
+        CancellationToken cancellationToken);
+}
+
+internal sealed class LockCommands(RespireClient client) : ILockCommands, IManagedLockCommands
 {
     private static readonly TimeSpan DefaultRetryInterval = TimeSpan.FromMilliseconds(50);
 
@@ -243,6 +252,43 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands
         return ExecuteBooleanScriptAsync(ExtendScript, key, [token, milliseconds], cancellationToken);
     }
 
+    async ValueTask<bool> IManagedLockCommands.ExtendManagedAsync(
+        RespireKey key,
+        RespireValue token,
+        TimeSpan expiry,
+        CancellationToken cancellationToken)
+    {
+        ValidateToken(token);
+        var milliseconds = ValidateExpiry(expiry);
+        if (!client.RequiresReliableCorrectionOrdering(cancellationToken))
+        {
+            return await ExecuteBooleanScriptAsync(
+                    ExtendScript, key, [token, milliseconds], cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        await client.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
+        RespireClient.TrackedScriptExecution? execution = null;
+        try
+        {
+            execution = await client.StartTrackedScriptExecutionAsync(
+                    ExtendScript, [key], [token, milliseconds], cancellationToken)
+                .ConfigureAwait(false);
+            using var result = await execution.Response.ConfigureAwait(false);
+            return result.AsInteger() >= 1;
+        }
+        catch (Exception ex) when (
+            ex is OperationCanceledException or RespireTimeoutException or RespireConnectionException)
+        {
+            if (execution?.ConnectionIdentity.ServerClientId > 0)
+            {
+                await client.FenceCorrectionConnectionAsync(execution.ConnectionIdentity).ConfigureAwait(false);
+            }
+
+            throw;
+        }
+    }
+
     public ValueTask<byte[]?> GetOwnerTokenAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.BytesOrNullAsync("GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken);
 
@@ -251,8 +297,7 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(mutex);
-        var token = await GetOwnerTokenAsync(mutex.Key, cancellationToken).ConfigureAwait(false);
-        return token is not null && token.AsSpan().SequenceEqual(mutex.Token.Span);
+        return await mutex.IsHeldByOriginAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask<bool> ExecuteBooleanScriptAsync(

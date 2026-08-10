@@ -256,7 +256,12 @@ public class LockCommandTests
             FakeRespServer.OkReply,
             ":1\r\n"u8.ToArray(),
             ":0\r\n"u8.ToArray());
-        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+            CommandTimeout = null,
+        });
 
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
 
@@ -293,6 +298,47 @@ public class LockCommandTests
         await Assert.That(commands.Expiries).IsEquivalentTo(
             [TimeSpan.FromSeconds(45), TimeSpan.FromSeconds(90)]);
         await Assert.That(mutex.Duration).IsEqualTo(TimeSpan.FromSeconds(90));
+    }
+
+    [Test]
+    public async Task RespireLock_CancelledExtensionIsFencedBeforeTheNextExtension()
+    {
+        await using var server = new FakeRespServer(
+            3,
+            ":41\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            ":1\r\n"u8.ToArray());
+        server.DelayReply(3, 500);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+        });
+        await client.EnsureReliableCorrectionOrderingAsync();
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+
+        await Assert.That(async () =>
+                await mutex.ExtendAsync(TimeSpan.FromSeconds(60), cancellation.Token))
+            .Throws<OperationCanceledException>();
+        await WaitForCommandsAsync(server, 6);
+        await Assert.That(await mutex.ExtendAsync(TimeSpan.FromSeconds(10))).IsTrue();
+
+        var extensionIndexes = server.ReceivedCommands
+            .Select((command, index) => (command, index))
+            .Where(item => item.command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+            .Select(item => item.index)
+            .ToArray();
+        var fenceIndex = server.ReceivedCommands
+            .Select((command, index) => (command, index))
+            .Single(item => item.command == "CLIENT KILL ID 41")
+            .index;
+
+        await Assert.That(extensionIndexes).Count().IsEqualTo(2);
+        await Assert.That(fenceIndex).IsGreaterThan(extensionIndexes[0]);
+        await Assert.That(fenceIndex).IsLessThan(extensionIndexes[1]);
+        await mutex.DisposeAsync();
     }
 
     [Test]
@@ -361,6 +407,25 @@ public class LockCommandTests
     }
 
     [Test]
+    public async Task RespireLock_ReleaseCancelsSleepingKeepAlive()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
+        await using var keepAlive = await mutex.KeepAliveAsync();
+
+        await Assert.That(await mutex.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!keepAlive.CancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
+        await Assert.That(keepAlive.OwnershipLost).IsTrue();
+    }
+
+    [Test]
     public async Task KeepAliveDelayAccountsForElapsedLeaseTime()
     {
         await Assert.That(RespireLockKeepAlive.GetRenewalDelay(
@@ -390,6 +455,24 @@ public class LockCommandTests
             $"SET tenant:resource {token} NX PX 30000",
             $"EVALSHA {LockCommands.ReleaseScript.Sha1} 1 tenant:resource {token}",
         });
+    }
+
+    [Test]
+    public async Task RespireLock_OwnershipCheckUsesTheAcquiringPrefix()
+    {
+        var ownerReply = new byte[39];
+        await using var server = new FakeRespServer(
+            FakeRespServer.OkReply, ownerReply, ":1\r\n"u8.ToArray());
+        await using var root = await FakeRespServer.ConnectClientAsync(server.Port);
+        var prefixed = root.WithKeyPrefix("tenant:");
+        var mutex = await prefixed.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
+        Encoding.ASCII.GetBytes($"$32\r\n{Encoding.ASCII.GetString(mutex.Token.Span)}\r\n")
+            .CopyTo(ownerReply, 0);
+
+        await Assert.That(await root.Locks.IsHeldByAsync(mutex)).IsTrue();
+        await mutex.DisposeAsync();
+
+        await Assert.That(server.ReceivedCommands[1]).IsEqualTo("GET tenant:resource");
     }
 
     [Test]
