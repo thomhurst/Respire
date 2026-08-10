@@ -1,9 +1,11 @@
 using System.Buffers;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using Respire.Commands;
 using Respire.Internal;
+using Respire.Serialization;
 
 namespace Respire;
 
@@ -97,6 +99,8 @@ public interface IScriptCommands
         => ExecuteAsync(script, keys.ToArray(), args.ToArray(), cancellationToken);
 
     /// <summary>Executes a script and deserializes its scalar result. Redis: EVALSHA / EVAL.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     async ValueTask<T?> ExecuteAsync<T>(
         RespireScript script,
         RespireKey[]? keys = null,
@@ -155,6 +159,8 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         return client.ExecuteScriptAsync(script, tail, cancellationToken);
     }
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?> ExecuteAsync<T>(
         RespireScript script, RespireKey[]? keys = null, RespireValue[]? args = null,
         CancellationToken cancellationToken = default)
@@ -182,6 +188,8 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         return ExecuteStringCoreAsync(script, tail, cancellationToken);
     }
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     private async ValueTask<T?> ExecuteTypedCoreAsync<T>(
         RespireScript script, RespireValue[] tail, CancellationToken cancellationToken)
     {

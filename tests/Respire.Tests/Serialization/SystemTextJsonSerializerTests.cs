@@ -32,6 +32,9 @@ public class SystemTextJsonSerializerTests
             typeof(IRespireClient).GetMethod(nameof(IRespireClient.GetAsync))!,
             typeof(IRespireClient).GetMethods().Single(method =>
                 method.Name == nameof(IRespireClient.SetAsync) && method.IsGenericMethod),
+            typeof(RespireResult).GetMethod(nameof(RespireResult.As))!,
+            typeof(IScriptCommands).GetMethods().Single(method =>
+                method.Name == nameof(IScriptCommands.ExecuteAsync) && method.IsGenericMethod),
         };
 
         foreach (var method in methods)
