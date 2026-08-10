@@ -358,9 +358,12 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         CancellationToken cancellationToken)
     {
         // Target this connection's valid ID but explicitly exclude the caller. Redis performs
-        // CLIENT KILL ACL validation, then returns 0 without disconnecting anything.
+        // CLIENT KILL ACL validation, then returns 0 without disconnecting anything. Identity
+        // setup is bounded by its callers' own timeout tokens, not the per-command deadline.
         var reply = await connection.SendAsync(
-            new ClientKillIdCommand(connection.ServerClientId, skipMe: true), cancellationToken).ConfigureAwait(false);
+                new ClientKillIdCommand(connection.ServerClientId, skipMe: true), cancellationToken,
+                armCommandDeadline: false)
+            .ConfigureAwait(false);
         if (reply.IsError)
         {
             var error = new RespireServerException(reply.GetErrorMessage(), "CLIENT KILL");
@@ -532,8 +535,12 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                     var connection = await GetHealthyConnectionAsync(cancellationToken).ConfigureAwait(false);
                     try
                     {
+                        // The kill is an owed ordering barrier; it must not be abandonable,
+                        // so no command deadline applies.
                         var reply = await connection.SendAsync(
-                            new ClientKillIdCommand(clientId), cancellationToken).ConfigureAwait(false);
+                                new ClientKillIdCommand(clientId), cancellationToken,
+                                armCommandDeadline: false)
+                            .ConfigureAwait(false);
                         if (reply.IsError)
                         {
                             var error = new RespireServerException(reply.GetErrorMessage(), "CLIENT KILL");

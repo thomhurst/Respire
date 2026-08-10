@@ -420,9 +420,11 @@ internal sealed class RespireConnection : IAsyncDisposable
             return existing;
         }
 
+        // Identity setup is bounded by its callers' own timeout tokens (relabeled as
+        // "CLIENT ID / CLIENT KILL"), not the per-command deadline.
         var reply = await SendCoreAsync(
                 new Commands.ClientIdCommand(), discardRepliesBefore: 0, throwOnError: false,
-                cancellationToken, commandName: "CLIENT ID")
+                cancellationToken, commandName: "CLIENT ID", armCommandDeadline: false)
             .ConfigureAwait(false);
         if (reply.IsError)
         {
@@ -1031,6 +1033,7 @@ internal sealed class RespireConnection : IAsyncDisposable
                 if (TryEnqueue(
                     in command, source, out startedBatch, repliesBeforeFinal, retainRepliesBefore: true))
                 {
+                    ClampDeadline(source, deadline);
                     break;
                 }
 
@@ -1118,6 +1121,7 @@ internal sealed class RespireConnection : IAsyncDisposable
                     in command, source, out var startedBatch, discardRepliesBefore,
                     retainRepliesBefore: false, armCommandDeadline))
                 {
+                    ClampDeadline(source, deadline);
                     return startedBatch;
                 }
 
@@ -1130,6 +1134,20 @@ internal sealed class RespireConnection : IAsyncDisposable
         {
             ReclaimUnpublished(source);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Re-stamps a source enqueued after a capacity wait with the deadline computed when the
+    /// send began, so time parked on a full ring counts against the command timeout instead
+    /// of restarting it. The store may race a sweep that already read the fresher stamp;
+    /// that only delays the timeout, by at most one sweep granularity interval.
+    /// </summary>
+    private static void ClampDeadline(PendingResponse source, long deadline)
+    {
+        if (deadline != 0 && deadline < source.Deadline)
+        {
+            source.Deadline = deadline;
         }
     }
 

@@ -90,6 +90,10 @@ internal sealed class InflightRing
                 continue;
             }
 
+            // State must be read before Deadline: the pool-return path clears the deadline
+            // before its release-store of the new epoch, so a state read that sees the old
+            // epoch pairs only with that incarnation's deadline, and one that sees the new
+            // epoch can no longer see the previous command's expired deadline.
             var state = source.State;
             if (PendingResponse.IsCompleted(state))
             {

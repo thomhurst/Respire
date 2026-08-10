@@ -139,6 +139,12 @@ internal abstract class PendingResponse
             return;
         }
 
+        // Clear the deadline before the epoch store publishes this source as reusable. The
+        // sweep reads State before Deadline, so the release/acquire pairing on _state
+        // guarantees that a sweep observing the new epoch can no longer read the previous
+        // command's expired deadline and time out the next incarnation.
+        Deadline = 0;
+
         // Bump the reuse epoch and clear the completed bit in one atomic store, invalidating
         // any state the deadline sweep captured for this incarnation.
         Volatile.Write(ref _state, ((Volatile.Read(ref _state) >> 1) + 1) << 1);
