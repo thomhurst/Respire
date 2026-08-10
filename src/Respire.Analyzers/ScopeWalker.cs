@@ -191,12 +191,24 @@ internal static class ScopeWalker
                 return parentGraph.GetLocalFunctionControlFlowGraph(localFunctionSymbol, cancellationToken);
             }
 
-            if (scope is AnonymousFunctionExpressionSyntax anonymousFunction
-                && GetEnclosingScope(anonymousFunction) is { } containingScope
-                && CreateControlFlowGraph(semanticModel, containingScope, cancellationToken) is { } containingGraph
-                && FindAnonymousFunction(containingGraph, anonymousFunction) is { } flowAnonymousFunction)
+            if (scope is AnonymousFunctionExpressionSyntax anonymousFunction)
             {
-                return containingGraph.GetAnonymousFunctionControlFlowGraph(flowAnonymousFunction, cancellationToken);
+                if (GetEnclosingScope(anonymousFunction) is { } containingScope
+                    && CreateControlFlowGraph(semanticModel, containingScope, cancellationToken) is { } containingGraph
+                    && FindAnonymousFunction(containingGraph, anonymousFunction) is { } flowAnonymousFunction)
+                {
+                    return containingGraph.GetAnonymousFunctionControlFlowGraph(
+                        flowAnonymousFunction, cancellationToken);
+                }
+
+                if (semanticModel.GetOperation(anonymousFunction, cancellationToken)
+                        is IAnonymousFunctionOperation operation
+                    && CreateRootControlFlowGraph(operation, cancellationToken) is { } rootGraph
+                    && FindAnonymousFunction(rootGraph, anonymousFunction) is { } rootAnonymousFunction)
+                {
+                    return rootGraph.GetAnonymousFunctionControlFlowGraph(
+                        rootAnonymousFunction, cancellationToken);
+                }
             }
 
             return ControlFlowGraph.Create(scope, semanticModel, cancellationToken);
@@ -209,6 +221,27 @@ internal static class ScopeWalker
         {
             return null;
         }
+    }
+
+    private static ControlFlowGraph? CreateRootControlFlowGraph(
+        IOperation operation, CancellationToken cancellationToken)
+    {
+        while (operation.Parent is { } parent)
+        {
+            operation = parent;
+        }
+
+        return operation switch
+        {
+            IBlockOperation block => ControlFlowGraph.Create(block, cancellationToken),
+            IMethodBodyOperation method => ControlFlowGraph.Create(method, cancellationToken),
+            IConstructorBodyOperation constructor => ControlFlowGraph.Create(constructor, cancellationToken),
+            IFieldInitializerOperation field => ControlFlowGraph.Create(field, cancellationToken),
+            IPropertyInitializerOperation property => ControlFlowGraph.Create(property, cancellationToken),
+            IParameterInitializerOperation parameter => ControlFlowGraph.Create(parameter, cancellationToken),
+            IAttributeOperation attribute => ControlFlowGraph.Create(attribute, cancellationToken),
+            _ => null,
+        };
     }
 
     private static IFlowAnonymousFunctionOperation? FindAnonymousFunction(

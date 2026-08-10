@@ -661,4 +661,23 @@ public class PendingReadBeforeFlushAnalyzerTests
             }
         }
         """);
+
+    [Test]
+    public async Task FieldInitializerLambdaSendThenRead_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public Func<RespireClient, Task> Run { get; } = async client =>
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                await batch.SendAsync();
+                Console.WriteLine(pending.Result);
+            };
+        }
+        """);
 }

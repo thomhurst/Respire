@@ -572,4 +572,22 @@ public class UndisposedPooledResultAnalyzerTests
             }
         }
         """);
+
+    [Test]
+    public async Task FieldInitializerLambdaDispose_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public Func<RespireClient, Task> Run { get; } = async client =>
+            {
+                var result = await client.ExecuteAsync("PING");
+                Console.WriteLine(result.AsString());
+                result.Dispose();
+            };
+        }
+        """);
 }
