@@ -21,6 +21,8 @@ public class TypedValueApiTests
         await Assert.That(missing.Found).IsFalse();
         await Assert.That(missing.Value).IsEqualTo(0);
         await Assert.That(missing.GetValueOrDefault(-1)).IsEqualTo(-1);
+        await Assert.That(missing.TryGetValue(out var value)).IsFalse();
+        await Assert.That(value).IsEqualTo(0);
     }
 
     [Test]
@@ -32,6 +34,8 @@ public class TypedValueApiTests
         await Assert.That(found).IsTrue();
         await Assert.That(value).IsEqualTo(0);
         await Assert.That(stored.GetValueOrDefault(-1)).IsEqualTo(0);
+        await Assert.That(stored.TryGetValue(out var extracted)).IsTrue();
+        await Assert.That(extracted).IsEqualTo(0);
         await Assert.That(stored.Equals(default(RespireGet<int>))).IsFalse();
     }
 

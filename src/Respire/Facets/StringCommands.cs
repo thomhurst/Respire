@@ -26,9 +26,9 @@ public interface IStringCommands
 
     /// <summary>
     /// Gets a key's value deserialized as <typeparamref name="T"/>, reporting presence separately
-    /// so a missing key is distinguishable from a stored <c>default(T)</c> — unlike
-    /// <see cref="GetAsync{T}"/>, whose <c>T?</c> cannot tell an absent <c>int</c> key from a
-    /// stored <c>0</c>. Redis: GET.
+    /// so a missing key is distinguishable from a stored <c>default(T)</c>. Callers can instead
+    /// make a value type nullable, such as <c>GetAsync&lt;int?&gt;</c>; this form keeps
+    /// <typeparamref name="T"/> non-nullable and exposes an explicit presence flag. Redis: GET.
     /// </summary>
     ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
 
