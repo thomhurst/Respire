@@ -218,6 +218,13 @@ public interface IRespireClient : IAsyncDisposable
     ValueTask ExecuteFireAndForgetAsync(
         string command, RespireValue[] args, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Queues an interpolated command and discards its reply; each hole is one argument.
+    /// </summary>
+    ValueTask ExecuteFireAndForgetAsync(
+        RespireCommandInterpolatedStringHandler command,
+        CancellationToken cancellationToken = default);
+
     /// <summary>A view that prepends a prefix to every key; shares this client's connections.</summary>
     IRespireClient WithKeyPrefix(string prefix);
 }
