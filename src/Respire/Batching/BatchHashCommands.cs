@@ -12,8 +12,12 @@ namespace Respire;
 /// </summary>
 public interface IBatchHashCommands
 {
-    /// <summary>Sets one field. True when the field was newly created. Redis: HSET.</summary>
-    RespirePending<bool> Set(RespireKey key, string field, RespireValue value);
+    /// <summary>
+    /// Sets one field. The pending is true when an unconditional write creates the field, or when
+    /// a conditional write is applied. Redis: HSET/HSETNX/HSETEX.
+    /// </summary>
+    RespirePending<bool> Set(
+        RespireKey key, string field, RespireValue value, SetWhen when = SetWhen.Always);
 
     /// <summary>Sets many fields; returns how many were newly created. Redis: HSET.</summary>
     RespirePending<long> Set(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
@@ -91,10 +95,25 @@ public interface IBatchHashCommands
 
 internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
 {
-    public RespirePending<bool> Set(RespireKey key, string field, RespireValue value)
-        => sink.Add<Cmd3, bool>(
-            "HSET", new Cmd3(Verbs.HSet, sink.Client.Key(in key), field, value),
-            static (c, v) => ResponseReader.Flag(in v));
+    public RespirePending<bool> Set(
+        RespireKey key, string field, RespireValue value, SetWhen when = SetWhen.Always)
+        => when switch
+        {
+            SetWhen.Always => sink.Add<Cmd3, bool>(
+                "HSET", new Cmd3(Verbs.HSet, sink.Client.Key(in key), field, value),
+                static (c, v) => ResponseReader.Flag(in v)),
+            SetWhen.NotExists => sink.Add<Cmd3, bool>(
+                "HSETNX", new Cmd3(Verbs.HSetNx, sink.Client.Key(in key), field, value),
+                static (c, v) => ResponseReader.Flag(in v)),
+            SetWhen.Exists => sink.Add<Cmd1N, bool>(
+                "HSETEX",
+                new Cmd1N(
+                    RespireCommands.Hash.HSETEX.Verb,
+                    sink.Client.Key(in key),
+                    HashCommands.SetExFieldsBlock("KEEPTTL", 0, hasValue: false, when, [(field, value)])),
+                static (c, v) => ResponseReader.Flag(in v)),
+            _ => throw new ArgumentOutOfRangeException(nameof(when), when, null),
+        };
 
     public RespirePending<long> Set(
         RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields)

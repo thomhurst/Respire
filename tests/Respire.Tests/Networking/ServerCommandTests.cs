@@ -166,13 +166,13 @@ public class ServerCommandTests
     }
 
     [Test]
-    public async Task ConfigAsync_ReturnsMatchingConfiguration()
+    public async Task GetConfigAsync_ReturnsMatchingConfiguration()
     {
         await using var server = new FakeRespServer(
             Array(Bulk("maxmemory"), Bulk("0")));
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var config = await client.Server.ConfigAsync("max*");
+        var config = await client.Server.GetConfigAsync("max*");
 
         await Assert.That(config).IsEquivalentTo(new Dictionary<string, string>
         {

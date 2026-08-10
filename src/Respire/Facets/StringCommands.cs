@@ -11,14 +11,14 @@ public enum SetWhen
     Always,
 
     /// <summary>
-    /// Only write when the target does not exist. Maps to NX for string and geo commands, and
-    /// FNX for hash-field writes (none of the supplied fields may exist).
+    /// Only write when the target does not exist. Maps to NX for string and geo commands,
+    /// HSETNX for a single hash field, and FNX for multi-field hash expiry writes.
     /// </summary>
     NotExists,
 
     /// <summary>
     /// Only write when the target exists. Maps to XX for string and geo commands, and FXX for
-    /// hash-field writes (all supplied fields must exist).
+    /// hash-field writes.
     /// </summary>
     Exists,
 }
@@ -112,10 +112,14 @@ public interface IStringCommands
     /// <summary>A substring by byte offsets (negative offsets count from the end). Redis: GETRANGE.</summary>
     ValueTask<string> GetRangeAsync(RespireKey key, long start, long end, CancellationToken cancellationToken = default);
 
+    /// <summary>Overwrites bytes from a zero-based offset and returns the new length. Redis: SETRANGE.</summary>
+    ValueTask<long> SetRangeAsync(
+        RespireKey key, long offset, RespireValue value, CancellationToken cancellationToken = default);
+
     /// <summary>Atomically adds <paramref name="by"/> and returns the new value. Redis: INCR when <paramref name="by"/> is 1, INCRBY otherwise.</summary>
     ValueTask<long> IncrementAsync(RespireKey key, long by = 1, CancellationToken cancellationToken = default);
 
-    /// <summary>Atomically adds a floating-point delta and returns the new value. Redis: INCRBYFLOAT.</summary>
+    /// <summary>Atomically adds a floating-point delta and returns the new value. Pass a negative delta to subtract. Redis: INCRBYFLOAT.</summary>
     ValueTask<double> IncrementAsync(RespireKey key, double by, CancellationToken cancellationToken = default);
 
     /// <summary>Atomically subtracts <paramref name="by"/> and returns the new value. Redis: DECR when <paramref name="by"/> is 1, DECRBY otherwise.</summary>
@@ -299,6 +303,15 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
 
     public ValueTask<string> GetRangeAsync(RespireKey key, long start, long end, CancellationToken cancellationToken = default)
         => client.StringAsync("GETRANGE", new Cmd3(Verbs.GetRange, client.Key(in key), start, end), cancellationToken);
+
+    public ValueTask<long> SetRangeAsync(
+        RespireKey key, long offset, RespireValue value, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        RespireValue.ThrowIfNull(value, nameof(value));
+        return client.IntegerAsync(
+            "SETRANGE", new Cmd3(Verbs.SetRange, client.Key(in key), offset, value), cancellationToken);
+    }
 
     public ValueTask<long> IncrementAsync(RespireKey key, long by = 1, CancellationToken cancellationToken = default)
         => client.IntegerAsync(

@@ -76,10 +76,13 @@ public interface IBatchStringCommands
     /// <summary>A substring by byte offsets (negative offsets count from the end). Redis: GETRANGE.</summary>
     RespirePending<string> GetRange(RespireKey key, long start, long end);
 
+    /// <summary>Overwrites bytes from a zero-based offset and returns the new length. Redis: SETRANGE.</summary>
+    RespirePending<long> SetRange(RespireKey key, long offset, RespireValue value);
+
     /// <summary>Atomically adds <paramref name="by"/> and returns the new value. Redis: INCR when <paramref name="by"/> is 1, INCRBY otherwise.</summary>
     RespirePending<long> Increment(RespireKey key, long by = 1);
 
-    /// <summary>Atomically adds a floating-point delta and returns the new value. Redis: INCRBYFLOAT.</summary>
+    /// <summary>Atomically adds a floating-point delta and returns the new value. Pass a negative delta to subtract. Redis: INCRBYFLOAT.</summary>
     RespirePending<double> Increment(RespireKey key, double by);
 
     /// <summary>Atomically subtracts <paramref name="by"/> and returns the new value. Redis: DECR when <paramref name="by"/> is 1, DECRBY otherwise.</summary>
@@ -235,6 +238,15 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
         => sink.Add<Cmd3, string>(
             "GETRANGE", new Cmd3(Verbs.GetRange, sink.Client.Key(in key), start, end),
             static (c, v) => ResponseReader.String(in v));
+
+    public RespirePending<long> SetRange(RespireKey key, long offset, RespireValue value)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        RespireValue.ThrowIfNull(value, nameof(value));
+        return sink.Add<Cmd3, long>(
+            "SETRANGE", new Cmd3(Verbs.SetRange, sink.Client.Key(in key), offset, value),
+            static (c, v) => ResponseReader.Integer(in v));
+    }
 
     public RespirePending<long> Increment(RespireKey key, long by = 1)
         => sink.Add<IncrementCommand, long>(
