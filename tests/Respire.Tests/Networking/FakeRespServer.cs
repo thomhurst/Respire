@@ -41,6 +41,11 @@ internal sealed class FakeRespServer : IAsyncDisposable
     /// <summary>Closes the connection after receiving this many commands, without sending a reply.</summary>
     public int? CloseConnectionAfterCommand { get; set; }
 
+    /// <summary>
+    /// Suppresses replies for matching commands, allowing cancellation tests to park a connection.
+    /// </summary>
+    public Func<string, bool>? SuppressReply { get; set; }
+
     public IReadOnlyList<string> ReceivedCommands
     {
         get
@@ -144,7 +149,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
                 var pos = 0;
                 while (RespParser.TryParseValue(buffer.AsSpan(0, end), ref pos, out var command) == RespParseStatus.Done)
                 {
-                    RecordCommand(in command, connectionId);
+                    var commandText = RecordCommand(in command, connectionId);
                     command.Dispose();
                     var commandsSeen = Interlocked.Increment(ref _commandsSeen);
                     if (commandsSeen == CloseConnectionAfterCommand)
@@ -157,7 +162,10 @@ internal sealed class FakeRespServer : IAsyncDisposable
                         await Task.Delay(delay, _cts.Token);
                     }
 
-                    pendingReplies.Add(replyIndex++);
+                    if (SuppressReply?.Invoke(commandText) != true)
+                    {
+                        pendingReplies.Add(replyIndex++);
+                    }
                 }
 
                 if (pendingReplies.Count >= MinimumCommandsBeforeReply)
@@ -177,7 +185,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
         }
     }
 
-    private void RecordCommand(in RespValue command, int connectionId)
+    private string RecordCommand(in RespValue command, int connectionId)
     {
         var elements = command.AsArray();
         var builder = new StringBuilder();
@@ -191,11 +199,14 @@ internal sealed class FakeRespServer : IAsyncDisposable
             builder.Append(elements[i].AsString());
         }
 
+        var commandText = builder.ToString();
         lock (_receivedCommands)
         {
-            _receivedCommands.Add(builder.ToString());
+            _receivedCommands.Add(commandText);
             _receivedConnectionIds.Add(connectionId);
         }
+
+        return commandText;
     }
 
     public async ValueTask DisposeAsync()

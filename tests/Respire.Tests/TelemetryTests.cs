@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Text;
 using Respire.Internal;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
@@ -66,6 +67,67 @@ public class TelemetryTests
         var activity = capture.SingleActivity("SET", server.Port);
         await Assert.That(activity.Status).IsEqualTo(ActivityStatusCode.Unset);
         _ = capture.SingleMeasurement("SET", server.Port);
+    }
+
+    [Test]
+    public async Task ClusterFireAndForget_EmitsOneTargetNodeOperation()
+    {
+        await using var target = new FakeRespServer(FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        using var capture = new TelemetryCapture();
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        await client.ExecuteFireAndForgetAsync("SET", "key", "value");
+
+        var activity = capture.SingleActivity("SET", target.Port);
+        await Assert.That(activity.Status).IsEqualTo(ActivityStatusCode.Unset);
+        await Assert.That(capture.Activities.Count(item =>
+            Tag(item, "db.operation.name") as string == "SET" &&
+            Tag(item, "server.port") as int? == target.Port)).IsEqualTo(1);
+        await Assert.That(capture.Activities.Any(item =>
+            Tag(item, "db.operation.name") as string == "SET" &&
+            Tag(item, "server.port") as int? == seed.Port)).IsFalse();
+        _ = capture.SingleMeasurement("SET", target.Port);
+    }
+
+    [Test]
+    public async Task ClusterWideFireAndForget_EmitsOneOperationPerMaster()
+    {
+        await using var firstNode = new FakeRespServer(FakeRespServer.OkReply);
+        await using var secondNode = new FakeRespServer(FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*2\r\n" +
+            $"*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{firstNode.Port}\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{secondNode.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        using var capture = new TelemetryCapture();
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        await client.ExecuteFireAndForgetAsync(
+            RespireCommands.Scripting.FUNCTION_LOAD, "#!lua name=library");
+
+        var expectedPorts = new int?[] { firstNode.Port, secondNode.Port };
+        var ports = capture.Activities
+            .Where(item =>
+                Tag(item, "db.operation.name") as string == "FUNCTION LOAD" &&
+                expectedPorts.Contains(Tag(item, "server.port") as int?))
+            .Select(item => Tag(item, "server.port") as int?)
+            .ToArray();
+        await Assert.That(ports).IsEquivalentTo(expectedPorts);
+        await Assert.That(capture.Measurements.Count(measurement =>
+            measurement.Tags.GetValueOrDefault("db.operation.name") as string == "FUNCTION LOAD" &&
+            expectedPorts.Contains(measurement.Tags.GetValueOrDefault("server.port") as int?)))
+            .IsEqualTo(2);
     }
 
     [Test]

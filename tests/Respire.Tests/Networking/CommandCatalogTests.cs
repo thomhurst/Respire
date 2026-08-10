@@ -225,6 +225,40 @@ public class CommandCatalogTests
     }
 
     [Test]
+    public async Task RawBlockingCommands_CancelDedicatedConnectionsWithoutStallingSharedTraffic()
+    {
+        await using var server = new FakeRespServer(3, FakeRespServer.PongReply)
+        {
+            SuppressReply = static command => command.StartsWith("BLPOP ", StringComparison.Ordinal),
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        using var rawCancellation = new CancellationTokenSource();
+        var raw = client.ExecuteAsync("BLPOP", ["raw-key", 0], rawCancellation.Token).AsTask();
+        await WaitForCommandsAsync(server, 1);
+        rawCancellation.Cancel();
+        await Assert.That(async () => await raw.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<OperationCanceledException>();
+
+        using var interpolatedCancellation = new CancellationTokenSource();
+        RespireKey interpolatedKey = "interpolated-key";
+        var interpolated = client.ExecuteAsync(
+            $"BLPOP {interpolatedKey} {0}", interpolatedCancellation.Token).AsTask();
+        await WaitForCommandsAsync(server, 2);
+        interpolatedCancellation.Cancel();
+        await Assert.That(async () => await interpolated.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<OperationCanceledException>();
+
+        using var ping = await client.ExecuteAsync("PING")
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
+        await Assert.That(ping.AsString()).IsEqualTo("PONG");
+        await Assert.That(server.ReceivedCommands)
+            .IsEquivalentTo(["BLPOP raw-key 0", "BLPOP interpolated-key 0", "PING"]);
+        await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(3);
+    }
+
+    [Test]
     public async Task RawFireAndForget_ConnectionScopedCommandsAreRejectedBeforeSending()
     {
         await using var server = new FakeRespServer();
