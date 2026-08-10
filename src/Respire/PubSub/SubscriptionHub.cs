@@ -299,7 +299,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             var reply = await connection.SendAsync(new Cmd1(verb, name), cancellationToken).ConfigureAwait(false);
             if (reply.IsError)
             {
-                var error = ResponseReader.ServerError(in reply);
+                var error = ResponseReader.ServerError(in reply, operation);
                 reply.Dispose();
                 throw error;
             }

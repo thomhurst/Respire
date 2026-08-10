@@ -148,7 +148,7 @@ public sealed partial class RespireClient : IRespireClient
         ArgumentNullException.ThrowIfNull(options);
         if (!string.IsNullOrWhiteSpace(options.ServiceName))
         {
-            throw new NotSupportedException(
+            throw new RespireConfigurationException(
                 "Redis Sentinel discovery requires RespireClient.ConnectAsync because it must query Sentinel " +
                 "before Redis connections are created. Lazy Sentinel failover is not supported yet.");
         }
@@ -1023,7 +1023,7 @@ public sealed partial class RespireClient : IRespireClient
             {
                 connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken)
                     .ConfigureAwait(false);
-                sendAsking = error.Code == "ASK";
+                sendAsking = error.Code == RespireErrorCodes.Ask;
             }
         }
     }
@@ -1245,8 +1245,8 @@ public sealed partial class RespireClient : IRespireClient
         if (_core.Options.CommandTimeout is not { } timeout)
         {
             return sendAsking
-                ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken)
-                : connection.SendCheckedAsync(in command, cancellationToken);
+                ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation)
+                : connection.SendCheckedAsync(in command, cancellationToken, operation);
         }
 
         return SendWithTimeoutAsync(operation, connection, command, cancellationToken, timeout, sendAsking);
@@ -1269,8 +1269,8 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             return await (sendAsking
-                    ? ClusterRouter.SendAskingAsync(connection, in command, timeoutSource.Token)
-                    : connection.SendCheckedAsync(in command, timeoutSource.Token))
+                    ? ClusterRouter.SendAskingAsync(connection, in command, timeoutSource.Token, operation)
+                    : connection.SendCheckedAsync(in command, timeoutSource.Token, operation))
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -1375,7 +1375,7 @@ public sealed partial class RespireClient : IRespireClient
             returned = true;
             if (response.IsError)
             {
-                var error = ResponseReader.ServerError(in response);
+                var error = ResponseReader.ServerError(in response, operation);
                 response.Dispose();
                 throw error;
             }
@@ -1438,7 +1438,7 @@ public sealed partial class RespireClient : IRespireClient
                 sendAsking = false;
                 if (response.IsError)
                 {
-                    var error = ResponseReader.ServerError(in response);
+                    var error = ResponseReader.ServerError(in response, operation);
                     response.Dispose();
                     if (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.IsRedirect(error))
                     {
@@ -1448,7 +1448,7 @@ public sealed partial class RespireClient : IRespireClient
                         pool.Return(connection);
                         returned = true;
                         pool = redirectedPool;
-                        sendAsking = error.Code == "ASK";
+                        sendAsking = error.Code == RespireErrorCodes.Ask;
                         continue;
                     }
 
@@ -1606,7 +1606,7 @@ public sealed partial class RespireClient : IRespireClient
                         cancellationToken, script.Sha1)
                     .ConfigureAwait(false);
             }
-            catch (RespireServerException ex) when (ex.Code == "NOSCRIPT")
+            catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.NoScript)
             {
                 clusterReply = await SendClusterAsync(
                         "EVAL", cluster,
@@ -1767,7 +1767,7 @@ public sealed partial class RespireClient : IRespireClient
                     requiresIdentity, cancellationToken)
                 .ConfigureAwait(false);
         }
-        catch (RespireServerException ex) when (ex.Code == "NOSCRIPT")
+        catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.NoScript)
         {
             return await ExecuteTrackedClusterCommandAsync(
                     execution, cluster, execution.Connection, "EVAL", Verbs.Eval, script.Source, script.Sha1, tail,
@@ -1806,7 +1806,7 @@ public sealed partial class RespireClient : IRespireClient
                 connection = await GetTrackedRedirectConnectionAsync(
                         cluster, error, connection, requiresIdentity, cancellationToken)
                     .ConfigureAwait(false);
-                sendAsking = error.Code == "ASK";
+                sendAsking = error.Code == RespireErrorCodes.Ask;
                 execution.Connection = connection;
                 execution.ConnectionIdentity = GetTrackedConnectionIdentity(
                     connection, cluster.HasReliableCorrectionOrdering(connection), sendAsking);
@@ -1854,7 +1854,7 @@ public sealed partial class RespireClient : IRespireClient
                 .ConfigureAwait(false);
             return new RespireResult(in reply);
         }
-        catch (RespireServerException ex) when (ex.Code == "NOSCRIPT")
+        catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.NoScript)
         {
             var reply = await SendOnConnectionCoreAsync(
                     "EVAL", connection, new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]), cancellationToken)
@@ -1884,7 +1884,7 @@ public sealed partial class RespireClient : IRespireClient
                 new ClientKillIdCommand(identity.ServerClientId), CancellationToken.None).ConfigureAwait(false);
             if (reply.IsError)
             {
-                var error = ResponseReader.ServerError(in reply);
+                var error = ResponseReader.ServerError(in reply, "CLIENT KILL");
                 reply.Dispose();
                 throw error;
             }
@@ -2176,7 +2176,7 @@ public sealed partial class RespireClient : IRespireClient
         {
             var connection = core.Multiplexer.GetConnection();
             return connection.SendConvertedAsync(
-                in command, state, converter, transferOwnership, ct);
+                in command, state, converter, transferOwnership, ct, operation);
         }
 
         return PooledResponseSource<TState, TResult>.Create(

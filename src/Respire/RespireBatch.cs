@@ -424,7 +424,7 @@ public sealed class RespireBatch : IDisposable, IPendingSink
             {
                 if (value.IsError)
                 {
-                    var error = ResponseReader.ServerError(in value);
+                    var error = ResponseReader.ServerError(in value, Operation);
                     pending.Fail(error);
                     return error;
                 }

@@ -163,6 +163,6 @@ internal static class ResponseReader
         return result;
     }
 
-    public static RespireServerException ServerError(in RespValue value)
-        => new(value.GetErrorMessage());
+    public static RespireServerException ServerError(in RespValue value, string? commandName = null)
+        => new(value.GetErrorMessage(), commandName);
 }

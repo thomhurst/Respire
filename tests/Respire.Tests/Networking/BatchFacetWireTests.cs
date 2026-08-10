@@ -13,6 +13,20 @@ namespace Respire.Tests.Networking;
 public class BatchFacetWireTests
 {
     [Test]
+    public async Task BatchCommandError_PreservesCommandName()
+    {
+        await using var server = new FakeRespServer("-WRONGTYPE bad value\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var batch = client.CreateBatch();
+        var pending = batch.GetStringAsync("key");
+
+        await batch.SendAsync();
+        var error = Assert.Throws<RespireServerException>(() => _ = pending.Result);
+        await Assert.That(error.CommandName).IsEqualTo("GET");
+    }
+
+    [Test]
     public async Task BatchFacets_EmitTheSameFramesAsClientFacets()
     {
         // Every command below replies with an integer, which satisfies both the integer and the

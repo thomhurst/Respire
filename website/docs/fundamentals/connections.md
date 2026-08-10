@@ -153,6 +153,11 @@ Commands with a `CancellationToken` abandon the wait when cancelled; cancellatio
 
 Likewise, a `RespireTimeoutException` means the response did not arrive within `CommandTimeout`. Treat writes as potentially executed and design retries around operation idempotency.
 
+Redis error replies throw `RespireServerException`. Its `Code` identifies the Redis error,
+`CommandName` identifies the originating command when available, and `IsTransient` classifies
+`LOADING`, `BUSY`, `CLUSTERDOWN`, `TRYAGAIN`, and `MASTERDOWN`. Use `RespireErrorCodes` instead of
+string literals when building retry policies.
+
 ## Connection state
 
 `IsConnected` reports current availability. Subscribe to `ConnectionStateChanged` when a health surface needs transition events:

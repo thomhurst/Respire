@@ -38,7 +38,7 @@ public static class RespireCachingServiceCollectionExtensions
                 return new RespireDistributedCache(RespireClient.Create(clientOptions), options);
             }
 
-            var client = provider.GetService<IRespireClient>() ?? throw new InvalidOperationException(
+            var client = provider.GetService<IRespireClient>() ?? throw new RespireConfigurationException(
                 $"No {nameof(IRespireClient)} is registered and {nameof(RespireCacheOptions)}." +
                 $"{nameof(RespireCacheOptions.ConnectionString)} is not set. Either call AddRespire " +
                 "first or set the connection string in AddRespireDistributedCache.");

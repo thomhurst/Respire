@@ -269,7 +269,7 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
 
             if (result.IsError)
             {
-                var error = ResponseReader.ServerError(in result);
+                var error = ResponseReader.ServerError(in result, "MULTI/EXEC");
                 operationError = error;
                 result.Dispose();
                 foreach (var op in _ops)
@@ -350,14 +350,14 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
                     return reply;
                 }
 
-                var redirect = ResponseReader.ServerError(in reply);
+                var redirect = ResponseReader.ServerError(in reply, "MULTI/EXEC");
                 if (!ClusterRouter.IsRedirect(redirect))
                 {
                     return reply;
                 }
 
                 reply.Dispose();
-                if (redirect.Code == "ASK")
+                if (redirect.Code == RespireErrorCodes.Ask)
                 {
                     throw new RespireConnectionException(
                         "Redis Cluster transactions cannot follow ASK redirects during slot migration.",
@@ -498,7 +498,7 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
         {
             if (element.IsError)
             {
-                var error = ResponseReader.ServerError(in element);
+                var error = ResponseReader.ServerError(in element, Operation);
                 pending.Fail(error);
                 return error;
             }

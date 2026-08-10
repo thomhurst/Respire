@@ -226,12 +226,17 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
     private ManualResetValueTaskSourceCore<RespValue> _core = new() { RunContinuationsAsynchronously = false };
     private PendingResponsePool? _pool;
     private bool _throwOnError;
+    private string? _commandName;
 
     public ValueTask<RespValue> Task => new(this, _core.Version);
 
     internal void SetPool(PendingResponsePool pool) => _pool = pool;
 
-    internal void Configure(bool throwOnError) => _throwOnError = throwOnError;
+    internal void Configure(bool throwOnError, string? commandName)
+    {
+        _throwOnError = throwOnError;
+        _commandName = commandName;
+    }
 
     protected override void SetResultCore(in RespValue result) => _core.SetResult(result);
 
@@ -247,7 +252,7 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
                 return response;
             }
 
-            var error = ResponseReader.ServerError(in response);
+            var error = ResponseReader.ServerError(in response, _commandName);
             response.Dispose();
             throw error;
         }
@@ -269,6 +274,7 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
     protected override void ResetAndReturn()
     {
         _throwOnError = false;
+        _commandName = null;
         _core.Reset();
         _pool?.Return(this);
     }
@@ -289,6 +295,7 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
     private TState _state = default!;
     private bool _hasResponse;
     private bool _transferOwnership;
+    private string? _commandName;
 
     private ConvertedPendingResponseSource()
     {
@@ -299,7 +306,8 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
     public static ConvertedPendingResponseSource<TState, TResult> Rent(
         TState state,
         ResponseConverter<TState, TResult> converter,
-        bool transferOwnership)
+        bool transferOwnership,
+        string? commandName)
     {
         if (!Pool.TryPop(out var source))
         {
@@ -309,6 +317,7 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         source._state = state;
         source._converter = converter;
         source._transferOwnership = transferOwnership;
+        source._commandName = commandName;
         source.PrepareForUse();
         return source;
     }
@@ -329,7 +338,7 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
             _core.GetResult(token);
             if (_response.IsError)
             {
-                throw ResponseReader.ServerError(in _response);
+                throw ResponseReader.ServerError(in _response, _commandName);
             }
 
             var result = _converter!(_state, in _response);
@@ -375,6 +384,7 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         _converter = null;
         _hasResponse = false;
         _transferOwnership = false;
+        _commandName = null;
     }
 }
 
@@ -386,7 +396,7 @@ internal sealed class PendingResponsePool
     public PendingResponsePool(int maxPoolSize) => _stack = new LockFreeStack<PendingResponseSource>(maxPoolSize);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public PendingResponseSource Rent(bool throwOnError = false)
+    public PendingResponseSource Rent(bool throwOnError = false, string? commandName = null)
     {
         if (!_stack.TryPop(out var source))
         {
@@ -394,7 +404,7 @@ internal sealed class PendingResponsePool
             source.SetPool(this);
         }
 
-        source.Configure(throwOnError);
+        source.Configure(throwOnError, commandName);
         source.PrepareForUse();
         return source;
     }

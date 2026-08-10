@@ -162,7 +162,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
         var observe = error.Code != "ASK";
         var node = GetOrCreateNode(endpoint, observe);
         await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-        if (error.Code == "MOVED")
+        if (error.Code == RespireErrorCodes.Moved)
         {
             SetSlotOwner(slot, node);
         }
@@ -234,7 +234,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
         var node = GetOrCreateNode(endpoint, observe: error.Code != "ASK");
         await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-        if (error.Code == "MOVED")
+        if (error.Code == RespireErrorCodes.Moved)
         {
             SetSlotOwner(slot, node);
         }
@@ -256,7 +256,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             .HasReliableCorrectionOrdering;
 
     internal static bool IsRedirect(RespireServerException error)
-        => error.Code is "MOVED" or "ASK";
+        => error.Code is RespireErrorCodes.Moved or RespireErrorCodes.Ask;
 
     internal static bool TryParseRedirect(
         RespireServerException error,
@@ -308,9 +308,10 @@ internal sealed class ClusterRouter : IAsyncDisposable
     internal static ValueTask<Respire.Protocol.RespValue> SendAskingAsync<TCommand>(
         RespireConnection connection,
         in TCommand command,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? commandName = null)
         where TCommand : struct, Respire.Protocol.IRespCommand
-        => connection.SendPrefixedCheckedAsync(in Asking, in command, cancellationToken);
+        => connection.SendPrefixedCheckedAsync(in Asking, in command, cancellationToken, commandName);
 
     internal static ValueTask<Respire.Protocol.RespValue> SendAskingUncheckedAsync<TCommand>(
         RespireConnection connection,
