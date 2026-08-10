@@ -32,8 +32,8 @@ Pass an `ILoggerFactory` through `RespireOptions` or use the dependency-injectio
 For health checks or dashboards, combine `IsConnected` with `ConnectionStateChanged`:
 
 ```csharp
-redis.ConnectionStateChanged += state =>
-    healthState.Update(state);
+redis.ConnectionStateChanged += change =>
+    healthState.Update(change.Endpoint, change.State, change.Error);
 ```
 
 A transient reconnection is expected to move through connection states; use application-level thresholds before paging an operator.

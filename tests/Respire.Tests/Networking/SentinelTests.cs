@@ -1,4 +1,6 @@
+using System.Net;
 using System.Net.Security;
+using System.Net.Sockets;
 using System.Text;
 using Respire.Internal;
 using TUnit.Assertions;
@@ -236,11 +238,12 @@ public class SentinelTests
     [Test]
     public async Task ConnectAsync_FallsBackWhenSentinelReportsUnreachablePrimary()
     {
-        await using var stalePrimary = new FakeRespServer(FakeRespServer.PongReply);
+        using var unavailablePrimary = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        unavailablePrimary.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        var unavailablePrimaryPort = ((IPEndPoint)unavailablePrimary.LocalEndPoint!).Port;
         await using var primary = new FakeRespServer(FakeRespServer.PongReply);
-        await using var staleSentinel = new FakeRespServer(PrimaryReply(stalePrimary.Port));
+        await using var staleSentinel = new FakeRespServer(PrimaryReply(unavailablePrimaryPort));
         await using var currentSentinel = new FakeRespServer(PrimaryReply(primary.Port));
-        await stalePrimary.DisposeAsync();
 
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {

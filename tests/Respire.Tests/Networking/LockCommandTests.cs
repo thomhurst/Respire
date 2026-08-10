@@ -286,8 +286,10 @@ public class LockCommandTests
         var mutex = await client.Locks.AcquireOrThrowAsync(
             "resource",
             TimeSpan.FromSeconds(30),
-            wait: TimeSpan.FromMilliseconds(50),
-            retryEvery: TimeSpan.FromSeconds(1));
+            // Keep the wait below the retry interval while allowing the first loopback response
+            // enough headroom on loaded CI runners.
+            wait: TimeSpan.FromMilliseconds(500),
+            retryEvery: TimeSpan.FromSeconds(5));
 
         await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
     }

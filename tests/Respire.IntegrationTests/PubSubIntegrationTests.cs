@@ -173,16 +173,16 @@ public class PubSubIntegrationTests
         var clientName = $"respire-pubsub-{Guid.NewGuid():N}";
         await using var resilientClient = await RespireClient.ConnectAsync(
             RespireOptions.Parse(_fixture.ConnectionString) with { ClientName = clientName });
-        var states = new List<RespireConnectionState>();
+        var changes = new List<RespireConnectionStateChange>();
         var connected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        resilientClient.ConnectionStateChanged += state =>
+        resilientClient.ConnectionStateChanged += change =>
         {
-            lock (states)
+            lock (changes)
             {
-                states.Add(state);
+                changes.Add(change);
             }
 
-            if (state == RespireConnectionState.Connected)
+            if (change.State == RespireConnectionState.Connected)
             {
                 connected.TrySetResult();
             }
@@ -211,11 +211,15 @@ public class PubSubIntegrationTests
 
         (await reconnectedMessage.WaitAsync(TimeSpan.FromSeconds(5))).Text.Should().Be("after-reconnect");
         await connected.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        lock (states)
+        lock (changes)
         {
-            states.Should().ContainInOrder(
+            changes.Select(change => change.State).Should().ContainInOrder(
                 RespireConnectionState.Reconnecting,
                 RespireConnectionState.Connected);
+            var reconnecting = changes.First(
+                change => change.State == RespireConnectionState.Reconnecting);
+            reconnecting.Endpoint.Should().Be(resilientClient.Endpoint);
+            reconnecting.Error.Should().NotBeNull();
         }
     }
 

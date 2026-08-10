@@ -89,6 +89,7 @@ public sealed class RespireConnection : IAsyncDisposable
     /// faults itself — used to observe connection lifetime (e.g. pub/sub auto-resubscribe).
     /// </summary>
     internal Task Closed => _receiveTask;
+    internal Exception? CloseError => Volatile.Read(ref _abortReason);
 
     /// <summary>
     /// Redis's connection ID, populated only when reliable cross-connection correction ordering
@@ -1280,10 +1281,11 @@ public sealed class RespireConnection : IAsyncDisposable
             RespirePools.ResponsePayloads.Return(buffer);
             // Replies parsed before the fault still complete normally.
             _completions.Flush();
-            Abort();
-            FailAllPending(Volatile.Read(ref _abortReason)
+            var closeError = Volatile.Read(ref _abortReason)
                 ?? fault
-                ?? new RespireConnectionException($"Connection to {Host}:{Port} closed."));
+                ?? new RespireConnectionException($"Connection to {Host}:{Port} closed.");
+            Abort(closeError);
+            FailAllPending(Volatile.Read(ref _abortReason) ?? closeError);
         }
     }
 

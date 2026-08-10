@@ -77,7 +77,7 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 - URI carries the common knobs: `redis://user:pass@host:6379/2?clientName=api&commandTimeout=2s`.
 - Connection count, logger, TLS all live in `RespireOptions` — no five-parameter factory.
 - `redis.IsConnected`, `redis.ConnectionStateChanged` event (`Connected`, `Reconnecting`,
-  `Failed`) for health surfacing.
+  `Disconnected`) with endpoint and error context for health surfacing.
 
 ## 2. Core surface: root shortcuts + facets
 

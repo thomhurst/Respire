@@ -1335,7 +1335,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public RespireEndpoint Endpoint => inner.Endpoint;
         public bool IsConnected => inner.IsConnected;
 
-        public event Action<RespireConnectionState>? ConnectionStateChanged
+        public event Action<RespireConnectionStateChange>? ConnectionStateChanged
         {
             add => inner.ConnectionStateChanged += value;
             remove => inner.ConnectionStateChanged -= value;

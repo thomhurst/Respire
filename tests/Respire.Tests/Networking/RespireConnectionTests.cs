@@ -1,9 +1,11 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using Respire;
 using Respire.Commands;
+using Respire.Infrastructure;
 using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
@@ -501,6 +503,72 @@ public class RespireConnectionTests
         await Assert.That(async () => await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
             .Throws<RespireConnectionException>();
         listener.Stop();
+    }
+
+    [Test]
+    public async Task FailedReconnect_HandlerCanImmediatelyScheduleAnotherReconnect()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var acceptTask = listener.AcceptSocketAsync();
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", port);
+        using var socket = await acceptTask;
+        var secondReconnect = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var laterSubscriberThreeStates = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var laterSubscriberStates = new ConcurrentQueue<RespireConnectionState>();
+        var reconnectCount = 0;
+        var retryRequested = 0;
+
+        multiplexer.StateChanged += change =>
+        {
+            if (change.State == RespireConnectionState.Reconnecting
+                && Interlocked.Increment(ref reconnectCount) == 2)
+            {
+                secondReconnect.TrySetResult();
+            }
+
+            if (change.State == RespireConnectionState.Disconnected
+                && Interlocked.Exchange(ref retryRequested, 1) == 0)
+            {
+                try
+                {
+                    _ = multiplexer.GetConnection();
+                }
+                catch (RespireConnectionException)
+                {
+                    // The retry is scheduled before GetConnection reports no healthy connection.
+                }
+            }
+        };
+        multiplexer.StateChanged += change =>
+        {
+            laterSubscriberStates.Enqueue(change.State);
+            if (laterSubscriberStates.Count >= 3)
+            {
+                laterSubscriberThreeStates.TrySetResult();
+            }
+        };
+
+        listener.Stop();
+        socket.LingerState = new LingerOption(true, 0);
+        socket.Close();
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (multiplexer.IsConnected)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+
+        await Assert.That(() => multiplexer.GetConnection()).Throws<RespireConnectionException>();
+        await secondReconnect.Task.WaitAsync(timeout.Token);
+        await laterSubscriberThreeStates.Task.WaitAsync(timeout.Token);
+
+        var states = laterSubscriberStates.ToArray();
+        await Assert.That(states.Length).IsGreaterThanOrEqualTo(3);
+        await Assert.That(states[0]).IsEqualTo(RespireConnectionState.Reconnecting);
+        await Assert.That(states[1]).IsEqualTo(RespireConnectionState.Disconnected);
+        await Assert.That(states[2]).IsEqualTo(RespireConnectionState.Reconnecting);
     }
 
     [Test]

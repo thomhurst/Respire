@@ -158,8 +158,12 @@ Likewise, a `RespireTimeoutException` means the response did not arrive within `
 `IsConnected` reports current availability. Subscribe to `ConnectionStateChanged` when a health surface needs transition events:
 
 ```csharp
-redis.ConnectionStateChanged += state =>
-    logger.LogInformation("Redis connection is {State}", state);
+redis.ConnectionStateChanged += change =>
+    logger.LogInformation(
+        change.Error,
+        "Redis endpoint {Endpoint} is {State}",
+        change.Endpoint,
+        change.State);
 ```
 
 Respire reconnects failed connections in the background. Pub/sub subscriptions reconnect and resubscribe automatically.
