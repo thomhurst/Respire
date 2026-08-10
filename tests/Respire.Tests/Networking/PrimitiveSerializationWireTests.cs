@@ -44,14 +44,14 @@ public class PrimitiveSerializationWireTests
     }
 
     [Test]
-    public async Task SerializerCancellation_IsNotReportedAsCommandTimeout()
+    public async Task SerializerCancellation_AfterResponseTimeoutWindow_IsNotCommandTimeout()
     {
         await using var server = new FakeRespServer("$2\r\n{}\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
-            CommandTimeout = TimeSpan.FromSeconds(10),
+            CommandTimeout = TimeSpan.FromMilliseconds(250),
             Serializer = new CancelingDeserializer()
         });
 
@@ -97,6 +97,9 @@ public class PrimitiveSerializationWireTests
             => throw new NotSupportedException();
 
         public T? Deserialize<T>(ReadOnlySpan<byte> payload)
-            => throw new OperationCanceledException("Serializer canceled conversion.");
+        {
+            Thread.Sleep(TimeSpan.FromMilliseconds(500));
+            throw new OperationCanceledException("Serializer canceled conversion.");
+        }
     }
 }

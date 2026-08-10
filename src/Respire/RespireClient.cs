@@ -2286,23 +2286,37 @@ public sealed partial class RespireClient : IRespireClient
         TimeSpan timeout)
         where TCommand : struct, IRespCommand
     {
-        using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
+        RespValue response;
+        // CommandTimeout covers the Redis response, not user converter work.
+        using (var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout))
+        {
+            try
+            {
+                response = await connection.SendCheckedAsync(
+                        in command, timeoutSource.Token, operation)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (
+                !cancellationToken.IsCancellationRequested
+                && timeoutSource.IsCancellationRequested)
+            {
+                throw new RespireTimeoutException(operation, timeout);
+            }
+        }
+
+        var converted = false;
         try
         {
-            return await connection.SendConvertedAsync(
-                    in command,
-                    state,
-                    converter,
-                    transferOwnership,
-                    timeoutSource.Token,
-                    operation)
-                .ConfigureAwait(false);
+            var result = converter(state, in response);
+            converted = true;
+            return result;
         }
-        catch (OperationCanceledException) when (
-            !cancellationToken.IsCancellationRequested
-            && timeoutSource.IsCancellationRequested)
+        finally
         {
-            throw new RespireTimeoutException(operation, timeout);
+            if (!transferOwnership || !converted)
+            {
+                response.Dispose();
+            }
         }
     }
 
