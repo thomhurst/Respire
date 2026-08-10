@@ -82,11 +82,13 @@ Respire also accepts the common comma-delimited format, which eases migration fr
 StackExchange.Redis:
 
 ```text
-cache-a:6380,cache-b,password=secret,ssl=true,defaultDatabase=2
+cache-a:6380,password=secret,ssl=true,defaultDatabase=2
 ```
 
-Multiple endpoints are preserved in `RespireOptions.Endpoints`. Supported options are `user`
-(or `username`), `password`, `ssl`, `clientName`, `defaultDatabase` (or `db`),
+This format accepts one endpoint. Multi-endpoint strings fail immediately because Respire cannot
+infer whether they represent Redis Cluster, Sentinel, or standalone failover; configure
+`RespireOptions` directly and select the mode explicitly. Supported options are `user` (or
+`username`), `password`, `ssl`, `clientName`, `defaultDatabase` (or `db`),
 `connectTimeout`, `asyncTimeout` (or `syncTimeout`), `protocol` (`resp2` or `resp3`),
 and `allowAdmin`. Unsupported StackExchange.Redis options fail immediately with an
 `ArgumentException`; use a `redis://` URI or configure `RespireOptions` directly for Respire-only

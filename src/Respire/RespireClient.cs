@@ -42,8 +42,9 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     /// <summary>
-    /// Connects using a connection string: "host", "host:port", a StackExchange.Redis-compatible
-    /// comma-delimited string, or a <c>redis://[user[:password]@]host[:port][/db]</c> URI
+    /// Connects using a connection string: "host", "host:port", a single-endpoint
+    /// StackExchange.Redis-compatible comma-delimited string, or a
+    /// <c>redis://[user[:password]@]host[:port][/db]</c> URI
     /// (see <see cref="RespireOptions.Parse"/>).
     /// </summary>
     public static ValueTask<RespireClient> ConnectAsync(string connectionString, CancellationToken cancellationToken = default)

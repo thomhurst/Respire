@@ -17,15 +17,14 @@ public class RespireOptionsTests
     }
 
     [Test]
-    public async Task StackExchangeConnectionString_MapsCommonOptionsAndMultipleEndpoints()
+    public async Task StackExchangeConnectionString_MapsCommonOptions()
     {
         var options = RespireOptions.Parse(
-            "cache-a:6380,cache-b,user=app,password=secret,clientName=api," +
+            "cache-a:6380,user=app,password=secret,clientName=api," +
             "defaultDatabase=2,connectTimeout=1500,asyncTimeout=2500,protocol=resp3," +
             "allowAdmin=true");
 
-        await Assert.That(options.Endpoints).IsEquivalentTo(
-            [new RespireEndpoint("cache-a", 6380), new RespireEndpoint("cache-b")]);
+        await Assert.That(options.Endpoints).IsEquivalentTo([new RespireEndpoint("cache-a", 6380)]);
         await Assert.That(options.Username).IsEqualTo("app");
         await Assert.That(options.Password).IsEqualTo("secret");
         await Assert.That(options.ClientName).IsEqualTo("api");
@@ -34,6 +33,16 @@ public class RespireOptionsTests
         await Assert.That(options.CommandTimeout).IsEqualTo(TimeSpan.FromMilliseconds(2500));
         await Assert.That(options.Protocol).IsEqualTo(RespProtocol.Resp3);
         await Assert.That(options.AllowAdmin).IsTrue();
+    }
+
+    [Test]
+    public async Task StackExchangeConnectionString_MultipleEndpointsFailClearly()
+    {
+        var exception = Assert.Throws<ArgumentException>(
+            () => RespireOptions.Parse("cache-a:6380,cache-b,password=secret"));
+
+        await Assert.That(exception.Message).Contains("multiple endpoints");
+        await Assert.That(exception.Message).Contains("RespireOptions");
     }
 
     [Test]

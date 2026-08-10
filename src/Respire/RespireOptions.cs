@@ -235,7 +235,7 @@ public sealed record RespireOptions
     /// <summary>
     /// Parses a connection string: "host", "host:port", a StackExchange.Redis-compatible
     /// comma-delimited string, or a <c>redis://[user[:password]@]host[:port][/database]</c> URI.
-    /// Comma-delimited strings support multiple endpoints and the options <c>user</c>,
+    /// Comma-delimited strings support one endpoint and the options <c>user</c>,
     /// <c>password</c>, <c>ssl</c>, <c>clientName</c>, <c>defaultDatabase</c>,
     /// <c>connectTimeout</c>, <c>asyncTimeout</c>, <c>syncTimeout</c>, <c>protocol</c>,
     /// and <c>allowAdmin</c>. Recognized URI query parameters:
@@ -474,6 +474,14 @@ public sealed record RespireOptions
         {
             throw new ArgumentException(
                 "A StackExchange.Redis connection string must contain at least one endpoint.",
+                nameof(connectionString));
+        }
+
+        if (endpoints.Count > 1)
+        {
+            throw new ArgumentException(
+                "StackExchange.Redis connection strings with multiple endpoints are not supported. " +
+                "Configure RespireOptions directly and select Redis Cluster or Sentinel mode.",
                 nameof(connectionString));
         }
 
