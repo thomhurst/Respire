@@ -244,17 +244,20 @@ public sealed partial class RespireClient : IRespireClient
                 $"{command.Name} can block and cannot run through ExecuteFireAndForgetAsync.");
         }
 
+        var storedProcedureName = StoredProcedureName(command.Name, args);
         var commandValue = new CatalogCommand(command, args);
         if (_core.Cluster is { } cluster
             && DynamicCommandRouting.IsClusterWideMutation(command.Name, args))
         {
             await SendClusterWideFireAndForgetAsync(
-                    command.Name, cluster, commandValue, cancellationToken)
+                    command.Name, cluster, commandValue, cancellationToken, storedProcedureName)
                 .ConfigureAwait(false);
             return;
         }
 
-        await SendFireAndForgetAsync(command.Name, commandValue, cancellationToken).ConfigureAwait(false);
+        await SendFireAndForgetAsync(
+                command.Name, commandValue, cancellationToken, storedProcedureName)
+            .ConfigureAwait(false);
     }
 
     /// <summary>
@@ -380,18 +383,21 @@ public sealed partial class RespireClient : IRespireClient
         var (operation, words, firstArgumentIndex) = ParseRawCommand(command);
         ValidateRawFireAndForgetCommand(
             operation, words.AsSpan(firstArgumentIndex), args);
-        var (_, commandValue) = CreateRawCommand(operation, words, firstArgumentIndex, args);
+        var (storedProcedureName, commandValue) = CreateRawCommand(
+            operation, words, firstArgumentIndex, args);
 
         if (_core.Cluster is { } cluster
             && DynamicCommandRouting.IsClusterWideMutation(operation, args))
         {
             await SendClusterWideFireAndForgetAsync(
-                    operation, cluster, commandValue, cancellationToken)
+                    operation, cluster, commandValue, cancellationToken, storedProcedureName)
                 .ConfigureAwait(false);
             return;
         }
 
-        await SendFireAndForgetAsync(operation, commandValue, cancellationToken).ConfigureAwait(false);
+        await SendFireAndForgetAsync(
+                operation, commandValue, cancellationToken, storedProcedureName)
+            .ConfigureAwait(false);
     }
 
     /// <summary>
@@ -514,7 +520,8 @@ public sealed partial class RespireClient : IRespireClient
         ReadOnlySpan<RespireValue> arguments)
     {
         var behavior = RespireCommand.Classify(operation);
-        if (operation == "SCRIPT" && arguments.Length > 0 && IsMultiplexedScriptSubcommand(arguments[0]))
+        if (behavior == RespireCommandBehavior.ConnectionScoped
+            && IsMultiplexedRawSubcommand(operation, inlineArguments, arguments))
         {
             behavior = RespireCommandBehavior.Multiplexed;
         }
@@ -532,6 +539,26 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
+    private static bool IsMultiplexedRawSubcommand(
+        string operation,
+        ReadOnlySpan<string> inlineArguments,
+        ReadOnlySpan<RespireValue> arguments)
+    {
+        if (operation == "SCRIPT")
+        {
+            return arguments.Length > 0 && IsMultiplexedScriptSubcommand(arguments[0]);
+        }
+
+        if (operation != "CLIENT")
+        {
+            return false;
+        }
+
+        return inlineArguments.Length > 0
+            ? IsMultiplexedClientSubcommand(inlineArguments[0])
+            : arguments.Length > 0 && IsMultiplexedClientSubcommand(arguments[0]);
+    }
+
     private static bool IsMultiplexedScriptSubcommand(RespireValue candidate)
         => candidate.EqualsAsciiIgnoreCase("EXISTS")
            || candidate.EqualsAsciiIgnoreCase("FLUSH")
@@ -539,6 +566,22 @@ public sealed partial class RespireClient : IRespireClient
            || candidate.EqualsAsciiIgnoreCase("KILL")
            || candidate.EqualsAsciiIgnoreCase("LOAD")
            || candidate.EqualsAsciiIgnoreCase("SHOW");
+
+    private static bool IsMultiplexedClientSubcommand(string candidate)
+        => candidate.Equals("HELP", StringComparison.OrdinalIgnoreCase)
+           || candidate.Equals("KILL", StringComparison.OrdinalIgnoreCase)
+           || candidate.Equals("LIST", StringComparison.OrdinalIgnoreCase)
+           || candidate.Equals("PAUSE", StringComparison.OrdinalIgnoreCase)
+           || candidate.Equals("UNBLOCK", StringComparison.OrdinalIgnoreCase)
+           || candidate.Equals("UNPAUSE", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsMultiplexedClientSubcommand(RespireValue candidate)
+        => candidate.EqualsAsciiIgnoreCase("HELP")
+           || candidate.EqualsAsciiIgnoreCase("KILL")
+           || candidate.EqualsAsciiIgnoreCase("LIST")
+           || candidate.EqualsAsciiIgnoreCase("PAUSE")
+           || candidate.EqualsAsciiIgnoreCase("UNBLOCK")
+           || candidate.EqualsAsciiIgnoreCase("UNPAUSE");
 
     private static (string Operation, string[] Words, int FirstArgumentIndex) ParseRawCommand(string command)
     {
@@ -941,42 +984,47 @@ public sealed partial class RespireClient : IRespireClient
     private ValueTask SendFireAndForgetAsync<TCommand>(
         string operation,
         TCommand command,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? storedProcedureName = null)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         if (core.Cluster is { } cluster)
         {
-            return SendFireAndForgetClusterAsync(operation, cluster, command, cancellationToken);
+            return SendFireAndForgetClusterAsync(
+                operation, cluster, command, cancellationToken, storedProcedureName);
         }
 
         if (!core.Multiplexer.IsInitialized)
         {
-            return SendFireAndForgetAfterConnectAsync(operation, command, cancellationToken);
+            return SendFireAndForgetAfterConnectAsync(
+                operation, command, cancellationToken, storedProcedureName);
         }
 
         var connection = core.Multiplexer.GetConnection();
         return SendFireAndForgetOnConnectionAsync(
-            operation, connection, command, cancellationToken);
+            operation, connection, command, cancellationToken, storedProcedureName);
     }
 
     private ValueTask SendFireAndForgetOnConnectionAsync<TCommand>(
         string operation,
         RespireConnection connection,
         TCommand command,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? storedProcedureName = null)
         where TCommand : struct, IRespCommand
         => RespireTelemetry.IsEnabled
             ? SendFireAndForgetOnConnectionInstrumentedAsync(
-                operation, connection, command, cancellationToken)
+                operation, connection, command, cancellationToken, storedProcedureName)
             : connection.SendFireAndForgetAsync(in command, cancellationToken);
 
     private async ValueTask SendFireAndForgetOnConnectionInstrumentedAsync<TCommand>(
         string operation,
         RespireConnection connection,
         TCommand command,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? storedProcedureName)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -984,7 +1032,8 @@ public sealed partial class RespireClient : IRespireClient
             operation,
             connection.Host,
             connection.Port,
-            core.Options.Database);
+            core.Options.Database,
+            storedProcedureName: storedProcedureName);
         try
         {
             await connection.SendFireAndForgetAsync(in command, cancellationToken).ConfigureAwait(false);
@@ -993,6 +1042,7 @@ public sealed partial class RespireClient : IRespireClient
                 connection.Host,
                 connection.Port,
                 core.Options.Database,
+                storedProcedureName,
                 connection: connection);
         }
         catch (Exception ex)
@@ -1002,6 +1052,7 @@ public sealed partial class RespireClient : IRespireClient
                 connection.Host,
                 connection.Port,
                 core.Options.Database,
+                storedProcedureName,
                 error: ex,
                 connection: connection);
             throw;
@@ -1011,14 +1062,15 @@ public sealed partial class RespireClient : IRespireClient
     private async ValueTask SendFireAndForgetAfterConnectAsync<TCommand>(
         string operation,
         TCommand command,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? storedProcedureName)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
         await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         var connection = core.Multiplexer.GetConnection();
         await SendFireAndForgetOnConnectionAsync(
-                operation, connection, command, cancellationToken)
+                operation, connection, command, cancellationToken, storedProcedureName)
             .ConfigureAwait(false);
     }
 
@@ -1026,7 +1078,8 @@ public sealed partial class RespireClient : IRespireClient
         string operation,
         ClusterRouter cluster,
         TCommand command,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? storedProcedureName)
         where TCommand : struct, IRespCommand
     {
         if (RespireCommand.MayCloseWithoutReply(operation))
@@ -1034,7 +1087,7 @@ public sealed partial class RespireClient : IRespireClient
             var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
             var connection = await cluster.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
             await SendFireAndForgetOnConnectionAsync(
-                    operation, connection, command, cancellationToken)
+                    operation, connection, command, cancellationToken, storedProcedureName)
                 .ConfigureAwait(false);
             return;
         }
@@ -1042,7 +1095,7 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             using var response = await SendClusterAsync(
-                    operation, cluster, command, cancellationToken)
+                    operation, cluster, command, cancellationToken, storedProcedureName)
                 .ConfigureAwait(false);
         }
         catch (RespireServerException)
@@ -1055,7 +1108,8 @@ public sealed partial class RespireClient : IRespireClient
         string operation,
         ClusterRouter cluster,
         TCommand command,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? storedProcedureName = null)
         where TCommand : struct, IRespCommand
     {
         var connections = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
@@ -1069,7 +1123,8 @@ public sealed partial class RespireClient : IRespireClient
                         operation,
                         connection,
                         command,
-                        cancellationToken)
+                        cancellationToken,
+                        storedProcedureName)
                     .ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

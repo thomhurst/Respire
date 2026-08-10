@@ -286,6 +286,10 @@ public class CommandCatalogTests
             .Throws<NotSupportedException>()
             .WithMessage(
                 "CLIENT requires connection affinity and cannot run through ExecuteFireAndForgetAsync.");
+        await Assert.That(async () => await client.ExecuteFireAndForgetAsync("CLIENT UNKNOWN"))
+            .Throws<NotSupportedException>()
+            .WithMessage(
+                "CLIENT requires connection affinity and cannot run through ExecuteFireAndForgetAsync.");
         await Assert.That(async () => await client.ExecuteFireAndForgetAsync("SCRIPT DEBUG", "YES"))
             .Throws<NotSupportedException>()
             .WithMessage(
@@ -296,6 +300,37 @@ public class CommandCatalogTests
                 "SCRIPT requires connection affinity and cannot run through ExecuteFireAndForgetAsync.");
 
         await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task RawFireAndForget_SafeClientSubcommandsAreAccepted()
+    {
+        await using var server = new FakeRespServer(
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await client.ExecuteFireAndForgetAsync("CLIENT LIST");
+        await client.ExecuteFireAndForgetAsync("CLIENT", "HELP");
+        await client.ExecuteFireAndForgetAsync("CLIENT KILL", "ID", 42);
+        await client.ExecuteFireAndForgetAsync("CLIENT", "UNBLOCK", 42);
+        await client.ExecuteFireAndForgetAsync("CLIENT PAUSE", 100);
+        await client.ExecuteFireAndForgetAsync("CLIENT", "UNPAUSE");
+        await WaitForCommandsAsync(server, 6);
+
+        await Assert.That(server.ReceivedCommands)
+            .IsEquivalentTo([
+                "CLIENT LIST",
+                "CLIENT HELP",
+                "CLIENT KILL ID 42",
+                "CLIENT UNBLOCK 42",
+                "CLIENT PAUSE 100",
+                "CLIENT UNPAUSE",
+            ]);
     }
 
     [Test]

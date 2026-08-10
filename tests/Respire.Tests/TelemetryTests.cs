@@ -70,6 +70,31 @@ public class TelemetryTests
     }
 
     [Test]
+    public async Task FireAndForget_CapturesStoredProcedureNames()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.OkReply);
+        using var capture = new TelemetryCapture();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        const string sha1 = "0123456789abcdef0123456789abcdef01234567";
+        const string function = "library.function";
+
+        await client.ExecuteFireAndForgetAsync("EVALSHA", sha1, 0);
+        await client.ExecuteFireAndForgetAsync(RespireCommands.Scripting.FCALL, function, 0);
+
+        var evalActivity = capture.SingleActivity("EVALSHA", server.Port);
+        await Assert.That(evalActivity.OperationName).IsEqualTo($"EVALSHA {sha1}");
+        await Assert.That(Tag(evalActivity, "db.stored_procedure.name")).IsEqualTo(sha1);
+        var evalMeasurement = capture.SingleMeasurement("EVALSHA", server.Port);
+        await Assert.That(evalMeasurement.Tags["db.stored_procedure.name"]).IsEqualTo(sha1);
+
+        var functionActivity = capture.SingleActivity("FCALL", server.Port);
+        await Assert.That(functionActivity.OperationName).IsEqualTo($"FCALL {function}");
+        await Assert.That(Tag(functionActivity, "db.stored_procedure.name")).IsEqualTo(function);
+        var functionMeasurement = capture.SingleMeasurement("FCALL", server.Port);
+        await Assert.That(functionMeasurement.Tags["db.stored_procedure.name"]).IsEqualTo(function);
+    }
+
+    [Test]
     public async Task ClusterFireAndForget_EmitsOneTargetNodeOperation()
     {
         await using var target = new FakeRespServer(FakeRespServer.OkReply);
