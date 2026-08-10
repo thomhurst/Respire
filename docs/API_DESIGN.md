@@ -227,7 +227,7 @@ suffix and the same parameter shapes. The return type is deferred, and cancellat
 `RespirePendingNotReadyException` if touched before `ExecuteAsync`. The synchronous queueing names
 make accidental early awaits conspicuous, while the exception prevents a deadlock. `Status`, `HasResult`, `Error`,
 and `TryGetResult` expose pending, successful, faulted, and aborted outcomes without try/catch.
-`SendAsync` returns the batch-wide `Count`, `FailureCount`, and `FirstError`; command and
+`ExecuteAsync` returns the batch-wide `Count`, `FailureCount`, and `FirstError`; command and
 connection-acquisition failures fault their pendings and do not throw unless the caller invokes
 `ThrowIfAnyFailed`.
 
