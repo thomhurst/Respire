@@ -1364,21 +1364,21 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             => inner.GetBytesAsync(key, cancellationToken);
 
         public async ValueTask<bool> SetAsync(
-            RespireKey key, RespireValue value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always,
-            bool keepTtl = false, CancellationToken cancellationToken = default)
+            RespireKey key, RespireValue value, RespireTtl expiry = default, SetWhen when = SetWhen.Always,
+            CancellationToken cancellationToken = default)
         {
             _lastSetKey = key;
             await DelaySetAsync(cancellationToken);
-            return await inner.SetAsync(key, value, expiry, when, keepTtl, cancellationToken);
+            return await inner.SetAsync(key, value, expiry, when, cancellationToken);
         }
 
         public async ValueTask<bool> SetAsync<T>(
-            RespireKey key, T value, TimeSpan? expiry = null, SetWhen when = SetWhen.Always,
-            bool keepTtl = false, CancellationToken cancellationToken = default)
+            RespireKey key, T value, RespireTtl expiry = default, SetWhen when = SetWhen.Always,
+            CancellationToken cancellationToken = default)
         {
             _lastSetKey = key;
             await DelaySetAsync(cancellationToken);
-            return await inner.SetAsync(key, value, expiry, when, keepTtl, cancellationToken);
+            return await inner.SetAsync(key, value, expiry, when, cancellationToken);
         }
 
         private async ValueTask DelaySetAsync(CancellationToken cancellationToken)
@@ -1391,6 +1391,9 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         }
 
         public ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys) => inner.DeleteAsync(keys);
+
+        public ValueTask<long> DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
+            => inner.DeleteAsync(keys, cancellationToken);
 
         public ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default)
             => inner.ExistsAsync(key, cancellationToken);
@@ -1430,50 +1433,22 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             => inner.ExecuteAsync(command, args);
 
         public ValueTask<RespireResult> ExecuteAsync(
-            RespireCommand command, RespireCommandFlags flags, params RespireValue[] args)
-            => inner.ExecuteAsync(command, flags, args);
-
-        public ValueTask<RespireResult> ExecuteAsync(
-            RespireCommand command, RespireValue[] args, RespireCommandFlags flags)
-            => inner.ExecuteAsync(command, args, flags);
-
-        public ValueTask<RespireResult> ExecuteAsync(
-            RespireCommand command, RespireValue[] args, CancellationToken cancellationToken)
-            => inner.ExecuteAsync(command, args, cancellationToken);
-
-        public ValueTask<RespireResult> ExecuteAsync(
             RespireCommand command,
             RespireValue[] args,
-            RespireCommandFlags flags,
-            CancellationToken cancellationToken)
+            RespireCommandFlags flags = RespireCommandFlags.None,
+            CancellationToken cancellationToken = default)
             => inner.ExecuteAsync(command, args, flags, cancellationToken);
-
-        public ValueTask<RespireResult> ExecuteAsync(
-            string command, RespireCommandFlags flags, params RespireValue[] args)
-            => inner.ExecuteAsync(command, flags, args);
-
-        public ValueTask<RespireResult> ExecuteAsync(
-            string command, RespireValue[] args, RespireCommandFlags flags)
-            => inner.ExecuteAsync(command, args, flags);
-
-        public ValueTask<RespireResult> ExecuteAsync(
-            string command, RespireValue[] args, CancellationToken cancellationToken)
-            => inner.ExecuteAsync(command, args, cancellationToken);
 
         public ValueTask<RespireResult> ExecuteAsync(
             string command,
             RespireValue[] args,
-            RespireCommandFlags flags,
-            CancellationToken cancellationToken)
+            RespireCommandFlags flags = RespireCommandFlags.None,
+            CancellationToken cancellationToken = default)
             => inner.ExecuteAsync(command, args, flags, cancellationToken);
 
         public ValueTask<RespireResult> ExecuteAsync(
-            RespireCommandInterpolatedStringHandler command, CancellationToken cancellationToken = default)
-            => inner.ExecuteAsync(command, cancellationToken);
-
-        public ValueTask<RespireResult> ExecuteAsync(
             RespireCommandInterpolatedStringHandler command,
-            RespireCommandFlags flags,
+            RespireCommandFlags flags = RespireCommandFlags.None,
             CancellationToken cancellationToken = default)
             => inner.ExecuteAsync(command, flags, cancellationToken);
 
@@ -1481,14 +1456,14 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             => inner.ExecuteFireAndForgetAsync(command, args);
 
         public ValueTask ExecuteFireAndForgetAsync(
-            RespireCommand command, RespireValue[] args, CancellationToken cancellationToken)
+            RespireCommand command, RespireValue[] args, CancellationToken cancellationToken = default)
             => inner.ExecuteFireAndForgetAsync(command, args, cancellationToken);
 
         public ValueTask ExecuteFireAndForgetAsync(string command, params RespireValue[] args)
             => inner.ExecuteFireAndForgetAsync(command, args);
 
         public ValueTask ExecuteFireAndForgetAsync(
-            string command, RespireValue[] args, CancellationToken cancellationToken)
+            string command, RespireValue[] args, CancellationToken cancellationToken = default)
             => inner.ExecuteFireAndForgetAsync(command, args, cancellationToken);
 
         public IRespireClient WithKeyPrefix(string prefix) => inner.WithKeyPrefix(prefix);
@@ -1507,7 +1482,14 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public void Complete() => _unlink.TrySetResult(0);
 
         public ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys) => inner.DeleteAsync(keys);
+
+        public ValueTask<long> DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
+            => inner.DeleteAsync(keys, cancellationToken);
+
         public ValueTask<long> UnlinkAsync(params ReadOnlySpan<RespireKey> keys) => new(_unlink.Task);
+
+        public ValueTask<long> UnlinkAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
+            => new(_unlink.Task);
 
         public ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default)
             => inner.ExistsAsync(key, cancellationToken);
@@ -1534,6 +1516,9 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             => inner.RenameAsync(key, newKey, cancellationToken);
 
         public ValueTask<long> TouchAsync(params ReadOnlySpan<RespireKey> keys) => inner.TouchAsync(keys);
+
+        public ValueTask<long> TouchAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
+            => inner.TouchAsync(keys, cancellationToken);
 
         public IAsyncEnumerable<string> ScanAsync(
             string? match = null,

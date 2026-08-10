@@ -148,6 +148,12 @@ public interface IStreamCommands
     /// <summary>Appends an entry (id auto-generated) and returns its id. Redis: XADD.</summary>
     ValueTask<RespireStreamId> AddAsync(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
 
+    /// <summary>Appends an entry (id auto-generated) and returns its id. Redis: XADD.</summary>
+    ValueTask<RespireStreamId> AddAsync(
+        RespireKey key,
+        ReadOnlySpan<(string Field, RespireValue Value)> fields,
+        CancellationToken cancellationToken);
+
     /// <summary>Number of entries. Redis: XLEN.</summary>
     ValueTask<long> LengthAsync(RespireKey key, CancellationToken cancellationToken = default);
 
@@ -161,6 +167,10 @@ public interface IStreamCommands
 
     /// <summary>Deletes stream entries; returns the number removed. Redis: XDEL.</summary>
     ValueTask<long> DeleteAsync(RespireKey key, params ReadOnlySpan<RespireStreamId> ids);
+
+    /// <summary>Deletes stream entries; returns the number removed. Redis: XDEL.</summary>
+    ValueTask<long> DeleteAsync(
+        RespireKey key, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken);
 
     /// <summary>Trims a stream by maximum length; returns the number removed. Redis: XTRIM MAXLEN.</summary>
     ValueTask<long> TrimByMaxLengthAsync(
@@ -200,6 +210,10 @@ public interface IStreamCommands
 
     /// <summary>Acknowledges entries; returns how many were newly acknowledged. Redis: XACK.</summary>
     ValueTask<long> AcknowledgeAsync(RespireKey key, string group, params ReadOnlySpan<RespireStreamId> ids);
+
+    /// <summary>Acknowledges entries; returns how many were newly acknowledged. Redis: XACK.</summary>
+    ValueTask<long> AcknowledgeAsync(
+        RespireKey key, string group, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken);
 
     /// <summary>Summarizes pending entries for a group. Redis: XPENDING.</summary>
     ValueTask<RespireStreamPendingSummary> GetPendingSummaryAsync(
@@ -258,6 +272,12 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
     private static readonly Verb XInfoConsumers = new("XINFO CONSUMERS");
 
     public ValueTask<RespireStreamId> AddAsync(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
+        => AddAsync(key, fields, CancellationToken.None);
+
+    public ValueTask<RespireStreamId> AddAsync(
+        RespireKey key,
+        ReadOnlySpan<(string Field, RespireValue Value)> fields,
+        CancellationToken cancellationToken)
     {
         var args = new RespireValue[1 + fields.Length * 2];
         args[0] = "*";
@@ -267,11 +287,11 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
             args[2 + i * 2] = fields[i].Value;
         }
 
-        return AddCoreAsync(new Cmd1N(Verbs.XAdd, client.Key(in key), args));
+        return AddCoreAsync(new Cmd1N(Verbs.XAdd, client.Key(in key), args), cancellationToken);
     }
 
-    private async ValueTask<RespireStreamId> AddCoreAsync(Cmd1N command)
-        => new(await client.StringAsync("XADD", command, CancellationToken.None).ConfigureAwait(false));
+    private async ValueTask<RespireStreamId> AddCoreAsync(Cmd1N command, CancellationToken cancellationToken)
+        => new(await client.StringAsync("XADD", command, cancellationToken).ConfigureAwait(false));
 
     public ValueTask<long> LengthAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.IntegerAsync("XLEN", new Cmd1(Verbs.XLen, client.Key(in key)), cancellationToken);
@@ -295,6 +315,10 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
     }
 
     public ValueTask<long> DeleteAsync(RespireKey key, params ReadOnlySpan<RespireStreamId> ids)
+        => DeleteAsync(key, ids, CancellationToken.None);
+
+    public ValueTask<long> DeleteAsync(
+        RespireKey key, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken)
     {
         RequireIds(ids);
         var args = new RespireValue[ids.Length];
@@ -303,7 +327,7 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
             args[i] = ids[i].Value;
         }
 
-        return client.IntegerAsync("XDEL", new Cmd1N(XDel, client.Key(in key), args), CancellationToken.None);
+        return client.IntegerAsync("XDEL", new Cmd1N(XDel, client.Key(in key), args), cancellationToken);
     }
 
     public ValueTask<long> TrimByMaxLengthAsync(
@@ -392,6 +416,10 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
     }
 
     public ValueTask<long> AcknowledgeAsync(RespireKey key, string group, params ReadOnlySpan<RespireStreamId> ids)
+        => AcknowledgeAsync(key, group, ids, CancellationToken.None);
+
+    public ValueTask<long> AcknowledgeAsync(
+        RespireKey key, string group, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken)
     {
         var args = new RespireValue[ids.Length];
         for (var i = 0; i < ids.Length; i++)
@@ -400,7 +428,7 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
         }
 
         return client.IntegerAsync(
-            "XACK", new Cmd2N(Verbs.XAck, client.Key(in key), group, args), CancellationToken.None);
+            "XACK", new Cmd2N(Verbs.XAck, client.Key(in key), group, args), cancellationToken);
     }
 
     public async ValueTask<RespireStreamPendingSummary> GetPendingSummaryAsync(

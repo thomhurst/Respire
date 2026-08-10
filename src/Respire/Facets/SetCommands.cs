@@ -8,8 +8,14 @@ public interface ISetCommands
     /// <summary>Adds members; returns how many were new. Redis: SADD.</summary>
     ValueTask<long> AddAsync(RespireKey key, params ReadOnlySpan<RespireValue> members);
 
+    /// <summary>Adds members; returns how many were new. Redis: SADD.</summary>
+    ValueTask<long> AddAsync(RespireKey key, ReadOnlySpan<RespireValue> members, CancellationToken cancellationToken);
+
     /// <summary>Removes members; returns how many existed. Redis: SREM.</summary>
     ValueTask<long> RemoveAsync(RespireKey key, params ReadOnlySpan<RespireValue> members);
+
+    /// <summary>Removes members; returns how many existed. Redis: SREM.</summary>
+    ValueTask<long> RemoveAsync(RespireKey key, ReadOnlySpan<RespireValue> members, CancellationToken cancellationToken);
 
     /// <summary>Whether the member is in the set. Redis: SISMEMBER.</summary>
     ValueTask<bool> ContainsAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken = default);
@@ -37,29 +43,56 @@ public interface ISetCommands
     /// <summary>The intersection of the given sets. Redis: SINTER.</summary>
     ValueTask<string[]> IntersectAsync(params ReadOnlySpan<RespireKey> keys);
 
+    /// <summary>The intersection of the given sets. Redis: SINTER.</summary>
+    ValueTask<string[]> IntersectAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
+
     /// <summary>The union of the given sets. Redis: SUNION.</summary>
     ValueTask<string[]> UnionAsync(params ReadOnlySpan<RespireKey> keys);
+
+    /// <summary>The union of the given sets. Redis: SUNION.</summary>
+    ValueTask<string[]> UnionAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
 
     /// <summary>Members of the first set not present in the rest. Redis: SDIFF.</summary>
     ValueTask<string[]> DifferenceAsync(params ReadOnlySpan<RespireKey> keys);
 
+    /// <summary>Members of the first set not present in the rest. Redis: SDIFF.</summary>
+    ValueTask<string[]> DifferenceAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
+
     /// <summary>Stores the intersection into <paramref name="destination"/>; returns its size. Redis: SINTERSTORE.</summary>
     ValueTask<long> IntersectStoreAsync(RespireKey destination, params ReadOnlySpan<RespireKey> keys);
+
+    /// <summary>Stores the intersection into <paramref name="destination"/>; returns its size. Redis: SINTERSTORE.</summary>
+    ValueTask<long> IntersectStoreAsync(
+        RespireKey destination, ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
 
     /// <summary>Stores the union into <paramref name="destination"/>; returns its size. Redis: SUNIONSTORE.</summary>
     ValueTask<long> UnionStoreAsync(RespireKey destination, params ReadOnlySpan<RespireKey> keys);
 
+    /// <summary>Stores the union into <paramref name="destination"/>; returns its size. Redis: SUNIONSTORE.</summary>
+    ValueTask<long> UnionStoreAsync(
+        RespireKey destination, ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
+
     /// <summary>Stores the difference into <paramref name="destination"/>; returns its size. Redis: SDIFFSTORE.</summary>
     ValueTask<long> DifferenceStoreAsync(RespireKey destination, params ReadOnlySpan<RespireKey> keys);
+
+    /// <summary>Stores the difference into <paramref name="destination"/>; returns its size. Redis: SDIFFSTORE.</summary>
+    ValueTask<long> DifferenceStoreAsync(
+        RespireKey destination, ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
 }
 
 internal sealed class SetCommands(RespireClient client) : ISetCommands
 {
     public ValueTask<long> AddAsync(RespireKey key, params ReadOnlySpan<RespireValue> members)
-        => client.IntegerValuesAsync("SADD", Verbs.SAdd, client.Key(in key), members);
+        => AddAsync(key, members, CancellationToken.None);
+
+    public ValueTask<long> AddAsync(RespireKey key, ReadOnlySpan<RespireValue> members, CancellationToken cancellationToken)
+        => client.IntegerValuesAsync("SADD", Verbs.SAdd, client.Key(in key), members, cancellationToken);
 
     public ValueTask<long> RemoveAsync(RespireKey key, params ReadOnlySpan<RespireValue> members)
-        => client.IntegerValuesAsync("SREM", Verbs.SRem, client.Key(in key), members);
+        => RemoveAsync(key, members, CancellationToken.None);
+
+    public ValueTask<long> RemoveAsync(RespireKey key, ReadOnlySpan<RespireValue> members, CancellationToken cancellationToken)
+        => client.IntegerValuesAsync("SREM", Verbs.SRem, client.Key(in key), members, cancellationToken);
 
     public ValueTask<bool> ContainsAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken = default)
         => client.FlagAsync("SISMEMBER", new Cmd2(Verbs.SIsMember, client.Key(in key), member), cancellationToken);
@@ -80,23 +113,44 @@ internal sealed class SetCommands(RespireClient client) : ISetCommands
         => client.StringOrNullAsync("SPOP", new Cmd1(Verbs.SPop, client.Key(in key)), cancellationToken);
 
     public ValueTask<string[]> IntersectAsync(params ReadOnlySpan<RespireKey> keys)
-        => client.StringArrayAsync("SINTER", new CmdN(Verbs.SInter, client.MapKeys(keys)), CancellationToken.None);
+        => IntersectAsync(keys, CancellationToken.None);
+
+    public ValueTask<string[]> IntersectAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
+        => client.StringArrayAsync("SINTER", new CmdN(Verbs.SInter, client.MapKeys(keys)), cancellationToken);
 
     public ValueTask<string[]> UnionAsync(params ReadOnlySpan<RespireKey> keys)
-        => client.StringArrayAsync("SUNION", new CmdN(Verbs.SUnion, client.MapKeys(keys)), CancellationToken.None);
+        => UnionAsync(keys, CancellationToken.None);
+
+    public ValueTask<string[]> UnionAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
+        => client.StringArrayAsync("SUNION", new CmdN(Verbs.SUnion, client.MapKeys(keys)), cancellationToken);
 
     public ValueTask<string[]> DifferenceAsync(params ReadOnlySpan<RespireKey> keys)
-        => client.StringArrayAsync("SDIFF", new CmdN(Verbs.SDiff, client.MapKeys(keys)), CancellationToken.None);
+        => DifferenceAsync(keys, CancellationToken.None);
+
+    public ValueTask<string[]> DifferenceAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
+        => client.StringArrayAsync("SDIFF", new CmdN(Verbs.SDiff, client.MapKeys(keys)), cancellationToken);
 
     public ValueTask<long> IntersectStoreAsync(RespireKey destination, params ReadOnlySpan<RespireKey> keys)
+        => IntersectStoreAsync(destination, keys, CancellationToken.None);
+
+    public ValueTask<long> IntersectStoreAsync(
+        RespireKey destination, ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
         => client.IntegerAsync(
-            "SINTERSTORE", new Cmd1N(Verbs.SInterStore, client.Key(in destination), client.MapKeys(keys)), CancellationToken.None);
+            "SINTERSTORE", new Cmd1N(Verbs.SInterStore, client.Key(in destination), client.MapKeys(keys)), cancellationToken);
 
     public ValueTask<long> UnionStoreAsync(RespireKey destination, params ReadOnlySpan<RespireKey> keys)
+        => UnionStoreAsync(destination, keys, CancellationToken.None);
+
+    public ValueTask<long> UnionStoreAsync(
+        RespireKey destination, ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
         => client.IntegerAsync(
-            "SUNIONSTORE", new Cmd1N(Verbs.SUnionStore, client.Key(in destination), client.MapKeys(keys)), CancellationToken.None);
+            "SUNIONSTORE", new Cmd1N(Verbs.SUnionStore, client.Key(in destination), client.MapKeys(keys)), cancellationToken);
 
     public ValueTask<long> DifferenceStoreAsync(RespireKey destination, params ReadOnlySpan<RespireKey> keys)
+        => DifferenceStoreAsync(destination, keys, CancellationToken.None);
+
+    public ValueTask<long> DifferenceStoreAsync(
+        RespireKey destination, ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
         => client.IntegerAsync(
-            "SDIFFSTORE", new Cmd1N(Verbs.SDiffStore, client.Key(in destination), client.MapKeys(keys)), CancellationToken.None);
+            "SDIFFSTORE", new Cmd1N(Verbs.SDiffStore, client.Key(in destination), client.MapKeys(keys)), cancellationToken);
 }

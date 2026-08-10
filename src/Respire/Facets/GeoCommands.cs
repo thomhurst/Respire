@@ -110,11 +110,21 @@ public interface IGeoCommands
     ValueTask<long> AddAsync(
         RespireKey key, GeoAddCondition condition = GeoAddCondition.Always, bool changed = false,
         params ReadOnlySpan<GeoEntry> entries);
+    ValueTask<long> AddAsync(
+        RespireKey key,
+        GeoAddCondition condition,
+        bool changed,
+        ReadOnlySpan<GeoEntry> entries,
+        CancellationToken cancellationToken);
     ValueTask<double?> DistanceAsync(
         RespireKey key, RespireValue firstMember, RespireValue secondMember,
         GeoUnit unit = GeoUnit.Meters, CancellationToken cancellationToken = default);
     ValueTask<string?[]> HashAsync(RespireKey key, params ReadOnlySpan<RespireValue> members);
+    ValueTask<string?[]> HashAsync(
+        RespireKey key, ReadOnlySpan<RespireValue> members, CancellationToken cancellationToken);
     ValueTask<GeoPosition?[]> PositionAsync(RespireKey key, params ReadOnlySpan<RespireValue> members);
+    ValueTask<GeoPosition?[]> PositionAsync(
+        RespireKey key, ReadOnlySpan<RespireValue> members, CancellationToken cancellationToken);
     ValueTask<GeoSearchResult[]> SearchAsync(
         RespireKey key, GeoSearchOrigin origin, GeoSearchShape shape,
         GeoSearchOptions options = default, CancellationToken cancellationToken = default);
@@ -129,6 +139,14 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
     public ValueTask<long> AddAsync(
         RespireKey key, GeoAddCondition condition = GeoAddCondition.Always, bool changed = false,
         params ReadOnlySpan<GeoEntry> entries)
+        => AddAsync(key, condition, changed, entries, CancellationToken.None);
+
+    public ValueTask<long> AddAsync(
+        RespireKey key,
+        GeoAddCondition condition,
+        bool changed,
+        ReadOnlySpan<GeoEntry> entries,
+        CancellationToken cancellationToken)
     {
         if (entries.IsEmpty)
         {
@@ -149,7 +167,7 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
             "GEOADD",
             new GeoAddCommand(
                 RespireCommands.Geo.GEOADD.Verb, client.Key(in key), condition, changed, entries.ToArray()),
-            CancellationToken.None);
+            cancellationToken);
     }
 
     public ValueTask<double?> DistanceAsync(
@@ -165,27 +183,36 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
     }
 
     public ValueTask<string?[]> HashAsync(RespireKey key, params ReadOnlySpan<RespireValue> members)
+        => HashAsync(key, members, CancellationToken.None);
+
+    public ValueTask<string?[]> HashAsync(
+        RespireKey key, ReadOnlySpan<RespireValue> members, CancellationToken cancellationToken)
     {
         RequireMembers(members);
         return client.NullableStringArrayAsync(
             "GEOHASH",
             new Cmd1N(RespireCommands.Geo.GEOHASH.Verb, client.Key(in key), members.ToArray()),
-            CancellationToken.None);
+            cancellationToken);
     }
 
     public ValueTask<GeoPosition?[]> PositionAsync(
         RespireKey key, params ReadOnlySpan<RespireValue> members)
+        => PositionAsync(key, members, CancellationToken.None);
+
+    public ValueTask<GeoPosition?[]> PositionAsync(
+        RespireKey key, ReadOnlySpan<RespireValue> members, CancellationToken cancellationToken)
     {
         RequireMembers(members);
-        return PositionCoreAsync(key, members.ToArray());
+        return PositionCoreAsync(key, members.ToArray(), cancellationToken);
     }
 
-    private async ValueTask<GeoPosition?[]> PositionCoreAsync(RespireKey key, RespireValue[] members)
+    private async ValueTask<GeoPosition?[]> PositionCoreAsync(
+        RespireKey key, RespireValue[] members, CancellationToken cancellationToken)
     {
         var reply = await client.SendAsync(
             "GEOPOS",
             new Cmd1N(RespireCommands.Geo.GEOPOS.Verb, client.Key(in key), members),
-            CancellationToken.None).ConfigureAwait(false);
+            cancellationToken).ConfigureAwait(false);
         try
         {
             var values = reply.AsArray();

@@ -96,7 +96,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
         var pop = client.ExecuteAsync(
-            RespireCommands.List.BLPOP, ["catalog:jobs", 0], cancellation.Token).AsTask();
+            RespireCommands.List.BLPOP, ["catalog:jobs", 0], cancellationToken: cancellation.Token).AsTask();
         await Task.Delay(100, cancellation.Token);
         await client.Lists.RightPushAsync("catalog:jobs", "work").AsTask().WaitAsync(cancellation.Token);
         using var result = await pop.WaitAsync(cancellation.Token);
@@ -115,7 +115,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         var execute = async () =>
         {
             using var _ = await client.ExecuteAsync(
-                RespireCommands.List.BLPOP, ["catalog:empty", 0], cancellation.Token);
+                RespireCommands.List.BLPOP, ["catalog:empty", 0], cancellationToken: cancellation.Token);
         };
 
         await execute.Should().ThrowAsync<OperationCanceledException>();

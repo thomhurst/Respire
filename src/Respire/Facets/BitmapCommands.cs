@@ -119,8 +119,17 @@ public interface IBitmapCommands
         BitIndexUnit unit = BitIndexUnit.Byte, CancellationToken cancellationToken = default);
     ValueTask<long> OperateAsync(
         BitOperation operation, RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys);
+    ValueTask<long> OperateAsync(
+        BitOperation operation,
+        RespireKey destination,
+        ReadOnlySpan<RespireKey> sourceKeys,
+        CancellationToken cancellationToken);
     ValueTask<long?[]> FieldAsync(RespireKey key, params ReadOnlySpan<BitFieldOperation> operations);
+    ValueTask<long?[]> FieldAsync(
+        RespireKey key, ReadOnlySpan<BitFieldOperation> operations, CancellationToken cancellationToken);
     ValueTask<long?[]> FieldReadOnlyAsync(RespireKey key, params ReadOnlySpan<BitFieldOperation> gets);
+    ValueTask<long?[]> FieldReadOnlyAsync(
+        RespireKey key, ReadOnlySpan<BitFieldOperation> gets, CancellationToken cancellationToken);
 }
 
 internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
@@ -186,6 +195,13 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
 
     public ValueTask<long> OperateAsync(
         BitOperation operation, RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys)
+        => OperateAsync(operation, destination, sourceKeys, CancellationToken.None);
+
+    public ValueTask<long> OperateAsync(
+        BitOperation operation,
+        RespireKey destination,
+        ReadOnlySpan<RespireKey> sourceKeys,
+        CancellationToken cancellationToken)
     {
         if (sourceKeys.IsEmpty)
         {
@@ -204,17 +220,32 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
                 Operation(operation),
                 client.Key(in destination),
                 client.MapKeys(sourceKeys)),
-            CancellationToken.None);
+            cancellationToken);
     }
 
     public ValueTask<long?[]> FieldAsync(RespireKey key, params ReadOnlySpan<BitFieldOperation> operations)
-        => FieldCoreAsync("BITFIELD", RespireCommands.Bitmap.BITFIELD, key, operations, readOnly: false);
+        => FieldAsync(key, operations, CancellationToken.None);
+
+    public ValueTask<long?[]> FieldAsync(
+        RespireKey key, ReadOnlySpan<BitFieldOperation> operations, CancellationToken cancellationToken)
+        => FieldCoreAsync(
+            "BITFIELD", RespireCommands.Bitmap.BITFIELD, key, operations, readOnly: false, cancellationToken);
 
     public ValueTask<long?[]> FieldReadOnlyAsync(RespireKey key, params ReadOnlySpan<BitFieldOperation> gets)
-        => FieldCoreAsync("BITFIELD_RO", RespireCommands.Bitmap.BITFIELD_RO, key, gets, readOnly: true);
+        => FieldReadOnlyAsync(key, gets, CancellationToken.None);
+
+    public ValueTask<long?[]> FieldReadOnlyAsync(
+        RespireKey key, ReadOnlySpan<BitFieldOperation> gets, CancellationToken cancellationToken)
+        => FieldCoreAsync(
+            "BITFIELD_RO", RespireCommands.Bitmap.BITFIELD_RO, key, gets, readOnly: true, cancellationToken);
 
     private ValueTask<long?[]> FieldCoreAsync(
-        string name, RespireCommand command, RespireKey key, ReadOnlySpan<BitFieldOperation> operations, bool readOnly)
+        string name,
+        RespireCommand command,
+        RespireKey key,
+        ReadOnlySpan<BitFieldOperation> operations,
+        bool readOnly,
+        CancellationToken cancellationToken)
     {
         if (operations.IsEmpty)
         {
@@ -235,7 +266,7 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
         }
 
         return client.NullableIntegerArrayAsync(
-            name, new BitFieldCommand(command.Verb, client.Key(in key), operations.ToArray()), CancellationToken.None);
+            name, new BitFieldCommand(command.Verb, client.Key(in key), operations.ToArray()), cancellationToken);
     }
 
     private static string Unit(BitIndexUnit unit) => unit switch
