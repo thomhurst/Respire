@@ -37,7 +37,7 @@
        The path is TFM-independent, so this runs once on the outer (cross-targeting) build. -->
   <Target Name="_PackRespireAnalyzers" BeforeTargets="_GetPackageFiles">
     <MSBuild Projects="..\Respire.Analyzers\Respire.Analyzers.csproj"
-             Targets="Build"
+             Targets="GetTargetPath"
              Properties="Configuration=$(Configuration)">
       <Output TaskParameter="TargetOutputs" ItemName="_RespireAnalyzerAssembly" />
     </MSBuild>
