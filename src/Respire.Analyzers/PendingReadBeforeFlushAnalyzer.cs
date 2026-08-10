@@ -606,6 +606,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             var section = switchStatement.Sections.FirstOrDefault(candidate =>
                 candidate.Labels.Any(label => MatchesSwitchArm(arm, label)));
             if (section is not null
+                && HasAlignedSwitchPrefix(switchExpression, switchStatement, arm, section)
                 && HasUnconditionalFlush(context, scope, section, batch, origin))
             {
                 return true;
@@ -613,6 +614,31 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         }
 
         return false;
+    }
+
+    private static bool HasAlignedSwitchPrefix(
+        SwitchExpressionSyntax switchExpression,
+        SwitchStatementSyntax switchStatement,
+        SwitchExpressionArmSyntax arm,
+        SwitchSectionSyntax section)
+    {
+        var armIndex = switchExpression.Arms.IndexOf(arm);
+        var sectionIndex = switchStatement.Sections.IndexOf(section);
+        if (armIndex < 0 || sectionIndex != armIndex)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < armIndex; index++)
+        {
+            if (!switchStatement.Sections[index].Labels.Any(label =>
+                    MatchesSwitchArm(switchExpression.Arms[index], label)))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool MatchesSwitchArm(SwitchExpressionArmSyntax arm, SwitchLabelSyntax label)

@@ -915,6 +915,58 @@ public class UndisposedPooledResultAnalyzerTests
         """);
 
     [Test]
+    public async Task SwitchAcquisitionDisposedOnOwningArm_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, RespireResult existing, int choice)
+            {
+                var result = choice switch
+                {
+                    0 => await client.ExecuteAsync("PING"),
+                    _ => existing,
+                };
+
+                if (choice == 0)
+                {
+                    result.Dispose();
+                }
+            }
+        }
+        """);
+
+    [Test]
+    public async Task GuardedSwitchAcquisitionRelease_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(
+                RespireClient client, RespireResult existing, int choice, bool release)
+            {
+                var {|RESP001:result|} = choice switch
+                {
+                    0 => await client.ExecuteAsync("PING"),
+                    _ => existing,
+                };
+
+                if (release)
+                {
+                    if (choice == 0)
+                    {
+                        result.Dispose();
+                    }
+                }
+            }
+        }
+        """);
+
+    [Test]
     public async Task DiscardedNestedAssignmentWithoutDispose_IsFlagged() => await Verify.VerifyAsync(
         """
         using System.Threading.Tasks;

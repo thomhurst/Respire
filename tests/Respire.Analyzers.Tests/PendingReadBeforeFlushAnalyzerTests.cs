@@ -1275,6 +1275,43 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    public async Task EarlierOverlappingSwitchCaseDoesNotCountAsCorrelatedFlush() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client, int choice)
+            {
+                var first = client.CreateBatch();
+                var second = client.CreateBatch();
+                var pending = choice switch
+                {
+                    > 0 => first.GetStringAsync("a"),
+                    _ => second.GetStringAsync("b"),
+                };
+
+                switch (choice)
+                {
+                    case > 5:
+                        await second.SendAsync();
+                        break;
+                    case > 0:
+                        await first.SendAsync();
+                        break;
+                    default:
+                        await second.SendAsync();
+                        break;
+                }
+
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
     public async Task MutatedListWhenAllBeforeRead_IsFlagged() => await Verify.VerifyAsync(
         """
         using System;

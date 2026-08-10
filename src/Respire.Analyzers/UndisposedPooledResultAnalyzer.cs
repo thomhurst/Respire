@@ -104,6 +104,8 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
 
             if (IsDisposedOrEscapes(context, scope, declaration, acquisitionAssignment: null, local)
                 || ConditionalAcquisitionsAreReleased(
+                    context, scope, declaration, variable.Initializer.Value, local)
+                || SwitchAcquisitionsAreReleased(
                     context, scope, declaration, variable.Initializer.Value, local))
             {
                 continue;
@@ -130,7 +132,8 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         var pooledType = Match(local.Type, resultType) ?? Match(local.Type, leaseType);
         if (pooledType is null
             || IsDisposedOrEscapes(context, scope, assignment.Right, assignment, local)
-            || ConditionalAcquisitionsAreReleased(context, scope, assignment, assignment.Right, local))
+            || ConditionalAcquisitionsAreReleased(context, scope, assignment, assignment.Right, local)
+            || SwitchAcquisitionsAreReleased(context, scope, assignment, assignment.Right, local))
         {
             return;
         }
@@ -221,6 +224,122 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         return ScopeWalker.CollectivelyPostDominates(
             context.SemanticModel, scope, branch, releases, context.CancellationToken);
     }
+
+    private static bool SwitchAcquisitionsAreReleased(
+        SyntaxNodeAnalysisContext context,
+        SyntaxNode scope,
+        SyntaxNode acquisition,
+        ExpressionSyntax value,
+        ILocalSymbol local)
+    {
+        if (ScopeWalker.Unwrap(value) is not SwitchExpressionSyntax switchExpression)
+        {
+            return false;
+        }
+
+        var owningArms = switchExpression.Arms
+            .Where(arm => ContainsRespireAcquisition(context, arm.Expression))
+            .ToArray();
+        return owningArms.Length > 0
+               && owningArms.All(arm => SwitchArmHasRelease(
+                   context, scope, acquisition, switchExpression, arm, local));
+    }
+
+    private static bool SwitchArmHasRelease(
+        SyntaxNodeAnalysisContext context,
+        SyntaxNode scope,
+        SyntaxNode acquisition,
+        SwitchExpressionSyntax switchExpression,
+        SwitchExpressionArmSyntax arm,
+        ILocalSymbol local)
+    {
+        if (arm.Pattern is not ConstantPatternSyntax constant || arm.WhenClause is not null)
+        {
+            return false;
+        }
+
+        foreach (var ifStatement in scope.DescendantNodes().OfType<IfStatementSyntax>())
+        {
+            if (ifStatement.SpanStart <= acquisition.SpanStart
+                || !IsUnconditionallyReached(acquisition, ifStatement)
+                || ScopeWalker.HasWriteBetween(
+                    context.SemanticModel,
+                    scope,
+                    switchExpression.GoverningExpression,
+                    switchExpression,
+                    ifStatement,
+                    context.CancellationToken)
+                || GetSelectedBranch(
+                    switchExpression.GoverningExpression,
+                    constant.Expression,
+                    ifStatement) is not { } selectedBranch)
+            {
+                continue;
+            }
+
+            if (HasUnconditionalRelease(context, scope, selectedBranch, local))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsUnconditionallyReached(SyntaxNode acquisition, StatementSyntax releaseStatement)
+    {
+        if (acquisition.FirstAncestorOrSelf<StatementSyntax>() is not { } acquisitionStatement
+            || acquisitionStatement.Parent is not BlockSyntax block
+            || !ReferenceEquals(releaseStatement.Parent, block))
+        {
+            return false;
+        }
+
+        var acquisitionIndex = block.Statements.IndexOf(acquisitionStatement);
+        var releaseIndex = block.Statements.IndexOf(releaseStatement);
+        if (acquisitionIndex < 0 || releaseIndex <= acquisitionIndex)
+        {
+            return false;
+        }
+
+        return !block.Statements
+            .Skip(acquisitionIndex + 1)
+            .Take(releaseIndex - acquisitionIndex - 1)
+            .SelectMany(statement => statement.DescendantNodesAndSelf())
+            .Any(static node => node is ReturnStatementSyntax
+                or ThrowStatementSyntax
+                or GotoStatementSyntax
+                or YieldStatementSyntax);
+    }
+
+    private static StatementSyntax? GetSelectedBranch(
+        ExpressionSyntax governingExpression,
+        ExpressionSyntax constant,
+        IfStatementSyntax ifStatement)
+    {
+        if (ScopeWalker.Unwrap(ifStatement.Condition) is not BinaryExpressionSyntax comparison
+            || !comparison.IsKind(SyntaxKind.EqualsExpression)
+            && !comparison.IsKind(SyntaxKind.NotEqualsExpression)
+            || !ExpressionsMatchEitherOrder(
+                governingExpression, constant, comparison.Left, comparison.Right))
+        {
+            return null;
+        }
+
+        return comparison.IsKind(SyntaxKind.EqualsExpression)
+            ? ifStatement.Statement
+            : ifStatement.Else?.Statement;
+    }
+
+    private static bool ExpressionsMatchEitherOrder(
+        ExpressionSyntax first,
+        ExpressionSyntax second,
+        ExpressionSyntax candidateFirst,
+        ExpressionSyntax candidateSecond)
+        => SyntaxFactory.AreEquivalent(ScopeWalker.Unwrap(first), ScopeWalker.Unwrap(candidateFirst))
+           && SyntaxFactory.AreEquivalent(ScopeWalker.Unwrap(second), ScopeWalker.Unwrap(candidateSecond))
+           || SyntaxFactory.AreEquivalent(ScopeWalker.Unwrap(first), ScopeWalker.Unwrap(candidateSecond))
+           && SyntaxFactory.AreEquivalent(ScopeWalker.Unwrap(second), ScopeWalker.Unwrap(candidateFirst));
 
     private static INamedTypeSymbol? Match(ITypeSymbol candidate, INamedTypeSymbol? pooledType)
     {
