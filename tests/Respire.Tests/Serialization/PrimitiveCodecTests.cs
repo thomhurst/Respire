@@ -65,6 +65,23 @@ public class PrimitiveCodecTests
     }
 
     [Test]
+    public async Task RawCompatibility_PreservesMemoryAndNonFiniteScalars()
+    {
+        var serializer = new CountingSerializer();
+        await using var client = CreateClient(serializer);
+        ReadOnlyMemory<byte> memory = new byte[] { 0, 1, 254, 255 };
+
+        _ = client.SerializeRawCompatible(memory);
+        await Assert.That(client.SerializeRawCompatible(float.NaN).ToString()).IsEqualTo("NaN");
+        await Assert.That(client.SerializeRawCompatible(float.PositiveInfinity).ToString()).IsEqualTo("Infinity");
+        await Assert.That(client.SerializeRawCompatible(float.NegativeInfinity).ToString()).IsEqualTo("-Infinity");
+        await Assert.That(client.SerializeRawCompatible(double.NaN).ToString()).IsEqualTo("NaN");
+        await Assert.That(client.SerializeRawCompatible(double.PositiveInfinity).ToString()).IsEqualTo("Infinity");
+        await Assert.That(client.SerializeRawCompatible(double.NegativeInfinity).ToString()).IsEqualTo("-Infinity");
+        await Assert.That(serializer.SerializeCalls).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task FloatingPointReads_RejectNonFiniteValues()
     {
         await using var client = CreateClient(new CountingSerializer());

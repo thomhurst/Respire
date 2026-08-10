@@ -884,9 +884,29 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     internal RespireValue SerializeRawCompatible<T>(T value)
-        => value is null && (typeof(T) == typeof(string) || typeof(T) == typeof(byte[]))
-            ? RespireValue.Null
-            : Serialize(value);
+    {
+        if (value is null && (typeof(T) == typeof(string) || typeof(T) == typeof(byte[])))
+        {
+            return RespireValue.Null;
+        }
+
+        if (value is ReadOnlyMemory<byte> memory)
+        {
+            return memory;
+        }
+
+        if (value is float single && !float.IsFinite(single))
+        {
+            return single;
+        }
+
+        if (value is double number && !double.IsFinite(number))
+        {
+            return number;
+        }
+
+        return Serialize(value);
+    }
 
     internal RespireValue SerializeCollectionMember<T>(T value)
         => value is bool boolean ? boolean : SerializeRawCompatible(value);
