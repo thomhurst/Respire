@@ -61,15 +61,15 @@ public sealed class RespireLockNotAcquiredException() : RespireException(
     "The distributed lock was not acquired because another owner holds it.");
 
 /// <summary>An unsent batch was disposed, so none of its queued commands ran.</summary>
-public sealed class RespireBatchDiscardedException() : InvalidOperationException(
+public sealed class RespireBatchDiscardedException() : RespireException(
     "The batch was disposed before ExecuteAsync; its queued commands were discarded.");
 
 /// <summary>A deferred result was read before its batch or transaction executed.</summary>
-public sealed class RespirePendingNotReadyException() : InvalidOperationException(
+public sealed class RespirePendingNotReadyException() : RespireException(
     "This result is not available yet: execute the batch (ExecuteAsync) or commit the transaction (CommitAsync) first.");
 
 /// <summary>A watched key changed, so Redis aborted the transaction and no command ran.</summary>
-public sealed class RespireTransactionAbortedException() : InvalidOperationException(
+public sealed class RespireTransactionAbortedException() : RespireException(
     "The transaction was aborted — a watched key changed, so no command ran.");
 
 /// <summary>The server answered a command with a RESP error reply ("-WRONGTYPE ...").</summary>

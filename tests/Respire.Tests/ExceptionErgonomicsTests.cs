@@ -7,6 +7,21 @@ namespace Respire.Tests;
 public class ExceptionErgonomicsTests
 {
     [Test]
+    public async Task EveryPublicRespireException_DerivesFromRespireException()
+    {
+        var exceptionTypes = typeof(RespireException).Assembly.ExportedTypes
+            .Where(static type => type != typeof(RespireException)
+                && type.Name.StartsWith("Respire", StringComparison.Ordinal)
+                && type.Name.EndsWith("Exception", StringComparison.Ordinal));
+
+        foreach (var exceptionType in exceptionTypes)
+        {
+            await Assert.That(typeof(RespireException).IsAssignableFrom(exceptionType))
+                .IsTrue();
+        }
+    }
+
+    [Test]
     [Arguments(RespireErrorCodes.Loading)]
     [Arguments(RespireErrorCodes.Busy)]
     [Arguments(RespireErrorCodes.ClusterDown)]

@@ -37,7 +37,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         isEnabledByDefault: true,
         description:
             "A RespirePending<T> only carries a value once its batch has been sent or its "
-            + "transaction committed; reading it earlier throws InvalidOperationException. "
+            + "transaction committed; reading it earlier throws RespirePendingNotReadyException. "
             + "Queue the commands, flush, then read the pendings.");
 
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics { get; } = ImmutableArray.Create(Rule);
