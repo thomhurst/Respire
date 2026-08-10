@@ -233,7 +233,7 @@ public class CommandCatalogTests
             {
                 await Assert.That(method.GetCustomAttribute<EditorBrowsableAttribute>()?.State)
                     .IsEqualTo(EditorBrowsableState.Never);
-                await Assert.That(method.GetCustomAttribute<ObsoleteAttribute>()).IsNotNull();
+                await Assert.That(method.GetCustomAttribute<ObsoleteAttribute>()).IsNull();
             }
         }
         await Assert.That(Enum.GetNames<RespireCommandFlags>()).IsEquivalentTo(["None", "NoRedirect"]);
@@ -262,10 +262,10 @@ public class CommandCatalogTests
         var number = 1234.5m;
         var left = 42;
 
-        using var result = await client.ExecuteAsync($"SET formatted {number,12:N2} {left,-5:D4}");
+        using var result = await client.ExecuteAsync($"SET formatted {number,12:N2} {left,-5:D4} {"é",3}");
 
         await Assert.That(server.ReceivedCommands.Single())
-            .IsEqualTo("SET formatted     1,234.50 0042 ");
+            .IsEqualTo("SET formatted     1,234.50 0042    é");
     }
 
     [Test]

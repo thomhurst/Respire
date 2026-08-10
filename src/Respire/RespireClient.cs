@@ -234,7 +234,6 @@ public sealed partial class RespireClient : IRespireClient
 
     /// <summary>Compatibility forwarder for the former string command overload.</summary>
     [EditorBrowsable(EditorBrowsableState.Never)]
-    [Obsolete("Use the RespireCommand overload; string commands convert implicitly.", false)]
     public ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args)
         => ExecuteCommandAsync(command, args, RespireCommandFlags.None, CancellationToken.None);
 
@@ -252,7 +251,6 @@ public sealed partial class RespireClient : IRespireClient
 
     /// <summary>Compatibility forwarder for the former string command overload.</summary>
     [EditorBrowsable(EditorBrowsableState.Never)]
-    [Obsolete("Use the RespireCommand overload; string commands convert implicitly.", false)]
     public ValueTask<RespireResult> ExecuteAsync(
         string command,
         RespireValue[] args,
@@ -272,7 +270,6 @@ public sealed partial class RespireClient : IRespireClient
 
     /// <summary>Compatibility forwarder for the former string command overload.</summary>
     [EditorBrowsable(EditorBrowsableState.Never)]
-    [Obsolete("Use the RespireCommand overload; string commands convert implicitly.", false)]
     public ValueTask ExecuteFireAndForgetAsync(string command, params RespireValue[] args)
         => ExecuteCommandFireAndForgetAsync(command, args, CancellationToken.None);
 
@@ -289,7 +286,6 @@ public sealed partial class RespireClient : IRespireClient
 
     /// <summary>Compatibility forwarder for the former string command overload.</summary>
     [EditorBrowsable(EditorBrowsableState.Never)]
-    [Obsolete("Use the RespireCommand overload; string commands convert implicitly.", false)]
     public ValueTask ExecuteFireAndForgetAsync(
         string command, RespireValue[] args, CancellationToken cancellationToken = default)
         => ExecuteCommandFireAndForgetAsync(command, args, cancellationToken);

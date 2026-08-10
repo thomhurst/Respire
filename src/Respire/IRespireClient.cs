@@ -166,7 +166,6 @@ public interface IRespireClient : IAsyncDisposable
 
     /// <summary>Compatibility forwarder for the former string command overload.</summary>
     [EditorBrowsable(EditorBrowsableState.Never)]
-    [Obsolete("Use the RespireCommand overload; string commands convert implicitly.", false)]
     ValueTask<RespireResult> ExecuteAsync(string command, params RespireValue[] args);
 
     /// <summary>
@@ -181,7 +180,6 @@ public interface IRespireClient : IAsyncDisposable
 
     /// <summary>Compatibility forwarder for the former string command overload.</summary>
     [EditorBrowsable(EditorBrowsableState.Never)]
-    [Obsolete("Use the RespireCommand overload; string commands convert implicitly.", false)]
     ValueTask<RespireResult> ExecuteAsync(
         string command,
         RespireValue[] args,
@@ -202,7 +200,6 @@ public interface IRespireClient : IAsyncDisposable
 
     /// <summary>Compatibility forwarder for the former string command overload.</summary>
     [EditorBrowsable(EditorBrowsableState.Never)]
-    [Obsolete("Use the RespireCommand overload; string commands convert implicitly.", false)]
     ValueTask ExecuteFireAndForgetAsync(string command, params RespireValue[] args);
 
     /// <summary>Queues a command with cancellation and discards its reply.</summary>
@@ -211,7 +208,6 @@ public interface IRespireClient : IAsyncDisposable
 
     /// <summary>Compatibility forwarder for the former string command overload.</summary>
     [EditorBrowsable(EditorBrowsableState.Never)]
-    [Obsolete("Use the RespireCommand overload; string commands convert implicitly.", false)]
     ValueTask ExecuteFireAndForgetAsync(
         string command, RespireValue[] args, CancellationToken cancellationToken = default);
 

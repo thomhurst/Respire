@@ -126,20 +126,31 @@ public struct RespireCommandInterpolatedStringHandler
 
     /// <summary>Appends one invariant-formatted aligned argument.</summary>
     public void AppendFormatted<T>(T value, int alignment)
-        => _tokens.Add(Align(Format(value, format: null), alignment));
+        => _tokens.Add(AlignText(value, alignment, format: null));
 
     /// <summary>Appends one invariant-formatted aligned argument using the supplied format.</summary>
     public void AppendFormatted<T>(T value, int alignment, string? format)
-        => _tokens.Add(Align(Format(value, format), alignment));
+        => _tokens.Add(AlignText(value, alignment, format));
 
     private static RespireValue Format<T>(T value, string? format)
+        => value is null && format is null
+            ? RespireValue.Null
+            : FormatText(value, format);
+
+    private static string FormatText<T>(T value, string? format)
         => value switch
         {
-            null when format is null => RespireValue.Null,
             null => string.Empty,
             IFormattable formattable => formattable.ToString(format, CultureInfo.InvariantCulture),
             _ => value.ToString() ?? string.Empty,
         };
+
+    private static RespireValue AlignText<T>(T value, int alignment, string? format)
+    {
+        var text = FormatText(value, format);
+        var width = Math.Abs(alignment);
+        return alignment < 0 ? text.PadRight(width) : text.PadLeft(width);
+    }
 
     private static RespireValue Align(RespireValue value, int alignment)
     {
