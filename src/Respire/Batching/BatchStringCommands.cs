@@ -18,6 +18,9 @@ public interface IBatchStringCommands
     /// <summary>Gets a key's value deserialized as <typeparamref name="T"/>, or default when missing. Redis: GET.</summary>
     RespirePending<T?> Get<T>(RespireKey key);
 
+    /// <summary>Gets a typed value while reporting whether the key existed. Redis: GET.</summary>
+    RespirePending<RespireGet<T>> TryGet<T>(RespireKey key);
+
     /// <summary>Gets a key's raw bytes, or null when missing. Redis: GET.</summary>
     RespirePending<byte[]?> GetBytes(RespireKey key);
 
@@ -81,10 +84,15 @@ public interface IBatchStringCommands
     /// <summary>Sets many keys atomically; the pending is true once the server replies OK. Redis: MSET.</summary>
     RespirePending<bool> SetMany(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
 
-    /// <summary>Atomically sets many keys with a shared expiry and optional NX/XX condition. Redis: MSETEX.</summary>
+    /// <summary>Atomically sets many keys with a shared expiry. Redis: MSETEX.</summary>
     RespirePending<bool> SetManyExpire(
         RespireExpiry expiry,
-        SetWhen when = SetWhen.Always,
+        params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
+
+    /// <summary>Atomically sets many keys with a shared expiry and an NX/XX condition. Redis: MSETEX.</summary>
+    RespirePending<bool> SetManyExpire(
+        RespireExpiry expiry,
+        SetWhen when,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
 
     /// <summary>Returns the longest common subsequence. Redis: LCS.</summary>
@@ -105,6 +113,11 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
         => sink.Add<Cmd1, T?>(
             "GET", new Cmd1(Verbs.Get, sink.Client.Key(in key)),
             static (c, v) => c.DeserializeBorrowed<T>(in v));
+
+    public RespirePending<RespireGet<T>> TryGet<T>(RespireKey key)
+        => sink.Add<Cmd1, RespireGet<T>>(
+            "GET", new Cmd1(Verbs.Get, sink.Client.Key(in key)),
+            static (c, v) => c.TryDeserializeBorrowed<T>(in v));
 
     public RespirePending<byte[]?> GetBytes(RespireKey key)
         => sink.Add<Cmd1, byte[]?>(
@@ -241,7 +254,12 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
 
     public RespirePending<bool> SetManyExpire(
         RespireExpiry expiry,
-        SetWhen when = SetWhen.Always,
+        params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+        => SetManyExpire(expiry, SetWhen.Always, pairs);
+
+    public RespirePending<bool> SetManyExpire(
+        RespireExpiry expiry,
+        SetWhen when,
         params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
     {
         return sink.Add<MSetExCommand, bool>(

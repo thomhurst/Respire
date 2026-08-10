@@ -201,7 +201,8 @@ No API returns pooled memory without `Lease` in its name.
 - **SCAN-family returns `IAsyncEnumerable`**, cursor handled internally:
 
 ```csharp
-await foreach (var key in redis.Keys.ScanAsync(match: "user:*", cancellationToken: ct))
+await foreach (var key in redis.Keys.ScanAsync(
+    match: "user:*", countHint: 250, type: "hash", cancellationToken: ct))
 {
     Console.WriteLine(key);
 }

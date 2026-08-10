@@ -14,7 +14,7 @@ namespace Respire;
 /// Commands are grouped into the same facets as the client and a batch — see
 /// <see cref="RespireBatch"/> for what the deferred surface leaves out.
 /// Single-shot and not thread-safe: build, commit once, discard. When created with watch keys
-/// (<see cref="RespireClient.CreateTransactionAsync"/>), the transaction owns a dedicated
+/// (<see cref="RespireClient.CreateTransactionAsync(ReadOnlySpan{RespireKey})"/>), the transaction owns a dedicated
 /// connection and <see cref="CommitAsync"/> returns false if a watched key changed. Always
 /// commit or dispose a transaction so its buffer and any dedicated connection are released.
 /// </remarks>
@@ -37,6 +37,7 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
     private IBatchBitmapCommands? _bitmaps;
     private IBatchHyperLogLogCommands? _hyperLogLog;
     private IBatchGeoCommands? _geo;
+    private IBatchScriptCommands? _scripts;
 
     internal RespireTransaction(RespireClient client, RespireConnection? watchConnection)
     {
@@ -76,6 +77,9 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
     /// <summary>Geospatial commands. Redis: GEOADD, GEODIST, GEOSEARCH, …</summary>
     public IBatchGeoCommands Geo => _geo ??= new BatchGeoCommands(this);
 
+    /// <summary>Lua script evaluation. Redis: EVAL.</summary>
+    public IBatchScriptCommands Scripts => _scripts ??= new BatchScriptCommands(this);
+
     // Root shortcuts, mirroring the client's.
 
     /// <inheritdoc cref="IBatchStringCommands.GetString"/>
@@ -83,6 +87,9 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
 
     /// <inheritdoc cref="IBatchStringCommands.Get{T}"/>
     public RespirePending<T?> Get<T>(RespireKey key) => Strings.Get<T>(key);
+
+    /// <inheritdoc cref="IBatchStringCommands.TryGet{T}"/>
+    public RespirePending<RespireGet<T>> TryGet<T>(RespireKey key) => Strings.TryGet<T>(key);
 
     /// <inheritdoc cref="IBatchStringCommands.GetBytes"/>
     public RespirePending<byte[]?> GetBytes(RespireKey key) => Strings.GetBytes(key);

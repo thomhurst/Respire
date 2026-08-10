@@ -10,9 +10,11 @@ namespace Respire;
 public interface IBatchGeoCommands
 {
     /// <summary>Adds members with coordinates; returns how many were new. Redis: GEOADD.</summary>
+    RespirePending<long> Add(RespireKey key, params ReadOnlySpan<GeoEntry> entries);
+
+    /// <summary>Adds members with options; returns new or changed count. Redis: GEOADD.</summary>
     RespirePending<long> Add(
-        RespireKey key, SetWhen when = SetWhen.Always, bool changed = false,
-        params ReadOnlySpan<GeoEntry> entries);
+        RespireKey key, GeoAddOptions options, params ReadOnlySpan<GeoEntry> entries);
 
     /// <summary>The distance between two members, or null when either is absent. Redis: GEODIST.</summary>
     RespirePending<double?> Distance(
@@ -36,15 +38,21 @@ public interface IBatchGeoCommands
 
 internal sealed class BatchGeoCommands(IPendingSink sink) : IBatchGeoCommands
 {
+    public RespirePending<long> Add(RespireKey key, params ReadOnlySpan<GeoEntry> entries)
+        => Add(key, default, entries);
+
     public RespirePending<long> Add(
-        RespireKey key, SetWhen when = SetWhen.Always, bool changed = false,
-        params ReadOnlySpan<GeoEntry> entries)
+        RespireKey key, GeoAddOptions options, params ReadOnlySpan<GeoEntry> entries)
     {
-        GeoCommands.ValidateAdd(when, entries);
+        GeoCommands.ValidateAdd(options.When, entries);
         return sink.Add<GeoAddCommand, long>(
             "GEOADD",
             new GeoAddCommand(
-                RespireCommands.Geo.GEOADD.Verb, sink.Client.Key(in key), when, changed, entries.ToArray()),
+                RespireCommands.Geo.GEOADD.Verb,
+                sink.Client.Key(in key),
+                options.When,
+                options.Changed,
+                entries.ToArray()),
             static (c, v) => ResponseReader.Integer(in v));
     }
 

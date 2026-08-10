@@ -23,6 +23,7 @@ public class CommonOperationsBenchmarks
 {
     private const int ConcurrentOps = 50;
     private const int SteadyStateOps = 100;
+    private const int PipelinedOps = 200;
 
     private IContainer? _redisContainer;
     private RespireClient _respire = null!;
@@ -34,6 +35,8 @@ public class CommonOperationsBenchmarks
     private readonly string _10KBValue = new('Y', 10240);
     private readonly Task<RedisValue>[] _stackExchangeConcurrent = new Task<RedisValue>[ConcurrentOps];
     private readonly ValueTask<string?>[] _respireConcurrent = new ValueTask<string?>[ConcurrentOps];
+    private readonly Task<RedisValue>[] _stackExchangePipelined = new Task<RedisValue>[PipelinedOps];
+    private readonly ValueTask<string?>[] _respirePipelined = new ValueTask<string?>[PipelinedOps];
 
     [GlobalSetup]
     public async Task Setup()
@@ -296,6 +299,37 @@ public class CommonOperationsBenchmarks
         for (var i = 0; i < _respireConcurrent.Length; i++)
         {
             await _respireConcurrent[i];
+        }
+    }
+
+    // Deeply pipelined GETs — 200 overlapping requests amortize round-trip latency far enough
+    // that per-response CPU (parse, complete, decode) dominates the measurement.
+
+    [Benchmark(Baseline = true, OperationsPerInvoke = PipelinedOps), BenchmarkCategory("GET x200 pipelined")]
+    public async Task StackExchange_Get_Pipelined()
+    {
+        for (var i = 0; i < PipelinedOps; i++)
+        {
+            _stackExchangePipelined[i] = _stackExchangeDb.StringGetAsync("seeded:string");
+        }
+
+        for (var i = 0; i < _stackExchangePipelined.Length; i++)
+        {
+            await _stackExchangePipelined[i];
+        }
+    }
+
+    [Benchmark(OperationsPerInvoke = PipelinedOps), BenchmarkCategory("GET x200 pipelined")]
+    public async Task Respire_Get_Pipelined()
+    {
+        for (var i = 0; i < PipelinedOps; i++)
+        {
+            _respirePipelined[i] = _respire.GetStringAsync("seeded:string");
+        }
+
+        for (var i = 0; i < _respirePipelined.Length; i++)
+        {
+            await _respirePipelined[i];
         }
     }
 }

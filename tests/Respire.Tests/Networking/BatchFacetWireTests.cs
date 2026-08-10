@@ -114,7 +114,7 @@ public class BatchFacetWireTests
         await client.SortedSets.CountByScoreAsync("z", 10, 50);
         await client.Bitmaps.CountAsync("bits", 0, 8, BitIndexUnit.Bit);
         await client.HyperLogLog.AddAsync("hll", "one", "two");
-        await client.Geo.AddAsync("cities", entries: [new GeoEntry(-0.1276, 51.5072, "london")]);
+        await client.Geo.AddAsync("cities", new GeoEntry(-0.1276, 51.5072, "london"));
 
         var expected = server.ReceivedCommands;
 
@@ -135,7 +135,7 @@ public class BatchFacetWireTests
         _ = batch.SortedSets.CountByScore("z", 10, 50);
         _ = batch.Bitmaps.Count("bits", 0, 8, BitIndexUnit.Bit);
         _ = batch.HyperLogLog.Add("hll", "one", "two");
-        _ = batch.Geo.Add("cities", entries: [new GeoEntry(-0.1276, 51.5072, "london")]);
+        _ = batch.Geo.Add("cities", new GeoEntry(-0.1276, 51.5072, "london"));
         await batch.ExecuteAsync();
 
         var queued = server.ReceivedCommands.Skip(expected.Count).ToArray();
@@ -172,6 +172,70 @@ public class BatchFacetWireTests
 
         var queued = server.ReceivedCommands.Skip(expected.Length).ToArray();
         await Assert.That(queued).IsEquivalentTo(expected, CollectionOrdering.Matching);
+    }
+
+    [Test]
+    public async Task DeferredTryGet_SeparatesMissingKeysFromStoredDefaults()
+    {
+        await using var server = new FakeRespServer(
+            "$1\r\n0\r\n"u8.ToArray(),
+            "$-1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var batch = client.CreateBatch();
+        var stored = batch.TryGet<int>("stored");
+        var missing = batch.Strings.TryGet<int>("missing");
+        await batch.ExecuteAsync();
+
+        await Assert.That(stored.Result).IsEqualTo(new RespireGet<int>(true, 0));
+        await Assert.That(missing.Result).IsEqualTo(default(RespireGet<int>));
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(
+            new[] { "GET stored", "GET missing" }, CollectionOrdering.Matching);
+    }
+
+    [Test]
+    public async Task DeferredScripts_PrefixKeysAndOwnTheirResults()
+    {
+        var reply = "*2\r\n$10\r\ntenant:key\r\n$3\r\narg\r\n"u8.ToArray();
+        await using var server = new FakeRespServer(reply);
+        await using var owner = await FakeRespServer.ConnectClientAsync(server.Port);
+        var client = owner.WithKeyPrefix("tenant:");
+        var script = RespireScript.Create("return {KEYS[1], ARGV[1]}");
+
+        using var batch = client.CreateBatch();
+        var pending = batch.Scripts.Evaluate(script, ["key"], ["arg"]);
+        await batch.ExecuteAsync();
+        batch.Dispose();
+
+        using var result = pending.Result;
+        await Assert.That(result.Count).IsEqualTo(2);
+        await Assert.That(result[0].AsString()).IsEqualTo("tenant:key");
+        await Assert.That(result[1].AsString()).IsEqualTo("arg");
+        await Assert.That(server.ReceivedCommands[0]).IsEqualTo(
+            "EVAL return {KEYS[1], ARGV[1]} 1 tenant:key arg");
+    }
+
+    [Test]
+    public async Task TransactionScripts_OwnNestedExecResults()
+    {
+        await using var server = new FakeRespServer(
+            FakeRespServer.OkReply,
+            "+QUEUED\r\n"u8.ToArray(),
+            "*1\r\n*2\r\n:7\r\n$5\r\nvalue\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var script = RespireScript.Create("return {7, ARGV[1]}");
+
+        var transaction = client.CreateTransaction();
+        var pending = transaction.Scripts.Evaluate(script, args: ["value"]);
+        await transaction.CommitAsync();
+
+        using var result = pending.Result;
+        await Assert.That(result.Count).IsEqualTo(2);
+        await Assert.That(result[0].AsInteger()).IsEqualTo(7);
+        await Assert.That(result[1].AsString()).IsEqualTo("value");
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(
+            new[] { "MULTI", "EVAL return {7, ARGV[1]} 0 value", "EXEC" },
+            CollectionOrdering.Matching);
     }
 
     [Test]

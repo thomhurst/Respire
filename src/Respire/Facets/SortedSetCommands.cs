@@ -55,6 +55,22 @@ public interface ISortedSetCommands
         RespireKey key, string? match = null, int countHint = 250,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Removes and returns up to <paramref name="count"/> members, lowest-scored first unless
+    /// <paramref name="descending"/> is true. Redis: ZPOPMIN / ZPOPMAX.
+    /// </summary>
+    ValueTask<SortedSetEntry[]> PopAsync(
+        RespireKey key, long count, bool descending = false,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Removes members whose scores are within the inclusive range. Redis: ZREMRANGEBYSCORE.</summary>
+    ValueTask<long> RemoveRangeByScoreAsync(
+        RespireKey key, double min, double max, CancellationToken cancellationToken = default);
+
+    /// <summary>Removes members whose ranks are within the inclusive range. Redis: ZREMRANGEBYRANK.</summary>
+    ValueTask<long> RemoveRangeByRankAsync(
+        RespireKey key, long start, long stop, CancellationToken cancellationToken = default);
+
     /// <summary>Members with scores within the inclusive range. Redis: ZCOUNT.</summary>
     ValueTask<long> CountByScoreAsync(RespireKey key, double min, double max, CancellationToken cancellationToken = default);
 
@@ -127,6 +143,39 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
         => CollectionScan.EnumerateAsync(
             client, "ZSCAN", RespireCommands.SortedSet.ZSCAN.Verb, key, match, countHint,
             ParseEntries, cancellationToken);
+
+    public async ValueTask<SortedSetEntry[]> PopAsync(
+        RespireKey key, long count, bool descending = false,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        var command = descending ? RespireCommands.SortedSet.ZPOPMAX : RespireCommands.SortedSet.ZPOPMIN;
+        var reply = await client.SendAsync(
+                command.Name, new Cmd2(command.Verb, client.Key(in key), count), cancellationToken)
+            .ConfigureAwait(false);
+        try
+        {
+            return ParseEntries(in reply);
+        }
+        finally
+        {
+            reply.Dispose();
+        }
+    }
+
+    public ValueTask<long> RemoveRangeByScoreAsync(
+        RespireKey key, double min, double max, CancellationToken cancellationToken = default)
+        => client.IntegerAsync(
+            "ZREMRANGEBYSCORE",
+            new Cmd3(RespireCommands.SortedSet.ZREMRANGEBYSCORE.Verb, client.Key(in key), min, max),
+            cancellationToken);
+
+    public ValueTask<long> RemoveRangeByRankAsync(
+        RespireKey key, long start, long stop, CancellationToken cancellationToken = default)
+        => client.IntegerAsync(
+            "ZREMRANGEBYRANK",
+            new Cmd3(RespireCommands.SortedSet.ZREMRANGEBYRANK.Verb, client.Key(in key), start, stop),
+            cancellationToken);
 
     public ValueTask<long> CountByScoreAsync(RespireKey key, double min, double max, CancellationToken cancellationToken = default)
         => client.IntegerAsync("ZCOUNT", new Cmd3(Verbs.ZCount, client.Key(in key), min, max), cancellationToken);

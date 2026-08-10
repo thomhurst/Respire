@@ -65,7 +65,7 @@ public class GeoCommandTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         await Assert.That(await client.Geo.AddAsync(
-            "places", SetWhen.NotExists, changed: true,
+            "places", new GeoAddOptions { When = SetWhen.NotExists, Changed = true },
             new GeoEntry(1.5, 2.5, "cafe"), new GeoEntry(3.5, 4.5, "park"))).IsEqualTo(2);
         await Assert.That(await client.Geo.DistanceAsync("places", "cafe", "park", GeoUnit.Kilometers))
             .IsEqualTo(12.5);
@@ -177,7 +177,7 @@ public class GeoCommandTests
             "dest", "places", GeoSearchOrigin.FromMember("cafe"), GeoSearchShape.Circle(1),
             new GeoSearchOptions { IncludeDistance = true })).Throws<ArgumentException>();
         await Assert.That(async () => await client.Geo.AddAsync(
-            "places", entries: [new GeoEntry(181, 0, "bad")])).Throws<ArgumentOutOfRangeException>();
+            "places", new GeoEntry(181, 0, "bad"))).Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Geo.DistanceAsync(
             "places", "a", "b", (GeoUnit)42)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Geo.SearchAsync(
