@@ -156,21 +156,7 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
         RespireKey key, bool value, long? start = null, long? end = null,
         BitIndexUnit unit = BitIndexUnit.Byte, CancellationToken cancellationToken = default)
     {
-        if (end.HasValue && !start.HasValue)
-        {
-            throw new ArgumentException("End requires start.", nameof(end));
-        }
-
-        if (!Enum.IsDefined(unit))
-        {
-            throw new ArgumentOutOfRangeException(nameof(unit));
-        }
-
-        if (start.HasValue && !end.HasValue && unit != BitIndexUnit.Byte)
-        {
-            throw new ArgumentException("Bit indexing requires end because Redis places BYTE|BIT after end.", nameof(unit));
-        }
-
+        ValidatePosition(start, end, unit);
         return (start, end) switch
         {
             (null, _) => client.IntegerAsync(
@@ -187,16 +173,7 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
     public ValueTask<long> OperateAsync(
         BitOperation operation, RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys)
     {
-        if (sourceKeys.IsEmpty)
-        {
-            throw new ArgumentException("At least one source key is required.", nameof(sourceKeys));
-        }
-
-        if (operation == BitOperation.Not && sourceKeys.Length != 1)
-        {
-            throw new ArgumentException("BITOP NOT requires exactly one source key.", nameof(sourceKeys));
-        }
-
+        ValidateOperate(operation, sourceKeys);
         return client.IntegerAsync(
             "BITOP",
             new BitOpCommand(
@@ -216,6 +193,14 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
     private ValueTask<long?[]> FieldCoreAsync(
         string name, RespireCommand command, RespireKey key, ReadOnlySpan<BitFieldOperation> operations, bool readOnly)
     {
+        ValidateFieldOperations(operations, readOnly);
+        return client.NullableIntegerArrayAsync(
+            name, new BitFieldCommand(command.Verb, client.Key(in key), operations.ToArray()), CancellationToken.None);
+    }
+
+    /// <summary>Shared with the deferred (batch/transaction) facet.</summary>
+    internal static void ValidateFieldOperations(ReadOnlySpan<BitFieldOperation> operations, bool readOnly)
+    {
         if (operations.IsEmpty)
         {
             throw new ArgumentException("At least one bit-field operation is required.", nameof(operations));
@@ -233,19 +218,49 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
                 throw new ArgumentException("BITFIELD_RO accepts GET operations only.", nameof(operations));
             }
         }
-
-        return client.NullableIntegerArrayAsync(
-            name, new BitFieldCommand(command.Verb, client.Key(in key), operations.ToArray()), CancellationToken.None);
     }
 
-    private static string Unit(BitIndexUnit unit) => unit switch
+    /// <summary>Shared with the deferred (batch/transaction) facet.</summary>
+    internal static void ValidateOperate(BitOperation operation, ReadOnlySpan<RespireKey> sourceKeys)
+    {
+        if (sourceKeys.IsEmpty)
+        {
+            throw new ArgumentException("At least one source key is required.", nameof(sourceKeys));
+        }
+
+        if (operation == BitOperation.Not && sourceKeys.Length != 1)
+        {
+            throw new ArgumentException("BITOP NOT requires exactly one source key.", nameof(sourceKeys));
+        }
+    }
+
+    /// <summary>Shared with the deferred (batch/transaction) facet.</summary>
+    internal static void ValidatePosition(long? start, long? end, BitIndexUnit unit)
+    {
+        if (end.HasValue && !start.HasValue)
+        {
+            throw new ArgumentException("End requires start.", nameof(end));
+        }
+
+        if (!Enum.IsDefined(unit))
+        {
+            throw new ArgumentOutOfRangeException(nameof(unit));
+        }
+
+        if (start.HasValue && !end.HasValue && unit != BitIndexUnit.Byte)
+        {
+            throw new ArgumentException("Bit indexing requires end because Redis places BYTE|BIT after end.", nameof(unit));
+        }
+    }
+
+    internal static string Unit(BitIndexUnit unit) => unit switch
     {
         BitIndexUnit.Byte => "BYTE",
         BitIndexUnit.Bit => "BIT",
         _ => throw new ArgumentOutOfRangeException(nameof(unit)),
     };
 
-    private static string Operation(BitOperation operation) => operation switch
+    internal static string Operation(BitOperation operation) => operation switch
     {
         BitOperation.And => "AND",
         BitOperation.Or => "OR",

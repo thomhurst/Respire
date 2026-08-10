@@ -19,6 +19,13 @@ internal static class ResponseReader
     /// <summary>+OK → true, null → false (conditional writes like SET NX).</summary>
     public static bool OkOrNull(in RespValue value) => !value.IsNull;
 
+    /// <summary>+OK → true; anything else throws. For deferred results, whose readers must return a value.</summary>
+    public static bool Ok(in RespValue value)
+    {
+        ExpectOk(in value);
+        return true;
+    }
+
     public static void ExpectOk(in RespValue value)
     {
         if (value.Type != RespDataType.SimpleString || !value.AsSpan().SequenceEqual("OK"u8))

@@ -181,16 +181,7 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         => client.NullableStringArrayAsync("MGET", new CmdN(Verbs.MGet, client.MapKeys(keys)), CancellationToken.None);
 
     public ValueTask SetManyAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
-    {
-        var args = new RespireValue[pairs.Length * 2];
-        for (var i = 0; i < pairs.Length; i++)
-        {
-            args[i * 2] = client.Key(in pairs[i].Key);
-            args[i * 2 + 1] = pairs[i].Value;
-        }
-
-        return client.OkAsync("MSET", new CmdN(Verbs.MSet, args), CancellationToken.None);
-    }
+        => client.OkAsync("MSET", new CmdN(Verbs.MSet, SetManyArgs(client, pairs)), CancellationToken.None);
 
     public ValueTask<bool> SetManyExpireAsync(
         TimeSpan expiry, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
@@ -235,6 +226,35 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         bool hasValue,
         SetWhen when,
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+        => client.FlagAsync(
+            "MSETEX",
+            new MSetExCommand(
+                RespireCommands.String.MSETEX.Verb,
+                SetManyExpireArgs(client, option, optionValue, hasValue, when, pairs)),
+            CancellationToken.None);
+
+    /// <summary>MSET key value… — shared with the deferred (batch/transaction) facet.</summary>
+    internal static RespireValue[] SetManyArgs(
+        RespireClient client, ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+    {
+        var args = new RespireValue[pairs.Length * 2];
+        for (var i = 0; i < pairs.Length; i++)
+        {
+            args[i * 2] = client.Key(in pairs[i].Key);
+            args[i * 2 + 1] = pairs[i].Value;
+        }
+
+        return args;
+    }
+
+    /// <summary>MSETEX numkeys key value… [NX|XX] option [value] — shared with the deferred facet.</summary>
+    internal static RespireValue[] SetManyExpireArgs(
+        RespireClient client,
+        string option,
+        long optionValue,
+        bool hasValue,
+        SetWhen when,
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
     {
         ValidatePairs(pairs);
         var condition = StringSetWhenToken(when);
@@ -259,10 +279,7 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
             args[index++] = optionValue;
         }
 
-        return client.FlagAsync(
-            "MSETEX",
-            new MSetExCommand(RespireCommands.String.MSETEX.Verb, args),
-            CancellationToken.None);
+        return args;
     }
 
     private static string? StringSetWhenToken(SetWhen when)

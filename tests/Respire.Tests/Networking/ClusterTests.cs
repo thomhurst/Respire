@@ -390,6 +390,33 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task Batch_FacetMultiKeyCommand_RoutesByItsSharedSlot()
+    {
+        // Hash-tagged keys share a slot, so a multi-key facet command queued on a batch must
+        // route as one unit to that slot's node.
+        var slot = ClusterHash.GetSlot("{acct}dest");
+        await using var target = new FakeRespServer(":2\r\n"u8.ToArray());
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Cluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        var batch = client.CreateBatch();
+        var stored = batch.Sets.UnionStoreAsync("{acct}dest", "{acct}a", "{acct}b");
+        var deleted = batch.Keys.DeleteAsync("{acct}a", "{acct}b");
+        await batch.SendAsync();
+
+        await Assert.That(stored.Result).IsEqualTo(2);
+        await Assert.That(deleted.Result).IsEqualTo(2);
+        await Assert.That(target.ReceivedCommands[0]).IsEqualTo("SUNIONSTORE {acct}dest {acct}a {acct}b");
+        await Assert.That(target.ReceivedCommands[1]).IsEqualTo("DEL {acct}a {acct}b");
+    }
+
+    [Test]
     public async Task Transaction_RoutesToItsSingleHashSlot()
     {
         await using var target = new FakeRespServer(

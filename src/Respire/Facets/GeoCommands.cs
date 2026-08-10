@@ -130,21 +130,7 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
         RespireKey key, GeoAddCondition condition = GeoAddCondition.Always, bool changed = false,
         params ReadOnlySpan<GeoEntry> entries)
     {
-        if (entries.IsEmpty)
-        {
-            throw new ArgumentException("At least one geo entry is required.", nameof(entries));
-        }
-
-        if (!Enum.IsDefined(condition))
-        {
-            throw new ArgumentOutOfRangeException(nameof(condition));
-        }
-
-        foreach (var entry in entries)
-        {
-            ValidateCoordinates(entry.Longitude, entry.Latitude);
-        }
-
+        ValidateAdd(condition, entries);
         return client.IntegerAsync(
             "GEOADD",
             new GeoAddCommand(
@@ -188,26 +174,32 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
             CancellationToken.None).ConfigureAwait(false);
         try
         {
-            var values = reply.AsArray();
-            var result = new GeoPosition?[values.Length];
-            for (var i = 0; i < values.Length; i++)
-            {
-                if (values[i].IsNull)
-                {
-                    continue;
-                }
-
-                var coordinates = values[i].AsArray();
-                result[i] = new GeoPosition(
-                    ResponseReader.Double(in coordinates[0]), ResponseReader.Double(in coordinates[1]));
-            }
-
-            return result;
+            return ParsePositions(in reply);
         }
         finally
         {
             reply.Dispose();
         }
+    }
+
+    /// <summary>GEOPOS replies one [longitude, latitude] pair per member, null when absent.</summary>
+    internal static GeoPosition?[] ParsePositions(in RespValue reply)
+    {
+        var values = reply.AsArray();
+        var result = new GeoPosition?[values.Length];
+        for (var i = 0; i < values.Length; i++)
+        {
+            if (values[i].IsNull)
+            {
+                continue;
+            }
+
+            var coordinates = values[i].AsArray();
+            result[i] = new GeoPosition(
+                ResponseReader.Double(in coordinates[0]), ResponseReader.Double(in coordinates[1]));
+        }
+
+        return result;
     }
 
     public async ValueTask<GeoSearchResult[]> SearchAsync(
@@ -237,11 +229,7 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
         CancellationToken cancellationToken = default)
     {
         Validate(origin, shape, options);
-        if (options.IncludeDistance || options.IncludeHash || options.IncludeCoordinates)
-        {
-            throw new ArgumentException("GEOSEARCHSTORE cannot return distance, hash, or coordinates.", nameof(options));
-        }
-
+        ValidateSearchStore(options);
         return client.IntegerAsync(
             "GEOSEARCHSTORE",
             new GeoSearchCommand(
@@ -250,7 +238,7 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
             cancellationToken);
     }
 
-    private static GeoSearchResult[] ParseSearch(in RespValue reply, GeoSearchOptions options)
+    internal static GeoSearchResult[] ParseSearch(in RespValue reply, GeoSearchOptions options)
     {
         var values = reply.AsArray();
         var results = new GeoSearchResult[values.Length];
@@ -281,7 +269,35 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
         return results;
     }
 
-    private static void RequireMembers(ReadOnlySpan<RespireValue> members)
+    /// <summary>Shared with the deferred (batch/transaction) facet.</summary>
+    internal static void ValidateAdd(GeoAddCondition condition, ReadOnlySpan<GeoEntry> entries)
+    {
+        if (entries.IsEmpty)
+        {
+            throw new ArgumentException("At least one geo entry is required.", nameof(entries));
+        }
+
+        if (!Enum.IsDefined(condition))
+        {
+            throw new ArgumentOutOfRangeException(nameof(condition));
+        }
+
+        foreach (var entry in entries)
+        {
+            ValidateCoordinates(entry.Longitude, entry.Latitude);
+        }
+    }
+
+    /// <summary>Shared with the deferred (batch/transaction) facet.</summary>
+    internal static void ValidateSearchStore(GeoSearchOptions options)
+    {
+        if (options.IncludeDistance || options.IncludeHash || options.IncludeCoordinates)
+        {
+            throw new ArgumentException("GEOSEARCHSTORE cannot return distance, hash, or coordinates.", nameof(options));
+        }
+    }
+
+    internal static void RequireMembers(ReadOnlySpan<RespireValue> members)
     {
         if (members.IsEmpty)
         {
@@ -289,7 +305,7 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
         }
     }
 
-    private static void Validate(GeoSearchOrigin origin, GeoSearchShape shape, GeoSearchOptions options)
+    internal static void Validate(GeoSearchOrigin origin, GeoSearchShape shape, GeoSearchOptions options)
     {
         if (!origin.IsInitialized)
         {
