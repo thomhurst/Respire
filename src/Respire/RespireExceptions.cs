@@ -54,11 +54,11 @@ public sealed class RespireLockNotAcquiredException() : RespireException(
 
 /// <summary>An unsent batch was disposed, so none of its queued commands ran.</summary>
 public sealed class RespireBatchDiscardedException() : InvalidOperationException(
-    "The batch was disposed before SendAsync; its queued commands were discarded.");
+    "The batch was disposed before ExecuteAsync; its queued commands were discarded.");
 
 /// <summary>A deferred result was read before its batch or transaction executed.</summary>
 public sealed class RespirePendingNotReadyException() : InvalidOperationException(
-    "This result is not available yet: send the batch (SendAsync) or commit the transaction (CommitAsync) first.");
+    "This result is not available yet: execute the batch (ExecuteAsync) or commit the transaction (CommitAsync) first.");
 
 /// <summary>A watched key changed, so Redis aborted the transaction and no command ran.</summary>
 public sealed class RespireTransactionAbortedException() : InvalidOperationException(

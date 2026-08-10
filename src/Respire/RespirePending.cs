@@ -15,9 +15,9 @@ public enum RespirePendingStatus
 
 /// <summary>
 /// The future result of a command queued on a <see cref="RespireBatch"/> or
-/// <see cref="RespireTransaction"/>. Readable (or awaitable) only after the batch is sent /
+/// <see cref="RespireTransaction"/>. Readable (or awaitable) only after the batch is executed /
 /// the transaction committed — touching it earlier throws immediately instead of deadlocking,
-/// which makes the classic await-before-flush bug impossible.
+/// while the synchronous queueing method names make an accidental early await conspicuous.
 /// </summary>
 public sealed class RespirePending<T>
 {

@@ -110,11 +110,11 @@ public class SetExpiryWireTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         var batch = client.CreateBatch();
-        var previous = batch.Strings.GetAndSetAsync(
+        var previous = batch.Strings.GetAndSet(
             "key", "new", TimeSpan.FromSeconds(5), SetWhen.Exists);
-        var typedPrevious = batch.Strings.GetAndSetAsync(
+        var typedPrevious = batch.Strings.GetAndSet(
             "number", 43, RespireExpiry.Keep, SetWhen.NotExists);
-        await batch.SendAsync();
+        await batch.ExecuteAsync();
 
         await Assert.That(previous.Result).IsEqualTo("old");
         await Assert.That(typedPrevious.Result).IsEqualTo(42);
@@ -129,9 +129,9 @@ public class SetExpiryWireTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         var batch = client.CreateBatch();
-        var relative = batch.SetAsync("key", "value", TimeSpan.FromSeconds(5));
-        var keep = batch.SetAsync("other", "value", RespireExpiry.Keep);
-        await batch.SendAsync();
+        var relative = batch.Set("key", "value", TimeSpan.FromSeconds(5));
+        var keep = batch.Set("other", "value", RespireExpiry.Keep);
+        await batch.ExecuteAsync();
 
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("SET key value PX 5000");
         await Assert.That(server.ReceivedCommands[1]).IsEqualTo("SET other value KEEPTTL");
@@ -147,7 +147,7 @@ public class SetExpiryWireTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         var transaction = client.CreateTransaction();
-        var pending = transaction.SetAsync("key", "value", RespireExpiry.At(Instant));
+        var pending = transaction.Set("key", "value", RespireExpiry.At(Instant));
         var committed = await transaction.CommitAsync();
 
         await Assert.That(server.ReceivedCommands[1]).IsEqualTo("SET key value PXAT 1700000000123");

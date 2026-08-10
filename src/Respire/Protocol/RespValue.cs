@@ -15,7 +15,7 @@ namespace Respire.Protocol;
 /// to return buffers to the pools. Forgetting to dispose is safe — the buffers are simply
 /// collected by the GC instead of being reused.
 /// </remarks>
-public readonly struct RespValue : IEquatable<RespValue>, IDisposable
+internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
 {
     [Flags]
     internal enum ValueFlags : byte

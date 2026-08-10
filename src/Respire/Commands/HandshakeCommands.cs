@@ -3,13 +3,13 @@ using Respire.Protocol;
 namespace Respire.Commands;
 
 /// <summary>A fully pre-encoded command frame (PING, FLUSHDB, ...).</summary>
-public readonly struct RawCommand(byte[] preEncoded) : IRespCommand
+internal readonly struct RawCommand(byte[] preEncoded) : IRespCommand
 {
     public void Write(ref RespWriter writer) => writer.WriteRaw(preEncoded);
 }
 
 /// <summary>HELLO 3 [AUTH username password] — RESP3 protocol negotiation.</summary>
-public readonly struct HelloCommand(string? username, string? password) : IRespCommand
+internal readonly struct HelloCommand(string? username, string? password) : IRespCommand
 {
     public void Write(ref RespWriter writer)
     {
@@ -26,7 +26,7 @@ public readonly struct HelloCommand(string? username, string? password) : IRespC
 }
 
 /// <summary>AUTH [username] password — RESP2 authentication.</summary>
-public readonly struct AuthCommand(string? username, string password) : IRespCommand
+internal readonly struct AuthCommand(string? username, string password) : IRespCommand
 {
     public void Write(ref RespWriter writer)
     {
@@ -45,7 +45,7 @@ public readonly struct AuthCommand(string? username, string password) : IRespCom
 }
 
 /// <summary>CLIENT SETNAME name.</summary>
-public readonly struct ClientSetNameCommand(string name) : IRespCommand
+internal readonly struct ClientSetNameCommand(string name) : IRespCommand
 {
     public void Write(ref RespWriter writer)
     {
@@ -84,7 +84,7 @@ internal readonly struct ClientKillIdCommand(long id, bool skipMe = false) : IRe
 }
 
 /// <summary>SELECT database.</summary>
-public readonly struct SelectCommand(int database) : IRespCommand
+internal readonly struct SelectCommand(int database) : IRespCommand
 {
     public void Write(ref RespWriter writer)
     {

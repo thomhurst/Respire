@@ -203,10 +203,10 @@ public class TelemetryTests
         using var capture = new TelemetryCapture();
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var batch = client.CreateBatch();
-        _ = batch.SetAsync("one", "1");
-        _ = batch.SetAsync("two", "2");
+        _ = batch.Set("one", "1");
+        _ = batch.Set("two", "2");
 
-        await batch.SendAsync();
+        await batch.ExecuteAsync();
 
         var activities = capture.Activities.Where(activity =>
             Tag(activity, "server.port") as int? == server.Port).ToArray();
@@ -227,7 +227,7 @@ public class TelemetryTests
             Endpoints = { new RespireEndpoint("empty-pipeline.example") },
         });
 
-        await client.CreateBatch().SendAsync();
+        await client.CreateBatch().ExecuteAsync();
 
         var activity = capture.Activities.Single(activity =>
             Tag(activity, "server.address") as string == "empty-pipeline.example");
@@ -249,8 +249,8 @@ public class TelemetryTests
         using var capture = new TelemetryCapture();
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var transaction = client.CreateTransaction();
-        _ = transaction.SetAsync("one", "1");
-        _ = transaction.SetAsync("two", "2");
+        _ = transaction.Set("one", "1");
+        _ = transaction.Set("two", "2");
 
         await transaction.CommitAsync();
 
@@ -275,7 +275,7 @@ public class TelemetryTests
             Serializer = new FailingDeserializer(),
         });
         var transaction = client.CreateTransaction();
-        var pending = transaction.GetAsync<Payload>("key");
+        var pending = transaction.Get<Payload>("key");
 
         await transaction.CommitAsync();
 

@@ -17,18 +17,18 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
 
         var batch = client.CreateBatch();
-        var set = batch.Strings.SetAsync("batch:s", "alpha");
-        var appended = batch.Strings.AppendAsync("batch:s", "-beta");
-        var length = batch.Strings.LengthAsync("batch:s");
-        var value = batch.Strings.GetStringAsync("batch:s");
-        var many = batch.Strings.GetManyAsync("batch:s", "batch:missing");
-        var exists = batch.Keys.ExistsAsync("batch:s");
-        var type = batch.Keys.TypeAsync("batch:s");
-        var expired = batch.Keys.ExpireAsync("batch:s", TimeSpan.FromMinutes(5));
-        var expiry = batch.Keys.ExpiryAsync("batch:s");
-        var persisted = batch.Keys.PersistAsync("batch:s");
+        var set = batch.Strings.Set("batch:s", "alpha");
+        var appended = batch.Strings.Append("batch:s", "-beta");
+        var length = batch.Strings.Length("batch:s");
+        var value = batch.Strings.GetString("batch:s");
+        var many = batch.Strings.GetMany("batch:s", "batch:missing");
+        var exists = batch.Keys.Exists("batch:s");
+        var type = batch.Keys.Type("batch:s");
+        var expired = batch.Keys.Expire("batch:s", TimeSpan.FromMinutes(5));
+        var expiry = batch.Keys.Expiry("batch:s");
+        var persisted = batch.Keys.Persist("batch:s");
 
-        await batch.SendAsync();
+        await batch.ExecuteAsync();
 
         set.Result.Should().BeTrue();
         appended.Result.Should().Be(10);
@@ -51,23 +51,23 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
 
         var batch = client.CreateBatch();
-        var hashSet = batch.Hashes.SetAsync("batch:h", ("name", "Ada"), ("lang", "en"));
-        var hashIncrement = batch.Hashes.IncrementAsync("batch:h", "visits", 3);
-        var hashAll = batch.Hashes.GetAllAsync("batch:h");
-        var hashCount = batch.Hashes.CountAsync("batch:h");
-        var pushed = batch.Lists.RightPushAsync("batch:l", "a", "b", "c");
-        var listRange = batch.Lists.RangeAsync("batch:l");
-        var popped = batch.Lists.LeftPopAsync("batch:l");
-        var listCount = batch.Lists.CountAsync("batch:l");
-        var added = batch.Sets.AddAsync("batch:set", "x", "y");
-        var contains = batch.Sets.ContainsAsync("batch:set", "x");
-        var count = batch.Sets.CountAsync("batch:set");
-        var ranked = batch.SortedSets.AddAsync(
+        var hashSet = batch.Hashes.Set("batch:h", ("name", "Ada"), ("lang", "en"));
+        var hashIncrement = batch.Hashes.Increment("batch:h", "visits", 3);
+        var hashAll = batch.Hashes.GetAll("batch:h");
+        var hashCount = batch.Hashes.Count("batch:h");
+        var pushed = batch.Lists.RightPush("batch:l", "a", "b", "c");
+        var listRange = batch.Lists.Range("batch:l");
+        var popped = batch.Lists.LeftPop("batch:l");
+        var listCount = batch.Lists.Count("batch:l");
+        var added = batch.Sets.Add("batch:set", "x", "y");
+        var contains = batch.Sets.Contains("batch:set", "x");
+        var count = batch.Sets.Count("batch:set");
+        var ranked = batch.SortedSets.Add(
             "batch:z", new SortedSetEntry("ada", 42), new SortedSetEntry("grace", 58));
-        var score = batch.SortedSets.ScoreAsync("batch:z", "grace");
-        var leaderboard = batch.SortedSets.RangeWithScoresAsync("batch:z", descending: true);
+        var score = batch.SortedSets.Score("batch:z", "grace");
+        var leaderboard = batch.SortedSets.RangeWithScores("batch:z", descending: true);
 
-        await batch.SendAsync();
+        await batch.ExecuteAsync();
 
         hashSet.Result.Should().Be(2);
         hashIncrement.Result.Should().Be(3);
@@ -97,21 +97,21 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
 
         var batch = client.CreateBatch();
-        var bitSet = batch.Bitmaps.GetAndSetAsync("batch:bits", 4, true);
-        var bitCount = batch.Bitmaps.CountAsync("batch:bits");
-        var bitPosition = batch.Bitmaps.PositionAsync("batch:bits", true);
-        var hllAdded = batch.HyperLogLog.AddAsync("batch:hll", "ada", "grace");
-        var hllCount = batch.HyperLogLog.CountAsync("batch:hll");
-        var geoAdded = batch.Geo.AddAsync(
+        var bitSet = batch.Bitmaps.GetAndSet("batch:bits", 4, true);
+        var bitCount = batch.Bitmaps.Count("batch:bits");
+        var bitPosition = batch.Bitmaps.Position("batch:bits", true);
+        var hllAdded = batch.HyperLogLog.Add("batch:hll", "ada", "grace");
+        var hllCount = batch.HyperLogLog.Count("batch:hll");
+        var geoAdded = batch.Geo.Add(
             "batch:cities", entries:
             [
                 new GeoEntry(-0.1276, 51.5072, "london"),
                 new GeoEntry(2.3522, 48.8566, "paris"),
             ]);
-        var distance = batch.Geo.DistanceAsync("batch:cities", "london", "paris", GeoUnit.Kilometers);
-        var positions = batch.Geo.PositionAsync("batch:cities", "london", "missing");
+        var distance = batch.Geo.Distance("batch:cities", "london", "paris", GeoUnit.Kilometers);
+        var positions = batch.Geo.Position("batch:cities", "london", "missing");
 
-        await batch.SendAsync();
+        await batch.ExecuteAsync();
 
         bitSet.Result.Should().BeFalse();
         bitCount.Result.Should().Be(1);
@@ -131,18 +131,18 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
 
         var transaction = client.CreateTransaction();
-        var stored = transaction.Strings.SetAsync("tx:facet:s", "alpha");
-        var incremented = transaction.Strings.IncrementAsync("tx:facet:counter", 4);
-        var hashSet = transaction.Hashes.SetAsync("tx:facet:h", "name", "Ada");
-        var hashValue = transaction.Hashes.GetStringAsync("tx:facet:h", "name");
-        var pushed = transaction.Lists.LeftPushAsync("tx:facet:l", "one", "two");
-        var listCount = transaction.Lists.CountAsync("tx:facet:l");
-        var added = transaction.Sets.AddAsync("tx:facet:set", "x", "y", "z");
-        var members = transaction.Sets.MembersAsync("tx:facet:set");
-        var ranked = transaction.SortedSets.AddAsync("tx:facet:z", "ada", 42);
-        var rank = transaction.SortedSets.RankAsync("tx:facet:z", "ada");
-        var keyType = transaction.Keys.TypeAsync("tx:facet:h");
-        var removed = transaction.Keys.DeleteAsync("tx:facet:s", "tx:facet:missing");
+        var stored = transaction.Strings.Set("tx:facet:s", "alpha");
+        var incremented = transaction.Strings.Increment("tx:facet:counter", 4);
+        var hashSet = transaction.Hashes.Set("tx:facet:h", "name", "Ada");
+        var hashValue = transaction.Hashes.GetString("tx:facet:h", "name");
+        var pushed = transaction.Lists.LeftPush("tx:facet:l", "one", "two");
+        var listCount = transaction.Lists.Count("tx:facet:l");
+        var added = transaction.Sets.Add("tx:facet:set", "x", "y", "z");
+        var members = transaction.Sets.Members("tx:facet:set");
+        var ranked = transaction.SortedSets.Add("tx:facet:z", "ada", 42);
+        var rank = transaction.SortedSets.Rank("tx:facet:z", "ada");
+        var keyType = transaction.Keys.Type("tx:facet:h");
+        var removed = transaction.Keys.Delete("tx:facet:s", "tx:facet:missing");
 
         var committed = await transaction.CommitAsync();
 
@@ -173,17 +173,17 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         await client.SetAsync("root:b", "2");
 
         var batch = client.CreateBatch();
-        var typed = batch.SetAsync("root:typed", 7);
-        var read = batch.GetAsync<int>("root:typed");
-        var bytes = batch.GetBytesAsync("root:a");
-        var incremented = batch.IncrementAsync("root:counter", 5);
-        var decremented = batch.DecrementAsync("root:counter", 2);
-        var expired = batch.ExpireAsync("root:counter", TimeSpan.FromMinutes(1));
-        var present = batch.ExistsAsync("root:a");
+        var typed = batch.Set("root:typed", 7);
+        var read = batch.Get<int>("root:typed");
+        var bytes = batch.GetBytes("root:a");
+        var incremented = batch.Increment("root:counter", 5);
+        var decremented = batch.Decrement("root:counter", 2);
+        var expired = batch.Expire("root:counter", TimeSpan.FromMinutes(1));
+        var present = batch.Exists("root:a");
         // Parity with IRespireClient.DeleteAsync: many keys, not one.
-        var deleted = batch.DeleteAsync("root:a", "root:b", "root:missing");
+        var deleted = batch.Delete("root:a", "root:b", "root:missing");
 
-        await batch.SendAsync();
+        await batch.ExecuteAsync();
 
         typed.Result.Should().BeTrue();
         read.Result.Should().Be(7);
@@ -202,11 +202,11 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
 
         // Helper code can queue into either host through the shared interface.
         static RespirePending<long> QueueAudit(IBatchListCommands lists)
-            => lists.RightPushAsync("shared:audit", "entry");
+            => lists.RightPush("shared:audit", "entry");
 
         var batch = client.CreateBatch();
         var batched = QueueAudit(batch.Lists);
-        await batch.SendAsync();
+        await batch.ExecuteAsync();
 
         var transaction = client.CreateTransaction();
         var transacted = QueueAudit(transaction.Lists);

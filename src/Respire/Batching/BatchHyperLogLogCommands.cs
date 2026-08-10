@@ -10,24 +10,24 @@ namespace Respire;
 public interface IBatchHyperLogLogCommands
 {
     /// <summary>Adds values and returns whether estimated cardinality changed. Redis: PFADD.</summary>
-    RespirePending<bool> AddAsync(RespireKey key, params ReadOnlySpan<RespireValue> values);
+    RespirePending<bool> Add(RespireKey key, params ReadOnlySpan<RespireValue> values);
 
     /// <summary>Returns estimated cardinality across one or more HyperLogLogs. Redis: PFCOUNT.</summary>
-    RespirePending<long> CountAsync(params ReadOnlySpan<RespireKey> keys);
+    RespirePending<long> Count(params ReadOnlySpan<RespireKey> keys);
 
     /// <summary>Merges HyperLogLogs into <paramref name="destination"/>; true once the server replies OK. Redis: PFMERGE.</summary>
-    RespirePending<bool> MergeAsync(RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys);
+    RespirePending<bool> Merge(RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys);
 }
 
 internal sealed class BatchHyperLogLogCommands(IPendingSink sink) : IBatchHyperLogLogCommands
 {
-    public RespirePending<bool> AddAsync(RespireKey key, params ReadOnlySpan<RespireValue> values)
+    public RespirePending<bool> Add(RespireKey key, params ReadOnlySpan<RespireValue> values)
         => sink.Add<Cmd1N, bool>(
             "PFADD",
             new Cmd1N(RespireCommands.HyperLogLog.PFADD.Verb, sink.Client.Key(in key), values.ToArray()),
             static (c, v) => ResponseReader.Flag(in v));
 
-    public RespirePending<long> CountAsync(params ReadOnlySpan<RespireKey> keys)
+    public RespirePending<long> Count(params ReadOnlySpan<RespireKey> keys)
     {
         if (keys.IsEmpty)
         {
@@ -41,7 +41,7 @@ internal sealed class BatchHyperLogLogCommands(IPendingSink sink) : IBatchHyperL
             static (c, v) => ResponseReader.Integer(in v));
     }
 
-    public RespirePending<bool> MergeAsync(RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys)
+    public RespirePending<bool> Merge(RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys)
     {
         if (sourceKeys.IsEmpty)
         {

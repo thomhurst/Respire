@@ -24,8 +24,8 @@ public class TransactionTests
         await using var client = await ConnectAsync(server.Port);
 
         var transaction = client.CreateTransaction();
-        var set = transaction.SetAsync("k", "v");
-        var incremented = transaction.IncrementAsync("counter", 5);
+        var set = transaction.Set("k", "v");
+        var incremented = transaction.Increment("counter", 5);
         var committed = await transaction.CommitAsync();
 
         var commands = server.ReceivedCommands;
@@ -47,7 +47,7 @@ public class TransactionTests
         await using var client = await ConnectAsync(server.Port);
 
         var transaction = client.CreateTransaction();
-        var pending = transaction.GetStringAsync("k");
+        var pending = transaction.GetString("k");
 
         await Assert.That(pending.Status).IsEqualTo(RespirePendingStatus.Pending);
         await Assert.That(pending.IsCompleted).IsFalse();
@@ -64,7 +64,7 @@ public class TransactionTests
         await using var client = await ConnectAsync(server.Port);
 
         var transaction = client.CreateTransaction();
-        var pending = transaction.IncrementAsync("counter");
+        var pending = transaction.Increment("counter");
         var committed = await transaction.CommitAsync();
 
         await Assert.That(committed).IsFalse();
@@ -86,7 +86,7 @@ public class TransactionTests
         await using var client = await ConnectAsync(server.Port);
 
         var transaction = client.CreateTransaction();
-        _ = transaction.IncrementAsync("counter");
+        _ = transaction.Increment("counter");
 
         await Assert.That(async () => await transaction.CommitAsync()).Throws<RespireServerException>();
     }
@@ -101,7 +101,7 @@ public class TransactionTests
         await using var client = await ConnectAsync(server.Port);
 
         var transaction = client.CreateTransaction();
-        var pending = transaction.GetStringAsync("key");
+        var pending = transaction.GetString("key");
 
         await transaction.CommitAsync();
         var error = Assert.Throws<RespireServerException>(() => _ = pending.Result);
@@ -142,9 +142,9 @@ public class TransactionTests
 
         var transaction = client.CreateTransaction();
 
-        await Assert.That(() => transaction.SetAsync("invalid", RespireValue.Null))
+        await Assert.That(() => transaction.Set("invalid", RespireValue.Null))
             .Throws<ArgumentException>();
-        var pending = transaction.SetAsync("valid", "value");
+        var pending = transaction.Set("valid", "value");
         var committed = await transaction.CommitAsync();
 
         await Assert.That(transaction.Count).IsEqualTo(1);
@@ -165,7 +165,7 @@ public class TransactionTests
         var transaction = client.CreateTransaction();
         for (var i = 0; i < 50; i++)
         {
-            _ = transaction.SetAsync($"tx{i}", "v");
+            _ = transaction.Set($"tx{i}", "v");
         }
 
         var concurrent = new List<Task>();
@@ -223,7 +223,7 @@ public class TransactionTests
         await using var client = await ConnectAsync(server.Port);
 
         var transaction = client.CreateTransaction();
-        _ = transaction.SetAsync("k", "v");
+        _ = transaction.Set("k", "v");
         await transaction.CommitAsync();
 
         await Assert.That(async () => await transaction.CommitAsync()).Throws<InvalidOperationException>();
