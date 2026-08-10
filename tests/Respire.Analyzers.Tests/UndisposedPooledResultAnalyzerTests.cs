@@ -77,6 +77,23 @@ public class UndisposedPooledResultAnalyzerTests
         """);
 
     [Test]
+    public async Task AwaitedForwardedResult_IsNotFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireResult existingResult)
+            {
+                var copy = await Task.FromResult(existingResult);
+                Console.WriteLine(copy.AsString());
+            }
+        }
+        """);
+
+    [Test]
     public async Task DisposeInsideNameOf_IsFlagged() => await Verify.VerifyAsync(
         """
         using System;

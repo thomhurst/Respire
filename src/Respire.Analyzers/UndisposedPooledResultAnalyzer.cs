@@ -77,9 +77,12 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
         {
             context.CancellationToken.ThrowIfCancellationRequested();
 
-            if (variable.Initializer is null || ScopeWalker.Unwrap(variable.Initializer.Value) is not AwaitExpressionSyntax)
+            if (variable.Initializer is null
+                || ScopeWalker.Unwrap(variable.Initializer.Value) is not AwaitExpressionSyntax awaitExpression
+                || !IsRespireAcquisition(context, awaitExpression.Expression))
             {
-                // Only an awaited call hands out a fresh lease; indexer views and copies do not.
+                // Only an awaited Respire API call hands out a fresh lease; indexer views, copies,
+                // and values forwarded through Task/ValueTask helpers keep their existing owner.
                 continue;
             }
 
@@ -105,6 +108,31 @@ public sealed class UndisposedPooledResultAnalyzer : DiagnosticAnalyzer
 
     private static INamedTypeSymbol? Match(ITypeSymbol candidate, INamedTypeSymbol? pooledType)
         => pooledType is not null && SymbolEqualityComparer.Default.Equals(candidate, pooledType) ? pooledType : null;
+
+    private static bool IsRespireAcquisition(SyntaxNodeAnalysisContext context, ExpressionSyntax awaitedExpression)
+    {
+        var expression = ScopeWalker.Unwrap(awaitedExpression);
+
+        // await client.ExecuteAsync(...).ConfigureAwait(false)
+        if (expression is InvocationExpressionSyntax configureAwait
+            && context.SemanticModel.GetSymbolInfo(configureAwait, context.CancellationToken).Symbol is IMethodSymbol
+            {
+                Name: nameof(Task.ConfigureAwait),
+            }
+            && ScopeWalker.GetReceiver(configureAwait.Expression) is { } configuredReceiver)
+        {
+            expression = ScopeWalker.Unwrap(configuredReceiver);
+        }
+
+        if (expression is not InvocationExpressionSyntax invocation
+            || context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol is not IMethodSymbol method)
+        {
+            return false;
+        }
+
+        var containingNamespace = method.ContainingNamespace?.ToDisplayString();
+        return containingNamespace is "Respire" || containingNamespace?.StartsWith("Respire.", StringComparison.Ordinal) == true;
+    }
 
     /// <summary>
     /// True when the local is disposed, or when it leaves this scope in any way — both mean the
