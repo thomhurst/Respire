@@ -1,5 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
-
 namespace Respire;
 
 /// <summary>
@@ -27,7 +25,7 @@ public readonly record struct RespireGet<T>(bool Found, T? Value)
     /// <summary>Gets the value and reports whether Redis returned one.</summary>
     /// <param name="value">The deserialized value, or <c>default</c> when not found.</param>
     /// <returns>True when the key or field existed; otherwise false.</returns>
-    public bool TryGetValue([MaybeNullWhen(false)] out T value)
+    public bool TryGetValue(out T? value)
     {
         value = Found ? Value : default;
         return Found;
