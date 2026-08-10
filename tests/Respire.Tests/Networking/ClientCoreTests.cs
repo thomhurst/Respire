@@ -57,6 +57,26 @@ public class ClientCoreTests
     }
 
     [Test]
+    public async Task DisposeAsync_DisconnectsActualSubscriptionEndpoint()
+    {
+        var core = new ClientCore(new RespireOptions { Cluster = true });
+        var subscriptionEndpoint = new RespireEndpoint("127.0.0.1", 6380);
+        var changes = new List<RespireConnectionStateChange>();
+        core.ConnectionStateChanged += changes.Add;
+        core.NotifySubscriptionStateChanged(new RespireConnectionStateChange(
+            subscriptionEndpoint, RespireConnectionState.Reconnecting, null));
+
+        await core.DisposeAsync();
+
+        await Assert.That(changes.Select(change => (change.Endpoint, change.State))).IsEquivalentTo(
+            [
+                (subscriptionEndpoint, RespireConnectionState.Reconnecting),
+                (subscriptionEndpoint, RespireConnectionState.Disconnected),
+                (core.Options.PrimaryEndpoint, RespireConnectionState.Disconnected),
+            ]);
+    }
+
+    [Test]
     public async Task SubscriberRecovery_WaitsForCommandRecoveryBeforePublishingConnected()
     {
         await using var core = new ClientCore(new RespireOptions());

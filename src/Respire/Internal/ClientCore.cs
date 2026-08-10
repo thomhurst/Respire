@@ -264,10 +264,18 @@ internal sealed class ClientCore : IAsyncDisposable
         Disposed = true;
         lock (_stateGate)
         {
-            _subscriptionEndpoint = Options.PrimaryEndpoint;
+            var primaryEndpoint = Options.PrimaryEndpoint;
+            var subscriptionEndpoint = _subscriptionEndpoint ?? primaryEndpoint;
+            _subscriptionEndpoint = subscriptionEndpoint;
             _subscriptionState = RespireConnectionState.Disconnected;
             QueueEndpointStateLocked(new RespireConnectionStateChange(
-                Options.PrimaryEndpoint, RespireConnectionState.Disconnected, null));
+                subscriptionEndpoint, RespireConnectionState.Disconnected, null));
+            if (subscriptionEndpoint != primaryEndpoint)
+            {
+                _subscriptionEndpoint = primaryEndpoint;
+                QueueEndpointStateLocked(new RespireConnectionStateChange(
+                    primaryEndpoint, RespireConnectionState.Disconnected, null));
+            }
         }
 
         PublishQueuedStates();
