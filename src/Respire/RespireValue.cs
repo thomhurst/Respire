@@ -473,7 +473,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
         return hash.ToHashCode();
     }
 
-    private int GetWireLength()
+    internal int GetWireLength()
     {
         if (_kind == Kind.String)
         {
@@ -489,7 +489,7 @@ public readonly struct RespireValue : IEquatable<RespireValue>
         return WriteWirePayload(buffer);
     }
 
-    private int WriteWirePayload(Span<byte> destination)
+    internal int WriteWirePayload(Span<byte> destination)
     {
         switch (_kind)
         {

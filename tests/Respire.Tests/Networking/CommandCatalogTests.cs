@@ -254,6 +254,8 @@ public class CommandCatalogTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var bytes = "ab"u8.ToArray();
         ReadOnlyMemory<byte> memory = "cd"u8.ToArray();
+        RespireValue binaryValue = new byte[] { 0xff, 0x00 };
+        RespireKey binaryKey = new byte[] { 0xfe, 0x01 };
 
         using var booleanResult = await client.ExecuteAsync($"SET boolean {true,3}");
         using var bytesResult = await client.ExecuteAsync($"SET bytes {bytes,-4}");
@@ -264,6 +266,13 @@ public class CommandCatalogTests
             "SET bytes ab  ",
             "SET memory   cd",
         ]);
+
+        var binaryTokens = BuildTokens($"SET binary {binaryValue,4} {binaryKey,-4}");
+        await Assert.That(binaryTokens[2]).IsEqualTo((RespireValue)new byte[] { 0x20, 0x20, 0xff, 0x00 });
+        await Assert.That(binaryTokens[3]).IsEqualTo((RespireValue)new byte[] { 0xfe, 0x01, 0x20, 0x20 });
+
+        static RespireValue[] BuildTokens(RespireCommandInterpolatedStringHandler handler)
+            => handler.Build().Tokens;
     }
 
     [Test]

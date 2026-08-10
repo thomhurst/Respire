@@ -53,6 +53,18 @@ public struct RespireCommandInterpolatedStringHandler
     public void AppendFormatted<T>(T value, string? format)
         => _tokens.Add(Format(value, format));
 
+    public void AppendFormatted(RespireValue value, int alignment)
+        => _tokens.Add(Align(value, alignment));
+
+    public void AppendFormatted(RespireValue value, int alignment, string? format)
+        => AppendFormatted(value, alignment);
+
+    public void AppendFormatted(RespireKey value, int alignment)
+        => _tokens.Add(Align(value.AsValue(), alignment));
+
+    public void AppendFormatted(RespireKey value, int alignment, string? format)
+        => AppendFormatted(value, alignment);
+
     public void AppendFormatted(bool value, int alignment)
         => _tokens.Add(Align((RespireValue)value, alignment));
 
@@ -90,25 +102,29 @@ public struct RespireCommandInterpolatedStringHandler
 
     private static RespireValue Align(RespireValue value, int alignment)
     {
-        var text = value.IsNull ? string.Empty : value.ToString();
-        return alignment < 0
-            ? text.PadRight(-alignment)
-            : text.PadLeft(alignment);
-    }
-
-    private static RespireValue Align(ReadOnlyMemory<byte> value, int alignment)
-    {
-        var width = Math.Abs(alignment);
-        if (value.Length >= width)
+        if (value.IsNull)
         {
-            return new RespireValue(value);
+            return Align(ReadOnlyMemory<byte>.Empty, alignment);
+        }
+
+        var width = Math.Abs(alignment);
+        var length = value.GetWireLength();
+        if (length >= width)
+        {
+            return value;
         }
 
         var padded = new byte[width];
         padded.AsSpan().Fill((byte)' ');
-        value.Span.CopyTo(alignment < 0 ? padded : padded.AsSpan(width - value.Length));
+        value.WriteWirePayload(
+            alignment < 0
+                ? padded.AsSpan(0, length)
+                : padded.AsSpan(width - length, length));
         return padded;
     }
+
+    private static RespireValue Align(ReadOnlyMemory<byte> value, int alignment)
+        => Align(new RespireValue(value), alignment);
 
     internal readonly (string Operation, RespireValue[] Tokens) Build()
     {
