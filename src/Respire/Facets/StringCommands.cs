@@ -1,4 +1,6 @@
+using System.Diagnostics.CodeAnalysis;
 using Respire.Commands;
+using Respire.Serialization;
 
 namespace Respire;
 
@@ -31,6 +33,8 @@ public interface IStringCommands
     ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Gets a key's value deserialized as <typeparamref name="T"/>, or default when missing. Redis: GET.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<T?> GetAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -39,6 +43,8 @@ public interface IStringCommands
     /// make a value type nullable, such as <c>GetAsync&lt;int?&gt;</c>; this form keeps
     /// <typeparamref name="T"/> non-nullable and exposes an explicit presence flag. Redis: GET.
     /// </summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Gets a key's raw bytes, or null when missing. Redis: GET.</summary>
@@ -60,6 +66,8 @@ public interface IStringCommands
         CancellationToken cancellationToken = default);
 
     /// <summary>Sets a key to a serialized <typeparamref name="T"/>. Redis: SET.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<bool> SetAsync<T>(
         RespireKey key,
         T value,
@@ -79,6 +87,8 @@ public interface IStringCommands
     /// Sets a serialized <typeparamref name="T"/> and deserializes the previous value.
     /// Redis: SET … GET.
     /// </summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<T?> GetAndSetAsync<T>(
         RespireKey key,
         T value,
@@ -118,9 +128,13 @@ public interface IStringCommands
     ValueTask<string?[]> GetManyAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
 
     /// <summary>Gets and deserializes many keys; missing keys yield default. Redis: MGET.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<T?[]> GetManyAsync<T>(params ReadOnlySpan<RespireKey> keys);
 
     /// <summary>Gets and deserializes many keys; missing keys yield default. Redis: MGET.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<T?[]> GetManyAsync<T>(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
 
     /// <summary>Sets many keys atomically; returns true when Redis confirms the write. Redis: MSET.</summary>
@@ -175,9 +189,13 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
     public ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.StringOrNullAsync("GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken);
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?> GetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
         => client.DeserializeAsync<T, Cmd1>("GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken);
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
         => client.TryDeserializeAsync<T, Cmd1>("GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken);
 
@@ -196,6 +214,8 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
             "SET", new SetCommand(client.Key(in key), value, expiry, when, returnOld: false), cancellationToken);
     }
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<bool> SetAsync<T>(
         RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default)
@@ -219,6 +239,8 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
             cancellationToken);
     }
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?> GetAndSetAsync<T>(
         RespireKey key,
         T value,
@@ -292,9 +314,13 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
     public ValueTask<string?[]> GetManyAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
         => client.NullableStringArrayAsync("MGET", new CmdN(Verbs.MGet, client.MapKeys(keys)), cancellationToken);
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?[]> GetManyAsync<T>(params ReadOnlySpan<RespireKey> keys)
         => GetManyAsync<T>(keys, CancellationToken.None);
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?[]> GetManyAsync<T>(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
         => client.DeserializeNullableArrayAsync<T, CmdN>(
             "MGET", new CmdN(Verbs.MGet, client.MapKeys(keys)), cancellationToken);

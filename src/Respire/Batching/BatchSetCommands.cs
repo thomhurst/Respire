@@ -1,5 +1,7 @@
+using System.Diagnostics.CodeAnalysis;
 using Respire.Commands;
 using Respire.Internal;
+using Respire.Serialization;
 
 namespace Respire;
 
@@ -26,6 +28,8 @@ public interface IBatchSetCommands
     RespirePending<string[]> Members(RespireKey key);
 
     /// <summary>All members deserialized as <typeparamref name="T"/>. Redis: SMEMBERS.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     RespirePending<T[]> Members<T>(RespireKey key);
 
     /// <summary>Removes and returns a random member, or null when empty. Redis: SPOP.</summary>
@@ -83,6 +87,8 @@ internal sealed class BatchSetCommands(IPendingSink sink) : IBatchSetCommands
             "SMEMBERS", new Cmd1(Verbs.SMembers, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.StringArray(in v));
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public RespirePending<T[]> Members<T>(RespireKey key)
         => sink.Add<Cmd1, T[]>(
             "SMEMBERS", new Cmd1(Verbs.SMembers, sink.Client.Key(in key)),

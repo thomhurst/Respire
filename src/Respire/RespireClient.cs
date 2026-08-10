@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
@@ -871,6 +872,8 @@ public sealed partial class RespireClient : IRespireClient
 
     internal static RespireValue[] MapValues(ReadOnlySpan<RespireValue> values) => values.ToArray();
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     internal RespireValue Serialize<T>(T value)
     {
         ArgumentNullException.ThrowIfNull(value);
@@ -904,6 +907,8 @@ public sealed partial class RespireClient : IRespireClient
     internal RespireResult CreateResult(in RespValue value)
         => new(in value, _core.Options.Serializer);
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     internal RespireValue SerializeRawCompatible<T>(T value)
     {
         if (value is null && (typeof(T) == typeof(string) || typeof(T) == typeof(byte[])))
@@ -934,6 +939,8 @@ public sealed partial class RespireClient : IRespireClient
         return Serialize(value);
     }
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     internal RespireValue SerializeCollectionMember<T>(T value)
         => value is bool boolean ? boolean : SerializeRawCompatible(value);
 
@@ -941,10 +948,14 @@ public sealed partial class RespireClient : IRespireClient
     /// Reads a value the caller does not own, keeping "reply was null" distinct from a
     /// deserialized <c>default(T)</c>.
     /// </summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     internal RespireGet<T> TryDeserializeBorrowed<T>(in RespValue value)
         => value.IsNull ? default : new RespireGet<T>(true, DeserializeBorrowed<T>(in value)!);
 
     /// <summary>Reads a value the caller does not own (e.g. a transaction-array element).</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     internal T? DeserializeBorrowed<T>(in RespValue value)
     {
         if (value.IsNull)
@@ -2394,6 +2405,8 @@ public sealed partial class RespireClient : IRespireClient
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.NullableStringArray(in value));
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     internal ValueTask<T[]> DeserializeArrayAsync<T, TCommand>(
         string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
@@ -2401,6 +2414,8 @@ public sealed partial class RespireClient : IRespireClient
             operation, command, ct,
             static (RespireClient client, in RespValue value) => client.DeserializeArray<T>(in value));
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     internal ValueTask<T?[]> DeserializeNullableArrayAsync<T, TCommand>(
         string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
@@ -2420,6 +2435,8 @@ public sealed partial class RespireClient : IRespireClient
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.StringMap(in value));
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     internal ValueTask<Dictionary<string, T>> DeserializeMapAsync<T, TCommand>(
         string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
@@ -2427,12 +2444,16 @@ public sealed partial class RespireClient : IRespireClient
             operation, command, ct,
             static (RespireClient client, in RespValue value) => client.DeserializeMap<T>(in value));
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     internal ValueTask<T?> DeserializeAsync<T, TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync<TCommand, T?>(
             operation, command, ct,
             static (RespireClient client, in RespValue value) => client.DeserializeBorrowed<T>(in value));
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     internal ValueTask<RespireGet<T>> TryDeserializeAsync<T, TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync<TCommand, RespireGet<T>>(
@@ -2446,6 +2467,8 @@ public sealed partial class RespireClient : IRespireClient
             static (RespireClient _, in RespValue value) => new RespireLease(in value),
             transferOwnership: true);
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     internal T[] DeserializeArray<T>(in RespValue value)
     {
         var elements = value.AsArray();
@@ -2458,6 +2481,8 @@ public sealed partial class RespireClient : IRespireClient
         return result;
     }
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     internal T?[] DeserializeNullableArray<T>(in RespValue value)
     {
         var elements = value.AsArray();
@@ -2470,6 +2495,8 @@ public sealed partial class RespireClient : IRespireClient
         return result;
     }
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     internal Dictionary<string, T> DeserializeMap<T>(in RespValue value)
     {
         var elements = value.AsArray();

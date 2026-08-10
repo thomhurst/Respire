@@ -1,3 +1,6 @@
+using System.Diagnostics.CodeAnalysis;
+using Respire.Serialization;
+
 namespace Respire;
 
 /// <summary>
@@ -46,14 +49,17 @@ public interface IRespireClient : IAsyncDisposable
     // Root shortcuts for the most common operations.
     /// <summary>Gets a UTF-8 string, or null when the key is absent. Redis: GET.</summary>
     ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken cancellationToken = default);
-
     /// <summary>Gets and deserializes a value, or default when the key is absent. Redis: GET.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<T?> GetAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets a key's value deserialized as <typeparamref name="T"/> alongside a Found flag, so a
     /// missing key is distinguishable from a stored <c>default(T)</c>. Redis: GET.
     /// </summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Gets raw bytes, or null when the key is absent. Redis: GET.</summary>
@@ -68,6 +74,8 @@ public interface IRespireClient : IAsyncDisposable
         CancellationToken cancellationToken = default);
 
     /// <summary>Serializes and sets a value with optional expiry and condition. Redis: SET.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<bool> SetAsync<T>(
         RespireKey key,
         T value,
