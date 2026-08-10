@@ -92,6 +92,36 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    public async Task SetAndSortedSetCoverageCommands_RoundTripAgainstRedis()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        var suffix = Guid.NewGuid().ToString("N");
+        var setKey = $"coverage:set:{suffix}";
+        var sortedSetKey = $"coverage:zset:{suffix}";
+
+        await client.Sets.AddAsync(setKey, "one", "two", "three");
+        var random = await client.Sets.RandomMembersAsync(setKey, count: -5);
+        random.Should().HaveCount(5).And.OnlyContain(
+            member => member == "one" || member == "two" || member == "three");
+        (await client.Sets.PopAsync(setKey, count: 2)).Should().HaveCount(2);
+        (await client.Sets.CountAsync(setKey)).Should().Be(1);
+
+        await client.SortedSets.AddAsync(
+            sortedSetKey,
+            new SortedSetEntry("one", 1),
+            new SortedSetEntry("two", 2),
+            new SortedSetEntry("three", 3),
+            new SortedSetEntry("four", 4));
+        (await client.SortedSets.PopAsync(sortedSetKey, count: 1)).Should()
+            .Equal(new SortedSetEntry("one", 1));
+        (await client.SortedSets.RemoveRangeByScoreAsync(sortedSetKey, 2, 3)).Should().Be(2);
+        (await client.SortedSets.RemoveRangeByRankAsync(sortedSetKey, 0, 0)).Should().Be(1);
+        (await client.SortedSets.CountAsync(sortedSetKey)).Should().Be(0);
+
+        await client.DeleteAsync(setKey, sortedSetKey);
+    }
+
+    [Test]
     public async Task GeoCommands_RoundTripAgainstRedis()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);

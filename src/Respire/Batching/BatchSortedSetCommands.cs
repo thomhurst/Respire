@@ -29,6 +29,19 @@ public interface IBatchSortedSetCommands
     /// <summary>Number of members. Redis: ZCARD.</summary>
     RespirePending<long> Count(RespireKey key);
 
+    /// <summary>
+    /// Removes and returns up to <paramref name="count"/> members, lowest-scored first unless
+    /// <paramref name="descending"/> is true. Redis: ZPOPMIN / ZPOPMAX.
+    /// </summary>
+    RespirePending<SortedSetEntry[]> Pop(
+        RespireKey key, long count, bool descending = false);
+
+    /// <summary>Removes members whose scores are within the inclusive range. Redis: ZREMRANGEBYSCORE.</summary>
+    RespirePending<long> RemoveRangeByScore(RespireKey key, double min, double max);
+
+    /// <summary>Removes members whose ranks are within the inclusive range. Redis: ZREMRANGEBYRANK.</summary>
+    RespirePending<long> RemoveRangeByRank(RespireKey key, long start, long stop);
+
     /// <summary>Members with scores within the inclusive range. Redis: ZCOUNT.</summary>
     RespirePending<long> CountByScore(RespireKey key, double min, double max);
 
@@ -77,6 +90,28 @@ internal sealed class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSe
     public RespirePending<long> Count(RespireKey key)
         => sink.Add<Cmd1, long>(
             "ZCARD", new Cmd1(Verbs.ZCard, sink.Client.Key(in key)),
+            static (c, v) => ResponseReader.Integer(in v));
+
+    public RespirePending<SortedSetEntry[]> Pop(
+        RespireKey key, long count, bool descending = false)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        var command = descending ? RespireCommands.SortedSet.ZPOPMAX : RespireCommands.SortedSet.ZPOPMIN;
+        return sink.Add<Cmd2, SortedSetEntry[]>(
+            command.Name, new Cmd2(command.Verb, sink.Client.Key(in key), count),
+            static (c, v) => SortedSetCommands.ParseEntries(in v));
+    }
+
+    public RespirePending<long> RemoveRangeByScore(RespireKey key, double min, double max)
+        => sink.Add<Cmd3, long>(
+            "ZREMRANGEBYSCORE",
+            new Cmd3(RespireCommands.SortedSet.ZREMRANGEBYSCORE.Verb, sink.Client.Key(in key), min, max),
+            static (c, v) => ResponseReader.Integer(in v));
+
+    public RespirePending<long> RemoveRangeByRank(RespireKey key, long start, long stop)
+        => sink.Add<Cmd3, long>(
+            "ZREMRANGEBYRANK",
+            new Cmd3(RespireCommands.SortedSet.ZREMRANGEBYRANK.Verb, sink.Client.Key(in key), start, stop),
             static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<long> CountByScore(RespireKey key, double min, double max)
