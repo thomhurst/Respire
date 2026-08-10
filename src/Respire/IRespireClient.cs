@@ -35,8 +35,7 @@ public interface IRespireClient : IAsyncDisposable
     /// Gets a key's value deserialized as <typeparamref name="T"/> alongside a Found flag, so a
     /// missing key is distinguishable from a stored <c>default(T)</c>. Redis: GET.
     /// </summary>
-    ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
-        => Strings.TryGetAsync<T>(key, cancellationToken);
+    ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
 
     ValueTask<byte[]?> GetBytesAsync(RespireKey key, CancellationToken cancellationToken = default);
 

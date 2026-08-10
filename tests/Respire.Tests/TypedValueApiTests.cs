@@ -14,6 +14,16 @@ namespace Respire.Tests;
 public class TypedValueApiTests
 {
     [Test]
+    public async Task TryGetAsync_IsAbstractOnIRespireClient()
+    {
+        var method = typeof(IRespireClient)
+            .GetMethods()
+            .Single(candidate => candidate.Name == nameof(IRespireClient.TryGetAsync));
+
+        await Assert.That(method.IsAbstract).IsTrue();
+    }
+
+    [Test]
     public async Task DefaultRespireGet_IsNotFoundAndCarriesDefaultValue()
     {
         RespireGet<int> missing = default;
