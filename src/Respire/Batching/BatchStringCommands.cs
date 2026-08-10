@@ -143,6 +143,7 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
     public RespirePending<bool> Set(
         RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
     {
+        RespireValue.ThrowIfNull(value, nameof(value));
         SetCommand.ValidateExpiry(expiry);
         return sink.Add<SetCommand, bool>(
             "SET",
@@ -165,6 +166,7 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
     public RespirePending<string?> GetAndSet(
         RespireKey key, RespireValue value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always)
     {
+        RespireValue.ThrowIfNull(value, nameof(value));
         SetCommand.ValidateExpiry(expiry);
         return sink.Add<SetCommand, string?>(
             "SET",
@@ -217,9 +219,12 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
     }
 
     public RespirePending<long> Append(RespireKey key, RespireValue value)
-        => sink.Add<Cmd2, long>(
+    {
+        RespireValue.ThrowIfNull(value, nameof(value));
+        return sink.Add<Cmd2, long>(
             "APPEND", new Cmd2(Verbs.Append, sink.Client.Key(in key), value),
             static (c, v) => ResponseReader.Integer(in v));
+    }
 
     public RespirePending<long> Length(RespireKey key)
         => sink.Add<Cmd1, long>(

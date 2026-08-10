@@ -61,6 +61,16 @@ public readonly struct RespireValue : IEquatable<RespireValue>
     /// <summary>Whether this is the absent <see cref="Null"/> sentinel.</summary>
     public bool IsNull => _kind == Kind.Null;
 
+    internal static void ThrowIfNull(RespireValue value, string paramName)
+    {
+        if (value.IsNull)
+        {
+            throw new ArgumentNullException(
+                paramName,
+                "A null value cannot be sent as a Redis argument; use an empty string or delete the key.");
+        }
+    }
+
     /// <summary>Converts text or null to a command argument.</summary>
     public static implicit operator RespireValue(string? value)
         => value is null ? Null : new RespireValue(value);

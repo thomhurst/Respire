@@ -161,7 +161,11 @@ public class TransactionTests
         var transaction = client.CreateTransaction();
 
         await Assert.That(() => transaction.Set("invalid", RespireValue.Null))
-            .Throws<ArgumentException>();
+            .ThrowsExactly<ArgumentNullException>();
+        await Assert.That(() => transaction.Strings.GetAndSet("invalid", RespireValue.Null))
+            .ThrowsExactly<ArgumentNullException>();
+        await Assert.That(() => transaction.Strings.Append("invalid", RespireValue.Null))
+            .ThrowsExactly<ArgumentNullException>();
         var pending = transaction.Set("valid", "value");
         var committed = await transaction.CommitAsync();
 
