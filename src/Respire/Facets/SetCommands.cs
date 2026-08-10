@@ -19,7 +19,8 @@ public interface ISetCommands
     /// <para>
     /// An argument already typed as <see cref="RespireValue"/> picks the non-generic overload;
     /// any other type picks this one. Boolean members retain the Redis-native <c>1</c>/<c>0</c>
-    /// encoding used by <see cref="AddAsync"/>; other types use normal typed serialization.
+    /// encoding used by <see cref="AddAsync(RespireKey, ReadOnlySpan{RespireValue})"/>; other types
+    /// use normal typed serialization.
     /// </para>
     /// </summary>
     ValueTask<bool> ContainsAsync<T>(RespireKey key, T member, CancellationToken cancellationToken = default);
