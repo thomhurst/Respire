@@ -2277,6 +2277,13 @@ public sealed partial class RespireClient : IRespireClient
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.IntegerOrNull(in value));
 
+    internal ValueTask<long?> IntegerMinusOneOrNullAsync<TCommand>(
+        string operation, TCommand command, CancellationToken ct)
+        where TCommand : struct, IRespCommand
+        => ConvertAsync(
+            operation, command, ct,
+            static (RespireClient _, in RespValue value) => ResponseReader.IntegerMinusOneOrNull(in value));
+
     internal ValueTask<HashFieldExpiry[]> HashFieldExpiryArrayAsync<TCommand>(
         string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand

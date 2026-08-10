@@ -13,7 +13,7 @@ public interface IBatchBitmapCommands
     RespirePending<bool> GetAsync(RespireKey key, long offset);
 
     /// <summary>Sets the bit at an offset and returns its previous value. Redis: SETBIT.</summary>
-    RespirePending<bool> SetAsync(RespireKey key, long offset, bool value);
+    RespirePending<bool> GetAndSetAsync(RespireKey key, long offset, bool value);
 
     /// <summary>Number of set bits. Redis: BITCOUNT.</summary>
     RespirePending<long> CountAsync(RespireKey key);
@@ -21,8 +21,8 @@ public interface IBatchBitmapCommands
     /// <summary>Number of set bits within a range. Redis: BITCOUNT.</summary>
     RespirePending<long> CountAsync(RespireKey key, long start, long end, BitIndexUnit unit = BitIndexUnit.Byte);
 
-    /// <summary>The first offset holding <paramref name="value"/>, or -1. Redis: BITPOS.</summary>
-    RespirePending<long> PositionAsync(
+    /// <summary>The first offset holding <paramref name="value"/>, or null when none is found. Redis: BITPOS.</summary>
+    RespirePending<long?> PositionAsync(
         RespireKey key, bool value, long? start = null, long? end = null, BitIndexUnit unit = BitIndexUnit.Byte);
 
     /// <summary>Combines bitmaps into <paramref name="destination"/>; returns its byte length. Redis: BITOP.</summary>
@@ -46,7 +46,7 @@ internal sealed class BatchBitmapCommands(IPendingSink sink) : IBatchBitmapComma
             static (c, v) => ResponseReader.Flag(in v));
     }
 
-    public RespirePending<bool> SetAsync(RespireKey key, long offset, bool value)
+    public RespirePending<bool> GetAndSetAsync(RespireKey key, long offset, bool value)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(offset);
         return sink.Add<Cmd3, bool>(
@@ -67,23 +67,23 @@ internal sealed class BatchBitmapCommands(IPendingSink sink) : IBatchBitmapComma
                 RespireCommands.Bitmap.BITCOUNT.Verb, sink.Client.Key(in key), start, end, BitmapCommands.Unit(unit)),
             static (c, v) => ResponseReader.Integer(in v));
 
-    public RespirePending<long> PositionAsync(
+    public RespirePending<long?> PositionAsync(
         RespireKey key, bool value, long? start = null, long? end = null, BitIndexUnit unit = BitIndexUnit.Byte)
     {
         BitmapCommands.ValidatePosition(start, end, unit);
         return (start, end) switch
         {
-            (null, _) => sink.Add<Cmd2, long>(
+            (null, _) => sink.Add<Cmd2, long?>(
                 "BITPOS", new Cmd2(RespireCommands.Bitmap.BITPOS.Verb, sink.Client.Key(in key), value),
-                static (c, v) => ResponseReader.Integer(in v)),
-            ({ } from, null) => sink.Add<Cmd3, long>(
+                static (c, v) => ResponseReader.IntegerMinusOneOrNull(in v)),
+            ({ } from, null) => sink.Add<Cmd3, long?>(
                 "BITPOS", new Cmd3(RespireCommands.Bitmap.BITPOS.Verb, sink.Client.Key(in key), value, from),
-                static (c, v) => ResponseReader.Integer(in v)),
-            ({ } from, { } to) => sink.Add<Cmd5, long>(
+                static (c, v) => ResponseReader.IntegerMinusOneOrNull(in v)),
+            ({ } from, { } to) => sink.Add<Cmd5, long?>(
                 "BITPOS",
                 new Cmd5(
                     RespireCommands.Bitmap.BITPOS.Verb, sink.Client.Key(in key), value, from, to, BitmapCommands.Unit(unit)),
-                static (c, v) => ResponseReader.Integer(in v)),
+                static (c, v) => ResponseReader.IntegerMinusOneOrNull(in v)),
         };
     }
 

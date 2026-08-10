@@ -74,8 +74,9 @@ Blocking stream reads use the same dedicated-connection mechanism as blocking li
 ## Bitmaps, HyperLogLogs, and geo indexes
 
 ```csharp
-await redis.Bitmaps.SetAsync("active:2026-08-09", userId, true);
+bool wasActive = await redis.Bitmaps.GetAndSetAsync("active:2026-08-09", userId, true);
 long active = await redis.Bitmaps.CountAsync("active:2026-08-09");
+long? firstActive = await redis.Bitmaps.PositionAsync("active:2026-08-09", true);
 
 await redis.HyperLogLog.AddAsync("visitors", sessionId);
 long estimate = await redis.HyperLogLog.CountAsync("visitors");
