@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 using TUnit.Assertions;
@@ -37,6 +38,26 @@ public class TypedValueApiTests
         await Assert.That(stored.TryGetValue(out var extracted)).IsTrue();
         await Assert.That(extracted).IsEqualTo(0);
         await Assert.That(stored.Equals(default(RespireGet<int>))).IsFalse();
+    }
+
+    [Test]
+    public async Task TryGetValue_WritesDefaultWhenFoundIsFalse()
+    {
+        var inconsistent = new RespireGet<int>(Found: false, Value: 42);
+
+        await Assert.That(inconsistent.TryGetValue(out var value)).IsFalse();
+        await Assert.That(value).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task TryGetValue_AnnotatesMissingReferenceAsMaybeNull()
+    {
+        var parameter = typeof(RespireGet<>).GetMethod(nameof(RespireGet<int>.TryGetValue))!
+            .GetParameters()[0];
+        var attribute = parameter.GetCustomAttribute<MaybeNullWhenAttribute>();
+
+        await Assert.That(attribute).IsNotNull();
+        await Assert.That(attribute!.ReturnValue).IsFalse();
     }
 
     [Test]
