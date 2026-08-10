@@ -144,6 +144,8 @@ public sealed class RespireConnection : IAsyncDisposable
                 nameof(options), "ResponseTimeout must be at least one millisecond.");
         }
 
+        ValidateTcpKeepAlive(options);
+
         var socket = new Socket(SocketType.Stream, ProtocolType.Tcp)
         {
             NoDelay = true,
@@ -162,6 +164,8 @@ public sealed class RespireConnection : IAsyncDisposable
         SslStream? tlsStream = null;
         try
         {
+            ApplyTcpKeepAlive(socket, options);
+
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(options.ConnectTimeout);
             await socket.ConnectAsync(host, port, timeoutCts.Token).ConfigureAwait(false);
@@ -235,6 +239,57 @@ public sealed class RespireConnection : IAsyncDisposable
         }
 #endif
         return copy;
+    }
+
+    private static void ValidateTcpKeepAlive(RespireConnectionOptions options)
+    {
+        // The socket options carry whole seconds; sub-second values would silently truncate to 0.
+        if (options.TcpKeepAliveTime is { } time && time < TimeSpan.FromSeconds(1))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options), "TcpKeepAliveTime must be at least one second.");
+        }
+
+        if (options.TcpKeepAliveInterval is { } interval && interval < TimeSpan.FromSeconds(1))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options), "TcpKeepAliveInterval must be at least one second.");
+        }
+
+        if (options.TcpKeepAliveRetryCount is { } retryCount && retryCount < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options), "TcpKeepAliveRetryCount must be at least 1.");
+        }
+
+        if (options.TcpKeepAliveTime is null
+            && (options.TcpKeepAliveInterval is not null || options.TcpKeepAliveRetryCount is not null))
+        {
+            throw new ArgumentException(
+                $"{nameof(RespireConnectionOptions.TcpKeepAliveInterval)} and {nameof(RespireConnectionOptions.TcpKeepAliveRetryCount)} require {nameof(RespireConnectionOptions.TcpKeepAliveTime)} to be set.",
+                nameof(options));
+        }
+    }
+
+    internal static void ApplyTcpKeepAlive(Socket socket, RespireConnectionOptions options)
+    {
+        if (options.TcpKeepAliveTime is not { } time)
+        {
+            return;
+        }
+
+        socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+        socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, (int)time.TotalSeconds);
+        if (options.TcpKeepAliveInterval is { } interval)
+        {
+            socket.SetSocketOption(
+                SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, (int)interval.TotalSeconds);
+        }
+
+        if (options.TcpKeepAliveRetryCount is { } retryCount)
+        {
+            socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, retryCount);
+        }
     }
 
     /// <summary>
@@ -1607,11 +1662,36 @@ public sealed record RespireConnectionOptions
     /// <summary>Initial size of each of the two coalescing write buffers.</summary>
     public int WriteBufferSize { get; init; } = 64 * 1024;
 
-    /// <summary>Kernel socket receive buffer size; 0 keeps the OS default.</summary>
-    public int SocketReceiveBufferSize { get; init; } = 64 * 1024;
+    /// <summary>
+    /// Enables TCP keepalive and sets how long the connection may sit idle before the kernel
+    /// starts probing. Whole seconds, minimum one second. Null (the default) leaves keepalive
+    /// off. Recommended for connections idling behind NATs or load balancers that silently
+    /// drop stale flows; the receive watchdog only detects dead peers while replies are pending.
+    /// </summary>
+    public TimeSpan? TcpKeepAliveTime { get; init; }
 
-    /// <summary>Kernel socket send buffer size; 0 keeps the OS default.</summary>
-    public int SocketSendBufferSize { get; init; } = 64 * 1024;
+    /// <summary>
+    /// Interval between keepalive probes once <see cref="TcpKeepAliveTime"/> has elapsed
+    /// without traffic. Whole seconds, minimum one second. Null keeps the OS default; requires
+    /// <see cref="TcpKeepAliveTime"/>.
+    /// </summary>
+    public TimeSpan? TcpKeepAliveInterval { get; init; }
+
+    /// <summary>
+    /// Unanswered keepalive probes before the kernel declares the connection dead. Null keeps
+    /// the OS default; requires <see cref="TcpKeepAliveTime"/>.
+    /// </summary>
+    public int? TcpKeepAliveRetryCount { get; init; }
+
+    /// <summary>
+    /// Kernel socket receive buffer size; 0 (the default) keeps the OS default. Setting an
+    /// explicit size disables Linux receive-window autotuning, capping single-connection
+    /// throughput on high-latency links, so only pin a size when profiling demands it.
+    /// </summary>
+    public int SocketReceiveBufferSize { get; init; }
+
+    /// <summary>Kernel socket send buffer size; 0 (the default) keeps the OS default.</summary>
+    public int SocketSendBufferSize { get; init; }
 
     /// <summary>Maximum commands awaiting responses on one connection (rounded up to a power of two).</summary>
     public int MaxInflightCommands { get; init; } = 16 * 1024;

@@ -1343,6 +1343,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
 
         public IStringCommands Strings => inner.Strings;
         public IKeyCommands Keys => keys ?? inner.Keys;
+        public ILockCommands Locks => inner.Locks;
         public IHashCommands Hashes => inner.Hashes;
         public IListCommands Lists => inner.Lists;
         public ISetCommands Sets => inner.Sets;

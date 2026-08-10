@@ -116,6 +116,29 @@ do
 while (!applied);
 ```
 
+### Distributed locks
+
+Use a unique token for each attempted owner. Release and extend compare that token on the server
+before changing the key. `RunReportAsync` below must finish before the 30-second lease expires.
+For longer work, call `ExtendAsync` before expiry and stop protected writes if it returns `false`,
+because the lock is no longer owned.
+
+```csharp
+var token = Guid.NewGuid().ToString("N");
+
+if (await redis.Locks.TakeAsync("locks:report", token, TimeSpan.FromSeconds(30)))
+{
+    try
+    {
+        await RunReportAsync();
+    }
+    finally
+    {
+        await redis.Locks.ReleaseAsync("locks:report", token);
+    }
+}
+```
+
 ### Redis Cluster
 
 Enable cluster routing and provide one or more seed nodes. Respire loads `CLUSTER SLOTS`, follows

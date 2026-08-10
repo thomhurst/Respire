@@ -28,6 +28,7 @@ public sealed partial class RespireClient : IRespireClient
         _ownsCore = ownsCore;
         Strings = new StringCommands(this);
         Keys = new KeyCommands(this);
+        Locks = new LockCommands(this);
         Hashes = new HashCommands(this);
         Lists = new ListCommands(this);
         Sets = new SetCommands(this);
@@ -74,6 +75,67 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     /// <summary>
+    /// Tries independent Redis deployments in order and returns the first client that connects.
+    /// This is connection-time failover only: after a client is returned, commands use that
+    /// deployment and normal reconnect behavior rather than health-checked routing across all
+    /// candidates. Every candidate's full <see cref="RespireOptions"/> is used as provided.
+    /// </summary>
+    /// <exception cref="RespireConnectionException">
+    /// Thrown with an aggregate inner exception when every candidate fails to connect.
+    /// </exception>
+    public static async ValueTask<RespireClient> ConnectAnyAsync(
+        IEnumerable<RespireOptions> candidates,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(candidates);
+
+        List<Exception>? failures = null;
+        List<string>? failureMessages = null;
+        var candidateIndex = 0;
+        foreach (var candidate in candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            candidateIndex++;
+            if (candidate is null)
+            {
+                throw new ArgumentException("Connection candidates cannot contain null entries.", nameof(candidates));
+            }
+
+            try
+            {
+                return await ConnectAsync(candidate, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                (failures ??= []).Add(ex);
+                (failureMessages ??= []).Add(
+                    $"{candidateIndex}. {FormatCandidateEndpoints(candidate)}: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        if (candidateIndex == 0)
+        {
+            throw new RespireConnectionException("No Redis connection candidates were provided.");
+        }
+
+        var aggregate = new AggregateException("All Redis connection candidates failed.", failures!);
+        throw new RespireConnectionException(
+            "Unable to connect to any Redis endpoint candidate. Attempts:" +
+            Environment.NewLine +
+            string.Join(Environment.NewLine, failureMessages!),
+            aggregate);
+    }
+
+    private static string FormatCandidateEndpoints(RespireOptions options)
+        => options.Endpoints.Count == 0
+            ? options.PrimaryEndpoint.ToString()
+            : string.Join(", ", options.Endpoints);
+
+    /// <summary>
     /// Creates a client without connecting; the first command connects. Useful for dependency
     /// injection, where construction should not block on the network.
     /// </summary>
@@ -105,6 +167,7 @@ public sealed partial class RespireClient : IRespireClient
 
     public IStringCommands Strings { get; }
     public IKeyCommands Keys { get; }
+    public ILockCommands Locks { get; }
     public IHashCommands Hashes { get; }
     public IListCommands Lists { get; }
     public ISetCommands Sets { get; }
@@ -1656,6 +1719,20 @@ public sealed partial class RespireClient : IRespireClient
         => ConvertAsync(
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.IntegerOrNull(in value));
+
+    internal ValueTask<HashFieldExpiry[]> HashFieldExpiryArrayAsync<TCommand>(
+        string operation, TCommand command, CancellationToken ct)
+        where TCommand : struct, IRespCommand
+        => ConvertAsync(
+            operation, command, ct,
+            static (RespireClient _, in RespValue value) => ResponseReader.HashFieldExpiryArray(in value));
+
+    internal ValueTask<HashFieldExpiryResult[]> HashFieldExpiryResultArrayAsync<TCommand>(
+        string operation, TCommand command, CancellationToken ct)
+        where TCommand : struct, IRespCommand
+        => ConvertAsync(
+            operation, command, ct,
+            static (RespireClient _, in RespValue value) => ResponseReader.HashFieldExpiryResultArray(in value));
 
     internal ValueTask<string[]> StringArrayAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand

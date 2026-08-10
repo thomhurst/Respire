@@ -91,6 +91,9 @@ public sealed record RespireOptions
     /// <summary>Logical database SELECTed during the handshake.</summary>
     public int Database { get; init; }
 
+    /// <summary>Allows high-risk administrative commands such as FLUSHDB, FLUSHALL, and CONFIG SET.</summary>
+    public bool AllowAdmin { get; init; }
+
     public RespProtocol Protocol { get; init; } = RespProtocol.Resp2;
 
     /// <summary>Timeout for the initial TCP connect (per connection).</summary>
@@ -127,6 +130,27 @@ public sealed record RespireOptions
 
     public ILoggerFactory? LoggerFactory { get; init; }
 
+    /// <summary>
+    /// Enables TCP keepalive on every connection and sets how long a connection may sit idle
+    /// before the kernel starts probing. Whole seconds, minimum one second. Null (the default)
+    /// leaves keepalive off. Recommended (e.g. 60 seconds) when connections idle behind NATs
+    /// or load balancers that silently drop stale flows.
+    /// </summary>
+    public TimeSpan? TcpKeepAliveTime { get; init; }
+
+    /// <summary>
+    /// Interval between keepalive probes once <see cref="TcpKeepAliveTime"/> has elapsed
+    /// without traffic. Whole seconds, minimum one second. Null keeps the OS default; requires
+    /// <see cref="TcpKeepAliveTime"/>.
+    /// </summary>
+    public TimeSpan? TcpKeepAliveInterval { get; init; }
+
+    /// <summary>
+    /// Unanswered keepalive probes before the kernel declares the connection dead. Null keeps
+    /// the OS default; requires <see cref="TcpKeepAliveTime"/>.
+    /// </summary>
+    public int? TcpKeepAliveRetryCount { get; init; }
+
     /// <summary>Buffered messages per subscription before <see cref="SubscriptionOverflow"/> applies.</summary>
     public int SubscriptionBufferSize { get; init; } = 1024;
 
@@ -160,6 +184,9 @@ public sealed record RespireOptions
             ClientName = ClientName,
             Database = Database,
             UseResp3 = Protocol == RespProtocol.Resp3,
+            TcpKeepAliveTime = TcpKeepAliveTime,
+            TcpKeepAliveInterval = TcpKeepAliveInterval,
+            TcpKeepAliveRetryCount = TcpKeepAliveRetryCount,
             ReceiveBufferSize = ReceiveBufferSize,
             WriteBufferSize = WriteBufferSize,
             MaxInflightCommands = MaxInflightCommands,
@@ -172,7 +199,7 @@ public sealed record RespireOptions
     /// <c>clientName</c>, <c>connections</c>, <c>connectTimeoutMs</c>, <c>commandTimeoutMs</c>,
     /// <c>responseTimeoutMs</c>, <c>protocol</c> (2 or 3), <c>db</c>,
     /// <c>cluster</c> (true or false), <c>serviceName</c>, <c>sentinelUser</c>,
-    /// and <c>sentinelPassword</c>.
+    /// <c>sentinelPassword</c>, and <c>allowAdmin</c> (true or false).
     /// Use <c>rediss://</c> to enable TLS.
     /// Connection strings contain one endpoint; configure <see cref="Endpoints"/> directly when
     /// cluster seed failover requires multiple endpoints.
@@ -227,6 +254,7 @@ public sealed record RespireOptions
         string? serviceName = null;
         string? sentinelUser = null;
         string? sentinelPassword = null;
+        var allowAdmin = false;
 
         foreach (var pair in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
         {
@@ -275,6 +303,9 @@ public sealed record RespireOptions
                 case "sentinelpassword":
                     sentinelPassword = value;
                     break;
+                case "allowadmin":
+                    allowAdmin = bool.Parse(value);
+                    break;
                 default:
                     throw new ArgumentException($"Unknown connection string parameter '{name}'.", nameof(connectionString));
             }
@@ -298,6 +329,7 @@ public sealed record RespireOptions
             Protocol = protocol,
             Cluster = cluster,
             ServiceName = serviceName,
+            AllowAdmin = allowAdmin,
         };
     }
 }

@@ -410,6 +410,31 @@ internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] a
     }
 }
 
+/// <summary>MSETEX numkeys key value... options — routes by the first key after numkeys.</summary>
+internal readonly struct MSetExCommand(Verb verb, RespireValue[] args) : IRespCommand
+{
+    public bool TryGetClusterSlot(out int slot)
+    {
+        if (args.Length > 1)
+        {
+            return args[1].TryGetClusterSlot(out slot);
+        }
+
+        slot = 0;
+        return false;
+    }
+
+    public void Write(ref RespWriter writer)
+    {
+        writer.WriteArrayHeader(verb.Tokens + args.Length);
+        writer.WriteRaw(verb.Bulk);
+        foreach (var arg in args)
+        {
+            arg.WriteTo(ref writer);
+        }
+    }
+}
+
 /// <summary>
 /// INCR/DECR key when the delta is 1 (the two-token form StackExchange.Redis sends), INCRBY/DECRBY
 /// key delta otherwise. The wire-form choice lives here so the facet, batch, and transaction layers
