@@ -103,12 +103,14 @@ public class DistributedLockTests(RedisTestContainer fixture)
     [Test]
     public async Task KeepAlive_RenewsUntilItsScopeStops()
     {
-        await using var mutex = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(2));
+        await using var mutex = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(10));
         await using (var keepAlive = await mutex.KeepAliveAsync())
         {
-            await Task.Delay(TimeSpan.FromMilliseconds(2_500), keepAlive.CancellationToken);
+            await Task.Delay(TimeSpan.FromSeconds(11));
 
             await Assert.That(keepAlive.OwnershipLost).IsFalse();
+            await Assert.That(keepAlive.CancellationToken.IsCancellationRequested).IsFalse();
+            await Assert.That(keepAlive.Failure).IsNull();
             await Assert.That(await Client.Locks.IsHeldByAsync(mutex)).IsTrue();
         }
 
