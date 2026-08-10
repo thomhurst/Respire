@@ -69,19 +69,21 @@ internal sealed class InflightRing
     }
 
     /// <summary>
-    /// Deadline-sweep only. Scans published slots oldest-first, timing out sources whose armed
-    /// deadline has passed, and returns milliseconds until the next observed armed deadline
-    /// (or -1 when none is armed). Lock-free against both sides: slots between the head and
-    /// tail snapshots are published; a slot observed mid-dequeue reads null and is skipped; a
-    /// source recycled after its state was captured is rejected by the epoch CAS inside
-    /// <see cref="PendingResponse.TrySetTimedOut"/>. One connection arms one constant timeout,
-    /// so deadlines are monotonic in enqueue order and the scan stops at the first unexpired
-    /// armed entry.
+    /// Deadline-sweep only. Scans every published slot, timing out sources whose armed
+    /// deadline has passed, and returns milliseconds until the earliest remaining armed
+    /// deadline (or -1 when none is armed). The whole occupied span is examined — deadlines
+    /// are near-monotonic in enqueue order, but a producer that waited out a full ring is
+    /// re-stamped with its original deadline and can land behind a later-expiring entry, so
+    /// an early exit could strand it. Lock-free against both sides: slots between the head
+    /// and tail snapshots are published; a slot observed mid-dequeue reads null and is
+    /// skipped; a source recycled after its state was captured is rejected by the epoch CAS
+    /// inside <see cref="PendingResponse.TrySetTimedOut"/>.
     /// </summary>
     public long SweepExpired(long nowMilliseconds, TimeSpan timeout)
     {
         var head = Volatile.Read(ref _head);
         var tail = Volatile.Read(ref _tail);
+        long next = -1;
         for (var position = head; position < tail; position++)
         {
             var source = Volatile.Read(ref _slots[position & _mask]);
@@ -109,13 +111,18 @@ internal sealed class InflightRing
             var remaining = deadline - nowMilliseconds;
             if (remaining > 0)
             {
-                return remaining;
+                if (next < 0 || remaining < next)
+                {
+                    next = remaining;
+                }
+
+                continue;
             }
 
             source.TrySetTimedOut(state, timeout);
         }
 
-        return -1;
+        return next;
     }
 
     /// <summary>Consumer only (receive loop, or the fail-all drain after the loop exits).</summary>
