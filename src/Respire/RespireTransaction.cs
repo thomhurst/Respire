@@ -15,8 +15,8 @@ namespace Respire;
 /// <see cref="RespireBatch"/> for what the deferred surface leaves out.
 /// Single-shot and not thread-safe: build, commit once, discard. When created with watch keys
 /// (<see cref="RespireClient.CreateTransactionAsync"/>), the transaction owns a dedicated
-/// connection and <see cref="CommitAsync"/> returns false if a watched key changed — always
-/// commit or dispose so that connection is released.
+/// connection and <see cref="CommitAsync"/> returns false if a watched key changed. Always
+/// commit or dispose a transaction so its buffer and any dedicated connection are released.
 /// </remarks>
 public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
 {
@@ -184,11 +184,6 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
     public async ValueTask<bool> CommitAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfCompleted();
-        if (_ops.Count == 0)
-        {
-            throw new InvalidOperationException("The transaction has no commands.");
-        }
-
         _completed = true;
         var core = _client.Core;
         var telemetry = RespireTelemetry.StartBatchOperation(
@@ -203,6 +198,11 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
         Exception? operationError = null;
         try
         {
+            if (_ops.Count == 0)
+            {
+                return true;
+            }
+
             RespValue result;
             try
             {

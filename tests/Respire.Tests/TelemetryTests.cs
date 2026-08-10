@@ -259,6 +259,27 @@ public class TelemetryTests
     }
 
     [Test]
+    public async Task EmptyTransaction_EmitsBatchSizeZeroWithoutConnecting()
+    {
+        using var capture = new TelemetryCapture();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("empty-transaction.example") },
+        });
+        await using var transaction = client.CreateTransaction();
+
+        await transaction.CommitAsync();
+
+        var activity = capture.Activities.Single(activity =>
+            Tag(activity, "server.address") as string == "empty-transaction.example");
+        await Assert.That(activity.OperationName).IsEqualTo("MULTI");
+        await Assert.That(Tag(activity, "db.operation.batch.size")).IsEqualTo(0);
+        var measurement = capture.Measurements.Single(measurement =>
+            measurement.Tags.GetValueOrDefault("server.address") as string == "empty-transaction.example");
+        await Assert.That(measurement.Tags["db.operation.batch.size"]).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task ScriptFallback_EmitsOneSuccessfulLogicalOperation()
     {
         await using var server = new FakeRespServer(

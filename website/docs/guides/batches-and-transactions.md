@@ -44,7 +44,7 @@ Two client facets have no deferred form: blocking variants (a `waitFor` argument
 ## Atomic transactions
 
 ```csharp
-RespireTransaction transaction = redis.CreateTransaction();
+await using RespireTransaction transaction = redis.CreateTransaction();
 
 RespirePending<long> balance = transaction.IncrementAsync("balance", -100);
 transaction.Lists.RightPushAsync("audit", "withdraw:100");
@@ -59,12 +59,17 @@ if (committed)
 
 The transaction stays on one connection and maps to `MULTI` / `EXEC`.
 
+Always commit or dispose a transaction so its pooled buffer and any dedicated WATCH connection
+are released. `await using` also covers early returns and exceptions while commands are queued;
+disposal is a no-op after commit. Committing an empty transaction succeeds as a no-op and sends
+nothing to Redis.
+
 ## Optimistic concurrency
 
 Watch keys before queuing operations:
 
 ```csharp
-RespireTransaction transaction = await redis.CreateTransactionAsync(["balance"]);
+await using RespireTransaction transaction = await redis.CreateTransactionAsync(["balance"]);
 transaction.IncrementAsync("balance", -100);
 
 bool committed = await transaction.CommitAsync();

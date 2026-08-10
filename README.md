@@ -93,11 +93,15 @@ await batch.SendAsync();
 
 Console.WriteLine($"{name.Result}: {visits.Result} ({profile.Result.Count} fields)");
 
-var transaction = redis.CreateTransaction();
+await using var transaction = redis.CreateTransaction();
 var balance = transaction.IncrementAsync("balance", -100);
 transaction.Lists.RightPushAsync("audit", "withdraw:100");
 bool committed = await transaction.CommitAsync();
 ```
+
+Always commit or dispose a transaction so its pooled buffer and any dedicated WATCH connection
+are released. `await using` protects early-return and command-queuing failure paths; disposal is
+a no-op after a successful commit.
 
 Use `CreateTransactionAsync(["balance"])` for optimistic concurrency with `WATCH`. Read the
 current value, queue the conditional update, then retry when `CommitAsync` returns `false`:
