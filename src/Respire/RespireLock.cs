@@ -60,6 +60,8 @@ public sealed class RespireLock : IAsyncDisposable
     private long _renewedTimestamp;
     private int _state;
     private int _keepAlive;
+    private readonly object _releaseSync = new();
+    private Task<LockReleaseOutcome>? _releaseTask;
 
     internal RespireLock(
         ILockCommands locks,
@@ -181,16 +183,34 @@ public sealed class RespireLock : IAsyncDisposable
     /// <returns>
     /// Distinguishes a successful delete, a repeat call, and lost ownership.
     /// </returns>
-    public async ValueTask<LockReleaseOutcome> ReleaseAsync(CancellationToken cancellationToken = default)
+    public ValueTask<LockReleaseOutcome> ReleaseAsync(CancellationToken cancellationToken = default)
     {
-        var state = Interlocked.CompareExchange(ref _state, StateReleasing, StateHeld);
-        if (state != StateHeld)
+        lock (_releaseSync)
         {
-            return state is StateReleasing or StateReleased
-                ? LockReleaseOutcome.AlreadyReleased
-                : LockReleaseOutcome.NotOwned;
-        }
+            var state = Volatile.Read(ref _state);
+            if (state == StateReleased)
+            {
+                return ValueTask.FromResult(LockReleaseOutcome.AlreadyReleased);
+            }
 
+            if (state == StateNotOwned)
+            {
+                return ValueTask.FromResult(LockReleaseOutcome.NotOwned);
+            }
+
+            if (state == StateReleasing)
+            {
+                return new ValueTask<LockReleaseOutcome>(_releaseTask!);
+            }
+
+            Volatile.Write(ref _state, StateReleasing);
+            return new ValueTask<LockReleaseOutcome>(
+                _releaseTask = ReleaseCoreAsync(cancellationToken));
+        }
+    }
+
+    private async Task<LockReleaseOutcome> ReleaseCoreAsync(CancellationToken cancellationToken)
+    {
         try
         {
             var released = await _locks.ReleaseAsync(Key, Token, cancellationToken).ConfigureAwait(false);
@@ -201,7 +221,12 @@ public sealed class RespireLock : IAsyncDisposable
         {
             // The delete is undecided, so stay releasable: a retry (or DisposeAsync) may still
             // land, and a duplicate compare-and-DEL is harmless.
-            Volatile.Write(ref _state, StateHeld);
+            lock (_releaseSync)
+            {
+                Volatile.Write(ref _state, StateHeld);
+                _releaseTask = null;
+            }
+
             throw;
         }
     }
@@ -282,8 +307,13 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
             while (true)
             {
                 var duration = _lock.Duration;
-                var delay = TimeSpan.FromTicks(Math.Max(1, duration.Ticks / 2));
-                await Task.Delay(delay, _lifetime.Token).ConfigureAwait(false);
+                var delay = GetRenewalDelay(duration, _lock.RemainingEstimate);
+                if (delay > TimeSpan.Zero)
+                {
+                    await Task.Delay(delay, _lifetime.Token).ConfigureAwait(false);
+                }
+
+                duration = _lock.Duration;
                 if (!await _lock.ExtendAsync(duration, _lifetime.Token).ConfigureAwait(false))
                 {
                     Volatile.Write(ref _ownershipLost, 1);
@@ -306,6 +336,12 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
         {
             _lock.KeepAliveStopped();
         }
+    }
+
+    internal static TimeSpan GetRenewalDelay(TimeSpan duration, TimeSpan remaining)
+    {
+        var delay = remaining - TimeSpan.FromTicks(duration.Ticks / 2);
+        return delay > TimeSpan.Zero ? delay : TimeSpan.Zero;
     }
 
     public async ValueTask DisposeAsync()

@@ -232,6 +232,23 @@ public class LockCommandTests
     }
 
     [Test]
+    public async Task RespireLock_ConcurrentReleasesShareTheInFlightResult()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
+        server.DelayReply(1, 100);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
+
+        var first = mutex.ReleaseAsync().AsTask();
+        await WaitForCommandsAsync(server, 2);
+        var second = mutex.ReleaseAsync().AsTask();
+
+        await Assert.That(await first).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(await second).IsEqualTo(LockReleaseOutcome.Released);
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task RespireLock_ExtendRecordsDurationAndStopsAfterOwnershipLoss()
     {
         await using var server = new FakeRespServer(
@@ -257,7 +274,7 @@ public class LockCommandTests
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply, ":0\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromMilliseconds(40));
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromMilliseconds(200));
 
         await using var keepAlive = await mutex.KeepAliveAsync();
         try
@@ -272,6 +289,20 @@ public class LockCommandTests
         await Assert.That(keepAlive.OwnershipLost).IsTrue();
         await Assert.That(keepAlive.Failure).IsNull();
         await Assert.That(mutex.IsReleased).IsTrue();
+    }
+
+    [Test]
+    public async Task KeepAliveDelayAccountsForElapsedLeaseTime()
+    {
+        await Assert.That(RespireLockKeepAlive.GetRenewalDelay(
+                TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(25)))
+            .IsEqualTo(TimeSpan.FromSeconds(10));
+        await Assert.That(RespireLockKeepAlive.GetRenewalDelay(
+                TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(15)))
+            .IsEqualTo(TimeSpan.Zero);
+        await Assert.That(RespireLockKeepAlive.GetRenewalDelay(
+                TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(5)))
+            .IsEqualTo(TimeSpan.Zero);
     }
 
     [Test]
@@ -352,5 +383,14 @@ public class LockCommandTests
             .Throws<ArgumentOutOfRangeException>();
 
         await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    private static async Task WaitForCommandsAsync(FakeRespServer server, int count)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen < count)
+        {
+            await Task.Delay(10, timeout.Token);
+        }
     }
 }
