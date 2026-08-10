@@ -40,4 +40,34 @@ public class PrimitiveSerializationWireTests
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("GET count");
         await Assert.That(result).IsNull();
     }
+
+    [Test]
+    public async Task NullRawValue_IsRejectedBeforeSending()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var exception = await Assert.That(
+                async () => await client.SetAsync("key", RespireValue.Null))
+            .Throws<ArgumentException>();
+
+        await Assert.That(exception!.Message).Contains("null value cannot be sent as a Redis argument");
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task NullGenericValues_AreRejectedBeforeSending()
+    {
+        await using var server = new FakeRespServer();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        string? nullString = null;
+        byte[]? nullBytes = null;
+
+        await Assert.That(async () => await client.SetAsync("string", nullString))
+            .Throws<ArgumentNullException>();
+        await Assert.That(async () => await client.SetAsync("bytes", nullBytes))
+            .Throws<ArgumentNullException>();
+
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
 }

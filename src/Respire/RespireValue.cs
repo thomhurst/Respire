@@ -48,6 +48,9 @@ public readonly struct RespireValue
     {
     }
 
+    /// <summary>
+    /// Represents an absent optional argument. A null value cannot be serialized onto the Redis wire.
+    /// </summary>
     public static readonly RespireValue Null = default;
 
     public bool IsNull => _kind == Kind.Null;
@@ -55,7 +58,8 @@ public readonly struct RespireValue
     public static implicit operator RespireValue(string? value)
         => value is null ? Null : new RespireValue(value);
 
-    public static implicit operator RespireValue(byte[] value) => new(value.AsMemory());
+    public static implicit operator RespireValue(byte[]? value)
+        => value is null ? Null : new RespireValue(value.AsMemory());
 
     public static implicit operator RespireValue(ReadOnlyMemory<byte> value) => new(value);
 
@@ -93,6 +97,9 @@ public readonly struct RespireValue
     {
         switch (_kind)
         {
+            case Kind.Null:
+                throw new ArgumentException(
+                    "A null value cannot be sent as a Redis argument; use an empty string or delete the key.");
             case Kind.String:
                 writer.WriteBulkString(_string!);
                 break;
@@ -121,8 +128,7 @@ public readonly struct RespireValue
                 writer.WriteBulkString(_number != 0 ? "1"u8 : "0"u8);
                 break;
             default:
-                writer.WriteBulkString([]);
-                break;
+                throw new InvalidOperationException($"Unsupported RespireValue kind '{_kind}'.");
         }
     }
 
