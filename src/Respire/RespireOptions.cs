@@ -129,9 +129,12 @@ public sealed record RespireOptions
 
     /// <summary>
     /// Runs each connection's receive and flush loops on dedicated blocking threads (two per
-    /// connection) instead of async socket IO on the thread pool. Skips the IO-completion
-    /// dispatch machinery; worthwhile only for latency-critical workloads on a small number
-    /// of connections.
+    /// connection) instead of async socket IO on the thread pool, skipping the IO-completion
+    /// dispatch machinery. Highly platform-dependent: measured faster on a many-core Windows
+    /// host (+5% throughput, −23% CPU/op under load) and substantially slower on a 4-core
+    /// Linux host (−18% throughput), where async socket IO is already cheap and the extra
+    /// threads add context switching. Benchmark your workload on your target platform before
+    /// enabling.
     /// </summary>
     public bool DedicatedIoThreads { get; init; }
 

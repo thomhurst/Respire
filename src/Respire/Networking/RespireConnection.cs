@@ -1725,9 +1725,9 @@ public sealed record RespireConnectionOptions
 
     /// <summary>
     /// Runs this connection's receive and flush loops on dedicated blocking threads (two per
-    /// connection) instead of async socket IO on the thread pool. Skips the IO-completion
-    /// dispatch machinery entirely; worthwhile only for latency-critical workloads on a small
-    /// number of connections.
+    /// connection) instead of async socket IO on the thread pool, skipping the IO-completion
+    /// dispatch machinery entirely. Platform-dependent: helps on many-core Windows hosts,
+    /// hurts on small-core Linux hosts — see <see cref="RespireOptions.DedicatedIoThreads"/>.
     /// </summary>
     public bool UseDedicatedIoThreads { get; init; }
 
