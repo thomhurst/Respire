@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Globalization;
 using System.Net.Security;
 using Microsoft.Extensions.Logging;
@@ -84,6 +85,11 @@ public enum SubscriptionOverflow
 /// </summary>
 public sealed record RespireOptions
 {
+    private static readonly TimeSpan DefaultCommandTimeout = TimeSpan.FromSeconds(10);
+    private bool _useCluster;
+    private string? _sentinelPrimaryName;
+    private TimeSpan? _connectionIdleReadTimeout;
+
     /// <summary>
     /// Servers to connect to. In cluster mode these are seed nodes; otherwise the first endpoint is used.
     /// </summary>
@@ -93,14 +99,38 @@ public sealed record RespireOptions
     /// Enables Redis Cluster routing. MOVED and ASK redirects are followed automatically and
     /// learned hash slots are routed directly on later commands.
     /// </summary>
-    public bool Cluster { get; init; }
+    public bool UseCluster
+    {
+        get => _useCluster;
+        init => _useCluster = value;
+    }
+
+    /// <summary>Compatibility alias for <see cref="UseCluster"/>.</summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public bool Cluster
+    {
+        get => _useCluster;
+        init => _useCluster = value;
+    }
 
     /// <summary>
     /// Redis Sentinel primary service name. When set, <see cref="RespireClient.ConnectAsync(RespireOptions, CancellationToken)"/>
     /// treats <see cref="Endpoints"/> as Sentinel endpoints and discovers the current primary
     /// before opening Redis connections.
     /// </summary>
-    public string? ServiceName { get; init; }
+    public string? SentinelPrimaryName
+    {
+        get => _sentinelPrimaryName;
+        init => _sentinelPrimaryName = value;
+    }
+
+    /// <summary>Compatibility alias for <see cref="SentinelPrimaryName"/>.</summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public string? ServiceName
+    {
+        get => _sentinelPrimaryName;
+        init => _sentinelPrimaryName = value;
+    }
 
     /// <summary>ACL username. Defaults to Redis's "default" user when only a password is set.</summary>
     public string? Username { get; init; }
@@ -153,21 +183,34 @@ public sealed record RespireOptions
     /// Aborts a connection when commands are awaiting replies and no bytes arrive within this
     /// period. Null (default) disables the receive watchdog.
     /// </summary>
-    public TimeSpan? ResponseTimeout { get; init; }
+    public TimeSpan? ConnectionIdleReadTimeout
+    {
+        get => _connectionIdleReadTimeout;
+        init => _connectionIdleReadTimeout = value;
+    }
+
+    /// <summary>Compatibility alias for <see cref="ConnectionIdleReadTimeout"/>.</summary>
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    public TimeSpan? ResponseTimeout
+    {
+        get => _connectionIdleReadTimeout;
+        init => _connectionIdleReadTimeout = value;
+    }
 
     /// <summary>
-    /// Client-side cap on how long a command waits for its response. Null (default) disables the
-    /// cap. Expiry of the cap throws <see cref="RespireTimeoutException"/>; the command may still
+    /// Client-side cap on how long a command waits for its response. Defaults to ten seconds;
+    /// null disables the cap. Expiry throws <see cref="RespireTimeoutException"/>; the command may still
     /// execute server-side. Does not apply to intentionally blocking calls (BLPOP-style waits).
     /// </summary>
-    public TimeSpan? CommandTimeout { get; init; }
+    public TimeSpan? CommandTimeout { get; init; } = DefaultCommandTimeout;
 
     /// <summary>
-    /// Multiplexed connections to open; 0 (the default) opens one. A single connection
-    /// maximizes command coalescing per syscall and is fastest for typical workloads;
-    /// raise it only if profiling shows a single socket saturated.
+    /// Multiplexed connections to open. Defaults to one. A single connection maximizes command
+    /// coalescing per syscall and is fastest for typical workloads; under a 50-worker stress test,
+    /// one connection doubled small-command PING throughput versus eight. Raise this only if
+    /// profiling shows a single socket saturated.
     /// </summary>
-    public int Connections { get; init; }
+    public int Connections { get; init; } = 1;
 
     /// <summary>Serializer behind non-primitive typed values. System.Text.Json by default.</summary>
     public IRespireSerializer Serializer { get; init; } = RespireSerializer.Default;
@@ -216,13 +259,28 @@ public sealed record RespireOptions
     internal RespireEndpoint PrimaryEndpoint
         => Endpoints.Count > 0 ? Endpoints[0] : new RespireEndpoint("localhost");
 
+    internal RespireOptions ValidateAndSnapshot()
+    {
+        if (Endpoints is null || Endpoints.Count == 0)
+        {
+            throw new RespireConfigurationException("At least one Redis endpoint is required.");
+        }
+
+        if (Connections < 1)
+        {
+            throw new RespireConfigurationException("RespireOptions.Connections must be at least one.");
+        }
+
+        return this with { Endpoints = new List<RespireEndpoint>(Endpoints) };
+    }
+
     internal ILogger? CreateLogger(string category) => LoggerFactory?.CreateLogger(category);
 
     internal RespireConnectionOptions ToConnectionOptions(RespirePushHandler? pushHandler = null)
         => new()
         {
             ConnectTimeout = ConnectTimeout,
-            ResponseTimeout = ResponseTimeout,
+            ResponseTimeout = ConnectionIdleReadTimeout,
             UseTls = UseTls,
             TlsOptions = TlsOptions,
             Username = Username,
@@ -247,8 +305,8 @@ public sealed record RespireOptions
     /// <c>connectTimeout</c>, <c>asyncTimeout</c>, <c>syncTimeout</c>, <c>protocol</c>,
     /// and <c>allowAdmin</c>. Recognized URI query parameters:
     /// <c>clientName</c>, <c>connections</c>, <c>connectTimeoutMs</c>, <c>commandTimeoutMs</c>,
-    /// <c>responseTimeoutMs</c>, <c>protocol</c> (2 or 3), <c>db</c>,
-    /// <c>cluster</c> (true or false), <c>serviceName</c>, <c>sentinelUser</c>,
+    /// <c>connectionIdleReadTimeoutMs</c>, <c>protocol</c> (2 or 3), <c>db</c>,
+    /// <c>useCluster</c> (true or false), <c>sentinelPrimaryName</c>, <c>sentinelUser</c>,
     /// <c>sentinelPassword</c>, <c>sentinelTls</c> (true or false), and
     /// <c>allowAdmin</c> (true or false).
     /// Use <c>rediss://</c> to enable TLS.
@@ -274,7 +332,8 @@ public sealed record RespireOptions
 
         if (uriMarker < 0)
         {
-            return new RespireOptions { Endpoints = { RespireEndpoint.Parse(connectionString) } };
+            return new RespireOptions { Endpoints = { RespireEndpoint.Parse(connectionString) } }
+                .ValidateAndSnapshot();
         }
 
         var uri = new Uri(connectionString, UriKind.Absolute);
@@ -309,9 +368,9 @@ public sealed record RespireOptions
         }
 
         string? clientName = null;
-        var connections = 0;
+        var connections = 1;
         TimeSpan connectTimeout = TimeSpan.FromSeconds(10);
-        TimeSpan? commandTimeout = null;
+        TimeSpan? commandTimeout = DefaultCommandTimeout;
         TimeSpan? responseTimeout = null;
         var protocol = RespProtocol.Resp2;
         var cluster = false;
@@ -333,6 +392,12 @@ public sealed record RespireOptions
                     break;
                 case "connections":
                     connections = int.Parse(value, CultureInfo.InvariantCulture);
+                    if (connections < 1)
+                    {
+                        throw new ArgumentOutOfRangeException(
+                            nameof(connectionString), "Connection count must be at least one.");
+                    }
+
                     break;
                 case "connecttimeoutms":
                     connectTimeout = TimeSpan.FromMilliseconds(int.Parse(value, CultureInfo.InvariantCulture));
@@ -341,6 +406,7 @@ public sealed record RespireOptions
                     commandTimeout = TimeSpan.FromMilliseconds(int.Parse(value, CultureInfo.InvariantCulture));
                     break;
                 case "responsetimeoutms":
+                case "connectionidlereadtimeoutms":
                     responseTimeout = TimeSpan.FromMilliseconds(int.Parse(value, CultureInfo.InvariantCulture));
                     break;
                 case "protocol":
@@ -350,9 +416,11 @@ public sealed record RespireOptions
                     database = int.Parse(value, CultureInfo.InvariantCulture);
                     break;
                 case "cluster":
+                case "usecluster":
                     cluster = bool.Parse(value);
                     break;
                 case "servicename":
+                case "sentinelprimaryname":
                     if (string.IsNullOrWhiteSpace(value))
                     {
                         throw new ArgumentException(
@@ -394,12 +462,12 @@ public sealed record RespireOptions
             ConnectTimeout = connectTimeout,
             UseTls = useTls,
             CommandTimeout = commandTimeout,
-            ResponseTimeout = responseTimeout,
+            ConnectionIdleReadTimeout = responseTimeout,
             Protocol = protocol,
-            Cluster = cluster,
-            ServiceName = serviceName,
+            UseCluster = cluster,
+            SentinelPrimaryName = serviceName,
             AllowAdmin = allowAdmin,
-        };
+        }.ValidateAndSnapshot();
     }
 
     private static RespireOptions ParseStackExchangeConnectionString(string connectionString)
@@ -501,9 +569,9 @@ public sealed record RespireOptions
             Database = database,
             ConnectTimeout = connectTimeout,
             UseTls = useTls,
-            CommandTimeout = asyncTimeout ?? syncTimeout,
+            CommandTimeout = asyncTimeout ?? syncTimeout ?? DefaultCommandTimeout,
             Protocol = protocol,
             AllowAdmin = allowAdmin,
-        };
+        }.ValidateAndSnapshot();
     }
 }

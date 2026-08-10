@@ -12,12 +12,12 @@ internal static class SentinelResolver
         Func<RespireOptions, CancellationToken, ValueTask<TResult>> connectPrimaryAsync,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(options.ServiceName))
+        if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
         {
             return await connectPrimaryAsync(options, cancellationToken).ConfigureAwait(false);
         }
 
-        if (options.Cluster)
+        if (options.UseCluster)
         {
             throw new ArgumentException(
                 "Redis Sentinel discovery and Redis Cluster routing cannot both be enabled.",
@@ -39,7 +39,7 @@ internal static class SentinelResolver
             {
                 var primary = await QueryPrimaryAsync(
                         endpoint,
-                        options.ServiceName!,
+                        options.SentinelPrimaryName!,
                         sentinelOptions,
                         logger,
                         discoveryTimeoutSource.Token)
@@ -47,7 +47,7 @@ internal static class SentinelResolver
                 var primaryOptions = options with
                 {
                     Endpoints = new List<RespireEndpoint> { primary },
-                    ServiceName = null,
+                    SentinelPrimaryName = null,
                 };
                 using var connectTimeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 connectTimeoutSource.CancelAfter(options.ConnectTimeout);
@@ -69,7 +69,7 @@ internal static class SentinelResolver
         }
 
         var message =
-            $"Unable to discover and connect to Redis Sentinel service '{options.ServiceName}' " +
+            $"Unable to discover and connect to Redis Sentinel service '{options.SentinelPrimaryName}' " +
             $"from {sentinelEndpoints.Length} endpoint(s).";
         throw lastError is null
             ? new RespireConnectionException(message)

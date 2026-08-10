@@ -707,6 +707,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             {
                 Username = username,
                 Password = password,
+                CommandTimeout = null,
             };
             restrictedClient = await RespireClient.ConnectAsync(options);
             await using var restrictedCache = new RespireDistributedCache(restrictedClient);
@@ -864,8 +865,11 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     [NotInParallel]
     public async Task Remove_WithoutConfiguredTimeout_IsBoundedByLeaseTtl()
     {
-        await Cache.SetAsync("default-timeout-remove", [1], new DistributedCacheEntryOptions());
-        Client.RemovalLeaseTtl = TimeSpan.FromMilliseconds(100);
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { CommandTimeout = null });
+        await using var cache = new RespireDistributedCache(client);
+        await cache.SetAsync("default-timeout-remove", [1], new DistributedCacheEntryOptions());
+        client.RemovalLeaseTtl = TimeSpan.FromMilliseconds(100);
 
         var stallObserved = StallServerAsync("0.5");
         await Task.Delay(100);
@@ -873,7 +877,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         RespireTimeoutException? failure = null;
         try
         {
-            await Cache.RemoveAsync("default-timeout-remove").WaitAsync(TimeSpan.FromSeconds(5));
+            await cache.RemoveAsync("default-timeout-remove").WaitAsync(TimeSpan.FromSeconds(5));
         }
         catch (RespireTimeoutException ex)
         {
@@ -887,7 +891,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         await stallObserved;
         await Assert.That(failure).IsNotNull();
         await Assert.That(failure!.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(100));
-        await Assert.That(await Cache.GetAsync("default-timeout-remove")).IsNotNull();
+        await Assert.That(await cache.GetAsync("default-timeout-remove")).IsNotNull();
     }
 
     [Test]

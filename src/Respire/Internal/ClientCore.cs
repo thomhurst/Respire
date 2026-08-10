@@ -30,7 +30,7 @@ internal sealed class ClientCore : IAsyncDisposable
 
     public ClientCore(RespireOptions options)
     {
-        if (options.Cluster && options.Database != 0)
+        if (options.UseCluster && options.Database != 0)
         {
             throw new RespireConfigurationException("Redis Cluster supports database 0 only.");
         }
@@ -43,7 +43,7 @@ internal sealed class ClientCore : IAsyncDisposable
             endpoint.Host, endpoint.Port, options.Connections, connectionOptions, Logger);
         DedicatedPool = new DedicatedConnectionPool(
             endpoint.Host, endpoint.Port, connectionOptions, Logger);
-        Cluster = options.Cluster ? new ClusterRouter(options, Multiplexer) : null;
+        Cluster = options.UseCluster ? new ClusterRouter(options, Multiplexer) : null;
         if (Cluster is { } cluster)
         {
             cluster.SlotStateChanged += NotifyCommandStateChanged;

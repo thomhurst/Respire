@@ -7,6 +7,65 @@ namespace Respire.Tests;
 public class RespireOptionsTests
 {
     [Test]
+    public async Task Defaults_AreExplicitAndBounded()
+    {
+        var options = new RespireOptions();
+
+        await Assert.That(options.Endpoints).IsEmpty();
+        await Assert.That(options.Connections).IsEqualTo(1);
+        await Assert.That(options.CommandTimeout).IsEqualTo(TimeSpan.FromSeconds(10));
+        await Assert.That(options.Protocol).IsEqualTo(RespProtocol.Resp2);
+    }
+
+    [Test]
+    [Arguments("redis://localhost?connections=0")]
+    [Arguments("redis://localhost?connections=-1")]
+    public async Task ConnectionString_RejectsNonPositiveConnectionCount(string connectionString)
+    {
+        await Assert.That(() => RespireOptions.Parse(connectionString))
+            .Throws<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
+    public async Task Create_RejectsEmptyEndpointsAndNonPositiveConnections()
+    {
+        await Assert.That(() => RespireClient.Create(new RespireOptions { Endpoints = [] }))
+            .ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(() => RespireClient.Create(new RespireOptions
+            {
+                Connections = 0,
+                Endpoints = { new RespireEndpoint("localhost") },
+            }))
+            .ThrowsExactly<RespireConfigurationException>();
+    }
+
+    [Test]
+    public async Task Create_SnapshotsMutableEndpoints()
+    {
+        List<RespireEndpoint> endpoints = [new RespireEndpoint("first", 6379)];
+        var options = new RespireOptions { Endpoints = endpoints };
+        await using var client = RespireClient.Create(options);
+
+        endpoints[0] = new RespireEndpoint("second", 6380);
+
+        await Assert.That(client.Endpoint).IsEqualTo(new RespireEndpoint("first", 6379));
+        await Assert.That(client.Core.Options.Endpoints)
+            .IsEquivalentTo([new RespireEndpoint("first", 6379)]);
+    }
+
+    [Test]
+    public async Task UriOptions_ExposeDescriptivePropertyNames()
+    {
+        var options = RespireOptions.Parse(
+            "redis://localhost?useCluster=true&sentinelPrimaryName=primary&connectionIdleReadTimeoutMs=2500");
+
+        await Assert.That(options.UseCluster).IsTrue();
+        await Assert.That(options.SentinelPrimaryName).IsEqualTo("primary");
+        await Assert.That(options.ConnectionIdleReadTimeout)
+            .IsEqualTo(TimeSpan.FromMilliseconds(2500));
+    }
+
+    [Test]
     public async Task StackExchangeConnectionString_ParsesEndpointPasswordAndTls()
     {
         var options = RespireOptions.Parse("localhost:6379,password=secret,ssl=true");

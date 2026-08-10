@@ -88,16 +88,9 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     /// <summary>Creates an unconnected multiplexer; call <see cref="EnsureConnectedAsync"/> before use.</summary>
     public static RespireConnectionMultiplexer Create(
-        string host, int port = 6379, int connectionCount = 0, RespireConnectionOptions? options = null, ILogger? logger = null)
+        string host, int port = 6379, int connectionCount = 1, RespireConnectionOptions? options = null, ILogger? logger = null)
     {
-        if (connectionCount <= 0)
-        {
-            // One connection maximizes pipelining: concurrent commands coalesce into deep
-            // batches per syscall. Spreading load across sockets divides the batch depth —
-            // measured under 50-worker stress, every added connection lowered throughput
-            // (small commands worst: 1 connection doubled PING ops/s over 8).
-            connectionCount = 1;
-        }
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(connectionCount);
 
         return new RespireConnectionMultiplexer(host, port, connectionCount, options ?? RespireConnectionOptions.Default, logger);
     }
@@ -105,7 +98,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     public static async Task<RespireConnectionMultiplexer> CreateAsync(
         string host,
         int port = 6379,
-        int connectionCount = 0,
+        int connectionCount = 1,
         RespireConnectionOptions? options = null,
         ILogger? logger = null,
         CancellationToken cancellationToken = default)
