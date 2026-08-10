@@ -276,7 +276,8 @@ public class MultiItemCancellationOverloadTests
         public ValueTask<string> TypeAsync(RespireKey key, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
-        public ValueTask RenameAsync(RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default)
+        public ValueTask<bool> RenameAsync(
+            RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
         public IAsyncEnumerable<string> ScanAsync(

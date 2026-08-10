@@ -121,8 +121,9 @@ public class SetExpiryWireTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        await client.Strings.SetManyAsync(("a", "1"), ("b", "2"));
+        var confirmed = await client.Strings.SetManyAsync(("a", "1"), ("b", "2"));
 
+        await Assert.That(confirmed).IsTrue();
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("MSET a 1 b 2");
     }
 
