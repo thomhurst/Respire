@@ -41,11 +41,22 @@ public struct RespireCommandInterpolatedStringHandler
 
     public void AppendFormatted(bool value) => _tokens.Add(value);
 
+    public void AppendFormatted(bool value, string? format) => AppendFormatted(value);
+
     public void AppendFormatted(byte[] value) => _tokens.Add(value);
+
+    public void AppendFormatted(byte[]? value, string? format)
+        => _tokens.Add(value ?? RespireValue.Null);
 
     public void AppendFormatted(ReadOnlyMemory<byte> value) => _tokens.Add(value);
 
+    public void AppendFormatted(ReadOnlyMemory<byte> value, string? format) => AppendFormatted(value);
+
     public void AppendFormatted(RespireKey value) => _tokens.Add(value.AsValue());
+
+    public void AppendFormatted(RespireKey value, string? format) => AppendFormatted(value);
+
+    public void AppendFormatted(RespireValue value, string? format) => AppendFormatted(value);
 
     public void AppendFormatted<T>(T value)
         => _tokens.Add(Format(value, format: null));

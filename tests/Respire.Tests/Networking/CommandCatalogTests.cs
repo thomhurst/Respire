@@ -271,6 +271,13 @@ public class CommandCatalogTests
         await Assert.That(binaryTokens[2]).IsEqualTo((RespireValue)new byte[] { 0x20, 0x20, 0xff, 0x00 });
         await Assert.That(binaryTokens[3]).IsEqualTo((RespireValue)new byte[] { 0xfe, 0x01, 0x20, 0x20 });
 
+        var formattedTokens = BuildTokens($"SET format {true:X} {bytes:X} {memory:X} {binaryValue:X} {binaryKey:X}");
+        await Assert.That(formattedTokens[2]).IsEqualTo((RespireValue)new byte[] { (byte)'1' });
+        await Assert.That(formattedTokens[3]).IsEqualTo((RespireValue)bytes);
+        await Assert.That(formattedTokens[4]).IsEqualTo((RespireValue)memory);
+        await Assert.That(formattedTokens[5]).IsEqualTo(binaryValue);
+        await Assert.That(formattedTokens[6]).IsEqualTo(binaryKey.AsValue());
+
         static RespireValue[] BuildTokens(RespireCommandInterpolatedStringHandler handler)
             => handler.Build().Tokens;
     }
