@@ -231,7 +231,7 @@ Same pending-value shape as batch, plus watch keys. `CommitAsync` returns whethe
 won:
 
 ```csharp
-var tx = redis.CreateTransaction(watch: ["balance"]);
+await using var tx = await redis.CreateTransactionAsync(["balance"], ct);
 var newBal = tx.IncrementAsync("balance", -100);
 var log    = tx.Lists.RightPushAsync("audit", "withdraw:100");
 bool committed = await tx.CommitAsync(ct);

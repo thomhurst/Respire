@@ -85,14 +85,28 @@ public class TransactionTests
     }
 
     [Test]
-    public async Task EmptyTransaction_Throws()
+    public async Task EmptyTransaction_CommitsAsNoOpAndBecomesCompleted()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await ConnectAsync(server.Port);
 
         var transaction = client.CreateTransaction();
 
+        await Assert.That(await transaction.CommitAsync()).IsTrue();
+        await Assert.That(server.ReceivedCommands).IsEmpty();
         await Assert.That(async () => await transaction.CommitAsync()).Throws<InvalidOperationException>();
+    }
+
+    [Test]
+    public async Task EmptyWatchedTransaction_ReleasesWithoutMultiExec()
+    {
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
+        await using var client = await ConnectAsync(server.Port);
+        await using var transaction = await client.CreateTransactionAsync(["watched"]);
+
+        await Assert.That(await transaction.CommitAsync()).IsTrue();
+
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(["WATCH watched"]);
     }
 
     [Test]

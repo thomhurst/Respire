@@ -729,7 +729,10 @@ public sealed partial class RespireClient : IRespireClient
     /// </summary>
     public RespireBatch CreateBatch() => new(this);
 
-    /// <summary>Starts a MULTI/EXEC transaction. Queue commands, then <see cref="RespireTransaction.CommitAsync"/>.</summary>
+    /// <summary>
+    /// Starts a MULTI/EXEC transaction. Queue commands, then
+    /// <see cref="RespireTransaction.CommitAsync"/>. Always commit or dispose the transaction.
+    /// </summary>
     public RespireTransaction CreateTransaction() => new(this, watchConnection: null);
 
     /// <summary>
