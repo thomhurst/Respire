@@ -273,7 +273,8 @@ internal static class DynamicCommandRouting
             "KEYS" or "LASTSAVE" or "LATENCY" or "LOLWUT" or "MODULE" or "MONITOR" or "MULTI" or
             "PING" or "PSUBSCRIBE" or "PUBSUB" or "PUNSUBSCRIBE" or "QUIT" or "RANDOMKEY" or
             "READONLY" or "READWRITE" or "REPLICAOF" or "RESET" or "ROLE" or "SAVE" or "SCAN" or
-            "SCRIPT" or "SCRIPT LOAD" or "SELECT" or "SHUTDOWN" or "SLOWLOG" or "SUBSCRIBE" or
+            "SCRIPT" or "SCRIPT DEBUG" or "SCRIPT EXISTS" or "SCRIPT FLUSH" or "SCRIPT KILL" or
+            "SCRIPT LOAD" or "SCRIPT SHOW" or "SELECT" or "SHUTDOWN" or "SLOWLOG" or "SUBSCRIBE" or
             "SUNSUBSCRIBE" or "SWAPDB" or "SYNC" or "TIME" or "UNSUBSCRIBE" or "UNWATCH" or "WAIT" or
             "WAITAOF" => -1,
             _ => firstArgumentIndex,
