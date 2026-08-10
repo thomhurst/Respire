@@ -114,6 +114,16 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
 
     RespireClient IPendingSink.Client => _client;
 
+    void IPendingSink.ValidateClusterKey(in RespireKey key)
+    {
+        ThrowIfCompleted();
+        if (_client.Core.Cluster is not null
+            && _client.Key(in key).TryGetClusterSlot(out var slot))
+        {
+            ValidateClusterSlot(slot);
+        }
+    }
+
     RespirePending<T> IPendingSink.Add<TCommand, T>(
         string operation, in TCommand command, Func<RespireClient, RespValue, T> convert)
         => Add<TCommand, T>(operation, in command, convert);
@@ -314,15 +324,7 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
         ThrowIfCompleted();
         if (_client.Core.Cluster is not null && command.TryGetClusterSlot(out var slot))
         {
-            if (_hasClusterSlot && _clusterSlot != slot)
-            {
-                throw new InvalidOperationException(
-                    "Redis Cluster transactions require every key to use the same hash slot. " +
-                    "Use matching {...} hash tags for related keys.");
-            }
-
-            _clusterSlot = slot;
-            _hasClusterSlot = true;
+            ValidateClusterSlot(slot);
         }
 
         var writer = new RespWriter(_buffer);
@@ -330,6 +332,19 @@ public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
         var pending = new RespirePending<T>();
         _ops.Add(new TxOp<T>(operation, pending, convert));
         return pending;
+    }
+
+    private void ValidateClusterSlot(int slot)
+    {
+        if (_hasClusterSlot && _clusterSlot != slot)
+        {
+            throw new InvalidOperationException(
+                "Redis Cluster transactions require every key to use the same hash slot. " +
+                "Use matching {...} hash tags for related keys.");
+        }
+
+        _clusterSlot = slot;
+        _hasClusterSlot = true;
     }
 
     private void ThrowIfCompleted()

@@ -82,15 +82,21 @@ internal sealed class BatchKeyCommands(IPendingSink sink) : IBatchKeyCommands
             static (c, v) => ResponseReader.String(in v));
 
     public RespirePending<bool> RenameAsync(RespireKey key, RespireKey newKey)
-        => sink.Add<Cmd2, bool>(
+    {
+        sink.ValidateClusterKeys(key, newKey);
+        return sink.Add<Cmd2, bool>(
             "RENAME", new Cmd2(Verbs.Rename, sink.Client.Key(in key), sink.Client.Key(in newKey)),
             static (c, v) => ResponseReader.Ok(in v));
+    }
 
     public RespirePending<long> TouchAsync(params ReadOnlySpan<RespireKey> keys)
         => IntegerKeys("TOUCH", Verbs.Touch, keys);
 
     private RespirePending<long> IntegerKeys(string operation, Verb verb, ReadOnlySpan<RespireKey> keys)
-        => sink.Add<CmdN, long>(
+    {
+        sink.ValidateClusterKeys(keys);
+        return sink.Add<CmdN, long>(
             operation, new CmdN(verb, sink.Client.MapKeys(keys)),
             static (c, v) => ResponseReader.Integer(in v));
+    }
 }

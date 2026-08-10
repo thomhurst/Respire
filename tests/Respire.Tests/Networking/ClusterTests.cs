@@ -514,6 +514,40 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task Transaction_RejectsCrossSlotKeysWithinFacetCommands()
+    {
+        await using var client = RespireClient.Create(new RespireOptions { Cluster = true });
+        Action<RespireTransaction>[] queueCommands =
+        [
+            transaction => transaction.Keys.DeleteAsync("foo", "bar"),
+            transaction => transaction.Keys.RenameAsync("foo", "bar"),
+            transaction => transaction.Strings.GetManyAsync("foo", "bar"),
+            transaction => transaction.Strings.SetManyAsync(("foo", "one"), ("bar", "two")),
+            transaction => transaction.Strings.SetManyExpireAsync(
+                TimeSpan.FromMinutes(1), ("foo", "one"), ("bar", "two")),
+            transaction => transaction.Strings.LongestCommonSubsequenceAsync("foo", "bar"),
+            transaction => transaction.Lists.MoveAsync("foo", "bar"),
+            transaction => transaction.Sets.UnionAsync("foo", "bar"),
+            transaction => transaction.Sets.UnionStoreAsync("foo", "bar"),
+            transaction => transaction.Bitmaps.OperateAsync(BitOperation.Or, "foo", "bar"),
+            transaction => transaction.HyperLogLog.CountAsync("foo", "bar"),
+            transaction => transaction.HyperLogLog.MergeAsync("foo", "bar"),
+            transaction => transaction.Geo.SearchStoreAsync(
+                "foo", "bar", GeoSearchOrigin.FromMember("member"), GeoSearchShape.Circle(1)),
+        ];
+
+        foreach (var queueCommand in queueCommands)
+        {
+            await using var transaction = client.CreateTransaction();
+
+            var error = Assert.Throws<InvalidOperationException>(() => queueCommand(transaction));
+
+            await Assert.That(error.Message).Contains("same hash slot");
+            await Assert.That(transaction.Count).IsEqualTo(0);
+        }
+    }
+
+    [Test]
     public async Task TrackedScript_RoutesByKeyAndUpdatesIdentityAfterMoved()
     {
         var slot = ClusterHash.GetSlot("cache-key");

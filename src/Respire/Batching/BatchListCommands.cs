@@ -73,6 +73,7 @@ internal sealed class BatchListCommands(IPendingSink sink) : IBatchListCommands
     public RespirePending<string?> MoveAsync(
         RespireKey source, RespireKey destination, ListSide from = ListSide.Left, ListSide to = ListSide.Right)
     {
+        sink.ValidateClusterKeys(source, destination);
         RespireValue fromSide = from == ListSide.Left ? "LEFT" : "RIGHT";
         RespireValue toSide = to == ListSide.Left ? "LEFT" : "RIGHT";
         return sink.Add<Cmd4, string?>(

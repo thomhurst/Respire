@@ -176,14 +176,20 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
             static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<string?[]> GetManyAsync(params ReadOnlySpan<RespireKey> keys)
-        => sink.Add<CmdN, string?[]>(
+    {
+        sink.ValidateClusterKeys(keys);
+        return sink.Add<CmdN, string?[]>(
             "MGET", new CmdN(Verbs.MGet, sink.Client.MapKeys(keys)),
             static (c, v) => ResponseReader.NullableStringArray(in v));
+    }
 
     public RespirePending<bool> SetManyAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
-        => sink.Add<CmdN, bool>(
+    {
+        sink.ValidateClusterKeys(pairs);
+        return sink.Add<CmdN, bool>(
             "MSET", new CmdN(Verbs.MSet, StringCommands.SetManyArgs(sink.Client, pairs)),
             static (c, v) => ResponseReader.Ok(in v));
+    }
 
     public RespirePending<bool> SetManyExpireAsync(
         TimeSpan expiry, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
@@ -210,16 +216,22 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
         => SetManyExpireCore("KEEPTTL", optionValue: 0, hasValue: false, when, pairs);
 
     public RespirePending<string> LongestCommonSubsequenceAsync(RespireKey firstKey, RespireKey secondKey)
-        => sink.Add<Cmd2, string>(
+    {
+        sink.ValidateClusterKeys(firstKey, secondKey);
+        return sink.Add<Cmd2, string>(
             "LCS",
             new Cmd2(RespireCommands.String.LCS.Verb, sink.Client.Key(in firstKey), sink.Client.Key(in secondKey)),
             static (c, v) => ResponseReader.String(in v));
+    }
 
     public RespirePending<long> LongestCommonSubsequenceLengthAsync(RespireKey firstKey, RespireKey secondKey)
-        => sink.Add<Cmd3, long>(
+    {
+        sink.ValidateClusterKeys(firstKey, secondKey);
+        return sink.Add<Cmd3, long>(
             "LCS",
             new Cmd3(RespireCommands.String.LCS.Verb, sink.Client.Key(in firstKey), sink.Client.Key(in secondKey), "LEN"),
             static (c, v) => ResponseReader.Integer(in v));
+    }
 
     private RespirePending<bool> SetManyExpireCore(
         string option,
@@ -227,10 +239,13 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
         bool hasValue,
         SetWhen when,
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
-        => sink.Add<MSetExCommand, bool>(
+    {
+        sink.ValidateClusterKeys(pairs);
+        return sink.Add<MSetExCommand, bool>(
             "MSETEX",
             new MSetExCommand(
                 RespireCommands.String.MSETEX.Verb,
                 StringCommands.SetManyExpireArgs(sink.Client, option, optionValue, hasValue, when, pairs)),
             static (c, v) => ResponseReader.Flag(in v));
+    }
 }
