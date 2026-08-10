@@ -6,7 +6,7 @@ description: Latest automated Respire and StackExchange.Redis benchmark results.
 # Benchmarks
 
 :::info Automated results
-Generated 2026-08-10 20:45 UTC from commit `9c86e4a041aa`. See the [GitHub Actions run](https://github.com/thomhurst/Respire/actions/runs/31428446846) for logs and downloadable artifacts.
+Generated 2026-08-10 22:26 UTC from commit `83347ad6092d`. See the [GitHub Actions run](https://github.com/thomhurst/Respire/actions/runs/31436319002) for logs and downloadable artifacts.
 :::
 
 StackExchange.Redis is the baseline. A ratio below `1.00` means Respire completed the operation faster.
@@ -26,66 +26,66 @@ IterationCount=15  LaunchCount=2  WarmupCount=10
 ```
 | Method                         | Categories           | Mean       | Error     | StdDev    | Ratio | MannWhitney(5%) | RatioSD | Gen0   | Allocated | Alloc Ratio |
 |------------------------------- |--------------------- |-----------:|----------:|----------:|------:|---------------- |--------:|-------:|----------:|------------:|
-| StackExchange_Exists           | EXISTS               | 194.535 μs | 0.6728 μs | 1.0070 μs |  1.00 | Baseline        |    0.01 |      - |     296 B |        1.00 |
-| Respire_Exists                 | EXISTS               | 194.958 μs | 0.7054 μs | 1.0117 μs |  1.00 | Same            |    0.01 |      - |     288 B |        0.97 |
+| StackExchange_Exists           | EXISTS               | 187.170 μs | 1.0441 μs | 1.5628 μs |  1.00 | Baseline        |    0.01 |      - |     296 B |        1.00 |
+| Respire_Exists                 | EXISTS               | 185.967 μs | 0.8879 μs | 1.3290 μs |  0.99 | Same            |    0.01 |      - |         - |        0.00 |
 |                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Get              | GET                  | 196.738 μs | 0.7206 μs | 1.0785 μs |  1.00 | Baseline        |    0.01 |      - |     504 B |        1.00 |
-| Respire_Get                    | GET                  | 195.510 μs | 0.6449 μs | 0.9652 μs |  0.99 | Same            |    0.01 |      - |     336 B |        0.67 |
+| StackExchange_Get              | GET                  | 189.440 μs | 1.1435 μs | 1.6399 μs |  1.00 | Baseline        |    0.01 |      - |     504 B |        1.00 |
+| Respire_Get                    | GET                  | 186.591 μs | 1.0564 μs | 1.5150 μs |  0.99 | Same            |    0.01 |      - |      48 B |        0.10 |
 |                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Get_SteadyState  | GET x100 sequential  | 178.726 μs | 1.6713 μs | 2.5015 μs |  1.00 | Baseline        |    0.02 |      - |     338 B |        1.00 |
-| Respire_Get_SteadyState        | GET x100 sequential  | 178.024 μs | 1.1533 μs | 1.6904 μs |  1.00 | Same            |    0.02 |      - |     339 B |        1.00 |
+| StackExchange_Get_SteadyState  | GET x100 sequential  | 173.953 μs | 1.2312 μs | 1.8428 μs |  1.00 | Baseline        |    0.01 |      - |     338 B |        1.00 |
+| Respire_Get_SteadyState        | GET x100 sequential  | 170.317 μs | 0.8531 μs | 1.2769 μs |  0.98 | Same            |    0.01 |      - |      50 B |        0.15 |
 |                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Get_Pipelined    | GET x200 pipelined   |   2.456 μs | 0.0209 μs | 0.0313 μs |  1.00 | Baseline        |    0.02 | 0.0098 |     289 B |        1.00 |
-| Respire_Get_Pipelined          | GET x200 pipelined   |   2.558 μs | 0.0134 μs | 0.0196 μs |  1.04 | Same            |    0.02 | 0.0293 |     561 B |        1.94 |
+| StackExchange_Get_Pipelined    | GET x200 pipelined   |   2.371 μs | 0.0502 μs | 0.0736 μs |  1.00 | Baseline        |    0.04 | 0.0098 |     289 B |        1.00 |
+| Respire_Get_Pipelined          | GET x200 pipelined   |   2.036 μs | 0.0082 μs | 0.0118 μs |  0.86 | Faster          |    0.03 |      - |      49 B |        0.17 |
 |                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Get_Concurrent   | GET x50 concurrent   |   5.437 μs | 0.0387 μs | 0.0567 μs |  1.00 | Baseline        |    0.01 |      - |     291 B |        1.00 |
-| Respire_Get_Concurrent         | GET x50 concurrent   |   5.931 μs | 0.0516 μs | 0.0757 μs |  1.09 | Slower          |    0.02 | 0.0195 |     564 B |        1.94 |
+| StackExchange_Get_Concurrent   | GET x50 concurrent   |   5.229 μs | 0.0451 μs | 0.0675 μs |  1.00 | Baseline        |    0.02 |      - |     291 B |        1.00 |
+| Respire_Get_Concurrent         | GET x50 concurrent   |   5.265 μs | 0.0292 μs | 0.0438 μs |  1.01 | Same            |    0.02 |      - |      52 B |        0.18 |
 |                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_HGet             | HGET                 | 198.148 μs | 0.7960 μs | 1.1914 μs |  1.00 | Baseline        |    0.01 |      - |     520 B |        1.00 |
-| Respire_HGet                   | HGET                 | 196.089 μs | 0.6794 μs | 1.0169 μs |  0.99 | Same            |    0.01 |      - |     336 B |        0.65 |
+| StackExchange_HGet             | HGET                 | 192.462 μs | 0.6892 μs | 1.0316 μs |  1.00 | Baseline        |    0.01 |      - |     520 B |        1.00 |
+| Respire_HGet                   | HGET                 | 188.778 μs | 1.2113 μs | 1.8130 μs |  0.98 | Same            |    0.01 |      - |      48 B |        0.09 |
 |                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_HSet             | HSET                 | 196.973 μs | 0.5131 μs | 0.7681 μs |  1.00 | Baseline        |    0.01 |      - |     328 B |        1.00 |
-| Respire_HSet                   | HSET                 | 198.252 μs | 0.8374 μs | 1.2009 μs |  1.01 | Same            |    0.01 |      - |     288 B |        0.88 |
+| StackExchange_HSet             | HSET                 | 191.044 μs | 0.7930 μs | 1.1869 μs |  1.00 | Baseline        |    0.01 |      - |     328 B |        1.00 |
+| Respire_HSet                   | HSET                 | 189.581 μs | 1.2716 μs | 1.8639 μs |  0.99 | Same            |    0.01 |      - |         - |        0.00 |
 |                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Incr             | INCR                 | 194.992 μs | 0.6462 μs | 0.9672 μs |  1.00 | Baseline        |    0.01 |      - |     296 B |        1.00 |
-| Respire_Incr                   | INCR                 | 195.277 μs | 0.8168 μs | 1.1973 μs |  1.00 | Same            |    0.01 |      - |     288 B |        0.97 |
+| StackExchange_Incr             | INCR                 | 188.763 μs | 0.5438 μs | 0.7971 μs |  1.00 | Baseline        |    0.01 |      - |     296 B |        1.00 |
+| Respire_Incr                   | INCR                 | 188.490 μs | 0.7647 μs | 1.1446 μs |  1.00 | Same            |    0.01 |      - |         - |        0.00 |
 |                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_LPushLPop        | LPUSH+LPOP           | 382.343 μs | 1.0647 μs | 1.5606 μs |  1.00 | Baseline        |    0.01 |      - |     760 B |        1.00 |
-| Respire_LPushLPop              | LPUSH+LPOP           | 380.794 μs | 0.9502 μs | 1.4222 μs |  1.00 | Same            |    0.01 |      - |    1125 B |        1.48 |
+| StackExchange_LPushLPop        | LPUSH+LPOP           | 370.424 μs | 1.5255 μs | 2.2833 μs |  1.00 | Baseline        |    0.01 |      - |     760 B |        1.00 |
+| Respire_LPushLPop              | LPUSH+LPOP           | 366.685 μs | 1.4081 μs | 2.0640 μs |  0.99 | Same            |    0.01 |      - |     256 B |        0.34 |
 |                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Ping             | PING                 | 191.273 μs | 1.2219 μs | 1.8288 μs |  1.00 | Baseline        |    0.01 |      - |     304 B |        1.00 |
-| Respire_Ping                   | PING                 | 193.152 μs | 1.0252 μs | 1.5345 μs |  1.01 | Same            |    0.01 |      - |     288 B |        0.95 |
+| StackExchange_Ping             | PING                 | 186.207 μs | 1.2923 μs | 1.9342 μs |  1.00 | Baseline        |    0.01 |      - |     304 B |        1.00 |
+| Respire_Ping                   | PING                 | 186.068 μs | 0.8066 μs | 1.2073 μs |  1.00 | Same            |    0.01 |      - |         - |        0.00 |
 |                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Ping_SteadyState | PING x100 sequential | 177.248 μs | 0.8684 μs | 1.2997 μs |  1.00 | Baseline        |    0.01 |      - |     242 B |        1.00 |
-| Respire_Ping_SteadyState       | PING x100 sequential | 176.624 μs | 1.0157 μs | 1.5203 μs |  1.00 | Same            |    0.01 |      - |     292 B |        1.21 |
+| StackExchange_Ping_SteadyState | PING x100 sequential | 171.564 μs | 1.0147 μs | 1.5188 μs |  1.00 | Baseline        |    0.01 |      - |     242 B |       1.000 |
+| Respire_Ping_SteadyState       | PING x100 sequential | 169.708 μs | 0.9555 μs | 1.4301 μs |  0.99 | Same            |    0.01 |      - |       2 B |       0.008 |
 |                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_SAdd             | SADD                 | 195.163 μs | 0.7430 μs | 1.0655 μs |  1.00 | Baseline        |    0.01 |      - |     312 B |        1.00 |
-| Respire_SAdd                   | SADD                 | 194.379 μs | 0.9507 μs | 1.3935 μs |  1.00 | Same            |    0.01 |      - |     288 B |        0.92 |
+| StackExchange_SAdd             | SADD                 | 189.179 μs | 0.6256 μs | 0.9363 μs |  1.00 | Baseline        |    0.01 |      - |     312 B |        1.00 |
+| Respire_SAdd                   | SADD                 | 188.322 μs | 1.0382 μs | 1.5218 μs |  1.00 | Same            |    0.01 |      - |         - |        0.00 |
 |                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Set_10KB         | SET 10KB             | 205.957 μs | 0.7451 μs | 1.0921 μs |  1.00 | Baseline        |    0.01 |      - |     312 B |        1.00 |
-| Respire_Set_10KB               | SET 10KB             | 210.338 μs | 0.7630 μs | 1.1420 μs |  1.02 | Same            |    0.01 |      - |     288 B |        0.92 |
+| StackExchange_Set_10KB         | SET 10KB             | 201.984 μs | 0.6624 μs | 0.9914 μs |  1.00 | Baseline        |    0.01 |      - |     312 B |        1.00 |
+| Respire_Set_10KB               | SET 10KB             | 203.009 μs | 0.9302 μs | 1.3923 μs |  1.01 | Same            |    0.01 |      - |         - |        0.00 |
 |                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Set_Small        | SET 13B              | 195.124 μs | 0.5479 μs | 0.7858 μs |  1.00 | Baseline        |    0.01 |      - |     311 B |        1.00 |
-| Respire_Set_Small              | SET 13B              | 198.131 μs | 1.5713 μs | 2.3518 μs |  1.02 | Same            |    0.01 |      - |     288 B |        0.93 |
+| StackExchange_Set_Small        | SET 13B              | 190.548 μs | 0.6849 μs | 1.0251 μs |  1.00 | Baseline        |    0.01 |      - |     312 B |        1.00 |
+| Respire_Set_Small              | SET 13B              | 188.436 μs | 0.7598 μs | 1.0896 μs |  0.99 | Same            |    0.01 |      - |         - |        0.00 |
 |                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Set_1KB          | SET 1KB              | 198.285 μs | 0.6620 μs | 0.9908 μs |  1.00 | Baseline        |    0.01 |      - |     312 B |        1.00 |
-| Respire_Set_1KB                | SET 1KB              | 200.548 μs | 0.8786 μs | 1.2879 μs |  1.01 | Same            |    0.01 |      - |     288 B |        0.92 |
+| StackExchange_Set_1KB          | SET 1KB              | 192.543 μs | 0.6963 μs | 1.0422 μs |  1.00 | Baseline        |    0.01 |      - |     312 B |        1.00 |
+| Respire_Set_1KB                | SET 1KB              | 188.883 μs | 1.1032 μs | 1.6171 μs |  0.98 | Same            |    0.01 |      - |         - |        0.00 |
 |                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Set_SteadyState  | SET x100 sequential  | 179.929 μs | 0.8602 μs | 1.2875 μs |  1.00 | Baseline        |    0.01 |      - |     250 B |        1.00 |
-| Respire_Set_SteadyState        | SET x100 sequential  | 179.632 μs | 0.9857 μs | 1.4448 μs |  1.00 | Same            |    0.01 |      - |     292 B |        1.17 |
+| StackExchange_Set_SteadyState  | SET x100 sequential  | 175.024 μs | 0.7695 μs | 1.1280 μs |  1.00 | Baseline        |    0.01 |      - |     250 B |       1.000 |
+| Respire_Set_SteadyState        | SET x100 sequential  | 173.516 μs | 0.7374 μs | 1.0809 μs |  0.99 | Same            |    0.01 |      - |       2 B |       0.008 |
 |                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_SetDel           | SET+DEL              | 376.381 μs | 1.1050 μs | 1.6540 μs |  1.00 | Baseline        |    0.01 |      - |     648 B |        1.00 |
-| Respire_SetDel                 | SET+DEL              | 378.303 μs | 1.3991 μs | 2.0942 μs |  1.01 | Same            |    0.01 |      - |    1071 B |        1.65 |
+| StackExchange_SetDel           | SET+DEL              | 366.835 μs | 1.1146 μs | 1.6337 μs |  1.00 | Baseline        |    0.01 |      - |     648 B |        1.00 |
+| Respire_SetDel                 | SET+DEL              | 362.634 μs | 0.9699 μs | 1.4216 μs |  0.99 | Same            |    0.01 |      - |     200 B |        0.31 |
 |                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_SIsMember        | SISMEMBER            | 194.877 μs | 0.7709 μs | 1.1055 μs |  1.00 | Baseline        |    0.01 |      - |     312 B |        1.00 |
-| Respire_SIsMember              | SISMEMBER            | 194.623 μs | 1.0538 μs | 1.5773 μs |  1.00 | Same            |    0.01 |      - |     288 B |        0.92 |
+| StackExchange_SIsMember        | SISMEMBER            | 187.737 μs | 0.5266 μs | 0.7719 μs |  1.00 | Baseline        |    0.01 |      - |     312 B |        1.00 |
+| Respire_SIsMember              | SISMEMBER            | 188.086 μs | 0.7880 μs | 1.1550 μs |  1.00 | Same            |    0.01 |      - |         - |        0.00 |
 
 ## net8.0
 
 ```
 
 BenchmarkDotNet v0.15.8, Linux Ubuntu 24.04.4 LTS (Noble Numbat)
-INTEL XEON PLATINUM 8573C 3.52GHz, 1 CPU, 4 logical and 2 physical cores
+INTEL XEON PLATINUM 8573C 2.30GHz, 1 CPU, 4 logical and 2 physical cores
 .NET SDK 10.0.302
   [Host]     : .NET 8.0.29 (8.0.29, 8.0.2926.32403), X64 RyuJIT x86-64-v4
   Job-IDGKZI : .NET 8.0.29 (8.0.29, 8.0.2926.32403), X64 RyuJIT x86-64-v4
@@ -93,61 +93,61 @@ INTEL XEON PLATINUM 8573C 3.52GHz, 1 CPU, 4 logical and 2 physical cores
 IterationCount=15  LaunchCount=2  WarmupCount=10  
 
 ```
-| Method                         | Categories           | Mean       | Error     | StdDev    | Ratio | MannWhitney(5%) | RatioSD | Gen0   | Allocated | Alloc Ratio |
-|------------------------------- |--------------------- |-----------:|----------:|----------:|------:|---------------- |--------:|-------:|----------:|------------:|
-| StackExchange_Exists           | EXISTS               |  99.416 μs | 1.7765 μs | 2.6040 μs |  1.00 | Baseline        |    0.04 |      - |     296 B |        1.00 |
-| Respire_Exists                 | EXISTS               |  96.345 μs | 1.0343 μs | 1.5481 μs |  0.97 | Same            |    0.03 |      - |     288 B |        0.97 |
-|                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Get              | GET                  | 100.409 μs | 0.9627 μs | 1.4409 μs |  1.00 | Baseline        |    0.02 |      - |     504 B |        1.00 |
-| Respire_Get                    | GET                  |  95.997 μs | 1.2801 μs | 1.8764 μs |  0.96 | Same            |    0.02 |      - |     336 B |        0.67 |
-|                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Get_SteadyState  | GET x100 sequential  |  81.362 μs | 1.1706 μs | 1.7158 μs |  1.00 | Baseline        |    0.03 |      - |     338 B |        1.00 |
-| Respire_Get_SteadyState        | GET x100 sequential  |  81.813 μs | 1.4685 μs | 2.1526 μs |  1.01 | Same            |    0.03 |      - |     339 B |        1.00 |
-|                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Get_Pipelined    | GET x200 pipelined   |   1.587 μs | 0.1036 μs | 0.1550 μs |  1.01 | Baseline        |    0.14 |      - |     289 B |        1.00 |
-| Respire_Get_Pipelined          | GET x200 pipelined   |   1.760 μs | 0.0785 μs | 0.1150 μs |  1.12 | Same            |    0.13 | 0.0049 |     561 B |        1.94 |
-|                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Get_Concurrent   | GET x50 concurrent   |   3.067 μs | 0.0808 μs | 0.1210 μs |  1.00 | Baseline        |    0.05 |      - |     291 B |        1.00 |
-| Respire_Get_Concurrent         | GET x50 concurrent   |   3.302 μs | 0.0549 μs | 0.0821 μs |  1.08 | Same            |    0.05 | 0.0049 |     563 B |        1.93 |
-|                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_HGet             | HGET                 | 100.709 μs | 0.8424 μs | 1.2609 μs |  1.00 | Baseline        |    0.02 |      - |     520 B |        1.00 |
-| Respire_HGet                   | HGET                 |  98.279 μs | 0.9556 μs | 1.3705 μs |  0.98 | Same            |    0.02 |      - |     336 B |        0.65 |
-|                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_HSet             | HSET                 | 101.537 μs | 0.9817 μs | 1.4694 μs |  1.00 | Baseline        |    0.02 |      - |     328 B |        1.00 |
-| Respire_HSet                   | HSET                 |  98.819 μs | 0.7881 μs | 1.1552 μs |  0.97 | Same            |    0.02 |      - |     288 B |        0.88 |
-|                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Incr             | INCR                 |  98.985 μs | 1.4770 μs | 2.2107 μs |  1.00 | Baseline        |    0.03 |      - |     296 B |        1.00 |
-| Respire_Incr                   | INCR                 |  95.947 μs | 1.5163 μs | 2.1746 μs |  0.97 | Same            |    0.03 |      - |     288 B |        0.97 |
-|                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_LPushLPop        | LPUSH+LPOP           | 190.205 μs | 2.0027 μs | 2.9975 μs |  1.00 | Baseline        |    0.02 |      - |     760 B |        1.00 |
-| Respire_LPushLPop              | LPUSH+LPOP           | 184.137 μs | 1.8990 μs | 2.7835 μs |  0.97 | Same            |    0.02 |      - |    1143 B |        1.50 |
-|                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Ping             | PING                 |  97.635 μs | 1.2781 μs | 1.9129 μs |  1.00 | Baseline        |    0.03 |      - |     304 B |        1.00 |
-| Respire_Ping                   | PING                 |  90.304 μs | 4.4046 μs | 6.5926 μs |  0.93 | Same            |    0.07 |      - |     288 B |        0.95 |
-|                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Ping_SteadyState | PING x100 sequential |  81.358 μs | 0.8185 μs | 1.2250 μs |  1.00 | Baseline        |    0.02 |      - |     242 B |        1.00 |
-| Respire_Ping_SteadyState       | PING x100 sequential |  80.745 μs | 1.0806 μs | 1.5839 μs |  0.99 | Same            |    0.02 |      - |     291 B |        1.20 |
-|                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_SAdd             | SADD                 | 100.148 μs | 1.0994 μs | 1.6456 μs |  1.00 | Baseline        |    0.02 |      - |     312 B |        1.00 |
-| Respire_SAdd                   | SADD                 |  96.254 μs | 0.7913 μs | 1.1349 μs |  0.96 | Same            |    0.02 |      - |     288 B |        0.92 |
-|                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Set_10KB         | SET 10KB             | 107.448 μs | 1.2423 μs | 1.8594 μs |  1.00 | Baseline        |    0.02 |      - |     312 B |        1.00 |
-| Respire_Set_10KB               | SET 10KB             | 101.559 μs | 0.6902 μs | 1.0330 μs |  0.95 | Same            |    0.02 |      - |     288 B |        0.92 |
-|                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Set_Small        | SET 13B              | 102.270 μs | 0.8172 μs | 1.1719 μs |  1.00 | Baseline        |    0.02 |      - |     312 B |        1.00 |
-| Respire_Set_Small              | SET 13B              |  98.454 μs | 1.0899 μs | 1.5976 μs |  0.96 | Same            |    0.02 |      - |     288 B |        0.92 |
-|                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Set_1KB          | SET 1KB              | 103.318 μs | 1.3026 μs | 1.8681 μs |  1.00 | Baseline        |    0.03 |      - |     311 B |        1.00 |
-| Respire_Set_1KB                | SET 1KB              | 100.796 μs | 0.7513 μs | 1.1245 μs |  0.98 | Same            |    0.02 |      - |     288 B |        0.93 |
-|                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_Set_SteadyState  | SET x100 sequential  |  86.164 μs | 1.0453 μs | 1.4992 μs |  1.00 | Baseline        |    0.02 |      - |     250 B |        1.00 |
-| Respire_Set_SteadyState        | SET x100 sequential  |  85.507 μs | 1.1368 μs | 1.5937 μs |  0.99 | Same            |    0.02 |      - |     292 B |        1.17 |
-|                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_SetDel           | SET+DEL              | 191.388 μs | 2.1486 μs | 3.2160 μs |  1.00 | Baseline        |    0.02 |      - |     648 B |        1.00 |
-| Respire_SetDel                 | SET+DEL              | 188.868 μs | 2.3210 μs | 3.3286 μs |  0.99 | Same            |    0.02 |      - |    1083 B |        1.67 |
-|                                |                      |            |           |           |       |                 |         |        |           |             |
-| StackExchange_SIsMember        | SISMEMBER            |  98.956 μs | 0.9815 μs | 1.4691 μs |  1.00 | Baseline        |    0.02 |      - |     312 B |        1.00 |
-| Respire_SIsMember              | SISMEMBER            |  97.006 μs | 1.5560 μs | 2.2808 μs |  0.98 | Same            |    0.03 |      - |     288 B |        0.92 |
+| Method                         | Categories           | Mean       | Error     | StdDev    | Ratio | MannWhitney(5%) | RatioSD | Allocated | Alloc Ratio |
+|------------------------------- |--------------------- |-----------:|----------:|----------:|------:|---------------- |--------:|----------:|------------:|
+| StackExchange_Exists           | EXISTS               | 107.716 μs | 0.7350 μs | 1.1001 μs |  1.00 | Baseline        |    0.01 |     296 B |        1.00 |
+| Respire_Exists                 | EXISTS               | 103.695 μs | 0.8876 μs | 1.3285 μs |  0.96 | Same            |    0.02 |         - |        0.00 |
+|                                |                      |            |           |           |       |                 |         |           |             |
+| StackExchange_Get              | GET                  | 109.821 μs | 1.2818 μs | 1.9186 μs |  1.00 | Baseline        |    0.02 |     504 B |        1.00 |
+| Respire_Get                    | GET                  | 103.175 μs | 0.6797 μs | 0.9964 μs |  0.94 | Same            |    0.02 |      48 B |        0.10 |
+|                                |                      |            |           |           |       |                 |         |           |             |
+| StackExchange_Get_SteadyState  | GET x100 sequential  |  92.021 μs | 1.3622 μs | 2.0388 μs |  1.00 | Baseline        |    0.03 |     338 B |        1.00 |
+| Respire_Get_SteadyState        | GET x100 sequential  |  91.182 μs | 0.9814 μs | 1.4385 μs |  0.99 | Same            |    0.03 |      50 B |        0.15 |
+|                                |                      |            |           |           |       |                 |         |           |             |
+| StackExchange_Get_Pipelined    | GET x200 pipelined   |   1.828 μs | 0.1047 μs | 0.1567 μs |  1.01 | Baseline        |    0.12 |     289 B |        1.00 |
+| Respire_Get_Pipelined          | GET x200 pipelined   |   1.564 μs | 0.0123 μs | 0.0180 μs |  0.86 | Faster          |    0.08 |      49 B |        0.17 |
+|                                |                      |            |           |           |       |                 |         |           |             |
+| StackExchange_Get_Concurrent   | GET x50 concurrent   |   3.404 μs | 0.0522 μs | 0.0748 μs |  1.00 | Baseline        |    0.03 |     291 B |        1.00 |
+| Respire_Get_Concurrent         | GET x50 concurrent   |   3.068 μs | 0.0442 μs | 0.0662 μs |  0.90 | Faster          |    0.03 |      52 B |        0.18 |
+|                                |                      |            |           |           |       |                 |         |           |             |
+| StackExchange_HGet             | HGET                 | 109.591 μs | 1.0748 μs | 1.6087 μs |  1.00 | Baseline        |    0.02 |     520 B |        1.00 |
+| Respire_HGet                   | HGET                 | 103.497 μs | 0.6786 μs | 1.0157 μs |  0.94 | Same            |    0.02 |      48 B |        0.09 |
+|                                |                      |            |           |           |       |                 |         |           |             |
+| StackExchange_HSet             | HSET                 | 107.779 μs | 1.0929 μs | 1.6020 μs |  1.00 | Baseline        |    0.02 |     328 B |        1.00 |
+| Respire_HSet                   | HSET                 | 103.081 μs | 1.4633 μs | 2.1903 μs |  0.96 | Same            |    0.02 |         - |        0.00 |
+|                                |                      |            |           |           |       |                 |         |           |             |
+| StackExchange_Incr             | INCR                 | 107.109 μs | 0.9373 μs | 1.4028 μs |  1.00 | Baseline        |    0.02 |     296 B |        1.00 |
+| Respire_Incr                   | INCR                 | 102.296 μs | 1.0533 μs | 1.5766 μs |  0.96 | Same            |    0.02 |         - |        0.00 |
+|                                |                      |            |           |           |       |                 |         |           |             |
+| StackExchange_LPushLPop        | LPUSH+LPOP           | 208.834 μs | 1.3601 μs | 1.9067 μs |  1.00 | Baseline        |    0.01 |     760 B |        1.00 |
+| Respire_LPushLPop              | LPUSH+LPOP           | 203.443 μs | 1.4665 μs | 2.1950 μs |  0.97 | Same            |    0.01 |     256 B |        0.34 |
+|                                |                      |            |           |           |       |                 |         |           |             |
+| StackExchange_Ping             | PING                 | 105.310 μs | 1.1483 μs | 1.7187 μs |  1.00 | Baseline        |    0.02 |     304 B |        1.00 |
+| Respire_Ping                   | PING                 | 101.110 μs | 0.8257 μs | 1.2359 μs |  0.96 | Same            |    0.02 |         - |        0.00 |
+|                                |                      |            |           |           |       |                 |         |           |             |
+| StackExchange_Ping_SteadyState | PING x100 sequential |  89.530 μs | 0.7107 μs | 1.0637 μs |  1.00 | Baseline        |    0.02 |     242 B |       1.000 |
+| Respire_Ping_SteadyState       | PING x100 sequential |  88.576 μs | 0.8625 μs | 1.2910 μs |  0.99 | Same            |    0.02 |       2 B |       0.008 |
+|                                |                      |            |           |           |       |                 |         |           |             |
+| StackExchange_SAdd             | SADD                 | 106.186 μs | 0.9989 μs | 1.4951 μs |  1.00 | Baseline        |    0.02 |     312 B |        1.00 |
+| Respire_SAdd                   | SADD                 | 101.935 μs | 0.8334 μs | 1.2474 μs |  0.96 | Same            |    0.02 |         - |        0.00 |
+|                                |                      |            |           |           |       |                 |         |           |             |
+| StackExchange_Set_10KB         | SET 10KB             | 115.296 μs | 1.3224 μs | 1.9793 μs |  1.00 | Baseline        |    0.02 |     312 B |        1.00 |
+| Respire_Set_10KB               | SET 10KB             | 108.065 μs | 0.7718 μs | 1.1552 μs |  0.94 | Same            |    0.02 |         - |        0.00 |
+|                                |                      |            |           |           |       |                 |         |           |             |
+| StackExchange_Set_Small        | SET 13B              | 108.710 μs | 0.9696 μs | 1.4512 μs |  1.00 | Baseline        |    0.02 |     312 B |        1.00 |
+| Respire_Set_Small              | SET 13B              | 103.867 μs | 0.7167 μs | 1.0727 μs |  0.96 | Same            |    0.02 |         - |        0.00 |
+|                                |                      |            |           |           |       |                 |         |           |             |
+| StackExchange_Set_1KB          | SET 1KB              | 110.117 μs | 1.2846 μs | 1.9227 μs |  1.00 | Baseline        |    0.02 |     311 B |        1.00 |
+| Respire_Set_1KB                | SET 1KB              | 104.159 μs | 1.8408 μs | 2.7553 μs |  0.95 | Same            |    0.03 |         - |        0.00 |
+|                                |                      |            |           |           |       |                 |         |           |             |
+| StackExchange_Set_SteadyState  | SET x100 sequential  |  93.411 μs | 0.9347 μs | 1.3700 μs |  1.00 | Baseline        |    0.02 |     250 B |       1.000 |
+| Respire_Set_SteadyState        | SET x100 sequential  |  93.326 μs | 0.7223 μs | 1.0588 μs |  1.00 | Same            |    0.02 |       2 B |       0.008 |
+|                                |                      |            |           |           |       |                 |         |           |             |
+| StackExchange_SetDel           | SET+DEL              | 206.226 μs | 1.7183 μs | 2.5187 μs |  1.00 | Baseline        |    0.02 |     647 B |        1.00 |
+| Respire_SetDel                 | SET+DEL              | 200.753 μs | 1.5663 μs | 2.3444 μs |  0.97 | Same            |    0.02 |     200 B |        0.31 |
+|                                |                      |            |           |           |       |                 |         |           |             |
+| StackExchange_SIsMember        | SISMEMBER            | 109.185 μs | 0.8325 μs | 1.2203 μs |  1.00 | Baseline        |    0.02 |     310 B |        1.00 |
+| Respire_SIsMember              | SISMEMBER            | 102.799 μs | 0.7167 μs | 1.0727 μs |  0.94 | Same            |    0.01 |         - |        0.00 |
 
 ## Reading the results
 
