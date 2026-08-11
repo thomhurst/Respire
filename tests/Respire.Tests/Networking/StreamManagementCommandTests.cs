@@ -30,6 +30,9 @@ public class StreamManagementCommandTests
         var defaults = default(StreamAddOptions);
         await Assert.That(defaults.ApproximateTrim).IsTrue();
         await Assert.That(defaults.CreateStream).IsTrue();
+        var explicitDefaults = new StreamAddOptions { ApproximateTrim = true, CreateStream = true };
+        await Assert.That(defaults).IsEqualTo(explicitDefaults);
+        await Assert.That(defaults.GetHashCode()).IsEqualTo(explicitDefaults.GetHashCode());
 
         var chosenId = await client.Streams.AddAsync(
             "events",

@@ -261,6 +261,17 @@ public readonly record struct StreamAddOptions
         get => _createStream ?? true;
         init => _createStream = value;
     }
+
+    /// <inheritdoc/>
+    public bool Equals(StreamAddOptions other)
+        => Id == other.Id
+           && MaxLength == other.MaxLength
+           && ApproximateTrim == other.ApproximateTrim
+           && CreateStream == other.CreateStream;
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+        => HashCode.Combine(Id, MaxLength, ApproximateTrim, CreateStream);
 }
 
 /// <summary>
