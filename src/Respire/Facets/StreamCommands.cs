@@ -207,6 +207,12 @@ public readonly record struct RespireStreamPendingEntry(
     TimeSpan IdleTime,
     long DeliveryCount);
 
+/// <summary>The next scan position, claimed entries, and deleted pending ids returned by XAUTOCLAIM.</summary>
+public readonly record struct RespireStreamClaimResult(
+    RespireStreamId NextStart,
+    RespireStreamEntry[] Entries,
+    RespireStreamId[] DeletedIds);
+
 /// <summary>Stream metadata returned by Redis XINFO STREAM.</summary>
 public readonly record struct RespireStreamInfo(
     long Length,
@@ -394,6 +400,36 @@ public interface IStreamCommands
         string? consumer = null,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Claims pending entries by id for a consumer. Redis: XCLAIM.</summary>
+    ValueTask<RespireStreamEntry[]> ClaimAsync(
+        RespireKey key,
+        string group,
+        string consumer,
+        TimeSpan minIdle,
+        params ReadOnlySpan<RespireStreamId> ids)
+        => throw new NotSupportedException("Stream entry claiming is not implemented.");
+
+    /// <summary>Claims pending entries by id for a consumer. Redis: XCLAIM.</summary>
+    ValueTask<RespireStreamEntry[]> ClaimAsync(
+        RespireKey key,
+        string group,
+        string consumer,
+        TimeSpan minIdle,
+        ReadOnlySpan<RespireStreamId> ids,
+        CancellationToken cancellationToken)
+        => throw new NotSupportedException("Stream entry claiming is not implemented.");
+
+    /// <summary>Scans and claims idle pending entries for a consumer. Redis: XAUTOCLAIM.</summary>
+    ValueTask<RespireStreamClaimResult> ClaimPendingAsync(
+        RespireKey key,
+        string group,
+        string consumer,
+        TimeSpan minIdle,
+        RespireStreamId? start = null,
+        int count = 100,
+        CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Automatic stream entry claiming is not implemented.");
+
     /// <summary>Returns stream metadata. Redis: XINFO STREAM.</summary>
     ValueTask<RespireStreamInfo> GetInfoAsync(
         RespireKey key,
@@ -419,6 +455,17 @@ public interface IStreamCommands
     /// </summary>
     IAsyncEnumerable<RespireStreamEntry> ReadGroupAsync(
         RespireKey key, string group, string consumer, int batchSize = 64, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Replays this consumer's pending entries from an explicit id, or continuously reads new
+    /// entries when <paramref name="startAt"/> is null. Redis: XREADGROUP.
+    /// </summary>
+    IAsyncEnumerable<RespireStreamEntry> ReadGroupAsync(
+        RespireKey key, string group, string consumer, RespireStreamId? startAt,
+        int batchSize = 64, CancellationToken cancellationToken = default)
+        => startAt is null
+            ? ReadGroupAsync(key, group, consumer, batchSize, cancellationToken)
+            : throw new NotSupportedException("Consumer pending-entry replay is not implemented.");
 }
 
 internal sealed class StreamCommands(RespireClient client) : IStreamCommands
@@ -430,6 +477,8 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
     private static readonly Verb XGroupDelConsumer = new("XGROUP DELCONSUMER");
     private static readonly Verb XGroupSetId = new("XGROUP SETID");
     private static readonly Verb XPending = new("XPENDING");
+    private static readonly Verb XClaim = new("XCLAIM");
+    private static readonly Verb XAutoClaim = new("XAUTOCLAIM");
     private static readonly Verb XInfoStream = new("XINFO STREAM");
     private static readonly Verb XInfoGroups = new("XINFO GROUPS");
     private static readonly Verb XInfoConsumers = new("XINFO CONSUMERS");
@@ -693,6 +742,84 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
         }
     }
 
+    public ValueTask<RespireStreamEntry[]> ClaimAsync(
+        RespireKey key,
+        string group,
+        string consumer,
+        TimeSpan minIdle,
+        params ReadOnlySpan<RespireStreamId> ids)
+        => ClaimAsync(key, group, consumer, minIdle, ids, CancellationToken.None);
+
+    public ValueTask<RespireStreamEntry[]> ClaimAsync(
+        RespireKey key,
+        string group,
+        string consumer,
+        TimeSpan minIdle,
+        ReadOnlySpan<RespireStreamId> ids,
+        CancellationToken cancellationToken)
+    {
+        RequireIds(ids);
+        var resolvedKey = client.Key(in key);
+        var args = new RespireValue[3 + ids.Length];
+        args[0] = group;
+        args[1] = consumer;
+        args[2] = ToMilliseconds(minIdle, nameof(minIdle));
+        for (var i = 0; i < ids.Length; i++)
+        {
+            args[3 + i] = ids[i].Value;
+        }
+
+        return ClaimCoreAsync(new Cmd1N(XClaim, resolvedKey, args), resolvedKey, group, cancellationToken);
+    }
+
+    private async ValueTask<RespireStreamEntry[]> ClaimCoreAsync(
+        Cmd1N command, RespireValue resolvedKey, string group, CancellationToken cancellationToken)
+    {
+        var reply = await client.SendAsync("XCLAIM", command, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return ParseEntries(in reply, client, resolvedKey, group);
+        }
+        finally
+        {
+            reply.Dispose();
+        }
+    }
+
+    public async ValueTask<RespireStreamClaimResult> ClaimPendingAsync(
+        RespireKey key,
+        string group,
+        string consumer,
+        TimeSpan minIdle,
+        RespireStreamId? start = null,
+        int count = 100,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(count);
+        var resolvedKey = client.Key(in key);
+        var reply = await client.SendAsync(
+            "XAUTOCLAIM",
+            new CmdN(XAutoClaim,
+            [
+                resolvedKey,
+                group,
+                consumer,
+                ToMilliseconds(minIdle, nameof(minIdle)),
+                (start ?? RespireStreamId.Beginning).Value,
+                "COUNT",
+                count,
+            ]),
+            cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return ParseClaimResult(in reply, resolvedKey, group);
+        }
+        finally
+        {
+            reply.Dispose();
+        }
+    }
+
     public async ValueTask<RespireStreamInfo> GetInfoAsync(
         RespireKey key,
         CancellationToken cancellationToken = default)
@@ -747,6 +874,7 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
         RespireKey key, string group, string consumer, int batchSize = 64,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
         var resolvedKey = client.Key(in key);
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -767,12 +895,85 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
                 continue;
             }
 
-            var entries = ParseReadReply(in reply, resolvedKey, group);
-            reply.Dispose();
+            RespireStreamEntry[] entries;
+            try
+            {
+                entries = ParseReadReply(in reply, resolvedKey, group);
+            }
+            finally
+            {
+                reply.Dispose();
+            }
+
             foreach (var entry in entries)
             {
                 yield return entry;
             }
+        }
+    }
+
+    public async IAsyncEnumerable<RespireStreamEntry> ReadGroupAsync(
+        RespireKey key, string group, string consumer, RespireStreamId? startAt,
+        int batchSize = 64,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
+        if (startAt is null)
+        {
+            await foreach (var entry in ReadGroupAsync(key, group, consumer, batchSize, cancellationToken)
+                .ConfigureAwait(false))
+            {
+                yield return entry;
+            }
+
+            yield break;
+        }
+
+        var resolvedKey = client.Key(in key);
+        var cursor = startAt.Value;
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var reply = await client.SendAsync(
+                "XREADGROUP",
+                new CmdN(Verbs.XReadGroup,
+                [
+                    "GROUP", group, consumer,
+                    "COUNT", batchSize,
+                    "STREAMS", resolvedKey, cursor.Value,
+                ]),
+                cancellationToken).ConfigureAwait(false);
+            if (reply.IsNull)
+            {
+                reply.Dispose();
+                yield break;
+            }
+
+            RespireStreamEntry[] entries;
+            try
+            {
+                entries = ParseReadReply(in reply, resolvedKey, group);
+            }
+            finally
+            {
+                reply.Dispose();
+            }
+
+            if (entries.Length == 0)
+            {
+                yield break;
+            }
+
+            foreach (var entry in entries)
+            {
+                yield return entry;
+            }
+
+            if (entries[^1].Id == cursor)
+            {
+                yield break;
+            }
+
+            cursor = entries[^1].Id;
         }
     }
 
@@ -807,6 +1008,34 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
         }
 
         return entries;
+    }
+
+    private RespireStreamClaimResult ParseClaimResult(
+        in RespValue reply, RespireValue resolvedKey, string group)
+    {
+        var values = reply.AsArray();
+        var nextStart = values.Length > 0
+            ? new RespireStreamId(values[0].AsString())
+            : RespireStreamId.Beginning;
+        var entries = values.Length > 1
+            ? ParseEntries(in values[1], client, resolvedKey, group)
+            : [];
+        var deletedIds = values.Length > 2
+            ? ParseStreamIds(in values[2])
+            : [];
+        return new RespireStreamClaimResult(nextStart, entries, deletedIds);
+    }
+
+    private static RespireStreamId[] ParseStreamIds(in RespValue value)
+    {
+        var values = value.AsArray();
+        var ids = new RespireStreamId[values.Length];
+        for (var i = 0; i < values.Length; i++)
+        {
+            ids[i] = new RespireStreamId(values[i].AsString());
+        }
+
+        return ids;
     }
 
     private static RespireStreamEntry ParseEntry(
@@ -1072,5 +1301,15 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
         {
             throw new ArgumentException("At least one stream id is required.", nameof(ids));
         }
+    }
+
+    private static long ToMilliseconds(TimeSpan value, string parameterName)
+    {
+        if (value < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(parameterName, "Minimum idle time must be non-negative.");
+        }
+
+        return (long)value.TotalMilliseconds;
     }
 }

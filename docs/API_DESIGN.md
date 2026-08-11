@@ -313,6 +313,12 @@ Pass `StreamAddOptions` to select an id, trim with `MAXLEN`, or require an exist
 The options overload returns `null` when `CreateStream` is false and the stream is absent.
 `RangeAsync(..., descending: true)` reads the newest matching entries first with `XREVRANGE`.
 
+Consumer recovery is typed as well. `ClaimAsync` transfers known pending ids with `XCLAIM`;
+`ClaimPendingAsync` scans idle entries with `XAUTOCLAIM` and returns the next scan position,
+claimed entries, and ids Redis reports as deleted. Passing an explicit `startAt` to
+`ReadGroupAsync` replays that consumer's own PEL from the id and then completes; leaving it null
+keeps the blocking new-entry loop.
+
 ## 9. Blocking commands are supported, transparently
 
 BLPOP/BRPOP/BLMOVE/XREAD-block are *forbidden* in SE.Redis because of multiplexing. We

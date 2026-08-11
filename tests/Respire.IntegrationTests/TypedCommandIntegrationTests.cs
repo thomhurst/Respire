@@ -36,6 +36,55 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    public async Task StreamConsumerRecovery_RoundTripsClaimsAndPendingReplay()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        var suffix = Guid.NewGuid().ToString("N");
+        var key = $"stream:recovery:{suffix}";
+        var group = $"workers:{suffix}";
+
+        await client.Streams.AddAsync(key, new StreamAddOptions { Id = "1-0" }, ("type", "first"));
+        await client.Streams.AddAsync(key, new StreamAddOptions { Id = "2-0" }, ("type", "second"));
+        (await client.Streams.CreateGroupAsync(key, group, RespireStreamId.Beginning)).Should().BeTrue();
+
+        var delivered = new List<RespireStreamEntry>();
+        await foreach (var entry in client.Streams.ReadGroupAsync(key, group, "alice", batchSize: 2))
+        {
+            delivered.Add(entry);
+            if (delivered.Count == 2)
+            {
+                break;
+            }
+        }
+
+        var claimed = await client.Streams.ClaimAsync(
+            key, group, "bob", TimeSpan.Zero, delivered[0].Id);
+        claimed.Should().ContainSingle();
+        claimed[0].GetString("type").Should().Be("first");
+
+        var autoClaimed = await client.Streams.ClaimPendingAsync(
+            key, group, "bob", TimeSpan.Zero, count: 10);
+        autoClaimed.NextStart.Should().Be((RespireStreamId)"0-0");
+        autoClaimed.Entries.Select(entry => entry.Id).Should().Equal("1-0", "2-0");
+        autoClaimed.DeletedIds.Should().BeEmpty();
+
+        var replayed = new List<RespireStreamEntry>();
+        await foreach (var entry in client.Streams.ReadGroupAsync(
+            key, group, "bob", startAt: RespireStreamId.Beginning, batchSize: 10))
+        {
+            replayed.Add(entry);
+        }
+
+        replayed.Select(entry => entry.Id).Should().Equal("1-0", "2-0");
+        (await client.Streams.AcknowledgeAsync(key, group, replayed.Select(entry => entry.Id).ToArray()))
+            .Should().Be(2);
+        (await client.Streams.GetPendingSummaryAsync(key, group)).Count.Should().Be(0);
+
+        (await client.Streams.DeleteGroupAsync(key, group)).Should().BeTrue();
+        await client.DeleteAsync(key);
+    }
+
+    [Test]
     public async Task KeyCommands_RoundTripConditionalCopyAndTypedScan()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
