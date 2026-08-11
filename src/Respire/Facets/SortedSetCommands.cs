@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Serialization;
@@ -9,9 +10,146 @@ namespace Respire;
 /// <summary>A sorted-set member with its score.</summary>
 public readonly record struct SortedSetEntry(string Member, double Score);
 
+/// <summary>An inclusive or exclusive score boundary used by sorted-set range commands.</summary>
+public readonly record struct RespireScoreBound
+{
+    private RespireScoreBound(double value, bool exclusive)
+    {
+        if (double.IsNaN(value))
+        {
+            throw new ArgumentOutOfRangeException(nameof(value), "A score boundary cannot be NaN.");
+        }
+        if (exclusive && double.IsInfinity(value))
+        {
+            throw new ArgumentOutOfRangeException(nameof(value), "An infinite score boundary cannot be exclusive.");
+        }
+
+        Value = value;
+        IsExclusive = exclusive;
+    }
+
+    /// <summary>The numeric boundary value.</summary>
+    public double Value { get; }
+
+    /// <summary>Whether the boundary excludes <see cref="Value"/>.</summary>
+    public bool IsExclusive { get; }
+
+    /// <summary>Negative infinity.</summary>
+    public static RespireScoreBound Min => new(double.NegativeInfinity, exclusive: false);
+
+    /// <summary>Positive infinity.</summary>
+    public static RespireScoreBound Max => new(double.PositiveInfinity, exclusive: false);
+
+    /// <summary>Creates an inclusive score boundary.</summary>
+    public static RespireScoreBound Inclusive(double value) => new(value, exclusive: false);
+
+    /// <summary>Creates an exclusive, finite score boundary.</summary>
+    public static RespireScoreBound Exclusive(double value) => new(value, exclusive: true);
+
+    /// <summary>Creates an inclusive score boundary.</summary>
+    public static implicit operator RespireScoreBound(double value) => Inclusive(value);
+
+    internal RespireValue ToRespireValue()
+    {
+        if (double.IsNegativeInfinity(Value))
+        {
+            return "-inf";
+        }
+
+        if (double.IsPositiveInfinity(Value))
+        {
+            return "+inf";
+        }
+
+        return string.Concat(
+            IsExclusive ? "(" : null,
+            Value.ToString("R", CultureInfo.InvariantCulture));
+    }
+}
+
+/// <summary>A minimum and maximum score boundary.</summary>
+public readonly record struct RespireScoreRange(RespireScoreBound Minimum, RespireScoreBound Maximum)
+{
+    /// <summary>Creates an inclusive score range.</summary>
+    public RespireScoreRange(double minimum, double maximum)
+        : this((RespireScoreBound)minimum, (RespireScoreBound)maximum)
+    {
+    }
+
+    /// <summary>All possible scores.</summary>
+    public static RespireScoreRange All => new(RespireScoreBound.Min, RespireScoreBound.Max);
+}
+
+/// <summary>An inclusive or exclusive member boundary used by lexicographical sorted-set ranges.</summary>
+public readonly record struct RespireLexBound
+{
+    private const byte InclusiveKind = 0;
+    private const byte ExclusiveKind = 1;
+    private const byte MinimumKind = 2;
+    private const byte MaximumKind = 3;
+
+    private readonly byte _kind;
+
+    private RespireLexBound(string? value, byte kind)
+    {
+        if (kind <= ExclusiveKind)
+        {
+            ArgumentNullException.ThrowIfNull(value);
+        }
+
+        Value = value;
+        _kind = kind;
+    }
+
+    /// <summary>The member value, or null for an infinite boundary.</summary>
+    public string? Value { get; }
+
+    /// <summary>Whether this finite boundary excludes <see cref="Value"/>.</summary>
+    public bool IsExclusive => _kind == ExclusiveKind;
+
+    /// <summary>Negative infinity.</summary>
+    public static RespireLexBound Min => new(null, MinimumKind);
+
+    /// <summary>Positive infinity.</summary>
+    public static RespireLexBound Max => new(null, MaximumKind);
+
+    /// <summary>Creates an inclusive member boundary.</summary>
+    public static RespireLexBound Inclusive(string value) => new(value, InclusiveKind);
+
+    /// <summary>Creates an exclusive member boundary.</summary>
+    public static RespireLexBound Exclusive(string value) => new(value, ExclusiveKind);
+
+    /// <summary>Creates an inclusive member boundary.</summary>
+    public static implicit operator RespireLexBound(string value) => Inclusive(value);
+
+    internal RespireValue ToRespireValue()
+        => _kind switch
+        {
+            MinimumKind => "-",
+            MaximumKind => "+",
+            ExclusiveKind => string.Concat("(", Value),
+            _ when Value is not null => string.Concat("[", Value),
+            _ => throw new InvalidOperationException("A default RespireLexBound is not valid."),
+        };
+}
+
+/// <summary>A minimum and maximum lexicographical member boundary.</summary>
+public readonly record struct RespireLexRange(RespireLexBound Minimum, RespireLexBound Maximum)
+{
+    /// <summary>Creates an inclusive lexicographical range.</summary>
+    public RespireLexRange(string minimum, string maximum)
+        : this((RespireLexBound)minimum, (RespireLexBound)maximum)
+    {
+    }
+
+    /// <summary>All possible members.</summary>
+    public static RespireLexRange All => new(RespireLexBound.Min, RespireLexBound.Max);
+}
+
 /// <summary>
 /// Sorted set (score-ordered members) commands. Collection cardinality uses
-/// <see cref="CountAsync"/>; score-range cardinality uses <see cref="CountByScoreAsync"/>.
+/// <see cref="CountAsync"/>; score-range cardinality uses
+/// <see cref="CountByScoreAsync(RespireKey, double, double, CancellationToken)"/>.
 /// </summary>
 public interface ISortedSetCommands
 {
@@ -71,12 +209,22 @@ public interface ISortedSetCommands
     ValueTask<long> RemoveRangeByScoreAsync(
         RespireKey key, double min, double max, CancellationToken cancellationToken = default);
 
+    /// <summary>Removes members whose scores are within the range. Redis: ZREMRANGEBYSCORE.</summary>
+    ValueTask<long> RemoveRangeByScoreAsync(
+        RespireKey key, RespireScoreRange range, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Typed sorted-set score ranges are not implemented.");
+
     /// <summary>Removes members whose ranks are within the inclusive range. Redis: ZREMRANGEBYRANK.</summary>
     ValueTask<long> RemoveRangeByRankAsync(
         RespireKey key, long start, long stop, CancellationToken cancellationToken = default);
 
     /// <summary>Members with scores within the inclusive range. Redis: ZCOUNT.</summary>
     ValueTask<long> CountByScoreAsync(RespireKey key, double min, double max, CancellationToken cancellationToken = default);
+
+    /// <summary>Number of members whose scores are within the range. Redis: ZCOUNT.</summary>
+    ValueTask<long> CountByScoreAsync(
+        RespireKey key, RespireScoreRange range, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Typed sorted-set score ranges are not implemented.");
 
     /// <summary>The member's 0-based rank, or null when absent. Redis: ZRANK / ZREVRANK.</summary>
     ValueTask<long?> RankAsync(RespireKey key, RespireValue member, bool descending = false, CancellationToken cancellationToken = default);
@@ -92,6 +240,44 @@ public interface ISortedSetCommands
     /// <summary>Members with scores within the inclusive score range. Redis: ZRANGE BYSCORE.</summary>
     ValueTask<string[]> RangeByScoreAsync(
         RespireKey key, double min, double max, bool descending = false, CancellationToken cancellationToken = default);
+
+    /// <summary>Members within a score range, optionally paged. Redis: ZRANGE BYSCORE.</summary>
+    ValueTask<string[]> RangeByScoreAsync(
+        RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
+        bool descending = false, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Typed sorted-set score ranges are not implemented.");
+
+    /// <summary>Members and scores within a score range, optionally paged. Redis: ZRANGE BYSCORE WITHSCORES.</summary>
+    ValueTask<SortedSetEntry[]> RangeByScoreWithScoresAsync(
+        RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
+        bool descending = false, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Sorted-set score ranges with scores are not implemented.");
+
+    /// <summary>Members within a lexicographical range, optionally paged. Redis: ZRANGE BYLEX.</summary>
+    ValueTask<string[]> RangeByLexAsync(
+        RespireKey key, RespireLexRange range, long offset = 0, long? count = null,
+        bool descending = false, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Sorted-set lexicographical ranges are not implemented.");
+
+    /// <summary>Stores a rank range in another sorted set. Redis: ZRANGESTORE.</summary>
+    ValueTask<long> StoreRangeAsync(
+        RespireKey destination, RespireKey source, long start = 0, long stop = -1,
+        bool descending = false, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Sorted-set range storage is not implemented.");
+
+    /// <summary>Stores a score range in another sorted set. Redis: ZRANGESTORE BYSCORE.</summary>
+    ValueTask<long> StoreRangeByScoreAsync(
+        RespireKey destination, RespireKey source, RespireScoreRange range,
+        long offset = 0, long? count = null, bool descending = false,
+        CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Sorted-set score-range storage is not implemented.");
+
+    /// <summary>Stores a lexicographical range in another sorted set. Redis: ZRANGESTORE BYLEX.</summary>
+    ValueTask<long> StoreRangeByLexAsync(
+        RespireKey destination, RespireKey source, RespireLexRange range,
+        long offset = 0, long? count = null, bool descending = false,
+        CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Sorted-set lexicographical range storage is not implemented.");
 }
 
 internal sealed class SortedSetCommands(RespireClient client) : ISortedSetCommands
@@ -171,9 +357,17 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
 
     public ValueTask<long> RemoveRangeByScoreAsync(
         RespireKey key, double min, double max, CancellationToken cancellationToken = default)
+        => RemoveRangeByScoreAsync(key, new RespireScoreRange(min, max), cancellationToken);
+
+    public ValueTask<long> RemoveRangeByScoreAsync(
+        RespireKey key, RespireScoreRange range, CancellationToken cancellationToken = default)
         => client.IntegerAsync(
             "ZREMRANGEBYSCORE",
-            new Cmd3(RespireCommands.SortedSet.ZREMRANGEBYSCORE.Verb, client.Key(in key), min, max),
+            new Cmd3(
+                RespireCommands.SortedSet.ZREMRANGEBYSCORE.Verb,
+                client.Key(in key),
+                range.Minimum.ToRespireValue(),
+                range.Maximum.ToRespireValue()),
             cancellationToken);
 
     public ValueTask<long> RemoveRangeByRankAsync(
@@ -184,7 +378,18 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
             cancellationToken);
 
     public ValueTask<long> CountByScoreAsync(RespireKey key, double min, double max, CancellationToken cancellationToken = default)
-        => client.IntegerAsync("ZCOUNT", new Cmd3(Verbs.ZCount, client.Key(in key), min, max), cancellationToken);
+        => CountByScoreAsync(key, new RespireScoreRange(min, max), cancellationToken);
+
+    public ValueTask<long> CountByScoreAsync(
+        RespireKey key, RespireScoreRange range, CancellationToken cancellationToken = default)
+        => client.IntegerAsync(
+            "ZCOUNT",
+            new Cmd3(
+                Verbs.ZCount,
+                client.Key(in key),
+                range.Minimum.ToRespireValue(),
+                range.Maximum.ToRespireValue()),
+            cancellationToken);
 
     public ValueTask<long?> RankAsync(
         RespireKey key, RespireValue member, bool descending = false, CancellationToken cancellationToken = default)
@@ -219,12 +424,139 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
 
     public ValueTask<string[]> RangeByScoreAsync(
         RespireKey key, double min, double max, bool descending = false, CancellationToken cancellationToken = default)
-        => descending
-            // With REV the bounds swap: ZRANGE key max min BYSCORE REV.
-            ? client.StringArrayAsync(
-                "ZRANGE", new Cmd5(Verbs.ZRange, client.Key(in key), max, min, "BYSCORE", "REV"), cancellationToken)
-            : client.StringArrayAsync(
-                "ZRANGE", new Cmd4(Verbs.ZRange, client.Key(in key), min, max, "BYSCORE"), cancellationToken);
+        => RangeByScoreAsync(
+            key, new RespireScoreRange(min, max), descending: descending, cancellationToken: cancellationToken);
+
+    public ValueTask<string[]> RangeByScoreAsync(
+        RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
+        bool descending = false, CancellationToken cancellationToken = default)
+        => client.StringArrayAsync(
+            "ZRANGE",
+            new Cmd1N(
+                Verbs.ZRange,
+                client.Key(in key),
+                RangeArguments(
+                    range.Minimum.ToRespireValue(), range.Maximum.ToRespireValue(),
+                    "BYSCORE", offset, count, descending, withScores: false)),
+            cancellationToken);
+
+    public async ValueTask<SortedSetEntry[]> RangeByScoreWithScoresAsync(
+        RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
+        bool descending = false, CancellationToken cancellationToken = default)
+    {
+        var reply = await client.SendAsync(
+            "ZRANGE",
+            new Cmd1N(
+                Verbs.ZRange,
+                client.Key(in key),
+                RangeArguments(
+                    range.Minimum.ToRespireValue(), range.Maximum.ToRespireValue(),
+                    "BYSCORE", offset, count, descending, withScores: true)),
+            cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return ParseEntries(in reply);
+        }
+        finally
+        {
+            reply.Dispose();
+        }
+    }
+
+    public ValueTask<string[]> RangeByLexAsync(
+        RespireKey key, RespireLexRange range, long offset = 0, long? count = null,
+        bool descending = false, CancellationToken cancellationToken = default)
+        => client.StringArrayAsync(
+            "ZRANGE",
+            new Cmd1N(
+                Verbs.ZRange,
+                client.Key(in key),
+                RangeArguments(
+                    range.Minimum.ToRespireValue(), range.Maximum.ToRespireValue(),
+                    "BYLEX", offset, count, descending, withScores: false)),
+            cancellationToken);
+
+    public ValueTask<long> StoreRangeAsync(
+        RespireKey destination, RespireKey source, long start = 0, long stop = -1,
+        bool descending = false, CancellationToken cancellationToken = default)
+        => client.IntegerAsync(
+            "ZRANGESTORE",
+            new Cmd2N(
+                RespireCommands.SortedSet.ZRANGESTORE.Verb,
+                client.Key(in destination),
+                client.Key(in source),
+                descending ? [start, stop, "REV"] : [start, stop]),
+            cancellationToken);
+
+    public ValueTask<long> StoreRangeByScoreAsync(
+        RespireKey destination, RespireKey source, RespireScoreRange range,
+        long offset = 0, long? count = null, bool descending = false,
+        CancellationToken cancellationToken = default)
+        => StoreRangeCoreAsync(
+            destination, source,
+            range.Minimum.ToRespireValue(), range.Maximum.ToRespireValue(),
+            "BYSCORE", offset, count, descending, cancellationToken);
+
+    public ValueTask<long> StoreRangeByLexAsync(
+        RespireKey destination, RespireKey source, RespireLexRange range,
+        long offset = 0, long? count = null, bool descending = false,
+        CancellationToken cancellationToken = default)
+        => StoreRangeCoreAsync(
+            destination, source,
+            range.Minimum.ToRespireValue(), range.Maximum.ToRespireValue(),
+            "BYLEX", offset, count, descending, cancellationToken);
+
+    private ValueTask<long> StoreRangeCoreAsync(
+        RespireKey destination, RespireKey source, RespireValue minimum, RespireValue maximum,
+        string mode, long offset, long? count, bool descending, CancellationToken cancellationToken)
+        => client.IntegerAsync(
+            "ZRANGESTORE",
+            new Cmd2N(
+                RespireCommands.SortedSet.ZRANGESTORE.Verb,
+                client.Key(in destination),
+                client.Key(in source),
+                RangeArguments(minimum, maximum, mode, offset, count, descending, withScores: false)),
+            cancellationToken);
+
+    internal static RespireValue[] RangeArguments(
+        RespireValue minimum, RespireValue maximum, string mode,
+        long offset, long? count, bool descending, bool withScores)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        if (count is { } value)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(value);
+        }
+        else if (offset != 0)
+        {
+            throw new ArgumentException("A count is required when offset is non-zero.", nameof(count));
+        }
+
+        var argumentCount = 3 + (descending ? 1 : 0) + (count.HasValue ? 3 : 0) + (withScores ? 1 : 0);
+        var arguments = new RespireValue[argumentCount];
+        var index = 0;
+        arguments[index++] = descending ? maximum : minimum;
+        arguments[index++] = descending ? minimum : maximum;
+        arguments[index++] = mode;
+        if (descending)
+        {
+            arguments[index++] = "REV";
+        }
+
+        if (count is { } pageSize)
+        {
+            arguments[index++] = "LIMIT";
+            arguments[index++] = offset;
+            arguments[index++] = pageSize;
+        }
+
+        if (withScores)
+        {
+            arguments[index] = "WITHSCORES";
+        }
+
+        return arguments;
+    }
 
     /// <summary>WITHSCORES replies alternate member,score (RESP2 flat array; RESP3 pairs are flattened too).</summary>
     internal static SortedSetEntry[] ParseEntries(in RespValue reply)

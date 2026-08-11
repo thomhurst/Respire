@@ -52,7 +52,31 @@ SortedSetEntry[] top = await redis.SortedSets.RangeWithScoresAsync(
     start: 0,
     stop: 9,
     descending: true);
+
+var finalists = new RespireScoreRange(
+    RespireScoreBound.Exclusive(90),
+    RespireScoreBound.Max);
+SortedSetEntry[] page = await redis.SortedSets.RangeByScoreWithScoresAsync(
+    "scores",
+    finalists,
+    offset: 0,
+    count: 10,
+    descending: true);
+
+var names = new RespireLexRange("a", RespireLexBound.Exclusive("m"));
+string[] alphabetical = await redis.SortedSets.RangeByLexAsync("names", names);
+long stored = await redis.SortedSets.StoreRangeByScoreAsync(
+    "finalists",
+    "scores",
+    finalists,
+    count: 100,
+    descending: true);
 ```
+
+Score and lex boundaries are inclusive by default. Use `Exclusive(...)` for an open boundary,
+or `Min` / `Max` for negative and positive infinity. Supplying `offset` requires `count` because
+Redis emits them together as `LIMIT offset count`. The same range APIs are available on batches
+and transactions without the `Async` suffix.
 
 ## Streams
 

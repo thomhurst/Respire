@@ -154,6 +154,52 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    public async Task SortedSetAdvancedRanges_RoundTripAgainstRedis()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        var prefix = $"ranges:{Guid.NewGuid():N}:";
+        var scores = prefix + "scores";
+        var lex = prefix + "lex";
+        var rankStore = prefix + "rank-store";
+        var scoreStore = prefix + "score-store";
+        var lexStore = prefix + "lex-store";
+
+        await client.SortedSets.AddAsync(
+            scores,
+            new SortedSetEntry("one", 1),
+            new SortedSetEntry("two", 2),
+            new SortedSetEntry("three", 3),
+            new SortedSetEntry("four", 4));
+        await client.SortedSets.AddAsync(
+            lex,
+            new SortedSetEntry("alpha", 0),
+            new SortedSetEntry("beta", 0),
+            new SortedSetEntry("omega", 0),
+            new SortedSetEntry("zulu", 0));
+
+        var aboveOne = new RespireScoreRange(RespireScoreBound.Exclusive(1), RespireScoreBound.Max);
+        (await client.SortedSets.RangeByScoreAsync(scores, aboveOne, offset: 1, count: 2))
+            .Should().Equal("three", "four");
+        (await client.SortedSets.RangeByScoreWithScoresAsync(
+            scores, new RespireScoreRange(2, double.PositiveInfinity), count: 2, descending: true))
+            .Should().Equal(new SortedSetEntry("four", 4), new SortedSetEntry("three", 3));
+        (await client.SortedSets.CountByScoreAsync(scores, aboveOne)).Should().Be(3);
+
+        var middle = new RespireLexRange("beta", RespireLexBound.Exclusive("zulu"));
+        (await client.SortedSets.RangeByLexAsync(lex, middle)).Should().Equal("beta", "omega");
+
+        (await client.SortedSets.StoreRangeAsync(rankStore, scores, 0, 1, descending: true)).Should().Be(2);
+        (await client.SortedSets.RangeAsync(rankStore, descending: true)).Should().Equal("four", "three");
+        (await client.SortedSets.StoreRangeByScoreAsync(scoreStore, scores, aboveOne, count: 2)).Should().Be(2);
+        (await client.SortedSets.RangeAsync(scoreStore)).Should().Equal("two", "three");
+        (await client.SortedSets.StoreRangeByLexAsync(lexStore, lex, middle)).Should().Be(2);
+        (await client.SortedSets.RangeAsync(lexStore)).Should().Equal("beta", "omega");
+
+        (await client.SortedSets.RemoveRangeByScoreAsync(scores, aboveOne)).Should().Be(3);
+        await client.DeleteAsync(scores, lex, rankStore, scoreStore, lexStore);
+    }
+
+    [Test]
     public async Task GeoCommands_RoundTripAgainstRedis()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
