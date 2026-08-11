@@ -97,7 +97,7 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
 
         var batch = client.CreateBatch();
-        var bitSet = batch.Bitmaps.GetAndSet("batch:bits", 4, true);
+        var bitSet = batch.Bitmaps.Set("batch:bits", 4, true);
         var bitCount = batch.Bitmaps.Count("batch:bits");
         var bitPosition = batch.Bitmaps.Position("batch:bits", true);
         var hllAdded = batch.HyperLogLog.Add("batch:hll", "ada", "grace");

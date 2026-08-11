@@ -1,6 +1,7 @@
+using System.Buffers.Text;
+using System.Globalization;
 using Respire.Commands;
 using Respire.Protocol;
-using System.Globalization;
 
 namespace Respire;
 
@@ -55,6 +56,46 @@ public enum BitFieldOverflow
     Fail,
 }
 
+/// <summary>A signed or unsigned integer encoding used by Redis BITFIELD.</summary>
+public readonly record struct BitFieldEncoding
+{
+    private BitFieldEncoding(bool isSigned, int width)
+    {
+        IsSigned = isSigned;
+        Width = width;
+    }
+
+    /// <summary>Whether the field is signed.</summary>
+    public bool IsSigned { get; }
+
+    /// <summary>The field width in bits.</summary>
+    public int Width { get; }
+
+    /// <summary>Creates a signed encoding from 1 through 64 bits.</summary>
+    public static BitFieldEncoding Signed(int width)
+    {
+        if (width is < 1 or > 64)
+        {
+            throw new ArgumentOutOfRangeException(nameof(width), width, "Signed width must be from 1 through 64.");
+        }
+
+        return new(true, width);
+    }
+
+    /// <summary>Creates an unsigned encoding from 1 through 63 bits.</summary>
+    public static BitFieldEncoding Unsigned(int width)
+    {
+        if (width is < 1 or > 63)
+        {
+            throw new ArgumentOutOfRangeException(nameof(width), width, "Unsigned width must be from 1 through 63.");
+        }
+
+        return new(false, width);
+    }
+
+    internal bool IsValid => Width > 0;
+}
+
 /// <summary>One GET, SET, INCRBY, or OVERFLOW operation inside Redis BITFIELD.</summary>
 public readonly struct BitFieldOperation
 {
@@ -65,6 +106,19 @@ public readonly struct BitFieldOperation
         Offset = offset;
         Value = value;
         Overflow = overflow;
+        StructuredEncoding = default;
+        OffsetInFieldUnits = false;
+    }
+
+    private BitFieldOperation(BitFieldEncoding encoding, long offset, bool offsetInFieldUnits)
+    {
+        Command = "GET";
+        Encoding = null;
+        Offset = null;
+        Value = offset;
+        Overflow = null;
+        StructuredEncoding = encoding;
+        OffsetInFieldUnits = offsetInFieldUnits;
     }
 
     internal string Command { get; }
@@ -72,11 +126,27 @@ public readonly struct BitFieldOperation
     internal string? Offset { get; }
     internal long Value { get; }
     internal BitFieldOverflow? Overflow { get; }
+    internal BitFieldEncoding StructuredEncoding { get; }
+    internal bool OffsetInFieldUnits { get; }
+    internal bool HasStructuredArguments => StructuredEncoding.IsValid;
     internal int TokenCount => Command == "OVERFLOW" ? 2 : Command == "GET" ? 3 : 4;
 
     /// <summary>Reads a signed or unsigned field. Redis: BITFIELD GET.</summary>
     public static BitFieldOperation Get(string encoding, string offset)
         => ValueOperation("GET", encoding, offset, 0);
+
+    /// <summary>Reads a typed signed or unsigned field. Redis: BITFIELD GET.</summary>
+    public static BitFieldOperation Get(
+        BitFieldEncoding encoding, long offset, bool offsetInFieldUnits = false)
+    {
+        if (!encoding.IsValid)
+        {
+            throw new ArgumentException("Use BitFieldEncoding.Signed or Unsigned.", nameof(encoding));
+        }
+
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        return new(encoding, offset, offsetInFieldUnits);
+    }
 
     /// <summary>Writes a field and returns its previous value. Redis: BITFIELD SET.</summary>
     public static BitFieldOperation Set(string encoding, string offset, long value)
@@ -144,6 +214,11 @@ public interface IBitmapCommands
     ValueTask<bool> GetAsync(RespireKey key, long offset, CancellationToken cancellationToken = default);
 
     /// <summary>Sets the bit at an offset and returns its previous value. Redis: SETBIT.</summary>
+    ValueTask<bool> SetAsync(
+        RespireKey key, long offset, bool value, CancellationToken cancellationToken = default);
+
+    /// <summary>Sets the bit at an offset and returns its previous value. Redis: SETBIT.</summary>
+    [Obsolete("Use SetAsync; SETBIT returns the previous bit.")]
     ValueTask<bool> GetAndSetAsync(
         RespireKey key, long offset, bool value, CancellationToken cancellationToken = default);
 
@@ -195,13 +270,18 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
             "GETBIT", new Cmd2(RespireCommands.Bitmap.GETBIT.Verb, client.Key(in key), offset), cancellationToken);
     }
 
-    public ValueTask<bool> GetAndSetAsync(
+    public ValueTask<bool> SetAsync(
         RespireKey key, long offset, bool value, CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(offset);
         return client.FlagAsync(
             "SETBIT", new Cmd3(RespireCommands.Bitmap.SETBIT.Verb, client.Key(in key), offset, value), cancellationToken);
     }
+
+    [Obsolete("Use SetAsync; SETBIT returns the previous bit.")]
+    public ValueTask<bool> GetAndSetAsync(
+        RespireKey key, long offset, bool value, CancellationToken cancellationToken = default)
+        => SetAsync(key, offset, value, cancellationToken);
 
     public ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.IntegerAsync(
@@ -395,6 +475,8 @@ internal readonly struct BitFieldCommand(Verb verb, RespireValue key, BitFieldOp
         writer.WriteArrayHeader(verb.Tokens + tokenCount);
         writer.WriteRaw(verb.Bulk);
         key.WriteTo(ref writer);
+        Span<byte> encodingBuffer = stackalloc byte[3];
+        Span<byte> offsetBuffer = stackalloc byte[21];
         foreach (var operation in operations)
         {
             writer.WriteBulkString(operation.Command);
@@ -410,8 +492,30 @@ internal readonly struct BitFieldCommand(Verb verb, RespireValue key, BitFieldOp
                 continue;
             }
 
-            writer.WriteBulkString(operation.Encoding!);
-            writer.WriteBulkString(operation.Offset!);
+            if (operation.HasStructuredArguments)
+            {
+                encodingBuffer[0] = operation.StructuredEncoding.IsSigned ? (byte)'i' : (byte)'u';
+                Utf8Formatter.TryFormat(
+                    operation.StructuredEncoding.Width, encodingBuffer[1..], out var encodingLength);
+                writer.WriteBulkString(encodingBuffer[..(encodingLength + 1)]);
+
+                if (operation.OffsetInFieldUnits)
+                {
+                    offsetBuffer[0] = (byte)'#';
+                    Utf8Formatter.TryFormat(operation.Value, offsetBuffer[1..], out var offsetLength);
+                    writer.WriteBulkString(offsetBuffer[..(offsetLength + 1)]);
+                }
+                else
+                {
+                    writer.WriteBulkInteger(operation.Value);
+                }
+            }
+            else
+            {
+                writer.WriteBulkString(operation.Encoding!);
+                writer.WriteBulkString(operation.Offset!);
+            }
+
             if (operation.Command != "GET")
             {
                 writer.WriteBulkInteger(operation.Value);

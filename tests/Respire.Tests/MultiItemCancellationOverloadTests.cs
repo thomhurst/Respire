@@ -120,7 +120,7 @@ public class MultiItemCancellationOverloadTests
         (string Field, RespireValue Value)[] fieldValues = [("f1", "x")];
         SortedSetEntry[] entries = [new SortedSetEntry("m", 1)];
         GeoEntry[] geoEntries = [new GeoEntry(0, 0, "m")];
-        BitFieldOperation[] operations = [BitFieldOperation.Get("u8", "0")];
+        BitFieldOperation[] operations = [BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), 0)];
         RespireStreamId[] ids = [new RespireStreamId("1-1")];
         var expiry = TimeSpan.FromMinutes(1);
         var expireAt = DateTimeOffset.UtcNow;
