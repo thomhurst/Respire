@@ -7,20 +7,18 @@ using Respire.Serialization;
 namespace Respire;
 
 /// <summary>
-/// A MULTI/EXEC transaction. Commands serialize immediately into a pooled buffer as they are
-/// queued, each returning a <see cref="RespirePending{T}"/>; <see cref="CommitAsync"/> sends
-/// MULTI + commands + EXEC as one atomic append so no other multiplexed command can interleave
-/// into the server-side transaction, then completes every pending from EXEC's reply.
+/// Shared command-queue surface for MULTI/EXEC transactions. Commands serialize immediately
+/// into a pooled buffer and return <see cref="RespirePending{T}"/> values completed by commit.
 /// </summary>
 /// <remarks>
 /// Commands are grouped into the same facets as the client and a batch — see
 /// <see cref="RespireBatch"/> for what the deferred surface leaves out.
-/// Single-shot and not thread-safe: build, commit once, discard. When created with watch keys
-/// (<see cref="RespireClient.CreateTransactionAsync(ReadOnlySpan{RespireKey})"/>), the transaction owns a dedicated
-/// connection and <see cref="CommitAsync"/> returns false if a watched key changed. Always
-/// commit or dispose a transaction so its buffer and any dedicated connection are released.
+/// Single-shot and not thread-safe: build, commit once, discard. Always commit or dispose a
+/// transaction so its buffer is released. Concrete transactions expose different commit results:
+/// <see cref="RespireTransaction"/> cannot abort, while <see cref="RespireWatchedTransaction"/>
+/// reports a WATCH abort.
 /// </remarks>
-public sealed class RespireTransaction : IAsyncDisposable, IRespireCommandQueue, IPendingSink
+public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommandQueue, IPendingSink
 {
     private readonly RespireClient _client;
     private readonly RespireConnection? _watchConnection;
@@ -41,7 +39,7 @@ public sealed class RespireTransaction : IAsyncDisposable, IRespireCommandQueue,
     private IBatchGeoCommands? _geo;
     private IBatchScriptCommands? _scripts;
 
-    internal RespireTransaction(RespireClient client, RespireConnection? watchConnection)
+    internal RespireTransactionBase(RespireClient client, RespireConnection? watchConnection)
     {
         _client = client;
         _watchConnection = watchConnection;
@@ -222,12 +220,8 @@ public sealed class RespireTransaction : IAsyncDisposable, IRespireCommandQueue,
         return Add<TCommand, T>(operation, in command, convert);
     }
 
-    /// <summary>
-    /// Executes the transaction. Returns true when EXEC ran (pendings hold their results;
-    /// per-command runtime errors fault only that command's pending) and false when a watched
-    /// key changed and the whole transaction was discarded (pendings report aborted).
-    /// </summary>
-    public async ValueTask<bool> CommitAsync(CancellationToken cancellationToken = default)
+    /// <summary>Executes the shared transaction path and reports a watched abort.</summary>
+    private protected async ValueTask<bool> CommitCoreAsync(CancellationToken cancellationToken)
     {
         ThrowIfCompleted();
         _completed = true;
@@ -560,4 +554,46 @@ public sealed class RespireTransaction : IAsyncDisposable, IRespireCommandQueue,
 
         public override void Abort() => pending.Abort();
     }
+}
+
+/// <summary>
+/// An unwatched MULTI/EXEC transaction. Redis always executes a successfully queued EXEC, so
+/// commit has no result to inspect.
+/// </summary>
+public sealed class RespireTransaction : RespireTransactionBase
+{
+    internal RespireTransaction(RespireClient client)
+        : base(client, watchConnection: null)
+    {
+    }
+
+    /// <summary>
+    /// Executes the transaction. Pendings hold their results after EXEC; per-command runtime
+    /// errors fault only that command's pending.
+    /// </summary>
+    public async ValueTask CommitAsync(CancellationToken cancellationToken = default)
+    {
+        if (!await CommitCoreAsync(cancellationToken).ConfigureAwait(false))
+        {
+            throw new RespireProtocolException("An unwatched EXEC unexpectedly returned a null reply.");
+        }
+    }
+}
+
+/// <summary>
+/// A MULTI/EXEC transaction using WATCH for optimistic concurrency. A false commit result means
+/// a watched key changed and Redis discarded the transaction; queued pendings report aborted.
+/// </summary>
+public sealed class RespireWatchedTransaction : RespireTransactionBase
+{
+    internal RespireWatchedTransaction(RespireClient client, RespireConnection? watchConnection)
+        : base(client, watchConnection)
+    {
+    }
+
+    /// <summary>
+    /// Executes the transaction; returns false when a watched key changed before EXEC.
+    /// </summary>
+    public ValueTask<bool> CommitAsync(CancellationToken cancellationToken = default)
+        => CommitCoreAsync(cancellationToken);
 }

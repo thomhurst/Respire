@@ -78,15 +78,12 @@ await using RespireTransaction transaction = redis.CreateTransaction();
 RespirePending<long> balance = transaction.Increment("balance", -100);
 transaction.Lists.RightPush("audit", "withdraw:100");
 
-bool committed = await transaction.CommitAsync();
-
-if (committed)
-{
-    Console.WriteLine(balance.Result);
-}
+await transaction.CommitAsync();
+Console.WriteLine(balance.Result);
 ```
 
-The transaction stays on one connection and maps to `MULTI` / `EXEC`.
+The transaction stays on one connection and maps to `MULTI` / `EXEC`. Its commit has no result:
+without `WATCH`, `EXEC` cannot abort.
 
 Always commit or dispose a transaction so its pooled buffer and any dedicated WATCH connection
 are released. `await using` also covers early returns and exceptions while commands are queued;
@@ -105,7 +102,7 @@ bool committed = false;
 
 for (var attempt = 0; attempt < maxAttempts && !committed; attempt++)
 {
-    await using RespireTransaction transaction =
+    await using RespireWatchedTransaction transaction =
         await redis.CreateTransactionAsync(["balance"], cancellationToken);
 
     long current = await redis.GetAsync<long>("balance", cancellationToken);

@@ -40,7 +40,7 @@ public class TransactionTests
         var transaction = client.CreateTransaction();
         var set = transaction.Set("k", "v");
         var incremented = transaction.Increment("counter", 5);
-        var committed = await transaction.CommitAsync();
+        await transaction.CommitAsync();
 
         var commands = server.ReceivedCommands;
         await Assert.That(commands[0]).IsEqualTo("MULTI");
@@ -48,7 +48,6 @@ public class TransactionTests
         await Assert.That(commands[2]).IsEqualTo("INCRBY counter 5");
         await Assert.That(commands[3]).IsEqualTo("EXEC");
 
-        await Assert.That(committed).IsTrue();
         await Assert.That(set.Result).IsTrue();
         await Assert.That(incremented.Result).IsEqualTo(5);
         await Assert.That(await incremented).IsEqualTo(5);
@@ -79,10 +78,10 @@ public class TransactionTests
     {
         // EXEC replies null when a watched key changed: MULTI +OK, QUEUED, then *-1.
         await using var server = new FakeRespServer(
-            FakeRespServer.OkReply, QueuedReply, "*-1\r\n"u8.ToArray());
+            2, FakeRespServer.OkReply, FakeRespServer.OkReply, QueuedReply, "*-1\r\n"u8.ToArray());
         await using var client = await ConnectAsync(server.Port);
 
-        var transaction = client.CreateTransaction();
+        var transaction = await client.CreateTransactionAsync(["watched"]);
         var pending = transaction.Increment("counter");
         var committed = await transaction.CommitAsync();
 
@@ -135,7 +134,7 @@ public class TransactionTests
 
         var transaction = client.CreateTransaction();
 
-        await Assert.That(await transaction.CommitAsync()).IsTrue();
+        await transaction.CommitAsync();
         await Assert.That(server.ReceivedCommands).IsEmpty();
         await Assert.That(async () => await transaction.CommitAsync()).Throws<InvalidOperationException>();
     }
@@ -198,10 +197,9 @@ public class TransactionTests
         await Assert.That(() => transaction.Strings.Append("invalid", RespireValue.Null))
             .ThrowsExactly<ArgumentNullException>();
         var pending = transaction.Set("valid", "value");
-        var committed = await transaction.CommitAsync();
+        await transaction.CommitAsync();
 
         await Assert.That(transaction.Count).IsEqualTo(1);
-        await Assert.That(committed).IsTrue();
         await Assert.That(pending.Result).IsTrue();
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(
             ["MULTI", "SET valid value", "EXEC"]);

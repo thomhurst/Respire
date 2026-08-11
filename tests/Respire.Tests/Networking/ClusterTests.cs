@@ -484,9 +484,8 @@ public class ClusterTests
 
         var transaction = client.CreateTransaction();
         var pending = transaction.Set("{account}name", "Ada");
-        var committed = await transaction.CommitAsync();
+        await transaction.CommitAsync();
 
-        await Assert.That(committed).IsTrue();
         await Assert.That(pending.Result).IsTrue();
         await Assert.That(target.ReceivedCommands[0]).IsEqualTo("MULTI");
         await Assert.That(target.ReceivedCommands[1]).IsEqualTo("SET {account}name Ada");
@@ -514,9 +513,8 @@ public class ClusterTests
 
         var transaction = client.CreateTransaction();
         var pending = transaction.Set("{account}name", "Ada");
-        var committed = await transaction.CommitAsync();
+        await transaction.CommitAsync();
 
-        await Assert.That(committed).IsTrue();
         await Assert.That(pending.Result).IsTrue();
         await Assert.That(seed.ReceivedCommands[^3]).IsEqualTo("MULTI");
         await Assert.That(target.ReceivedCommands[0]).IsEqualTo("MULTI");

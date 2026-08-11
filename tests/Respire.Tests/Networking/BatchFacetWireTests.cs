@@ -320,9 +320,8 @@ public class BatchFacetWireTests
         var stored = transaction.Hashes.Set("user", "name", "Ada");
         var range = transaction.Lists.Range("audit");
 
-        var committed = await transaction.CommitAsync();
+        await transaction.CommitAsync();
 
-        await Assert.That(committed).IsTrue();
         await Assert.That(pushed.Result).IsEqualTo(2);
         await Assert.That(stored.Result).IsTrue();
         await Assert.That(range.Result).IsEquivalentTo(new[] { "a", "b" }, CollectionOrdering.Matching);

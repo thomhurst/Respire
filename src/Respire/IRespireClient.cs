@@ -211,14 +211,14 @@ public interface IRespireClient : IAsyncDisposable
     RespireTransaction CreateTransaction();
 
     /// <summary>Creates a transaction watching keys for optimistic concurrency. Redis: WATCH.</summary>
-    ValueTask<RespireTransaction> CreateTransactionAsync(
+    ValueTask<RespireWatchedTransaction> CreateTransactionAsync(
         RespireKey[] watchKeys, CancellationToken cancellationToken = default);
 
     /// <summary>Creates a transaction watching keys for optimistic concurrency. Redis: WATCH.</summary>
-    ValueTask<RespireTransaction> CreateTransactionAsync(params ReadOnlySpan<RespireKey> watchKeys);
+    ValueTask<RespireWatchedTransaction> CreateTransactionAsync(params ReadOnlySpan<RespireKey> watchKeys);
 
     /// <summary>Creates a transaction watching keys with cancellation. Redis: WATCH.</summary>
-    ValueTask<RespireTransaction> CreateTransactionAsync(
+    ValueTask<RespireWatchedTransaction> CreateTransactionAsync(
         ReadOnlySpan<RespireKey> watchKeys, CancellationToken cancellationToken);
 
     /// <summary>Returns the effective Redis key after this client applies any key transformation.</summary>

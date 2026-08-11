@@ -84,10 +84,9 @@ public class IncrementWireTests
 
         var transaction = client.CreateTransaction();
         var incremented = transaction.Increment("counter");
-        var committed = await transaction.CommitAsync();
+        await transaction.CommitAsync();
 
         await Assert.That(server.ReceivedCommands[1]).IsEqualTo("INCR counter");
-        await Assert.That(committed).IsTrue();
         await Assert.That(incremented.Result).IsEqualTo(1L);
     }
 }

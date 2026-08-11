@@ -833,11 +833,11 @@ public sealed partial class RespireClient : IRespireClient
     /// Starts a MULTI/EXEC transaction. Queue commands, then
     /// <see cref="RespireTransaction.CommitAsync"/>. Always commit or dispose the transaction.
     /// </summary>
-    public RespireTransaction CreateTransaction() => new(this, watchConnection: null);
+    public RespireTransaction CreateTransaction() => new(this);
 
     /// <summary>
     /// Starts a transaction that WATCHes keys first: if any watched key changes before commit,
-    /// <see cref="RespireTransaction.CommitAsync"/> returns false. Runs on a dedicated
+    /// <see cref="RespireWatchedTransaction.CommitAsync"/> returns false. Runs on a dedicated
     /// connection for correct WATCH isolation; always commit or dispose the transaction.
     /// For read-modify-write loops, prefer a Lua script (<see cref="Scripts"/>) — one round
     /// trip, no retry loop.
@@ -864,7 +864,7 @@ public sealed partial class RespireClient : IRespireClient
     /// }
     /// </code>
     /// </example>
-    public ValueTask<RespireTransaction> CreateTransactionAsync(
+    public ValueTask<RespireWatchedTransaction> CreateTransactionAsync(
         RespireKey[] watchKeys, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(watchKeys);
@@ -872,22 +872,22 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     /// <inheritdoc cref="CreateTransactionAsync(RespireKey[], CancellationToken)"/>
-    public ValueTask<RespireTransaction> CreateTransactionAsync(params ReadOnlySpan<RespireKey> watchKeys)
+    public ValueTask<RespireWatchedTransaction> CreateTransactionAsync(params ReadOnlySpan<RespireKey> watchKeys)
         => CreateTransactionAsync(watchKeys, CancellationToken.None);
 
     /// <inheritdoc cref="CreateTransactionAsync(RespireKey[], CancellationToken)"/>
-    public ValueTask<RespireTransaction> CreateTransactionAsync(
+    public ValueTask<RespireWatchedTransaction> CreateTransactionAsync(
         ReadOnlySpan<RespireKey> watchKeys, CancellationToken cancellationToken)
     {
         if (watchKeys.Length == 0)
         {
-            return new ValueTask<RespireTransaction>(CreateTransaction());
+            return new ValueTask<RespireWatchedTransaction>(new RespireWatchedTransaction(this, watchConnection: null));
         }
 
         return CreateWatchedTransactionAsync(watchKeys.ToArray(), cancellationToken);
     }
 
-    private async ValueTask<RespireTransaction> CreateWatchedTransactionAsync(
+    private async ValueTask<RespireWatchedTransaction> CreateWatchedTransactionAsync(
         RespireKey[] watchKeys, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_core.Disposed, this);
@@ -906,7 +906,7 @@ public sealed partial class RespireClient : IRespireClient
             var command = new Cmd1N(Verbs.Watch, Key(watchKeys[0]), MapKeys(watchKeys.AsSpan(1)));
             var reply = await SendOnConnectionAsync("WATCH", connection, command, cancellationToken).ConfigureAwait(false);
             reply.Dispose();
-            return new RespireTransaction(this, connection);
+            return new RespireWatchedTransaction(this, connection);
         }
         catch
         {

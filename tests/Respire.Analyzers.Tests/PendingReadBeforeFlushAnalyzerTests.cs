@@ -81,6 +81,25 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
+    public async Task WatchedTransactionResultReadBeforeCommit_IsFlagged() => await Verify.VerifyAsync(
+        """
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                await using var transaction = await client.CreateTransactionAsync("key");
+                var pending = transaction.GetStringAsync("key");
+                Console.WriteLine({|RESP002:pending.Result|});
+                _ = await transaction.CommitAsync();
+            }
+        }
+        """);
+
+    [Test]
     public async Task SendThenRead_IsNotFlagged() => await Verify.VerifyAsync(
         """
         using System;

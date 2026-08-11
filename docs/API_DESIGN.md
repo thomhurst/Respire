@@ -246,8 +246,10 @@ connection-acquisition failures fault their pendings and do not throw unless the
 
 ## 6. Transactions
 
-Same pending-value shape as batch, plus watch keys. `CommitAsync` returns whether EXEC
-won:
+Same pending-value shape as batch. `CreateTransaction()` returns `RespireTransaction`, whose
+`CommitAsync` is a `ValueTask` because an unwatched EXEC cannot abort. With watch keys,
+`CreateTransactionAsync` returns `RespireWatchedTransaction`; its `CommitAsync` returns whether
+EXEC won:
 
 ```csharp
 await using var tx = await redis.CreateTransactionAsync(["balance"], ct);

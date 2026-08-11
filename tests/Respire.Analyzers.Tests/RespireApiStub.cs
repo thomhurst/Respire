@@ -55,12 +55,21 @@ internal static class RespireApiStub
                 public ValueTask SendAsync() => default;
             }
 
-            public sealed class RespireTransaction : IAsyncDisposable
+            public abstract class RespireTransactionBase : IAsyncDisposable
             {
                 public BatchHashCommands Hashes => new BatchHashCommands();
                 public RespirePending<string> GetStringAsync(string key) => new RespirePending<string>();
-                public ValueTask<bool> CommitAsync() => default;
                 public ValueTask DisposeAsync() => default;
+            }
+
+            public sealed class RespireTransaction : RespireTransactionBase
+            {
+                public ValueTask CommitAsync() => default;
+            }
+
+            public sealed class RespireWatchedTransaction : RespireTransactionBase
+            {
+                public ValueTask<bool> CommitAsync() => default;
             }
 
             public sealed class BatchHashCommands
@@ -74,6 +83,7 @@ internal static class RespireApiStub
                 public ValueTask<RespireLease> GetLeaseAsync(string key) => default;
                 public RespireBatch CreateBatch() => new RespireBatch();
                 public RespireTransaction CreateTransaction() => new RespireTransaction();
+                public ValueTask<RespireWatchedTransaction> CreateTransactionAsync(params string[] keys) => default;
             }
         }
         """;
