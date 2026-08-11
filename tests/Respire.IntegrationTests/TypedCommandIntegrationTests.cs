@@ -42,22 +42,23 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
 
-        (await client.Bitmaps.GetAndSetAsync("bits", 4, true)).Should().BeFalse();
+        (await client.Bitmaps.SetAsync("bits", 4, true)).Should().BeFalse();
         (await client.Bitmaps.GetAsync("bits", 4)).Should().BeTrue();
         (await client.Bitmaps.CountAsync("bits")).Should().Be(1);
         (await client.Bitmaps.CountAsync("bits", 4, 4, BitIndexUnit.Bit)).Should().Be(1);
         (await client.Bitmaps.PositionAsync("bits", true)).Should().Be(4);
         (await client.Bitmaps.PositionAsync("missing-bits", true)).Should().BeNull();
 
-        await client.Bitmaps.GetAndSetAsync("left", 0, true);
-        await client.Bitmaps.GetAndSetAsync("right", 1, true);
+        await client.Bitmaps.SetAsync("left", 0, true);
+        await client.Bitmaps.SetAsync("right", 1, true);
         (await client.Bitmaps.OperateAsync(BitOperation.Or, "union", "left", "right")).Should().Be(1);
         (await client.Bitmaps.CountAsync("union")).Should().Be(2);
 
         (await client.Bitmaps.FieldAsync(
             "fields", BitFieldOperation.Set("u8", "0", 5), BitFieldOperation.Increment("u8", "0", 2)))
             .Should().Equal(0, 7);
-        (await client.Bitmaps.FieldReadOnlyAsync("fields", BitFieldOperation.Get("u8", "0")))
+        (await client.Bitmaps.FieldReadOnlyAsync(
+            "fields", BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), 0)))
             .Should().Equal(7);
     }
 

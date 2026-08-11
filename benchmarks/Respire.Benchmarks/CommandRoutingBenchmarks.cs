@@ -18,7 +18,7 @@ public class CommandRoutingBenchmarks
     private readonly BitFieldCommand _bitFieldCommand = new(
         RespireCommands.Bitmap.BITFIELD.Verb,
         "benchmark-key",
-        [BitFieldOperation.Get("u8", "0")]);
+        [BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), 0)]);
     private readonly BitOpCommand _bitOpCommand = new(
         RespireCommands.Bitmap.BITOP.Verb,
         "AND",

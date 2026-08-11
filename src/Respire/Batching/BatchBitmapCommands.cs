@@ -13,6 +13,13 @@ public interface IBatchBitmapCommands
     RespirePending<bool> Get(RespireKey key, long offset);
 
     /// <summary>Sets the bit at an offset and returns its previous value. Redis: SETBIT.</summary>
+#pragma warning disable CS0618 // Default preserves compatibility with existing interface implementations.
+    RespirePending<bool> Set(RespireKey key, long offset, bool value)
+        => GetAndSet(key, offset, value);
+#pragma warning restore CS0618
+
+    /// <summary>Sets the bit at an offset and returns its previous value. Redis: SETBIT.</summary>
+    [Obsolete("Use Set; SETBIT returns the previous bit.")]
     RespirePending<bool> GetAndSet(RespireKey key, long offset, bool value);
 
     /// <summary>Number of set bits. Redis: BITCOUNT.</summary>
@@ -46,13 +53,17 @@ internal sealed class BatchBitmapCommands(IPendingSink sink) : IBatchBitmapComma
             static (c, v) => ResponseReader.Flag(in v));
     }
 
-    public RespirePending<bool> GetAndSet(RespireKey key, long offset, bool value)
+    public RespirePending<bool> Set(RespireKey key, long offset, bool value)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(offset);
         return sink.Add<Cmd3, bool>(
             "SETBIT", new Cmd3(RespireCommands.Bitmap.SETBIT.Verb, sink.Client.Key(in key), offset, value),
             static (c, v) => ResponseReader.Flag(in v));
     }
+
+    [Obsolete("Use Set; SETBIT returns the previous bit.")]
+    public RespirePending<bool> GetAndSet(RespireKey key, long offset, bool value)
+        => Set(key, offset, value);
 
     public RespirePending<long> Count(RespireKey key)
         => sink.Add<Cmd1, long>(

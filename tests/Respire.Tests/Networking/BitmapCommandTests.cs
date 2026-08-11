@@ -25,7 +25,7 @@ public class BitmapCommandTests
         var command = new BitFieldCommand(
             RespireCommands.Bitmap.BITFIELD.Verb,
             "bitmap-key",
-            [BitFieldOperation.Get("u8", "0")]);
+            [BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), 0)]);
 
         await Assert.That(command.TryGetClusterSlot(out var slot)).IsTrue();
         await Assert.That(slot).IsEqualTo(Respire.Internal.ClusterHash.GetSlot("bitmap-key"));
@@ -49,7 +49,7 @@ public class BitmapCommandTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
         await Assert.That(await client.Bitmaps.GetAsync("bits", 4)).IsTrue();
-        await Assert.That(await client.Bitmaps.GetAndSetAsync("bits", 4, true)).IsFalse();
+        await Assert.That(await client.Bitmaps.SetAsync("bits", 4, true)).IsFalse();
         await Assert.That(await client.Bitmaps.CountAsync("bits")).IsEqualTo(3);
         await Assert.That(await client.Bitmaps.CountAsync("bits", 1, 9, BitIndexUnit.Bit)).IsEqualTo(2);
         await Assert.That(await client.Bitmaps.PositionAsync("bits", true)).IsEqualTo(8);
@@ -59,17 +59,17 @@ public class BitmapCommandTests
         await Assert.That(await client.Bitmaps.OperateAsync(BitOperation.Xor, "dest", "one", "two")).IsEqualTo(4);
         await Assert.That(await client.Bitmaps.FieldAsync(
             "bits",
-            BitFieldOperation.Get("u8", "0"),
+            BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), 0),
             BitFieldOperation.SetOverflow(BitFieldOverflow.Fail),
             BitFieldOperation.Increment("i8", "#1", 2),
             BitFieldOperation.Set("u4", "12", 3))).IsEquivalentTo(
                 new long?[] { 1, 2, null, 3 }, TUnit.Assertions.Enums.CollectionOrdering.Matching);
         await Assert.That(await client.Bitmaps.FieldReadOnlyAsync(
             "bits",
-            BitFieldOperation.Get("i1", "0"),
-            BitFieldOperation.Get("i64", "1"),
-            BitFieldOperation.Get("u1", "#2"),
-            BitFieldOperation.Get("u63", "#9223372036854775807")))
+            BitFieldOperation.Get(BitFieldEncoding.Signed(1), 0),
+            BitFieldOperation.Get(BitFieldEncoding.Signed(64), 1),
+            BitFieldOperation.Get(BitFieldEncoding.Unsigned(1), 2, offsetInFieldUnits: true),
+            BitFieldOperation.Get(BitFieldEncoding.Unsigned(63), long.MaxValue, offsetInFieldUnits: true)))
             .IsEquivalentTo(new long?[] { 7, 8, 9, 10 }, TUnit.Assertions.Enums.CollectionOrdering.Matching);
 
         await AssertCommands(server.ReceivedCommands,
@@ -108,6 +108,13 @@ public class BitmapCommandTests
         await Assert.That(async () => await client.Bitmaps.FieldAsync("bits", default(BitFieldOperation)))
             .Throws<ArgumentException>();
         await Assert.That(() => BitFieldOperation.SetOverflow((BitFieldOverflow)42))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => BitFieldEncoding.Signed(0)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => BitFieldEncoding.Signed(65)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => BitFieldEncoding.Unsigned(0)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => BitFieldEncoding.Unsigned(64)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => BitFieldOperation.Get(default, 0)).Throws<ArgumentException>();
+        await Assert.That(() => BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), -1))
             .Throws<ArgumentOutOfRangeException>();
 
         foreach (var encoding in new[] { "i0", "i65", "u0", "u64", "x8", "i", "i1x" })
