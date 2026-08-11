@@ -42,6 +42,21 @@ public class PubSubTests
     }
 
     [Test]
+    public async Task InvalidSubscriptionOptions_FailBeforeConnecting()
+    {
+        await using var server = new FakeRespServer(SubscribeConfirmation);
+        await using var client = CreateLazyClient(server.Port);
+
+        await Assert.That(async () => await client.SubscribeAsync(
+                "ch", new RespireSubscriptionOptions(BufferSize: 0), CancellationToken.None))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.SubscribeAsync(
+                "ch", new RespireSubscriptionOptions(Overflow: (SubscriptionOverflow)42), CancellationToken.None))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(server.CommandsSeen).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task SubscribeAsync_ReturnsAfterConfirmation_ThenMessagesFlowToEnumerator()
     {
         await using var server = new FakeRespServer(SubscribeConfirmation);
@@ -51,7 +66,7 @@ public class PubSubTests
         await using var subscription = await client.SubscribeAsync(channel);
 
         await Assert.That(subscription.Kind).IsEqualTo(SubscriptionKind.Channel);
-        await Assert.That(subscription.Channels).IsEquivalentTo([channel]);
+        await Assert.That(subscription.Targets).IsEquivalentTo([channel]);
         await Assert.That(subscription.IsDisposed).IsFalse();
 
         // Returning already implies the confirmation arrived — no waiting for the command to show up.
@@ -125,6 +140,36 @@ public class PubSubTests
         await using var enumerator = subscription.GetAsyncEnumerator();
         await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
         await Assert.That(enumerator.Current.Text).IsEqualTo(retainedMessage);
+    }
+
+    [Test]
+    public async Task PerSubscriptionOptions_OverrideClientBufferPolicy()
+    {
+        await using var server = new FakeRespServer(SubscribeConfirmation);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            SubscriptionBufferSize = 8,
+            SubscriptionOverflow = SubscriptionOverflow.DropOldest,
+        });
+        await using var subscription = await client.SubscribeAsync(
+            "ch",
+            new RespireSubscriptionOptions(BufferSize: 1, Overflow: SubscriptionOverflow.DropNewest),
+            CancellationToken.None);
+
+        await server.SendRawAsync(
+            "*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$1\r\na\r\n"u8.ToArray());
+        await server.SendRawAsync(
+            "*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$1\r\nb\r\n"u8.ToArray());
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (subscription.DroppedMessages != 1)
+        {
+            await Task.Delay(10, cts.Token);
+        }
+
+        await using var enumerator = subscription.GetAsyncEnumerator();
+        await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+        await Assert.That(enumerator.Current.Text).IsEqualTo("a");
     }
 
     [Test]

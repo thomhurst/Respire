@@ -734,7 +734,12 @@ public sealed partial class RespireClient : IRespireClient
     /// unsubscribes. Redis: SUBSCRIBE.
     /// </summary>
     public ValueTask<RespireSubscription> SubscribeAsync(string channel, CancellationToken cancellationToken = default)
-        => SubscribeCoreAsync(SubscriptionKind.Channel, [channel], cancellationToken);
+        => SubscribeCoreAsync(SubscriptionKind.Channel, [channel], default, cancellationToken);
+
+    /// <summary>Subscribes to one channel with per-subscription buffer settings. Redis: SUBSCRIBE.</summary>
+    public ValueTask<RespireSubscription> SubscribeAsync(
+        string channel, RespireSubscriptionOptions options, CancellationToken cancellationToken)
+        => SubscribeCoreAsync(SubscriptionKind.Channel, [channel], options, cancellationToken);
 
     /// <inheritdoc cref="SubscribeAsync(string, CancellationToken)"/>
     public ValueTask<RespireSubscription> SubscribeAsync(params ReadOnlySpan<string> channels)
@@ -743,14 +748,26 @@ public sealed partial class RespireClient : IRespireClient
     /// <inheritdoc cref="SubscribeAsync(string, CancellationToken)"/>
     public ValueTask<RespireSubscription> SubscribeAsync(
         ReadOnlySpan<string> channels, CancellationToken cancellationToken)
-        => SubscribeCoreAsync(SubscriptionKind.Channel, channels.ToArray(), cancellationToken);
+        => SubscribeCoreAsync(SubscriptionKind.Channel, channels.ToArray(), default, cancellationToken);
+
+    /// <summary>Subscribes to channels with per-subscription buffer settings. Redis: SUBSCRIBE.</summary>
+    public ValueTask<RespireSubscription> SubscribeAsync(
+        ReadOnlySpan<string> channels,
+        RespireSubscriptionOptions options,
+        CancellationToken cancellationToken)
+        => SubscribeCoreAsync(SubscriptionKind.Channel, channels.ToArray(), options, cancellationToken);
 
     /// <summary>
     /// Subscribes to a glob pattern ("news.*") and returns once the server has acknowledged.
     /// Redis: PSUBSCRIBE.
     /// </summary>
     public ValueTask<RespireSubscription> SubscribePatternAsync(string pattern, CancellationToken cancellationToken = default)
-        => SubscribeCoreAsync(SubscriptionKind.Pattern, [pattern], cancellationToken);
+        => SubscribeCoreAsync(SubscriptionKind.Pattern, [pattern], default, cancellationToken);
+
+    /// <summary>Subscribes to one pattern with per-subscription buffer settings. Redis: PSUBSCRIBE.</summary>
+    public ValueTask<RespireSubscription> SubscribePatternAsync(
+        string pattern, RespireSubscriptionOptions options, CancellationToken cancellationToken)
+        => SubscribeCoreAsync(SubscriptionKind.Pattern, [pattern], options, cancellationToken);
 
     /// <inheritdoc cref="SubscribePatternAsync(string, CancellationToken)"/>
     public ValueTask<RespireSubscription> SubscribePatternAsync(params ReadOnlySpan<string> patterns)
@@ -759,14 +776,26 @@ public sealed partial class RespireClient : IRespireClient
     /// <inheritdoc cref="SubscribePatternAsync(string, CancellationToken)"/>
     public ValueTask<RespireSubscription> SubscribePatternAsync(
         ReadOnlySpan<string> patterns, CancellationToken cancellationToken)
-        => SubscribeCoreAsync(SubscriptionKind.Pattern, patterns.ToArray(), cancellationToken);
+        => SubscribeCoreAsync(SubscriptionKind.Pattern, patterns.ToArray(), default, cancellationToken);
+
+    /// <summary>Subscribes to patterns with per-subscription buffer settings. Redis: PSUBSCRIBE.</summary>
+    public ValueTask<RespireSubscription> SubscribePatternAsync(
+        ReadOnlySpan<string> patterns,
+        RespireSubscriptionOptions options,
+        CancellationToken cancellationToken)
+        => SubscribeCoreAsync(SubscriptionKind.Pattern, patterns.ToArray(), options, cancellationToken);
 
     /// <summary>
     /// Subscribes to a sharded channel (Redis 7+) and returns once the server has acknowledged.
     /// Redis: SSUBSCRIBE.
     /// </summary>
     public ValueTask<RespireSubscription> SubscribeShardedAsync(string channel, CancellationToken cancellationToken = default)
-        => SubscribeCoreAsync(SubscriptionKind.Sharded, [channel], cancellationToken);
+        => SubscribeCoreAsync(SubscriptionKind.Sharded, [channel], default, cancellationToken);
+
+    /// <summary>Subscribes to one sharded channel with per-subscription buffer settings. Redis: SSUBSCRIBE.</summary>
+    public ValueTask<RespireSubscription> SubscribeShardedAsync(
+        string channel, RespireSubscriptionOptions options, CancellationToken cancellationToken)
+        => SubscribeCoreAsync(SubscriptionKind.Sharded, [channel], options, cancellationToken);
 
     /// <inheritdoc cref="SubscribeShardedAsync(string, CancellationToken)"/>
     public ValueTask<RespireSubscription> SubscribeShardedAsync(params ReadOnlySpan<string> channels)
@@ -775,11 +804,21 @@ public sealed partial class RespireClient : IRespireClient
     /// <inheritdoc cref="SubscribeShardedAsync(string, CancellationToken)"/>
     public ValueTask<RespireSubscription> SubscribeShardedAsync(
         ReadOnlySpan<string> channels, CancellationToken cancellationToken)
-        => SubscribeCoreAsync(SubscriptionKind.Sharded, channels.ToArray(), cancellationToken);
+        => SubscribeCoreAsync(SubscriptionKind.Sharded, channels.ToArray(), default, cancellationToken);
+
+    /// <summary>Subscribes to sharded channels with per-subscription buffer settings. Redis: SSUBSCRIBE.</summary>
+    public ValueTask<RespireSubscription> SubscribeShardedAsync(
+        ReadOnlySpan<string> channels,
+        RespireSubscriptionOptions options,
+        CancellationToken cancellationToken)
+        => SubscribeCoreAsync(SubscriptionKind.Sharded, channels.ToArray(), options, cancellationToken);
 
     private ValueTask<RespireSubscription> SubscribeCoreAsync(
-        SubscriptionKind kind, string[] names, CancellationToken cancellationToken)
-        => _core.Hub.SubscribeAsync(kind, names, cancellationToken);
+        SubscriptionKind kind,
+        string[] names,
+        RespireSubscriptionOptions options,
+        CancellationToken cancellationToken)
+        => _core.Hub.SubscribeAsync(kind, names, options, cancellationToken);
 
     // Batches and transactions
 

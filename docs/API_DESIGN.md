@@ -283,8 +283,9 @@ await foreach (RespireMessage msg in sub.WithCancellation(ct))
 - `SubscribeAsync(channel | channels)`, `SubscribePatternAsync(pattern)`,
   `SubscribeShardedAsync(channel)` (RESP3 SSUBSCRIBE). Subscribing is always awaited: the
   task completes once the server has acknowledged, so the next publish reaches the stream.
-- Backed by a bounded `Channel<T>`; overflow policy in options (`DropOldest` default,
-  `Block`, `Throw`).
+- Backed by a bounded `Channel<T>`; overflow policy is `DropOldest` (default) or
+  `DropNewest`. Blocking and throwing policies are intentionally omitted because either would
+  stop the shared pub/sub reader and affect unrelated subscriptions.
 - `RespireMessage` exposes `Channel`, `Pattern`, `Text`, `Memory`, `As<T>()`.
 - Publish is just `redis.PublishAsync(channel, value)` on the root.
 
