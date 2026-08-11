@@ -114,6 +114,14 @@ public interface IRespireClient : IAsyncDisposable
     /// <summary>Subscribes to one channel. Redis: SUBSCRIBE.</summary>
     ValueTask<RespireSubscription> SubscribeAsync(string channel, CancellationToken cancellationToken = default);
 
+    /// <summary>Subscribes to one channel with per-subscription buffer settings. Redis: SUBSCRIBE.</summary>
+    ValueTask<RespireSubscription> SubscribeAsync(
+        string channel, RespireSubscriptionOptions options, CancellationToken cancellationToken)
+    {
+        ThrowIfSubscriptionOverridesUnsupported(options);
+        return SubscribeAsync(channel, cancellationToken);
+    }
+
     /// <summary>Subscribes to channels. Redis: SUBSCRIBE.</summary>
     ValueTask<RespireSubscription> SubscribeAsync(params ReadOnlySpan<string> channels);
 
@@ -121,8 +129,26 @@ public interface IRespireClient : IAsyncDisposable
     ValueTask<RespireSubscription> SubscribeAsync(
         ReadOnlySpan<string> channels, CancellationToken cancellationToken);
 
+    /// <summary>Subscribes to channels with per-subscription buffer settings. Redis: SUBSCRIBE.</summary>
+    ValueTask<RespireSubscription> SubscribeAsync(
+        ReadOnlySpan<string> channels,
+        RespireSubscriptionOptions options,
+        CancellationToken cancellationToken)
+    {
+        ThrowIfSubscriptionOverridesUnsupported(options);
+        return SubscribeAsync(channels, cancellationToken);
+    }
+
     /// <summary>Subscribes to one channel pattern. Redis: PSUBSCRIBE.</summary>
     ValueTask<RespireSubscription> SubscribePatternAsync(string pattern, CancellationToken cancellationToken = default);
+
+    /// <summary>Subscribes to one pattern with per-subscription buffer settings. Redis: PSUBSCRIBE.</summary>
+    ValueTask<RespireSubscription> SubscribePatternAsync(
+        string pattern, RespireSubscriptionOptions options, CancellationToken cancellationToken)
+    {
+        ThrowIfSubscriptionOverridesUnsupported(options);
+        return SubscribePatternAsync(pattern, cancellationToken);
+    }
 
     /// <summary>Subscribes to channel patterns. Redis: PSUBSCRIBE.</summary>
     ValueTask<RespireSubscription> SubscribePatternAsync(params ReadOnlySpan<string> patterns);
@@ -131,8 +157,26 @@ public interface IRespireClient : IAsyncDisposable
     ValueTask<RespireSubscription> SubscribePatternAsync(
         ReadOnlySpan<string> patterns, CancellationToken cancellationToken);
 
+    /// <summary>Subscribes to patterns with per-subscription buffer settings. Redis: PSUBSCRIBE.</summary>
+    ValueTask<RespireSubscription> SubscribePatternAsync(
+        ReadOnlySpan<string> patterns,
+        RespireSubscriptionOptions options,
+        CancellationToken cancellationToken)
+    {
+        ThrowIfSubscriptionOverridesUnsupported(options);
+        return SubscribePatternAsync(patterns, cancellationToken);
+    }
+
     /// <summary>Subscribes to one sharded channel. Redis: SSUBSCRIBE.</summary>
     ValueTask<RespireSubscription> SubscribeShardedAsync(string channel, CancellationToken cancellationToken = default);
+
+    /// <summary>Subscribes to one sharded channel with per-subscription settings. Redis: SSUBSCRIBE.</summary>
+    ValueTask<RespireSubscription> SubscribeShardedAsync(
+        string channel, RespireSubscriptionOptions options, CancellationToken cancellationToken)
+    {
+        ThrowIfSubscriptionOverridesUnsupported(options);
+        return SubscribeShardedAsync(channel, cancellationToken);
+    }
 
     /// <summary>Subscribes to sharded channels. Redis: SSUBSCRIBE.</summary>
     ValueTask<RespireSubscription> SubscribeShardedAsync(params ReadOnlySpan<string> channels);
@@ -140,6 +184,25 @@ public interface IRespireClient : IAsyncDisposable
     /// <summary>Subscribes to sharded channels with cancellation. Redis: SSUBSCRIBE.</summary>
     ValueTask<RespireSubscription> SubscribeShardedAsync(
         ReadOnlySpan<string> channels, CancellationToken cancellationToken);
+
+    /// <summary>Subscribes to sharded channels with per-subscription settings. Redis: SSUBSCRIBE.</summary>
+    ValueTask<RespireSubscription> SubscribeShardedAsync(
+        ReadOnlySpan<string> channels,
+        RespireSubscriptionOptions options,
+        CancellationToken cancellationToken)
+    {
+        ThrowIfSubscriptionOverridesUnsupported(options);
+        return SubscribeShardedAsync(channels, cancellationToken);
+    }
+
+    private static void ThrowIfSubscriptionOverridesUnsupported(RespireSubscriptionOptions options)
+    {
+        if (options != default)
+        {
+            throw new NotSupportedException(
+                "This IRespireClient implementation does not support per-subscription options.");
+        }
+    }
 
     // Batches and transactions.
     /// <summary>Creates an explicit pipeline that queues commands until execution.</summary>

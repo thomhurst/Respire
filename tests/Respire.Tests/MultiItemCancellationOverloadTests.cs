@@ -198,6 +198,13 @@ public class MultiItemCancellationOverloadTests
         _ = client.SubscribeAsync(channels, token);
         _ = client.SubscribePatternAsync(channels, token);
         _ = client.SubscribeShardedAsync(channels, token);
+        var subscriptionOptions = new RespireSubscriptionOptions(BufferSize: 32);
+        _ = client.SubscribeAsync("a", subscriptionOptions, token);
+        _ = client.SubscribeAsync(channels, subscriptionOptions, token);
+        _ = client.SubscribePatternAsync("a:*", subscriptionOptions, token);
+        _ = client.SubscribePatternAsync(channels, subscriptionOptions, token);
+        _ = client.SubscribeShardedAsync("a", subscriptionOptions, token);
+        _ = client.SubscribeShardedAsync(channels, subscriptionOptions, token);
         _ = client.CreateTransactionAsync(keys, token);
         _ = client.CreateTransactionAsync(keys.AsSpan(), token);
         _ = client.Geo.HashAsync("g", values, token);

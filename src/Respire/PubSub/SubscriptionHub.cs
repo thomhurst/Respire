@@ -28,7 +28,8 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
     private bool _publishingReconnectState;
     private volatile bool _disposed;
 
-    private RespireSubscription CreateSubscription(SubscriptionKind kind, string[] names)
+    private RespireSubscription CreateSubscription(
+        SubscriptionKind kind, string[] names, RespireSubscriptionOptions options)
     {
         ArgumentNullException.ThrowIfNull(names);
         if (kind == SubscriptionKind.Sharded && core.Cluster is not null)
@@ -53,12 +54,13 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         // Defensive copy (unsubscription must look up the names that were registered, not
         // whatever the caller later wrote into their array), deduplicated so one published
         // message is never delivered twice through duplicate route entries.
+        var (bufferSize, overflow) = options.Resolve(core.Options);
         return new RespireSubscription(
             this,
             kind,
             [.. names.Distinct(StringComparer.Ordinal)],
-            core.Options.SubscriptionBufferSize,
-            core.Options.SubscriptionOverflow);
+            bufferSize,
+            overflow);
     }
 
     /// <summary>
@@ -66,9 +68,12 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
     /// server-side when the caller sees it — enumeration only drains the buffer.
     /// </summary>
     public async ValueTask<RespireSubscription> SubscribeAsync(
-        SubscriptionKind kind, string[] names, CancellationToken cancellationToken)
+        SubscriptionKind kind,
+        string[] names,
+        RespireSubscriptionOptions options,
+        CancellationToken cancellationToken)
     {
-        var subscription = CreateSubscription(kind, names);
+        var subscription = CreateSubscription(kind, names, options);
         await ActivateAsync(subscription, cancellationToken).ConfigureAwait(false);
         return subscription;
     }

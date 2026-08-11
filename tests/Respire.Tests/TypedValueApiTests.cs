@@ -27,6 +27,19 @@ public class TypedValueApiTests
     }
 
     [Test]
+    public async Task SubscriptionOptionsOverloads_PreserveInterfaceImplementers()
+    {
+        var methods = typeof(IRespireClient)
+            .GetMethods()
+            .Where(method => method.GetParameters()
+                .Any(parameter => parameter.ParameterType == typeof(RespireSubscriptionOptions)))
+            .ToArray();
+
+        await Assert.That(methods.Length).IsEqualTo(6);
+        await Assert.That(methods.All(method => !method.IsAbstract)).IsTrue();
+    }
+
+    [Test]
     public async Task TryGetAsync_IsAbstractOnIRespireClient()
     {
         var method = typeof(IRespireClient)

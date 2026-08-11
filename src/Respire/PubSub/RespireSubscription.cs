@@ -28,6 +28,32 @@ public enum RespireSubscriptionEndReason
 }
 
 /// <summary>
+/// Per-subscription buffer settings. Null values inherit the corresponding
+/// <see cref="RespireOptions"/> setting.
+/// </summary>
+/// <param name="BufferSize">Buffered messages before the overflow policy applies.</param>
+/// <param name="Overflow">Policy used when the subscription consumer falls behind.</param>
+public readonly record struct RespireSubscriptionOptions(
+    int? BufferSize = null,
+    SubscriptionOverflow? Overflow = null)
+{
+    internal (int BufferSize, SubscriptionOverflow Overflow) Resolve(RespireOptions defaults)
+    {
+        if (BufferSize is < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(BufferSize), BufferSize, "Must be at least one.");
+        }
+
+        if (Overflow is { } overflow && !Enum.IsDefined(overflow))
+        {
+            throw new ArgumentOutOfRangeException(nameof(Overflow), Overflow, null);
+        }
+
+        return (BufferSize ?? defaults.SubscriptionBufferSize, Overflow ?? defaults.SubscriptionOverflow);
+    }
+}
+
+/// <summary>
 /// An active subscription, consumed as an async stream:
 /// <code>
 /// await using var sub = await client.SubscribeAsync("news");
@@ -59,7 +85,7 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
         _hub = hub;
         Kind = kind;
         Names = names;
-        Channels = Array.AsReadOnly(names);
+        Targets = Array.AsReadOnly(names);
         Buffer = Channel.CreateBounded<RespireMessage>(new BoundedChannelOptions(bufferSize)
         {
             FullMode = overflow == SubscriptionOverflow.DropOldest
@@ -77,10 +103,12 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
     /// <summary>The Redis pub/sub command family used by this subscription.</summary>
     public SubscriptionKind Kind { get; }
 
-    /// <summary>
-    /// The channels or patterns covered by this subscription. The collection is immutable.
-    /// </summary>
-    public IReadOnlyList<string> Channels { get; }
+    /// <summary>The channels or patterns covered by this subscription. The collection is immutable.</summary>
+    public IReadOnlyList<string> Targets { get; }
+
+    /// <summary>The channels or patterns covered by this subscription. The collection is immutable.</summary>
+    [Obsolete("Use Targets; subscriptions may cover channel patterns.")]
+    public IReadOnlyList<string> Channels => Targets;
 
     /// <summary>Whether this subscription has ended because it or its owning client was disposed.</summary>
     public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
