@@ -32,7 +32,10 @@ public readonly struct RespireMessage
     /// <summary>The payload decoded as UTF-8.</summary>
     public string Text => Internal.Utf8String.GetString(Payload);
 
-    /// <summary>The typed payload; strings, bytes, Boolean values, and numbers bypass the serializer.</summary>
+    /// <summary>
+    /// The typed payload; strings, bytes, characters (including nullable characters), Boolean
+    /// values, and numbers bypass the serializer.
+    /// </summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public T? As<T>()

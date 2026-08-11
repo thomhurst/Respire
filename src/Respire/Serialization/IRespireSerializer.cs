@@ -5,8 +5,8 @@ namespace Respire.Serialization;
 
 /// <summary>
 /// Converts values behind <c>GetAsync&lt;T&gt;</c>/<c>SetAsync&lt;T&gt;</c> and friends.
-/// <see cref="string"/>, <see cref="byte"/> arrays, Boolean values, and numeric types bypass
-/// the serializer.
+/// <see cref="string"/>, <see cref="byte"/> arrays, <see cref="char"/> and nullable character
+/// values, Boolean values, and numeric types bypass the serializer.
 /// </summary>
 public interface IRespireSerializer
 {
