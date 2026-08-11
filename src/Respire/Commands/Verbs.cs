@@ -186,6 +186,7 @@ internal static class Verbs
     // Sorted sets
     public static readonly Verb ZAdd = new("ZADD");
     public static readonly Verb ZScore = new("ZSCORE");
+    public static readonly Verb ZMScore = new("ZMSCORE");
     public static readonly Verb ZIncrBy = new("ZINCRBY");
     public static readonly Verb ZRem = new("ZREM");
     public static readonly Verb ZCard = new("ZCARD");
@@ -193,6 +194,12 @@ internal static class Verbs
     public static readonly Verb ZRank = new("ZRANK");
     public static readonly Verb ZRevRank = new("ZREVRANK");
     public static readonly Verb ZRange = new("ZRANGE");
+    public static readonly Verb ZInter = new(1, "ZINTER");
+    public static readonly Verb ZUnion = new(1, "ZUNION");
+    public static readonly Verb ZDiff = new(1, "ZDIFF");
+    public static readonly Verb ZInterStore = new("ZINTERSTORE");
+    public static readonly Verb ZUnionStore = new("ZUNIONSTORE");
+    public static readonly Verb ZDiffStore = new("ZDIFFSTORE");
 
     // Streams
     public static readonly Verb XAdd = new("XADD");

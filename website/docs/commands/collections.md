@@ -46,6 +46,7 @@ bool member = await redis.Sets.ContainsAsync("team:red", "ada");
 ```csharp
 await redis.SortedSets.AddAsync("scores", "ada", 98.5);
 await redis.SortedSets.IncrementAsync("scores", "ada", 1.5);
+double?[] scores = await redis.SortedSets.ScoresAsync("scores", "ada", "missing");
 
 SortedSetEntry[] top = await redis.SortedSets.RangeWithScoresAsync(
     "scores",
@@ -71,12 +72,21 @@ long stored = await redis.SortedSets.StoreRangeByScoreAsync(
     finalists,
     count: 100,
     descending: true);
+
+string[] combined = await redis.SortedSets.UnionAsync("regional:uk", "regional:eu");
+long combinedCount = await redis.SortedSets.UnionStoreAsync(
+    "regional:all", "regional:uk", "regional:eu");
+
+SortedSetEntry<int>[] players =
+    await redis.SortedSets.RangeWithScoresAsync<int>("player:scores", descending: true);
 ```
 
 Score and lex boundaries are inclusive by default. Use `Exclusive(...)` for an open boundary,
 or `Min` / `Max` for negative and positive infinity. Supplying `offset` requires `count` because
 Redis emits them together as `LIMIT offset count`. The same range APIs are available on batches
-and transactions without the `Async` suffix.
+and transactions without the `Async` suffix. Sorted-set intersection, union, and difference each
+have read and `Store` forms. Typed rank ranges, score ranges, and pops deserialize members while
+preserving their scores in `SortedSetEntry<T>`.
 
 ## Streams
 

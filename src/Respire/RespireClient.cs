@@ -2518,6 +2518,12 @@ public sealed partial class RespireClient : IRespireClient
             operation, command, ct, this,
             static (RespireClient _, in RespValue value) => ResponseReader.NullableIntegerArray(in value));
 
+    internal ValueTask<double?[]> NullableDoubleArrayAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+        where TCommand : struct, IRespCommand
+        => ConvertResponseAsync(
+            operation, command, ct, this,
+            static (RespireClient _, in RespValue value) => ResponseReader.NullableDoubleArray(in value));
+
     internal ValueTask<Dictionary<string, string>> StringMapAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync(

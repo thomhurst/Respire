@@ -229,6 +229,46 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    public async Task SortedSetAlgebraAndTypedReads_RoundTripAgainstRedis()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        var prefix = $"algebra:{Guid.NewGuid():N}:";
+        var first = prefix + "first";
+        var second = prefix + "second";
+        var intersection = prefix + "intersection";
+        var union = prefix + "union";
+        var difference = prefix + "difference";
+        var typed = prefix + "typed";
+
+        await client.SortedSets.AddAsync(
+            first, new SortedSetEntry("one", 1), new SortedSetEntry("two", 2));
+        await client.SortedSets.AddAsync(
+            second, new SortedSetEntry("two", 3), new SortedSetEntry("three", 4));
+
+        (await client.SortedSets.ScoresAsync(first, "one", "missing", "two"))
+            .Should().Equal(1, null, 2);
+        (await client.SortedSets.IntersectAsync(first, second)).Should().Equal("two");
+        (await client.SortedSets.UnionAsync(first, second)).Should()
+            .BeEquivalentTo("one", "two", "three");
+        (await client.SortedSets.DifferenceAsync(first, second)).Should().Equal("one");
+        (await client.SortedSets.IntersectStoreAsync(intersection, first, second)).Should().Be(1);
+        (await client.SortedSets.UnionStoreAsync(union, first, second)).Should().Be(3);
+        (await client.SortedSets.DifferenceStoreAsync(difference, first, second)).Should().Be(1);
+
+        await client.SortedSets.AddAsync(typed, 7, 1.5);
+        await client.SortedSets.AddAsync(typed, 9, 2);
+        (await client.SortedSets.RangeAsync<int>(typed)).Should().Equal(7, 9);
+        (await client.SortedSets.RangeByScoreAsync<int>(typed, 1, 2)).Should().Equal(7, 9);
+        var expected = new[] { new SortedSetEntry<int>(7, 1.5), new SortedSetEntry<int>(9, 2) };
+        (await client.SortedSets.RangeWithScoresAsync<int>(typed)).Should().Equal(expected);
+        (await client.SortedSets.RangeByScoreWithScoresAsync<int>(
+            typed, new RespireScoreRange(1, 2))).Should().Equal(expected);
+        (await client.SortedSets.PopAsync<int>(typed, 2)).Should().Equal(expected);
+
+        await client.DeleteAsync(first, second, intersection, union, difference, typed);
+    }
+
+    [Test]
     public async Task GeoCommands_RoundTripAgainstRedis()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);

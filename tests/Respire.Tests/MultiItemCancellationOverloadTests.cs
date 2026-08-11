@@ -171,6 +171,13 @@ public class MultiItemCancellationOverloadTests
 
         _ = client.SortedSets.AddAsync("z", entries, token);
         _ = client.SortedSets.RemoveAsync("z", values, token);
+        _ = client.SortedSets.ScoresAsync("z", values, token);
+        _ = client.SortedSets.IntersectAsync(keys, token);
+        _ = client.SortedSets.UnionAsync(keys, token);
+        _ = client.SortedSets.DifferenceAsync(keys, token);
+        _ = client.SortedSets.IntersectStoreAsync("d", keys, token);
+        _ = client.SortedSets.UnionStoreAsync("d", keys, token);
+        _ = client.SortedSets.DifferenceStoreAsync("d", keys, token);
 
         _ = client.HyperLogLog.AddAsync("hll", values, token);
         _ = client.HyperLogLog.CountAsync(keys, token);

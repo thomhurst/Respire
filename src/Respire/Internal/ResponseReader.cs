@@ -116,6 +116,23 @@ internal static class ResponseReader
         return result;
     }
 
+    public static double?[] NullableDoubleArray(in RespValue value)
+    {
+        var elements = value.AsArray();
+        if (elements.Length == 0)
+        {
+            return [];
+        }
+
+        var result = new double?[elements.Length];
+        for (var i = 0; i < elements.Length; i++)
+        {
+            result[i] = DoubleOrNull(in elements[i]);
+        }
+
+        return result;
+    }
+
     public static RespireTtl[] TtlArray(in RespValue value)
     {
         var elements = value.AsArray();
