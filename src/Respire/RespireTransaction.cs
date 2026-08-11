@@ -242,6 +242,7 @@ public sealed class RespireTransaction : IAsyncDisposable, IRespireCommandQueue,
             out var telemetryOperation);
         RespireConnection? connection = _watchConnection;
         Exception? operationError = null;
+        var returnWatchConnection = false;
         try
         {
             if (_ops.Count == 0)
@@ -271,6 +272,11 @@ public sealed class RespireTransaction : IAsyncDisposable, IRespireCommandQueue,
                 {
                     result = await SendAsync(cancellationToken).ConfigureAwait(false);
                 }
+
+                // SendTransactionAsync drains through EXEC before completing, including when it
+                // returns a queue error or a null watched-abort reply. Redis has therefore cleared
+                // WATCH and the dedicated connection is safe to pool again.
+                returnWatchConnection = ReferenceEquals(connection, _watchConnection);
             }
             catch (Exception ex)
             {
@@ -335,7 +341,7 @@ public sealed class RespireTransaction : IAsyncDisposable, IRespireCommandQueue,
         {
             try
             {
-                await ReleaseAsync().ConfigureAwait(false);
+                await ReleaseAsync(returnWatchConnection).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -405,18 +411,26 @@ public sealed class RespireTransaction : IAsyncDisposable, IRespireCommandQueue,
             operation.Fail(error);
         }
 
-        await ReleaseAsync().ConfigureAwait(false);
+        await ReleaseAsync(returnWatchConnection: false).ConfigureAwait(false);
     }
 
-    private async ValueTask ReleaseAsync()
+    private ValueTask ReleaseAsync(bool returnWatchConnection)
     {
         _buffer.Release();
-        if (_watchConnection is not null)
+        if (_watchConnection is null)
         {
-            // Rented from the dedicated pool at creation; discarded (never reused) because an
-            // uncommitted transaction still carries WATCH state on the connection.
-            await _client.Core.DedicatedPool.DiscardAsync(_watchConnection).ConfigureAwait(false);
+            return ValueTask.CompletedTask;
         }
+
+        if (returnWatchConnection)
+        {
+            _client.Core.DedicatedPool.Return(_watchConnection);
+            return ValueTask.CompletedTask;
+        }
+
+        // Disposing without EXEC leaves WATCH state behind. A failed send has uncertain server
+        // state and may still have unread replies, so neither path is safe to reuse.
+        return _client.Core.DedicatedPool.DiscardAsync(_watchConnection);
     }
 
     private RespirePending<T> Add<TCommand, T>(
