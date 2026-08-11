@@ -545,9 +545,11 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
         return new Cmd1N(Verbs.XAdd, client.Key(in key), args);
     }
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespireStreamId> AddRequiredAsync(Cmd1N command, CancellationToken cancellationToken)
         => new(await client.StringAsync("XADD", command, cancellationToken).ConfigureAwait(false));
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespireStreamId?> AddOptionalAsync(Cmd1N command, CancellationToken cancellationToken)
     {
         var id = await client.StringOrNullAsync("XADD", command, cancellationToken).ConfigureAwait(false);
@@ -562,7 +564,7 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
         CancellationToken cancellationToken = default)
         => RangeAsync(key, descending: false, start, end, count, cancellationToken);
 
-    public async ValueTask<RespireStreamEntry[]> RangeAsync(
+    public ValueTask<RespireStreamEntry[]> RangeAsync(
         RespireKey key, bool descending, RespireStreamId? start = null, RespireStreamId? end = null, int? count = null,
         CancellationToken cancellationToken = default)
     {
@@ -570,16 +572,15 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
         var to = (descending ? start ?? RespireStreamId.Min : end ?? RespireStreamId.Max).Value;
         var operation = descending ? "XREVRANGE" : "XRANGE";
         var verb = descending ? Verbs.XRevRange : Verbs.XRange;
-        var reply = count is { } take
-            ? await client.SendAsync(
-                operation, new Cmd5(verb, client.Key(in key), from, to, "COUNT", take), cancellationToken)
-                .ConfigureAwait(false)
-            : await client.SendAsync(
-                operation, new Cmd3(verb, client.Key(in key), from, to), cancellationToken).ConfigureAwait(false);
-
-        var entries = ParseEntries(in reply, client: null, resolvedKey: default, group: null);
-        reply.Dispose();
-        return entries;
+        return count is { } take
+            ? client.ConvertResponseAsync(
+                operation, new Cmd5(verb, client.Key(in key), from, to, "COUNT", take), cancellationToken, this,
+                static (StreamCommands _, in RespValue value) =>
+                    ParseEntries(in value, client: null, resolvedKey: default, group: null))
+            : client.ConvertResponseAsync(
+                operation, new Cmd3(verb, client.Key(in key), from, to), cancellationToken, this,
+                static (StreamCommands _, in RespValue value) =>
+                    ParseEntries(in value, client: null, resolvedKey: default, group: null));
     }
 
     public ValueTask<long> DeleteAsync(RespireKey key, params ReadOnlySpan<RespireStreamId> ids)
@@ -612,6 +613,7 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
                 "XTRIM", new Cmd3(XTrim, client.Key(in key), "MAXLEN", maxLength), cancellationToken);
     }
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     public async ValueTask<bool> CreateGroupAsync(
         RespireKey key, string group, RespireStreamId? startAt = null, bool createStream = true,
         CancellationToken cancellationToken = default)
@@ -656,7 +658,7 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
             "XGROUP DELCONSUMER", new Cmd3(XGroupDelConsumer, client.Key(in key), group, consumer),
             cancellationToken);
 
-    public async ValueTask SetGroupPositionAsync(
+    public ValueTask SetGroupPositionAsync(
         RespireKey key,
         string group,
         RespireStreamId id,
@@ -670,17 +672,16 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
 
         if (entriesRead is { } read)
         {
-            await client.OkAsync(
+            return client.OkAsync(
                 "XGROUP SETID",
                 new Cmd5(XGroupSetId, client.Key(in key), group, id.Value, "ENTRIESREAD", read),
-                cancellationToken).ConfigureAwait(false);
-            return;
+                cancellationToken);
         }
 
-        await client.OkAsync(
+        return client.OkAsync(
             "XGROUP SETID",
             new Cmd3(XGroupSetId, client.Key(in key), group, id.Value),
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken);
     }
 
     public ValueTask<long> AcknowledgeAsync(RespireKey key, string group, params ReadOnlySpan<RespireStreamId> ids)
@@ -699,24 +700,15 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
             "XACK", new Cmd2N(Verbs.XAck, client.Key(in key), group, args), cancellationToken);
     }
 
-    public async ValueTask<RespireStreamPendingSummary> GetPendingSummaryAsync(
+    public ValueTask<RespireStreamPendingSummary> GetPendingSummaryAsync(
         RespireKey key,
         string group,
         CancellationToken cancellationToken = default)
-    {
-        var reply = await client.SendAsync(
-            "XPENDING", new Cmd2(XPending, client.Key(in key), group), cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return ParsePendingSummary(in reply);
-        }
-        finally
-        {
-            reply.Dispose();
-        }
-    }
+        => client.ConvertResponseAsync(
+            "XPENDING", new Cmd2(XPending, client.Key(in key), group), cancellationToken, this,
+            static (StreamCommands _, in RespValue value) => ParsePendingSummary(in value));
 
-    public async ValueTask<RespireStreamPendingEntry[]> GetPendingAsync(
+    public ValueTask<RespireStreamPendingEntry[]> GetPendingAsync(
         RespireKey key,
         string group,
         RespireStreamId? start = null,
@@ -731,15 +723,9 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
         RespireValue[] args = consumer is null
             ? [client.Key(in key), group, from, to, count]
             : [client.Key(in key), group, from, to, count, consumer];
-        var reply = await client.SendAsync("XPENDING", new CmdN(XPending, args), cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return ParsePendingEntries(in reply);
-        }
-        finally
-        {
-            reply.Dispose();
-        }
+        return client.ConvertResponseAsync(
+            "XPENDING", new CmdN(XPending, args), cancellationToken, this,
+            static (StreamCommands _, in RespValue value) => ParsePendingEntries(in value));
     }
 
     public ValueTask<RespireStreamEntry[]> ClaimAsync(
@@ -772,21 +758,14 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
         return ClaimCoreAsync(new Cmd1N(XClaim, resolvedKey, args), resolvedKey, group, cancellationToken);
     }
 
-    private async ValueTask<RespireStreamEntry[]> ClaimCoreAsync(
+    private ValueTask<RespireStreamEntry[]> ClaimCoreAsync(
         Cmd1N command, RespireValue resolvedKey, string group, CancellationToken cancellationToken)
-    {
-        var reply = await client.SendAsync("XCLAIM", command, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return ParseEntries(in reply, client, resolvedKey, group);
-        }
-        finally
-        {
-            reply.Dispose();
-        }
-    }
+        => client.ConvertResponseAsync(
+            "XCLAIM", command, cancellationToken, new StreamParseState(client, resolvedKey, group),
+            static (StreamParseState state, in RespValue value) =>
+                ParseEntries(in value, state.Client, state.ResolvedKey, state.Group));
 
-    public async ValueTask<RespireStreamClaimResult> ClaimPendingAsync(
+    public ValueTask<RespireStreamClaimResult> ClaimPendingAsync(
         RespireKey key,
         string group,
         string consumer,
@@ -797,7 +776,7 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(count);
         var resolvedKey = client.Key(in key);
-        var reply = await client.SendAsync(
+        return client.ConvertResponseAsync(
             "XAUTOCLAIM",
             new CmdN(XAutoClaim,
             [
@@ -809,66 +788,33 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
                 "COUNT",
                 count,
             ]),
-            cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return ParseClaimResult(in reply, resolvedKey, group);
-        }
-        finally
-        {
-            reply.Dispose();
-        }
+            cancellationToken,
+            new StreamParseState(client, resolvedKey, group),
+            static (StreamParseState state, in RespValue value) =>
+                ParseClaimResult(in value, state.Client, state.ResolvedKey, state.Group));
     }
 
-    public async ValueTask<RespireStreamInfo> GetInfoAsync(
+    public ValueTask<RespireStreamInfo> GetInfoAsync(
         RespireKey key,
         CancellationToken cancellationToken = default)
-    {
-        var reply = await client.SendAsync(
-            "XINFO STREAM", new Cmd1(XInfoStream, client.Key(in key)), cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return ParseStreamInfo(in reply);
-        }
-        finally
-        {
-            reply.Dispose();
-        }
-    }
+        => client.ConvertResponseAsync(
+            "XINFO STREAM", new Cmd1(XInfoStream, client.Key(in key)), cancellationToken, this,
+            static (StreamCommands _, in RespValue value) => ParseStreamInfo(in value));
 
-    public async ValueTask<RespireStreamGroupInfo[]> GetGroupInfoAsync(
+    public ValueTask<RespireStreamGroupInfo[]> GetGroupInfoAsync(
         RespireKey key,
         CancellationToken cancellationToken = default)
-    {
-        var reply = await client.SendAsync(
-            "XINFO GROUPS", new Cmd1(XInfoGroups, client.Key(in key)), cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return ParseGroupInfo(in reply);
-        }
-        finally
-        {
-            reply.Dispose();
-        }
-    }
+        => client.ConvertResponseAsync(
+            "XINFO GROUPS", new Cmd1(XInfoGroups, client.Key(in key)), cancellationToken, this,
+            static (StreamCommands _, in RespValue value) => ParseGroupInfo(in value));
 
-    public async ValueTask<RespireStreamConsumerInfo[]> GetConsumerInfoAsync(
+    public ValueTask<RespireStreamConsumerInfo[]> GetConsumerInfoAsync(
         RespireKey key,
         string group,
         CancellationToken cancellationToken = default)
-    {
-        var reply = await client.SendAsync(
-            "XINFO CONSUMERS", new Cmd2(XInfoConsumers, client.Key(in key), group), cancellationToken)
-            .ConfigureAwait(false);
-        try
-        {
-            return ParseConsumerInfo(in reply);
-        }
-        finally
-        {
-            reply.Dispose();
-        }
-    }
+        => client.ConvertResponseAsync(
+            "XINFO CONSUMERS", new Cmd2(XInfoConsumers, client.Key(in key), group), cancellationToken, this,
+            static (StreamCommands _, in RespValue value) => ParseConsumerInfo(in value));
 
     public async IAsyncEnumerable<RespireStreamEntry> ReadGroupAsync(
         RespireKey key, string group, string consumer, int batchSize = 64,
@@ -1010,8 +956,8 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
         return entries;
     }
 
-    private RespireStreamClaimResult ParseClaimResult(
-        in RespValue reply, RespireValue resolvedKey, string group)
+    private static RespireStreamClaimResult ParseClaimResult(
+        in RespValue reply, RespireClient client, RespireValue resolvedKey, string group)
     {
         var values = reply.AsArray();
         var nextStart = values.Length > 0
@@ -1025,6 +971,11 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
             : [];
         return new RespireStreamClaimResult(nextStart, entries, deletedIds);
     }
+
+    private readonly record struct StreamParseState(
+        RespireClient Client,
+        RespireValue ResolvedKey,
+        string Group);
 
     private static RespireStreamId[] ParseStreamIds(in RespValue value)
     {

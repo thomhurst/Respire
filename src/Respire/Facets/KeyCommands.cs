@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
+using Respire.Protocol;
 
 namespace Respire;
 
@@ -177,15 +178,18 @@ internal sealed class KeyCommands(RespireClient client) : IKeyCommands
             "Key expiry must be relative, absolute, or RespireExpiry.Persist.", nameof(expiry));
     }
 
-    public async ValueTask<RespireTtl> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
-        => RespireTtl.FromRedisMilliseconds(
-            await client.IntegerAsync("PTTL", new Cmd1(Verbs.Pttl, client.Key(in key)), cancellationToken).ConfigureAwait(false));
+    public ValueTask<RespireTtl> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
+        => client.ConvertResponseAsync(
+            "PTTL", new Cmd1(Verbs.Pttl, client.Key(in key)), cancellationToken, this,
+            static (KeyCommands _, in RespValue value) =>
+                RespireTtl.FromRedisMilliseconds(ResponseReader.Integer(in value)));
 
-    public async ValueTask<RespireKeyType> TypeAsync(
+    public ValueTask<RespireKeyType> TypeAsync(
         RespireKey key,
         CancellationToken cancellationToken = default)
-        => ParseKeyType(await client.StringAsync(
-            "TYPE", new Cmd1(Verbs.Type, client.Key(in key)), cancellationToken).ConfigureAwait(false));
+        => client.ConvertResponseAsync(
+            "TYPE", new Cmd1(Verbs.Type, client.Key(in key)), cancellationToken, this,
+            static (KeyCommands _, in RespValue value) => ParseKeyType(ResponseReader.String(in value)));
 
     public ValueTask RenameAsync(RespireKey key, RespireKey newKey, CancellationToken cancellationToken = default)
         => client.OkAsync(

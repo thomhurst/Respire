@@ -333,21 +333,16 @@ internal sealed class ServerCommands(RespireClient client) : IServerCommands
         }
     }
 
-    public async ValueTask<DateTimeOffset> TimeAsync(CancellationToken cancellationToken = default)
-    {
-        var reply = await client.SendAsync("TIME", new RawCommand(RespCommands.Time), cancellationToken).ConfigureAwait(false);
-        try
-        {
-            var parts = reply.AsArray();
-            var seconds = parts.Length > 0 ? ReadInt64(in parts[0]) : 0;
-            var microseconds = parts.Length > 1 ? ReadInt64(in parts[1]) : 0;
-            return FromUnixTimeSeconds(seconds).Add(FromMicroseconds(microseconds));
-        }
-        finally
-        {
-            reply.Dispose();
-        }
-    }
+    public ValueTask<DateTimeOffset> TimeAsync(CancellationToken cancellationToken = default)
+        => ConvertAsync(
+            "TIME", new RawCommand(RespCommands.Time), cancellationToken,
+            static (ServerCommands _, in RespValue value) =>
+            {
+                var parts = value.AsArray();
+                var seconds = parts.Length > 0 ? ReadInt64(in parts[0]) : 0;
+                var microseconds = parts.Length > 1 ? ReadInt64(in parts[1]) : 0;
+                return FromUnixTimeSeconds(seconds).Add(FromMicroseconds(microseconds));
+            });
 
     public ValueTask<Dictionary<string, string>> GetConfigAsync(string pattern, CancellationToken cancellationToken = default)
         => client.StringMapAsync("CONFIG GET", new Cmd1(Verbs.ConfigGet, pattern), cancellationToken);
@@ -358,23 +353,13 @@ internal sealed class ServerCommands(RespireClient client) : IServerCommands
         return client.OkAsync("CONFIG SET", new Cmd2(Verbs.ConfigSet, name, value), cancellationToken);
     }
 
-    private async ValueTask<TResult> ConvertAsync<TCommand, TResult>(
+    private ValueTask<TResult> ConvertAsync<TCommand, TResult>(
         string operation,
         TCommand command,
         CancellationToken cancellationToken,
         ResponseConverter<ServerCommands, TResult> converter)
         where TCommand : struct, IRespCommand
-    {
-        var reply = await client.SendAsync(operation, command, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return converter(this, in reply);
-        }
-        finally
-        {
-            reply.Dispose();
-        }
-    }
+        => client.ConvertResponseAsync(operation, command, cancellationToken, this, converter);
 
     private static RespireServerClientInfo[] ParseClientList(in RespValue value)
     {

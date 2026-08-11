@@ -435,44 +435,28 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
             client, "ZSCAN", RespireCommands.SortedSet.ZSCAN.Verb, key, match, countHint,
             ParseEntries, cancellationToken);
 
-    public async ValueTask<SortedSetEntry[]> PopAsync(
+    public ValueTask<SortedSetEntry[]> PopAsync(
         RespireKey key, long count, bool descending = false,
         CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(count);
         var command = descending ? RespireCommands.SortedSet.ZPOPMAX : RespireCommands.SortedSet.ZPOPMIN;
-        var reply = await client.SendAsync(
-                command.Name, new Cmd2(command.Verb, client.Key(in key), count), cancellationToken)
-            .ConfigureAwait(false);
-        try
-        {
-            return ParseEntries(in reply);
-        }
-        finally
-        {
-            reply.Dispose();
-        }
+        return client.ConvertResponseAsync(
+            command.Name, new Cmd2(command.Verb, client.Key(in key), count), cancellationToken, this,
+            static (SortedSetCommands _, in RespValue value) => ParseEntries(in value));
     }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public async ValueTask<SortedSetEntry<T>[]> PopAsync<T>(
+    public ValueTask<SortedSetEntry<T>[]> PopAsync<T>(
         RespireKey key, long count, bool descending = false,
         CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(count);
         var command = descending ? RespireCommands.SortedSet.ZPOPMAX : RespireCommands.SortedSet.ZPOPMIN;
-        var reply = await client.SendAsync(
-                command.Name, new Cmd2(command.Verb, client.Key(in key), count), cancellationToken)
-            .ConfigureAwait(false);
-        try
-        {
-            return ParseEntries<T>(client, in reply);
-        }
-        finally
-        {
-            reply.Dispose();
-        }
+        return client.ConvertResponseAsync(
+            command.Name, new Cmd2(command.Verb, client.Key(in key), count), cancellationToken, client,
+            static (RespireClient state, in RespValue value) => ParseEntries<T>(state, in value));
     }
 
     public ValueTask<long> RemoveRangeByScoreAsync(
@@ -537,21 +521,17 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
             : client.DeserializeArrayAsync<T, Cmd3>(
                 "ZRANGE", new Cmd3(Verbs.ZRange, client.Key(in key), start, stop), cancellationToken);
 
-    public async ValueTask<SortedSetEntry[]> RangeWithScoresAsync(
+    public ValueTask<SortedSetEntry[]> RangeWithScoresAsync(
         RespireKey key, long start = 0, long stop = -1, bool descending = false, CancellationToken cancellationToken = default)
-    {
-        var reply = descending
-            ? await client.SendAsync(
-                "ZRANGE", new Cmd5(Verbs.ZRange, client.Key(in key), start, stop, "REV", "WITHSCORES"), cancellationToken)
-                .ConfigureAwait(false)
-            : await client.SendAsync(
-                "ZRANGE", new Cmd4(Verbs.ZRange, client.Key(in key), start, stop, "WITHSCORES"), cancellationToken)
-                .ConfigureAwait(false);
-
-        var entries = ParseEntries(in reply);
-        reply.Dispose();
-        return entries;
-    }
+        => descending
+            ? client.ConvertResponseAsync(
+                "ZRANGE", new Cmd5(Verbs.ZRange, client.Key(in key), start, stop, "REV", "WITHSCORES"),
+                cancellationToken, this,
+                static (SortedSetCommands _, in RespValue value) => ParseEntries(in value))
+            : client.ConvertResponseAsync(
+                "ZRANGE", new Cmd4(Verbs.ZRange, client.Key(in key), start, stop, "WITHSCORES"),
+                cancellationToken, this,
+                static (SortedSetCommands _, in RespValue value) => ParseEntries(in value));
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
@@ -606,11 +586,10 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
                     "BYSCORE", offset, count, descending, withScores: false)),
             cancellationToken);
 
-    public async ValueTask<SortedSetEntry[]> RangeByScoreWithScoresAsync(
+    public ValueTask<SortedSetEntry[]> RangeByScoreWithScoresAsync(
         RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
         bool descending = false, CancellationToken cancellationToken = default)
-    {
-        var reply = await client.SendAsync(
+        => client.ConvertResponseAsync(
             "ZRANGE",
             new Cmd1N(
                 Verbs.ZRange,
@@ -618,16 +597,9 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
                 RangeArguments(
                     range.Minimum.ToRespireValue(), range.Maximum.ToRespireValue(),
                     "BYSCORE", offset, count, descending, withScores: true)),
-            cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return ParseEntries(in reply);
-        }
-        finally
-        {
-            reply.Dispose();
-        }
-    }
+            cancellationToken,
+            this,
+            static (SortedSetCommands _, in RespValue value) => ParseEntries(in value));
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
@@ -806,19 +778,11 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    private async ValueTask<SortedSetEntry<T>[]> RangeWithScoresCoreAsync<T>(
+    private ValueTask<SortedSetEntry<T>[]> RangeWithScoresCoreAsync<T>(
         Cmd1N command, CancellationToken cancellationToken)
-    {
-        var reply = await client.SendAsync("ZRANGE", command, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return ParseEntries<T>(client, in reply);
-        }
-        finally
-        {
-            reply.Dispose();
-        }
-    }
+        => client.ConvertResponseAsync(
+            "ZRANGE", command, cancellationToken, client,
+            static (RespireClient state, in RespValue value) => ParseEntries<T>(state, in value));
 
     private ValueTask<string[]> AlgebraAsync(
         string operation, Verb verb, ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
