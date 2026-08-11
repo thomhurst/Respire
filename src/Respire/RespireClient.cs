@@ -932,6 +932,11 @@ public sealed partial class RespireClient : IRespireClient
             return (byte[])(object)value;
         }
 
+        if (typeof(T) == typeof(char))
+        {
+            return (char)(object)value;
+        }
+
         // Pass payload types straight through: the typed overloads sit next to RespireValue ones,
         // so an argument that is already a command argument must not be run through the serializer.
         if (typeof(T) == typeof(RespireValue))
@@ -964,11 +969,6 @@ public sealed partial class RespireClient : IRespireClient
         if (typeof(T) == typeof(ReadOnlyMemory<byte>))
         {
             return (ReadOnlyMemory<byte>)(object)value!;
-        }
-
-        if (typeof(T) == typeof(char))
-        {
-            return (ushort)(char)(object)value!;
         }
 
         if (typeof(T) == typeof(float) && !float.IsFinite((float)(object)value!))

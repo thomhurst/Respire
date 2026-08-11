@@ -51,6 +51,42 @@ public class PrimitiveCodecTests
     }
 
     [Test]
+    public async Task Character_BypassesSerializer_OnWriteAndRead()
+    {
+        var serializer = new CountingSerializer();
+        await using var client = CreateClient(serializer);
+        char? nullable = '£';
+
+        await Assert.That(client.Serialize('£').ToString()).IsEqualTo("£");
+        await Assert.That(client.Serialize(nullable).ToString()).IsEqualTo("£");
+        await Assert.That(client.DeserializeBorrowed<char>(Bulk("£"))).IsEqualTo('£');
+        await Assert.That(client.DeserializeBorrowed<char?>(Bulk("£"))).IsEqualTo('£');
+        await Assert.That(client.DeserializeBorrowed<char>(Bulk("\"A\""))).IsEqualTo('A');
+        await Assert.That(client.DeserializeBorrowed<char?>(Bulk("\"\\u00A3\""))).IsEqualTo('£');
+        await Assert.That(serializer.SerializeCalls).IsEqualTo(0);
+        await Assert.That(serializer.DeserializeCalls).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task CharacterWrite_RejectsIsolatedSurrogates()
+    {
+        await using var client = CreateClient(new CountingSerializer());
+
+        await Assert.That(() => client.Serialize('\uD800')).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => (RespireValue)'\uDC00').Throws<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
+    public async Task CharacterRead_RejectsPayloadThatIsNotOneUtf16CodeUnit()
+    {
+        await using var client = CreateClient(new CountingSerializer());
+
+        await Assert.That(() => client.DeserializeBorrowed<char>(Bulk(""))).Throws<FormatException>();
+        await Assert.That(() => client.DeserializeBorrowed<char>(Bulk("AB"))).Throws<FormatException>();
+        await Assert.That(() => client.DeserializeBorrowed<char>(Bulk("😀"))).Throws<FormatException>();
+    }
+
+    [Test]
     public async Task ReadOnlyMemory_UsesConfiguredSerializer_OnWriteAndRead()
     {
         var serializer = new CountingSerializer();
@@ -72,7 +108,7 @@ public class PrimitiveCodecTests
         ReadOnlyMemory<byte> memory = new byte[] { 0, 1, 254, 255 };
 
         _ = client.SerializeRawCompatible(memory);
-        await Assert.That(client.SerializeRawCompatible('A').ToString()).IsEqualTo("65");
+        await Assert.That(client.SerializeRawCompatible('A').ToString()).IsEqualTo("A");
         await Assert.That(client.SerializeRawCompatible(float.NaN).ToString()).IsEqualTo("NaN");
         await Assert.That(client.SerializeRawCompatible(float.PositiveInfinity).ToString()).IsEqualTo("Infinity");
         await Assert.That(client.SerializeRawCompatible(float.NegativeInfinity).ToString()).IsEqualTo("-Infinity");

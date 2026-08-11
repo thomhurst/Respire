@@ -91,7 +91,7 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
         await client.Hashes.SetAsync("typed:hash", "nan", double.NaN);
         (await client.Hashes.GetStringAsync("typed:hash", "nan")).Should().Be("NaN");
         await client.Hashes.SetAsync("typed:hash", "char", 'A');
-        (await client.Hashes.GetStringAsync("typed:hash", "char")).Should().Be("65");
+        (await client.Hashes.GetStringAsync("typed:hash", "char")).Should().Be("A");
 
         var storedDefault = await client.Hashes.TryGetAsync<int>("typed:hash", "count");
         storedDefault.Found.Should().BeTrue();

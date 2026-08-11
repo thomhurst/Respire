@@ -51,6 +51,22 @@ public class PrimitiveSerializationWireTests
     }
 
     [Test]
+    public async Task CharacterWrites_UseBareTextAcrossOverloadShapes()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.OkReply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        RespireValue value = '£';
+
+        await client.SetAsync("generic", '£');
+        await client.SetAsync("value", value);
+
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo([
+            "SET generic £",
+            "SET value £",
+        ]);
+    }
+
+    [Test]
     public async Task NullablePrimitives_PreserveJsonNullEncoding()
     {
         await using var server = new FakeRespServer("$4\r\nnull\r\n"u8.ToArray());
