@@ -55,6 +55,24 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    public async Task CombinedGets_DeserializeSerializedPayloads()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        var deletedPayload = new TypedPayload(8, "deleted");
+        var expiredPayload = new TypedPayload(9, "expired");
+        await client.SetAsync("typed:combined:delete", deletedPayload);
+        await client.SetAsync(
+            "typed:combined:expire", expiredPayload, RespireExpiry.In(TimeSpan.FromMinutes(1)));
+
+        (await client.Strings.GetAndDeleteAsync<TypedPayload>("typed:combined:delete"))
+            .Should().Be(deletedPayload);
+        (await client.Strings.GetAndExpireAsync<TypedPayload>(
+            "typed:combined:expire", RespireExpiry.Persist)).Should().Be(expiredPayload);
+        (await client.Keys.ExistsAsync("typed:combined:delete")).Should().BeFalse();
+        (await client.Keys.ExpiryAsync("typed:combined:expire")).HasExpiry.Should().BeFalse();
+    }
+
+    [Test]
     public async Task HashTypedSetAndGet_RoundTrip()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);

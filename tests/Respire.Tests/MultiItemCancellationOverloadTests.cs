@@ -148,10 +148,10 @@ public class MultiItemCancellationOverloadTests
         _ = client.Hashes.ExpireAsync("h", RespireExpiry.At(expireAt), fields, token);
         _ = client.Hashes.ExpireAsync("h", RespireExpiry.At(expireAt), HashFieldExpireWhen.Exists, fields, token);
         _ = client.Hashes.ExpireAsync("h", RespireExpiry.Persist, fields, token);
-        _ = client.Hashes.GetDeleteAsync("h", fields, token);
-        _ = client.Hashes.GetExpireAsync("h", expiry, fields, token);
-        _ = client.Hashes.GetExpireAsync("h", RespireExpiry.At(expireAt), fields, token);
-        _ = client.Hashes.GetExpireAsync("h", RespireExpiry.Persist, fields, token);
+        _ = client.Hashes.GetAndDeleteAsync("h", fields, token);
+        _ = client.Hashes.GetAndExpireAsync("h", expiry, fields, token);
+        _ = client.Hashes.GetAndExpireAsync("h", RespireExpiry.At(expireAt), fields, token);
+        _ = client.Hashes.GetAndExpireAsync("h", RespireExpiry.Persist, fields, token);
         _ = client.Hashes.SetExpireAsync("h", expiry, fieldValues, token);
         _ = client.Hashes.SetExpireAsync("h", expiry, SetWhen.Exists, fieldValues, token);
         _ = client.Hashes.SetExpireAsync("h", RespireExpiry.At(expireAt), fieldValues, token);

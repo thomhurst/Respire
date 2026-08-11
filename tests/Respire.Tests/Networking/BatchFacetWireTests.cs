@@ -222,17 +222,17 @@ public class BatchFacetWireTests
         var instant = DateTimeOffset.FromUnixTimeMilliseconds(987654321);
 
         await client.Keys.ExpireAsync("key", RespireExpiry.In(TimeSpan.FromSeconds(2)), ExpireWhen.GreaterThan);
-        await client.Strings.GetExpireAsync("key", RespireExpiry.At(instant));
+        await client.Strings.GetAndExpireAsync("key", RespireExpiry.At(instant));
         await client.Hashes.ExpireAsync("hash", RespireExpiry.Persist, "field");
-        await client.Hashes.GetExpireAsync("hash", RespireExpiry.At(instant), "field");
+        await client.Hashes.GetAndExpireAsync("hash", RespireExpiry.At(instant), "field");
         await client.Hashes.SetExpireAsync("hash", RespireExpiry.Keep, ("field", "value"));
         var expected = server.ReceivedCommands.ToArray();
 
         var batch = client.CreateBatch();
         _ = batch.Keys.Expire("key", RespireExpiry.In(TimeSpan.FromSeconds(2)), ExpireWhen.GreaterThan);
-        _ = batch.Strings.GetExpire("key", RespireExpiry.At(instant));
+        _ = batch.Strings.GetAndExpire("key", RespireExpiry.At(instant));
         _ = batch.Hashes.Expire("hash", RespireExpiry.Persist, "field");
-        _ = batch.Hashes.GetExpire("hash", RespireExpiry.At(instant), "field");
+        _ = batch.Hashes.GetAndExpire("hash", RespireExpiry.At(instant), "field");
         _ = batch.Hashes.SetExpire("hash", RespireExpiry.Keep, ("field", "value"));
         await batch.ExecuteAsync();
 

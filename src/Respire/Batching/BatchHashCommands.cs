@@ -80,9 +80,24 @@ public interface IBatchHashCommands
         RespireKey key, RespireExpiry expiry, HashFieldExpireWhen when, params ReadOnlySpan<string> fields);
 
     /// <summary>Gets fields and deletes them atomically. Redis: HGETDEL.</summary>
+#pragma warning disable CS0618 // Defaults preserve compatibility with existing interface implementations.
+    RespirePending<string?[]> GetAndDelete(RespireKey key, params ReadOnlySpan<string> fields)
+        => GetDelete(key, fields);
+#pragma warning restore CS0618
+
+    /// <summary>Gets fields and deletes them atomically. Redis: HGETDEL.</summary>
+    [Obsolete("Use GetAndDelete.")]
     RespirePending<string?[]> GetDelete(RespireKey key, params ReadOnlySpan<string> fields);
 
     /// <summary>Gets fields and updates or removes their expiry metadata. Redis: HGETEX.</summary>
+#pragma warning disable CS0618 // Defaults preserve compatibility with existing interface implementations.
+    RespirePending<string?[]> GetAndExpire(
+        RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)
+        => GetExpire(key, expiry, fields);
+#pragma warning restore CS0618
+
+    /// <summary>Gets fields and updates or removes their expiry metadata. Redis: HGETEX.</summary>
+    [Obsolete("Use GetAndExpire.")]
     RespirePending<string?[]> GetExpire(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields);
 
@@ -237,13 +252,17 @@ internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
             "Hash expiry must be relative, absolute, or RespireExpiry.Persist.", nameof(expiry));
     }
 
-    public RespirePending<string?[]> GetDelete(RespireKey key, params ReadOnlySpan<string> fields)
+    public RespirePending<string?[]> GetAndDelete(RespireKey key, params ReadOnlySpan<string> fields)
         => sink.Add<Cmd1N, string?[]>(
             "HGETDEL",
             new Cmd1N(RespireCommands.Hash.HGETDEL.Verb, sink.Client.Key(in key), HashCommands.FieldsBlock(fields)),
             static (c, v) => ResponseReader.NullableStringArray(in v));
 
-    public RespirePending<string?[]> GetExpire(
+    [Obsolete("Use GetAndDelete.")]
+    public RespirePending<string?[]> GetDelete(RespireKey key, params ReadOnlySpan<string> fields)
+        => GetAndDelete(key, fields);
+
+    public RespirePending<string?[]> GetAndExpire(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)
     {
         if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
@@ -264,6 +283,11 @@ internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
         throw new ArgumentException(
             "HGETEX expiry must be relative, absolute, or RespireExpiry.Persist.", nameof(expiry));
     }
+
+    [Obsolete("Use GetAndExpire.")]
+    public RespirePending<string?[]> GetExpire(
+        RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)
+        => GetAndExpire(key, expiry, fields);
 
     public RespirePending<bool> SetExpire(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
