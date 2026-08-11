@@ -24,7 +24,7 @@ namespace Respire;
 /// blocking, streaming, connection-scoped, or managed-lifetime semantics do not fit a deferred
 /// single-flush command queue.
 /// </remarks>
-public sealed class RespireBatch : IDisposable, IPendingSink
+public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSink
 {
     private readonly RespireClient _client;
     private readonly List<Op> _ops = [];

@@ -20,7 +20,7 @@ namespace Respire;
 /// connection and <see cref="CommitAsync"/> returns false if a watched key changed. Always
 /// commit or dispose a transaction so its buffer and any dedicated connection are released.
 /// </remarks>
-public sealed class RespireTransaction : IAsyncDisposable, IPendingSink
+public sealed class RespireTransaction : IAsyncDisposable, IRespireCommandQueue, IPendingSink
 {
     private readonly RespireClient _client;
     private readonly RespireConnection? _watchConnection;

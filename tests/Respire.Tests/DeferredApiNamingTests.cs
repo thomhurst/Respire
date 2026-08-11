@@ -14,6 +14,7 @@ public class DeferredApiNamingTests
             .Where(type => type.IsPublic
                 && (type == typeof(RespireBatch)
                     || type == typeof(RespireTransaction)
+                    || type == typeof(IRespireCommandQueue)
                     || type.IsInterface && type.Name.StartsWith("IBatch", StringComparison.Ordinal)));
 
         var offenders = apiTypes
@@ -37,5 +38,49 @@ public class DeferredApiNamingTests
         await Assert.That(batchMethods.Any(method => method.Name == "ExecuteAsync")).IsTrue();
         await Assert.That(batchMethods.Any(method => method.Name == "SendAsync")).IsFalse();
         await Assert.That(typeof(RespireTransaction).GetMethod("CommitAsync")).IsNotNull();
+    }
+
+    [Test]
+    public async Task BatchAndTransactionShareCommandQueueInterface()
+    {
+        await Assert.That(typeof(IRespireCommandQueue).IsAssignableFrom(typeof(RespireBatch))).IsTrue();
+        await Assert.That(typeof(IRespireCommandQueue).IsAssignableFrom(typeof(RespireTransaction))).IsTrue();
+
+        var facetNames = typeof(IRespireCommandQueue)
+            .GetProperties()
+            .Select(static property => property.Name)
+            .Order()
+            .ToArray();
+
+        await Assert.That(facetNames).IsEquivalentTo(new[]
+        {
+            "Bitmaps",
+            "Geo",
+            "Hashes",
+            "HyperLogLog",
+            "Keys",
+            "Lists",
+            "Scripts",
+            "Sets",
+            "SortedSets",
+            "Strings",
+        });
+
+        await using var client = RespireClient.Create("localhost:6379");
+        using var batch = client.CreateBatch();
+        await using var transaction = client.CreateTransaction();
+
+        QueueAggregate(batch);
+        QueueAggregate(transaction);
+
+        await Assert.That(batch.Count).IsEqualTo(3);
+        await Assert.That(transaction.Count).IsEqualTo(3);
+    }
+
+    private static void QueueAggregate(IRespireCommandQueue queue)
+    {
+        _ = queue.Hashes.Set("aggregate", "status", "ready");
+        _ = queue.Set("aggregate:version", 1);
+        _ = queue.Expire("aggregate", RespireExpiry.In(TimeSpan.FromMinutes(5)));
     }
 }

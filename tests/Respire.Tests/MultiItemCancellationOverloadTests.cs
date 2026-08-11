@@ -26,6 +26,7 @@ public class MultiItemCancellationOverloadTests
             // or CommitAsync owns cancellation for the whole queued operation set.
             if (type == typeof(RespireBatch)
                 || type == typeof(RespireTransaction)
+                || type == typeof(IRespireCommandQueue)
                 || type.Name.StartsWith("IBatch", StringComparison.Ordinal))
             {
                 continue;
