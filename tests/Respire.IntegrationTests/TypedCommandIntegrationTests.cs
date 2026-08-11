@@ -7,6 +7,35 @@ namespace Respire.IntegrationTests;
 public class TypedCommandIntegrationTests(RedisTestContainer fixture)
 {
     [Test]
+    public async Task StreamAddOptionsAndDescendingRange_RoundTripAgainstRedis()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        var suffix = Guid.NewGuid().ToString("N");
+        var key = $"stream:options:{suffix}";
+        var absentKey = $"stream:absent:{suffix}";
+
+        var notCreated = await client.Streams.AddAsync(
+            absentKey, new StreamAddOptions { CreateStream = false }, ("type", "ignored"));
+        notCreated.Should().BeNull();
+        (await client.ExistsAsync(absentKey)).Should().BeFalse();
+
+        var firstId = await client.Streams.AddAsync(
+            key, new StreamAddOptions { Id = "1-0" }, ("type", "first"));
+        firstId.Should().Be((RespireStreamId)"1-0");
+        await client.Streams.AddAsync(key, new StreamAddOptions { Id = "2-0" }, ("type", "second"));
+        await client.Streams.AddAsync(
+            key,
+            new StreamAddOptions { Id = "3-0", MaxLength = 2, ApproximateTrim = false },
+            ("type", "third"));
+
+        (await client.Streams.CountAsync(key)).Should().Be(2);
+        var latest = await client.Streams.RangeAsync(key, descending: true, count: 1);
+        latest.Should().ContainSingle();
+        latest[0].Id.ToString().Should().Be("3-0");
+        latest[0].GetString("type").Should().Be("third");
+    }
+
+    [Test]
     public async Task KeyCommands_RoundTripConditionalCopyAndTypedScan()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);

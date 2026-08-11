@@ -198,6 +198,7 @@ internal static class Verbs
     public static readonly Verb XAdd = new("XADD");
     public static readonly Verb XLen = new("XLEN");
     public static readonly Verb XRange = new("XRANGE");
+    public static readonly Verb XRevRange = new("XREVRANGE");
     public static readonly Verb XAck = new("XACK");
     public static readonly Verb XGroupCreate = new("XGROUP CREATE");
     public static readonly Verb XReadGroup = new(8, "XREADGROUP");

@@ -19,6 +19,57 @@ public class StreamManagementCommandTests
     }
 
     [Test]
+    public async Task AddAndRange_WriteOptionsAndDescendingFrames()
+    {
+        await using var server = new FakeRespServer(
+            Bulk("42-0"),
+            Bulk("43-0"),
+            Resp(Arr("9-0", Arr("type", "latest")), Arr("8-0", Arr("type", "previous"))));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var defaults = default(StreamAddOptions);
+        await Assert.That(defaults.ApproximateTrim).IsTrue();
+        await Assert.That(defaults.CreateStream).IsTrue();
+
+        var chosenId = await client.Streams.AddAsync(
+            "events",
+            new StreamAddOptions
+            {
+                Id = "42-0",
+                MaxLength = 100,
+                CreateStream = false,
+            },
+            ("type", "click"));
+        var exactId = await client.Streams.AddAsync(
+            "events",
+            new StreamAddOptions { MaxLength = 10, ApproximateTrim = false },
+            ("type", "view"));
+        var latest = await client.Streams.RangeAsync(
+            "events", descending: true, start: "1-0", end: "9-0", count: 2);
+
+        await Assert.That(chosenId?.ToString()).IsEqualTo("42-0");
+        await Assert.That(exactId?.ToString()).IsEqualTo("43-0");
+        await Assert.That(latest.Select(entry => entry.Id.ToString())).IsEquivalentTo(new[] { "9-0", "8-0" });
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        {
+            "XADD events NOMKSTREAM MAXLEN ~ 100 42-0 type click",
+            "XADD events MAXLEN 10 * type view",
+            "XREVRANGE events 9-0 1-0 COUNT 2",
+        });
+    }
+
+    [Test]
+    public async Task Add_WithNegativeMaximumLength_Throws()
+    {
+        await using var server = new FakeRespServer();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await Assert.That(async () => await client.Streams.AddAsync(
+            "events", new StreamAddOptions { MaxLength = -1 }, ("type", "click")))
+            .Throws<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
     public async Task StreamManagementCommands_WriteExpectedFramesAndParseReplies()
     {
         await using var server = new FakeRespServer(
@@ -123,6 +174,9 @@ public class StreamManagementCommandTests
 
     private static byte[] Integer(long value)
         => Encoding.ASCII.GetBytes($":{value.ToString(CultureInfo.InvariantCulture)}\r\n");
+
+    private static byte[] Bulk(string value)
+        => Encoding.UTF8.GetBytes($"${Encoding.UTF8.GetByteCount(value)}\r\n{value}\r\n");
 
     private static byte[] PendingSummaryReply()
         => Resp(
