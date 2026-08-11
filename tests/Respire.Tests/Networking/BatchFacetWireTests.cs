@@ -32,6 +32,10 @@ public class BatchFacetWireTests
         await Assert.That(result.FailureCount).IsEqualTo(1);
         await Assert.That(result.FirstError).IsSameReferenceAs(failed.Error);
         await Assert.That(result.FirstError).IsTypeOf<RespireServerException>();
+        await Assert.That(result.Failures.Count).IsEqualTo(1);
+        await Assert.That(result.Failures[0].Index).IsEqualTo(0);
+        await Assert.That(result.Failures[0].Operation).IsEqualTo("GET");
+        await Assert.That(result.Failures[0].Error).IsSameReferenceAs(failed.Error);
         await Assert.That(succeeded.Result).IsTrue();
         await Assert.That(() => result.ThrowIfAnyFailed()).ThrowsExactly<RespireServerException>();
     }
@@ -68,6 +72,8 @@ public class BatchFacetWireTests
         await Assert.That(result.Count).IsEqualTo(0);
         await Assert.That(result.FailureCount).IsEqualTo(0);
         await Assert.That(result.FirstError).IsNull();
+        await Assert.That(result.Failures).IsEmpty();
+        await Assert.That(ReferenceEquals(result.Failures, default(RespireBatchResult).Failures)).IsTrue();
         result.ThrowIfAnyFailed();
     }
 
@@ -95,6 +101,13 @@ public class BatchFacetWireTests
         await Assert.That(result.FirstError).IsNotNull();
         await Assert.That(first.Error).IsSameReferenceAs(result.FirstError);
         await Assert.That(second.Error).IsSameReferenceAs(result.FirstError);
+        await Assert.That(result.Failures.Count).IsEqualTo(2);
+        await Assert.That(result.Failures[0].Index).IsEqualTo(0);
+        await Assert.That(result.Failures[0].Operation).IsEqualTo("GET");
+        await Assert.That(result.Failures[1].Index).IsEqualTo(1);
+        await Assert.That(result.Failures[1].Operation).IsEqualTo("EXISTS");
+        await Assert.That(result.Failures.All(failure => ReferenceEquals(failure.Error, result.FirstError)))
+            .IsTrue();
     }
 
     [Test]
