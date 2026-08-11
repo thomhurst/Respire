@@ -92,9 +92,23 @@ public interface ILockCommands
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Extends the lock expiry only when its value still matches <paramref name="token"/>.
+    /// Resets the lock expiry from now only when its value still matches <paramref name="token"/>.
     /// Redis: EVALSHA/EVAL compare-and-PEXPIRE.
     /// </summary>
+    ValueTask<bool> ResetExpiryAsync(
+        RespireKey key,
+        RespireValue token,
+        TimeSpan newDuration,
+        CancellationToken cancellationToken = default)
+#pragma warning disable CS0618 // Compatibility fallback for existing ILockCommands implementations.
+        => ExtendAsync(key, token, newDuration, cancellationToken);
+#pragma warning restore CS0618
+
+    /// <summary>
+    /// Resets the lock expiry from now only when its value still matches <paramref name="token"/>.
+    /// Redis: EVALSHA/EVAL compare-and-PEXPIRE.
+    /// </summary>
+    [Obsolete("Use ResetExpiryAsync; the duration is applied from now rather than added to the current expiry.")]
     ValueTask<bool> ExtendAsync(
         RespireKey key,
         RespireValue token,
@@ -105,7 +119,42 @@ public interface ILockCommands
     ValueTask<byte[]?> GetOwnerTokenAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Whether <paramref name="mutex"/> still owns its key according to Redis.</summary>
+    [Obsolete("Use mutex.VerifyStillHeldAsync().")]
     ValueTask<bool> IsHeldByAsync(RespireLock mutex, CancellationToken cancellationToken = default);
+}
+
+/// <summary>Convenience operations composed from managed distributed-lock commands.</summary>
+public static class LockCommandExtensions
+{
+    /// <summary>
+    /// Acquires a managed lock and, when requested, starts renewal owned by the returned lock
+    /// handle. Disposing the attempt stops renewal and releases the lock.
+    /// </summary>
+    public static async ValueTask<RespireLockAttempt> AcquireAsync(
+        this ILockCommands locks,
+        RespireKey key,
+        TimeSpan expiry,
+        bool keepAlive,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(locks);
+        var attempt = await locks.AcquireAsync(key, expiry, cancellationToken).ConfigureAwait(false);
+        if (!keepAlive || !attempt.Acquired)
+        {
+            return attempt;
+        }
+
+        try
+        {
+            attempt.Lock.StartOwnedKeepAlive();
+            return attempt;
+        }
+        catch
+        {
+            await attempt.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
 }
 
 internal interface IManagedLockCommands
@@ -243,16 +292,24 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         return ExecuteBooleanScriptAsync(ReleaseScript, key, [token], cancellationToken);
     }
 
+    public ValueTask<bool> ResetExpiryAsync(
+        RespireKey key,
+        RespireValue token,
+        TimeSpan newDuration,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateToken(token);
+        var milliseconds = ValidateExpiry(newDuration, nameof(newDuration));
+        return ExecuteBooleanScriptAsync(ExtendScript, key, [token, milliseconds], cancellationToken);
+    }
+
+    [Obsolete("Use ResetExpiryAsync; the duration is applied from now rather than added to the current expiry.")]
     public ValueTask<bool> ExtendAsync(
         RespireKey key,
         RespireValue token,
         TimeSpan expiry,
         CancellationToken cancellationToken = default)
-    {
-        ValidateToken(token);
-        var milliseconds = ValidateExpiry(expiry);
-        return ExecuteBooleanScriptAsync(ExtendScript, key, [token, milliseconds], cancellationToken);
-    }
+        => ResetExpiryAsync(key, token, expiry, cancellationToken);
 
     async ValueTask<bool> IManagedLockCommands.ExtendManagedAsync(
         RespireKey key,
@@ -321,12 +378,15 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
     }
 
     private static long ValidateExpiry(TimeSpan expiry)
+        => ValidateExpiry(expiry, nameof(expiry));
+
+    private static long ValidateExpiry(TimeSpan expiry, string parameterName)
     {
         var milliseconds = (long)expiry.TotalMilliseconds;
         if (milliseconds <= 0)
         {
             throw new ArgumentOutOfRangeException(
-                nameof(expiry),
+                parameterName,
                 expiry,
                 "Lock expiry must be at least 1 millisecond.");
         }
