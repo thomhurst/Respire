@@ -1,4 +1,5 @@
 using Respire.Protocol;
+using TUnit.Assertions.Enums;
 using TUnit.Core;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -149,6 +150,36 @@ public class TransactionTests
         await Assert.That(await transaction.CommitAsync()).IsTrue();
 
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(["WATCH watched"]);
+    }
+
+    [Test]
+    public async Task CompletedWatchedTransactions_ReuseDedicatedConnection()
+    {
+        var committedReply = "*1\r\n+OK\r\n"u8.ToArray();
+        var abortedReply = "*-1\r\n"u8.ToArray();
+        await using var server = new FakeRespServer(
+            4,
+            FakeRespServer.OkReply, FakeRespServer.OkReply, QueuedReply, committedReply,
+            FakeRespServer.OkReply, FakeRespServer.OkReply, QueuedReply, abortedReply,
+            FakeRespServer.OkReply, FakeRespServer.OkReply, QueuedReply, committedReply);
+        await using var client = await ConnectAsync(server.Port);
+        var commits = new List<bool>();
+
+        for (var i = 0; i < 3; i++)
+        {
+            await using var transaction = await client.CreateTransactionAsync(["watched"]);
+            _ = transaction.Set("watched", i);
+            commits.Add(await transaction.CommitAsync());
+        }
+
+        await Assert.That(commits).IsEquivalentTo([true, false, true], CollectionOrdering.Matching);
+        var watchConnectionIds = server.ReceivedCommands
+            .Select((command, index) => (command, ConnectionId: server.ReceivedConnectionIds[index]))
+            .Where(item => item.command == "WATCH watched")
+            .Select(item => item.ConnectionId)
+            .ToArray();
+        await Assert.That(watchConnectionIds.Length).IsEqualTo(3);
+        await Assert.That(watchConnectionIds.Distinct().Count()).IsEqualTo(1);
     }
 
     [Test]
