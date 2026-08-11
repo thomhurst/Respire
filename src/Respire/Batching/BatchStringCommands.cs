@@ -62,9 +62,32 @@ public interface IBatchStringCommands
         RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always);
 
     /// <summary>Gets a key's value and deletes the key. Redis: GETDEL.</summary>
+#pragma warning disable CS0618 // Default preserves compatibility with existing interface implementations.
+    RespirePending<string?> GetAndDelete(RespireKey key) => GetDelete(key);
+#pragma warning restore CS0618
+
+    /// <summary>Gets and deserializes a key's value, then deletes the key. Redis: GETDEL.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    RespirePending<T?> GetAndDelete<T>(RespireKey key);
+
+    /// <summary>Gets a key's value and deletes the key. Redis: GETDEL.</summary>
+    [Obsolete("Use GetAndDelete.")]
     RespirePending<string?> GetDelete(RespireKey key);
 
     /// <summary>Gets a key's value and updates or removes its expiry. Redis: GETEX.</summary>
+#pragma warning disable CS0618 // Default preserves compatibility with existing interface implementations.
+    RespirePending<string?> GetAndExpire(RespireKey key, RespireExpiry expiry)
+        => GetExpire(key, expiry);
+#pragma warning restore CS0618
+
+    /// <summary>Gets and deserializes a key's value, then updates or removes its expiry. Redis: GETEX.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    RespirePending<T?> GetAndExpire<T>(RespireKey key, RespireExpiry expiry);
+
+    /// <summary>Gets a key's value and updates or removes its expiry. Redis: GETEX.</summary>
+    [Obsolete("Use GetAndExpire.")]
     RespirePending<string?> GetExpire(RespireKey key, RespireExpiry expiry);
 
     /// <summary>Appends to a string and returns the new length. Redis: APPEND.</summary>
@@ -189,37 +212,42 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
             static (c, v) => c.DeserializeBorrowed<T>(in v));
     }
 
-    public RespirePending<string?> GetDelete(RespireKey key)
+    public RespirePending<string?> GetAndDelete(RespireKey key)
         => sink.Add<Cmd1, string?>(
             "GETDEL", new Cmd1(Verbs.GetDel, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.StringOrNull(in v));
 
-    public RespirePending<string?> GetExpire(RespireKey key, RespireExpiry expiry)
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public RespirePending<T?> GetAndDelete<T>(RespireKey key)
+        => sink.Add<Cmd1, T?>(
+            "GETDEL", new Cmd1(Verbs.GetDel, sink.Client.Key(in key)),
+            static (c, v) => c.DeserializeBorrowed<T>(in v));
+
+    [Obsolete("Use GetAndDelete.")]
+    public RespirePending<string?> GetDelete(RespireKey key) => GetAndDelete(key);
+
+    public RespirePending<string?> GetAndExpire(RespireKey key, RespireExpiry expiry)
     {
-        if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
-        {
-            return sink.Add<Cmd3, string?>(
-                "GETEX", new Cmd3(RespireCommands.String.GETEX.Verb, sink.Client.Key(in key), "PX", milliseconds),
-                static (c, v) => ResponseReader.StringOrNull(in v));
-        }
-
-        if (expiry.TryGetAbsoluteUnixMilliseconds(out var unixMilliseconds))
-        {
-            return sink.Add<Cmd3, string?>(
-                "GETEX", new Cmd3(RespireCommands.String.GETEX.Verb, sink.Client.Key(in key), "PXAT", unixMilliseconds),
-                static (c, v) => ResponseReader.StringOrNull(in v));
-        }
-
-        if (expiry.IsPersist)
-        {
-            return sink.Add<Cmd2, string?>(
-                "GETEX", new Cmd2(RespireCommands.String.GETEX.Verb, sink.Client.Key(in key), "PERSIST"),
-                static (c, v) => ResponseReader.StringOrNull(in v));
-        }
-
-        throw new ArgumentException(
-            "GETEX expiry must be relative, absolute, or RespireExpiry.Persist.", nameof(expiry));
+        GetExCommand.ValidateExpiry(expiry);
+        return sink.Add<GetExCommand, string?>(
+            "GETEX", new GetExCommand(sink.Client.Key(in key), expiry),
+            static (c, v) => ResponseReader.StringOrNull(in v));
     }
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public RespirePending<T?> GetAndExpire<T>(RespireKey key, RespireExpiry expiry)
+    {
+        GetExCommand.ValidateExpiry(expiry);
+        return sink.Add<GetExCommand, T?>(
+            "GETEX", new GetExCommand(sink.Client.Key(in key), expiry),
+            static (c, v) => c.DeserializeBorrowed<T>(in v));
+    }
+
+    [Obsolete("Use GetAndExpire.")]
+    public RespirePending<string?> GetExpire(RespireKey key, RespireExpiry expiry)
+        => GetAndExpire(key, expiry);
 
     public RespirePending<long> Append(RespireKey key, RespireValue value)
     {

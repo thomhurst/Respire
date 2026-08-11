@@ -40,6 +40,31 @@ public class TypedValueApiTests
     }
 
     [Test]
+    public async Task RenamedCombinedGets_HaveDefaultInterfaceImplementations()
+    {
+        (Type Type, string Name)[] methods =
+        [
+            (typeof(IStringCommands), nameof(IStringCommands.GetAndDeleteAsync)),
+            (typeof(IStringCommands), nameof(IStringCommands.GetAndExpireAsync)),
+            (typeof(IHashCommands), nameof(IHashCommands.GetAndDeleteAsync)),
+            (typeof(IHashCommands), nameof(IHashCommands.GetAndExpireAsync)),
+            (typeof(IBatchStringCommands), nameof(IBatchStringCommands.GetAndDelete)),
+            (typeof(IBatchStringCommands), nameof(IBatchStringCommands.GetAndExpire)),
+            (typeof(IBatchHashCommands), nameof(IBatchHashCommands.GetAndDelete)),
+            (typeof(IBatchHashCommands), nameof(IBatchHashCommands.GetAndExpire)),
+        ];
+
+        foreach (var (type, name) in methods)
+        {
+            var untyped = type.GetMethods()
+                .Where(method => method.Name == name && !method.IsGenericMethod)
+                .ToArray();
+            await Assert.That(untyped).IsNotEmpty();
+            await Assert.That(untyped.All(method => !method.IsAbstract)).IsTrue();
+        }
+    }
+
+    [Test]
     public async Task TryGetAsync_IsAbstractOnIRespireClient()
     {
         var method = typeof(IRespireClient)

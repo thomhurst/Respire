@@ -97,9 +97,35 @@ public interface IStringCommands
         CancellationToken cancellationToken = default);
 
     /// <summary>Gets a key's value and deletes the key. Redis: GETDEL.</summary>
+#pragma warning disable CS0618 // Default preserves compatibility with existing interface implementations.
+    ValueTask<string?> GetAndDeleteAsync(RespireKey key, CancellationToken cancellationToken = default)
+        => GetDeleteAsync(key, cancellationToken);
+#pragma warning restore CS0618
+
+    /// <summary>Gets and deserializes a key's value, then deletes the key. Redis: GETDEL.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    ValueTask<T?> GetAndDeleteAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
+
+    /// <summary>Gets a key's value and deletes the key. Redis: GETDEL.</summary>
+    [Obsolete("Use GetAndDeleteAsync.")]
     ValueTask<string?> GetDeleteAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Gets a key's value and updates or removes its expiry. Redis: GETEX.</summary>
+#pragma warning disable CS0618 // Default preserves compatibility with existing interface implementations.
+    ValueTask<string?> GetAndExpireAsync(
+        RespireKey key, RespireExpiry expiry, CancellationToken cancellationToken = default)
+        => GetExpireAsync(key, expiry, cancellationToken);
+#pragma warning restore CS0618
+
+    /// <summary>Gets and deserializes a key's value, then updates or removes its expiry. Redis: GETEX.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    ValueTask<T?> GetAndExpireAsync<T>(
+        RespireKey key, RespireExpiry expiry, CancellationToken cancellationToken = default);
+
+    /// <summary>Gets a key's value and updates or removes its expiry. Redis: GETEX.</summary>
+    [Obsolete("Use GetAndExpireAsync.")]
     ValueTask<string?> GetExpireAsync(
         RespireKey key, RespireExpiry expiry, CancellationToken cancellationToken = default);
 
@@ -260,37 +286,41 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
             cancellationToken);
     }
 
-    public ValueTask<string?> GetDeleteAsync(RespireKey key, CancellationToken cancellationToken = default)
+    public ValueTask<string?> GetAndDeleteAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.StringOrNullAsync("GETDEL", new Cmd1(Verbs.GetDel, client.Key(in key)), cancellationToken);
 
-    public ValueTask<string?> GetExpireAsync(
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public ValueTask<T?> GetAndDeleteAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
+        => client.DeserializeAsync<T, Cmd1>(
+            "GETDEL", new Cmd1(Verbs.GetDel, client.Key(in key)), cancellationToken);
+
+    [Obsolete("Use GetAndDeleteAsync.")]
+    public ValueTask<string?> GetDeleteAsync(RespireKey key, CancellationToken cancellationToken = default)
+        => GetAndDeleteAsync(key, cancellationToken);
+
+    public ValueTask<string?> GetAndExpireAsync(
         RespireKey key, RespireExpiry expiry, CancellationToken cancellationToken = default)
     {
-        if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
-        {
-            return client.StringOrNullAsync(
-                "GETEX",
-                new Cmd3(RespireCommands.String.GETEX.Verb, client.Key(in key), "PX", milliseconds),
-                cancellationToken);
-        }
-
-        if (expiry.TryGetAbsoluteUnixMilliseconds(out var unixMilliseconds))
-        {
-            return client.StringOrNullAsync(
-                "GETEX",
-                new Cmd3(RespireCommands.String.GETEX.Verb, client.Key(in key), "PXAT", unixMilliseconds),
-                cancellationToken);
-        }
-
-        if (expiry.IsPersist)
-        {
-            return client.StringOrNullAsync(
-                "GETEX", new Cmd2(RespireCommands.String.GETEX.Verb, client.Key(in key), "PERSIST"), cancellationToken);
-        }
-
-        throw new ArgumentException(
-            "GETEX expiry must be relative, absolute, or RespireExpiry.Persist.", nameof(expiry));
+        GetExCommand.ValidateExpiry(expiry);
+        return client.StringOrNullAsync(
+            "GETEX", new GetExCommand(client.Key(in key), expiry), cancellationToken);
     }
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public ValueTask<T?> GetAndExpireAsync<T>(
+        RespireKey key, RespireExpiry expiry, CancellationToken cancellationToken = default)
+    {
+        GetExCommand.ValidateExpiry(expiry);
+        return client.DeserializeAsync<T, GetExCommand>(
+            "GETEX", new GetExCommand(client.Key(in key), expiry), cancellationToken);
+    }
+
+    [Obsolete("Use GetAndExpireAsync.")]
+    public ValueTask<string?> GetExpireAsync(
+        RespireKey key, RespireExpiry expiry, CancellationToken cancellationToken = default)
+        => GetAndExpireAsync(key, expiry, cancellationToken);
 
     public ValueTask<long> AppendAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken = default)
     {

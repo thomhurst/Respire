@@ -75,8 +75,12 @@ await redis.Keys.ExpireAsync("session:42", RespireExpiry.Persist);
 await redis.Keys.ExpireAsync("report", RespireExpiry.At(DateTimeOffset.UtcNow.AddDays(1)));
 await redis.Keys.ExpireAsync("lease", TimeSpan.FromMinutes(10), ExpireWhen.GreaterThan);
 
-var value = await redis.Strings.GetExpireAsync("session:42", TimeSpan.FromMinutes(30));
+var value = await redis.Strings.GetAndExpireAsync("session:42", TimeSpan.FromMinutes(30));
+CachedJob? job = await redis.Strings.GetAndDeleteAsync<CachedJob>("jobs:next");
 ```
+
+The generic combined-get forms deserialize through the client's configured serializer. Hash
+field equivalents use the same `GetAndDeleteAsync` and `GetAndExpireAsync` naming.
 
 `TypeAsync` returns `RespireKeyType` rather than a server string. Conditional rename and copy are
 available without dropping to raw commands:

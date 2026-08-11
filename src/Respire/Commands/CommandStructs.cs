@@ -523,3 +523,43 @@ internal readonly struct SetCommand(
         }
     }
 }
+
+/// <summary>GETEX key PX milliseconds | PXAT unix-milliseconds | PERSIST.</summary>
+internal readonly struct GetExCommand(RespireValue key, RespireExpiry expiry) : IRespCommand
+{
+    public bool TryGetClusterSlot(out int slot) => key.TryGetClusterSlot(out slot);
+
+    public void Write(ref RespWriter writer)
+    {
+        ValidateExpiry(expiry);
+        writer.WriteArrayHeader(expiry.IsPersist ? 3 : 4);
+        writer.WriteRaw(RespireCommands.String.GETEX.Verb.Bulk);
+        key.WriteTo(ref writer);
+
+        if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
+        {
+            writer.WriteBulkString("PX"u8);
+            writer.WriteBulkInteger(milliseconds);
+        }
+        else if (expiry.TryGetAbsoluteUnixMilliseconds(out var unixMilliseconds))
+        {
+            writer.WriteBulkString("PXAT"u8);
+            writer.WriteBulkInteger(unixMilliseconds);
+        }
+        else
+        {
+            writer.WriteBulkString("PERSIST"u8);
+        }
+    }
+
+    internal static void ValidateExpiry(RespireExpiry expiry)
+    {
+        if (!expiry.TryGetRelativeMilliseconds(out _)
+            && !expiry.TryGetAbsoluteUnixMilliseconds(out _)
+            && !expiry.IsPersist)
+        {
+            throw new ArgumentException(
+                "GETEX expiry must be relative, absolute, or RespireExpiry.Persist.", nameof(expiry));
+        }
+    }
+}
