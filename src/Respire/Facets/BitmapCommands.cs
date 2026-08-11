@@ -214,8 +214,11 @@ public interface IBitmapCommands
     ValueTask<bool> GetAsync(RespireKey key, long offset, CancellationToken cancellationToken = default);
 
     /// <summary>Sets the bit at an offset and returns its previous value. Redis: SETBIT.</summary>
+#pragma warning disable CS0618 // Default preserves compatibility with existing interface implementations.
     ValueTask<bool> SetAsync(
-        RespireKey key, long offset, bool value, CancellationToken cancellationToken = default);
+        RespireKey key, long offset, bool value, CancellationToken cancellationToken = default)
+        => GetAndSetAsync(key, offset, value, cancellationToken);
+#pragma warning restore CS0618
 
     /// <summary>Sets the bit at an offset and returns its previous value. Redis: SETBIT.</summary>
     [Obsolete("Use SetAsync; SETBIT returns the previous bit.")]

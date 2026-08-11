@@ -15,6 +15,18 @@ namespace Respire.Tests;
 public class TypedValueApiTests
 {
     [Test]
+    public async Task BitmapSetAliases_HaveDefaultInterfaceImplementations()
+    {
+        var clientSet = typeof(IBitmapCommands).GetMethod(nameof(IBitmapCommands.SetAsync));
+        var batchSet = typeof(IBatchBitmapCommands).GetMethod(nameof(IBatchBitmapCommands.Set));
+
+        await Assert.That(clientSet).IsNotNull();
+        await Assert.That(clientSet!.IsAbstract).IsFalse();
+        await Assert.That(batchSet).IsNotNull();
+        await Assert.That(batchSet!.IsAbstract).IsFalse();
+    }
+
+    [Test]
     public async Task TryGetAsync_IsAbstractOnIRespireClient()
     {
         var method = typeof(IRespireClient)

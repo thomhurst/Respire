@@ -13,7 +13,10 @@ public interface IBatchBitmapCommands
     RespirePending<bool> Get(RespireKey key, long offset);
 
     /// <summary>Sets the bit at an offset and returns its previous value. Redis: SETBIT.</summary>
-    RespirePending<bool> Set(RespireKey key, long offset, bool value);
+#pragma warning disable CS0618 // Default preserves compatibility with existing interface implementations.
+    RespirePending<bool> Set(RespireKey key, long offset, bool value)
+        => GetAndSet(key, offset, value);
+#pragma warning restore CS0618
 
     /// <summary>Sets the bit at an offset and returns its previous value. Redis: SETBIT.</summary>
     [Obsolete("Use Set; SETBIT returns the previous bit.")]
