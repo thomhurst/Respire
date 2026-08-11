@@ -15,6 +15,37 @@ namespace Respire.Tests.Networking;
 public class BatchFacetWireTests
 {
     [Test]
+    public async Task ConditionalHashSetAndStringSetRange_MatchDeferredFacets()
+    {
+        await using var server = new FakeRespServer(
+            ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":5\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":5\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await client.Hashes.SetAsync("hash", "new", "one", SetWhen.NotExists);
+        await client.Hashes.SetAsync("hash", "existing", (RespireValue)"two", SetWhen.Exists);
+        await client.Strings.SetRangeAsync("text", 2, "xyz");
+
+        var batch = client.CreateBatch();
+        var created = batch.Hashes.Set("hash", "new", "one", SetWhen.NotExists);
+        var updated = batch.Hashes.Set("hash", "existing", "two", SetWhen.Exists);
+        var length = batch.Strings.SetRange("text", 2, "xyz");
+        await batch.ExecuteAsync();
+
+        await Assert.That(created.Result).IsTrue();
+        await Assert.That(updated.Result).IsTrue();
+        await Assert.That(length.Result).IsEqualTo(5);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo([
+            "HSETNX hash new one",
+            "HSETEX hash FXX FIELDS 1 existing two",
+            "SETRANGE text 2 xyz",
+            "HSETNX hash new one",
+            "HSETEX hash FXX FIELDS 1 existing two",
+            "SETRANGE text 2 xyz",
+        ], CollectionOrdering.Matching);
+    }
+
+    [Test]
     public async Task ExecuteAsync_ReturnsPerCommandFailureSummary()
     {
         await using var server = new FakeRespServer(

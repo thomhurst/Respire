@@ -126,7 +126,8 @@ public class TypedValueApiTests
     public async Task HashSetAsync_WithRespireValue_BindsToRawOverload()
     {
         var bound = BoundMethod(
-            (IHashCommands hash) => hash.SetAsync("key", "field", (RespireValue)"text", CancellationToken.None));
+            (IHashCommands hash) => hash.SetAsync(
+                "key", "field", (RespireValue)"text", SetWhen.Always, CancellationToken.None));
 
         await Assert.That(bound.IsGenericMethod).IsFalse();
     }
@@ -137,10 +138,34 @@ public class TypedValueApiTests
         // An exact match beats the implicit string -> RespireValue conversion, so the typed
         // overload wins. Both write the same bytes: string serialization is pass-through.
         var bound = BoundMethod(
-            (IHashCommands hash) => hash.SetAsync("key", "field", "text", CancellationToken.None));
+            (IHashCommands hash) => hash.SetAsync(
+                "key", "field", "text", SetWhen.Always, CancellationToken.None));
 
         await Assert.That(bound.IsGenericMethod).IsTrue();
         await Assert.That(bound.GetGenericArguments()[0]).IsEqualTo(typeof(string));
+    }
+
+    [Test]
+    public async Task HashSetAsync_LegacyCancellationOverloadsRemainBindable()
+    {
+        var raw = BoundMethod(
+            (IHashCommands hash) => hash.SetAsync(
+                "key", "field", (RespireValue)"text", CancellationToken.None));
+        var typed = BoundMethod(
+            (IHashCommands hash) => hash.SetAsync(
+                "key", "field", "text", CancellationToken.None));
+
+        await Assert.That(raw.GetParameters()[3].ParameterType).IsEqualTo(typeof(CancellationToken));
+        await Assert.That(typed.GetParameters()[3].ParameterType).IsEqualTo(typeof(CancellationToken));
+    }
+
+    [Test]
+    public async Task BatchHashSet_LegacyThreeArgumentOverloadRemainsBindable()
+    {
+        var bound = BoundMethod(
+            (IBatchHashCommands hash) => hash.Set("key", "field", (RespireValue)"text"));
+
+        await Assert.That(bound.GetParameters().Length).IsEqualTo(3);
     }
 
     [Test]

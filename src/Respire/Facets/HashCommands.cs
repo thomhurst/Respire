@@ -12,11 +12,22 @@ namespace Respire;
 public interface IHashCommands
 {
     /// <summary>Sets one field. Returns true when the field was newly created. Redis: HSET.</summary>
-    ValueTask<bool> SetAsync(RespireKey key, string field, RespireValue value, CancellationToken cancellationToken = default);
+    ValueTask<bool> SetAsync(
+        RespireKey key, string field, RespireValue value,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets one field. Returns true when an unconditional write creates the field, or when a
+    /// conditional write is applied. Redis: HSET/HSETNX/HSETEX.
+    /// </summary>
+    ValueTask<bool> SetAsync(
+        RespireKey key, string field, RespireValue value, SetWhen when,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Sets one field to a serialized <typeparamref name="T"/>; the write partner of
-    /// <see cref="GetAsync{T}"/>. Returns true when the field was newly created. Redis: HSET.
+    /// <see cref="GetAsync{T}"/>. Returns true when an unconditional write creates the field, or
+    /// when a conditional write is applied. Redis: HSET/HSETNX/HSETEX.
     /// <para>
     /// Overload resolution mirrors <see cref="IStringCommands.SetAsync{T}"/>:
     /// an argument already typed as <see cref="RespireValue"/> picks the non-generic overload,
@@ -28,7 +39,19 @@ public interface IHashCommands
     /// </summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    ValueTask<bool> SetAsync<T>(RespireKey key, string field, T value, CancellationToken cancellationToken = default);
+    ValueTask<bool> SetAsync<T>(
+        RespireKey key, string field, T value,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Conditionally sets one field to a serialized <typeparamref name="T"/>. Redis:
+    /// HSET/HSETNX/HSETEX.
+    /// </summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    ValueTask<bool> SetAsync<T>(
+        RespireKey key, string field, T value, SetWhen when,
+        CancellationToken cancellationToken = default);
 
     /// <summary>Sets many fields in one round trip; returns how many were newly created. Redis: HSET.</summary>
     ValueTask<long> SetAsync(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
@@ -170,16 +193,48 @@ public interface IHashCommands
 
 internal sealed class HashCommands(RespireClient client) : IHashCommands
 {
-    public ValueTask<bool> SetAsync(RespireKey key, string field, RespireValue value, CancellationToken cancellationToken = default)
-        => client.FlagAsync("HSET", new Cmd3(Verbs.HSet, client.Key(in key), field, value), cancellationToken);
+    public ValueTask<bool> SetAsync(
+        RespireKey key, string field, RespireValue value,
+        CancellationToken cancellationToken = default)
+        => SetCoreAsync(key, field, value, SetWhen.Always, cancellationToken);
+
+    public ValueTask<bool> SetAsync(
+        RespireKey key, string field, RespireValue value, SetWhen when,
+        CancellationToken cancellationToken = default)
+        => SetCoreAsync(key, field, value, when, cancellationToken);
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public ValueTask<bool> SetAsync<T>(RespireKey key, string field, T value, CancellationToken cancellationToken = default)
-        => client.FlagAsync(
-            "HSET",
-            new Cmd3(Verbs.HSet, client.Key(in key), field, client.SerializeRawCompatible(value)),
-            cancellationToken);
+    public ValueTask<bool> SetAsync<T>(
+        RespireKey key, string field, T value,
+        CancellationToken cancellationToken = default)
+        => SetCoreAsync(
+            key, field, client.SerializeRawCompatible(value), SetWhen.Always, cancellationToken);
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public ValueTask<bool> SetAsync<T>(
+        RespireKey key, string field, T value, SetWhen when,
+        CancellationToken cancellationToken = default)
+        => SetCoreAsync(key, field, client.SerializeRawCompatible(value), when, cancellationToken);
+
+    private ValueTask<bool> SetCoreAsync(
+        RespireKey key, string field, RespireValue value, SetWhen when, CancellationToken cancellationToken)
+        => when switch
+        {
+            SetWhen.Always => client.FlagAsync(
+                "HSET", new Cmd3(Verbs.HSet, client.Key(in key), field, value), cancellationToken),
+            SetWhen.NotExists => client.FlagAsync(
+                "HSETNX", new Cmd3(Verbs.HSetNx, client.Key(in key), field, value), cancellationToken),
+            SetWhen.Exists => client.FlagAsync(
+                "HSETEX",
+                new Cmd1N(
+                    RespireCommands.Hash.HSETEX.Verb,
+                    client.Key(in key),
+                    SetExFieldsBlock(option: null, 0, hasValue: false, when, [(field, value)])),
+                cancellationToken),
+            _ => throw new ArgumentOutOfRangeException(nameof(when), when, null),
+        };
 
     public ValueTask<long> SetAsync(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
         => SetAsync(key, fields, CancellationToken.None);
@@ -532,7 +587,7 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
     }
 
     internal static RespireValue[] SetExFieldsBlock(
-        string option,
+        string? option,
         long optionValue,
         bool hasValue,
         SetWhen when,
@@ -540,14 +595,19 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
     {
         ValidateFieldPairs(fields);
         var condition = HashSetWhenToken(when);
-        var args = new RespireValue[(condition is null ? 0 : 1) + 3 + (hasValue ? 1 : 0) + fields.Length * 2];
+        var args = new RespireValue[
+            (condition is null ? 0 : 1) + (option is null ? 0 : 1) + 2
+            + (hasValue ? 1 : 0) + fields.Length * 2];
         var index = 0;
         if (condition is not null)
         {
             args[index++] = condition;
         }
 
-        args[index++] = option;
+        if (option is not null)
+        {
+            args[index++] = option;
+        }
         if (hasValue)
         {
             args[index++] = optionValue;

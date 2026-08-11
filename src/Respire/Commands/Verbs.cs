@@ -114,6 +114,7 @@ internal static class Verbs
     public static readonly Verb Append = new("APPEND");
     public static readonly Verb StrLen = new("STRLEN");
     public static readonly Verb GetRange = new("GETRANGE");
+    public static readonly Verb SetRange = new("SETRANGE");
     public static readonly Verb GetDel = new("GETDEL");
     public static readonly Verb Incr = new("INCR");
     public static readonly Verb Decr = new("DECR");
@@ -140,6 +141,7 @@ internal static class Verbs
 
     // Hashes
     public static readonly Verb HSet = new("HSET");
+    public static readonly Verb HSetNx = new("HSETNX");
     public static readonly Verb HGet = new("HGET");
     public static readonly Verb HGetAll = new("HGETALL");
     public static readonly Verb HDel = new("HDEL");
