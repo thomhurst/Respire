@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Caching.Distributed;
 
 namespace Respire.Extensions.Caching;
@@ -214,6 +215,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         => TryGetAsync(key, destination).AsTask().GetAwaiter().GetResult();
 
     /// <inheritdoc/>
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     public async ValueTask<bool> TryGetAsync(string key, IBufferWriter<byte> destination, CancellationToken token = default)
     {
         ArgumentNullException.ThrowIfNull(key);
@@ -254,6 +256,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     public ValueTask SetAsync(string key, ReadOnlySequence<byte> value, DistributedCacheEntryOptions options, CancellationToken token = default)
         => SetCoreAsync(key, value.IsSingleSegment ? value.First : value.ToArray(), options, token);
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
     private async ValueTask SetCoreAsync(string key, ReadOnlyMemory<byte> value, DistributedCacheEntryOptions options, CancellationToken token)
     {
         ArgumentNullException.ThrowIfNull(key);
@@ -666,6 +669,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         }
     }
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespireResult> RunGetScriptAsync(string key, bool returnData, CancellationToken token)
     {
         var trackedWire = await GetTrackedWireAsync(token).ConfigureAwait(false);

@@ -310,6 +310,9 @@ public sealed partial class RespireClient : IRespireClient
             ? ExecuteRawFireAndForgetAsync(command.Name, args, cancellationToken)
             : ExecuteCatalogFireAndForgetAsync(command, args, cancellationToken);
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<RespireResult> ExecuteCatalogAsync(
         RespireCommand command,
         RespireValue[] args,
@@ -353,6 +356,9 @@ public sealed partial class RespireClient : IRespireClient
         return new RespireResult(in response, _core.Options.Serializer);
     }
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+#endif
     private async ValueTask ExecuteCatalogFireAndForgetAsync(
         RespireCommand command,
         RespireValue[] args,
@@ -381,6 +387,9 @@ public sealed partial class RespireClient : IRespireClient
             .ConfigureAwait(false);
     }
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<RespireResult> ExecuteRawAsync(
         string command,
         RespireValue[] args,
@@ -429,6 +438,9 @@ public sealed partial class RespireClient : IRespireClient
         return new RespireResult(in response, _core.Options.Serializer);
     }
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+#endif
     private async ValueTask ExecuteRawFireAndForgetAsync(
         string command,
         RespireValue[] args,
@@ -466,6 +478,9 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken = default)
         => ExecuteInterpolatedAsync(command, flags, cancellationToken);
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<RespireResult> ExecuteInterpolatedAsync(
         RespireCommandInterpolatedStringHandler command,
         RespireCommandFlags flags,
@@ -511,6 +526,9 @@ public sealed partial class RespireClient : IRespireClient
         return new RespireResult(in response, _core.Options.Serializer);
     }
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+#endif
     private async ValueTask ExecuteInterpolatedFireAndForgetAsync(
         RespireCommandInterpolatedStringHandler command,
         CancellationToken cancellationToken)
@@ -1117,6 +1135,9 @@ public sealed partial class RespireClient : IRespireClient
             .ConfigureAwait(false);
     }
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<RespValue> SendStoredProcedureAsync<TCommand>(
         string operation,
         TCommand command,
@@ -1265,6 +1286,9 @@ public sealed partial class RespireClient : IRespireClient
                 operation, connection, command, cancellationToken, storedProcedureName)
             : connection.SendFireAndForgetAsync(in command, cancellationToken);
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+#endif
     private async ValueTask SendFireAndForgetOnConnectionInstrumentedAsync<TCommand>(
         string operation,
         RespireConnection connection,
@@ -1320,6 +1344,9 @@ public sealed partial class RespireClient : IRespireClient
             .ConfigureAwait(false);
     }
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+#endif
     private async ValueTask SendFireAndForgetClusterAsync<TCommand>(
         string operation,
         ClusterRouter cluster,
@@ -1412,6 +1439,9 @@ public sealed partial class RespireClient : IRespireClient
                 operation, connection, command, cancellationToken, storedProcedureName, sendAsking)
             : SendOnConnectionCoreAsync(operation, connection, command, cancellationToken, sendAsking);
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<RespValue> SendOnConnectionInstrumentedAsync<TCommand>(
         string operation,
         RespireConnection connection,
@@ -1712,6 +1742,9 @@ public sealed partial class RespireClient : IRespireClient
         internal ValueTask<RespireResult> Response { get; set; }
     }
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     internal async ValueTask<RespireResult> ExecuteScriptAsync(
         RespireScript script,
         RespireValue[] tail,
@@ -1909,6 +1942,9 @@ public sealed partial class RespireClient : IRespireClient
                 requiresAsking)
             : default;
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<RespireResult> ExecuteTrackedClusterScriptAsync(
         TrackedScriptExecution execution,
         ClusterRouter cluster,
@@ -1934,6 +1970,9 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<RespireResult> ExecuteTrackedClusterCommandAsync(
         TrackedScriptExecution execution,
         ClusterRouter cluster,
@@ -1972,6 +2011,9 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<RespireResult> ExecuteScriptOnConnectionAsync(
         RespireConnection connection,
         RespireScript script,
@@ -1999,6 +2041,9 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<RespireResult> ExecuteScriptOnConnectionCoreAsync(
         RespireConnection connection,
         RespireScript script,
@@ -2323,7 +2368,7 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
         => ConvertResponseAsync(operation, command, ct, this, converter, transferOwnership);
 
-    private ValueTask<TResult> ConvertResponseAsync<TCommand, TState, TResult>(
+    internal ValueTask<TResult> ConvertResponseAsync<TCommand, TState, TResult>(
         string operation,
         TCommand command,
         CancellationToken ct,

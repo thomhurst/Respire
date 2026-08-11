@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Respire.Commands;
 using Respire.Internal;
+using Respire.Protocol;
 using Respire.Serialization;
 
 namespace Respire;
@@ -139,13 +140,13 @@ public interface IScriptCommands
 
 internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
 {
-    public async ValueTask<RespireResult> ExecuteAsync(
+    public ValueTask<RespireResult> ExecuteAsync(
         RespireScript script, RespireKey[]? keys = null, RespireValue[]? args = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(script);
         var tail = client.BuildScriptTail(keys, args);
-        return await client.ExecuteScriptAsync(script, tail, cancellationToken).ConfigureAwait(false);
+        return client.ExecuteScriptAsync(script, tail, cancellationToken);
     }
 
     public ValueTask<RespireResult> ExecuteSpanAsync(
@@ -190,6 +191,7 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<T?> ExecuteTypedCoreAsync<T>(
         RespireScript script, RespireValue[] tail, CancellationToken cancellationToken)
     {
@@ -197,6 +199,7 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         return result.As<T>();
     }
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<long> ExecuteIntegerCoreAsync(
         RespireScript script, RespireValue[] tail, CancellationToken cancellationToken)
     {
@@ -204,6 +207,7 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         return result.AsInteger();
     }
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<string?> ExecuteStringCoreAsync(
         RespireScript script, RespireValue[] tail, CancellationToken cancellationToken)
     {
@@ -222,16 +226,12 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         return LoadSingleAsync(script, cancellationToken);
     }
 
-    private async ValueTask<string> LoadSingleAsync(
+    private ValueTask<string> LoadSingleAsync(
         RespireScript script,
         CancellationToken cancellationToken)
-    {
-        var reply = await client.SendAsync(
-            "SCRIPT LOAD", new Cmd1(Verbs.ScriptLoad, script.Source), cancellationToken).ConfigureAwait(false);
-        var result = ResponseReader.String(in reply);
-        reply.Dispose();
-        return result;
-    }
+        => client.ConvertResponseAsync(
+            "SCRIPT LOAD", new Cmd1(Verbs.ScriptLoad, script.Source), cancellationToken, this,
+            static (ScriptCommands _, in RespValue value) => ResponseReader.String(in value));
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<string> LoadClusterAsync(

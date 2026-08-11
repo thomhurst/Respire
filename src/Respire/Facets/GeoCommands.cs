@@ -313,22 +313,14 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
         return PositionCoreAsync(key, members.ToArray(), cancellationToken);
     }
 
-    private async ValueTask<GeoPosition?[]> PositionCoreAsync(
+    private ValueTask<GeoPosition?[]> PositionCoreAsync(
         RespireKey key, RespireValue[] members, CancellationToken cancellationToken)
-    {
-        var reply = await client.SendAsync(
+        => client.ConvertResponseAsync(
             "GEOPOS",
             new Cmd1N(RespireCommands.Geo.GEOPOS.Verb, client.Key(in key), members),
-            cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return ParsePositions(in reply);
-        }
-        finally
-        {
-            reply.Dispose();
-        }
-    }
+            cancellationToken,
+            this,
+            static (GeoCommands _, in RespValue value) => ParsePositions(in value));
 
     /// <summary>GEOPOS replies one [longitude, latitude] pair per member, null when absent.</summary>
     internal static GeoPosition?[] ParsePositions(in RespValue reply)
@@ -350,25 +342,19 @@ internal sealed class GeoCommands(RespireClient client) : IGeoCommands
         return result;
     }
 
-    public async ValueTask<GeoSearchResult[]> SearchAsync(
+    public ValueTask<GeoSearchResult[]> SearchAsync(
         RespireKey key, GeoSearchOrigin origin, GeoSearchShape shape,
         GeoSearchOptions options = default, CancellationToken cancellationToken = default)
     {
         Validate(origin, shape, options);
-        var reply = await client.SendAsync(
+        return client.ConvertResponseAsync(
             "GEOSEARCH",
             new GeoSearchCommand(
                 RespireCommands.Geo.GEOSEARCH.Verb, client.Key(in key), origin, shape, options,
                 destination: null, storeDistance: false),
-            cancellationToken).ConfigureAwait(false);
-        try
-        {
-            return ParseSearch(in reply, options);
-        }
-        finally
-        {
-            reply.Dispose();
-        }
+            cancellationToken,
+            options,
+            static (GeoSearchOptions state, in RespValue value) => ParseSearch(in value, state));
     }
 
     public ValueTask<long> SearchStoreAsync(

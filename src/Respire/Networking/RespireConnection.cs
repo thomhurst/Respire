@@ -1098,6 +1098,9 @@ internal sealed class RespireConnection : IAsyncDisposable
     /// In-flight ring full: flush, then park until the receive loop frees capacity. Returns
     /// whether the eventual enqueue started a new write batch.
     /// </summary>
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<bool> WaitForInflightCapacityAsync<TCommand>(
         TCommand command,
         PendingResponse source,
