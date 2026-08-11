@@ -26,6 +26,8 @@ use `TryGetResult` when exception-free state handling is preferable. Access befo
 throws `RespirePendingNotReadyException` instead of waiting forever for a batch that was never
 flushed; command failures set `Status` to `Faulted` and expose the exception through `Error`.
 `RespireBatchResult` summarizes the whole flush with `Count`, `FailureCount`, and `FirstError`.
+Its `Failures` list identifies every faulted command by original queue index, operation name, and
+exception; the list is empty without per-result allocation when all commands succeed.
 The flush itself does not throw for command or connection-acquisition failures; call
 `ThrowIfAnyFailed()` when fail-fast handling is preferable.
 

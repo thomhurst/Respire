@@ -399,6 +399,13 @@ public class ClusterTests
         await Assert.That(result.FailureCount).IsEqualTo(2);
         await Assert.That(result.FirstError).IsSameReferenceAs(second.Error);
         await Assert.That(result.FirstError).IsNotSameReferenceAs(third.Error);
+        await Assert.That(result.Failures.Count).IsEqualTo(2);
+        await Assert.That(result.Failures[0].Index).IsEqualTo(1);
+        await Assert.That(result.Failures[0].Operation).IsEqualTo("GET");
+        await Assert.That(result.Failures[1].Index).IsEqualTo(2);
+        await Assert.That(result.Failures[1].Operation).IsEqualTo("GET");
+        await Assert.That(result.Failures[0].Error).IsSameReferenceAs(second.Error);
+        await Assert.That(result.Failures[1].Error).IsSameReferenceAs(third.Error);
     }
 
     [Test]

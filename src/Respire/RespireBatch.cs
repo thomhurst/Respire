@@ -188,7 +188,7 @@ public sealed class RespireBatch : IDisposable, IPendingSink
         if (_ops.Count == 0)
         {
             telemetry.Complete(core, telemetryOperation, batchSize: 0);
-            return new RespireBatchResult(0, 0, null);
+            return new RespireBatchResult(0, null);
         }
 
         if (core.Cluster is not null)
@@ -208,26 +208,22 @@ public sealed class RespireBatch : IDisposable, IPendingSink
                 groups[groupIndex].Operations.Add(op);
             }
 
-            var clusterTasks = new Task<RespireBatchResult>[groups.Count];
+            var clusterTasks = new Task[groups.Count];
             for (var i = 0; i < groups.Count; i++)
             {
                 clusterTasks[i] = RunClusterGroupAsync(
                     groups[i].Slot, groups[i].Operations, cancellationToken);
             }
 
-            var clusterResults = await Task.WhenAll(clusterTasks).ConfigureAwait(false);
-            var firstError = _ops
-                .Select(static operation => operation.Error)
-                .FirstOrDefault(static error => error is not null);
+            await Task.WhenAll(clusterTasks).ConfigureAwait(false);
+            var failures = CollectFailures(_ops);
+            var firstError = failures is { Length: > 0 } ? failures[0].Error : null;
             telemetry.Complete(
                 core,
                 telemetryOperation,
                 error: firstError,
                 batchSize: _ops.Count == 1 ? null : _ops.Count);
-            return new RespireBatchResult(
-                _ops.Count,
-                clusterResults.Sum(static result => result.FailureCount),
-                firstError);
+            return new RespireBatchResult(_ops.Count, failures);
         }
 
         RespireConnection? connection = null;
@@ -249,7 +245,7 @@ public sealed class RespireBatch : IDisposable, IPendingSink
                 telemetryOperation,
                 error: ex,
                 batchSize: _ops.Count == 1 ? null : _ops.Count);
-            return new RespireBatchResult(_ops.Count, _ops.Count, ex);
+            return new RespireBatchResult(_ops.Count, CollectFailures(_ops));
         }
 
         // CommandTimeout is enforced per command by the connection's deadline sweep, which
@@ -261,18 +257,16 @@ public sealed class RespireBatch : IDisposable, IPendingSink
             tasks[i] = _ops[i].RunAsync(_client, connection, cancellationToken);
         }
 
-        var errors = await Task.WhenAll(tasks).ConfigureAwait(false);
-        var batchFirstError = errors.FirstOrDefault(static error => error is not null);
+        await Task.WhenAll(tasks).ConfigureAwait(false);
+        var batchFailures = CollectFailures(_ops);
+        var batchFirstError = batchFailures is { Length: > 0 } ? batchFailures[0].Error : null;
         telemetry.Complete(
             core,
             telemetryOperation,
             error: batchFirstError,
             connection: connection,
             batchSize: _ops.Count == 1 ? null : _ops.Count);
-        return new RespireBatchResult(
-            _ops.Count,
-            errors.Count(static error => error is not null),
-            batchFirstError);
+        return new RespireBatchResult(_ops.Count, batchFailures);
     }
 
     /// <summary>
@@ -299,7 +293,7 @@ public sealed class RespireBatch : IDisposable, IPendingSink
         }
     }
 
-    private async Task<RespireBatchResult> RunClusterGroupAsync(
+    private async Task RunClusterGroupAsync(
         int? slot,
         List<Op> operations,
         CancellationToken cancellationToken)
@@ -316,7 +310,7 @@ public sealed class RespireBatch : IDisposable, IPendingSink
                 operation.Fail(ex);
             }
 
-            return new RespireBatchResult(operations.Count, operations.Count, ex);
+            return;
         }
 
         var sends = new ValueTask<RespValue>[operations.Count];
@@ -333,21 +327,43 @@ public sealed class RespireBatch : IDisposable, IPendingSink
             }
         }
 
-        Exception? firstError = null;
+        for (var i = 0; i < operations.Count; i++)
+        {
+            _ = await operations[i].CompleteClusterSendAsync(
+                    _client, sends[i], cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private static RespireBatchFailure[]? CollectFailures(IReadOnlyList<Op> operations)
+    {
         var failureCount = 0;
         for (var i = 0; i < operations.Count; i++)
         {
-            var error = await operations[i].CompleteClusterSendAsync(
-                    _client, sends[i], cancellationToken)
-                .ConfigureAwait(false);
-            if (error is not null)
+            if (operations[i].Error is not null)
             {
-                firstError ??= error;
                 failureCount++;
             }
         }
 
-        return new RespireBatchResult(operations.Count, failureCount, firstError);
+        if (failureCount == 0)
+        {
+            return null;
+        }
+
+        var failures = new RespireBatchFailure[failureCount];
+        var failureIndex = 0;
+        for (var i = 0; i < operations.Count; i++)
+        {
+            var operation = operations[i];
+            if (operation.Error is { } error)
+            {
+                failures[failureIndex++] = new RespireBatchFailure(
+                    i, operation.Operation, error);
+            }
+        }
+
+        return failures;
     }
 
     private RespirePending<T> Add<TCommand, T>(string operation, in TCommand command, Func<RespireClient, RespValue, T> convert)
@@ -391,7 +407,10 @@ public sealed class RespireBatch : IDisposable, IPendingSink
     }
 
     private sealed class Op<TCommand, T>(
-        string operation, TCommand command, RespirePending<T> pending, Func<RespireClient, RespValue, T> convert) : Op(operation)
+        string operation,
+        TCommand command,
+        RespirePending<T> pending,
+        Func<RespireClient, RespValue, T> convert) : Op(operation)
         where TCommand : struct, IRespCommand
     {
         public override Exception? Error => pending.Error;
