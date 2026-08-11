@@ -9,6 +9,85 @@ namespace Respire.Tests.Networking;
 public class StreamManagementCommandTests
 {
     [Test]
+    public async Task StreamRecovery_ClaimsEntriesAndReplaysOwnPendingEntries()
+    {
+        var entry = Arr("1-0", Arr("type", "job"));
+        await using var server = new FakeRespServer(
+            Resp((object)entry),
+            Resp("2-0", Arr((object)entry), Arr("0-1")),
+            Resp((object)Arr("events", Arr((object)entry))),
+            "$-1\r\n"u8.ToArray(),
+            Integer(1));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var claimed = await client.Streams.ClaimAsync(
+            "events", "workers", "bob", TimeSpan.FromMilliseconds(1250), "1-0");
+        var pending = await client.Streams.ClaimPendingAsync(
+            "events", "workers", "bob", TimeSpan.FromMilliseconds(500), count: 25);
+        var replayed = new List<RespireStreamEntry>();
+        await foreach (var replay in client.Streams.ReadGroupAsync(
+            "events", "workers", "bob", startAt: RespireStreamId.Beginning, batchSize: 10))
+        {
+            replayed.Add(replay);
+        }
+        await Assert.That(await claimed[0].AckAsync()).IsTrue();
+
+        await Assert.That(claimed.Select(item => item.Id.ToString())).IsEquivalentTo(new[] { "1-0" });
+        await Assert.That(claimed[0].GetString("type")).IsEqualTo("job");
+        await Assert.That(pending.NextStart.ToString()).IsEqualTo("2-0");
+        await Assert.That(pending.Entries.Select(item => item.Id.ToString())).IsEquivalentTo(new[] { "1-0" });
+        await Assert.That(pending.DeletedIds.Select(id => id.ToString())).IsEquivalentTo(new[] { "0-1" });
+        await Assert.That(replayed.Select(item => item.Id.ToString())).IsEquivalentTo(new[] { "1-0" });
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        {
+            "XCLAIM events workers bob 1250 1-0",
+            "XAUTOCLAIM events workers bob 500 0 COUNT 25",
+            "XREADGROUP GROUP workers bob COUNT 10 STREAMS events 0",
+            "XREADGROUP GROUP workers bob COUNT 10 STREAMS events 1-0",
+            "XACK events workers 1-0",
+        });
+    }
+
+    [Test]
+    public async Task ClaimPending_ParsesRedis62ReplyWithoutDeletedIds()
+    {
+        await using var server = new FakeRespServer(Resp("0-0", Arr()));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var result = await client.Streams.ClaimPendingAsync(
+            "events", "workers", "bob", TimeSpan.Zero, start: "5-0", count: 1);
+
+        await Assert.That(result.NextStart.ToString()).IsEqualTo("0-0");
+        await Assert.That(result.Entries).IsEmpty();
+        await Assert.That(result.DeletedIds).IsEmpty();
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        {
+            "XAUTOCLAIM events workers bob 0 5-0 COUNT 1",
+        });
+    }
+
+    [Test]
+    public async Task StreamRecovery_RejectsInvalidArgumentsBeforeSending()
+    {
+        await using var server = new FakeRespServer();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await Assert.That(async () => await client.Streams.ClaimAsync(
+            "events", "workers", "bob", TimeSpan.Zero, []))
+            .ThrowsExactly<ArgumentException>();
+        await Assert.That(async () => await client.Streams.ClaimAsync(
+            "events", "workers", "bob", TimeSpan.FromMilliseconds(-1), "1-0"))
+            .ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.Streams.ClaimPendingAsync(
+            "events", "workers", "bob", TimeSpan.FromMilliseconds(-1)))
+            .ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.Streams.ClaimPendingAsync(
+            "events", "workers", "bob", TimeSpan.Zero, count: 0))
+            .ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
     public async Task Count_WritesXLenAndParsesTheEntryCount()
     {
         await using var server = new FakeRespServer(Integer(2));

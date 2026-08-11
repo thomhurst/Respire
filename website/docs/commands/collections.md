@@ -92,9 +92,27 @@ await foreach (var entry in redis.Streams.ReadGroupAsync(
     await HandleAsync(entry.GetString("type"));
     await entry.AckAsync();
 }
+
+RespireStreamClaimResult recovered = await redis.Streams.ClaimPendingAsync(
+    "events",
+    group: "processors",
+    consumer: Environment.MachineName,
+    minIdle: TimeSpan.FromMinutes(1),
+    count: 100,
+    cancellationToken: stoppingToken);
+
+foreach (var entry in recovered.Entries)
+{
+    await HandleAsync(entry.GetString("type"));
+    await entry.AckAsync(stoppingToken);
+}
 ```
 
 Blocking stream reads use the same dedicated-connection mechanism as blocking list operations.
+Use `ClaimAsync` when the pending ids are already known. `ClaimPendingAsync` exposes the
+`XAUTOCLAIM` next position and deleted ids for iterative recovery. To replay the current
+consumer's own pending-entry list, call `ReadGroupAsync` with an explicit `startAt`; that replay
+is non-blocking and completes after the pending entries are exhausted.
 
 ## Bitmaps, HyperLogLogs, and geo indexes
 
