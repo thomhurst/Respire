@@ -187,10 +187,9 @@ public class SetExpiryWireTests
 
         var transaction = client.CreateTransaction();
         var pending = transaction.Set("key", "value", RespireExpiry.At(Instant));
-        var committed = await transaction.CommitAsync();
+        await transaction.CommitAsync();
 
         await Assert.That(server.ReceivedCommands[1]).IsEqualTo("SET key value PXAT 1700000000123");
-        await Assert.That(committed).IsTrue();
         await Assert.That(pending.Result).IsTrue();
     }
 

@@ -144,9 +144,8 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         var keyType = transaction.Keys.Type("tx:facet:h");
         var removed = transaction.Keys.Delete("tx:facet:s", "tx:facet:missing");
 
-        var committed = await transaction.CommitAsync();
+        await transaction.CommitAsync();
 
-        committed.Should().BeTrue();
         stored.Result.Should().BeTrue();
         incremented.Result.Should().Be(4);
         hashSet.Result.Should().BeTrue();
@@ -210,10 +209,9 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
 
         var transaction = client.CreateTransaction();
         var transacted = QueueAudit(transaction.Lists);
-        var committed = await transaction.CommitAsync();
+        await transaction.CommitAsync();
 
         batched.Result.Should().Be(1);
-        committed.Should().BeTrue();
         transacted.Result.Should().Be(2);
         (await client.Lists.RangeAsync("shared:audit")).Should().Equal("entry", "entry");
     }
@@ -241,7 +239,7 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
 
         var transaction = client.CreateTransaction();
         var txScript = transaction.Scripts.Evaluate(script, ["deferred:typed"], ["transaction"]);
-        (await transaction.CommitAsync()).Should().BeTrue();
+        await transaction.CommitAsync();
 
         using var transactionResult = txScript.Result;
         transactionResult[0].AsString().Should().Be("deferred:typed");

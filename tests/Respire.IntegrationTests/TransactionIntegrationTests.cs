@@ -41,9 +41,8 @@ public class TransactionIntegrationTests
         var readEarly = () => getPending.Result;
         readEarly.Should().Throw<RespirePendingNotReadyException>();
 
-        var committed = await transaction.CommitAsync();
+        await transaction.CommitAsync();
 
-        committed.Should().BeTrue();
         setPending.Result.Should().BeTrue();
         incrPending.Result.Should().Be(1);
         getPending.Result.Should().Be("tx-value");
@@ -82,10 +81,9 @@ public class TransactionIntegrationTests
         // INCR on a non-numeric value queues fine but fails inside EXEC.
         var incrPending = transaction.Increment("tx:err:string");
 
-        var committed = await transaction.CommitAsync();
+        await transaction.CommitAsync();
 
         // EXEC ran: only the failing command's pending faults, the rest of the transaction applies.
-        committed.Should().BeTrue();
         setPending.Result.Should().BeTrue();
         var readFaulted = () => incrPending.Result;
         readFaulted.Should().Throw<RespireServerException>()
@@ -106,9 +104,8 @@ public class TransactionIntegrationTests
             pendings[i] = transaction.Set($"tx:bulk:{i}", $"value-{i}");
         }
 
-        var committed = await transaction.CommitAsync();
+        await transaction.CommitAsync();
 
-        committed.Should().BeTrue();
         pendings.Should().OnlyContain(pending => pending.Result);
 
         (await _client.GetStringAsync("tx:bulk:73")).Should().Be("value-73");
@@ -132,10 +129,8 @@ public class TransactionIntegrationTests
             pendings[i] = transaction.Increment("tx:concurrent:counter");
         }
 
-        var committed = await transaction.CommitAsync();
+        await transaction.CommitAsync();
         await Task.WhenAll(traffic);
-
-        committed.Should().BeTrue();
 
         // INCR replies inside the transaction must be strictly sequential 1..10 — proof that
         // no interleaved command executed between them.

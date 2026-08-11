@@ -54,8 +54,8 @@ Console.WriteLine($"batched: {a.Result} / hits={b.Result} / profile fields={prof
 var tx = redis.CreateTransaction();
 var newBalance = tx.Increment("balance", 100);
 tx.Lists.RightPush("audit", "deposit:100");
-var committed = await tx.CommitAsync();
-Console.WriteLine($"committed={committed}, balance={newBalance.Result}");
+await tx.CommitAsync();
+Console.WriteLine($"committed, balance={newBalance.Result}");
 
 // ── Raw escape hatch — any command, interpolated safely ──────────────────────
 using (var encoding = await redis.ExecuteAsync($"OBJECT ENCODING {"greeting"}"))

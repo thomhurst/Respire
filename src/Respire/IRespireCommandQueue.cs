@@ -5,7 +5,7 @@ namespace Respire;
 
 /// <summary>
 /// The commands that can be queued by both a <see cref="RespireBatch"/> and a
-/// <see cref="RespireTransaction"/>.
+/// <see cref="RespireTransaction"/> or <see cref="RespireWatchedTransaction"/>.
 /// </summary>
 /// <remarks>
 /// Use this interface when helper code should queue the same work into either deferred execution

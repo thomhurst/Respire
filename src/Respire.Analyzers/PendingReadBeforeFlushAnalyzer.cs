@@ -21,6 +21,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
     internal const string PendingTypeName = "Respire.RespirePending`1";
     internal const string BatchTypeName = "Respire.RespireBatch";
     internal const string TransactionTypeName = "Respire.RespireTransaction";
+    internal const string TransactionBaseTypeName = "Respire.RespireTransactionBase";
 
     private const string SendAsync = "SendAsync";
     private const string CommitAsync = "CommitAsync";
@@ -57,12 +58,13 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
 
             var batchType = compilationStart.Compilation.GetTypeByMetadataName(BatchTypeName);
             var transactionType = compilationStart.Compilation.GetTypeByMetadataName(TransactionTypeName);
-            if (batchType is null && transactionType is null)
+            var transactionBaseType = compilationStart.Compilation.GetTypeByMetadataName(TransactionBaseTypeName);
+            if (batchType is null && transactionType is null && transactionBaseType is null)
             {
                 return;
             }
 
-            var known = new KnownTypes(pendingType, batchType, transactionType);
+            var known = new KnownTypes(pendingType, batchType, transactionType, transactionBaseType);
 
             compilationStart.RegisterSyntaxNodeAction(
                 nodeContext => AnalyzeResultAccess(nodeContext, known), SyntaxKind.SimpleMemberAccessExpression);
@@ -173,7 +175,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            var isTransaction = SymbolEqualityComparer.Default.Equals(batch.Type, known.Transaction);
+            var isTransaction = IsTypeOrDerivedFrom(batch.Type, known.Transaction)
+                || IsTypeOrDerivedFrom(batch.Type, known.TransactionBase);
             if (!isTransaction && !SymbolEqualityComparer.Default.Equals(batch.Type, known.Batch))
             {
                 continue;
@@ -859,7 +862,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
     private static bool IsFlushInvocation(
         SyntaxNodeAnalysisContext context, InvocationExpressionSyntax invocation, ILocalSymbol batch)
     {
-        var expectedName = batch.Type.ToDisplayString() == TransactionTypeName ? CommitAsync : SendAsync;
+        var expectedName = batch.Type.ToDisplayString() == BatchTypeName ? SendAsync : CommitAsync;
         return ScopeWalker.Unwrap(invocation.Expression) is MemberAccessExpressionSyntax member
                && member.Name.Identifier.ValueText == expectedName
                && context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol
@@ -869,6 +872,19 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                && context.SemanticModel.GetSymbolInfo(
                    ScopeWalker.Unwrap(member.Expression), context.CancellationToken).Symbol is ILocalSymbol target
                && SymbolEqualityComparer.Default.Equals(target, batch);
+    }
+
+    private static bool IsTypeOrDerivedFrom(ITypeSymbol type, INamedTypeSymbol? expected)
+    {
+        for (var current = type as INamedTypeSymbol; current is not null; current = current.BaseType)
+        {
+            if (SymbolEqualityComparer.Default.Equals(current, expected))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static ExpressionSyntax? GetCompletionExpression(
@@ -986,12 +1002,18 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         };
     }
 
-    private sealed class KnownTypes(INamedTypeSymbol pending, INamedTypeSymbol? batch, INamedTypeSymbol? transaction)
+    private sealed class KnownTypes(
+        INamedTypeSymbol pending,
+        INamedTypeSymbol? batch,
+        INamedTypeSymbol? transaction,
+        INamedTypeSymbol? transactionBase)
     {
         public INamedTypeSymbol Pending { get; } = pending;
 
         public INamedTypeSymbol? Batch { get; } = batch;
 
         public INamedTypeSymbol? Transaction { get; } = transaction;
+
+        public INamedTypeSymbol? TransactionBase { get; } = transactionBase;
     }
 }
