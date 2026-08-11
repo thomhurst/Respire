@@ -53,4 +53,18 @@ public class UnifiedExpiryIntegrationTests(ModernRedisTestContainer fixture)
 
         (await client.Hashes.ExpiryAsync("unified:hash", "field"))[0].HasExpiry.Should().BeFalse();
     }
+
+    [Test]
+    public async Task ConditionalHashSet_ClearsExistingFieldExpiry()
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await client.Hashes.SetAsync("conditional:hash", "field", "value");
+        await client.Hashes.ExpireAsync(
+            "conditional:hash", RespireExpiry.In(TimeSpan.FromSeconds(30)), "field");
+
+        (await client.Hashes.SetAsync(
+            "conditional:hash", "field", "updated", SetWhen.Exists)).Should().BeTrue();
+
+        (await client.Hashes.ExpiryAsync("conditional:hash", "field"))[0].HasExpiry.Should().BeFalse();
+    }
 }

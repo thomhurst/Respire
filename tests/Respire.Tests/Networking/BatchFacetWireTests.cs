@@ -37,10 +37,10 @@ public class BatchFacetWireTests
         await Assert.That(length.Result).IsEqualTo(5);
         await Assert.That(server.ReceivedCommands).IsEquivalentTo([
             "HSETNX hash new one",
-            "HSETEX hash FXX KEEPTTL FIELDS 1 existing two",
+            "HSETEX hash FXX FIELDS 1 existing two",
             "SETRANGE text 2 xyz",
             "HSETNX hash new one",
-            "HSETEX hash FXX KEEPTTL FIELDS 1 existing two",
+            "HSETEX hash FXX FIELDS 1 existing two",
             "SETRANGE text 2 xyz",
         ], CollectionOrdering.Matching);
     }

@@ -116,7 +116,8 @@ internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
                 new Cmd1N(
                     RespireCommands.Hash.HSETEX.Verb,
                     sink.Client.Key(in key),
-                    HashCommands.SetExFieldsBlock("KEEPTTL", 0, hasValue: false, when, [(field, value)])),
+                    HashCommands.SetExFieldsBlock(
+                        option: null, 0, hasValue: false, when, [(field, value)])),
                 static (c, v) => ResponseReader.Flag(in v)),
             _ => throw new ArgumentOutOfRangeException(nameof(when), when, null),
         };

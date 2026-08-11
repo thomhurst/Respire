@@ -231,7 +231,7 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
                 new Cmd1N(
                     RespireCommands.Hash.HSETEX.Verb,
                     client.Key(in key),
-                    SetExFieldsBlock("KEEPTTL", 0, hasValue: false, when, [(field, value)])),
+                    SetExFieldsBlock(option: null, 0, hasValue: false, when, [(field, value)])),
                 cancellationToken),
             _ => throw new ArgumentOutOfRangeException(nameof(when), when, null),
         };
@@ -587,7 +587,7 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
     }
 
     internal static RespireValue[] SetExFieldsBlock(
-        string option,
+        string? option,
         long optionValue,
         bool hasValue,
         SetWhen when,
@@ -595,14 +595,19 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
     {
         ValidateFieldPairs(fields);
         var condition = HashSetWhenToken(when);
-        var args = new RespireValue[(condition is null ? 0 : 1) + 3 + (hasValue ? 1 : 0) + fields.Length * 2];
+        var args = new RespireValue[
+            (condition is null ? 0 : 1) + (option is null ? 0 : 1) + 2
+            + (hasValue ? 1 : 0) + fields.Length * 2];
         var index = 0;
         if (condition is not null)
         {
             args[index++] = condition;
         }
 
-        args[index++] = option;
+        if (option is not null)
+        {
+            args[index++] = option;
+        }
         if (hasValue)
         {
             args[index++] = optionValue;
