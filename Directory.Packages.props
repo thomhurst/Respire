@@ -26,7 +26,7 @@
     <PackageVersion Include="Polyfill" Version="11.0.2" />
     <PackageVersion Include="ModularPipelines.GitHub" Version="3.2.8" />
     <PackageVersion Include="StackExchange.Redis" Version="3.1.13" />
-    <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="10.0.10" />
+    <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="10.0.11" />
     <PackageVersion Include="System.IO.Hashing" Version="10.0.11" />
     <PackageVersion Include="System.IO.Pipelines" Version="10.0.10" />
     <PackageVersion Include="Testcontainers.Redis" Version="4.13.0" />
