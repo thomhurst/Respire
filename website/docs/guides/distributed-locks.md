@@ -39,6 +39,25 @@ await using var mutex = await redis.Locks.AcquireOrThrowAsync(
     cancellationToken);
 ```
 
+For long-running work, acquisition can start a keep-alive owned by the returned lock. Disposing
+the attempt stops renewal before releasing the lock; its acquisition cancellation token does not
+control the keep-alive after acquisition succeeds.
+
+```csharp
+await using var attempt = await redis.Locks.AcquireAsync(
+    "locks:report",
+    expiry: TimeSpan.FromSeconds(30),
+    keepAlive: true,
+    cancellationToken);
+
+if (!attempt.Acquired)
+{
+    return;
+}
+
+await RunReportAsync(attempt.Lock.KeepAliveCancellationToken);
+```
+
 ## Wait for contention
 
 Both acquisition styles have an overload that polls until a wait budget expires:
@@ -63,16 +82,17 @@ The lock disappears when `Duration` elapses, even if protected work is still run
 shorter than the lease or extend it before expiry:
 
 `RemainingEstimate` and `ExpiresAtEstimate` are approximate timing values, not ownership checks.
-Use `IsHeldByAsync` when current ownership must be verified.
+Use `VerifyStillHeldAsync` when current ownership must be checked against Redis.
 
 ```csharp
-if (!await mutex.ExtendAsync(TimeSpan.FromSeconds(30), cancellationToken))
+if (!await mutex.ResetExpiryAsync(TimeSpan.FromSeconds(30), cancellationToken))
 {
     return; // ownership was lost; stop protected writes
 }
 ```
 
-`ExtendAsync` returns `false` after expiry, release, or ownership loss. Do not retry protected
+`ResetExpiryAsync` applies the supplied duration from now; it does not add time to the current
+expiry. It returns `false` after expiry, release, or ownership loss. Do not retry protected
 writes after that result: another process may now own the lock.
 
 For longer work, use a keep-alive and pass its cancellation token to the protected operation:
@@ -86,7 +106,7 @@ The keep-alive token is cancelled when renewal fails or ownership is lost. Prote
 must honor it and stop protected writes after cancellation. Disposing `keepAlive` stops renewal;
 it does not release `mutex`, which remains held until `ReleaseAsync`, mutex disposal, or expiry.
 
-Managed `RespireLock.ExtendAsync` and `KeepAliveAsync` fence cancelled or timed-out renewals with
+Managed `RespireLock.ResetExpiryAsync` and `KeepAliveAsync` fence cancelled or timed-out renewals with
 Redis `CLIENT ID` and `CLIENT KILL`. The authenticated Redis user must permit both commands. The
 raw-token APIs remain available for restricted users, but do not provide this managed fencing.
 
@@ -97,7 +117,7 @@ expiry remains the final safety net.
 
 ## Manage owner tokens directly
 
-Use `TryTakeAsync`, `ExtendAsync`, `ReleaseAsync`, and `GetOwnerTokenAsync` when the token must be
+Use `TryTakeAsync`, `ResetExpiryAsync`, `ReleaseAsync`, and `GetOwnerTokenAsync` when the token must be
 shared with another process or outlive the acquiring process:
 
 ```csharp

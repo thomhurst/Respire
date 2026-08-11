@@ -44,7 +44,7 @@ public readonly struct RespireLockAttempt : IAsyncDisposable
 /// </summary>
 /// <remarks>
 /// The lock is a lease, not a mutex: it disappears on its own when <see cref="Duration"/> elapses,
-/// even mid-work. Keep protected work shorter than the duration, call <see cref="ExtendAsync"/>,
+/// even mid-work. Keep protected work shorter than the duration, call <see cref="ResetExpiryAsync"/>,
 /// or use <see cref="KeepAliveAsync"/> and stop protected work when its token is cancelled.
 /// </remarks>
 public sealed class RespireLock : IAsyncDisposable
@@ -62,6 +62,8 @@ public sealed class RespireLock : IAsyncDisposable
     private long _renewedTimestamp;
     private int _state;
     private int _keepAlive;
+    private RespireLockKeepAlive? _ownedKeepAlive;
+    private int _ownedKeepAliveDisposed;
     private readonly object _releaseSync = new();
     private Task<LockReleaseOutcome>? _releaseTask;
 
@@ -91,7 +93,7 @@ public sealed class RespireLock : IAsyncDisposable
 
     /// <summary>
     /// The lease duration currently applied to the lock: the one it was acquired with, or the one
-    /// from the most recent successful <see cref="ExtendAsync"/>.
+    /// from the most recent successful <see cref="ResetExpiryAsync"/>.
     /// </summary>
     public TimeSpan Duration => TimeSpan.FromTicks(Interlocked.Read(ref _durationTicks));
 
@@ -121,7 +123,14 @@ public sealed class RespireLock : IAsyncDisposable
         => Volatile.Read(ref _state) != StateHeld || RemainingEstimate == TimeSpan.Zero;
 
     /// <summary>
-    /// Resets the lock's expiry to <paramref name="expiry"/> from now, only while this handle is
+    /// Cancelled when acquisition-owned keep-alive renewal stops or loses ownership. This token
+    /// cannot be cancelled when the lock was acquired without <c>keepAlive: true</c>.
+    /// </summary>
+    public CancellationToken KeepAliveCancellationToken
+        => Volatile.Read(ref _ownedKeepAlive)?.CancellationToken ?? CancellationToken.None;
+
+    /// <summary>
+    /// Resets the lock's expiry to <paramref name="newDuration"/> from now, only while this handle is
     /// still the owner. Redis: compare-and-PEXPIRE.
     /// </summary>
     /// <remarks>
@@ -132,8 +141,19 @@ public sealed class RespireLock : IAsyncDisposable
     /// <see langword="false"/> when the lock is no longer owned — it expired, it was released, or
     /// another owner took it — in which case protected work must stop rather than retry.
     /// </returns>
+    public ValueTask<bool> ResetExpiryAsync(
+        TimeSpan newDuration,
+        CancellationToken cancellationToken = default)
+        => ExtendCoreAsync(newDuration, signalLeaseChanged: true, MarkOwnershipLost, cancellationToken);
+
+    /// <summary>Resets the lock expiry to <paramref name="expiry"/> from now.</summary>
+    [Obsolete("Use ResetExpiryAsync; the duration is applied from now rather than added to the current expiry.")]
     public ValueTask<bool> ExtendAsync(TimeSpan expiry, CancellationToken cancellationToken = default)
-        => ExtendCoreAsync(expiry, signalLeaseChanged: true, MarkOwnershipLost, cancellationToken);
+        => ResetExpiryAsync(expiry, cancellationToken);
+
+    /// <summary>Checks Redis to verify that this handle's owner token still holds the key.</summary>
+    public ValueTask<bool> VerifyStillHeldAsync(CancellationToken cancellationToken = default)
+        => IsHeldByOriginAsync(cancellationToken);
 
     internal ValueTask<bool> RenewAsync(Action onOutcomeUncertain, CancellationToken cancellationToken)
         => ExtendCoreAsync(expiry: null, signalLeaseChanged: false, onOutcomeUncertain, cancellationToken);
@@ -167,7 +187,7 @@ public sealed class RespireLock : IAsyncDisposable
                 ? await managed.ExtendManagedAsync(
                         Key, Token, effectiveExpiry, onOutcomeUncertain, cancellationToken)
                     .ConfigureAwait(false)
-                : await _locks.ExtendAsync(Key, Token, effectiveExpiry, cancellationToken).ConfigureAwait(false);
+                : await _locks.ResetExpiryAsync(Key, Token, effectiveExpiry, cancellationToken).ConfigureAwait(false);
             if (!extended)
             {
                 changed = TryMarkOwnershipLost();
@@ -196,6 +216,12 @@ public sealed class RespireLock : IAsyncDisposable
     /// run for a lock at a time.
     /// </summary>
     public ValueTask<RespireLockKeepAlive> KeepAliveAsync(CancellationToken cancellationToken = default)
+        => ValueTask.FromResult(StartKeepAlive(cancellationToken));
+
+    internal void StartOwnedKeepAlive()
+        => Volatile.Write(ref _ownedKeepAlive, StartKeepAlive(CancellationToken.None));
+
+    private RespireLockKeepAlive StartKeepAlive(CancellationToken cancellationToken)
     {
         if (IsReleased)
         {
@@ -209,7 +235,7 @@ public sealed class RespireLock : IAsyncDisposable
 
         try
         {
-            return ValueTask.FromResult(new RespireLockKeepAlive(this, cancellationToken));
+            return new RespireLockKeepAlive(this, cancellationToken);
         }
         catch
         {
@@ -302,6 +328,12 @@ public sealed class RespireLock : IAsyncDisposable
     /// </remarks>
     public async ValueTask DisposeAsync()
     {
+        var keepAlive = Volatile.Read(ref _ownedKeepAlive);
+        if (keepAlive is not null && Interlocked.Exchange(ref _ownedKeepAliveDisposed, 1) == 0)
+        {
+            await keepAlive.DisposeAsync().ConfigureAwait(false);
+        }
+
         try
         {
             await ReleaseAsync().ConfigureAwait(false);

@@ -150,7 +150,7 @@ if (keepAlive.OwnershipLost)
 }
 ```
 
-You can instead call `mutex.ExtendAsync(...)` directly and stop protected writes when it returns
+You can instead call `mutex.ResetExpiryAsync(...)` directly and stop protected writes when it returns
 `false`. `ReleaseAsync` returns `LockReleaseOutcome`, distinguishing `Released`,
 `AlreadyReleased`, and `NotOwned`. Every operation compares the token on the server, so an expired
 handle never extends or deletes the next owner's lock.
@@ -165,7 +165,7 @@ await using var mutex = await redis.Locks.AcquireOrThrowAsync(
     wait: TimeSpan.FromSeconds(5)); // retries every 50 ms by default
 ```
 
-`TryTakeAsync`, `ExtendAsync`, `ReleaseAsync`, and `GetOwnerTokenAsync` are the raw-token APIs for
+`TryTakeAsync`, `ResetExpiryAsync`, `ReleaseAsync`, and `GetOwnerTokenAsync` are the raw-token APIs for
 callers that must share ownership between processes or outlive the acquiring process:
 
 ```csharp
