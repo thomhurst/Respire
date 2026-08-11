@@ -307,6 +307,9 @@ await foreach (var entry in redis.Streams.ReadGroupAsync(
 
 `AddAsync(key, [("type", "click"), ...])` returns the generated `RespireStreamId`
 (comparable struct, not string).
+Pass `StreamAddOptions` to select an id, trim with `MAXLEN`, or require an existing stream.
+The options overload returns `null` when `CreateStream` is false and the stream is absent.
+`RangeAsync(..., descending: true)` reads the newest matching entries first with `XREVRANGE`.
 
 ## 9. Blocking commands are supported, transparently
 

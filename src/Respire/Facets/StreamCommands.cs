@@ -236,6 +236,44 @@ public readonly record struct RespireStreamConsumerInfo(
     TimeSpan IdleTime,
     TimeSpan? InactiveTime);
 
+/// <summary>Options controlling stream entry ids, trimming, and stream creation for Redis XADD.</summary>
+public readonly record struct StreamAddOptions
+{
+    private readonly bool? _approximateTrim;
+    private readonly bool? _createStream;
+
+    /// <summary>Gets the entry id, or null to let Redis generate one.</summary>
+    public RespireStreamId? Id { get; init; }
+
+    /// <summary>Gets the maximum stream length, or null to leave the stream untrimmed.</summary>
+    public long? MaxLength { get; init; }
+
+    /// <summary>Gets whether maximum-length trimming may be approximate. Defaults to true.</summary>
+    public bool ApproximateTrim
+    {
+        get => _approximateTrim ?? true;
+        init => _approximateTrim = value;
+    }
+
+    /// <summary>Gets whether Redis may create the stream when it does not exist. Defaults to true.</summary>
+    public bool CreateStream
+    {
+        get => _createStream ?? true;
+        init => _createStream = value;
+    }
+
+    /// <inheritdoc/>
+    public bool Equals(StreamAddOptions other)
+        => Id == other.Id
+           && MaxLength == other.MaxLength
+           && ApproximateTrim == other.ApproximateTrim
+           && CreateStream == other.CreateStream;
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+        => HashCode.Combine(Id, MaxLength, ApproximateTrim, CreateStream);
+}
+
 /// <summary>
 /// Stream commands. Collection cardinality uses <see cref="CountAsync"/>. Group reading is
 /// exposed as an endless async stream of entries.
@@ -251,12 +289,40 @@ public interface IStreamCommands
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Appends an entry using id, trimming, and creation options; returns null when creation is
+    /// disabled and the stream is absent. Redis: XADD.
+    /// </summary>
+    ValueTask<RespireStreamId?> AddAsync(
+        RespireKey key,
+        StreamAddOptions options,
+        params ReadOnlySpan<(string Field, RespireValue Value)> fields);
+
+    /// <summary>
+    /// Appends an entry using id, trimming, and creation options; returns null when creation is
+    /// disabled and the stream is absent. Redis: XADD.
+    /// </summary>
+    ValueTask<RespireStreamId?> AddAsync(
+        RespireKey key,
+        StreamAddOptions options,
+        ReadOnlySpan<(string Field, RespireValue Value)> fields,
+        CancellationToken cancellationToken);
+
     /// <summary>Number of entries. Redis: XLEN.</summary>
     ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Entries in an inclusive id range. Redis: XRANGE.</summary>
     ValueTask<RespireStreamEntry[]> RangeAsync(
         RespireKey key,
+        RespireStreamId? start = null,
+        RespireStreamId? end = null,
+        int? count = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Entries in an inclusive id range, optionally newest first. Redis: XRANGE or XREVRANGE.</summary>
+    ValueTask<RespireStreamEntry[]> RangeAsync(
+        RespireKey key,
+        bool descending,
         RespireStreamId? start = null,
         RespireStreamId? end = null,
         int? count = null,
@@ -369,42 +435,98 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
     private static readonly Verb XInfoConsumers = new("XINFO CONSUMERS");
 
     public ValueTask<RespireStreamId> AddAsync(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
-        => AddAsync(key, fields, CancellationToken.None);
+        => AddRequiredAsync(BuildAddCommand(key, default, fields), CancellationToken.None);
 
     public ValueTask<RespireStreamId> AddAsync(
         RespireKey key,
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         CancellationToken cancellationToken)
+        => AddRequiredAsync(BuildAddCommand(key, default, fields), cancellationToken);
+
+    public ValueTask<RespireStreamId?> AddAsync(
+        RespireKey key,
+        StreamAddOptions options,
+        params ReadOnlySpan<(string Field, RespireValue Value)> fields)
+        => AddAsync(key, options, fields, CancellationToken.None);
+
+    public ValueTask<RespireStreamId?> AddAsync(
+        RespireKey key,
+        StreamAddOptions options,
+        ReadOnlySpan<(string Field, RespireValue Value)> fields,
+        CancellationToken cancellationToken)
+        => AddOptionalAsync(BuildAddCommand(key, options, fields), cancellationToken);
+
+    private Cmd1N BuildAddCommand(
+        RespireKey key,
+        StreamAddOptions options,
+        ReadOnlySpan<(string Field, RespireValue Value)> fields)
     {
-        var args = new RespireValue[1 + fields.Length * 2];
-        args[0] = "*";
-        for (var i = 0; i < fields.Length; i++)
+        if (options.MaxLength is { } maxLength)
         {
-            args[1 + i * 2] = fields[i].Field;
-            args[2 + i * 2] = fields[i].Value;
+            ArgumentOutOfRangeException.ThrowIfNegative(maxLength);
         }
 
-        return AddCoreAsync(new Cmd1N(Verbs.XAdd, client.Key(in key), args), cancellationToken);
+        var optionCount = (options.CreateStream ? 0 : 1)
+            + (options.MaxLength.HasValue ? options.ApproximateTrim ? 3 : 2 : 0);
+        var args = new RespireValue[optionCount + 1 + fields.Length * 2];
+        var offset = 0;
+        if (!options.CreateStream)
+        {
+            args[offset++] = "NOMKSTREAM";
+        }
+
+        if (options.MaxLength is { } trimLength)
+        {
+            args[offset++] = "MAXLEN";
+            if (options.ApproximateTrim)
+            {
+                args[offset++] = "~";
+            }
+
+            args[offset++] = trimLength;
+        }
+
+        args[offset++] = options.Id?.Value ?? "*";
+        for (var i = 0; i < fields.Length; i++)
+        {
+            args[offset + i * 2] = fields[i].Field;
+            args[offset + i * 2 + 1] = fields[i].Value;
+        }
+
+        return new Cmd1N(Verbs.XAdd, client.Key(in key), args);
     }
 
-    private async ValueTask<RespireStreamId> AddCoreAsync(Cmd1N command, CancellationToken cancellationToken)
+    private async ValueTask<RespireStreamId> AddRequiredAsync(Cmd1N command, CancellationToken cancellationToken)
         => new(await client.StringAsync("XADD", command, cancellationToken).ConfigureAwait(false));
+
+    private async ValueTask<RespireStreamId?> AddOptionalAsync(Cmd1N command, CancellationToken cancellationToken)
+    {
+        var id = await client.StringOrNullAsync("XADD", command, cancellationToken).ConfigureAwait(false);
+        return id is null ? default(RespireStreamId?) : new RespireStreamId(id);
+    }
 
     public ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.IntegerAsync("XLEN", new Cmd1(Verbs.XLen, client.Key(in key)), cancellationToken);
 
-    public async ValueTask<RespireStreamEntry[]> RangeAsync(
+    public ValueTask<RespireStreamEntry[]> RangeAsync(
         RespireKey key, RespireStreamId? start = null, RespireStreamId? end = null, int? count = null,
         CancellationToken cancellationToken = default)
+        => RangeAsync(key, descending: false, start, end, count, cancellationToken);
+
+    public async ValueTask<RespireStreamEntry[]> RangeAsync(
+        RespireKey key, bool descending, RespireStreamId? start = null, RespireStreamId? end = null, int? count = null,
+        CancellationToken cancellationToken = default)
     {
-        var from = (start ?? RespireStreamId.Min).Value;
-        var to = (end ?? RespireStreamId.Max).Value;
+        var from = (descending ? end ?? RespireStreamId.Max : start ?? RespireStreamId.Min).Value;
+        var to = (descending ? start ?? RespireStreamId.Min : end ?? RespireStreamId.Max).Value;
+        var operation = descending ? "XREVRANGE" : "XRANGE";
+        var verb = descending ? Verbs.XRevRange : Verbs.XRange;
         var reply = count is { } take
             ? await client.SendAsync(
-                "XRANGE", new Cmd5(Verbs.XRange, client.Key(in key), from, to, "COUNT", take), cancellationToken)
+                operation, new Cmd5(verb, client.Key(in key), from, to, "COUNT", take), cancellationToken)
                 .ConfigureAwait(false)
             : await client.SendAsync(
-                "XRANGE", new Cmd3(Verbs.XRange, client.Key(in key), from, to), cancellationToken).ConfigureAwait(false);
+                operation, new Cmd3(verb, client.Key(in key), from, to), cancellationToken).ConfigureAwait(false);
 
         var entries = ParseEntries(in reply, client: null, resolvedKey: default, group: null);
         reply.Dispose();
