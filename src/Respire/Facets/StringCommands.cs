@@ -105,7 +105,8 @@ public interface IStringCommands
     /// <summary>Gets and deserializes a key's value, then deletes the key. Redis: GETDEL.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    ValueTask<T?> GetAndDeleteAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
+    ValueTask<T?> GetAndDeleteAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Typed GETDEL is not implemented.");
 
     /// <summary>Gets a key's value and deletes the key. Redis: GETDEL.</summary>
     [Obsolete("Use GetAndDeleteAsync.")]
@@ -122,7 +123,8 @@ public interface IStringCommands
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<T?> GetAndExpireAsync<T>(
-        RespireKey key, RespireExpiry expiry, CancellationToken cancellationToken = default);
+        RespireKey key, RespireExpiry expiry, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Typed GETEX is not implemented.");
 
     /// <summary>Gets a key's value and updates or removes its expiry. Redis: GETEX.</summary>
     [Obsolete("Use GetAndExpireAsync.")]
