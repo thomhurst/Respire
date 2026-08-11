@@ -7,7 +7,7 @@ namespace Respire;
 /// Sorted set (score-ordered members) commands queued on a <see cref="RespireBatch"/> or
 /// <see cref="RespireTransaction"/>. Mirrors <see cref="ISortedSetCommands"/>; collection
 /// cardinality uses <see cref="Count"/> and score-range cardinality uses
-/// <see cref="CountByScore"/>.
+/// <see cref="CountByScore(RespireKey, double, double)"/>.
 /// </summary>
 public interface IBatchSortedSetCommands
 {
@@ -39,11 +39,19 @@ public interface IBatchSortedSetCommands
     /// <summary>Removes members whose scores are within the inclusive range. Redis: ZREMRANGEBYSCORE.</summary>
     RespirePending<long> RemoveRangeByScore(RespireKey key, double min, double max);
 
+    /// <summary>Removes members whose scores are within the range. Redis: ZREMRANGEBYSCORE.</summary>
+    RespirePending<long> RemoveRangeByScore(RespireKey key, RespireScoreRange range)
+        => throw new NotSupportedException("Typed sorted-set score ranges are not implemented.");
+
     /// <summary>Removes members whose ranks are within the inclusive range. Redis: ZREMRANGEBYRANK.</summary>
     RespirePending<long> RemoveRangeByRank(RespireKey key, long start, long stop);
 
     /// <summary>Members with scores within the inclusive range. Redis: ZCOUNT.</summary>
     RespirePending<long> CountByScore(RespireKey key, double min, double max);
+
+    /// <summary>Number of members whose scores are within the range. Redis: ZCOUNT.</summary>
+    RespirePending<long> CountByScore(RespireKey key, RespireScoreRange range)
+        => throw new NotSupportedException("Typed sorted-set score ranges are not implemented.");
 
     /// <summary>The member's 0-based rank, or null when absent. Redis: ZRANK / ZREVRANK.</summary>
     RespirePending<long?> Rank(RespireKey key, RespireValue member, bool descending = false);
@@ -57,6 +65,42 @@ public interface IBatchSortedSetCommands
 
     /// <summary>Members with scores within the inclusive score range. Redis: ZRANGE BYSCORE.</summary>
     RespirePending<string[]> RangeByScore(RespireKey key, double min, double max, bool descending = false);
+
+    /// <summary>Members within a score range, optionally paged. Redis: ZRANGE BYSCORE.</summary>
+    RespirePending<string[]> RangeByScore(
+        RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
+        bool descending = false)
+        => throw new NotSupportedException("Typed sorted-set score ranges are not implemented.");
+
+    /// <summary>Members and scores within a score range, optionally paged. Redis: ZRANGE BYSCORE WITHSCORES.</summary>
+    RespirePending<SortedSetEntry[]> RangeByScoreWithScores(
+        RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
+        bool descending = false)
+        => throw new NotSupportedException("Sorted-set score ranges with scores are not implemented.");
+
+    /// <summary>Members within a lexicographical range, optionally paged. Redis: ZRANGE BYLEX.</summary>
+    RespirePending<string[]> RangeByLex(
+        RespireKey key, RespireLexRange range, long offset = 0, long? count = null,
+        bool descending = false)
+        => throw new NotSupportedException("Sorted-set lexicographical ranges are not implemented.");
+
+    /// <summary>Stores a rank range in another sorted set. Redis: ZRANGESTORE.</summary>
+    RespirePending<long> StoreRange(
+        RespireKey destination, RespireKey source, long start = 0, long stop = -1,
+        bool descending = false)
+        => throw new NotSupportedException("Sorted-set range storage is not implemented.");
+
+    /// <summary>Stores a score range in another sorted set. Redis: ZRANGESTORE BYSCORE.</summary>
+    RespirePending<long> StoreRangeByScore(
+        RespireKey destination, RespireKey source, RespireScoreRange range,
+        long offset = 0, long? count = null, bool descending = false)
+        => throw new NotSupportedException("Sorted-set score-range storage is not implemented.");
+
+    /// <summary>Stores a lexicographical range in another sorted set. Redis: ZRANGESTORE BYLEX.</summary>
+    RespirePending<long> StoreRangeByLex(
+        RespireKey destination, RespireKey source, RespireLexRange range,
+        long offset = 0, long? count = null, bool descending = false)
+        => throw new NotSupportedException("Sorted-set lexicographical range storage is not implemented.");
 }
 
 internal sealed class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSetCommands
@@ -103,9 +147,16 @@ internal sealed class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSe
     }
 
     public RespirePending<long> RemoveRangeByScore(RespireKey key, double min, double max)
+        => RemoveRangeByScore(key, new RespireScoreRange(min, max));
+
+    public RespirePending<long> RemoveRangeByScore(RespireKey key, RespireScoreRange range)
         => sink.Add<Cmd3, long>(
             "ZREMRANGEBYSCORE",
-            new Cmd3(RespireCommands.SortedSet.ZREMRANGEBYSCORE.Verb, sink.Client.Key(in key), min, max),
+            new Cmd3(
+                RespireCommands.SortedSet.ZREMRANGEBYSCORE.Verb,
+                sink.Client.Key(in key),
+                range.Minimum.ToRespireValue(),
+                range.Maximum.ToRespireValue()),
             static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<long> RemoveRangeByRank(RespireKey key, long start, long stop)
@@ -115,8 +166,16 @@ internal sealed class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSe
             static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<long> CountByScore(RespireKey key, double min, double max)
+        => CountByScore(key, new RespireScoreRange(min, max));
+
+    public RespirePending<long> CountByScore(RespireKey key, RespireScoreRange range)
         => sink.Add<Cmd3, long>(
-            "ZCOUNT", new Cmd3(Verbs.ZCount, sink.Client.Key(in key), min, max),
+            "ZCOUNT",
+            new Cmd3(
+                Verbs.ZCount,
+                sink.Client.Key(in key),
+                range.Minimum.ToRespireValue(),
+                range.Maximum.ToRespireValue()),
             static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<long?> Rank(RespireKey key, RespireValue member, bool descending = false)
@@ -149,12 +208,87 @@ internal sealed class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSe
 
     public RespirePending<string[]> RangeByScore(
         RespireKey key, double min, double max, bool descending = false)
-        => descending
-            // With REV the bounds swap: ZRANGE key max min BYSCORE REV.
-            ? sink.Add<Cmd5, string[]>(
-                "ZRANGE", new Cmd5(Verbs.ZRange, sink.Client.Key(in key), max, min, "BYSCORE", "REV"),
-                static (c, v) => ResponseReader.StringArray(in v))
-            : sink.Add<Cmd4, string[]>(
-                "ZRANGE", new Cmd4(Verbs.ZRange, sink.Client.Key(in key), min, max, "BYSCORE"),
-                static (c, v) => ResponseReader.StringArray(in v));
+        => RangeByScore(key, new RespireScoreRange(min, max), descending: descending);
+
+    public RespirePending<string[]> RangeByScore(
+        RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
+        bool descending = false)
+        => sink.Add<Cmd1N, string[]>(
+            "ZRANGE",
+            new Cmd1N(
+                Verbs.ZRange,
+                sink.Client.Key(in key),
+                SortedSetCommands.RangeArguments(
+                    range.Minimum.ToRespireValue(), range.Maximum.ToRespireValue(),
+                    "BYSCORE", offset, count, descending, withScores: false)),
+            static (c, v) => ResponseReader.StringArray(in v));
+
+    public RespirePending<SortedSetEntry[]> RangeByScoreWithScores(
+        RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
+        bool descending = false)
+        => sink.Add<Cmd1N, SortedSetEntry[]>(
+            "ZRANGE",
+            new Cmd1N(
+                Verbs.ZRange,
+                sink.Client.Key(in key),
+                SortedSetCommands.RangeArguments(
+                    range.Minimum.ToRespireValue(), range.Maximum.ToRespireValue(),
+                    "BYSCORE", offset, count, descending, withScores: true)),
+            static (c, v) => SortedSetCommands.ParseEntries(in v));
+
+    public RespirePending<string[]> RangeByLex(
+        RespireKey key, RespireLexRange range, long offset = 0, long? count = null,
+        bool descending = false)
+        => sink.Add<Cmd1N, string[]>(
+            "ZRANGE",
+            new Cmd1N(
+                Verbs.ZRange,
+                sink.Client.Key(in key),
+                SortedSetCommands.RangeArguments(
+                    range.Minimum.ToRespireValue(), range.Maximum.ToRespireValue(),
+                    "BYLEX", offset, count, descending, withScores: false)),
+            static (c, v) => ResponseReader.StringArray(in v));
+
+    public RespirePending<long> StoreRange(
+        RespireKey destination, RespireKey source, long start = 0, long stop = -1,
+        bool descending = false)
+        => sink.Add<Cmd2N, long>(
+            "ZRANGESTORE",
+            new Cmd2N(
+                RespireCommands.SortedSet.ZRANGESTORE.Verb,
+                sink.Client.Key(in destination),
+                sink.Client.Key(in source),
+                descending ? [start, stop, "REV"] : [start, stop]),
+            destination, source,
+            static (c, v) => ResponseReader.Integer(in v));
+
+    public RespirePending<long> StoreRangeByScore(
+        RespireKey destination, RespireKey source, RespireScoreRange range,
+        long offset = 0, long? count = null, bool descending = false)
+        => StoreRangeCore(
+            destination, source,
+            range.Minimum.ToRespireValue(), range.Maximum.ToRespireValue(),
+            "BYSCORE", offset, count, descending);
+
+    public RespirePending<long> StoreRangeByLex(
+        RespireKey destination, RespireKey source, RespireLexRange range,
+        long offset = 0, long? count = null, bool descending = false)
+        => StoreRangeCore(
+            destination, source,
+            range.Minimum.ToRespireValue(), range.Maximum.ToRespireValue(),
+            "BYLEX", offset, count, descending);
+
+    private RespirePending<long> StoreRangeCore(
+        RespireKey destination, RespireKey source, RespireValue minimum, RespireValue maximum,
+        string mode, long offset, long? count, bool descending)
+        => sink.Add<Cmd2N, long>(
+            "ZRANGESTORE",
+            new Cmd2N(
+                RespireCommands.SortedSet.ZRANGESTORE.Verb,
+                sink.Client.Key(in destination),
+                sink.Client.Key(in source),
+                SortedSetCommands.RangeArguments(
+                    minimum, maximum, mode, offset, count, descending, withScores: false)),
+            destination, source,
+            static (c, v) => ResponseReader.Integer(in v));
 }
