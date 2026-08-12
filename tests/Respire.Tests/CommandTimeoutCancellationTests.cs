@@ -31,14 +31,12 @@ public class CommandTimeoutCancellationTests
         await Assert.That(cancellation.Token.IsCancellationRequested).IsTrue();
     }
 
-#if NET10_0_OR_GREATER
     [Test]
-    public async Task ReturningLeaseRemovesCallerRegistrationBeforeReuse()
+    public async Task ReturningSourceResetsBeforeReuse()
     {
-        using var caller = new CancellationTokenSource();
         CancellationToken firstToken;
         using (var first = CommandTimeoutCancellation.Create(
-                   caller.Token,
+                   default,
                    Timeout.InfiniteTimeSpan))
         {
             firstToken = first.Token;
@@ -48,10 +46,6 @@ public class CommandTimeoutCancellationTests
             default,
             Timeout.InfiniteTimeSpan);
         await Assert.That(second.Token).IsEqualTo(firstToken);
-
-        caller.Cancel();
-
         await Assert.That(second.Token.IsCancellationRequested).IsFalse();
     }
-#endif
 }

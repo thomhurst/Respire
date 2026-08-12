@@ -23,6 +23,7 @@
   <ItemGroup>
     <!-- Source-only: supplies System.Threading.Lock (with lock-statement support) on net8. -->
     <PackageReference Include="Polyfill" PrivateAssets="all" />
+    <PackageReference Include="Reservoir" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
@@ -68,7 +69,6 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
-    <PackageReference Include="Reservoir" PrivateAssets="all" />
     <PackageReference Include="System.IO.Hashing" />
     <PackageReference Include="System.IO.Pipelines" />
     <PackageReference Include="System.Diagnostics.DiagnosticSource" />
