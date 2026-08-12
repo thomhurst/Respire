@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Caching.Distributed;
+using Respire.Internal;
 
 namespace Respire.Extensions.Caching;
 
@@ -517,8 +518,9 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
     private async Task UnlinkWrappedGuardedAsync(string key, CancellationToken cancellationToken)
     {
-        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutSource.CancelAfter(WrappedRemovalTimeout);
+        using var timeoutSource = CommandTimeoutCancellation.Create(
+            cancellationToken,
+            WrappedRemovalTimeout);
         try
         {
             await UnlinkWrappedLeasedAsync(key, timeoutSource.Token).ConfigureAwait(false);

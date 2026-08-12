@@ -23,6 +23,7 @@
   <ItemGroup>
     <!-- Source-only: supplies System.Threading.Lock (with lock-statement support) on net8. -->
     <PackageReference Include="Polyfill" PrivateAssets="all" />
+    <PackageReference Include="Reservoir" />
   </ItemGroup>
 
   <ItemGroup>

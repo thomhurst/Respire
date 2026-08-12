@@ -1,16 +1,15 @@
 namespace Respire.Internal;
 
-/// <summary>Creates timeout cancellation without linking an inert caller token.</summary>
+/// <summary>Creates timeout cancellation while avoiding unnecessary source allocations.</summary>
 internal static class CommandTimeoutCancellation
 {
+    private const int MaxPoolSize = 4096;
+    private static readonly Reservoir.CancellationTokenSourcePool Pool = new(MaxPoolSize);
+
     public static CancellationTokenSource Create(CancellationToken callerToken, TimeSpan timeout)
     {
-        if (!callerToken.CanBeCanceled)
-        {
-            return new CancellationTokenSource(timeout);
-        }
+        var source = Pool.RentLinked(callerToken);
 
-        var source = CancellationTokenSource.CreateLinkedTokenSource(callerToken);
         try
         {
             source.CancelAfter(timeout);

@@ -251,8 +251,9 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                 // exactly as it does on the regular send path.
                 if (_client.Core.Options.CommandTimeout is { } timeout)
                 {
-                    using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                    timeoutSource.CancelAfter(timeout);
+                    using var timeoutSource = CommandTimeoutCancellation.Create(
+                        cancellationToken,
+                        timeout);
                     try
                     {
                         result = await SendAsync(timeoutSource.Token).ConfigureAwait(false);
