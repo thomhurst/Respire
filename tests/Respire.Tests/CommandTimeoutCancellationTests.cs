@@ -32,11 +32,12 @@ public class CommandTimeoutCancellationTests
     }
 
     [Test]
-    public async Task ReturningSourceResetsBeforeReuse()
+    public async Task ReturningLinkedSourceRemovesCallerRegistrationBeforeReuse()
     {
+        using var caller = new CancellationTokenSource();
         CancellationToken firstToken;
         using (var first = CommandTimeoutCancellation.Create(
-                   default,
+                   caller.Token,
                    Timeout.InfiniteTimeSpan))
         {
             firstToken = first.Token;
@@ -46,6 +47,9 @@ public class CommandTimeoutCancellationTests
             default,
             Timeout.InfiniteTimeSpan);
         await Assert.That(second.Token).IsEqualTo(firstToken);
+
+        caller.Cancel();
+
         await Assert.That(second.Token.IsCancellationRequested).IsFalse();
     }
 }

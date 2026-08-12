@@ -13,7 +13,8 @@ public class CommandTimeoutCancellationBenchmarks
     [GlobalSetup]
     public void WarmPool()
     {
-        using var cancellation = CommandTimeoutCancellation.Create(default, Timeout);
+        Warm(default);
+        Warm(_callerSource.Token);
     }
 
     [GlobalCleanup]
@@ -46,5 +47,10 @@ public class CommandTimeoutCancellationBenchmarks
     {
         using var cancellation = CommandTimeoutCancellation.Create(_callerSource.Token, Timeout);
         return cancellation.Token.IsCancellationRequested;
+    }
+
+    private static void Warm(CancellationToken callerToken)
+    {
+        using var cancellation = CommandTimeoutCancellation.Create(callerToken, Timeout);
     }
 }
