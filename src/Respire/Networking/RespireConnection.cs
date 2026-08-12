@@ -188,8 +188,9 @@ internal sealed class RespireConnection : IAsyncDisposable
         {
             ApplyTcpKeepAlive(socket, options);
 
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(options.ConnectTimeout);
+            using var timeoutCts = CommandTimeoutCancellation.Create(
+                cancellationToken,
+                options.ConnectTimeout);
             await socket.ConnectAsync(host, port, timeoutCts.Token).ConfigureAwait(false);
 
             if (options.UseTls)

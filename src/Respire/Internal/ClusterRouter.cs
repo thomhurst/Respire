@@ -779,8 +779,9 @@ internal sealed class ClusterRouter : IAsyncDisposable
         RespireConnectionMultiplexer seed,
         CancellationToken cancellationToken)
     {
-        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutSource.CancelAfter(_options.CommandTimeout ?? _options.ConnectTimeout);
+        using var timeoutSource = CommandTimeoutCancellation.Create(
+            cancellationToken,
+            _options.CommandTimeout ?? _options.ConnectTimeout);
         try
         {
             var reply = await seed.GetConnection().SendAsync(
