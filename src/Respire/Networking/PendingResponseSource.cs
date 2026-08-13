@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks.Sources;
+using Reservoir;
 using Respire.Internal;
 using Respire.Protocol;
 
@@ -166,7 +167,7 @@ internal abstract class PendingResponse
 internal sealed class TransactionPendingResponseSource : PendingResponse, IValueTaskSource<RespValue>
 {
     private const int MaxPoolSize = 4096;
-    private static readonly LockFreeStack<TransactionPendingResponseSource> Pool = new(MaxPoolSize);
+    private static readonly ObjectPool<TransactionPendingResponseSource, PoolPolicy> Pool = new(MaxPoolSize);
 
     private ManualResetValueTaskSourceCore<RespValue> _core = new() { RunContinuationsAsynchronously = false };
     private RespValue _queueError;
@@ -185,10 +186,7 @@ internal sealed class TransactionPendingResponseSource : PendingResponse, IValue
 
     internal static TransactionPendingResponseSource Rent(int replyCount, int firstQueueReply)
     {
-        if (!Pool.TryPop(out var source))
-        {
-            source = new TransactionPendingResponseSource();
-        }
+        var source = Pool.Rent();
 
         source._replyCount = replyCount;
         source._firstQueueReply = firstQueueReply;
@@ -257,20 +255,27 @@ internal sealed class TransactionPendingResponseSource : PendingResponse, IValue
         ValueTaskSourceOnCompletedFlags flags)
         => _core.OnCompleted(continuation, state, token, flags);
 
-    protected override void ResetAndReturn()
-    {
-        if (_hasQueueError)
-        {
-            _queueError.Dispose();
-        }
+    protected override void ResetAndReturn() => Pool.Return(this);
 
-        _queueError = default;
-        _replyCount = 0;
-        _firstQueueReply = 0;
-        _replyIndex = 0;
-        _hasQueueError = false;
-        _core.Reset();
-        Pool.TryPush(this);
+    private readonly struct PoolPolicy : IPooledObjectPolicy<TransactionPendingResponseSource>
+    {
+        public TransactionPendingResponseSource Create() => new();
+
+        public bool TryReset(TransactionPendingResponseSource source)
+        {
+            if (source._hasQueueError)
+            {
+                source._queueError.Dispose();
+            }
+
+            source._queueError = default;
+            source._replyCount = 0;
+            source._firstQueueReply = 0;
+            source._replyIndex = 0;
+            source._hasQueueError = false;
+            source._core.Reset();
+            return true;
+        }
     }
 }
 
@@ -278,15 +283,19 @@ internal sealed class TransactionPendingResponseSource : PendingResponse, IValue
 internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<RespValue>
 {
     private ManualResetValueTaskSourceCore<RespValue> _core = new() { RunContinuationsAsynchronously = false };
-    private PendingResponsePool? _pool;
+    private readonly PendingResponsePool? _pool;
     private bool _throwOnError;
     private string? _commandName;
+
+    internal PendingResponseSource()
+    {
+    }
+
+    private PendingResponseSource(PendingResponsePool pool) => _pool = pool;
 
     public ValueTask<RespValue> Task => new(this, _core.Version);
 
     internal override string? CommandName => _commandName;
-
-    internal void SetPool(PendingResponsePool pool) => _pool = pool;
 
     internal void Configure(bool throwOnError, string? commandName)
     {
@@ -329,10 +338,31 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
 
     protected override void ResetAndReturn()
     {
+        if (_pool is { } pool)
+        {
+            pool.Return(this);
+            return;
+        }
+
+        ResetForPool();
+    }
+
+    private void ResetForPool()
+    {
         _throwOnError = false;
         _commandName = null;
         _core.Reset();
-        _pool?.Return(this);
+    }
+
+    internal readonly struct PoolPolicy(PendingResponsePool pool) : IPooledObjectPolicy<PendingResponseSource>
+    {
+        public PendingResponseSource Create() => new(pool);
+
+        public bool TryReset(PendingResponseSource source)
+        {
+            source.ResetForPool();
+            return true;
+        }
     }
 }
 
@@ -343,7 +373,7 @@ internal sealed class PendingResponseSource : PendingResponse, IValueTaskSource<
 internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingResponse, IValueTaskSource<TResult>
 {
     private const int MaxPoolSize = 4096;
-    private static readonly LockFreeStack<ConvertedPendingResponseSource<TState, TResult>> Pool = new(MaxPoolSize);
+    private static readonly ObjectPool<ConvertedPendingResponseSource<TState, TResult>, PoolPolicy> Pool = new(MaxPoolSize);
 
     private ManualResetValueTaskSourceCore<bool> _core = new() { RunContinuationsAsynchronously = false };
     private RespValue _response;
@@ -367,10 +397,7 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         bool transferOwnership,
         string? commandName)
     {
-        if (!Pool.TryPop(out var source))
-        {
-            source = new ConvertedPendingResponseSource<TState, TResult>();
-        }
+        var source = Pool.Rent();
 
         source._state = state;
         source._converter = converter;
@@ -423,12 +450,7 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         ValueTaskSourceOnCompletedFlags flags)
         => _core.OnCompleted(continuation, state, token, flags);
 
-    protected override void ResetAndReturn()
-    {
-        ClearResponse();
-        _core.Reset();
-        Pool.TryPush(this);
-    }
+    protected override void ResetAndReturn() => Pool.Return(this);
 
     private void ClearResponse()
     {
@@ -444,6 +466,18 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
         _transferOwnership = false;
         _commandName = null;
     }
+
+    private readonly struct PoolPolicy : IPooledObjectPolicy<ConvertedPendingResponseSource<TState, TResult>>
+    {
+        public ConvertedPendingResponseSource<TState, TResult> Create() => new();
+
+        public bool TryReset(ConvertedPendingResponseSource<TState, TResult> source)
+        {
+            source.ClearResponse();
+            source._core.Reset();
+            return true;
+        }
+    }
 }
 
 /// <summary>
@@ -458,7 +492,7 @@ internal sealed class ConvertedPendingResponseSource<TState, TResult> : PendingR
 internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskSource<string?>
 {
     private const int MaxPoolSize = 4096;
-    private static readonly LockFreeStack<StringPendingResponseSource> Pool = new(MaxPoolSize);
+    private static readonly ObjectPool<StringPendingResponseSource, PoolPolicy> Pool = new(MaxPoolSize);
 
     private ManualResetValueTaskSourceCore<bool> _core = new() { RunContinuationsAsynchronously = false };
     private RespValue _response;
@@ -477,10 +511,7 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
 
     public static StringPendingResponseSource Rent(string? commandName)
     {
-        if (!Pool.TryPop(out var source))
-        {
-            source = new StringPendingResponseSource();
-        }
+        var source = Pool.Rent();
 
         source._commandName = commandName;
         source.PrepareForUse();
@@ -547,12 +578,7 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
         ValueTaskSourceOnCompletedFlags flags)
         => _core.OnCompleted(continuation, state, token, flags);
 
-    protected override void ResetAndReturn()
-    {
-        Clear();
-        _core.Reset();
-        Pool.TryPush(this);
-    }
+    protected override void ResetAndReturn() => Pool.Return(this);
 
     private void Clear()
     {
@@ -567,29 +593,37 @@ internal sealed class StringPendingResponseSource : PendingResponse, IValueTaskS
         _hasDirectResult = false;
         _commandName = null;
     }
+
+    private readonly struct PoolPolicy : IPooledObjectPolicy<StringPendingResponseSource>
+    {
+        public StringPendingResponseSource Create() => new();
+
+        public bool TryReset(StringPendingResponseSource source)
+        {
+            source.Clear();
+            source._core.Reset();
+            return true;
+        }
+    }
 }
 
 /// <summary>Bounded, allocation-free pool of raw response sources.</summary>
 internal sealed class PendingResponsePool
 {
-    private readonly LockFreeStack<PendingResponseSource> _stack;
+    private readonly ObjectPool<PendingResponseSource, PendingResponseSource.PoolPolicy> _pool;
 
-    public PendingResponsePool(int maxPoolSize) => _stack = new LockFreeStack<PendingResponseSource>(maxPoolSize);
+    public PendingResponsePool(int maxPoolSize)
+        => _pool = new(new PendingResponseSource.PoolPolicy(this), maxPoolSize);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public PendingResponseSource Rent(bool throwOnError = false, string? commandName = null)
     {
-        if (!_stack.TryPop(out var source))
-        {
-            source = new PendingResponseSource();
-            source.SetPool(this);
-        }
-
+        var source = _pool.Rent();
         source.Configure(throwOnError, commandName);
         source.PrepareForUse();
         return source;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Return(PendingResponseSource source) => _stack.TryPush(source);
+    public void Return(PendingResponseSource source) => _pool.Return(source);
 }

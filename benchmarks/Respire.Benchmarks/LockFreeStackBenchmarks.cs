@@ -1,29 +1,62 @@
 using BenchmarkDotNet.Attributes;
+using Reservoir;
 using Respire.Networking;
 
 namespace Respire.Benchmarks;
 
 [MemoryDiagnoser]
-[SimpleJob(warmupCount: 3, iterationCount: 5)]
 public class LockFreeStackBenchmarks
 {
-    private readonly LockFreeStack<object> _pool = CreatePopulatedPool();
-    private readonly LockFreeStack<object> _emptyPool = new(4096);
+    private const int MaximumRetained = 4096;
 
-    [Benchmark]
-    public bool RentReturn()
+    private readonly LockFreeStack<PoolBenchmarkItem> _lockFreeStack = CreatePopulatedStack();
+    private readonly ObjectPool<PoolBenchmarkItem, PoolBenchmarkItemPolicy> _reservoir = new(MaximumRetained);
+
+    [Benchmark(Baseline = true)]
+    public int LockFreeStackRentReturn()
     {
-        var popped = _pool.TryPop(out var item);
-        return popped && _pool.TryPush(item!);
+        if (!_lockFreeStack.TryPop(out var item))
+        {
+            return 0;
+        }
+
+        var value = item.Value;
+        _lockFreeStack.TryPush(item);
+        return value;
     }
 
     [Benchmark]
-    public bool EmptyPop() => _emptyPool.TryPop(out _);
-
-    private static LockFreeStack<object> CreatePopulatedPool()
+    public int ReservoirRentReturn()
     {
-        var pool = new LockFreeStack<object>(4096);
-        pool.TryPush(new object());
-        return pool;
+        var item = _reservoir.Rent();
+        var value = item.Value;
+        _reservoir.Return(item);
+        return value;
     }
+
+    [Benchmark]
+    public int ReservoirRentScoped()
+    {
+        using var lease = _reservoir.RentScoped(out var item);
+        return item.Value;
+    }
+
+    private static LockFreeStack<PoolBenchmarkItem> CreatePopulatedStack()
+    {
+        var stack = new LockFreeStack<PoolBenchmarkItem>(MaximumRetained);
+        stack.TryPush(new PoolBenchmarkItem());
+        return stack;
+    }
+}
+
+internal sealed class PoolBenchmarkItem
+{
+    public int Value { get; } = 42;
+}
+
+internal readonly struct PoolBenchmarkItemPolicy : IPooledObjectPolicy<PoolBenchmarkItem>
+{
+    public PoolBenchmarkItem Create() => new();
+
+    public bool TryReset(PoolBenchmarkItem _) => true;
 }
