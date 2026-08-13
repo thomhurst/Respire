@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks.Sources;
+using Reservoir;
 using Respire.Networking;
 using Respire.Protocol;
 
@@ -14,7 +15,7 @@ internal delegate TResult ResponseConverter<TState, TResult>(TState state, in Re
 internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<TResult>
 {
     private const int MaxPoolSize = 4096;
-    private static readonly LockFreeStack<PooledResponseSource<TState, TResult>> Pool = new(MaxPoolSize);
+    private static readonly ObjectPool<PooledResponseSource<TState, TResult>, PoolPolicy> Pool = new(MaxPoolSize);
 
     private ManualResetValueTaskSourceCore<TResult> _core = new() { RunContinuationsAsynchronously = true };
     private readonly Action _complete;
@@ -50,10 +51,7 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
             }
         }
 
-        if (!Pool.TryPop(out var source))
-        {
-            source = new PooledResponseSource<TState, TResult>();
-        }
+        var source = Pool.Rent();
 
         source._responseTask = responseTask;
         source._state = state;
@@ -105,8 +103,7 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
         }
         finally
         {
-            _core.Reset();
-            Pool.TryPush(this);
+            Pool.Return(this);
         }
     }
 
@@ -118,4 +115,15 @@ internal sealed class PooledResponseSource<TState, TResult> : IValueTaskSource<T
         short token,
         ValueTaskSourceOnCompletedFlags flags)
         => _core.OnCompleted(continuation, state, token, flags);
+
+    private readonly struct PoolPolicy : IPooledObjectPolicy<PooledResponseSource<TState, TResult>>
+    {
+        public PooledResponseSource<TState, TResult> Create() => new();
+
+        public bool TryReset(PooledResponseSource<TState, TResult> source)
+        {
+            source._core.Reset();
+            return true;
+        }
+    }
 }
