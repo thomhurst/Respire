@@ -174,8 +174,6 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     // degrades to the plain command path and keeps only its weaker ordering.
     private readonly RespireClient? _wireClient;
 
-    internal RespireOptions? OwnedClientOptions => _ownedClient?.Core.Options;
-
     /// <summary>Wraps an existing client; the caller keeps ownership of it.</summary>
     public RespireDistributedCache(IRespireClient client, RespireCacheOptions? options = null)
     {

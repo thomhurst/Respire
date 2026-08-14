@@ -316,6 +316,7 @@ internal sealed class ServerCommands(RespireClient client) : IServerCommands
         byte[] command,
         CancellationToken cancellationToken)
     {
+        client.Core.ClientCache?.FlushForUnknownCommand();
         var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
         foreach (var connection in connections)
         {

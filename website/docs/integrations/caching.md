@@ -30,12 +30,12 @@ builder.Services.AddRespireDistributedCache(options =>
         CommandTimeout = TimeSpan.FromSeconds(2),
     };
     options.InstanceName = "myapp:";
-    options.ClientSideCache = new();
 });
 ```
 
-`ClientSideCache` configures a cache-owned Respire connection. If this registration reuses a
-shared `IRespireClient`, enable client-side caching when registering that client instead.
+`RespireDistributedCache` uses atomic Lua reads to implement sliding expiration, so RESP3
+client-side caching does not apply to `IDistributedCache` operations. Applications can still
+enable it on a separately registered `IRespireClient` used for direct `GET` and `MGET` calls.
 
 The cache owns and disposes clients created from `ClientOptions` or `ConnectionString`. If neither
 is set, it uses a separately registered `IRespireClient` without taking ownership.

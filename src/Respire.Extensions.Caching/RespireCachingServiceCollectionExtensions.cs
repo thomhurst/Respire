@@ -42,11 +42,6 @@ public static class RespireCachingServiceCollectionExtensions
 
             if (clientOptions is not null)
             {
-                if (options.ClientSideCache is { } clientSideCache)
-                {
-                    clientOptions = clientOptions with { ClientSideCache = clientSideCache };
-                }
-
                 if (clientOptions.LoggerFactory is null && provider.GetService<ILoggerFactory>() is { } loggerFactory)
                 {
                     clientOptions = clientOptions with { LoggerFactory = loggerFactory };
@@ -59,13 +54,6 @@ public static class RespireCachingServiceCollectionExtensions
                 $"No {nameof(IRespireClient)} is registered and neither " +
                 $"{nameof(RespireCacheOptions.ClientOptions)} nor {nameof(RespireCacheOptions.ConnectionString)} " +
                 "is set. Either register a client first or configure a cache-owned client.");
-            if (options.ClientSideCache is not null && client.ClientSideCache is null)
-            {
-                throw new RespireConfigurationException(
-                    $"{nameof(RespireCacheOptions.ClientSideCache)} can only configure a cache-owned client. " +
-                    "Enable client-side caching when registering the shared IRespireClient instead.");
-            }
-
             return new RespireDistributedCache(client, options);
         });
         return services;

@@ -1472,24 +1472,49 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        core.ClientCache?.BeforeCommand(operation, in command);
+        var cache = core.ClientCache;
+        var mutationKey = cache?.BeforeCommand(operation, in command);
+        ValueTask<RespValue> response;
         if (core.Cluster is { } cluster)
         {
-            return SendClusterAsync(
+            response = SendClusterAsync(
                 operation,
                 cluster,
                 command,
                 cancellationToken,
                 noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect));
         }
-
-        if (!core.Multiplexer.IsInitialized)
+        else if (!core.Multiplexer.IsInitialized)
         {
-            return SendAfterConnectAsync(operation, command, cancellationToken);
+            response = SendAfterConnectAsync(operation, command, cancellationToken);
+        }
+        else
+        {
+            var connection = core.Multiplexer.GetConnection();
+            response = SendOnConnectionAsync(operation, connection, command, cancellationToken);
         }
 
-        var connection = core.Multiplexer.GetConnection();
-        return SendOnConnectionAsync(operation, connection, command, cancellationToken);
+        return mutationKey is { } key
+            ? CompleteMutationAsync(response, cache!, key)
+            : response;
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private static async ValueTask<RespValue> CompleteMutationAsync(
+        ValueTask<RespValue> response,
+        ClientSideCacheCoordinator cache,
+        RespireKey key)
+    {
+        try
+        {
+            return await response.ConfigureAwait(false);
+        }
+        finally
+        {
+            cache.Invalidate(in key);
+        }
     }
 
 #if NET

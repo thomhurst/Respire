@@ -116,23 +116,6 @@ public class ServiceCollectionTests(RedisTestContainer fixture)
     }
 
     [Test]
-    public async Task DistributedCache_ClientSideCache_ConfiguresOwnedClient()
-    {
-        var services = new ServiceCollection();
-        services.AddRespireDistributedCache(options =>
-        {
-            options.ConnectionString = fixture.ConnectionString;
-            options.ClientSideCache = new RespireClientSideCacheOptions { MaxEntries = 123 };
-        });
-
-        await using var provider = services.BuildServiceProvider();
-        var cache = (RespireDistributedCache)provider.GetRequiredService<IDistributedCache>();
-
-        await Assert.That(cache.OwnedClientOptions).IsNotNull();
-        await Assert.That(cache.OwnedClientOptions!.ClientSideCache!.MaxEntries).IsEqualTo(123);
-    }
-
-    [Test]
     public async Task AddKeyedRespire_RegistersSeparateClients()
     {
         var services = new ServiceCollection();

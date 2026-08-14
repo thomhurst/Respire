@@ -174,22 +174,23 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
         RespireTelemetry.ClientCacheInvalidations.Add(1);
     }
 
-    internal void BeforeCommand<TCommand>(string operation, in TCommand command)
+    internal RespireKey? BeforeCommand<TCommand>(string operation, in TCommand command)
         where TCommand : struct, IRespCommand
     {
         if (IsReadOnly(operation))
         {
-            return;
+            return null;
         }
 
         if (IsSingleKeyMutation(operation) && command.TryGetPrimaryKey(out var primaryKey))
         {
-            var key = primaryKey.AsKey();
+            var key = primaryKey.AsKey().Snapshot();
             Invalidate(in key);
-            return;
+            return key;
         }
 
         Flush(continuityLost: false);
+        return null;
     }
 
     internal void HandlePush(in RespValue push)

@@ -177,11 +177,11 @@ services.AddRespire(options =>
 });
 ```
 
-`RespireCacheOptions.ClientSideCache` applies the same policy to a client owned by
-`AddRespireDistributedCache`. For a shared registered `IRespireClient`, configure caching when that
-client is registered; asking the distributed-cache registration to mutate an already-created
-shared client is rejected. `HybridCache` remains the preferred general-purpose object L1 because
-the Respire client cache intentionally stores only Redis string command results.
+`RespireDistributedCache` uses Lua reads to preserve Microsoft-compatible sliding-expiration
+semantics, so its operations do not use the `GET`/`MGET` client cache. Configure client-side
+caching on a separately registered `IRespireClient` used for direct string reads. `HybridCache`
+remains the preferred general-purpose object L1 because the Respire client cache intentionally
+stores only Redis string command results.
 
 ## Test matrix
 

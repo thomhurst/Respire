@@ -176,6 +176,35 @@ public class ClientSideCacheTests
     }
 
     [Test]
+    public async Task MutationCompletion_RejectsReadStartedAfterEagerInvalidation()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$3\r\nold\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$3\r\nold\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            "$3\r\nnew\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+
+        await client.GetStringAsync("key");
+        server.MinimumCommandsBeforeReply = 3;
+        var mutation = client.SetAsync("key", "new").AsTask();
+        await WaitUntilAsync(() => server.CommandsSeen >= 5);
+        var racingRead = client.GetStringAsync("key").AsTask();
+
+        await mutation;
+        await Assert.That(await racingRead).IsEqualTo("old");
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+
+        server.MinimumCommandsBeforeReply = 1;
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("new");
+    }
+
+    [Test]
     public async Task NativeScript_EagerlyFlushesCachedReads()
     {
         await using var server = new FakeRespServer(
@@ -282,6 +311,38 @@ public class ClientSideCacheTests
         await Assert.That(target.ReceivedCommands.Skip(2)).IsEquivalentTo([
             "ASKING", "GET key", "ASKING", "GET key",
         ]);
+    }
+
+    [Test]
+    public async Task ClusterFlush_EagerlyClearsResidentEntries()
+    {
+        await using var target = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$5\r\nvalue\r\n"u8.ToArray(),
+            FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
+        await using var seed = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            UseCluster = true,
+            AllowAdmin = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+            ClientSideCache = new(),
+        });
+
+        await client.GetStringAsync("key");
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
+
+        await client.Server.FlushDatabaseAsync();
+
+        await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
+        await Assert.That(target.ReceivedCommands[^1]).IsEqualTo("FLUSHDB");
     }
 
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server)
