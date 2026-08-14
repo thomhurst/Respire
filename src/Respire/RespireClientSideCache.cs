@@ -278,7 +278,7 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             "XLEN" or "XRANGE" or "XREVRANGE" or "XPENDING" or
             "XREAD" or "TS.READ" or
             "GETBIT" or "BITCOUNT" or "BITPOS" or "BITFIELD_RO" or
-            "PFCOUNT" or "GEODIST" or "GEOHASH" or "GEOPOS" or "GEOSEARCH" or
+            "GEODIST" or "GEOHASH" or "GEOPOS" or "GEOSEARCH" or
             "PING" or "ECHO" or "DBSIZE" or "INFO" or "TIME" or "LASTSAVE" or
             "COMMAND COUNT" or "COMMAND LIST" or "CLIENT LIST" or "MEMORY USAGE" or "MEMORY STATS" or
             "PUBSUB" or "PUBSUB CHANNELS" or "PUBSUB NUMPAT" or "PUBSUB NUMSUB" or "PUBSUB SHARDCHANNELS" or

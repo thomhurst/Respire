@@ -234,6 +234,29 @@ public class ClientSideCacheTests
     }
 
     [Test]
+    public async Task PfCount_FencesCacheThroughCompletion()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$3\r\nold\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray());
+        server.DelayReply(4, 250);
+        await using var client = await ConnectAsync(server);
+
+        await client.GetStringAsync("key");
+        var count = client.HyperLogLog.CountAsync("key").AsTask();
+        await WaitUntilAsync(() => server.CommandsSeen >= 5);
+        var cache = client.Core.ClientCache!;
+        await Assert.That(cache.Count).IsEqualTo(0);
+        InsertCachedValue(cache, "key", "old");
+
+        await Assert.That(await count).IsEqualTo(1);
+        await Assert.That(cache.Count).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task BatchCompletion_RejectsReadStartedDuringExecution()
     {
         await using var server = new FakeRespServer(
