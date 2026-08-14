@@ -30,6 +30,8 @@ Serious Redis clients need multiplexed connections, pipelining, pooled buffers, 
 
 Respire combines a performance-focused wire layer with an API designed for current .NET:
 
+- **Server-assisted client caching.** Eligible hot reads complete from bounded process memory;
+  Redis invalidation pushes keep entries coherent without application-owned refresh plumbing.
 - **Real return types.** Commands return `string?`, `long`, `bool`, `TimeSpan`, or `T?`.
 - **Async-first.** Pub/sub, stream consumers, and key scanning use `IAsyncEnumerable`.
 - **Discoverable commands.** Data types live behind facets such as `redis.Hashes` and `redis.Streams`.
@@ -55,6 +57,7 @@ await foreach (var key in redis.Keys.ScanAsync(match: "user:*"))
 ## Choose your next step
 
 - [Get connected](./getting-started) and run the first command.
+- Make hot reads local with [server-assisted client-side caching](./fundamentals/client-side-caching).
 - Learn how [values and serialization](./fundamentals/values-and-serialization) work.
 - Build a [blocking work queue](./guides/blocking-queues).
 - Add Respire to an ASP.NET Core app with [dependency injection](./integrations/dependency-injection).

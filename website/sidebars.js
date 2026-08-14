@@ -3,12 +3,12 @@ const sidebars = {
   docsSidebar: [
     'intro',
     'getting-started',
+    'fundamentals/client-side-caching',
     {
       type: 'category',
       label: 'Core concepts',
       items: [
         'fundamentals/connections',
-        'fundamentals/client-side-caching',
         'fundamentals/values-and-serialization',
       ],
     },

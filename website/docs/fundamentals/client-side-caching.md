@@ -6,7 +6,16 @@ description: Enable bounded RESP3 server-assisted caching for Redis reads.
 # Client-side caching
 
 Respire can cache eligible Redis reads in-process while Redis invalidation pushes keep entries
-coherent across clients. Enable it once on the client:
+coherent across clients. Repeated reads skip command encoding, socket I/O, Redis execution, reply
+parsing, and network latency while the application keeps using the same typed API.
+
+This is Redis's server-assisted cache—not a second application caching abstraction. Redis tracks
+the keys Respire reads, pushes only invalidations when those keys change, and Respire evicts them.
+The next caller refreshes lazily; Redis never pushes replacement values.
+
+## Enable it
+
+Enable caching once on the client:
 
 ```csharp
 await using var redis = await RespireClient.ConnectAsync(new RespireOptions
@@ -23,6 +32,52 @@ entries and partial-hit behavior; other replies use exact command-and-argument i
 
 Missing keys are cached too. Replies are deep-owned internally and converted for each call, so
 enabling caching does not introduce shared mutable objects.
+
+## Why this is different
+
+StackExchange.Redis 3.1.13 supports RESP3 and exposes keyspace notifications, but it does not
+provide an equivalent built-in server-assisted local response cache. Its
+[keyspace-notification documentation](https://stackexchange.github.io/StackExchange.Redis/KeyspaceNotifications.html)
+presents notifications as a building block for an application-defined invalidation strategy.
+That approach requires Redis server configuration plus application-owned storage, subscription,
+node coverage, bounds, command eligibility, and invalidation-race handling.
+
+Respire uses Redis `CLIENT TRACKING` directly. No notification channel or global
+`notify-keyspace-events` setting is required. Redis's own
+[client-side caching support table](https://redis.io/docs/latest/develop/clients/client-side-caching/#which-client-libraries-support-client-side-caching)
+does not currently list StackExchange.Redis and warns that exposing `CLIENT TRACKING` alone is not
+the same as implementing a client cache.
+
+## Measured impact
+
+These results compare a local Respire cache hit with an ordinary StackExchange.Redis server read.
+They demonstrate the value of avoiding a network round trip—not a claim that Respire's uncached
+wire path is hundreds of times faster. Uncached Respire and StackExchange.Redis reads were
+statistically equivalent in the same net10 run.
+
+| net10 operation | StackExchange.Redis server read | Respire client-cache hit | Hit latency |
+| --- | ---: | ---: | ---: |
+| `GET`, present | 186.5 μs | 151.5 ns | 0.081% |
+| `GET`, missing | 185.9 μs | 129.5 ns | 0.070% |
+| `HGET` | 186.8 μs | 466.5 ns | 0.250% |
+| `EXISTS` | 185.6 μs | 387.3 ns | 0.209% |
+
+BenchmarkDotNet used Redis 8.10, two launches, three warmups, and three measured iterations on a
+GitHub-hosted Linux runner. See the
+[official net8/net10 run](https://github.com/thomhurst/Respire/actions/runs/31848970849) and
+[benchmark source](https://github.com/thomhurst/Respire/blob/main/benchmarks/Respire.ComparisonBenchmarks/ClientSideCachingBenchmarks.cs).
+
+## Invalidation flow
+
+```text
+read miss → Redis response → local entry
+key changes → RESP3 invalidation push → local eviction
+next read → Redis response → refreshed local entry
+```
+
+With `OPTIN`, Redis tracks only misses Respire deliberately sends with `CLIENT CACHING YES`.
+Local mutations also evict before and after execution. If tracking continuity is lost, Respire
+clears affected cache state instead of trusting entries whose invalidations may have been missed.
 
 ## Bounds
 

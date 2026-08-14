@@ -12,8 +12,8 @@ const features = [
   },
   {
     number: '02',
-    title: 'Fast without ceremony',
-    text: 'Concurrent commands coalesce into fewer socket writes. Pooled buffers and multiplexed connections keep hot paths lean.',
+    title: 'Hot reads stay local',
+    text: 'Redis-assisted client caching serves eligible reads from bounded process memory and evicts them from RESP3 invalidation pushes.',
   },
   {
     number: '03',
@@ -22,7 +22,7 @@ const features = [
   },
 ];
 
-const ticks = ['Redis', 'Valkey', 'KeyDB', 'RESP2', '.NET 8+', 'Async-only'];
+const ticks = ['Redis', 'Valkey', 'KeyDB', 'RESP3 cache', '.NET 8+', 'Async-only'];
 
 function CodeWindow() {
   return (
@@ -48,7 +48,7 @@ function Hero() {
         <div className={styles.heroCopy}>
           <div className={styles.eyebrow}><span>Pre-release</span> A modern RESP client for .NET</div>
           <Heading as="h1">Let your Redis code <em>breathe.</em></Heading>
-          <p>Fast, typed, async-first access to Redis, Valkey, KeyDB, and other RESP-compatible servers—without inherited API baggage.</p>
+          <p>Fast, typed, async-first access to Redis, Valkey, KeyDB, and other RESP-compatible servers—with built-in server-assisted caching for hot Redis reads.</p>
           <div className={styles.actions}>
             <Link className={styles.primaryButton} to="/docs/getting-started">Start building <span>→</span></Link>
             <Link className={styles.secondaryButton} href="https://github.com/thomhurst/Respire">View source</Link>
@@ -61,6 +61,53 @@ function Hero() {
         <div>{[...ticks, ...ticks].map((tick, index) => <span key={`${tick}-${index}`}><i />{tick}</span>)}</div>
       </div>
     </header>
+  );
+}
+
+function CacheSection() {
+  return (
+    <section className={styles.cacheSection}>
+      <div className="container">
+        <div className={styles.cacheHeading}>
+          <div>
+            <span className={styles.kicker}>A reason to switch</span>
+            <Heading as="h2">Hot Redis reads.<br />No Redis round trip.</Heading>
+          </div>
+          <p>Enable one option. Respire stores eligible responses in bounded process memory while Redis tells it exactly when tracked keys change. No cache-aside wrappers, notification channels, or application invalidation handlers.</p>
+        </div>
+        <div className={styles.cacheGrid}>
+          <div className={styles.cacheVisual} aria-label="Client-side cache invalidation flow">
+            <div className={styles.cacheStep}><span>01 · miss</span><strong>Read Redis</strong><small>Cache response locally</small></div>
+            <div className={styles.cacheArrow}>↓</div>
+            <div className={styles.cacheStep}><span>02 · change</span><strong>Redis pushes invalidation</strong><small>Respire evicts stale entry</small></div>
+            <div className={styles.cacheArrow}>↓</div>
+            <div className={styles.cacheStep}><span>03 · next read</span><strong>Refresh lazily</strong><small>Then serve hot reads locally</small></div>
+          </div>
+          <div className={styles.cacheCopy}>
+            <span className={styles.comparisonLabel}>StackExchange.Redis has no equivalent built-in cache</span>
+            <pre><code>{`await using var redis = await
+    RespireClient.ConnectAsync(new RespireOptions
+    {
+        Endpoints = { new("localhost") },
+        ClientSideCache = new(),
+    });
+
+// Same API. First call misses; hot reads stay local.
+string? name = await redis.GetStringAsync("user:42:name");`}</code></pre>
+            <div className={styles.cacheMetrics}>
+              <div><strong>151.5 ns</strong><span>cached GET</span></div>
+              <div><strong>186.5 μs</strong><span>StackExchange server GET</span></div>
+              <div><strong>0 B</strong><span>missing GET cache hit</span></div>
+            </div>
+            <p className={styles.benchmarkNote}>net10 BenchmarkDotNet short run. Cache hit versus server read; uncached clients measured statistically the same.</p>
+            <div className={styles.cacheLinks}>
+              <Link to="/docs/fundamentals/client-side-caching">Explore client caching <span>→</span></Link>
+              <Link href="https://github.com/thomhurst/Respire/actions/runs/31848970849">See benchmark run</Link>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -123,8 +170,8 @@ function FinalCta() {
 
 export default function Home() {
   return (
-    <Layout title="Modern Redis client for .NET" description="Respire is a fast, modern RESP client for .NET, Redis, Valkey, and KeyDB.">
-      <main><Hero /><FeatureSection /><BlockingSection /><FinalCta /></main>
+    <Layout title="Modern Redis client for .NET" description="Respire is a fast, modern RESP client for .NET with built-in Redis server-assisted client-side caching.">
+      <main><Hero /><FeatureSection /><CacheSection /><BlockingSection /><FinalCta /></main>
     </Layout>
   );
 }

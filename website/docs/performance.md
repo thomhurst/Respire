@@ -20,6 +20,20 @@ await Task.WhenAll(
 
 No batching mode is needed for this concurrent case.
 
+## Make hot reads local
+
+Redis server-assisted [client-side caching](./fundamentals/client-side-caching) changes the cost
+model for read-heavy workloads. After a miss, eligible repeated reads return from bounded
+in-process memory. Redis sends an invalidation when another client changes a tracked key, Respire
+evicts it, and the next read refreshes lazily.
+
+In the official net10 comparison run, a cached Respire `GET` measured 151.5 ns and 64 B allocated,
+versus 186.5 μs and 527 B for a StackExchange.Redis server read. Missing `GET` and `EXISTS` cache
+hits allocated nothing. StackExchange.Redis 3.1.13 has no equivalent built-in server-assisted
+local cache, so this comparison intentionally shows the cost eliminated by the feature. See the
+[benchmark source](https://github.com/thomhurst/Respire/blob/main/benchmarks/Respire.ComparisonBenchmarks/ClientSideCachingBenchmarks.cs)
+and [official run](https://github.com/thomhurst/Respire/actions/runs/31848970849).
+
 ## Connection count tuning
 
 One multiplexed connection is the default because it gives the write loop the deepest batches
