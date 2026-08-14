@@ -467,7 +467,7 @@ public class ClientSideCacheTests
         server.DelayReply(2, 250);
         await using var client = await ConnectAsync(server);
 
-        var mutation = client.Strings.GetDeleteAsync("key").AsTask();
+        var mutation = client.Strings.GetAndDeleteAsync("key").AsTask();
         await WaitUntilAsync(() => server.CommandsSeen >= 3);
         var cache = client.Core.ClientCache!;
         InsertCachedValue(cache, "key", "old");

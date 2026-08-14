@@ -360,19 +360,10 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
     }
 
     private static bool IsReadOnly(string operation)
-        => operation is
-            "GET" or "MGET" or "STRLEN" or "GETRANGE" or "LCS" or
-            "EXISTS" or "PTTL" or "TYPE" or "SCAN" or "KEYS" or "RANDOMKEY" or
-            "HGET" or "HMGET" or "HGETALL" or "HEXISTS" or "HLEN" or "HKEYS" or "HVALS" or "HSCAN" or
-            "LLEN" or "LRANGE" or "LINDEX" or
-            "SISMEMBER" or "SMISMEMBER" or "SCARD" or "SMEMBERS" or "SRANDMEMBER" or "SSCAN" or
-            "SINTER" or "SUNION" or "SDIFF" or "SINTERCARD" or
-            "ZSCORE" or "ZMSCORE" or "ZCARD" or "ZCOUNT" or "ZRANK" or "ZREVRANK" or
-            "ZRANGE" or "ZINTER" or "ZUNION" or "ZDIFF" or "ZINTERCARD" or "ZSCAN" or
-            "XLEN" or "XRANGE" or "XREVRANGE" or "XPENDING" or
-            "XREAD" or "TS.READ" or
-            "GETBIT" or "BITCOUNT" or "BITPOS" or "BITFIELD_RO" or
-            "GEODIST" or "GEOHASH" or "GEOPOS" or "GEOSEARCH" or
+        => IsCacheableRead(operation)
+           || operation is
+            "PTTL" or "SCAN" or "KEYS" or "RANDOMKEY" or "HSCAN" or
+            "SRANDMEMBER" or "SSCAN" or "ZSCAN" or "XREAD" or "TS.READ" or
             "PING" or "ECHO" or "DBSIZE" or "INFO" or "TIME" or "LASTSAVE" or
             "COMMAND COUNT" or "COMMAND LIST" or "CLIENT LIST" or "MEMORY USAGE" or "MEMORY STATS" or
             "PUBSUB" or "PUBSUB CHANNELS" or "PUBSUB NUMPAT" or "PUBSUB NUMSUB" or "PUBSUB SHARDCHANNELS" or

@@ -229,5 +229,5 @@ The implementation is covered by deterministic wire, concurrency, and Redis inte
 - entry/byte bounds, TTL, oversized values, statistics, clear, and disposal;
 - binary keys and prefixed views;
 - external-client mutation and connection kill/reconnect against Redis;
-- cluster `ASK` with atomic `ASKING` + caching prelude + read;
+- cluster `ASK` with `ASKING` immediately before the read, no caching prelude, and no cache insertion;
 - disabled options and Microsoft dependency-injection configuration.

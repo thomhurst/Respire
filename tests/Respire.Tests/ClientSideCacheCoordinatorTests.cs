@@ -124,15 +124,33 @@ public class ClientSideCacheCoordinatorTests
     {
         var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
         var command = new Cmd1(Verbs.StrLen, "key");
-        cache.TryCreateQuery("STRLEN", in command, out var request);
-        var token = cache.BeginRead("STRLEN", in request);
+        await Assert.That(cache.TryCreateQuery("STRLEN", in command, out var request)).IsTrue();
+        var response = RespValue.Integer(3);
+        var successfulToken = cache.BeginRead("STRLEN", in request);
+        cache.CompleteRead(in successfulToken, in response, allowInsert: true);
+        await Assert.That(cache.Count).IsEqualTo(1);
+        cache.Clear();
+
+        var invalidatedToken = cache.BeginRead("STRLEN", in request);
         var key = new RespireKey("key");
         cache.Invalidate(in key);
-        var response = RespValue.Integer(3);
 
-        cache.CompleteRead(in token, in response, allowInsert: true);
+        cache.CompleteRead(in invalidatedToken, in response, allowInsert: true);
 
         await Assert.That(cache.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task CacheableRead_IsNeverClassifiedAsMutation()
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        Insert(cache, "cached", "value");
+        var command = new Cmd1(Verbs.StrLen, "key");
+
+        var fence = cache.BeforeCommand("HSTRLEN", in command);
+
+        await Assert.That(fence.IsRequired).IsFalse();
+        await Assert.That(cache.Count).IsEqualTo(1);
     }
 
     private static void Insert(ClientSideCacheCoordinator cache, string key, string value)
