@@ -205,6 +205,37 @@ public class ClientSideCacheTests
     }
 
     [Test]
+    public async Task BatchCompletion_RejectsReadStartedDuringExecution()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$3\r\nold\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$3\r\nold\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            "$3\r\nnew\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+
+        await client.GetStringAsync("key");
+        using var batch = client.CreateBatch();
+        _ = batch.Strings.Set("key", "new");
+        server.MinimumCommandsBeforeReply = 3;
+        var execution = batch.ExecuteAsync().AsTask();
+        await WaitUntilAsync(() => server.CommandsSeen >= 5);
+        var racingRead = client.GetStringAsync("key").AsTask();
+
+        await execution;
+        await Assert.That(await racingRead).IsEqualTo("old");
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+
+        server.MinimumCommandsBeforeReply = 1;
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("new");
+    }
+
+    [Test]
     public async Task NativeScript_EagerlyFlushesCachedReads()
     {
         await using var server = new FakeRespServer(

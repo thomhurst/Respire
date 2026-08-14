@@ -1502,8 +1502,8 @@ public sealed partial class RespireClient : IRespireClient
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
-    private static async ValueTask<RespValue> CompleteMutationAsync(
-        ValueTask<RespValue> response,
+    private static async ValueTask<TResult> CompleteMutationAsync<TResult>(
+        ValueTask<TResult> response,
         ClientSideCacheCoordinator cache,
         RespireKey key)
     {
@@ -2787,10 +2787,14 @@ public sealed partial class RespireClient : IRespireClient
         {
             // CommandTimeout is enforced by the connection's deadline sweep and covers the
             // Redis response, not user converter work (conversion runs at the caller).
-            core.ClientCache?.BeforeCommand(operation, in command);
+            var cache = core.ClientCache;
+            var mutationKey = cache?.BeforeCommand(operation, in command);
             var connection = core.Multiplexer.GetConnection();
-            return connection.SendConvertedAsync(
+            var response = connection.SendConvertedAsync(
                 in command, state, converter, transferOwnership, ct, operation);
+            return mutationKey is { } key
+                ? CompleteMutationAsync(response, cache!, key)
+                : response;
         }
 
         return PooledResponseSource<TState, TResult>.Create(

@@ -212,14 +212,22 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
                 groups[groupIndex].Operations.Add(op);
             }
 
-            var clusterTasks = new Task[groups.Count];
-            for (var i = 0; i < groups.Count; i++)
+            try
             {
-                clusterTasks[i] = RunClusterGroupAsync(
-                    groups[i].Slot, groups[i].Operations, cancellationToken);
+                var clusterTasks = new Task[groups.Count];
+                for (var i = 0; i < groups.Count; i++)
+                {
+                    clusterTasks[i] = RunClusterGroupAsync(
+                        groups[i].Slot, groups[i].Operations, cancellationToken);
+                }
+
+                await Task.WhenAll(clusterTasks).ConfigureAwait(false);
+            }
+            finally
+            {
+                core.ClientCache?.FlushForUnknownCommand();
             }
 
-            await Task.WhenAll(clusterTasks).ConfigureAwait(false);
             var failures = CollectFailures(_ops);
             var firstError = failures is { Length: > 0 } ? failures[0].Error : null;
             telemetry.Complete(
@@ -255,13 +263,21 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
         // CommandTimeout is enforced per command by the connection's deadline sweep, which
         // fails an expired operation with a RespireTimeoutException carrying its name — no
         // batch-level CancellationTokenSource or per-operation registrations needed.
-        var tasks = new Task<Exception?>[_ops.Count];
-        for (var i = 0; i < _ops.Count; i++)
+        try
         {
-            tasks[i] = _ops[i].RunAsync(_client, connection, cancellationToken);
+            var tasks = new Task<Exception?>[_ops.Count];
+            for (var i = 0; i < _ops.Count; i++)
+            {
+                tasks[i] = _ops[i].RunAsync(_client, connection, cancellationToken);
+            }
+
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
+        finally
+        {
+            core.ClientCache?.FlushForUnknownCommand();
         }
 
-        await Task.WhenAll(tasks).ConfigureAwait(false);
         var batchFailures = CollectFailures(_ops);
         var batchFirstError = batchFailures is { Length: > 0 } ? batchFailures[0].Error : null;
         telemetry.Complete(
