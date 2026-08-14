@@ -74,6 +74,259 @@ public class ClientSideCacheTests
     }
 
     [Test]
+    public async Task DeterministicRead_CachesIntegerReply()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            ":5\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+
+        await Assert.That(await client.Strings.LengthAsync("key")).IsEqualTo(5);
+        await Assert.That(await client.Strings.LengthAsync("key")).IsEqualTo(5);
+
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo([
+            "HELLO 3",
+            "CLIENT TRACKING ON OPTIN",
+            "CLIENT CACHING YES",
+            "STRLEN key",
+        ]);
+        await Assert.That(client.ClientSideCache!.GetStatistics().Hits).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task AggregateRead_CachesDeepOwnedReply()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "*4\r\n$1\r\na\r\n$1\r\n1\r\n$1\r\nb\r\n$1\r\n2\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+
+        var first = await client.Hashes.GetAllAsync("hash");
+        var second = await client.Hashes.GetAllAsync("hash");
+
+        await Assert.That(first).IsEquivalentTo(new Dictionary<string, string>
+        {
+            ["a"] = "1",
+            ["b"] = "2",
+        });
+        await Assert.That(second).IsEquivalentTo(first);
+        await Assert.That(server.ReceivedCommands.Count(static command => command == "HGETALL hash"))
+            .IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task CommandArguments_ArePartOfCacheIdentity()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$2\r\nab\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            "$2\r\nbc\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+
+        await Assert.That(await client.Strings.GetRangeAsync("key", 0, 1)).IsEqualTo("ab");
+        await Assert.That(await client.Strings.GetRangeAsync("key", 1, 2)).IsEqualTo("bc");
+        await Assert.That(await client.Strings.GetRangeAsync("key", 0, 1)).IsEqualTo("ab");
+
+        await Assert.That(server.ReceivedCommands.Count(static command => command.StartsWith("GETRANGE ")))
+            .IsEqualTo(2);
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task MultiKeyRead_IsEvictedWhenAnyDependencyIsInvalidated()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            ":3\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            ":4\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+
+        await Assert.That(await client.Strings.LcsLengthAsync("first", "second")).IsEqualTo(3);
+        await Assert.That(await client.Strings.LcsLengthAsync("first", "second")).IsEqualTo(3);
+
+        await server.SendRawAsync(
+            ">2\r\n+invalidate\r\n*1\r\n$6\r\nsecond\r\n"u8.ToArray());
+        await WaitUntilAsync(() => client.ClientSideCache!.Count == 0);
+
+        await Assert.That(await client.Strings.LcsLengthAsync("first", "second")).IsEqualTo(4);
+        await Assert.That(server.ReceivedCommands.Count(static command => command == "LCS first second LEN"))
+            .IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task CountedMultiKeyRead_TracksEveryDeclaredKey()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "*1\r\n$3\r\none\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            "*1\r\n$3\r\ntwo\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+
+        await Assert.That(await client.SortedSets.IntersectAsync("first", "second"))
+            .IsEquivalentTo(["one"]);
+        await Assert.That(await client.SortedSets.IntersectAsync("first", "second"))
+            .IsEquivalentTo(["one"]);
+
+        await server.SendRawAsync(
+            ">2\r\n+invalidate\r\n*1\r\n$6\r\nsecond\r\n"u8.ToArray());
+        await WaitUntilAsync(() => client.ClientSideCache!.Count == 0);
+
+        await Assert.That(await client.SortedSets.IntersectAsync("first", "second"))
+            .IsEquivalentTo(["two"]);
+        await Assert.That(server.ReceivedCommands.Count(static command => command == "ZINTER 2 first second"))
+            .IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task InvalidationRacingGenericRead_PreventsStaleInsertion()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            ":3\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            ":4\r\n"u8.ToArray());
+        server.DelayReply(3, 250);
+        await using var client = await ConnectAsync(server);
+
+        var read = client.Strings.LengthAsync("key").AsTask();
+        await WaitUntilAsync(() => server.CommandsSeen >= 4);
+        await server.SendRawAsync(">2\r\n+invalidate\r\n*1\r\n$3\r\nkey\r\n"u8.ToArray());
+
+        await Assert.That(await read).IsEqualTo(3);
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+        await Assert.That(await client.Strings.LengthAsync("key")).IsEqualTo(4);
+    }
+
+    [Test]
+    public async Task CursorAndRandomReads_AreNeverCached()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            "*1\r\n$1\r\na\r\n"u8.ToArray(),
+            "*1\r\n$1\r\nb\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+
+        await Assert.That(await client.Sets.RandomMembersAsync("key", 1)).IsEquivalentTo(["a"]);
+        await Assert.That(await client.Sets.RandomMembersAsync("key", 1)).IsEquivalentTo(["b"]);
+
+        await Assert.That(server.ReceivedCommands.Count(static command => command.StartsWith("SRANDMEMBER ")))
+            .IsEqualTo(2);
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task GetLease_UsesTheCommandCacheWithoutSharingLeaseOwnership()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$5\r\nvalue\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+
+        using (var first = await client.Strings.GetLeaseAsync("key"))
+        {
+            await Assert.That(first.ToString()).IsEqualTo("value");
+        }
+
+        using (var second = await client.Strings.GetLeaseAsync("key"))
+        {
+            await Assert.That(second.ToString()).IsEqualTo("value");
+        }
+
+        await Assert.That(server.ReceivedCommands.Count(static command => command == "GET key"))
+            .IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task CatalogRead_UsesTheSameGenericCachePath()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            ":4\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+
+        using (var first = await client.ExecuteAsync(RespireCommands.Hash.HSTRLEN, "hash", "field"))
+        {
+            await Assert.That(first.AsInteger()).IsEqualTo(4);
+        }
+
+        using (var second = await client.ExecuteAsync(RespireCommands.Hash.HSTRLEN, "hash", "field"))
+        {
+            await Assert.That(second.AsInteger()).IsEqualTo(4);
+        }
+
+        await Assert.That(server.ReceivedCommands.Count(static command => command == "HSTRLEN hash field"))
+            .IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task CallerOwnedBinaryArguments_AreSnapshottedOnMiss()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$5\r\nvalue\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+        var field = new byte[] { (byte)'f' };
+
+        using (var first = await client.ExecuteAsync(
+            RespireCommands.Hash.HGET, ["hash", field]))
+        {
+            await Assert.That(first.AsString()).IsEqualTo("value");
+        }
+
+        field[0] = (byte)'x';
+        using (var second = await client.ExecuteAsync(
+            RespireCommands.Hash.HGET, ["hash", new byte[] { (byte)'f' }]))
+        {
+            await Assert.That(second.AsString()).IsEqualTo("value");
+        }
+
+        await Assert.That(server.ReceivedCommands.Count(static command => command == "HGET hash f"))
+            .IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task StructuredReadCommand_UsesSemanticCacheIdentity()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "*1\r\n:7\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+        var operation = BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), 0);
+
+        await Assert.That(await client.Bitmaps.FieldReadOnlyAsync("key", operation))
+            .IsEquivalentTo((long?[])[7]);
+        await Assert.That(await client.Bitmaps.FieldReadOnlyAsync("key", operation))
+            .IsEquivalentTo((long?[])[7]);
+
+        await Assert.That(server.ReceivedCommands.Count(static command => command == "BITFIELD_RO key GET u8 0"))
+            .IsEqualTo(1);
+    }
+
+    [Test]
     public async Task ClientCachingError_IsSurfacedAndReadIsNotCached()
     {
         await using var server = new FakeRespServer(
@@ -563,7 +816,7 @@ public class ClientSideCacheTests
 
         await Assert.That(await client.Strings.LengthAsync("key")).IsEqualTo(3);
 
-        await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
+        await Assert.That(client.ClientSideCache.Count).IsEqualTo(1);
         await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes).IsEqualTo(1);
     }
 

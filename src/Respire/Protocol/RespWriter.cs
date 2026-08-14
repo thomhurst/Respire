@@ -3,6 +3,7 @@ using System.Buffers.Text;
 using System.Runtime.CompilerServices;
 using System.Text;
 using Respire.Networking;
+using Respire.Internal;
 
 namespace Respire.Protocol;
 
@@ -118,6 +119,13 @@ internal interface IRespCommand
     bool TryGetClusterSlot(out int slot)
     {
         slot = 0;
+        return false;
+    }
+
+    /// <summary>Builds an invocation identity for server-assisted client-side caching.</summary>
+    bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
+    {
+        key = default;
         return false;
     }
 }

@@ -1485,6 +1485,18 @@ public sealed partial class RespireClient : IRespireClient
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         var cache = core.ClientCache;
+        if (flags == RespireCommandFlags.None
+            && cache is not null
+            && cache.TryCreateQuery(operation, in command, out var query))
+        {
+            if (cache.TryGet(in query, out var cached))
+            {
+                return new ValueTask<RespValue>(cached);
+            }
+
+            return QueryAndCacheAsync(operation, command, cache, query, cancellationToken);
+        }
+
         var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
         ValueTask<RespValue> response;
         if (core.Cluster is { } cluster)
@@ -1509,6 +1521,48 @@ public sealed partial class RespireClient : IRespireClient
         return mutationFence.IsRequired
             ? CompleteMutationAsync(response, cache!, mutationFence)
             : response;
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<RespValue> QueryAndCacheAsync<TCommand>(
+        string operation,
+        TCommand command,
+        ClientSideCacheCoordinator cache,
+        ClientSideCacheCoordinator.QueryRequest request,
+        CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var token = cache.BeginRead(operation, in request);
+        var completed = false;
+        var allowInsert = true;
+        Action<bool>? onRedirect = null;
+        if (_core.Cluster is not null)
+        {
+            onRedirect = cacheable =>
+            {
+                token = cache.RebaseRead(operation, in request);
+                allowInsert = cacheable;
+            };
+        }
+
+        var response = default(RespValue);
+        try
+        {
+            response = await SendTrackedAsync(
+                operation, command, cancellationToken, onRedirect).ConfigureAwait(false);
+            cache.CompleteRead(in token, in response, allowInsert);
+            completed = true;
+            return response;
+        }
+        finally
+        {
+            if (!completed)
+            {
+                cache.CompleteRead(in token, in response, allowInsert: false);
+            }
+        }
     }
 
 #if NET
@@ -2907,7 +2961,9 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         if (!RespireTelemetry.IsEnabled
             && core.Cluster is null
-            && core.Multiplexer.IsInitialized)
+            && core.Multiplexer.IsInitialized
+            && (core.ClientCache is null
+                || !ClientSideCacheCoordinator.CanCacheOperation(operation)))
         {
             // CommandTimeout is enforced by the connection's deadline sweep and covers the
             // Redis response, not user converter work (conversion runs at the caller).
@@ -2998,7 +3054,9 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         if (!RespireTelemetry.IsEnabled
             && core.Cluster is null
-            && core.Multiplexer.IsInitialized)
+            && core.Multiplexer.IsInitialized
+            && (core.ClientCache is null
+                || !ClientSideCacheCoordinator.CanCacheOperation(operation)))
         {
             // Specialized bulk-string source: small buffered replies decode straight from the
             // receive buffer instead of round-tripping through a pooled RespValue payload.

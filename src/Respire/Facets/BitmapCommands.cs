@@ -1,6 +1,7 @@
 using System.Buffers.Text;
 using System.Globalization;
 using Respire.Commands;
+using Respire.Internal;
 using Respire.Protocol;
 
 namespace Respire;
@@ -465,6 +466,33 @@ internal readonly struct BitOpCommand(
 
 internal readonly struct BitFieldCommand(Verb verb, RespireValue key, BitFieldOperation[] operations) : IRespCommand
 {
+    public bool TryGetPrimaryKey(out RespireValue primaryKey)
+    {
+        primaryKey = key;
+        return true;
+    }
+
+    public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey cacheKey)
+    {
+        var arguments = new RespireValue[1 + operations.Length * 7];
+        arguments[0] = key;
+        for (var index = 0; index < operations.Length; index++)
+        {
+            var item = operations[index];
+            var offset = 1 + index * 7;
+            arguments[offset] = item.Command;
+            arguments[offset + 1] = item.Encoding;
+            arguments[offset + 2] = item.Offset;
+            arguments[offset + 3] = item.Value;
+            arguments[offset + 4] = item.Overflow.HasValue ? (int)item.Overflow.Value : -1;
+            arguments[offset + 5] = item.StructuredEncoding.Width;
+            arguments[offset + 6] = item.OffsetInFieldUnits;
+        }
+
+        cacheKey = new(operation, arguments);
+        return true;
+    }
+
     public bool TryGetClusterSlot(out int slot) => key.TryGetClusterSlot(out slot);
 
     public void Write(ref RespWriter writer)

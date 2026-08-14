@@ -138,6 +138,23 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
         return new RespValue(_type, integerValue: _integerValue);
     }
 
+    /// <summary>Approximate bytes retained by an owned copy of this value.</summary>
+    internal long GetOwnedSize()
+    {
+        long size = 32 + _payload.Length;
+        if (_elements is null)
+        {
+            return size;
+        }
+
+        for (var index = 0; index < _elementCount; index++)
+        {
+            size += _elements[index].GetOwnedSize();
+        }
+
+        return size;
+    }
+
     public long AsInteger() => _type == RespDataType.Integer ? _integerValue : 0;
 
     public bool AsBoolean() => _type == RespDataType.Boolean && _integerValue != 0;

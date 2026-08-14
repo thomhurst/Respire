@@ -37,6 +37,42 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    public async Task ExternalHashMutation_InvalidatesCachedAggregate()
+    {
+        await using var resources = await Resources.CreateAsync(fixture);
+        var key = $"cache:hash:{Guid.NewGuid():N}";
+        await resources.Database.HashSetAsync(key, "field", "one");
+
+        await Assert.That((await resources.Client.Hashes.GetAllAsync(key))["field"]).IsEqualTo("one");
+        await Assert.That((await resources.Client.Hashes.GetAllAsync(key))["field"]).IsEqualTo("one");
+        await resources.Database.HashSetAsync(key, "field", "two");
+        await WaitForCacheEvictionAsync(resources.Client);
+
+        await Assert.That((await resources.Client.Hashes.GetAllAsync(key))["field"]).IsEqualTo("two");
+    }
+
+    [Test]
+    public async Task ExternalMutationOfEitherKey_InvalidatesMultiKeyProjection()
+    {
+        await using var resources = await Resources.CreateAsync(fixture);
+        var suffix = Guid.NewGuid().ToString("N");
+        var first = $"cache:set:first:{suffix}";
+        var second = $"cache:set:second:{suffix}";
+        await resources.Database.SetAddAsync(first, ["one", "two"]);
+        await resources.Database.SetAddAsync(second, "one");
+
+        await Assert.That(await resources.Client.Sets.IntersectAsync(first, second))
+            .IsEquivalentTo(["one"]);
+        await Assert.That(await resources.Client.Sets.IntersectAsync(first, second))
+            .IsEquivalentTo(["one"]);
+        await resources.Database.SetAddAsync(second, "two");
+        await WaitForCacheEvictionAsync(resources.Client);
+
+        await Assert.That(await resources.Client.Sets.IntersectAsync(first, second))
+            .IsEquivalentTo(["one", "two"]);
+    }
+
+    [Test]
     public async Task BinaryKeys_PreserveExactWireIdentity()
     {
         await using var resources = await Resources.CreateAsync(fixture);

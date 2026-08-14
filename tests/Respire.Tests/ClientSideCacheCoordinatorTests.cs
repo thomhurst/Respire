@@ -1,4 +1,5 @@
 using Respire.Protocol;
+using Respire.Commands;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -102,6 +103,38 @@ public class ClientSideCacheCoordinatorTests
         await Assert.That(cache.GetStatistics().ContinuityFlushes).IsEqualTo(1);
     }
 
+    [Test]
+    public async Task EntryBound_IsSharedByKeyAndCommandEntries()
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions
+        {
+            MaxEntries = 1,
+            MaxSizeBytes = 1_000_000,
+            TimeToLive = null,
+        });
+        Insert(cache, "value", "one");
+        InsertQuery(cache, "length", RespValue.Integer(3));
+
+        await Assert.That(cache.Count).IsLessThanOrEqualTo(1);
+        await Assert.That(cache.GetStatistics().Evictions).IsGreaterThanOrEqualTo(1);
+    }
+
+    [Test]
+    public async Task GenericRead_IsRejectedAfterDependencyInvalidation()
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        var command = new Cmd1(Verbs.StrLen, "key");
+        cache.TryCreateQuery("STRLEN", in command, out var request);
+        var token = cache.BeginRead("STRLEN", in request);
+        var key = new RespireKey("key");
+        cache.Invalidate(in key);
+        var response = RespValue.Integer(3);
+
+        cache.CompleteRead(in token, in response, allowInsert: true);
+
+        await Assert.That(cache.Count).IsEqualTo(0);
+    }
+
     private static void Insert(ClientSideCacheCoordinator cache, string key, string value)
         => Insert(cache, new RespireKey(key), value);
 
@@ -120,5 +153,20 @@ public class ClientSideCacheCoordinatorTests
         }
 
         return response.AsString();
+    }
+
+    private static void InsertQuery(
+        ClientSideCacheCoordinator cache,
+        RespireValue key,
+        RespValue response)
+    {
+        var command = new Cmd1(Verbs.StrLen, key);
+        if (!cache.TryCreateQuery("STRLEN", in command, out var request))
+        {
+            throw new InvalidOperationException("Expected a cacheable query.");
+        }
+
+        var token = cache.BeginRead("STRLEN", in request);
+        cache.CompleteRead(in token, in response, allowInsert: true);
     }
 }

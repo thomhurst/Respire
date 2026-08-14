@@ -1,4 +1,5 @@
 using Respire.Protocol;
+using Respire.Internal;
 
 namespace Respire.Commands;
 
@@ -7,6 +8,11 @@ namespace Respire.Commands;
 
 internal readonly struct Cmd(Verb verb) : IRespCommand
 {
+    public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
+    {
+        key = new(operation);
+        return true;
+    }
     public bool TryGetClusterSlot(out int slot)
     {
         slot = 0;
@@ -22,6 +28,11 @@ internal readonly struct Cmd(Verb verb) : IRespCommand
 
 internal readonly struct Cmd1(Verb verb, RespireValue a1) : IRespCommand
 {
+    public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
+    {
+        key = new(operation, a1);
+        return true;
+    }
     public bool TryGetPrimaryKey(out RespireValue key)
         => CommandRouting.TryGetPrimaryKey(verb, 0, a1, out key);
 
@@ -38,6 +49,11 @@ internal readonly struct Cmd1(Verb verb, RespireValue a1) : IRespCommand
 
 internal readonly struct Cmd2(Verb verb, RespireValue a1, RespireValue a2) : IRespCommand
 {
+    public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
+    {
+        key = new(operation, a1, a2);
+        return true;
+    }
     public bool TryGetPrimaryKey(out RespireValue key)
         => CommandRouting.TryGetPrimaryKey(verb, 0, a1, out key)
             || CommandRouting.TryGetPrimaryKey(verb, 1, a2, out key);
@@ -57,6 +73,11 @@ internal readonly struct Cmd2(Verb verb, RespireValue a1, RespireValue a2) : IRe
 
 internal readonly struct Cmd3(Verb verb, RespireValue a1, RespireValue a2, RespireValue a3) : IRespCommand
 {
+    public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
+    {
+        key = new(operation, a1, a2, a3);
+        return true;
+    }
     public bool TryGetPrimaryKey(out RespireValue key)
         => CommandRouting.TryGetPrimaryKey(verb, 0, a1, out key)
             || CommandRouting.TryGetPrimaryKey(verb, 1, a2, out key)
@@ -79,6 +100,11 @@ internal readonly struct Cmd3(Verb verb, RespireValue a1, RespireValue a2, Respi
 
 internal readonly struct Cmd4(Verb verb, RespireValue a1, RespireValue a2, RespireValue a3, RespireValue a4) : IRespCommand
 {
+    public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
+    {
+        key = new(operation, a1, a2, a3, a4);
+        return true;
+    }
     public bool TryGetPrimaryKey(out RespireValue key)
         => CommandRouting.TryGetPrimaryKey(verb, 0, a1, out key)
             || CommandRouting.TryGetPrimaryKey(verb, 1, a2, out key)
@@ -104,6 +130,11 @@ internal readonly struct Cmd4(Verb verb, RespireValue a1, RespireValue a2, Respi
 
 internal readonly struct Cmd5(Verb verb, RespireValue a1, RespireValue a2, RespireValue a3, RespireValue a4, RespireValue a5) : IRespCommand
 {
+    public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
+    {
+        key = new(operation, a1, a2, a3, a4, a5);
+        return true;
+    }
     public bool TryGetPrimaryKey(out RespireValue key)
         => CommandRouting.TryGetPrimaryKey(verb, 0, a1, out key)
             || CommandRouting.TryGetPrimaryKey(verb, 1, a2, out key)
@@ -133,6 +164,11 @@ internal readonly struct Cmd5(Verb verb, RespireValue a1, RespireValue a2, Respi
 /// <summary>VERB args… — fully dynamic argument list.</summary>
 internal readonly struct CmdN(Verb verb, RespireValue[] args) : IRespCommand
 {
+    public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
+    {
+        key = new(operation, args);
+        return true;
+    }
     public bool TryGetPrimaryKey(out RespireValue key)
     {
         if ((uint)verb.RoutingKeyIndex < (uint)args.Length)
@@ -170,6 +206,11 @@ internal readonly struct CmdN(Verb verb, RespireValue[] args) : IRespCommand
 /// <summary>VERB fixed rest… (e.g. SADD key member…).</summary>
 internal readonly struct Cmd1N(Verb verb, RespireValue a1, RespireValue[] rest) : IRespCommand
 {
+    public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
+    {
+        key = new(operation, a1, rest);
+        return true;
+    }
     public bool TryGetPrimaryKey(out RespireValue key)
     {
         if (verb.RoutingKeyIndex == 0)
@@ -253,6 +294,11 @@ internal static class CommandRouting
 /// <summary>VERB a1 a2 rest… (e.g. XACK key group id…).</summary>
 internal readonly struct Cmd2N(Verb verb, RespireValue a1, RespireValue a2, RespireValue[] rest) : IRespCommand
 {
+    public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
+    {
+        key = new(operation, a1, a2, rest);
+        return true;
+    }
     public bool TryGetPrimaryKey(out RespireValue key)
     {
         var index = verb.RoutingKeyIndex;
@@ -316,6 +362,11 @@ internal readonly struct Cmd2N(Verb verb, RespireValue a1, RespireValue a2, Resp
 /// <summary>An entire command whose tokens (verb included) are caller-supplied — the raw escape hatch.</summary>
 internal readonly struct DynamicCommand(RespireValue[] tokens, int routingKeyIndex) : IRespCommand
 {
+    public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
+    {
+        key = new(operation, tokens, argumentOffset: 1);
+        return true;
+    }
     public bool TryGetPrimaryKey(out RespireValue key)
     {
         if ((uint)routingKeyIndex < (uint)tokens.Length)
@@ -496,6 +547,11 @@ internal static class DynamicCommandRouting
 /// <summary>A pre-encoded catalog command followed by caller-supplied arguments.</summary>
 internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] args) : IRespCommand
 {
+    public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
+    {
+        key = new(operation, args);
+        return true;
+    }
     public bool TryGetPrimaryKey(out RespireValue key)
     {
         var index = DynamicCommandRouting.GetCatalogRoutingKeyIndex(command.Name, args);

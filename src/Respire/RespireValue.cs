@@ -322,6 +322,10 @@ public readonly struct RespireValue : IEquatable<RespireValue>
             _ => false,
         };
 
+    /// <summary>Returns a value whose binary storage cannot be changed by the original caller.</summary>
+    internal RespireValue Snapshot()
+        => _kind == Kind.Bytes ? new RespireValue(_bytes.ToArray()) : this;
+
     /// <summary>
     /// Compares the exact bulk-string payload written to Redis, so equivalent text, binary, and
     /// scalar representations compare equal.

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using Respire.Internal;
 using Respire.Protocol;
 
@@ -53,8 +54,10 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
 
     private readonly RespireClientSideCacheOptions _options;
     private readonly ConcurrentDictionary<RespireKey, InflightRead> _inflight = new();
+    private readonly Lock _queryLock = new();
     private CacheStore _store;
     private long _continuityEpoch;
+    private long _queryEpoch;
     private long _hits;
     private long _misses;
     private long _invalidations;
@@ -102,6 +105,92 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
         value = default;
         return false;
     }
+
+    internal bool TryCreateQuery<TCommand>(
+        string operation,
+        in TCommand command,
+        out QueryRequest request)
+        where TCommand : struct, IRespCommand
+    {
+        if (IsCacheableRead(operation)
+            && command.TryGetClientCacheKey(operation, out var query)
+            && command.TryGetPrimaryKey(out var primaryKey)
+            && HasValidDependencies(operation, in query))
+        {
+            request = new QueryRequest(query, primaryKey.AsKey());
+            return true;
+        }
+
+        request = default;
+        return false;
+    }
+
+    internal static bool CanCacheOperation(string operation) => IsCacheableRead(operation);
+
+    internal bool TryGet(in QueryRequest request, out RespValue value)
+    {
+        var store = Volatile.Read(ref _store);
+        var query = request.Query;
+        if (store.TryGet(in query, out value))
+        {
+            Interlocked.Increment(ref _hits);
+            RespireTelemetry.ClientCacheHits.Add(1);
+            return true;
+        }
+
+        Interlocked.Increment(ref _misses);
+        RespireTelemetry.ClientCacheMisses.Add(1);
+        return false;
+    }
+
+    internal QueryReadToken BeginRead(string operation, in QueryRequest request)
+    {
+        var query = request.Query.Snapshot();
+        var primaryKey = request.PrimaryKey;
+        return new QueryReadToken(
+            query,
+            CreateDependencies(operation, in query, in primaryKey),
+            Volatile.Read(ref _queryEpoch),
+            Volatile.Read(ref _continuityEpoch),
+            Volatile.Read(ref _store));
+    }
+
+    internal void CompleteRead(in QueryReadToken token, in RespValue response, bool allowInsert)
+    {
+        if (!allowInsert
+            || Volatile.Read(ref _queryEpoch) != token.QueryEpoch
+            || Volatile.Read(ref _continuityEpoch) != token.ContinuityEpoch
+            || !ReferenceEquals(Volatile.Read(ref _store), token.Store))
+        {
+            return;
+        }
+
+        var query = token.Query;
+        if (!token.Store.TryCreateEntry(
+                in query, token.Dependencies, in response, out var entry))
+        {
+            return;
+        }
+
+        var published = false;
+        lock (_queryLock)
+        {
+            if (Volatile.Read(ref _queryEpoch) == token.QueryEpoch
+                && Volatile.Read(ref _continuityEpoch) == token.ContinuityEpoch
+                && ReferenceEquals(Volatile.Read(ref _store), token.Store))
+            {
+                published = token.Store.Set(in query, entry);
+            }
+        }
+
+        if (published)
+        {
+            token.Store.Trim();
+        }
+    }
+
+    internal QueryReadToken RebaseRead(string operation, in QueryRequest request)
+        => BeginRead(operation, in request);
 
     internal ReadToken BeginRead(in RespireKey key)
     {
@@ -172,7 +261,11 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             }
         }
 
-        Volatile.Read(ref _store).Remove(in key, CacheRemoval.Invalidation);
+        lock (_queryLock)
+        {
+            Interlocked.Increment(ref _queryEpoch);
+            Volatile.Read(ref _store).Remove(in key, CacheRemoval.Invalidation);
+        }
         Interlocked.Increment(ref _invalidations);
         RespireTelemetry.ClientCacheInvalidations.Add(1);
     }
@@ -244,6 +337,7 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
     private void Flush(bool continuityLost)
     {
         Interlocked.Increment(ref _continuityEpoch);
+        Interlocked.Increment(ref _queryEpoch);
         var replacement = new CacheStore(_options, RecordEviction);
         var removed = Interlocked.Exchange(ref _store, replacement).Count;
         if (removed > 0)
@@ -284,6 +378,108 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             "PUBSUB" or "PUBSUB CHANNELS" or "PUBSUB NUMPAT" or "PUBSUB NUMSUB" or "PUBSUB SHARDCHANNELS" or
             "PUBSUB SHARDNUMSUB" or "ROLE" or "SLOWLOG GET" or "LATENCY LATEST" or "CONFIG GET";
 
+    // Redis tracks keys read by deterministic @read commands. Cursor/random/time-dependent,
+    // probabilistic, blocking, scripting, time-series, and unkeyed server replies are not safe
+    // local values even though some are formally read-only.
+    private static bool IsCacheableRead(string operation)
+        => operation is
+            "GET" or "MGET" or "STRLEN" or "GETRANGE" or "LCS" or
+            "DUMP" or "EXISTS" or "EXPIRETIME" or "PEXPIRETIME" or "TYPE" or "OBJECT ENCODING" or
+            "HGET" or "HMGET" or "HGETALL" or "HEXISTS" or "HLEN" or "HSTRLEN" or
+            "HKEYS" or "HVALS" or "HEXPIRETIME" or "HPEXPIRETIME" or
+            "LLEN" or "LRANGE" or "LINDEX" or "LPOS" or
+            "SISMEMBER" or "SMISMEMBER" or "SCARD" or "SMEMBERS" or
+            "SINTER" or "SUNION" or "SDIFF" or "SINTERCARD" or
+            "ZSCORE" or "ZMSCORE" or "ZCARD" or "ZCOUNT" or "ZLEXCOUNT" or "ZRANK" or "ZREVRANK" or
+            "ZRANGE" or "ZINTER" or "ZUNION" or "ZDIFF" or "ZINTERCARD" or
+            "XLEN" or "XRANGE" or "XREVRANGE" or "XPENDING" or
+            "XINFO STREAM" or "XINFO GROUPS" or
+            "GETBIT" or "BITCOUNT" or "BITPOS" or "BITFIELD_RO" or
+            "GEODIST" or "GEOHASH" or "GEOPOS" or "GEOSEARCH";
+
+    private static bool HasValidDependencies(string operation, in ClientCacheCommandKey query)
+    {
+        if (operation == "LCS")
+        {
+            return query.ArgumentCount >= 2;
+        }
+
+        if (operation == "XPENDING")
+        {
+            // The summary form is stable; range replies contain a time-varying idle duration.
+            return query.ArgumentCount == 2;
+        }
+
+        if (UsesEveryArgumentAsKey(operation))
+        {
+            return query.ArgumentCount > 0;
+        }
+
+        if (UsesCountedKeys(operation))
+        {
+            return TryGetKeyCount(in query, out _);
+        }
+
+        return true;
+    }
+
+    private static RespireKey[] CreateDependencies(
+        string operation,
+        in ClientCacheCommandKey query,
+        in RespireKey primaryKey)
+    {
+        if (operation == "LCS")
+        {
+            return [query.GetArgument(0).AsKey().Snapshot(), query.GetArgument(1).AsKey().Snapshot()];
+        }
+
+        if (UsesEveryArgumentAsKey(operation))
+        {
+            var keys = new RespireKey[query.ArgumentCount];
+            for (var index = 0; index < keys.Length; index++)
+            {
+                keys[index] = query.GetArgument(index).AsKey().Snapshot();
+            }
+
+            return keys;
+        }
+
+        if (UsesCountedKeys(operation) && TryGetKeyCount(in query, out var count))
+        {
+            var keys = new RespireKey[count];
+            for (var index = 0; index < count; index++)
+            {
+                keys[index] = query.GetArgument(index + 1).AsKey().Snapshot();
+            }
+
+            return keys;
+        }
+
+        return [primaryKey.Snapshot()];
+    }
+
+    private static bool UsesEveryArgumentAsKey(string operation)
+        => operation is "MGET" or "EXISTS" or "SINTER" or "SUNION" or "SDIFF";
+
+    private static bool UsesCountedKeys(string operation)
+        => operation is "SINTERCARD" or "ZINTER" or "ZUNION" or "ZDIFF" or "ZINTERCARD";
+
+    private static bool TryGetKeyCount(in ClientCacheCommandKey query, out int count)
+    {
+        if (query.ArgumentCount > 1
+            && query.GetArgument(0).TryGetInt64(out var value)
+            && value > 0
+            && value <= query.ArgumentCount - 1
+            && value <= int.MaxValue)
+        {
+            count = (int)value;
+            return true;
+        }
+
+        count = 0;
+        return false;
+    }
+
     private static bool IsSingleKeyMutation(string operation)
         => operation is
             "SET" or "GETDEL" or "GETEX" or "APPEND" or "SETRANGE" or
@@ -303,6 +499,15 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
         long ContinuityEpoch,
         CacheStore Store);
 
+    internal readonly record struct QueryRequest(ClientCacheCommandKey Query, RespireKey PrimaryKey);
+
+    internal readonly record struct QueryReadToken(
+        ClientCacheCommandKey Query,
+        RespireKey[] Dependencies,
+        long QueryEpoch,
+        long ContinuityEpoch,
+        CacheStore Store);
+
     internal sealed class InflightRead(RespireKey key)
     {
         public RespireKey Key { get; } = key;
@@ -314,6 +519,9 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
     internal sealed class CacheStore
     {
         private readonly ConcurrentDictionary<RespireKey, CacheEntry> _entries = new();
+        private readonly ConcurrentDictionary<ClientCacheCommandKey, QueryCacheEntry> _queries = new();
+        private readonly Dictionary<RespireKey, HashSet<ClientCacheCommandKey>> _dependencies = new();
+        private readonly Lock _dependencyLock = new();
         private readonly RespireClientSideCacheOptions _options;
         private readonly Action _recordEviction;
         private int _trimming;
@@ -325,7 +533,7 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             _recordEviction = recordEviction;
         }
 
-        public int Count => _entries.Count;
+        public int Count => _entries.Count + _queries.Count;
         public long SizeBytes => Interlocked.Read(ref _sizeBytes);
 
         public bool TryGet(in RespireKey key, out byte[]? payload)
@@ -345,6 +553,26 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             }
 
             payload = null;
+            return false;
+        }
+
+        public bool TryGet(in ClientCacheCommandKey query, out RespValue value)
+        {
+            while (_queries.TryGetValue(query, out var entry))
+            {
+                if (entry.ExpiresAt == 0 || Stopwatch.GetTimestamp() < entry.ExpiresAt)
+                {
+                    value = entry.Value;
+                    return true;
+                }
+
+                if (Remove(in query, entry, CacheRemoval.Expiration))
+                {
+                    break;
+                }
+            }
+
+            value = default;
             return false;
         }
 
@@ -369,7 +597,7 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             {
                 if (_entries.TryUpdate(key, entry, previous))
                 {
-                    Interlocked.Add(ref _sizeBytes, size - previous.Size);
+                    Interlocked.Add(ref _sizeBytes, entry.Size - previous.Size);
                 }
             }
             else if (_entries.TryAdd(key, entry))
@@ -378,6 +606,64 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             }
 
             Trim();
+        }
+
+        public bool TryCreateEntry(
+            in ClientCacheCommandKey query,
+            RespireKey[] dependencies,
+            in RespValue response,
+            [NotNullWhen(true)] out QueryCacheEntry? entry)
+        {
+            if (response.IsError)
+            {
+                entry = null;
+                return false;
+            }
+
+            var size = EntryOverhead + query.OwnedSize + response.GetOwnedSize();
+            for (var index = 0; index < dependencies.Length; index++)
+            {
+                size += dependencies[index].WireLength;
+            }
+
+            if (size > _options.MaxSizeBytes)
+            {
+                entry = null;
+                return false;
+            }
+
+            entry = new QueryCacheEntry(
+                response.ToOwned(), dependencies, size, ExpirationTimestamp(_options.TimeToLive));
+            return true;
+        }
+
+        public bool Set(in ClientCacheCommandKey query, QueryCacheEntry entry)
+        {
+            lock (_dependencyLock)
+            {
+                if (_queries.TryGetValue(query, out var previous))
+                {
+                    if (!_queries.TryUpdate(query, entry, previous))
+                    {
+                        return false;
+                    }
+
+                    RemoveDependencies(in query, previous.Dependencies);
+                    Interlocked.Add(ref _sizeBytes, entry.Size - previous.Size);
+                }
+                else if (_queries.TryAdd(query, entry))
+                {
+                    Interlocked.Add(ref _sizeBytes, entry.Size);
+                }
+                else
+                {
+                    return false;
+                }
+
+                AddDependencies(in query, entry.Dependencies);
+            }
+
+            return true;
         }
 
         private static long ExpirationTimestamp(TimeSpan? timeToLive)
@@ -396,12 +682,27 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
 
         public void Remove(in RespireKey key, CacheRemoval reason)
         {
-            if (!_entries.TryRemove(key, out var entry))
+            if (_entries.TryRemove(key, out var entry))
             {
-                return;
+                RecordRemoval(entry, reason);
             }
 
-            RecordRemoval(entry, reason);
+            lock (_dependencyLock)
+            {
+                if (!_dependencies.Remove(key, out var queries))
+                {
+                    return;
+                }
+
+                foreach (var query in queries)
+                {
+                    if (_queries.TryRemove(query, out var queryEntry))
+                    {
+                        RemoveDependencies(in query, queryEntry.Dependencies);
+                        RecordRemoval(queryEntry, reason);
+                    }
+                }
+            }
         }
 
         private bool Remove(in RespireKey key, CacheEntry expected, CacheRemoval reason)
@@ -425,7 +726,70 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             }
         }
 
-        private void Trim()
+        private bool Remove(
+            in ClientCacheCommandKey query,
+            QueryCacheEntry expected,
+            CacheRemoval reason)
+        {
+            lock (_dependencyLock)
+            {
+                if (!((ICollection<KeyValuePair<ClientCacheCommandKey, QueryCacheEntry>>)_queries)
+                    .Remove(new KeyValuePair<ClientCacheCommandKey, QueryCacheEntry>(query, expected)))
+                {
+                    return false;
+                }
+
+                RemoveDependencies(in query, expected.Dependencies);
+                RecordRemoval(expected, reason);
+                return true;
+            }
+        }
+
+        private void AddDependencies(
+            in ClientCacheCommandKey query,
+            ReadOnlySpan<RespireKey> dependencies)
+        {
+            foreach (ref readonly var dependency in dependencies)
+            {
+                if (!_dependencies.TryGetValue(dependency, out var queries))
+                {
+                    queries = [];
+                    _dependencies.Add(dependency, queries);
+                }
+
+                queries.Add(query);
+            }
+        }
+
+        private void RemoveDependencies(
+            in ClientCacheCommandKey query,
+            ReadOnlySpan<RespireKey> dependencies)
+        {
+            foreach (ref readonly var dependency in dependencies)
+            {
+                if (!_dependencies.TryGetValue(dependency, out var queries))
+                {
+                    continue;
+                }
+
+                queries.Remove(query);
+                if (queries.Count == 0)
+                {
+                    _dependencies.Remove(dependency);
+                }
+            }
+        }
+
+        private void RecordRemoval(QueryCacheEntry entry, CacheRemoval reason)
+        {
+            Interlocked.Add(ref _sizeBytes, -entry.Size);
+            if (reason is CacheRemoval.Capacity or CacheRemoval.Expiration)
+            {
+                _recordEviction();
+            }
+        }
+
+        internal void Trim()
         {
             while (IsOverCapacity)
             {
@@ -463,6 +827,19 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
                     }
                 }
 
+                if (IsOverCapacity)
+                {
+                    foreach (var pair in _queries)
+                    {
+                        var query = pair.Key;
+                        removed |= Remove(in query, pair.Value, CacheRemoval.Capacity);
+                        if (!IsOverCapacity)
+                        {
+                            break;
+                        }
+                    }
+                }
+
                 if (!removed)
                 {
                     return;
@@ -474,6 +851,18 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
     internal sealed class CacheEntry(byte[]? payload, long size, long expiresAt)
     {
         public byte[]? Payload { get; } = payload;
+        public long Size { get; } = size;
+        public long ExpiresAt { get; } = expiresAt;
+    }
+
+    internal sealed class QueryCacheEntry(
+        RespValue value,
+        RespireKey[] dependencies,
+        long size,
+        long expiresAt)
+    {
+        public RespValue Value { get; } = value;
+        public RespireKey[] Dependencies { get; } = dependencies;
         public long Size { get; } = size;
         public long ExpiresAt { get; } = expiresAt;
     }

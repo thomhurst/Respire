@@ -5,8 +5,8 @@ This document records the implementation design for
 
 ## Public API
 
-Caching is an opt-in connection policy. Existing `GET` and `MGET` APIs become cached; no parallel
-`GetCachedAsync` method family or wrapper client is required.
+Caching is an opt-in connection policy. Existing deterministic read APIs become cached; no
+parallel `GetCachedAsync` method family or wrapper client is required.
 
 ```csharp
 await using var redis = await RespireClient.ConnectAsync(new RespireOptions
@@ -20,8 +20,8 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
     },
 });
 
-var first = await redis.GetAsync<User>("user:42"); // Redis
-var second = await redis.GetAsync<User>("user:42"); // local raw-byte cache
+var first = await redis.Hashes.GetAllAsync("user:42"); // Redis
+var second = await redis.Hashes.GetAllAsync("user:42"); // local command cache
 ```
 
 `RespireOptions.ClientSideCache = null` is disabled. Enabling it promotes the validated option
@@ -41,22 +41,45 @@ in flight cannot refill the new store.
 
 ## Eligibility and value representation
 
-The first implementation caches:
+Respire caches deterministic, explicitly keyed Redis core reads for which it can prove the full
+dependency set:
 
-- `GET` through string, byte-array, primitive, and serialized APIs;
-- negative `GET` results;
-- `MGET`, decomposed into the same per-key entries, with only missing keys sent to Redis.
+- strings: `GET`, `MGET`, `STRLEN`, `GETRANGE`, `LCS`;
+- keys: `DUMP`, `EXISTS`, `EXPIRETIME`, `PEXPIRETIME`, `TYPE`, `OBJECT ENCODING`;
+- hashes: `HGET`, `HMGET`, `HGETALL`, `HEXISTS`, `HLEN`, `HSTRLEN`, `HKEYS`, `HVALS`,
+  `HEXPIRETIME`, `HPEXPIRETIME`;
+- lists: `LINDEX`, `LLEN`, `LPOS`, `LRANGE`;
+- sets: `SCARD`, `SDIFF`, `SINTER`, `SINTERCARD`, `SISMEMBER`, `SMEMBERS`, `SMISMEMBER`,
+  `SUNION`;
+- sorted sets: `ZCARD`, `ZCOUNT`, `ZDIFF`, `ZINTER`, `ZINTERCARD`, `ZLEXCOUNT`, `ZMSCORE`,
+  `ZRANGE`, `ZRANK`, `ZREVRANK`, `ZSCORE`, `ZUNION`;
+- streams: `XLEN`, `XRANGE`, `XREVRANGE`, summary-form `XPENDING`, `XINFO STREAM`,
+  `XINFO GROUPS`;
+- bitmaps: `GETBIT`, `BITCOUNT`, `BITPOS`, `BITFIELD_RO`;
+- geospatial: `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`.
 
-`GetLeaseAsync`, scripts, raw commands, batches, transactions, and other command families are not
-cached. Cached entries hold immutable raw Redis bytes, not deserialized objects. Therefore:
+Typed APIs, catalog `ExecuteAsync`, interpolated commands, and `GetLeaseAsync` use the same policy.
+`GET` and `MGET` retain optimized per-key storage: one entry serves every typed representation,
+and `MGET` sends only misses. Other reads are cached by exact command invocation, including command
+name and ordered wire-equivalent arguments.
+
+Cursor (`SCAN`, `HSCAN`, `SSCAN`, `ZSCAN`), random, relative-TTL, time-varying, probabilistic,
+blocking, script/function, time-series, Search, unkeyed server, and implicit-key (`SORT_RO`)
+commands are deliberately excluded. Detailed `XPENDING` is excluded because its idle-duration
+field changes with time. Batches and transactions preserve their server execution semantics and
+do not consult the local cache.
+
+Cached entries hold immutable, deep-owned RESP values rather than deserialized objects. Therefore:
 
 - serializer behavior remains identical on a hit;
 - mutable objects are never shared between callers;
 - `GetBytesAsync` still returns caller-owned arrays;
-- one entry serves every typed representation of the same Redis string.
+- scalar, null, array, map, set, and nested replies can all be cached safely.
 
-One cache belongs to `ClientCore`. The root client and all key-prefixed views share it. Cache keys
-are exact, fully resolved wire bytes, preserving database, text/binary identity, and prefixes.
+One cache belongs to `ClientCore`. The root client and all key-prefixed views share it. Redis key
+dependencies and command arguments use exact resolved wire identity, preserving text/binary
+equivalence, argument order, and prefixes. Caller-owned binary arguments are snapshotted before an
+asynchronous miss is sent.
 
 ## RESP3 tracking protocol
 
@@ -71,7 +94,7 @@ On a miss, Respire appends the opt-in prelude and read atomically under one writ
 
 ```text
 CLIENT CACHING YES
-GET <resolved-key>
+<cacheable read and arguments>
 ```
 
 Both in-flight response slots are reserved before either frame is written. A pooled multi-reply
@@ -84,7 +107,7 @@ Respire appends only:
 
 ```text
 ASKING
-GET <resolved-key>
+<cacheable read and arguments>
 ```
 
 `MOVED` retries remain cacheable on the authoritative node. Both `MOVED` and `ASK` advance the
@@ -97,9 +120,13 @@ redirected invalidation connection.
 
 ## Race correctness
 
-Each key has an in-flight generation. The cache also has a global continuity epoch and active
-store identity. A miss records all three before sending the tracked read. Invalidation increments
-the key generation before removing the entry. A response may insert only when:
+Each optimized `GET`/`MGET` key has an in-flight generation. General command entries capture a
+global query epoch, every explicit Redis key dependency, the continuity epoch, and active store
+identity. Invalidation increments the relevant key generation and query epoch before removing all
+projections that depend on that key. Publication and invalidation are serialized, closing the
+final check/insert race.
+
+For the optimized per-key path, a response may insert only when:
 
 ```text
 current key generation == captured generation
@@ -111,7 +138,7 @@ Thus an invalidation that races a response can never be undone by stale insertio
 timeout, protocol failure, redirect, and conversion failure release the in-flight token without
 publishing a value.
 
-Local single-key mutations invalidate their resolved primary key before sending and after reply
+Local single-key mutations invalidate their resolved primary key and its projections before sending and after reply
 completion. Commands whose dependencies cannot be proven, raw commands, scripts, blocking
 commands, cluster-wide mutations, batches, and transactions conservatively swap out the entire
 store before dispatch and again when their awaited execution finishes. Completion fences also run
@@ -138,11 +165,12 @@ detection interval. Local TTL is an additional staleness bound, not a substitute
 ## Bounded storage
 
 Both `MaxEntries` and `MaxSizeBytes` are hard policies; the first exceeded limit triggers
-eviction. Approximate size includes payload bytes, exact key bytes, and a fixed per-entry estimate.
+eviction. Approximate size includes deep RESP payloads, command arguments, dependency keys, and a
+fixed per-entry estimate.
 An individually oversized value is returned but not cached. The store uses:
 
 - `ConcurrentDictionary` probes on the hit path;
-- immutable payload arrays and a null sentinel;
+- immutable payload arrays and deep-owned RESP aggregates;
 - `Stopwatch.GetTimestamp()` for lazy monotonic TTL checks;
 - no timer, linked-list mutation, queue growth, or global lock on hits;
 - an O(1) epoch/store swap for full flushes.
@@ -182,17 +210,20 @@ services.AddRespire(options =>
 ```
 
 `RespireDistributedCache` uses Lua reads to preserve Microsoft-compatible sliding-expiration
-semantics, so its operations do not use the `GET`/`MGET` client cache. Configure client-side
-caching on a separately registered `IRespireClient` used for direct string reads. `HybridCache`
-remains the preferred general-purpose object L1 because the Respire client cache intentionally
-stores only Redis string command results.
+semantics, so its operations do not use the command cache. Configure client-side caching on a
+separately registered `IRespireClient` used for direct deterministic reads. `HybridCache` remains
+the preferred application-level object L1; Respire's cache stores protocol replies and follows
+Redis invalidations.
 
 ## Test matrix
 
 The implementation is covered by deterministic wire, concurrency, and Redis integration tests:
 
 - tracked handshake and atomic prelude validation;
-- hit, miss, negative entry, partial-hit `MGET`, typed conversion, and local mutation;
+- scalar, negative, aggregate, lease, raw/catalog, structured-command, argument-identity, and
+  partial-hit `MGET` behavior;
+- single-key and multi-key projection invalidation, typed conversion, and local mutation;
+- explicit exclusion of cursor, random, time-varying, probabilistic, and blocking reads;
 - key and null invalidation pushes;
 - invalidation racing a delayed read response;
 - entry/byte bounds, TTL, oversized values, statistics, clear, and disposal;
