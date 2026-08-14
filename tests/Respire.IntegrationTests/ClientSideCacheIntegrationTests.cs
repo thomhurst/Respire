@@ -92,7 +92,7 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
             async () => _ = await resources.Client.Strings.LcsLengthAsync(first, second),
             async () => _ = await resources.Client.Keys.ExistsAsync(first),
             async () => _ = await resources.Client.Keys.TypeAsync(first),
-            async () => _ = await resources.Client.Server.MemoryUsageAsync(first));
+            async () => _ = await resources.Client.Server.MemoryUsageAsync(first, samples: 0));
 
         await resources.Database.StringSetAsync(first, "changed");
         await WaitForCacheEvictionAsync(resources.Client);

@@ -289,23 +289,50 @@ public class ClientSideCacheTests
         await using var client = await ConnectAsync(server);
         var key = "key";
 
-        using (var first = await client.ExecuteAsync($"MEMORY USAGE {key}"))
+        using (var first = await client.ExecuteAsync($"MEMORY USAGE {key} SAMPLES {0}"))
         {
             await Assert.That(first.AsInteger()).IsEqualTo(42);
         }
 
-        using (var second = await client.ExecuteAsync("MEMORY USAGE", key))
+        using (var second = await client.ExecuteAsync("MEMORY USAGE", key, "SAMPLES", 0))
         {
             await Assert.That(second.AsInteger()).IsEqualTo(42);
         }
 
-        using (var third = await client.ExecuteAsync(RespireCommands.Server.MEMORY_USAGE, key))
+        using (var third = await client.ExecuteAsync(
+            RespireCommands.Server.MEMORY_USAGE, key, "SAMPLES", 0))
         {
             await Assert.That(third.AsInteger()).IsEqualTo(42);
         }
 
-        await Assert.That(server.ReceivedCommands.Count(static command => command == "MEMORY USAGE key"))
+        await Assert.That(server.ReceivedCommands.Count(static command =>
+            command == "MEMORY USAGE key SAMPLES 0"))
             .IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task SampledMemoryUsage_BypassesClientCache()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            ":41\r\n"u8.ToArray(),
+            ":42\r\n"u8.ToArray(),
+            ":43\r\n"u8.ToArray(),
+            ":44\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+
+        await Assert.That(await client.Server.MemoryUsageAsync("key")).IsEqualTo(41);
+        await Assert.That(await client.Server.MemoryUsageAsync("key")).IsEqualTo(42);
+        await Assert.That(await client.Server.MemoryUsageAsync("key", samples: 5)).IsEqualTo(43);
+        await Assert.That(await client.Server.MemoryUsageAsync("key", samples: 5)).IsEqualTo(44);
+
+        await Assert.That(server.ReceivedCommands.Count(static command => command == "MEMORY USAGE key"))
+            .IsEqualTo(2);
+        await Assert.That(server.ReceivedCommands.Count(static command =>
+            command == "MEMORY USAGE key SAMPLES 5"))
+            .IsEqualTo(2);
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
     }
 
     [Test]
@@ -993,6 +1020,31 @@ public class ClientSideCacheTests
         var write = client.ExecuteFireAndForgetAsync(
             RespireCommands.String.SET, "key", "new").AsTask();
         await WaitUntilAsync(() => seed.CommandsSeen >= 6);
+        var cache = client.Core.ClientCache!;
+        await Assert.That(cache.Count).IsEqualTo(0);
+        InsertCachedValue(cache, "key", "old");
+
+        await write;
+
+        await Assert.That(cache.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task StandaloneFireAndForget_FencesCacheThroughCompletion()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$3\r\nold\r\n"u8.ToArray(),
+            FakeRespServer.OkReply);
+        server.DelayReply(4, 250);
+        await using var client = await ConnectAsync(server);
+
+        await client.GetStringAsync("key");
+        var write = client.ExecuteFireAndForgetAsync(
+            RespireCommands.String.SET, "key", "new").AsTask();
+        await WaitUntilAsync(() => server.CommandsSeen >= 5);
         var cache = client.Core.ClientCache!;
         await Assert.That(cache.Count).IsEqualTo(0);
         InsertCachedValue(cache, "key", "old");

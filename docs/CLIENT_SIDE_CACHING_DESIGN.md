@@ -45,7 +45,8 @@ Respire caches every keyed Redis 8.10 read that meets Redis client-side-cache el
 which it can prove the full dependency set:
 
 - strings: `GET`, `MGET`, `STRLEN`, `GETRANGE`, `SUBSTR`, `DIGEST`, `LCS`;
-- keys: `EXISTS`, `EXPIRETIME`, `PEXPIRETIME`, `TYPE`, `OBJECT ENCODING`, `MEMORY USAGE`,
+- keys: `EXISTS`, `EXPIRETIME`, `PEXPIRETIME`, `TYPE`, `OBJECT ENCODING`, exact
+  `MEMORY USAGE ... SAMPLES 0`,
   and self-contained `SORT_RO` calls without `BY` or `GET` key patterns;
 - hashes: `HGET`, `HMGET`, `HGETALL`, `HEXISTS`, `HLEN`, `HSTRLEN`, `HKEYS`, `HVALS`,
   `HEXPIRETIME`, `HPEXPIRETIME`;
@@ -75,6 +76,8 @@ commands, probabilistic structures, blocking reads, scripts/functions, time seri
 unkeyed server state, and `TOUCH` are deliberately excluded. `SORT_RO` calls using `BY` or `GET`
 patterns are excluded because those patterns create dependencies the client cannot enumerate.
 `GEOSEARCH` with `COUNT ... ANY` is excluded because Redis may return an arbitrary early subset.
+Sampled `MEMORY USAGE` is excluded because Redis estimates aggregate sizes; `SAMPLES 0` requests
+an exact traversal and remains cacheable.
 Detailed `XPENDING` is excluded because its idle-duration field changes with time. Batches and
 transactions preserve their server execution semantics and do not consult the local cache.
 Commands that would break cache coherence by changing protocol, database, or tracking state

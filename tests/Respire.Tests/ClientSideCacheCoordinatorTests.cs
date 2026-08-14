@@ -252,6 +252,21 @@ public class ClientSideCacheCoordinatorTests
     }
 
     [Test]
+    public async Task OnlyExactMemoryUsage_IsCacheable()
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        var defaultSampling = new CatalogCommand(RespireCommands.Server.MEMORY_USAGE, ["key"]);
+        var sampled = new CatalogCommand(
+            RespireCommands.Server.MEMORY_USAGE, ["key", "SAMPLES", 5]);
+        var exact = new CatalogCommand(
+            RespireCommands.Server.MEMORY_USAGE, ["key", "SAMPLES", 0]);
+
+        await Assert.That(cache.TryCreateQuery("MEMORY USAGE", in defaultSampling, out _)).IsFalse();
+        await Assert.That(cache.TryCreateQuery("MEMORY USAGE", in sampled, out _)).IsFalse();
+        await Assert.That(cache.TryCreateQuery("MEMORY USAGE", in exact, out _)).IsTrue();
+    }
+
+    [Test]
     public async Task SortReadOnly_RejectsImplicitExternalKeyPatterns()
     {
         var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());

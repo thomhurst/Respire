@@ -466,6 +466,14 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             return !ContainsGeoSearchAny(in query);
         }
 
+        if (operation == "MEMORY USAGE")
+        {
+            return query.ArgumentCount == 3
+                   && query.GetArgument(1).EqualsAsciiIgnoreCase("SAMPLES")
+                   && query.GetArgument(2).TryGetInt64(out var samples)
+                   && samples == 0;
+        }
+
         if (operation == "SORT_RO")
         {
             return !ContainsImplicitSortDependency(in query);

@@ -139,7 +139,11 @@ public interface IServerCommands
     /// <summary>Resets one latency event. Redis: LATENCY RESET event.</summary>
     ValueTask<long> ResetLatencyAsync(string eventName, CancellationToken cancellationToken = default);
 
-    /// <summary>Approximate memory used by a key, or null when the key is missing. Redis: MEMORY USAGE.</summary>
+    /// <summary>
+    /// Memory used by a key, or null when the key is missing. With client-side caching enabled,
+    /// only exact <paramref name="samples"/> = 0 calls are cached; sampled estimates bypass it.
+    /// Redis: MEMORY USAGE.
+    /// </summary>
     ValueTask<long?> MemoryUsageAsync(
         RespireKey key,
         long? samples = null,

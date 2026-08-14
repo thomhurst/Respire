@@ -1791,13 +1791,21 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         var cache = core.ClientCache;
         var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
+        if (mutationFence.IsRequired)
+        {
+            return SendFencedFireAndForgetAsync(
+                operation,
+                command,
+                cancellationToken,
+                storedProcedureName,
+                cache!,
+                mutationFence);
+        }
+
         if (core.Cluster is { } cluster)
         {
-            var response = SendFireAndForgetClusterAsync(
+            return SendFireAndForgetClusterAsync(
                 operation, cluster, command, cancellationToken, storedProcedureName);
-            return mutationFence.IsRequired
-                ? CompleteMutationAsync(response, cache!, mutationFence)
-                : response;
         }
 
         if (!core.Multiplexer.IsInitialized)
@@ -1809,6 +1817,56 @@ public sealed partial class RespireClient : IRespireClient
         var connection = core.Multiplexer.GetConnection();
         return SendFireAndForgetOnConnectionAsync(
             operation, connection, command, cancellationToken, storedProcedureName);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+#endif
+    private async ValueTask SendFencedFireAndForgetAsync<TCommand>(
+        string operation,
+        TCommand command,
+        CancellationToken cancellationToken,
+        string? storedProcedureName,
+        ClientSideCacheCoordinator cache,
+        ClientSideCacheCoordinator.MutationFence mutationFence)
+        where TCommand : struct, IRespCommand
+    {
+        try
+        {
+            var core = _core;
+            if (core.Cluster is { } cluster)
+            {
+                await SendFireAndForgetClusterAsync(
+                        operation, cluster, command, cancellationToken, storedProcedureName)
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            var connection = core.Multiplexer.GetConnection();
+            if (RespireCommand.MayCloseWithoutReply(operation))
+            {
+                await SendFireAndForgetOnConnectionAsync(
+                        operation, connection, command, cancellationToken, storedProcedureName)
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            try
+            {
+                using var response = await SendOnConnectionAsync(
+                        operation, connection, command, cancellationToken, storedProcedureName)
+                    .ConfigureAwait(false);
+            }
+            catch (RespireServerException)
+            {
+                // Fire-and-forget preserves its contract by discarding ordinary server errors.
+            }
+        }
+        finally
+        {
+            cache.CompleteMutation(in mutationFence);
+        }
     }
 
     private ValueTask SendFireAndForgetOnConnectionAsync<TCommand>(

@@ -94,7 +94,8 @@ ClientSideCache = new RespireClientSideCacheOptions
 
 An oversized response is returned without being cached. `GetLeaseAsync` participates without
 sharing lease ownership. `GEOSEARCH` with `COUNT ... ANY` is also excluded because Redis may return
-an arbitrary early subset. Nondeterministic, random, probabilistic, blocking, script/function,
+an arbitrary early subset. Only exact `MEMORY USAGE ... SAMPLES 0` calls are cached; sampled size
+estimates bypass the cache. Nondeterministic, random, probabilistic, blocking, script/function,
 time-series, Search, and unkeyed commands bypass caching; so do batches and transactions. Unknown
 mutations conservatively flush local entries before dispatch and after awaited completion.
 Respire rejects raw commands that would change protocol, database, or tracking state while this
