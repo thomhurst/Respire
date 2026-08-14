@@ -95,6 +95,12 @@ internal sealed class RespireConnection : IAsyncDisposable
     internal Exception? CloseError => Volatile.Read(ref _abortReason);
 
     /// <summary>
+    /// Raised after the connection is marked dead but before in-flight callers are failed.
+    /// Multiplexers use this ordering point to publish continuity loss first.
+    /// </summary>
+    internal event Action? PendingCommandsFailing;
+
+    /// <summary>
     /// Redis's connection ID, populated only when reliable cross-connection correction ordering
     /// is enabled. Zero means it has not been requested.
     /// </summary>
@@ -1524,6 +1530,15 @@ internal sealed class RespireConnection : IAsyncDisposable
                 ?? fault
                 ?? new RespireConnectionException($"Connection to {Host}:{Port} closed.");
             Abort(closeError);
+            try
+            {
+                PendingCommandsFailing?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Connection failure observer threw for {Host}:{Port}", Host, Port);
+            }
+
             FailAllPending(Volatile.Read(ref _abortReason) ?? closeError);
         }
     }

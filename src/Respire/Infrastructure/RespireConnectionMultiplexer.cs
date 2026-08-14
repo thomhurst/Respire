@@ -146,7 +146,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 for (var i = 0; i < connections.Length; i++)
                 {
                     Volatile.Write(ref _connections[i], connections[i]);
-                    ObserveConnectionClosed(i, connections[i]);
+                    ObserveConnectionFailure(i, connections[i]);
                 }
 
                 _connected = true;
@@ -666,7 +666,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             var old = Interlocked.Exchange(ref _connections[slot], replacement);
             var publishedReplacement = replacement;
             replacement = null;
-            ObserveConnectionClosed(slot, publishedReplacement);
+            ObserveConnectionFailure(slot, publishedReplacement);
             RetireConnection(old);
             _logger?.LogInformation("Replaced dead connection {Slot} to {Host}:{Port}", slot, Host, Port);
             if (old is not null)
@@ -723,17 +723,20 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
-    private void ObserveConnectionClosed(int slot, RespireConnection connection)
+    private void ObserveConnectionFailure(int slot, RespireConnection connection)
     {
         if (_options.EnableClientTracking)
         {
-            _ = ObserveConnectionClosedAsync(slot, connection);
+            connection.PendingCommandsFailing += () => HandleConnectionFailure(slot, connection);
+            if (!connection.IsConnected)
+            {
+                HandleConnectionFailure(slot, connection);
+            }
         }
     }
 
-    private async Task ObserveConnectionClosedAsync(int slot, RespireConnection connection)
+    private void HandleConnectionFailure(int slot, RespireConnection connection)
     {
-        await connection.Closed.ConfigureAwait(false);
         if (Volatile.Read(ref _disposed) == 0
             && ReferenceEquals(connection, Volatile.Read(ref _connections[slot])))
         {

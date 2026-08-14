@@ -1055,6 +1055,28 @@ public class ClientSideCacheTests
     }
 
     [Test]
+    public async Task ConnectionFailure_FlushesCacheBeforePendingCallerResumes()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$3\r\nold\r\n"u8.ToArray(),
+            FakeRespServer.OkReply)
+        {
+            CloseConnectionAfterCommand = 6,
+        };
+        await using var client = await ConnectAsync(server);
+
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
+        var pending = client.Strings.LengthAsync("other").AsTask();
+
+        await Assert.That(async () => await pending).Throws<RespireConnectionException>();
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+        await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task ClusterFlush_FencesCacheThroughCompletion()
     {
         await using var target = new FakeRespServer(
