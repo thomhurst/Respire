@@ -458,6 +458,25 @@ public class ClientSideCacheTests
     }
 
     [Test]
+    public async Task StringFastPathMutation_UsesCompletionFence()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            "$3\r\nold\r\n"u8.ToArray());
+        server.DelayReply(2, 250);
+        await using var client = await ConnectAsync(server);
+
+        var mutation = client.Strings.GetDeleteAsync("key").AsTask();
+        await WaitUntilAsync(() => server.CommandsSeen >= 3);
+        var cache = client.Core.ClientCache!;
+        InsertCachedValue(cache, "key", "old");
+
+        await Assert.That(await mutation).IsEqualTo("old");
+        await Assert.That(cache.Count).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task BroadMutationCompletion_RejectsReadStartedAfterFlush()
     {
         await using var server = new FakeRespServer(

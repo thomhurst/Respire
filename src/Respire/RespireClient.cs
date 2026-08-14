@@ -3061,8 +3061,13 @@ public sealed partial class RespireClient : IRespireClient
             // Specialized bulk-string source: small buffered replies decode straight from the
             // receive buffer instead of round-tripping through a pooled RespValue payload.
             // CommandTimeout is enforced by the connection's deadline sweep.
+            var cache = core.ClientCache;
+            var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
             var connection = core.Multiplexer.GetConnection();
-            return connection.SendStringAsync(in command, ct, operation);
+            var response = connection.SendStringAsync(in command, ct, operation);
+            return mutationFence.IsRequired
+                ? CompleteMutationAsync(response, cache!, mutationFence)
+                : response;
         }
 
         return PooledResponseSource<RespireClient, string?>.Create(
