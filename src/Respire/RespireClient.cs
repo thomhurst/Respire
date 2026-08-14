@@ -1176,8 +1176,14 @@ public sealed partial class RespireClient : IRespireClient
             }
             else
             {
-                (missingKeys ??= new RespireKey[keys.Length])[missingCount] = resolvedKey;
-                (missingIndexes ??= new int[keys.Length])[missingCount++] = i;
+                if (missingKeys is null)
+                {
+                    missingKeys = new RespireKey[keys.Length];
+                    missingIndexes = new int[keys.Length];
+                }
+
+                missingKeys[missingCount] = resolvedKey;
+                missingIndexes![missingCount++] = i;
             }
         }
 
