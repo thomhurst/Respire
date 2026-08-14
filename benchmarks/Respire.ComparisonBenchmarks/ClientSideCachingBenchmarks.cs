@@ -22,9 +22,6 @@ namespace Respire.ComparisonBenchmarks;
 [CategoriesColumn]
 public class ClientSideCachingBenchmarks
 {
-    private const string ExistingKey = "cache:existing";
-    private const string MissingKey = "cache:missing";
-    private const string HashKey = "cache:hash";
     private const string HashField = "field";
     private const string Value = "Hello, client cache!";
 
@@ -33,6 +30,18 @@ public class ClientSideCachingBenchmarks
     private RespireClient _respireCached = null!;
     private ConnectionMultiplexer _stackExchange = null!;
     private IDatabase _stackExchangeDb = null!;
+
+    private string ExistingKey { get; }
+    private string MissingKey { get; }
+    private string HashKey { get; }
+
+    public ClientSideCachingBenchmarks()
+    {
+        var prefix = $"respire:benchmark:client-cache:{Guid.NewGuid():N}";
+        ExistingKey = $"{prefix}:existing";
+        MissingKey = $"{prefix}:missing";
+        HashKey = $"{prefix}:hash";
+    }
 
     [GlobalSetup]
     public async Task Setup()
@@ -85,6 +94,7 @@ public class ClientSideCachingBenchmarks
     [GlobalCleanup]
     public async Task Cleanup()
     {
+        await _stackExchangeDb.KeyDeleteAsync([ExistingKey, MissingKey, HashKey]);
         await _respire.DisposeAsync();
         await _respireCached.DisposeAsync();
         await _stackExchange.DisposeAsync();
