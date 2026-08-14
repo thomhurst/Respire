@@ -1820,32 +1820,43 @@ public sealed partial class RespireClient : IRespireClient
         string? storedProcedureName = null)
         where TCommand : struct, IRespCommand
     {
-        _core.ClientCache?.BeginUnknownMutation();
-        var connections = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
-        List<Exception>? failures = null;
-        foreach (var connection in connections)
+        var cache = _core.ClientCache;
+        var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
+            var connections = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
+            List<Exception>? failures = null;
+            foreach (var connection in connections)
             {
-                await SendFireAndForgetOnConnectionAsync(
-                        operation,
-                        connection,
-                        command,
-                        cancellationToken,
-                        storedProcedureName)
-                    .ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    await SendFireAndForgetOnConnectionAsync(
+                            operation,
+                            connection,
+                            command,
+                            cancellationToken,
+                            storedProcedureName)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    (failures ??= []).Add(ex);
+                }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+
+            if (failures is not null)
             {
-                (failures ??= []).Add(ex);
+                throw new AggregateException(
+                    "One or more Redis Cluster masters did not accept the command.", failures);
             }
         }
-
-        if (failures is not null)
+        finally
         {
-            throw new AggregateException(
-                "One or more Redis Cluster masters did not accept the command.", failures);
+            if (mutationFence.IsRequired)
+            {
+                cache!.CompleteMutation(in mutationFence);
+            }
         }
     }
 
