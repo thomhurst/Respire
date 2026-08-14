@@ -279,6 +279,36 @@ public class ClientSideCacheTests
     }
 
     [Test]
+    public async Task MultiwordRead_SharesCacheAcrossRawEntryPoints()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            ":42\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+        var key = "key";
+
+        using (var first = await client.ExecuteAsync($"MEMORY USAGE {key}"))
+        {
+            await Assert.That(first.AsInteger()).IsEqualTo(42);
+        }
+
+        using (var second = await client.ExecuteAsync("MEMORY USAGE", key))
+        {
+            await Assert.That(second.AsInteger()).IsEqualTo(42);
+        }
+
+        using (var third = await client.ExecuteAsync(RespireCommands.Server.MEMORY_USAGE, key))
+        {
+            await Assert.That(third.AsInteger()).IsEqualTo(42);
+        }
+
+        await Assert.That(server.ReceivedCommands.Count(static command => command == "MEMORY USAGE key"))
+            .IsEqualTo(1);
+    }
+
+    [Test]
     public async Task CallerOwnedBinaryArguments_AreSnapshottedOnMiss()
     {
         await using var server = new FakeRespServer(

@@ -21,7 +21,7 @@ Respire is pre-release. Its core RESP2 client, typed command surface, pipelining
 - Raw and interpolated command execution
 - Automatic reconnect and pub/sub resubscription
 - TLS connections through `rediss://` or `RespireOptions.UseTls`
-- Bounded RESP3 server-assisted client-side caching for `GET` and `MGET`
+- Bounded RESP3 server-assisted client-side caching for eligible Redis reads
 - Dependency injection, distributed caching, `HybridCache`, and OpenTelemetry
 
 ## Not implemented yet

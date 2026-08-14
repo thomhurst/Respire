@@ -360,11 +360,14 @@ internal readonly struct Cmd2N(Verb verb, RespireValue a1, RespireValue a2, Resp
 }
 
 /// <summary>An entire command whose tokens (verb included) are caller-supplied — the raw escape hatch.</summary>
-internal readonly struct DynamicCommand(RespireValue[] tokens, int routingKeyIndex) : IRespCommand
+internal readonly struct DynamicCommand(
+    RespireValue[] tokens,
+    int routingKeyIndex,
+    int argumentOffset = 1) : IRespCommand
 {
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
-        key = new(operation, tokens, argumentOffset: 1);
+        key = new(operation, tokens, argumentOffset);
         return true;
     }
     public bool TryGetPrimaryKey(out RespireValue key)

@@ -1,11 +1,11 @@
 ---
 title: Client-side caching
-description: Enable bounded RESP3 server-assisted caching for GET and MGET.
+description: Enable bounded RESP3 server-assisted caching for Redis reads.
 ---
 
 # Client-side caching
 
-Respire can cache Redis string reads in-process while Redis invalidation pushes keep entries
+Respire can cache eligible Redis reads in-process while Redis invalidation pushes keep entries
 coherent across clients. Enable it once on the client:
 
 ```csharp
@@ -16,9 +16,13 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 });
 ```
 
-Existing `GetStringAsync`, `GetBytesAsync`, `GetAsync<T>`, `TryGetAsync<T>`, and `MGET` methods then
-use the cache transparently. Missing keys are cached too. Values remain raw bytes internally and
-are deserialized for each call, so enabling caching does not introduce shared mutable objects.
+Existing typed APIs and catalog `ExecuteAsync` calls then use the cache transparently. This covers
+deterministic keyed reads across strings, keys, hashes, lists, sets, sorted sets, streams, bitmaps,
+geospatial indexes, Redis arrays, JSON, and vector sets. `GET` and `MGET` keep optimized per-key
+entries and partial-hit behavior; other replies use exact command-and-argument identities.
+
+Missing keys are cached too. Replies are deep-owned internally and converted for each call, so
+enabling caching does not introduce shared mutable objects.
 
 ## Bounds
 
@@ -33,9 +37,10 @@ ClientSideCache = new RespireClientSideCacheOptions
 },
 ```
 
-An oversized response is returned without being cached. `GetLeaseAsync`, scripts, batches,
-transactions, and raw commands bypass caching. Unknown mutations conservatively flush local
-entries before dispatch and after awaited completion.
+An oversized response is returned without being cached. `GetLeaseAsync` participates without
+sharing lease ownership. Nondeterministic, random, probabilistic, blocking, script/function,
+time-series, Search, and unkeyed commands bypass caching; so do batches and transactions. Unknown
+mutations conservatively flush local entries before dispatch and after awaited completion.
 
 ## ASP.NET Core registration
 

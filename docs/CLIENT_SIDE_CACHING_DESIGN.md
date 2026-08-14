@@ -41,33 +41,41 @@ in flight cannot refill the new store.
 
 ## Eligibility and value representation
 
-Respire caches deterministic, explicitly keyed Redis core reads for which it can prove the full
-dependency set:
+Respire caches every keyed Redis 8.10 read that meets Redis client-side-cache eligibility and for
+which it can prove the full dependency set:
 
-- strings: `GET`, `MGET`, `STRLEN`, `GETRANGE`, `LCS`;
-- keys: `DUMP`, `EXISTS`, `EXPIRETIME`, `PEXPIRETIME`, `TYPE`, `OBJECT ENCODING`;
+- strings: `GET`, `MGET`, `STRLEN`, `GETRANGE`, `SUBSTR`, `DIGEST`, `LCS`;
+- keys: `EXISTS`, `EXPIRETIME`, `PEXPIRETIME`, `TYPE`, `OBJECT ENCODING`, `MEMORY USAGE`,
+  and self-contained `SORT_RO` calls without `BY` or `GET` key patterns;
 - hashes: `HGET`, `HMGET`, `HGETALL`, `HEXISTS`, `HLEN`, `HSTRLEN`, `HKEYS`, `HVALS`,
   `HEXPIRETIME`, `HPEXPIRETIME`;
 - lists: `LINDEX`, `LLEN`, `LPOS`, `LRANGE`;
 - sets: `SCARD`, `SDIFF`, `SINTER`, `SINTERCARD`, `SISMEMBER`, `SMEMBERS`, `SMISMEMBER`,
-  `SUNION`;
+  `SUNION`, `SDIFFCARD`, `SUNIONCARD`;
 - sorted sets: `ZCARD`, `ZCOUNT`, `ZDIFF`, `ZINTER`, `ZINTERCARD`, `ZLEXCOUNT`, `ZMSCORE`,
-  `ZRANGE`, `ZRANK`, `ZREVRANK`, `ZSCORE`, `ZUNION`;
+  `ZRANGE`, the legacy range aliases, `ZRANK`, `ZREVRANK`, `ZSCORE`, `ZUNION`;
 - streams: `XLEN`, `XRANGE`, `XREVRANGE`, summary-form `XPENDING`, `XINFO STREAM`,
   `XINFO GROUPS`;
 - bitmaps: `GETBIT`, `BITCOUNT`, `BITPOS`, `BITFIELD_RO`;
-- geospatial: `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`.
+- geospatial: `GEODIST`, `GEOHASH`, `GEOPOS`, `GEOSEARCH`, `GEORADIUS_RO`,
+  `GEORADIUSBYMEMBER_RO`;
+- arrays: all read-only commands, including `ARSCAN`;
+- JSON: `JSON.ARRINDEX`, `JSON.ARRLEN`, `JSON.GET`, `JSON.MGET`, `JSON.OBJKEYS`,
+  `JSON.OBJLEN`, `JSON.RESP`, `JSON.STRLEN`, `JSON.TYPE`;
+- vector sets: every deterministic read (`VCARD`, `VDIM`, `VEMB`, `VGETATTR`, `VINFO`,
+  `VISMEMBER`, `VLINKS`, `VRANGE`, `VSIM`).
 
 Typed APIs, catalog `ExecuteAsync`, interpolated commands, and `GetLeaseAsync` use the same policy.
 `GET` and `MGET` retain optimized per-key storage: one entry serves every typed representation,
 and `MGET` sends only misses. Other reads are cached by exact command invocation, including command
 name and ordered wire-equivalent arguments.
 
-Cursor (`SCAN`, `HSCAN`, `SSCAN`, `ZSCAN`), random, relative-TTL, time-varying, probabilistic,
-blocking, script/function, time-series, Search, unkeyed server, and implicit-key (`SORT_RO`)
-commands are deliberately excluded. Detailed `XPENDING` is excluded because its idle-duration
-field changes with time. Batches and transactions preserve their server execution semantics and
-do not consult the local cache.
+Commands marked with nondeterministic output (`DUMP`, relative TTL, the core cursor scans), random
+commands, probabilistic structures, blocking reads, scripts/functions, time series, Search,
+unkeyed server state, and `TOUCH` are deliberately excluded. `SORT_RO` calls using `BY` or `GET`
+patterns are excluded because those patterns create dependencies the client cannot enumerate.
+Detailed `XPENDING` is excluded because its idle-duration field changes with time. Batches and
+transactions preserve their server execution semantics and do not consult the local cache.
 
 Cached entries hold immutable, deep-owned RESP values rather than deserialized objects. Therefore:
 

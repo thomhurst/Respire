@@ -82,13 +82,13 @@ internal readonly struct ClientCacheCommandKey : IEquatable<ClientCacheCommandKe
 
     internal ClientCacheCommandKey Snapshot()
     {
-        var arguments = new RespireValue[Count];
+        var arguments = new RespireValue[ArgumentCount];
         for (var index = 0; index < arguments.Length; index++)
         {
-            arguments[index] = this[index].Snapshot();
+            arguments[index] = GetArgument(index).Snapshot();
         }
 
-        return new ClientCacheCommandKey(_operation, arguments, _argumentOffset);
+        return new ClientCacheCommandKey(_operation, arguments);
     }
 
     internal long OwnedSize
@@ -96,9 +96,9 @@ internal readonly struct ClientCacheCommandKey : IEquatable<ClientCacheCommandKe
         get
         {
             long size = 32 + _operation.Length * sizeof(char);
-            for (var index = 0; index < Count; index++)
+            for (var index = 0; index < ArgumentCount; index++)
             {
-                size += this[index].GetWireLength();
+                size += GetArgument(index).GetWireLength();
             }
 
             return size;
@@ -107,14 +107,15 @@ internal readonly struct ClientCacheCommandKey : IEquatable<ClientCacheCommandKe
 
     public bool Equals(ClientCacheCommandKey other)
     {
-        if (!string.Equals(_operation, other._operation, StringComparison.Ordinal) || Count != other.Count)
+        if (!string.Equals(_operation, other._operation, StringComparison.Ordinal)
+            || ArgumentCount != other.ArgumentCount)
         {
             return false;
         }
 
-        for (var index = 0; index < Count; index++)
+        for (var index = 0; index < ArgumentCount; index++)
         {
-            if (this[index] != other[index])
+            if (GetArgument(index) != other.GetArgument(index))
             {
                 return false;
             }
@@ -129,9 +130,10 @@ internal readonly struct ClientCacheCommandKey : IEquatable<ClientCacheCommandKe
     {
         var hash = new HashCode();
         hash.Add(_operation, StringComparer.Ordinal);
-        for (var index = 0; index < Count; index++)
+        hash.Add(ArgumentCount);
+        for (var index = 0; index < ArgumentCount; index++)
         {
-            hash.Add(this[index]);
+            hash.Add(GetArgument(index));
         }
 
         return hash.ToHashCode();

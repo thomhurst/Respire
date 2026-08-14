@@ -490,15 +490,17 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken)
     {
         ValidateResultFlags(flags);
-        var (operation, tokens) = command.Build();
-        var storedProcedureName = StoredProcedureName(operation, tokens.AsSpan(1));
-        var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, firstArgumentIndex: 1);
-        var commandValue = new DynamicCommand(tokens, routingKeyIndex);
+        var (initialOperation, tokens) = command.Build();
+        var (operation, firstArgumentIndex) = NormalizeInterpolatedOperation(initialOperation, tokens);
+        var arguments = tokens.AsSpan(firstArgumentIndex);
+        var storedProcedureName = StoredProcedureName(operation, arguments);
+        var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, firstArgumentIndex);
+        var commandValue = new DynamicCommand(tokens, routingKeyIndex, firstArgumentIndex);
         var isBlocking = RespireCommand.IsBlocking(
-            operation, RespireCommand.Classify(operation), tokens.AsSpan(1));
+            operation, RespireCommand.Classify(operation), arguments);
         RespValue response;
         if (_core.Cluster is { } cluster
-            && DynamicCommandRouting.IsClusterWideMutation(operation, tokens.AsSpan(1)))
+            && DynamicCommandRouting.IsClusterWideMutation(operation, arguments))
         {
             ValidateClusterWideFlags(operation, flags);
             response = await SendClusterWideAsync(
@@ -536,14 +538,15 @@ public sealed partial class RespireClient : IRespireClient
         RespireCommandInterpolatedStringHandler command,
         CancellationToken cancellationToken)
     {
-        var (operation, tokens) = command.Build();
-        var arguments = tokens.AsSpan(1);
+        var (initialOperation, tokens) = command.Build();
+        var (operation, firstArgumentIndex) = NormalizeInterpolatedOperation(initialOperation, tokens);
+        var arguments = tokens.AsSpan(firstArgumentIndex);
         ValidateRawFireAndForgetCommand(operation, ReadOnlySpan<string>.Empty, arguments);
 
         var storedProcedureName = StoredProcedureName(operation, arguments);
         var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(
-            operation, tokens, firstArgumentIndex: 1);
-        var commandValue = new DynamicCommand(tokens, routingKeyIndex);
+            operation, tokens, firstArgumentIndex);
+        var commandValue = new DynamicCommand(tokens, routingKeyIndex, firstArgumentIndex);
         if (_core.Cluster is { } cluster
             && DynamicCommandRouting.IsClusterWideMutation(operation, arguments))
         {
@@ -693,7 +696,7 @@ public sealed partial class RespireClient : IRespireClient
         var storedProcedureName = words.Length == 1 ? StoredProcedureName(operation, args) : null;
         var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(
             operation, tokens, firstArgumentIndex);
-        return (storedProcedureName, new DynamicCommand(tokens, routingKeyIndex));
+        return (storedProcedureName, new DynamicCommand(tokens, routingKeyIndex, firstArgumentIndex));
     }
 
     private static string? StoredProcedureName(string operation, ReadOnlySpan<RespireValue> arguments)
@@ -713,28 +716,47 @@ public sealed partial class RespireClient : IRespireClient
             return command;
         }
 
-        var subcommand = KnownRawSubcommand(command, words[1]);
-        firstArgumentIndex = subcommand is null ? 1 : 2;
-        return subcommand is null ? command : $"{command} {subcommand}";
+        var operation = KnownRawOperation(command, words[1]);
+        firstArgumentIndex = operation is null ? 1 : 2;
+        return operation ?? command;
     }
 
-    private static string? KnownRawSubcommand(string command, string candidate)
+    private static (string Operation, int FirstArgumentIndex) NormalizeInterpolatedOperation(
+        string command,
+        RespireValue[] tokens)
+    {
+        if (tokens.Length > 1 && KnownRawOperation(command, tokens[1]) is { } operation)
+        {
+            return (operation, 2);
+        }
+
+        return (command, 1);
+    }
+
+    private static string? KnownRawOperation(string command, string candidate)
+        => KnownRawOperation(command, (RespireValue)candidate);
+
+    private static string? KnownRawOperation(string command, RespireValue candidate)
         => command switch
         {
-            "CONFIG" when candidate.Equals("GET", StringComparison.OrdinalIgnoreCase) => "GET",
-            "CONFIG" when candidate.Equals("SET", StringComparison.OrdinalIgnoreCase) => "SET",
-            "FUNCTION" when candidate.Equals("DELETE", StringComparison.OrdinalIgnoreCase) => "DELETE",
-            "FUNCTION" when candidate.Equals("FLUSH", StringComparison.OrdinalIgnoreCase) => "FLUSH",
-            "FUNCTION" when candidate.Equals("LOAD", StringComparison.OrdinalIgnoreCase) => "LOAD",
-            "FUNCTION" when candidate.Equals("RESTORE", StringComparison.OrdinalIgnoreCase) => "RESTORE",
-            "SCRIPT" when candidate.Equals("DEBUG", StringComparison.OrdinalIgnoreCase) => "DEBUG",
-            "SCRIPT" when candidate.Equals("EXISTS", StringComparison.OrdinalIgnoreCase) => "EXISTS",
-            "SCRIPT" when candidate.Equals("FLUSH", StringComparison.OrdinalIgnoreCase) => "FLUSH",
-            "SCRIPT" when candidate.Equals("HELP", StringComparison.OrdinalIgnoreCase) => "HELP",
-            "SCRIPT" when candidate.Equals("KILL", StringComparison.OrdinalIgnoreCase) => "KILL",
-            "SCRIPT" when candidate.Equals("LOAD", StringComparison.OrdinalIgnoreCase) => "LOAD",
-            "SCRIPT" when candidate.Equals("SHOW", StringComparison.OrdinalIgnoreCase) => "SHOW",
-            "XGROUP" when candidate.Equals("CREATE", StringComparison.OrdinalIgnoreCase) => "CREATE",
+            "CONFIG" when candidate.EqualsAsciiIgnoreCase("GET") => "CONFIG GET",
+            "CONFIG" when candidate.EqualsAsciiIgnoreCase("SET") => "CONFIG SET",
+            "MEMORY" when candidate.EqualsAsciiIgnoreCase("USAGE") => "MEMORY USAGE",
+            "OBJECT" when candidate.EqualsAsciiIgnoreCase("ENCODING") => "OBJECT ENCODING",
+            "FUNCTION" when candidate.EqualsAsciiIgnoreCase("DELETE") => "FUNCTION DELETE",
+            "FUNCTION" when candidate.EqualsAsciiIgnoreCase("FLUSH") => "FUNCTION FLUSH",
+            "FUNCTION" when candidate.EqualsAsciiIgnoreCase("LOAD") => "FUNCTION LOAD",
+            "FUNCTION" when candidate.EqualsAsciiIgnoreCase("RESTORE") => "FUNCTION RESTORE",
+            "SCRIPT" when candidate.EqualsAsciiIgnoreCase("DEBUG") => "SCRIPT DEBUG",
+            "SCRIPT" when candidate.EqualsAsciiIgnoreCase("EXISTS") => "SCRIPT EXISTS",
+            "SCRIPT" when candidate.EqualsAsciiIgnoreCase("FLUSH") => "SCRIPT FLUSH",
+            "SCRIPT" when candidate.EqualsAsciiIgnoreCase("HELP") => "SCRIPT HELP",
+            "SCRIPT" when candidate.EqualsAsciiIgnoreCase("KILL") => "SCRIPT KILL",
+            "SCRIPT" when candidate.EqualsAsciiIgnoreCase("LOAD") => "SCRIPT LOAD",
+            "SCRIPT" when candidate.EqualsAsciiIgnoreCase("SHOW") => "SCRIPT SHOW",
+            "XGROUP" when candidate.EqualsAsciiIgnoreCase("CREATE") => "XGROUP CREATE",
+            "XINFO" when candidate.EqualsAsciiIgnoreCase("GROUPS") => "XINFO GROUPS",
+            "XINFO" when candidate.EqualsAsciiIgnoreCase("STREAM") => "XINFO STREAM",
             _ => null,
         };
 

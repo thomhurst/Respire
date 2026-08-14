@@ -362,31 +362,59 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
     private static bool IsReadOnly(string operation)
         => IsCacheableRead(operation)
            || operation is
-            "PTTL" or "SCAN" or "KEYS" or "RANDOMKEY" or "HSCAN" or
-            "SRANDMEMBER" or "SSCAN" or "ZSCAN" or "XREAD" or "TS.READ" or
+            "DUMP" or "TTL" or "PTTL" or "HTTL" or "HPTTL" or
+            "SCAN" or "KEYS" or "RANDOMKEY" or "HSCAN" or
+            "HRANDFIELD" or "SRANDMEMBER" or "SSCAN" or "ZRANDMEMBER" or "ZSCAN" or
+            "VRANDMEMBER" or "XREAD" or "XINFO CONSUMERS" or
+            "OBJECT FREQ" or "OBJECT IDLETIME" or "OBJECT REFCOUNT" or "TOUCH" or
+            "EVAL_RO" or "EVALSHA_RO" or "FCALL_RO" or
+            "BF.CARD" or "BF.DEBUG" or "BF.EXISTS" or "BF.INFO" or "BF.MEXISTS" or "BF.SCANDUMP" or
+            "CF.COUNT" or "CF.DEBUG" or "CF.EXISTS" or "CF.INFO" or
+            "CF.MEXISTS" or "CF.SCANDUMP" or "CMS.INFO" or "CMS.QUERY" or
+            "TDIGEST.BYRANK" or "TDIGEST.BYREVRANK" or "TDIGEST.CDF" or "TDIGEST.INFO" or
+            "TDIGEST.MAX" or "TDIGEST.MIN" or "TDIGEST.QUANTILE" or "TDIGEST.RANK" or
+            "TDIGEST.REVRANK" or "TDIGEST.TRIMMED_MEAN" or
+            "TOPK.COUNT" or "TOPK.INFO" or "TOPK.LIST" or "TOPK.QUERY" or
+            "TS.GET" or "TS.INFO" or "TS.MGET" or "TS.MRANGE" or "TS.MREVRANGE" or
+            "TS.NRANGE" or "TS.NREVRANGE" or "TS.QUERYINDEX" or "TS.QUERYLABELS" or
+            "TS.RANGE" or "TS.READ" or "TS.REVRANGE" or "TIMESERIES.REFRESHCLUSTER" or
+            "FT.AGGREGATE" or "FT.ALIASLIST" or "FT.CURSOR" or "FT.CURSOR DEL" or
+            "FT.CURSOR GC" or "FT.CURSOR READ" or "FT.DICTDUMP" or "FT.EXPLAIN" or
+            "FT.EXPLAINCLI" or "FT.INFO" or "FT.PROFILE" or "FT.SEARCH" or
+            "FT.SPELLCHECK" or "FT.SUGGET" or "FT.SUGLEN" or "FT.SYNDUMP" or "FT.TAGVALS" or
+            "JSON.DEBUG" or "LOLWUT" or
             "PING" or "ECHO" or "DBSIZE" or "INFO" or "TIME" or "LASTSAVE" or
-            "COMMAND COUNT" or "COMMAND LIST" or "CLIENT LIST" or "MEMORY USAGE" or "MEMORY STATS" or
+            "COMMAND COUNT" or "COMMAND LIST" or "CLIENT LIST" or "MEMORY STATS" or
             "PUBSUB" or "PUBSUB CHANNELS" or "PUBSUB NUMPAT" or "PUBSUB NUMSUB" or "PUBSUB SHARDCHANNELS" or
             "PUBSUB SHARDNUMSUB" or "ROLE" or "SLOWLOG GET" or "LATENCY LATEST" or "CONFIG GET";
 
-    // Redis tracks keys read by deterministic @read commands. Cursor/random/time-dependent,
-    // probabilistic, blocking, scripting, time-series, and unkeyed server replies are not safe
-    // local values even though some are formally read-only.
+    // Mirrors Redis client-side-cache eligibility: keyed, read-only, deterministic, non-blocking,
+    // and not a script/function, probabilistic structure, time series, or Search command.
     private static bool IsCacheableRead(string operation)
         => operation is
-            "GET" or "MGET" or "STRLEN" or "GETRANGE" or "LCS" or
-            "DUMP" or "EXISTS" or "EXPIRETIME" or "PEXPIRETIME" or "TYPE" or "OBJECT ENCODING" or
+            "GET" or "MGET" or "STRLEN" or "GETRANGE" or "SUBSTR" or "DIGEST" or "LCS" or
+            "EXISTS" or "EXPIRETIME" or "PEXPIRETIME" or "TYPE" or "OBJECT ENCODING" or "MEMORY USAGE" or
             "HGET" or "HMGET" or "HGETALL" or "HEXISTS" or "HLEN" or "HSTRLEN" or
             "HKEYS" or "HVALS" or "HEXPIRETIME" or "HPEXPIRETIME" or
             "LLEN" or "LRANGE" or "LINDEX" or "LPOS" or
             "SISMEMBER" or "SMISMEMBER" or "SCARD" or "SMEMBERS" or
-            "SINTER" or "SUNION" or "SDIFF" or "SINTERCARD" or
+            "SINTER" or "SUNION" or "SDIFF" or "SINTERCARD" or "SUNIONCARD" or "SDIFFCARD" or
             "ZSCORE" or "ZMSCORE" or "ZCARD" or "ZCOUNT" or "ZLEXCOUNT" or "ZRANK" or "ZREVRANK" or
-            "ZRANGE" or "ZINTER" or "ZUNION" or "ZDIFF" or "ZINTERCARD" or
+            "ZRANGE" or "ZRANGEBYLEX" or "ZRANGEBYSCORE" or
+            "ZREVRANGE" or "ZREVRANGEBYLEX" or "ZREVRANGEBYSCORE" or
+            "ZINTER" or "ZUNION" or "ZDIFF" or "ZINTERCARD" or
             "XLEN" or "XRANGE" or "XREVRANGE" or "XPENDING" or
             "XINFO STREAM" or "XINFO GROUPS" or
             "GETBIT" or "BITCOUNT" or "BITPOS" or "BITFIELD_RO" or
-            "GEODIST" or "GEOHASH" or "GEOPOS" or "GEOSEARCH";
+            "GEODIST" or "GEOHASH" or "GEOPOS" or "GEOSEARCH" or
+            "GEORADIUS_RO" or "GEORADIUSBYMEMBER_RO" or
+            "ARCOUNT" or "ARGET" or "ARGETRANGE" or "ARGREP" or "ARINFO" or
+            "ARLASTITEMS" or "ARLEN" or "ARMGET" or "ARNEXT" or "AROP" or "ARSCAN" or
+            "JSON.ARRINDEX" or "JSON.ARRLEN" or "JSON.GET" or "JSON.MGET" or
+            "JSON.OBJKEYS" or "JSON.OBJLEN" or "JSON.RESP" or "JSON.STRLEN" or "JSON.TYPE" or
+            "VCARD" or "VDIM" or "VEMB" or "VGETATTR" or "VINFO" or
+            "VISMEMBER" or "VLINKS" or "VRANGE" or "VSIM" or
+            "SORT_RO";
 
     private static bool HasValidDependencies(string operation, in ClientCacheCommandKey query)
     {
@@ -399,6 +427,16 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
         {
             // The summary form is stable; range replies contain a time-varying idle duration.
             return query.ArgumentCount == 2;
+        }
+
+        if (operation == "JSON.MGET")
+        {
+            return query.ArgumentCount >= 2;
+        }
+
+        if (operation == "SORT_RO")
+        {
+            return !ContainsImplicitSortDependency(in query);
         }
 
         if (UsesEveryArgumentAsKey(operation))
@@ -435,6 +473,17 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             return keys;
         }
 
+        if (operation == "JSON.MGET")
+        {
+            var keys = new RespireKey[query.ArgumentCount - 1];
+            for (var index = 0; index < keys.Length; index++)
+            {
+                keys[index] = query.GetArgument(index).AsKey().Snapshot();
+            }
+
+            return keys;
+        }
+
         if (UsesCountedKeys(operation) && TryGetKeyCount(in query, out var count))
         {
             var keys = new RespireKey[count];
@@ -453,7 +502,23 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
         => operation is "MGET" or "EXISTS" or "SINTER" or "SUNION" or "SDIFF";
 
     private static bool UsesCountedKeys(string operation)
-        => operation is "SINTERCARD" or "ZINTER" or "ZUNION" or "ZDIFF" or "ZINTERCARD";
+        => operation is
+            "SINTERCARD" or "SUNIONCARD" or "SDIFFCARD" or
+            "ZINTER" or "ZUNION" or "ZDIFF" or "ZINTERCARD";
+
+    private static bool ContainsImplicitSortDependency(in ClientCacheCommandKey query)
+    {
+        for (var index = 1; index < query.ArgumentCount; index++)
+        {
+            var argument = query.GetArgument(index);
+            if (argument.EqualsAsciiIgnoreCase("BY") || argument.EqualsAsciiIgnoreCase("GET"))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private static bool TryGetKeyCount(in ClientCacheCommandKey query, out int count)
     {

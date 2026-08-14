@@ -153,6 +153,100 @@ public class ClientSideCacheCoordinatorTests
         await Assert.That(cache.Count).IsEqualTo(1);
     }
 
+    [Test]
+    public async Task RedisCacheableCommandFamilies_AreRecognized()
+    {
+        string[] operations =
+        [
+            "GET", "MGET", "STRLEN", "GETRANGE", "SUBSTR", "DIGEST", "LCS",
+            "EXISTS", "EXPIRETIME", "PEXPIRETIME", "TYPE", "OBJECT ENCODING", "MEMORY USAGE",
+            "HGET", "HMGET", "HGETALL", "HEXISTS", "HLEN", "HSTRLEN", "HKEYS", "HVALS",
+            "HEXPIRETIME", "HPEXPIRETIME",
+            "LLEN", "LRANGE", "LINDEX", "LPOS",
+            "SISMEMBER", "SMISMEMBER", "SCARD", "SMEMBERS", "SINTER", "SUNION", "SDIFF",
+            "SINTERCARD", "SUNIONCARD", "SDIFFCARD",
+            "ZSCORE", "ZMSCORE", "ZCARD", "ZCOUNT", "ZLEXCOUNT", "ZRANK", "ZREVRANK",
+            "ZRANGE", "ZRANGEBYLEX", "ZRANGEBYSCORE", "ZREVRANGE", "ZREVRANGEBYLEX",
+            "ZREVRANGEBYSCORE", "ZINTER", "ZUNION", "ZDIFF", "ZINTERCARD",
+            "XLEN", "XRANGE", "XREVRANGE", "XPENDING", "XINFO STREAM", "XINFO GROUPS",
+            "GETBIT", "BITCOUNT", "BITPOS", "BITFIELD_RO",
+            "GEODIST", "GEOHASH", "GEOPOS", "GEOSEARCH", "GEORADIUS_RO",
+            "GEORADIUSBYMEMBER_RO",
+            "ARCOUNT", "ARGET", "ARGETRANGE", "ARGREP", "ARINFO", "ARLASTITEMS", "ARLEN",
+            "ARMGET", "ARNEXT", "AROP", "ARSCAN",
+            "JSON.ARRINDEX", "JSON.ARRLEN", "JSON.GET", "JSON.MGET", "JSON.OBJKEYS",
+            "JSON.OBJLEN", "JSON.RESP", "JSON.STRLEN", "JSON.TYPE",
+            "VCARD", "VDIM", "VEMB", "VGETATTR", "VINFO", "VISMEMBER", "VLINKS", "VRANGE", "VSIM",
+            "SORT_RO",
+        ];
+
+        foreach (var operation in operations)
+        {
+            await Assert.That(ClientSideCacheCoordinator.CanCacheOperation(operation))
+                .IsTrue()
+                .Because($"{operation} should support client-side caching");
+        }
+    }
+
+    [Test]
+    public async Task RedisNonCacheableCommandFamilies_AreRejected()
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        Insert(cache, "cached", "value");
+        var command = new Cmd1(Verbs.StrLen, "key");
+        string[] operations =
+        [
+            "DUMP", "TTL", "PTTL", "HTTL", "HPTTL",
+            "SCAN", "HSCAN", "SSCAN", "ZSCAN", "RANDOMKEY", "HRANDFIELD", "SRANDMEMBER",
+            "ZRANDMEMBER", "VRANDMEMBER", "XREAD", "EVAL_RO", "EVALSHA_RO", "FCALL_RO",
+            "BF.EXISTS", "CF.EXISTS", "CMS.QUERY", "TDIGEST.CDF", "TOPK.QUERY",
+            "TS.GET", "FT.SEARCH", "KEYS", "DBSIZE", "TOUCH",
+        ];
+
+        foreach (var operation in operations)
+        {
+            await Assert.That(ClientSideCacheCoordinator.CanCacheOperation(operation))
+                .IsFalse()
+                .Because($"{operation} must bypass client-side caching");
+            await Assert.That(cache.BeforeCommand(operation, in command).IsRequired)
+                .IsFalse()
+                .Because($"{operation} is read-only and must not create a mutation fence");
+        }
+
+        await Assert.That(ClientSideCacheCoordinator.CanCacheOperation("PFCOUNT")).IsFalse();
+        await Assert.That(cache.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task JsonMGet_InvalidatesOnEveryDocumentKey()
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        var command = new CatalogCommand(
+            RespireCommands.Json.JSON_MGET,
+            ["first", "second", "$"]);
+        await Assert.That(cache.TryCreateQuery("JSON.MGET", in command, out var request)).IsTrue();
+        var token = cache.BeginRead("JSON.MGET", in request);
+        var response = RespValue.Array([]);
+        cache.CompleteRead(in token, in response, allowInsert: true);
+        await Assert.That(cache.Count).IsEqualTo(1);
+
+        var second = new RespireKey("second");
+        cache.Invalidate(in second);
+
+        await Assert.That(cache.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task SortReadOnly_RejectsImplicitExternalKeyPatterns()
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        var selfContained = new CatalogCommand(RespireCommands.Key.SORT_RO, ["key", "ALPHA"]);
+        var external = new CatalogCommand(RespireCommands.Key.SORT_RO, ["key", "BY", "weight_*"]);
+
+        await Assert.That(cache.TryCreateQuery("SORT_RO", in selfContained, out _)).IsTrue();
+        await Assert.That(cache.TryCreateQuery("SORT_RO", in external, out _)).IsFalse();
+    }
+
     private static void Insert(ClientSideCacheCoordinator cache, string key, string value)
         => Insert(cache, new RespireKey(key), value);
 
