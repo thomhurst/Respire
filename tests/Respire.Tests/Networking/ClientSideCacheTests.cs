@@ -336,23 +336,23 @@ public class ClientSideCacheTests
     }
 
     [Test]
-    public async Task CallerOwnedBinaryArguments_AreSnapshottedOnMiss()
+    public async Task GenericRead_SnapshotsCallerMemoryBeforeLazyConnect()
     {
         await using var server = new FakeRespServer(
             HelloReply,
             FakeRespServer.OkReply,
             FakeRespServer.OkReply,
             "$5\r\nvalue\r\n"u8.ToArray());
-        await using var client = await ConnectAsync(server);
+        await using var client = CreateLazyClient(server);
         var field = new byte[] { (byte)'f' };
 
-        using (var first = await client.ExecuteAsync(
-            RespireCommands.Hash.HGET, ["hash", field]))
+        var pending = client.ExecuteAsync(RespireCommands.Hash.HGET, ["hash", field]).AsTask();
+        field[0] = (byte)'x';
+        using (var first = await pending)
         {
             await Assert.That(first.AsString()).IsEqualTo("value");
         }
 
-        field[0] = (byte)'x';
         using (var second = await client.ExecuteAsync(
             RespireCommands.Hash.HGET, ["hash", new byte[] { (byte)'f' }]))
         {
@@ -361,6 +361,53 @@ public class ClientSideCacheTests
 
         await Assert.That(server.ReceivedCommands.Count(static command => command == "HGET hash f"))
             .IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands).DoesNotContain("HGET hash x");
+    }
+
+    [Test]
+    public async Task Get_SnapshotsCallerKeyBeforeLazyConnect()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$5\r\nvalue\r\n"u8.ToArray());
+        await using var client = CreateLazyClient(server);
+        var key = new byte[] { (byte)'a' };
+
+        var pending = client.GetStringAsync(key).AsTask();
+        key[0] = (byte)'b';
+
+        await Assert.That(await pending).IsEqualTo("value");
+        await Assert.That(await client.GetStringAsync(new byte[] { (byte)'a' })).IsEqualTo("value");
+        await Assert.That(server.ReceivedCommands.Count(static command => command == "GET a"))
+            .IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands).DoesNotContain("GET b");
+    }
+
+    [Test]
+    public async Task MGet_SnapshotsCallerKeysBeforeLazyConnect()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "*2\r\n$1\r\na\r\n$1\r\nb\r\n"u8.ToArray());
+        await using var client = CreateLazyClient(server);
+        var first = new byte[] { (byte)'a' };
+        var second = new byte[] { (byte)'b' };
+
+        var pending = client.Strings.GetManyAsync(first, second).AsTask();
+        first[0] = (byte)'x';
+        second[0] = (byte)'y';
+
+        await Assert.That(await pending).IsEquivalentTo((string?[])["a", "b"]);
+        await Assert.That(await client.Strings.GetManyAsync(
+            new byte[] { (byte)'a' }, new byte[] { (byte)'b' }))
+            .IsEquivalentTo((string?[])["a", "b"]);
+        await Assert.That(server.ReceivedCommands.Count(static command => command == "MGET a b"))
+            .IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands).DoesNotContain("MGET x y");
     }
 
     [Test]
@@ -381,6 +428,34 @@ public class ClientSideCacheTests
 
         await Assert.That(server.ReceivedCommands.Count(static command => command == "BITFIELD_RO key GET u8 0"))
             .IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task GeoSearchAny_BypassesClientCache()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            "*1\r\n$3\r\none\r\n"u8.ToArray(),
+            "*1\r\n$3\r\ntwo\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+        var options = new GeoSearchOptions { Count = 1, Any = true };
+
+        await Assert.That((await client.Geo.SearchAsync(
+            "places",
+            GeoSearchOrigin.FromMember("origin"),
+            GeoSearchShape.Circle(1),
+            options))[0].Member).IsEqualTo("one");
+        await Assert.That((await client.Geo.SearchAsync(
+            "places",
+            GeoSearchOrigin.FromMember("origin"),
+            GeoSearchShape.Circle(1),
+            options))[0].Member).IsEqualTo("two");
+
+        await Assert.That(server.ReceivedCommands.Count(static command =>
+            command == "GEOSEARCH places FROMMEMBER origin BYRADIUS 1 m COUNT 1 ANY"))
+            .IsEqualTo(2);
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
     }
 
     [Test]
@@ -1032,6 +1107,14 @@ public class ClientSideCacheTests
 
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server)
         => RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+            ClientSideCache = new(),
+        });
+
+    private static RespireClient CreateLazyClient(FakeRespServer server)
+        => RespireClient.Create(new RespireOptions
         {
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,

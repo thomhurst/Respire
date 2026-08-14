@@ -1127,7 +1127,7 @@ public sealed partial class RespireClient : IRespireClient
             return new ValueTask<TResult>(converter(this, in cached));
         }
 
-        return GetAndCacheAsync(resolvedKey, command, cache, cancellationToken, converter);
+        return GetAndCacheAsync(resolvedKey, cache, cancellationToken, converter);
     }
 
     internal ValueTask<TResult[]> CachedGetManyAsync<TResult>(
@@ -1245,12 +1245,12 @@ public sealed partial class RespireClient : IRespireClient
 #endif
     private async ValueTask<TResult> GetAndCacheAsync<TResult>(
         RespireKey resolvedKey,
-        Cmd1 command,
         ClientSideCacheCoordinator cache,
         CancellationToken cancellationToken,
         ResponseConverter<RespireClient, TResult> converter)
     {
         var token = cache.BeginRead(in resolvedKey);
+        var command = new Cmd1(Verbs.Get, token.State.Key.AsValue());
         var response = default(RespValue);
         var released = false;
         var allowInsert = true;
@@ -1300,8 +1300,8 @@ public sealed partial class RespireClient : IRespireClient
         for (var i = 0; i < missingCount; i++)
         {
             ref readonly var key = ref missingKeys[i];
-            arguments[i] = key.AsValue();
             tokens[i] = cache.BeginRead(in key);
+            arguments[i] = tokens[i].State.Key.AsValue();
         }
 
         var response = default(RespValue);
@@ -1558,6 +1558,7 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
+        var snapshot = SnapshotCommand.Create(in command);
         var token = cache.BeginRead(operation, in request);
         var completed = false;
         var allowInsert = true;
@@ -1566,7 +1567,7 @@ public sealed partial class RespireClient : IRespireClient
         {
             onRedirect = cacheable =>
             {
-                token = cache.RebaseRead(operation, in request);
+                token = cache.RebaseRead(in token);
                 allowInsert = cacheable;
             };
         }
@@ -1575,7 +1576,7 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             response = await SendTrackedAsync(
-                operation, command, cancellationToken, onRedirect).ConfigureAwait(false);
+                operation, snapshot, cancellationToken, onRedirect).ConfigureAwait(false);
             cache.CompleteRead(in token, in response, allowInsert);
             completed = true;
             return response;

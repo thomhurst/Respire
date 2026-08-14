@@ -1,7 +1,37 @@
 using Respire.Protocol;
 using Respire.Internal;
+using Respire.Networking;
 
 namespace Respire.Commands;
+
+/// <summary>An owned RESP frame used when caller-owned arguments must survive an async send.</summary>
+internal readonly struct SnapshotCommand(byte[] frame, int? clusterSlot) : IRespCommand
+{
+    public static SnapshotCommand Create<TCommand>(in TCommand command)
+        where TCommand : struct, IRespCommand
+    {
+        var slot = command.TryGetClusterSlot(out var value) ? value : (int?)null;
+        var buffer = new WriteBuffer(256);
+        try
+        {
+            var writer = new RespWriter(buffer);
+            command.Write(ref writer);
+            return new SnapshotCommand(buffer.WrittenMemory.ToArray(), slot);
+        }
+        finally
+        {
+            buffer.Release();
+        }
+    }
+
+    public bool TryGetClusterSlot(out int slot)
+    {
+        slot = clusterSlot.GetValueOrDefault();
+        return clusterSlot.HasValue;
+    }
+
+    public void Write(ref RespWriter writer) => writer.WriteRaw(frame);
+}
 
 // Generic command shapes: an array header, the pre-encoded verb, then N bulk-string arguments.
 // Readonly structs so the connection's generic send path is fully monomorphized.
