@@ -72,14 +72,17 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
     public long SizeBytes => Volatile.Read(ref _store).SizeBytes;
 
     public RespireClientSideCacheStatistics GetStatistics()
-        => new(
+    {
+        var store = Volatile.Read(ref _store);
+        return new(
             Interlocked.Read(ref _hits),
             Interlocked.Read(ref _misses),
             Interlocked.Read(ref _invalidations),
             Interlocked.Read(ref _evictions),
             Interlocked.Read(ref _continuityFlushes),
-            Count,
-            SizeBytes);
+            store.Count,
+            store.SizeBytes);
+    }
 
     public void Clear() => Flush(continuityLost: false);
 
@@ -189,8 +192,13 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             return new MutationFence(key, FlushAll: false);
         }
 
+        return BeginUnknownMutation();
+    }
+
+    internal MutationFence BeginUnknownMutation()
+    {
         Flush(continuityLost: false);
-        return new MutationFence(Key: null, FlushAll: true);
+        return MutationFence.All;
     }
 
     internal void CompleteMutation(in MutationFence fence)
@@ -268,6 +276,7 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             "ZSCORE" or "ZMSCORE" or "ZCARD" or "ZCOUNT" or "ZRANK" or "ZREVRANK" or
             "ZRANGE" or "ZINTER" or "ZUNION" or "ZDIFF" or "ZINTERCARD" or "ZSCAN" or
             "XLEN" or "XRANGE" or "XREVRANGE" or "XPENDING" or
+            "XREAD" or "TS.READ" or
             "GETBIT" or "BITCOUNT" or "BITPOS" or "BITFIELD_RO" or
             "PFCOUNT" or "GEODIST" or "GEOHASH" or "GEOPOS" or "GEOSEARCH" or
             "PING" or "ECHO" or "DBSIZE" or "INFO" or "TIME" or "LASTSAVE" or
@@ -321,21 +330,22 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
 
         public bool TryGet(in RespireKey key, out byte[]? payload)
         {
-            if (!_entries.TryGetValue(key, out var entry))
+            while (_entries.TryGetValue(key, out var entry))
             {
-                payload = null;
-                return false;
+                if (entry.ExpiresAt == 0 || Stopwatch.GetTimestamp() < entry.ExpiresAt)
+                {
+                    payload = entry.Payload;
+                    return true;
+                }
+
+                if (Remove(in key, entry, CacheRemoval.Expiration))
+                {
+                    break;
+                }
             }
 
-            if (entry.ExpiresAt != 0 && Stopwatch.GetTimestamp() >= entry.ExpiresAt)
-            {
-                Remove(in key, CacheRemoval.Expiration);
-                payload = null;
-                return false;
-            }
-
-            payload = entry.Payload;
-            return true;
+            payload = null;
+            return false;
         }
 
         public void Set(RespireKey key, in RespValue response)
@@ -391,6 +401,23 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
                 return;
             }
 
+            RecordRemoval(entry, reason);
+        }
+
+        private bool Remove(in RespireKey key, CacheEntry expected, CacheRemoval reason)
+        {
+            if (!((ICollection<KeyValuePair<RespireKey, CacheEntry>>)_entries)
+                .Remove(new KeyValuePair<RespireKey, CacheEntry>(key, expected)))
+            {
+                return false;
+            }
+
+            RecordRemoval(expected, reason);
+            return true;
+        }
+
+        private void RecordRemoval(CacheEntry entry, CacheRemoval reason)
+        {
             Interlocked.Add(ref _sizeBytes, -entry.Size);
             if (reason is CacheRemoval.Capacity or CacheRemoval.Expiration)
             {
@@ -429,8 +456,7 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
                 foreach (var pair in _entries)
                 {
                     var key = pair.Key;
-                    Remove(in key, CacheRemoval.Capacity);
-                    removed = true;
+                    removed |= Remove(in key, pair.Value, CacheRemoval.Capacity);
                     if (!IsOverCapacity)
                     {
                         break;
@@ -461,6 +487,8 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
 
     internal readonly record struct MutationFence(RespireKey? Key, bool FlushAll)
     {
+        internal static MutationFence All => new(Key: null, FlushAll: true);
+
         internal bool IsRequired => Key is not null || FlushAll;
     }
 }

@@ -35,7 +35,7 @@ ClientSideCache = new RespireClientSideCacheOptions
 
 An oversized response is returned without being cached. `GetLeaseAsync`, scripts, batches,
 transactions, and raw commands bypass caching. Unknown mutations conservatively flush local
-entries.
+entries before dispatch and after awaited completion.
 
 ## ASP.NET Core registration
 
@@ -65,7 +65,8 @@ counters.
 ## Consistency boundary
 
 Respire rejects a stale read response when an invalidation races cache insertion. It also flushes
-on detected connection loss, reconnect, redirect, and cluster topology retirement. Like every
-server-assisted client cache, it cannot observe invalidations across an undetected network
-partition. Configure TCP keepalive or `ConnectionIdleReadTimeout`, and keep a finite local TTL,
-when bounded failure detection matters.
+after awaited local mutations and on detected connection loss, reconnect, redirect, and cluster
+topology retirement. `ASK` retries return their value without caching because Redis applies both
+`ASKING` and `CLIENT CACHING YES` to the next command. Like every server-assisted client cache, it
+cannot observe invalidations across an undetected network partition. Configure TCP keepalive or
+`ConnectionIdleReadTimeout`, and keep a finite local TTL, when bounded failure detection matters.

@@ -282,10 +282,7 @@ public class ClientSideCacheTests
         var commit = transaction.CommitAsync().AsTask();
         await WaitUntilAsync(() => server.CommandsSeen >= 5);
         var cache = client.Core.ClientCache!;
-        var key = new RespireKey("key");
-        var token = cache.BeginRead(in key);
-        var response = RespValue.BulkString("old"u8.ToArray());
-        cache.CompleteRead(in token, in response, allowInsert: true);
+        InsertCachedValue(cache, "key", "old");
         await Assert.That(cache.Count).IsEqualTo(1);
 
         await commit;
@@ -294,7 +291,7 @@ public class ClientSideCacheTests
     }
 
     [Test]
-    public async Task NativeScript_EagerlyFlushesCachedReads()
+    public async Task NativeScript_FencesCacheThroughCompletion()
     {
         await using var server = new FakeRespServer(
             HelloReply,
@@ -304,15 +301,129 @@ public class ClientSideCacheTests
             ":1\r\n"u8.ToArray(),
             FakeRespServer.OkReply,
             "$3\r\nnew\r\n"u8.ToArray());
+        server.DelayReply(4, 250);
         await using var client = await ConnectAsync(server);
 
         await client.GetStringAsync("key");
         var script = RespireScript.Create("return redis.call('DEL', KEYS[1])");
-        using var result = await client.Scripts.ExecuteAsync(script, ["key"]);
+        var execution = client.Scripts.ExecuteAsync(script, ["key"]).AsTask();
+        await WaitUntilAsync(() => server.CommandsSeen >= 5);
+        var cache = client.Core.ClientCache!;
+        await Assert.That(cache.Count).IsEqualTo(0);
+        InsertCachedValue(cache, "key", "old");
+
+        using var result = await execution;
 
         await Assert.That(result.AsInteger()).IsEqualTo(1);
-        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+        await Assert.That(cache.Count).IsEqualTo(0);
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("new");
+    }
+
+    [Test]
+    public async Task RawStoredProcedure_FencesCacheThroughCompletion()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$3\r\nold\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray());
+        server.DelayReply(4, 250);
+        await using var client = await ConnectAsync(server);
+
+        await client.GetStringAsync("key");
+        var execution = client.ExecuteAsync(
+            RespireCommands.Scripting.EVAL, ["return redis.call('DEL', KEYS[1])", 1, "key"]).AsTask();
+        await WaitUntilAsync(() => server.CommandsSeen >= 5);
+        var cache = client.Core.ClientCache!;
+        await Assert.That(cache.Count).IsEqualTo(0);
+        InsertCachedValue(cache, "key", "old");
+
+        using var result = await execution;
+
+        await Assert.That(result.AsInteger()).IsEqualTo(1);
+        await Assert.That(cache.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task BlockingMutation_FencesCacheThroughCompletion()
+    {
+        await using var server = new FakeRespServer(
+            2,
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$3\r\nold\r\n"u8.ToArray());
+        server.DelayReply(1, 250);
+        await using var client = await ConnectAsync(server);
+
+        await client.GetStringAsync("key");
+        var execution = client.ExecuteAsync(RespireCommands.List.BLPOP, ["key", 0]).AsTask();
+        await WaitUntilAsync(() => server.CommandsSeen >= 6);
+        var cache = client.Core.ClientCache!;
+        await Assert.That(cache.Count).IsEqualTo(0);
+        InsertCachedValue(cache, "key", "old");
+
+        using var result = await execution;
+
+        await Assert.That(cache.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task CorrectionScript_FencesCacheThroughCompletion()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$3\r\nold\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray());
+        server.DelayReply(4, 250);
+        await using var client = await ConnectAsync(server);
+
+        await client.GetStringAsync("key");
+        var script = RespireScript.Create("return redis.call('DEL', KEYS[1])");
+        var execution = client.ExecuteOnAllConnectionsAsync(script, ["key"], []).AsTask();
+        await WaitUntilAsync(() => server.CommandsSeen >= 5);
+        var cache = client.Core.ClientCache!;
+        await Assert.That(cache.Count).IsEqualTo(0);
+        InsertCachedValue(cache, "key", "old");
+
+        await execution;
+
+        await Assert.That(cache.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task TrackedScriptResponse_OwnsCompletionFence()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            ":123\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            "$3\r\nold\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray());
+        server.DelayReply(5, 250);
+        await using var client = await ConnectAsync(server);
+        await client.EnsureReliableCorrectionOrderingAsync();
+
+        await client.GetStringAsync("key");
+        var script = RespireScript.Create("return redis.call('DEL', KEYS[1])");
+        var execution = await client.StartTrackedScriptExecutionAsync(
+            script,
+            ["key"],
+            [],
+            CancellationToken.None);
+        await WaitUntilAsync(() => server.CommandsSeen >= 6);
+        var cache = client.Core.ClientCache!;
+        await Assert.That(cache.Count).IsEqualTo(0);
+        InsertCachedValue(cache, "key", "old");
+
+        using var result = await execution.Response;
+
+        await Assert.That(result.AsInteger()).IsEqualTo(1);
+        await Assert.That(cache.Count).IsEqualTo(0);
     }
 
     [Test]
@@ -403,7 +514,7 @@ public class ClientSideCacheTests
     }
 
     [Test]
-    public async Task ClusterFlush_EagerlyClearsResidentEntries()
+    public async Task ClusterFlush_FencesCacheThroughCompletion()
     {
         await using var target = new FakeRespServer(
             HelloReply,
@@ -411,6 +522,7 @@ public class ClientSideCacheTests
             FakeRespServer.OkReply,
             "$5\r\nvalue\r\n"u8.ToArray(),
             FakeRespServer.OkReply);
+        target.DelayReply(4, 250);
         var topology = Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
         await using var seed = new FakeRespServer(
@@ -428,10 +540,50 @@ public class ClientSideCacheTests
         await client.GetStringAsync("key");
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
 
-        await client.Server.FlushDatabaseAsync();
+        var flush = client.Server.FlushDatabaseAsync().AsTask();
+        await WaitUntilAsync(() => target.CommandsSeen >= 5);
+        await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
+        InsertCachedValue(client.Core.ClientCache!, "key", "value");
+
+        await flush;
 
         await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
         await Assert.That(target.ReceivedCommands[^1]).IsEqualTo("FLUSHDB");
+    }
+
+    [Test]
+    public async Task RawClusterWideCommand_FencesCacheThroughCompletion()
+    {
+        await using var target = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$5\r\nvalue\r\n"u8.ToArray(),
+            FakeRespServer.OkReply);
+        target.DelayReply(4, 250);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
+        await using var seed = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+            ClientSideCache = new(),
+        });
+
+        await client.GetStringAsync("key");
+        var flush = client.ExecuteAsync(RespireCommands.Scripting.SCRIPT_FLUSH).AsTask();
+        await WaitUntilAsync(() => target.CommandsSeen >= 5);
+        var cache = client.Core.ClientCache!;
+        await Assert.That(cache.Count).IsEqualTo(0);
+        InsertCachedValue(cache, "key", "value");
+
+        using var result = await flush;
+
+        await Assert.That(cache.Count).IsEqualTo(0);
     }
 
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server)
@@ -441,6 +593,16 @@ public class ClientSideCacheTests
             Connections = 1,
             ClientSideCache = new(),
         });
+
+    private static void InsertCachedValue(
+        ClientSideCacheCoordinator cache,
+        RespireKey key,
+        string value)
+    {
+        var token = cache.BeginRead(in key);
+        var response = RespValue.BulkString(Encoding.UTF8.GetBytes(value));
+        cache.CompleteRead(in token, in response, allowInsert: true);
+    }
 
     private static async Task WaitUntilAsync(Func<bool> condition)
     {

@@ -78,16 +78,18 @@ Both in-flight response slots are reserved before either frame is written. A poo
 source validates the prelude, drains both replies, and returns only the read response. No other
 producer can interleave a command between `CLIENT CACHING YES` and its read.
 
-For an `ASK` redirect, three commands are appended atomically on the target node:
+For an `ASK` redirect, the retry is intentionally not cached. Both `ASKING` and
+`CLIENT CACHING YES` apply to the next command, so they cannot safely prefix the same read.
+Respire appends only:
 
 ```text
 ASKING
-CLIENT CACHING YES
 GET <resolved-key>
 ```
 
-`MOVED` and `ASK` advance the continuity epoch before retrying. Every discovered cluster node is
-created with the same RESP3 push handler and tracking handshake.
+`MOVED` retries remain cacheable on the authoritative node. Both `MOVED` and `ASK` advance the
+continuity epoch before retrying. Every discovered cluster node is created with the same RESP3
+push handler and tracking handshake.
 
 `OPTIN` limits Redis tracking memory and push traffic to actual cache misses. RESP3 invalidations
 remain on the command connection that performed the read, preserving server wire order without a
@@ -109,9 +111,11 @@ Thus an invalidation that races a response can never be undone by stale insertio
 timeout, protocol failure, redirect, and conversion failure release the in-flight token without
 publishing a value.
 
-Local single-key mutations invalidate their resolved primary key before sending. Commands whose
-dependencies cannot be proven, raw commands, scripts, batches, and transactions conservatively
-swap out the entire store. Redis pushes remain authoritative for mutations from other clients.
+Local single-key mutations invalidate their resolved primary key before sending and after reply
+completion. Commands whose dependencies cannot be proven, raw commands, scripts, blocking
+commands, cluster-wide mutations, batches, and transactions conservatively swap out the entire
+store before dispatch and again when their awaited execution finishes. Completion fences also run
+on error and cancellation. Redis pushes remain authoritative for mutations from other clients.
 
 ## Continuity and failure behavior
 

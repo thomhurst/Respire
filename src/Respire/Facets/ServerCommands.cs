@@ -316,20 +316,32 @@ internal sealed class ServerCommands(RespireClient client) : IServerCommands
         byte[] command,
         CancellationToken cancellationToken)
     {
-        client.Core.ClientCache?.FlushForUnknownCommand();
-        var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var connection in connections)
+        var cache = client.Core.ClientCache;
+        var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
+        try
         {
-            var reply = await client.SendOnConnectionAsync(
-                    operation, connection, new RawCommand(command), cancellationToken)
+            var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken)
                 .ConfigureAwait(false);
-            try
+            foreach (var connection in connections)
             {
-                ResponseReader.ExpectOk(in reply);
+                var reply = await client.SendOnConnectionAsync(
+                        operation, connection, new RawCommand(command), cancellationToken)
+                    .ConfigureAwait(false);
+                try
+                {
+                    ResponseReader.ExpectOk(in reply);
+                }
+                finally
+                {
+                    reply.Dispose();
+                }
             }
-            finally
+        }
+        finally
+        {
+            if (mutationFence.IsRequired)
             {
-                reply.Dispose();
+                cache!.CompleteMutation(in mutationFence);
             }
         }
     }
