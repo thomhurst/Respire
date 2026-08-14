@@ -337,6 +337,11 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         }
         finally
         {
+            if (_ops.Count != 0)
+            {
+                core.ClientCache?.FlushForUnknownCommand();
+            }
+
             try
             {
                 await ReleaseAsync(returnWatchConnection).ConfigureAwait(false);

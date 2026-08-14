@@ -205,6 +205,35 @@ public class ClientSideCacheTests
     }
 
     [Test]
+    public async Task BroadMutationCompletion_RejectsReadStartedAfterFlush()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$3\r\nold\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$3\r\nold\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            "$3\r\nnew\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+
+        await client.GetStringAsync("key");
+        server.MinimumCommandsBeforeReply = 3;
+        var mutation = client.Strings.SetManyAsync(("key", "new"), ("other", "value")).AsTask();
+        await WaitUntilAsync(() => server.CommandsSeen >= 5);
+        var racingRead = client.GetStringAsync("key").AsTask();
+
+        await mutation;
+        await Assert.That(await racingRead).IsEqualTo("old");
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+
+        server.MinimumCommandsBeforeReply = 1;
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("new");
+    }
+
+    [Test]
     public async Task BatchCompletion_RejectsReadStartedDuringExecution()
     {
         await using var server = new FakeRespServer(
@@ -233,6 +262,35 @@ public class ClientSideCacheTests
 
         server.MinimumCommandsBeforeReply = 1;
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("new");
+    }
+
+    [Test]
+    public async Task TransactionCompletion_FlushesEntriesInsertedDuringExecution()
+    {
+        await using var server = new FakeRespServer(
+            2,
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "+QUEUED\r\n"u8.ToArray(),
+            "*1\r\n+OK\r\n"u8.ToArray());
+        server.DelayReply(4, 250);
+        await using var client = await ConnectAsync(server);
+        await using var transaction = client.CreateTransaction();
+        _ = transaction.Strings.Set("key", "new");
+
+        var commit = transaction.CommitAsync().AsTask();
+        await WaitUntilAsync(() => server.CommandsSeen >= 5);
+        var cache = client.Core.ClientCache!;
+        var key = new RespireKey("key");
+        var token = cache.BeginRead(in key);
+        var response = RespValue.BulkString("old"u8.ToArray());
+        cache.CompleteRead(in token, in response, allowInsert: true);
+        await Assert.That(cache.Count).IsEqualTo(1);
+
+        await commit;
+
+        await Assert.That(cache.Count).IsEqualTo(0);
     }
 
     [Test]

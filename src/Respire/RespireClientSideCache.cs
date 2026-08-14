@@ -174,23 +174,35 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
         RespireTelemetry.ClientCacheInvalidations.Add(1);
     }
 
-    internal RespireKey? BeforeCommand<TCommand>(string operation, in TCommand command)
+    internal MutationFence BeforeCommand<TCommand>(string operation, in TCommand command)
         where TCommand : struct, IRespCommand
     {
         if (IsReadOnly(operation))
         {
-            return null;
+            return default;
         }
 
         if (IsSingleKeyMutation(operation) && command.TryGetPrimaryKey(out var primaryKey))
         {
             var key = primaryKey.AsKey().Snapshot();
             Invalidate(in key);
-            return key;
+            return new MutationFence(key, FlushAll: false);
         }
 
         Flush(continuityLost: false);
-        return null;
+        return new MutationFence(Key: null, FlushAll: true);
+    }
+
+    internal void CompleteMutation(in MutationFence fence)
+    {
+        if (fence.Key is { } key)
+        {
+            Invalidate(in key);
+        }
+        else if (fence.FlushAll)
+        {
+            Flush(continuityLost: false);
+        }
     }
 
     internal void HandlePush(in RespValue push)
@@ -445,5 +457,10 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
         Invalidation,
         Capacity,
         Expiration,
+    }
+
+    internal readonly record struct MutationFence(RespireKey? Key, bool FlushAll)
+    {
+        internal bool IsRequired => Key is not null || FlushAll;
     }
 }

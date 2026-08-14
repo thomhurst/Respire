@@ -1473,7 +1473,7 @@ public sealed partial class RespireClient : IRespireClient
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         var cache = core.ClientCache;
-        var mutationKey = cache?.BeforeCommand(operation, in command);
+        var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
         ValueTask<RespValue> response;
         if (core.Cluster is { } cluster)
         {
@@ -1494,8 +1494,8 @@ public sealed partial class RespireClient : IRespireClient
             response = SendOnConnectionAsync(operation, connection, command, cancellationToken);
         }
 
-        return mutationKey is { } key
-            ? CompleteMutationAsync(response, cache!, key)
+        return mutationFence.IsRequired
+            ? CompleteMutationAsync(response, cache!, mutationFence)
             : response;
     }
 
@@ -1505,7 +1505,7 @@ public sealed partial class RespireClient : IRespireClient
     private static async ValueTask<TResult> CompleteMutationAsync<TResult>(
         ValueTask<TResult> response,
         ClientSideCacheCoordinator cache,
-        RespireKey key)
+        ClientSideCacheCoordinator.MutationFence fence)
     {
         try
         {
@@ -1513,7 +1513,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         finally
         {
-            cache.Invalidate(in key);
+            cache.CompleteMutation(in fence);
         }
     }
 
@@ -2788,12 +2788,12 @@ public sealed partial class RespireClient : IRespireClient
             // CommandTimeout is enforced by the connection's deadline sweep and covers the
             // Redis response, not user converter work (conversion runs at the caller).
             var cache = core.ClientCache;
-            var mutationKey = cache?.BeforeCommand(operation, in command);
+            var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
             var connection = core.Multiplexer.GetConnection();
             var response = connection.SendConvertedAsync(
                 in command, state, converter, transferOwnership, ct, operation);
-            return mutationKey is { } key
-                ? CompleteMutationAsync(response, cache!, key)
+            return mutationFence.IsRequired
+                ? CompleteMutationAsync(response, cache!, mutationFence)
                 : response;
         }
 
