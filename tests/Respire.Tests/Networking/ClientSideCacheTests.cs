@@ -537,6 +537,68 @@ public class ClientSideCacheTests
     }
 
     [Test]
+    public async Task OrdinaryClusterRedirect_FlushesCacheContinuity()
+    {
+        var slot = ClusterHash.GetSlot("key");
+        await using var target = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            ":3\r\n"u8.ToArray());
+        await using var seed = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            "*0\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            "$3\r\nold\r\n"u8.ToArray(),
+            Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+            ClientSideCache = new(),
+        });
+
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
+
+        await Assert.That(await client.Strings.LengthAsync("key")).IsEqualTo(3);
+
+        await Assert.That(client.ClientSideCache.Count).IsEqualTo(0);
+        await Assert.That(client.ClientSideCache.GetStatistics().ContinuityFlushes).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task ClusterFireAndForget_FencesCacheThroughCompletion()
+    {
+        await using var seed = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            "*0\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            "$3\r\nold\r\n"u8.ToArray(),
+            FakeRespServer.OkReply);
+        seed.DelayReply(5, 250);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+            ClientSideCache = new(),
+        });
+
+        await client.GetStringAsync("key");
+        var write = client.ExecuteFireAndForgetAsync(
+            RespireCommands.String.SET, "key", "new").AsTask();
+        await WaitUntilAsync(() => seed.CommandsSeen >= 6);
+        var cache = client.Core.ClientCache!;
+        await Assert.That(cache.Count).IsEqualTo(0);
+        InsertCachedValue(cache, "key", "old");
+
+        await write;
+
+        await Assert.That(cache.Count).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task ClusterFlush_FencesCacheThroughCompletion()
     {
         await using var target = new FakeRespServer(

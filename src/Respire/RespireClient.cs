@@ -1530,6 +1530,24 @@ public sealed partial class RespireClient : IRespireClient
     }
 
 #if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+#endif
+    private static async ValueTask CompleteMutationAsync(
+        ValueTask response,
+        ClientSideCacheCoordinator cache,
+        ClientSideCacheCoordinator.MutationFence fence)
+    {
+        try
+        {
+            await response.ConfigureAwait(false);
+        }
+        finally
+        {
+            cache.CompleteMutation(in fence);
+        }
+    }
+
+#if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
     private async ValueTask<RespValue> SendAfterConnectAsync<TCommand>(
@@ -1616,6 +1634,7 @@ public sealed partial class RespireClient : IRespireClient
             catch (RespireServerException error)
                 when (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.IsRedirect(error))
             {
+                _core.ClientCache?.FlushForContinuityLoss();
                 connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken)
                     .ConfigureAwait(false);
                 sendAsking = error.Code == RespireErrorCodes.Ask;
@@ -1691,11 +1710,15 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        core.ClientCache?.BeforeCommand(operation, in command);
+        var cache = core.ClientCache;
+        var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
         if (core.Cluster is { } cluster)
         {
-            return SendFireAndForgetClusterAsync(
+            var response = SendFireAndForgetClusterAsync(
                 operation, cluster, command, cancellationToken, storedProcedureName);
+            return mutationFence.IsRequired
+                ? CompleteMutationAsync(response, cache!, mutationFence)
+                : response;
         }
 
         if (!core.Multiplexer.IsInitialized)
@@ -2051,6 +2074,7 @@ public sealed partial class RespireClient : IRespireClient
                     response.Dispose();
                     if (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.IsRedirect(error))
                     {
+                        core.ClientCache?.FlushForContinuityLoss();
                         var redirectedPool = await cluster.GetRedirectDedicatedPoolAsync(
                                 error, connection, cancellationToken)
                             .ConfigureAwait(false);
