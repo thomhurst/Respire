@@ -285,6 +285,10 @@ public sealed record RespireOptions
 
         if (ClientSideCache is { } cache)
         {
+            Require(
+                MaxInflightCommands >= 2,
+                nameof(MaxInflightCommands),
+                "must be at least two when client-side caching is enabled");
             Require(cache.MaxEntries >= 1, nameof(ClientSideCache), "must have MaxEntries of at least one");
             Require(cache.MaxSizeBytes >= 1, nameof(ClientSideCache), "must have MaxSizeBytes of at least one");
             Require(

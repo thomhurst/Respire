@@ -16,7 +16,7 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
 
         await Assert.That(await resources.Client.GetStringAsync("cache:key")).IsEqualTo("one");
         await resources.Database.StringSetAsync("cache:key", "two");
-        await WaitForInvalidationAsync(resources.Client, 1);
+        await WaitForCacheEvictionAsync(resources.Client);
 
         await Assert.That(await resources.Client.GetStringAsync("cache:key")).IsEqualTo("two");
         await Assert.That(resources.Client.ClientSideCache!.GetStatistics().Hits).IsEqualTo(0);
@@ -31,7 +31,7 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
         await Assert.That(await resources.Client.GetStringAsync("cache:missing")).IsNull();
         await Assert.That(await resources.Client.GetStringAsync("cache:missing")).IsNull();
         await resources.Database.StringSetAsync("cache:missing", "created");
-        await WaitForInvalidationAsync(resources.Client, 1);
+        await WaitForCacheEvictionAsync(resources.Client);
 
         await Assert.That(await resources.Client.GetStringAsync("cache:missing")).IsEqualTo("created");
     }
@@ -105,8 +105,8 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
         throw new InvalidOperationException($"Redis client '{clientName}' was not found.");
     }
 
-    private static Task WaitForInvalidationAsync(RespireClient client, long count)
-        => WaitUntilAsync(() => client.ClientSideCache!.GetStatistics().Invalidations >= count);
+    private static Task WaitForCacheEvictionAsync(RespireClient client)
+        => WaitUntilAsync(() => client.ClientSideCache!.Count == 0);
 
     private static async Task WaitUntilAsync(Func<bool> condition)
     {

@@ -18,8 +18,8 @@ string? greeting = await redis.GetStringAsync("greeting");
 
 :::warning Pre-release
 
-Respire's public API may change. Cluster routing and Sentinel primary discovery are available;
-automatic Sentinel failover and RESP3 client-side caching remain roadmap items. See the
+Respire's public API may change. Cluster routing, Sentinel primary discovery, and bounded RESP3
+client-side caching for `GET` and `MGET` are available; automatic Sentinel failover remains a roadmap item. See the
 [roadmap](./roadmap).
 
 :::

@@ -26,6 +26,24 @@ public class ClientSideCacheCoordinatorTests
     }
 
     [Test]
+    public async Task ConcurrentInserts_DoNotEscapeEntryBound()
+    {
+        for (var iteration = 0; iteration < 100; iteration++)
+        {
+            var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions
+            {
+                MaxEntries = 1,
+                MaxSizeBytes = 1_000_000,
+                TimeToLive = null,
+            });
+
+            Parallel.For(0, 32, index => Insert(cache, $"key:{index}", "value"));
+
+            await Assert.That(cache.Count).IsLessThanOrEqualTo(1);
+        }
+    }
+
+    [Test]
     public async Task OversizedValue_IsReturnedButNotStored()
     {
         var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions

@@ -126,10 +126,10 @@ public class ServiceCollectionTests(RedisTestContainer fixture)
         });
 
         await using var provider = services.BuildServiceProvider();
-        _ = provider.GetRequiredService<IDistributedCache>();
+        var cache = (RespireDistributedCache)provider.GetRequiredService<IDistributedCache>();
 
-        // Resolution validates and constructs the RESP3 tracking-enabled owned client.
-        await Assert.That(provider.GetRequiredService<IDistributedCache>()).IsNotNull();
+        await Assert.That(cache.OwnedClientOptions).IsNotNull();
+        await Assert.That(cache.OwnedClientOptions!.ClientSideCache!.MaxEntries).IsEqualTo(123);
     }
 
     [Test]

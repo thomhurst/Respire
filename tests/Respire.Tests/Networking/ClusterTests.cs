@@ -32,6 +32,19 @@ public class ClusterTests
     }
 
     [Test]
+    public async Task MGet_RejectsCrossSlotKeysLocallyWithoutClientCache()
+    {
+        await using var client = CreateLazyClusterClient();
+
+        var error = await Assert.That(async () =>
+                await client.Strings.GetManyAsync("{first}key", "{second}key"))
+            .ThrowsExactly<RespireServerException>();
+
+        await Assert.That(error!.Code).IsEqualTo("CROSSSLOT");
+        await Assert.That(error.CommandName).IsEqualTo("MGET");
+    }
+
+    [Test]
     public async Task RemovalLeaseKey_UsesRequestedHashSlot()
     {
         var keys = new RespireKey[]

@@ -1111,7 +1111,8 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken,
         ResponseConverter<RespireClient, TResult> converter)
     {
-        if (_core.ClientCache is not { } cache || keys.Length == 0)
+        var cache = _core.ClientCache;
+        if (keys.Length == 0)
         {
             return ConvertResponseAsync(
                 "MGET",
@@ -1131,15 +1132,18 @@ public sealed partial class RespireClient : IRespireClient
                 });
         }
 
-        var resolvedKeys = new RespireKey[keys.Length];
-        var result = new TResult[keys.Length];
-        var missingIndexes = new int[keys.Length];
-        var missingCount = 0;
+        var resolvedKeys = cache is null ? null : new RespireKey[keys.Length];
+        var arguments = new RespireValue[keys.Length];
         int? clusterSlot = null;
         for (var i = 0; i < keys.Length; i++)
         {
             var resolvedKey = ResolveKey(keys[i]);
-            resolvedKeys[i] = resolvedKey;
+            if (resolvedKeys is not null)
+            {
+                resolvedKeys[i] = resolvedKey;
+            }
+
+            arguments[i] = resolvedKey.AsValue();
             if (_core.Cluster is not null)
             {
                 if (clusterSlot is { } expectedSlot && resolvedKey.ClusterSlot != expectedSlot)
@@ -1152,7 +1156,30 @@ public sealed partial class RespireClient : IRespireClient
             }
         }
 
-        for (var i = 0; i < resolvedKeys.Length; i++)
+        if (cache is null)
+        {
+            return ConvertResponseAsync(
+                "MGET",
+                new CmdN(Verbs.MGet, arguments),
+                cancellationToken,
+                this,
+                (RespireClient client, in RespValue response) =>
+                {
+                    var values = response.AsArray();
+                    var converted = new TResult[values.Length];
+                    for (var i = 0; i < values.Length; i++)
+                    {
+                        converted[i] = converter(client, in values[i]);
+                    }
+
+                    return converted;
+                });
+        }
+
+        var result = new TResult[keys.Length];
+        var missingIndexes = new int[keys.Length];
+        var missingCount = 0;
+        for (var i = 0; i < resolvedKeys!.Length; i++)
         {
             ref readonly var resolvedKey = ref resolvedKeys[i];
             if (cache.TryGet(in resolvedKey, out var cached))
@@ -1190,10 +1217,15 @@ public sealed partial class RespireClient : IRespireClient
         var token = cache.BeginRead(in resolvedKey);
         var response = default(RespValue);
         var released = false;
-        Action? onRedirect = null;
+        var allowInsert = true;
+        Action<bool>? onRedirect = null;
         if (_core.Cluster is not null)
         {
-            onRedirect = () => token = cache.RebaseRead(in token);
+            onRedirect = cacheable =>
+            {
+                token = cache.RebaseRead(in token);
+                allowInsert = cacheable;
+            };
         }
 
         try
@@ -1201,7 +1233,7 @@ public sealed partial class RespireClient : IRespireClient
             response = await SendTrackedAsync(
                 "GET", command, cancellationToken, onRedirect).ConfigureAwait(false);
             released = true;
-            cache.CompleteRead(in token, in response, allowInsert: true);
+            cache.CompleteRead(in token, in response, allowInsert);
             return converter(this, in response);
         }
         finally
@@ -1238,15 +1270,18 @@ public sealed partial class RespireClient : IRespireClient
 
         var response = default(RespValue);
         var completed = 0;
-        Action? onRedirect = null;
+        var allowInsert = true;
+        Action<bool>? onRedirect = null;
         if (_core.Cluster is not null)
         {
-            onRedirect = () =>
+            onRedirect = cacheable =>
             {
                 for (var i = 0; i < tokens.Length; i++)
                 {
                     tokens[i] = cache.RebaseRead(in tokens[i]);
                 }
+
+                allowInsert = cacheable;
             };
         }
 
@@ -1265,7 +1300,7 @@ public sealed partial class RespireClient : IRespireClient
             {
                 var index = completed;
                 ref readonly var value = ref values[index];
-                cache.CompleteRead(in tokens[index], in value, allowInsert: true);
+                cache.CompleteRead(in tokens[index], in value, allowInsert);
                 completed++;
                 result[missingIndexes[index]] = converter(this, in value);
             }
@@ -1287,7 +1322,7 @@ public sealed partial class RespireClient : IRespireClient
         string operation,
         TCommand command,
         CancellationToken cancellationToken,
-        Action? onRedirect = null)
+        Action<bool>? onRedirect = null)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -1317,7 +1352,7 @@ public sealed partial class RespireClient : IRespireClient
         ClusterRouter cluster,
         TCommand command,
         CancellationToken cancellationToken,
-        Action? onRedirect)
+        Action<bool>? onRedirect)
         where TCommand : struct, IRespCommand
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
@@ -1341,10 +1376,10 @@ public sealed partial class RespireClient : IRespireClient
             }
 
             _core.ClientCache?.FlushForContinuityLoss();
-            onRedirect?.Invoke();
             connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken)
                 .ConfigureAwait(false);
             sendAsking = error.Code == RespireErrorCodes.Ask;
+            onRedirect?.Invoke(!sendAsking);
         }
     }
 
@@ -1371,7 +1406,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         if (sendAsking)
         {
-            return ClusterRouter.SendTrackedAskingAsync(
+            return ClusterRouter.SendAskingAsync(
                 connection, in command, cancellationToken, operation);
         }
 
@@ -2092,6 +2127,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        core.ClientCache?.FlushForUnknownCommand();
         if (core.Cluster is { } cluster)
         {
             var arguments = tail[1..];
@@ -2153,6 +2189,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        core.ClientCache?.FlushForUnknownCommand();
         var requiresIdentity = requireReliableCorrectionOrdering
             || RequiresReliableCorrectionOrdering(cancellationToken);
         var tail = BuildScriptTail(keys, args);

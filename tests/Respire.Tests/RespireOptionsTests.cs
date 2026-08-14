@@ -35,6 +35,9 @@ public class RespireOptionsTests
     [Arguments(0L, 1L, 1)]
     [Arguments(1L, 0L, 1)]
     [Arguments(1L, 1L, 0)]
+    [Arguments(-1L, 1L, 1)]
+    [Arguments(1L, -1L, 1)]
+    [Arguments(1L, 1L, -1)]
     public async Task ClientSideCache_RejectsInvalidBounds(
         long maxEntries,
         long maxSizeBytes,
@@ -48,6 +51,19 @@ public class RespireOptionsTests
                 MaxSizeBytes = maxSizeBytes,
                 TimeToLive = TimeSpan.FromMilliseconds(ttlMilliseconds),
             },
+        };
+
+        await Assert.That(() => RespireClient.Create(options))
+            .ThrowsExactly<RespireConfigurationException>();
+    }
+
+    [Test]
+    public async Task ClientSideCache_RequiresTwoInflightSlots()
+    {
+        var options = ValidOptions() with
+        {
+            MaxInflightCommands = 1,
+            ClientSideCache = new(),
         };
 
         await Assert.That(() => RespireClient.Create(options))
@@ -79,10 +95,10 @@ public class RespireOptionsTests
         await Assert.That(() => RespireClient.Create(new RespireOptions { Endpoints = [] }))
             .ThrowsExactly<RespireConfigurationException>();
         await Assert.That(() => RespireClient.Create(new RespireOptions
-            {
-                Connections = 0,
-                Endpoints = { new RespireEndpoint("localhost") },
-            }))
+        {
+            Connections = 0,
+            Endpoints = { new RespireEndpoint("localhost") },
+        }))
             .ThrowsExactly<RespireConfigurationException>();
     }
 

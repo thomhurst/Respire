@@ -456,13 +456,13 @@ public sealed class CartService([FromKeyedServices("cache")] IRespireClient redi
 - Roadmap: `Respire.Testing` — in-memory `IRespireClient` fake for unit tests without a
   container; integration tests keep using real Redis via Testcontainers.
 
-## 18. Roadmap (designed-for, not v1)
+## 18. Delivery status and roadmap
 
-1. **RESP3-first internals**: HELLO 3, maps/doubles/booleans natively, push messages —
-   prerequisite for the next two.
-2. **Client-side caching**: RESP3 `CLIENT TRACKING` with bounded local storage and invalidation
-   pushes. The implementation design, including why options-level ownership supersedes the earlier
+1. **Delivered — client-side caching**: RESP3 `CLIENT TRACKING` with bounded local storage and
+   invalidation pushes for `GET` and `MGET`. The implementation design, including why options-level
+   ownership supersedes the earlier
    `WithLocalCache` sketch, lives in [CLIENT_SIDE_CACHING_DESIGN.md](CLIENT_SIDE_CACHING_DESIGN.md).
+2. **RESP3-first internals**: broader native RESP3 adoption for maps, doubles, and booleans.
 3. **Sentinel**: automatic primary discovery and failover. Redis Cluster already uses
    `Endpoints` as seeds and handles `CLUSTER SLOTS`, MOVED, ASK, and hash-slot validation.
 4. **Source-generated custom commands** (Refit-style) for modules (RedisJSON, Search):

@@ -375,7 +375,7 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         => GetManyAsync(keys, CancellationToken.None);
 
     public ValueTask<string?[]> GetManyAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
-        => client.Core.ClientCache is null
+        => client.Core.ClientCache is null && client.Core.Cluster is null
             ? client.NullableStringArrayAsync(
                 "MGET", new CmdN(Verbs.MGet, client.MapKeys(keys)), cancellationToken)
             : client.CachedGetManyAsync(
@@ -391,7 +391,7 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?[]> GetManyAsync<T>(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
-        => client.Core.ClientCache is null
+        => client.Core.ClientCache is null && client.Core.Cluster is null
             ? client.DeserializeNullableArrayAsync<T, CmdN>(
                 "MGET", new CmdN(Verbs.MGet, client.MapKeys(keys)), cancellationToken)
             : client.CachedGetManyAsync(

@@ -176,6 +176,28 @@ public class ClientSideCacheTests
     }
 
     [Test]
+    public async Task NativeScript_EagerlyFlushesCachedReads()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$3\r\nold\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            "$3\r\nnew\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+
+        await client.GetStringAsync("key");
+        var script = RespireScript.Create("return redis.call('DEL', KEYS[1])");
+        using var result = await client.Scripts.ExecuteAsync(script, ["key"]);
+
+        await Assert.That(result.AsInteger()).IsEqualTo(1);
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("new");
+    }
+
+    [Test]
     public async Task MGet_CachesPerKeyAndFetchesOnlyInvalidatedMisses()
     {
         await using var server = new FakeRespServer(
@@ -222,19 +244,25 @@ public class ClientSideCacheTests
     }
 
     [Test]
-    public async Task ClusterAskRedirect_AtomicallyTracksReadOnTarget()
+    public async Task ClusterAskRedirect_ReturnsReadWithoutCachingUntrackedTarget()
     {
         await using var target = new FakeRespServer(
             HelloReply,
             FakeRespServer.OkReply,
             FakeRespServer.OkReply,
+            "$5\r\nvalue\r\n"u8.ToArray(),
             FakeRespServer.OkReply,
-            "$5\r\nvalue\r\n"u8.ToArray());
+            "$5\r\nvalue\r\n"u8.ToArray())
+        {
+            MinimumCommandsBeforeReply = 2,
+        };
         var slot = ClusterHash.GetSlot("key");
         await using var seed = new FakeRespServer(
             HelloReply,
             FakeRespServer.OkReply,
             "*0\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{target.Port}\r\n"),
             FakeRespServer.OkReply,
             Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{target.Port}\r\n"));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
@@ -245,17 +273,14 @@ public class ClientSideCacheTests
         });
 
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
-        var seedCommands = seed.CommandsSeen;
-        var targetCommands = target.CommandsSeen;
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
-        await Assert.That(seed.CommandsSeen).IsEqualTo(seedCommands);
-        await Assert.That(target.CommandsSeen).IsEqualTo(targetCommands);
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
 
         await Assert.That(target.ReceivedCommands.Take(2)).IsEquivalentTo([
             "HELLO 3", "CLIENT TRACKING ON OPTIN",
         ]);
-        await Assert.That(target.ReceivedCommands.TakeLast(3)).IsEquivalentTo([
-            "ASKING", "CLIENT CACHING YES", "GET key",
+        await Assert.That(target.ReceivedCommands.Skip(2)).IsEquivalentTo([
+            "ASKING", "GET key", "ASKING", "GET key",
         ]);
     }
 

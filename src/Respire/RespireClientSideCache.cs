@@ -387,37 +387,47 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
 
         private void Trim()
         {
-            if ((Count <= _options.MaxEntries && SizeBytes <= _options.MaxSizeBytes)
-                || Interlocked.CompareExchange(ref _trimming, 1, 0) != 0)
+            while (IsOverCapacity)
             {
-                return;
-            }
-
-            try
-            {
-                while (Count > _options.MaxEntries || SizeBytes > _options.MaxSizeBytes)
+                if (Interlocked.CompareExchange(ref _trimming, 1, 0) != 0)
                 {
-                    var removed = false;
-                    foreach (var pair in _entries)
-                    {
-                        var key = pair.Key;
-                        Remove(in key, CacheRemoval.Capacity);
-                        removed = true;
-                        if (Count <= _options.MaxEntries && SizeBytes <= _options.MaxSizeBytes)
-                        {
-                            break;
-                        }
-                    }
+                    return;
+                }
 
-                    if (!removed)
+                try
+                {
+                    TrimToCapacity();
+                }
+                finally
+                {
+                    Volatile.Write(ref _trimming, 0);
+                }
+            }
+        }
+
+        private bool IsOverCapacity
+            => Count > _options.MaxEntries || SizeBytes > _options.MaxSizeBytes;
+
+        private void TrimToCapacity()
+        {
+            while (IsOverCapacity)
+            {
+                var removed = false;
+                foreach (var pair in _entries)
+                {
+                    var key = pair.Key;
+                    Remove(in key, CacheRemoval.Capacity);
+                    removed = true;
+                    if (!IsOverCapacity)
                     {
                         break;
                     }
                 }
-            }
-            finally
-            {
-                Volatile.Write(ref _trimming, 0);
+
+                if (!removed)
+                {
+                    return;
+                }
             }
         }
     }
