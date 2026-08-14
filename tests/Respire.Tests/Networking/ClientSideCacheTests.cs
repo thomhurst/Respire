@@ -309,6 +309,33 @@ public class ClientSideCacheTests
     }
 
     [Test]
+    public async Task CacheDisruptingConnectionCommands_AreRejectedBeforeSend()
+    {
+        await using var server = new FakeRespServer(HelloReply, FakeRespServer.OkReply);
+        await using var client = await ConnectAsync(server);
+        (RespireCommand Command, RespireValue[] Arguments)[] commands =
+        [
+            ("CLIENT TRACKING", ["OFF"]),
+            ("CLIENT", ["TRACKING", "OFF"]),
+            (RespireCommands.Connection.CLIENT_CACHING, ["YES"]),
+            ("HELLO", [2]),
+            ("RESET", []),
+            ("SELECT", [1]),
+        ];
+
+        foreach (var (command, arguments) in commands)
+        {
+            await Assert.That(async () =>
+                {
+                    using var result = await client.ExecuteAsync(command, arguments);
+                })
+                .ThrowsExactly<NotSupportedException>();
+        }
+
+        await Assert.That(server.CommandsSeen).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task CallerOwnedBinaryArguments_AreSnapshottedOnMiss()
     {
         await using var server = new FakeRespServer(

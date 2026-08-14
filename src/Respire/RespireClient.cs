@@ -741,6 +741,8 @@ public sealed partial class RespireClient : IRespireClient
         {
             "CONFIG" when candidate.EqualsAsciiIgnoreCase("GET") => "CONFIG GET",
             "CONFIG" when candidate.EqualsAsciiIgnoreCase("SET") => "CONFIG SET",
+            "CLIENT" when candidate.EqualsAsciiIgnoreCase("CACHING") => "CLIENT CACHING",
+            "CLIENT" when candidate.EqualsAsciiIgnoreCase("TRACKING") => "CLIENT TRACKING",
             "MEMORY" when candidate.EqualsAsciiIgnoreCase("USAGE") => "MEMORY USAGE",
             "OBJECT" when candidate.EqualsAsciiIgnoreCase("ENCODING") => "OBJECT ENCODING",
             "FUNCTION" when candidate.EqualsAsciiIgnoreCase("DELETE") => "FUNCTION DELETE",

@@ -76,6 +76,8 @@ unkeyed server state, and `TOUCH` are deliberately excluded. `SORT_RO` calls usi
 patterns are excluded because those patterns create dependencies the client cannot enumerate.
 Detailed `XPENDING` is excluded because its idle-duration field changes with time. Batches and
 transactions preserve their server execution semantics and do not consult the local cache.
+Commands that would break cache coherence by changing protocol, database, or tracking state
+(`HELLO`, `RESET`, `SELECT`, `CLIENT CACHING`, and `CLIENT TRACKING`) are rejected while caching is enabled.
 
 Cached entries hold immutable, deep-owned RESP values rather than deserialized objects. Therefore:
 

@@ -41,6 +41,8 @@ An oversized response is returned without being cached. `GetLeaseAsync` particip
 sharing lease ownership. Nondeterministic, random, probabilistic, blocking, script/function,
 time-series, Search, and unkeyed commands bypass caching; so do batches and transactions. Unknown
 mutations conservatively flush local entries before dispatch and after awaited completion.
+Respire rejects raw commands that would change protocol, database, or tracking state while this
+feature is enabled.
 
 ## ASP.NET Core registration
 

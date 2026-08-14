@@ -273,6 +273,13 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
     internal MutationFence BeforeCommand<TCommand>(string operation, in TCommand command)
         where TCommand : struct, IRespCommand
     {
+        if (DisruptsClientCacheTracking(operation, in command))
+        {
+            throw new NotSupportedException(
+                $"{operation} cannot execute while client-side caching is enabled because it changes " +
+                "the connection protocol, database, or Redis tracking state.");
+        }
+
         if (IsReadOnly(operation))
         {
             return default;
@@ -387,6 +394,21 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             "COMMAND COUNT" or "COMMAND LIST" or "CLIENT LIST" or "MEMORY STATS" or
             "PUBSUB" or "PUBSUB CHANNELS" or "PUBSUB NUMPAT" or "PUBSUB NUMSUB" or "PUBSUB SHARDCHANNELS" or
             "PUBSUB SHARDNUMSUB" or "ROLE" or "SLOWLOG GET" or "LATENCY LATEST" or "CONFIG GET";
+
+    private static bool DisruptsClientCacheTracking<TCommand>(string operation, in TCommand command)
+        where TCommand : struct, IRespCommand
+    {
+        if (operation is "CLIENT CACHING" or "CLIENT TRACKING" or "HELLO" or "RESET" or "SELECT")
+        {
+            return true;
+        }
+
+        return operation == "CLIENT"
+               && command.TryGetClientCacheKey(operation, out var query)
+               && query.ArgumentCount > 0
+               && (query.GetArgument(0).EqualsAsciiIgnoreCase("CACHING")
+                   || query.GetArgument(0).EqualsAsciiIgnoreCase("TRACKING"));
+    }
 
     // Mirrors Redis client-side-cache eligibility: keyed, read-only, deterministic, non-blocking,
     // and not a script/function, probabilistic structure, time series, or Search command.
