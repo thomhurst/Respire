@@ -167,6 +167,12 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
         }
     }
 
+    internal ReadOnlyMemory<byte> AsMemory()
+        => _type is RespDataType.SimpleString or RespDataType.BulkString
+            or RespDataType.Error or RespDataType.BulkError or RespDataType.BigNumber
+            ? _payload
+            : default;
+
     public string AsString()
     {
         return _type switch

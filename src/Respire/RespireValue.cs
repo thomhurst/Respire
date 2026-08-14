@@ -532,6 +532,23 @@ public readonly struct RespireValue : IEquatable<RespireValue>
         return WriteWirePayload(buffer);
     }
 
+    internal RespireKey AsKey()
+    {
+        if (_kind == Kind.String)
+        {
+            return new RespireKey(_string!);
+        }
+
+        if (_kind == Kind.Bytes)
+        {
+            return new RespireKey(_bytes);
+        }
+
+        var bytes = new byte[GetWireLength()];
+        WriteWirePayload(bytes);
+        return new RespireKey(bytes);
+    }
+
     internal int WriteWirePayload(Span<byte> destination)
     {
         switch (_kind)

@@ -9,6 +9,9 @@ namespace Respire;
 /// </summary>
 public interface IRespireClient : IAsyncDisposable
 {
+    /// <summary>Client-side cache diagnostics, or null when caching is disabled.</summary>
+    IRespireClientSideCache? ClientSideCache => null;
+
     /// <summary>The primary endpoint currently used by this client.</summary>
     RespireEndpoint Endpoint { get; }
 

@@ -6,7 +6,11 @@ const sidebars = {
     {
       type: 'category',
       label: 'Core concepts',
-      items: ['fundamentals/connections', 'fundamentals/values-and-serialization'],
+      items: [
+        'fundamentals/connections',
+        'fundamentals/client-side-caching',
+        'fundamentals/values-and-serialization',
+      ],
     },
     {
       type: 'category',

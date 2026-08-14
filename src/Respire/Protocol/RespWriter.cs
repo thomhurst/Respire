@@ -103,6 +103,13 @@ internal interface IRespCommand
 {
     void Write(ref RespWriter writer);
 
+    /// <summary>Returns the command's primary routing key when it is represented explicitly.</summary>
+    bool TryGetPrimaryKey(out RespireValue key)
+    {
+        key = default;
+        return false;
+    }
+
     /// <summary>
     /// Supplies a Redis Cluster hash slot when the command has a routing key. Custom commands
     /// may override this using <see cref="RespireKey.ClusterSlot"/>; the default lets a cluster

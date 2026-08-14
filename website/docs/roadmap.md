@@ -30,7 +30,7 @@ Respire is pre-release. Its core RESP2 client, typed command surface, pipelining
 | Redis Cluster gaps | Cluster routing is supported; `WATCH` transactions and sharded pub/sub remain unavailable in cluster mode |
 | Automatic Sentinel failover | Sentinel primary discovery is supported by `ConnectAsync`; lazy discovery and automatic re-discovery during failover are not supported |
 | RESP3-first internals | Protocol option exists; broader adoption remains planned |
-| Client-side caching | Tracking and invalidation not shipped |
+| Client-side caching | RESP3 server-assisted caching is available for `GET` and `MGET` |
 
 If one of these is a hard requirement today, use a mature client such as StackExchange.Redis.
 

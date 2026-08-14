@@ -53,6 +53,10 @@ public readonly struct RespireKey : IEquatable<RespireKey>
     internal RespireKey Snapshot()
         => _string is not null ? this : new RespireKey(_bytes.ToArray());
 
+    internal int WireLength => _string is not null
+        ? Encoding.UTF8.GetByteCount(_string)
+        : _bytes.Length;
+
     /// <summary>Returns a copy of this key with <paramref name="prefix"/> prepended.</summary>
     internal RespireKey Prepend(string prefix)
     {

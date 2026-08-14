@@ -184,6 +184,9 @@ public sealed partial class RespireClient : IRespireClient
     public bool IsConnected
         => !_core.Disposed && (_core.Cluster?.IsConnected ?? _core.Multiplexer.IsConnected);
 
+    /// <inheritdoc/>
+    public IRespireClientSideCache? ClientSideCache => _core.ClientCache;
+
     /// <summary>Raised when connection health changes, including endpoint and error context.</summary>
     public event Action<RespireConnectionStateChange>? ConnectionStateChanged
     {
@@ -1083,6 +1086,340 @@ public sealed partial class RespireClient : IRespireClient
         return _core.Options.Serializer.Deserialize<T>(value.AsSpan());
     }
 
+    internal ValueTask<TResult> CachedGetAsync<TResult>(
+        RespireKey resolvedKey,
+        CancellationToken cancellationToken,
+        ResponseConverter<RespireClient, TResult> converter)
+    {
+        var cache = _core.ClientCache;
+        var command = new Cmd1(Verbs.Get, resolvedKey.AsValue());
+        if (cache is null)
+        {
+            return ConvertResponseAsync("GET", command, cancellationToken, this, converter);
+        }
+
+        if (cache.TryGet(in resolvedKey, out var cached))
+        {
+            return new ValueTask<TResult>(converter(this, in cached));
+        }
+
+        return GetAndCacheAsync(resolvedKey, command, cache, cancellationToken, converter);
+    }
+
+    internal ValueTask<TResult[]> CachedGetManyAsync<TResult>(
+        ReadOnlySpan<RespireKey> keys,
+        CancellationToken cancellationToken,
+        ResponseConverter<RespireClient, TResult> converter)
+    {
+        if (_core.ClientCache is not { } cache || keys.Length == 0)
+        {
+            return ConvertResponseAsync(
+                "MGET",
+                new CmdN(Verbs.MGet, MapKeys(keys)),
+                cancellationToken,
+                this,
+                (RespireClient client, in RespValue response) =>
+                {
+                    var values = response.AsArray();
+                    var result = new TResult[values.Length];
+                    for (var i = 0; i < values.Length; i++)
+                    {
+                        result[i] = converter(client, in values[i]);
+                    }
+
+                    return result;
+                });
+        }
+
+        var resolvedKeys = new RespireKey[keys.Length];
+        var result = new TResult[keys.Length];
+        var missingIndexes = new int[keys.Length];
+        var missingCount = 0;
+        int? clusterSlot = null;
+        for (var i = 0; i < keys.Length; i++)
+        {
+            var resolvedKey = ResolveKey(keys[i]);
+            resolvedKeys[i] = resolvedKey;
+            if (_core.Cluster is not null)
+            {
+                if (clusterSlot is { } expectedSlot && resolvedKey.ClusterSlot != expectedSlot)
+                {
+                    throw new RespireServerException(
+                        "CROSSSLOT Keys in request don't hash to the same slot", "MGET");
+                }
+
+                clusterSlot = resolvedKey.ClusterSlot;
+            }
+        }
+
+        for (var i = 0; i < resolvedKeys.Length; i++)
+        {
+            ref readonly var resolvedKey = ref resolvedKeys[i];
+            if (cache.TryGet(in resolvedKey, out var cached))
+            {
+                result[i] = converter(this, in cached);
+            }
+            else
+            {
+                missingIndexes[missingCount++] = i;
+            }
+        }
+
+        return missingCount == 0
+            ? new ValueTask<TResult[]>(result)
+            : GetManyAndCacheAsync(
+                resolvedKeys,
+                result,
+                missingIndexes,
+                missingCount,
+                cache,
+                cancellationToken,
+                converter);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<TResult> GetAndCacheAsync<TResult>(
+        RespireKey resolvedKey,
+        Cmd1 command,
+        ClientSideCacheCoordinator cache,
+        CancellationToken cancellationToken,
+        ResponseConverter<RespireClient, TResult> converter)
+    {
+        var token = cache.BeginRead(in resolvedKey);
+        var response = default(RespValue);
+        var released = false;
+        Action? onRedirect = null;
+        if (_core.Cluster is not null)
+        {
+            onRedirect = () => token = cache.RebaseRead(in token);
+        }
+
+        try
+        {
+            response = await SendTrackedAsync(
+                "GET", command, cancellationToken, onRedirect).ConfigureAwait(false);
+            released = true;
+            cache.CompleteRead(in token, in response, allowInsert: true);
+            return converter(this, in response);
+        }
+        finally
+        {
+            if (!released)
+            {
+                cache.CompleteRead(in token, in response, allowInsert: false);
+            }
+
+            response.Dispose();
+        }
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<TResult[]> GetManyAndCacheAsync<TResult>(
+        RespireKey[] resolvedKeys,
+        TResult[] result,
+        int[] missingIndexes,
+        int missingCount,
+        ClientSideCacheCoordinator cache,
+        CancellationToken cancellationToken,
+        ResponseConverter<RespireClient, TResult> converter)
+    {
+        var arguments = new RespireValue[missingCount];
+        var tokens = new ClientSideCacheCoordinator.ReadToken[missingCount];
+        for (var i = 0; i < missingCount; i++)
+        {
+            ref readonly var key = ref resolvedKeys[missingIndexes[i]];
+            arguments[i] = key.AsValue();
+            tokens[i] = cache.BeginRead(in key);
+        }
+
+        var response = default(RespValue);
+        var completed = 0;
+        Action? onRedirect = null;
+        if (_core.Cluster is not null)
+        {
+            onRedirect = () =>
+            {
+                for (var i = 0; i < tokens.Length; i++)
+                {
+                    tokens[i] = cache.RebaseRead(in tokens[i]);
+                }
+            };
+        }
+
+        try
+        {
+            response = await SendTrackedAsync(
+                "MGET", new CmdN(Verbs.MGet, arguments), cancellationToken, onRedirect).ConfigureAwait(false);
+            var values = response.AsArray();
+            if (values.Length != missingCount)
+            {
+                throw new RespireProtocolException(
+                    $"MGET returned {values.Length} values for {missingCount} keys.");
+            }
+
+            while (completed < missingCount)
+            {
+                var index = completed;
+                ref readonly var value = ref values[index];
+                cache.CompleteRead(in tokens[index], in value, allowInsert: true);
+                completed++;
+                result[missingIndexes[index]] = converter(this, in value);
+            }
+
+            return result;
+        }
+        finally
+        {
+            for (; completed < missingCount; completed++)
+            {
+                cache.CompleteRead(in tokens[completed], in response, allowInsert: false);
+            }
+
+            response.Dispose();
+        }
+    }
+
+    private async ValueTask<RespValue> SendTrackedAsync<TCommand>(
+        string operation,
+        TCommand command,
+        CancellationToken cancellationToken,
+        Action? onRedirect = null)
+        where TCommand : struct, IRespCommand
+    {
+        var core = _core;
+        ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (core.Cluster is { } cluster)
+        {
+            return await SendTrackedClusterAsync(
+                operation, cluster, command, cancellationToken, onRedirect).ConfigureAwait(false);
+        }
+
+        await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        var connection = core.Multiplexer.GetConnection();
+        var response = await SendTrackedOnConnectionAsync(
+            operation, connection, command, cancellationToken, sendAsking: false).ConfigureAwait(false);
+        if (response.IsError)
+        {
+            var error = ResponseReader.ServerError(in response, operation);
+            response.Dispose();
+            throw error;
+        }
+
+        return response;
+    }
+
+    private async ValueTask<RespValue> SendTrackedClusterAsync<TCommand>(
+        string operation,
+        ClusterRouter cluster,
+        TCommand command,
+        CancellationToken cancellationToken,
+        Action? onRedirect)
+        where TCommand : struct, IRespCommand
+    {
+        var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
+        var connection = await cluster.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
+        var sendAsking = false;
+        for (var attempt = 0; ; attempt++)
+        {
+            var response = await SendTrackedOnConnectionAsync(
+                operation, connection, command, cancellationToken, sendAsking).ConfigureAwait(false);
+
+            if (!response.IsError)
+            {
+                return response;
+            }
+
+            var error = ResponseReader.ServerError(in response, operation);
+            response.Dispose();
+            if (attempt >= ClusterRouter.RedirectLimit || !ClusterRouter.IsRedirect(error))
+            {
+                throw error;
+            }
+
+            _core.ClientCache?.FlushForContinuityLoss();
+            onRedirect?.Invoke();
+            connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken)
+                .ConfigureAwait(false);
+            sendAsking = error.Code == RespireErrorCodes.Ask;
+        }
+    }
+
+    private ValueTask<RespValue> SendTrackedOnConnectionAsync<TCommand>(
+        string operation,
+        RespireConnection connection,
+        TCommand command,
+        CancellationToken cancellationToken,
+        bool sendAsking)
+        where TCommand : struct, IRespCommand
+        => RespireTelemetry.IsEnabled
+            ? SendTrackedOnConnectionInstrumentedAsync(
+                operation, connection, command, cancellationToken, sendAsking)
+            : SendTrackedOnConnectionCoreAsync(
+                operation, connection, command, cancellationToken, sendAsking);
+
+    private static ValueTask<RespValue> SendTrackedOnConnectionCoreAsync<TCommand>(
+        string operation,
+        RespireConnection connection,
+        TCommand command,
+        CancellationToken cancellationToken,
+        bool sendAsking)
+        where TCommand : struct, IRespCommand
+    {
+        if (sendAsking)
+        {
+            return ClusterRouter.SendTrackedAskingAsync(
+                connection, in command, cancellationToken, operation);
+        }
+
+        var caching = new ClientCachingCommand();
+        return connection.SendValidatedPrefixedAsync(
+            in caching, in command, cancellationToken, operation);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<RespValue> SendTrackedOnConnectionInstrumentedAsync<TCommand>(
+        string operation,
+        RespireConnection connection,
+        TCommand command,
+        CancellationToken cancellationToken,
+        bool sendAsking)
+        where TCommand : struct, IRespCommand
+    {
+        var telemetry = RespireTelemetry.StartOperation(
+            operation, connection.Host, connection.Port, _core.Options.Database);
+        try
+        {
+            var response = await SendTrackedOnConnectionCoreAsync(
+                operation, connection, command, cancellationToken, sendAsking).ConfigureAwait(false);
+            var error = response.IsError ? ResponseReader.ServerError(in response, operation) : null;
+            telemetry.Complete(
+                operation,
+                connection.Host,
+                connection.Port,
+                _core.Options.Database,
+                error: error,
+                connection: connection);
+            return response;
+        }
+        catch (Exception ex)
+        {
+            telemetry.Complete(
+                operation,
+                connection.Host,
+                connection.Port,
+                _core.Options.Database,
+                error: ex,
+                connection: connection);
+            throw;
+        }
+    }
+
     /// <summary>The central send path: lazy connect, optional command timeout, telemetry, error translation.</summary>
     internal ValueTask<RespValue> SendAsync<TCommand>(
         string operation,
@@ -1100,6 +1437,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        core.ClientCache?.BeforeCommand(operation, in command);
         if (core.Cluster is { } cluster)
         {
             return SendClusterAsync(
@@ -1148,6 +1486,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        core.ClientCache?.FlushForUnknownCommand();
         if (core.Cluster is { } cluster)
         {
             return await SendClusterAsync(
@@ -1257,6 +1596,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        core.ClientCache?.BeforeCommand(operation, in command);
         if (core.Cluster is { } cluster)
         {
             return SendFireAndForgetClusterAsync(
@@ -2385,6 +2725,7 @@ public sealed partial class RespireClient : IRespireClient
         {
             // CommandTimeout is enforced by the connection's deadline sweep and covers the
             // Redis response, not user converter work (conversion runs at the caller).
+            core.ClientCache?.BeforeCommand(operation, in command);
             var connection = core.Multiplexer.GetConnection();
             return connection.SendConvertedAsync(
                 in command, state, converter, transferOwnership, ct, operation);

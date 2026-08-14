@@ -13,6 +13,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
     private static HashSet<RespireConnectionMultiplexer>? t_activeTopologyNodes;
 
     private readonly RespireOptions _options;
+    private readonly RespireConnectionOptions _commandConnectionOptions;
     private readonly RespireEndpoint[] _seeds;
     private readonly RespireConnectionMultiplexer _primary;
     private readonly Dictionary<RespireEndpoint, RespireConnectionMultiplexer> _nodes = [];
@@ -28,8 +29,17 @@ internal sealed class ClusterRouter : IAsyncDisposable
     private int _disposed;
 
     internal ClusterRouter(RespireOptions options, RespireConnectionMultiplexer primary)
+        : this(options, primary, options.ToConnectionOptions())
+    {
+    }
+
+    internal ClusterRouter(
+        RespireOptions options,
+        RespireConnectionMultiplexer primary,
+        RespireConnectionOptions commandConnectionOptions)
     {
         _options = options;
+        _commandConnectionOptions = commandConnectionOptions;
         _seeds = options.Endpoints.Count == 0
             ? [new RespireEndpoint("localhost")]
             : options.Endpoints.ToArray();
@@ -324,6 +334,18 @@ internal sealed class ClusterRouter : IAsyncDisposable
         where TCommand : struct, Respire.Protocol.IRespCommand
         => connection.SendPrefixedCheckedAsync(in Asking, in command, cancellationToken, commandName);
 
+    internal static ValueTask<Respire.Protocol.RespValue> SendTrackedAskingAsync<TCommand>(
+        RespireConnection connection,
+        in TCommand command,
+        CancellationToken cancellationToken,
+        string commandName)
+        where TCommand : struct, Respire.Protocol.IRespCommand
+    {
+        var caching = new ClientCachingCommand();
+        return connection.SendValidatedDoublePrefixedAsync(
+            in Asking, in caching, in command, cancellationToken, commandName);
+    }
+
     internal static ValueTask<Respire.Protocol.RespValue> SendAskingUncheckedAsync<TCommand>(
         RespireConnection connection,
         in TCommand command,
@@ -561,7 +583,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 endpoint.Host,
                 endpoint.Port,
                 _options.Connections,
-                _options.ToConnectionOptions(),
+                _commandConnectionOptions,
                 _options.CreateLogger($"Respire.Cluster.{endpoint.Host}:{endpoint.Port}"));
             if (observe)
             {

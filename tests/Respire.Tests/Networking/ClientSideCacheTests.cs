@@ -1,0 +1,278 @@
+using Respire.Commands;
+using Respire.Networking;
+using Respire.Protocol;
+using Respire.Internal;
+using System.Text;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+
+namespace Respire.Tests.Networking;
+
+public class ClientSideCacheTests
+{
+    private static readonly byte[] HelloReply = "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
+
+    [Test]
+    public async Task ClientCachingCommand_WritesExpectedFrame()
+    {
+        var buffer = new WriteBuffer(128);
+        var writer = new RespWriter(buffer);
+        new ClientCachingCommand().Write(ref writer);
+
+        await Assert.That(buffer.WrittenMemory.ToArray())
+            .IsEquivalentTo("*3\r\n$6\r\nCLIENT\r\n$7\r\nCACHING\r\n$3\r\nYES\r\n"u8.ToArray());
+        buffer.Release();
+    }
+
+    [Test]
+    public async Task ValidatedPrefix_WritesBothCommandsAndReturnsFinalReply()
+    {
+        await using var server = new FakeRespServer(
+            FakeRespServer.OkReply,
+            "$5\r\nvalue\r\n"u8.ToArray());
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1", server.Port);
+        var caching = new ClientCachingCommand();
+        var get = new Cmd1(Verbs.Get, "key");
+
+        var response = await connection.SendValidatedPrefixedAsync(
+            in caching, in get, commandName: "GET");
+
+        await Assert.That(response.AsString()).IsEqualTo("value");
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo([
+            "CLIENT CACHING YES",
+            "GET key",
+        ]);
+        response.Dispose();
+    }
+
+    [Test]
+    public async Task Get_MissIsTrackedAndSecondReadIsLocal()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$5\r\nvalue\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+
+        var first = await client.GetStringAsync("key");
+        await Assert.That(first).IsEqualTo("value");
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo([
+            "HELLO 3",
+            "CLIENT TRACKING ON OPTIN",
+            "CLIENT CACHING YES",
+            "GET key",
+        ]);
+        var statistics = client.ClientSideCache!.GetStatistics();
+        await Assert.That(statistics.Hits).IsEqualTo(1);
+        await Assert.That(statistics.Misses).IsEqualTo(1);
+        await Assert.That(statistics.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task ClientCachingError_IsSurfacedAndReadIsNotCached()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            "-ERR caching disabled\r\n"u8.ToArray(),
+            "$5\r\nvalue\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+
+        var error = await Assert.That(async () => await client.GetStringAsync("key"))
+            .ThrowsExactly<RespireServerException>();
+
+        await Assert.That(error!.CommandName).IsEqualTo("GET");
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+        await Assert.That(server.ReceivedCommands.TakeLast(2)).IsEquivalentTo([
+            "CLIENT CACHING YES", "GET key",
+        ]);
+    }
+
+    [Test]
+    public async Task InvalidationPush_EvictsKeyAndForcesTrackedRead()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$3\r\none\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            "$3\r\ntwo\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("one");
+        await server.SendRawAsync(">2\r\n+invalidate\r\n*1\r\n$3\r\nkey\r\n"u8.ToArray());
+        await WaitUntilAsync(() => client.ClientSideCache!.Count == 0);
+
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("two");
+        await Assert.That(server.ReceivedCommands.Count(static command => command == "GET key"))
+            .IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task NullInvalidation_FlushesAllEntries()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$1\r\na\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            "$1\r\nb\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+
+        await client.GetStringAsync("key");
+        await server.SendRawAsync(">2\r\n+invalidate\r\n_\r\n"u8.ToArray());
+        await WaitUntilAsync(() => client.ClientSideCache!.Count == 0);
+
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("b");
+    }
+
+    [Test]
+    public async Task InvalidationRacingReadResponse_PreventsStaleInsertion()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$3\r\nold\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            "$3\r\nnew\r\n"u8.ToArray());
+        server.DelayReply(3, 250);
+        await using var client = await ConnectAsync(server);
+
+        var read = client.GetStringAsync("key");
+        await WaitUntilAsync(() => server.CommandsSeen >= 4);
+        await server.SendRawAsync(">2\r\n+invalidate\r\n*1\r\n$3\r\nkey\r\n"u8.ToArray());
+
+        await Assert.That(await read).IsEqualTo("old");
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("new");
+    }
+
+    [Test]
+    public async Task LocalMutation_EagerlyInvalidatesBeforeReply()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$3\r\nold\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$3\r\nnew\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+
+        await client.GetStringAsync("key");
+        await client.SetAsync("key", "new");
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("new");
+    }
+
+    [Test]
+    public async Task MGet_CachesPerKeyAndFetchesOnlyInvalidatedMisses()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "*2\r\n$1\r\na\r\n$1\r\nb\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "*1\r\n$2\r\nb2\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+
+        await Assert.That(await client.Strings.GetManyAsync("a", "b"))
+            .IsEquivalentTo((string?[])["a", "b"]);
+        await Assert.That(await client.Strings.GetManyAsync("a", "b"))
+            .IsEquivalentTo((string?[])["a", "b"]);
+        await client.SetAsync("b", "b2");
+        await Assert.That(await client.Strings.GetManyAsync("a", "b"))
+            .IsEquivalentTo((string?[])["a", "b2"]);
+
+        await Assert.That(server.ReceivedCommands[^1]).IsEqualTo("MGET b");
+    }
+
+    [Test]
+    public async Task PrefixedViews_UseResolvedWireKeyIdentity()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$3\r\none\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            "$3\r\ntwo\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+        var first = client.WithKeyPrefix("a:");
+        var second = client.WithKeyPrefix("b:");
+
+        await Assert.That(await first.GetStringAsync("key")).IsEqualTo("one");
+        await Assert.That(await second.GetStringAsync("key")).IsEqualTo("two");
+        await Assert.That(await first.GetStringAsync("key")).IsEqualTo("one");
+
+        await Assert.That(server.ReceivedCommands).Contains("GET a:key");
+        await Assert.That(server.ReceivedCommands).Contains("GET b:key");
+    }
+
+    [Test]
+    public async Task ClusterAskRedirect_AtomicallyTracksReadOnTarget()
+    {
+        await using var target = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            FakeRespServer.OkReply,
+            "$5\r\nvalue\r\n"u8.ToArray());
+        var slot = ClusterHash.GetSlot("key");
+        await using var seed = new FakeRespServer(
+            HelloReply,
+            FakeRespServer.OkReply,
+            "*0\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
+            Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{target.Port}\r\n"));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+            ClientSideCache = new(),
+        });
+
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        var seedCommands = seed.CommandsSeen;
+        var targetCommands = target.CommandsSeen;
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        await Assert.That(seed.CommandsSeen).IsEqualTo(seedCommands);
+        await Assert.That(target.CommandsSeen).IsEqualTo(targetCommands);
+
+        await Assert.That(target.ReceivedCommands.Take(2)).IsEquivalentTo([
+            "HELLO 3", "CLIENT TRACKING ON OPTIN",
+        ]);
+        await Assert.That(target.ReceivedCommands.TakeLast(3)).IsEquivalentTo([
+            "ASKING", "CLIENT CACHING YES", "GET key",
+        ]);
+    }
+
+    private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server)
+        => RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1,
+            ClientSideCache = new(),
+        });
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!condition())
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+    }
+}

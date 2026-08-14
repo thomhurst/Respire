@@ -345,6 +345,12 @@ internal sealed class RespireConnection : IAsyncDisposable
                 new Commands.SelectCommand(options.Database), cancellationToken)));
         }
 
+        if (options.EnableClientTracking)
+        {
+            (pending ??= new(4)).Add(("CLIENT TRACKING", SendAsync(
+                new Commands.ClientTrackingCommand(), cancellationToken)));
+        }
+
         if (pending is null)
         {
             return;
@@ -615,9 +621,9 @@ internal sealed class RespireConnection : IAsyncDisposable
                 $"A transaction with {commandCount} commands needs {slotsNeeded} in-flight slots, but this connection allows {_inflight.Capacity} (see {nameof(RespireConnectionOptions)}.{nameof(RespireConnectionOptions.MaxInflightCommands)}).");
         }
 
-        return SendTransactionCoreAsync(
+        return SendMultiReplyCoreAsync(
             new TransactionCommand(serializedCommands), repliesBeforeFinal: commandCount + 1,
-            firstQueueReply: 1, cancellationToken);
+            firstQueueReply: 1, cancellationToken, commandName: "MULTI/EXEC");
     }
 
     /// <summary>
@@ -659,15 +665,67 @@ internal sealed class RespireConnection : IAsyncDisposable
             armCommandDeadline);
     }
 
-    private ValueTask<RespValue> SendTransactionCoreAsync<TCommand>(
+    /// <summary>
+    /// Appends a one-shot prelude and command atomically, retaining a prelude error instead of
+    /// discarding it. Both replies are drained before the returned operation completes.
+    /// </summary>
+    internal ValueTask<RespValue> SendValidatedPrefixedAsync<TPrefix, TCommand>(
+        in TPrefix prefix,
+        in TCommand command,
+        CancellationToken cancellationToken = default,
+        string commandName = "(command)")
+        where TPrefix : struct, IRespCommand
+        where TCommand : struct, IRespCommand
+    {
+        if (_inflight.Capacity < 2)
+        {
+            throw new InvalidOperationException(
+                $"A validated prefixed command needs 2 in-flight slots, but this connection allows {_inflight.Capacity}.");
+        }
+
+        return SendMultiReplyCoreAsync(
+            new PrefixedCommand<TPrefix, TCommand>(prefix, command),
+            repliesBeforeFinal: 1,
+            firstQueueReply: 0,
+            cancellationToken,
+            commandName);
+    }
+
+    /// <summary>Appends two validated preludes and a command under one write-gate hold.</summary>
+    internal ValueTask<RespValue> SendValidatedDoublePrefixedAsync<TFirst, TSecond, TCommand>(
+        in TFirst first,
+        in TSecond second,
+        in TCommand command,
+        CancellationToken cancellationToken = default,
+        string commandName = "(command)")
+        where TFirst : struct, IRespCommand
+        where TSecond : struct, IRespCommand
+        where TCommand : struct, IRespCommand
+    {
+        if (_inflight.Capacity < 3)
+        {
+            throw new InvalidOperationException(
+                $"A double-prefixed command needs 3 in-flight slots, but this connection allows {_inflight.Capacity}.");
+        }
+
+        return SendMultiReplyCoreAsync(
+            new DoublePrefixedCommand<TFirst, TSecond, TCommand>(first, second, command),
+            repliesBeforeFinal: 2,
+            firstQueueReply: 0,
+            cancellationToken,
+            commandName);
+    }
+
+    private ValueTask<RespValue> SendMultiReplyCoreAsync<TCommand>(
         in TCommand command,
         int repliesBeforeFinal,
         int firstQueueReply,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string commandName)
         where TCommand : struct, IRespCommand
     {
         var replyCount = repliesBeforeFinal + 1;
-        var source = TransactionPendingResponseSource.Rent(replyCount, firstQueueReply);
+        var source = MultiReplyPendingResponseSource.Rent(replyCount, firstQueueReply, commandName);
 
         bool enqueued;
         bool startedBatch;
@@ -684,7 +742,7 @@ internal sealed class RespireConnection : IAsyncDisposable
 
         if (!enqueued)
         {
-            return SendTransactionSlowAsync(
+            return SendMultiReplySlowAsync(
                 command, source, repliesBeforeFinal, replyCount, cancellationToken);
         }
 
@@ -1014,9 +1072,9 @@ internal sealed class RespireConnection : IAsyncDisposable
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
-    private async ValueTask<RespValue> SendTransactionSlowAsync<TCommand>(
+    private async ValueTask<RespValue> SendMultiReplySlowAsync<TCommand>(
         TCommand command,
-        TransactionPendingResponseSource source,
+        MultiReplyPendingResponseSource source,
         int repliesBeforeFinal,
         int replyCount,
         CancellationToken cancellationToken)
@@ -1754,14 +1812,48 @@ internal sealed class RespireConnection : IAsyncDisposable
     }
 
     /// <summary>Writes two RESP commands as one buffer append.</summary>
-    private readonly struct PrefixedCommand<TPrefix, TCommand>(TPrefix prefix, TCommand command) : IRespCommand
+    private readonly struct PrefixedCommand<TPrefix, TCommand> : IRespCommand
         where TPrefix : struct, IRespCommand
         where TCommand : struct, IRespCommand
     {
+        private readonly TPrefix _prefix;
+        private readonly TCommand _command;
+
+        public PrefixedCommand(TPrefix prefix, TCommand command)
+        {
+            _prefix = prefix;
+            _command = command;
+        }
+
         public void Write(ref RespWriter writer)
         {
-            prefix.Write(ref writer);
-            command.Write(ref writer);
+            _prefix.Write(ref writer);
+            _command.Write(ref writer);
+        }
+    }
+
+    /// <summary>Writes three RESP commands as one buffer append.</summary>
+    private readonly struct DoublePrefixedCommand<TFirst, TSecond, TCommand> : IRespCommand
+        where TFirst : struct, IRespCommand
+        where TSecond : struct, IRespCommand
+        where TCommand : struct, IRespCommand
+    {
+        private readonly TFirst _first;
+        private readonly TSecond _second;
+        private readonly TCommand _command;
+
+        public DoublePrefixedCommand(TFirst first, TSecond second, TCommand command)
+        {
+            _first = first;
+            _second = second;
+            _command = command;
+        }
+
+        public void Write(ref RespWriter writer)
+        {
+            _first.Write(ref writer);
+            _second.Write(ref writer);
+            _command.Write(ref writer);
         }
     }
 
@@ -2014,6 +2106,9 @@ internal sealed record RespireConnectionOptions
     /// <see cref="RespirePushHandler"/>). Set by the client's pub/sub hub.
     /// </summary>
     public RespirePushHandler? PushHandler { get; init; }
+
+    /// <summary>Enables CLIENT TRACKING ON OPTIN before this connection is published.</summary>
+    public bool EnableClientTracking { get; init; }
 
     /// <summary>Timeout for the initial TCP connect.</summary>
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(10);

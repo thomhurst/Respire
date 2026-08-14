@@ -22,6 +22,9 @@ internal readonly struct Cmd(Verb verb) : IRespCommand
 
 internal readonly struct Cmd1(Verb verb, RespireValue a1) : IRespCommand
 {
+    public bool TryGetPrimaryKey(out RespireValue key)
+        => CommandRouting.TryGetPrimaryKey(verb, 0, a1, out key);
+
     public bool TryGetClusterSlot(out int slot)
         => CommandRouting.TryGetClusterSlot(verb, 0, a1, out slot);
 
@@ -35,6 +38,10 @@ internal readonly struct Cmd1(Verb verb, RespireValue a1) : IRespCommand
 
 internal readonly struct Cmd2(Verb verb, RespireValue a1, RespireValue a2) : IRespCommand
 {
+    public bool TryGetPrimaryKey(out RespireValue key)
+        => CommandRouting.TryGetPrimaryKey(verb, 0, a1, out key)
+            || CommandRouting.TryGetPrimaryKey(verb, 1, a2, out key);
+
     public bool TryGetClusterSlot(out int slot)
         => CommandRouting.TryGetClusterSlot(verb, 0, a1, out slot)
             || CommandRouting.TryGetClusterSlot(verb, 1, a2, out slot);
@@ -50,6 +57,11 @@ internal readonly struct Cmd2(Verb verb, RespireValue a1, RespireValue a2) : IRe
 
 internal readonly struct Cmd3(Verb verb, RespireValue a1, RespireValue a2, RespireValue a3) : IRespCommand
 {
+    public bool TryGetPrimaryKey(out RespireValue key)
+        => CommandRouting.TryGetPrimaryKey(verb, 0, a1, out key)
+            || CommandRouting.TryGetPrimaryKey(verb, 1, a2, out key)
+            || CommandRouting.TryGetPrimaryKey(verb, 2, a3, out key);
+
     public bool TryGetClusterSlot(out int slot)
         => CommandRouting.TryGetClusterSlot(verb, 0, a1, out slot)
             || CommandRouting.TryGetClusterSlot(verb, 1, a2, out slot)
@@ -67,6 +79,12 @@ internal readonly struct Cmd3(Verb verb, RespireValue a1, RespireValue a2, Respi
 
 internal readonly struct Cmd4(Verb verb, RespireValue a1, RespireValue a2, RespireValue a3, RespireValue a4) : IRespCommand
 {
+    public bool TryGetPrimaryKey(out RespireValue key)
+        => CommandRouting.TryGetPrimaryKey(verb, 0, a1, out key)
+            || CommandRouting.TryGetPrimaryKey(verb, 1, a2, out key)
+            || CommandRouting.TryGetPrimaryKey(verb, 2, a3, out key)
+            || CommandRouting.TryGetPrimaryKey(verb, 3, a4, out key);
+
     public bool TryGetClusterSlot(out int slot)
         => CommandRouting.TryGetClusterSlot(verb, 0, a1, out slot)
             || CommandRouting.TryGetClusterSlot(verb, 1, a2, out slot)
@@ -86,6 +104,13 @@ internal readonly struct Cmd4(Verb verb, RespireValue a1, RespireValue a2, Respi
 
 internal readonly struct Cmd5(Verb verb, RespireValue a1, RespireValue a2, RespireValue a3, RespireValue a4, RespireValue a5) : IRespCommand
 {
+    public bool TryGetPrimaryKey(out RespireValue key)
+        => CommandRouting.TryGetPrimaryKey(verb, 0, a1, out key)
+            || CommandRouting.TryGetPrimaryKey(verb, 1, a2, out key)
+            || CommandRouting.TryGetPrimaryKey(verb, 2, a3, out key)
+            || CommandRouting.TryGetPrimaryKey(verb, 3, a4, out key)
+            || CommandRouting.TryGetPrimaryKey(verb, 4, a5, out key);
+
     public bool TryGetClusterSlot(out int slot)
         => CommandRouting.TryGetClusterSlot(verb, 0, a1, out slot)
             || CommandRouting.TryGetClusterSlot(verb, 1, a2, out slot)
@@ -108,6 +133,18 @@ internal readonly struct Cmd5(Verb verb, RespireValue a1, RespireValue a2, Respi
 /// <summary>VERB args… — fully dynamic argument list.</summary>
 internal readonly struct CmdN(Verb verb, RespireValue[] args) : IRespCommand
 {
+    public bool TryGetPrimaryKey(out RespireValue key)
+    {
+        if ((uint)verb.RoutingKeyIndex < (uint)args.Length)
+        {
+            key = args[verb.RoutingKeyIndex];
+            return true;
+        }
+
+        key = default;
+        return false;
+    }
+
     public bool TryGetClusterSlot(out int slot)
     {
         if ((uint)verb.RoutingKeyIndex < (uint)args.Length)
@@ -133,6 +170,24 @@ internal readonly struct CmdN(Verb verb, RespireValue[] args) : IRespCommand
 /// <summary>VERB fixed rest… (e.g. SADD key member…).</summary>
 internal readonly struct Cmd1N(Verb verb, RespireValue a1, RespireValue[] rest) : IRespCommand
 {
+    public bool TryGetPrimaryKey(out RespireValue key)
+    {
+        if (verb.RoutingKeyIndex == 0)
+        {
+            key = a1;
+            return true;
+        }
+
+        if ((uint)(verb.RoutingKeyIndex - 1) < (uint)rest.Length)
+        {
+            key = rest[verb.RoutingKeyIndex - 1];
+            return true;
+        }
+
+        key = default;
+        return false;
+    }
+
     public bool TryGetClusterSlot(out int slot)
     {
         if (verb.RoutingKeyIndex == 0)
@@ -163,6 +218,22 @@ internal readonly struct Cmd1N(Verb verb, RespireValue a1, RespireValue[] rest) 
 
 internal static class CommandRouting
 {
+    internal static bool TryGetPrimaryKey(
+        Verb verb,
+        int argumentIndex,
+        RespireValue argument,
+        out RespireValue key)
+    {
+        if (verb.RoutingKeyIndex == argumentIndex)
+        {
+            key = argument;
+            return true;
+        }
+
+        key = default;
+        return false;
+    }
+
     internal static bool TryGetClusterSlot(
         Verb verb,
         int argumentIndex,
@@ -182,6 +253,31 @@ internal static class CommandRouting
 /// <summary>VERB a1 a2 rest… (e.g. XACK key group id…).</summary>
 internal readonly struct Cmd2N(Verb verb, RespireValue a1, RespireValue a2, RespireValue[] rest) : IRespCommand
 {
+    public bool TryGetPrimaryKey(out RespireValue key)
+    {
+        var index = verb.RoutingKeyIndex;
+        if (index == 0)
+        {
+            key = a1;
+            return true;
+        }
+
+        if (index == 1)
+        {
+            key = a2;
+            return true;
+        }
+
+        if ((uint)(index - 2) < (uint)rest.Length)
+        {
+            key = rest[index - 2];
+            return true;
+        }
+
+        key = default;
+        return false;
+    }
+
     public bool TryGetClusterSlot(out int slot)
     {
         var index = verb.RoutingKeyIndex;
@@ -220,6 +316,18 @@ internal readonly struct Cmd2N(Verb verb, RespireValue a1, RespireValue a2, Resp
 /// <summary>An entire command whose tokens (verb included) are caller-supplied — the raw escape hatch.</summary>
 internal readonly struct DynamicCommand(RespireValue[] tokens, int routingKeyIndex) : IRespCommand
 {
+    public bool TryGetPrimaryKey(out RespireValue key)
+    {
+        if ((uint)routingKeyIndex < (uint)tokens.Length)
+        {
+            key = tokens[routingKeyIndex];
+            return true;
+        }
+
+        key = default;
+        return false;
+    }
+
     public bool TryGetClusterSlot(out int slot)
     {
         if ((uint)routingKeyIndex < (uint)tokens.Length)
@@ -388,6 +496,19 @@ internal static class DynamicCommandRouting
 /// <summary>A pre-encoded catalog command followed by caller-supplied arguments.</summary>
 internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] args) : IRespCommand
 {
+    public bool TryGetPrimaryKey(out RespireValue key)
+    {
+        var index = DynamicCommandRouting.GetCatalogRoutingKeyIndex(command.Name, args);
+        if ((uint)index < (uint)args.Length)
+        {
+            key = args[index];
+            return true;
+        }
+
+        key = default;
+        return false;
+    }
+
     public bool TryGetClusterSlot(out int slot)
     {
         var routingKeyIndex = DynamicCommandRouting.GetCatalogRoutingKeyIndex(command.Name, args);
@@ -414,6 +535,18 @@ internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] a
 /// <summary>MSETEX numkeys key value... options — routes by the first key after numkeys.</summary>
 internal readonly struct MSetExCommand(Verb verb, RespireValue[] args) : IRespCommand
 {
+    public bool TryGetPrimaryKey(out RespireValue key)
+    {
+        if (args.Length > 1)
+        {
+            key = args[1];
+            return true;
+        }
+
+        key = default;
+        return false;
+    }
+
     public bool TryGetClusterSlot(out int slot)
     {
         if (args.Length > 1)
@@ -443,6 +576,12 @@ internal readonly struct MSetExCommand(Verb verb, RespireValue[] args) : IRespCo
 /// </summary>
 internal readonly struct IncrementCommand(Verb one, Verb by, RespireValue key, long delta) : IRespCommand
 {
+    public bool TryGetPrimaryKey(out RespireValue primaryKey)
+    {
+        primaryKey = key;
+        return true;
+    }
+
     public bool TryGetClusterSlot(out int slot) => key.TryGetClusterSlot(out slot);
 
     public void Write(ref RespWriter writer)
@@ -467,6 +606,12 @@ internal readonly struct IncrementCommand(Verb one, Verb by, RespireValue key, l
 internal readonly struct SetCommand(
     RespireValue key, RespireValue value, RespireExpiry expiry, SetWhen when, bool returnOld) : IRespCommand
 {
+    public bool TryGetPrimaryKey(out RespireValue primaryKey)
+    {
+        primaryKey = key;
+        return true;
+    }
+
     public bool TryGetClusterSlot(out int slot) => key.TryGetClusterSlot(out slot);
 
     public void Write(ref RespWriter writer)
@@ -527,6 +672,12 @@ internal readonly struct SetCommand(
 /// <summary>GETEX key PX milliseconds | PXAT unix-milliseconds | PERSIST.</summary>
 internal readonly struct GetExCommand(RespireValue key, RespireExpiry expiry) : IRespCommand
 {
+    public bool TryGetPrimaryKey(out RespireValue primaryKey)
+    {
+        primaryKey = key;
+        return true;
+    }
+
     public bool TryGetClusterSlot(out int slot) => key.TryGetClusterSlot(out slot);
 
     public void Write(ref RespWriter writer)

@@ -19,6 +19,12 @@ public sealed class RespireCacheOptions : IOptions<RespireCacheOptions>
     public string? ConnectionString { get; set; }
 
     /// <summary>
+    /// Enables RESP3 server-assisted caching on a cache-owned Respire client. When this cache
+    /// uses a registered <see cref="IRespireClient"/>, configure caching on that client instead.
+    /// </summary>
+    public RespireClientSideCacheOptions? ClientSideCache { get; set; }
+
+    /// <summary>
     /// Prefix prepended to every cache key, so several apps (or caches) can share one Redis
     /// without colliding. Same semantics as the Microsoft Redis cache's InstanceName.
     /// </summary>

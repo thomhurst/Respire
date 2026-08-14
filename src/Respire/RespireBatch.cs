@@ -191,6 +191,10 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
             return new RespireBatchResult(0, null);
         }
 
+        // Batch commands bypass the client's per-command mutation classifier. Conservatively
+        // fence older reads before any queued operation can reach Redis.
+        core.ClientCache?.FlushForUnknownCommand();
+
         if (core.Cluster is not null)
         {
             var groups = new List<(int? Slot, List<Op> Operations)>();

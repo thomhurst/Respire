@@ -30,8 +30,12 @@ builder.Services.AddRespireDistributedCache(options =>
         CommandTimeout = TimeSpan.FromSeconds(2),
     };
     options.InstanceName = "myapp:";
+    options.ClientSideCache = new();
 });
 ```
+
+`ClientSideCache` configures a cache-owned Respire connection. If this registration reuses a
+shared `IRespireClient`, enable client-side caching when registering that client instead.
 
 The cache owns and disposes clients created from `ClientOptions` or `ConnectionString`. If neither
 is set, it uses a separately registered `IRespireClient` without taking ownership.

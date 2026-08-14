@@ -15,8 +15,8 @@ await redis.SetAsync("user:1", new User("Ada", 36));
 User? user = await redis.GetAsync<User>("user:1");
 ```
 
-> **Status:** Respire is pre-release, so its API may still change. Automatic Sentinel failover and
-> RESP3 client-side caching are on the [roadmap](docs/API_DESIGN.md#18-roadmap-designed-for-not-v1).
+> **Status:** Respire is pre-release, so its API may still change. See the
+> [roadmap](docs/API_DESIGN.md#18-roadmap-designed-for-not-v1) for remaining work.
 
 ## Why Respire?
 

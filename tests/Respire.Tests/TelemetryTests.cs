@@ -34,6 +34,28 @@ public class TelemetryTests
     }
 
     [Test]
+    public async Task ClientCache_EmitsHitMissInvalidationAndContinuityCounters()
+    {
+        using var capture = new TelemetryCapture();
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        var key = new RespireKey("key");
+
+        _ = cache.TryGet(in key, out _);
+        var token = cache.BeginRead(in key);
+        var response = Respire.Protocol.RespValue.BulkString("value"u8.ToArray());
+        cache.CompleteRead(in token, in response, allowInsert: true);
+        _ = cache.TryGet(in key, out _);
+        cache.Invalidate(in key);
+        cache.FlushForContinuityLoss();
+
+        var names = capture.Measurements.Select(static measurement => measurement.InstrumentName);
+        await Assert.That(names).Contains("respire.client_cache.hits");
+        await Assert.That(names).Contains("respire.client_cache.misses");
+        await Assert.That(names).Contains("respire.client_cache.invalidations");
+        await Assert.That(names).Contains("respire.client_cache.continuity_flushes");
+    }
+
+    [Test]
     public async Task Command_EmitsRedisSpanAndStableDurationMetric()
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.PongReply);
@@ -453,7 +475,8 @@ public class TelemetryTests
                         HistogramBucketBoundaries = ((Histogram<double>)instrument).Advice?.HistogramBucketBoundaries;
                         listener.EnableMeasurementEvents(instrument);
                     }
-                    else if (instrument.Name == "respire.pubsub.messages.dropped")
+                    else if (instrument.Name == "respire.pubsub.messages.dropped"
+                             || instrument.Name.StartsWith("respire.client_cache.", StringComparison.Ordinal))
                     {
                         listener.EnableMeasurementEvents(instrument);
                     }

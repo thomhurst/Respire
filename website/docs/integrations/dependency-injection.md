@@ -61,6 +61,7 @@ builder.Services.AddRespire(options =>
     options.Endpoints.Add(new RespireEndpoint("redis.internal"));
     options.CommandTimeout = TimeSpan.FromSeconds(2);
     options.Connections = 2;
+    options.UseClientSideCaching();
 });
 ```
 

@@ -460,8 +460,9 @@ public sealed class CartService([FromKeyedServices("cache")] IRespireClient redi
 
 1. **RESP3-first internals**: HELLO 3, maps/doubles/booleans natively, push messages —
    prerequisite for the next two.
-2. **Client-side caching**: `redis.WithLocalCache(options)` view using CLIENT TRACKING
-   invalidation pushes. Killer feature; the view seam (§12) already accommodates it.
+2. **Client-side caching**: RESP3 `CLIENT TRACKING` with bounded local storage and invalidation
+   pushes. The implementation design, including why options-level ownership supersedes the earlier
+   `WithLocalCache` sketch, lives in [CLIENT_SIDE_CACHING_DESIGN.md](CLIENT_SIDE_CACHING_DESIGN.md).
 3. **Sentinel**: automatic primary discovery and failover. Redis Cluster already uses
    `Endpoints` as seeds and handles `CLUSTER SLOTS`, MOVED, ASK, and hash-slot validation.
 4. **Source-generated custom commands** (Refit-style) for modules (RedisJSON, Search):
