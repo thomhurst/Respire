@@ -74,6 +74,7 @@ Commands marked with nondeterministic output (`DUMP`, relative TTL, the core cur
 commands, probabilistic structures, blocking reads, scripts/functions, time series, Search,
 unkeyed server state, and `TOUCH` are deliberately excluded. `SORT_RO` calls using `BY` or `GET`
 patterns are excluded because those patterns create dependencies the client cannot enumerate.
+`GEOSEARCH` with `COUNT ... ANY` is excluded because Redis may return an arbitrary early subset.
 Detailed `XPENDING` is excluded because its idle-duration field changes with time. Batches and
 transactions preserve their server execution semantics and do not consult the local cache.
 Commands that would break cache coherence by changing protocol, database, or tracking state

@@ -519,6 +519,12 @@ internal readonly struct GeoSearchCommand(
 
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey cacheKey)
     {
+        if (options.Any)
+        {
+            cacheKey = default;
+            return false;
+        }
+
         RespireValue[] arguments =
         [
             source,

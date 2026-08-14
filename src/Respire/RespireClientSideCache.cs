@@ -189,8 +189,13 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
         }
     }
 
-    internal QueryReadToken RebaseRead(string operation, in QueryRequest request)
-        => BeginRead(operation, in request);
+    internal QueryReadToken RebaseRead(in QueryReadToken token)
+        => new(
+            token.Query,
+            token.Dependencies,
+            Volatile.Read(ref _queryEpoch),
+            Volatile.Read(ref _continuityEpoch),
+            Volatile.Read(ref _store));
 
     internal ReadToken BeginRead(in RespireKey key)
     {
@@ -456,6 +461,11 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             return query.ArgumentCount >= 2;
         }
 
+        if (operation == "GEOSEARCH")
+        {
+            return !ContainsGeoSearchAny(in query);
+        }
+
         if (operation == "SORT_RO")
         {
             return !ContainsImplicitSortDependency(in query);
@@ -534,6 +544,20 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
         {
             var argument = query.GetArgument(index);
             if (argument.EqualsAsciiIgnoreCase("BY") || argument.EqualsAsciiIgnoreCase("GET"))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool ContainsGeoSearchAny(in ClientCacheCommandKey query)
+    {
+        for (var index = 1; index + 2 < query.ArgumentCount; index++)
+        {
+            if (query.GetArgument(index).EqualsAsciiIgnoreCase("COUNT")
+                && query.GetArgument(index + 2).EqualsAsciiIgnoreCase("ANY"))
             {
                 return true;
             }

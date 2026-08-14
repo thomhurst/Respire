@@ -237,6 +237,21 @@ public class ClientSideCacheCoordinatorTests
     }
 
     [Test]
+    public async Task RawGeoSearchAny_IsNotCacheable()
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        var deterministic = new CatalogCommand(
+            RespireCommands.Geo.GEOSEARCH,
+            ["places", "FROMMEMBER", "origin", "BYRADIUS", 1, "m", "COUNT", 1]);
+        var any = new CatalogCommand(
+            RespireCommands.Geo.GEOSEARCH,
+            ["places", "FROMMEMBER", "origin", "BYRADIUS", 1, "m", "COUNT", 1, "ANY"]);
+
+        await Assert.That(cache.TryCreateQuery("GEOSEARCH", in deterministic, out _)).IsTrue();
+        await Assert.That(cache.TryCreateQuery("GEOSEARCH", in any, out _)).IsFalse();
+    }
+
+    [Test]
     public async Task SortReadOnly_RejectsImplicitExternalKeyPatterns()
     {
         var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
