@@ -15,8 +15,8 @@ await redis.SetAsync("user:1", new User("Ada", 36));
 User? user = await redis.GetAsync<User>("user:1");
 ```
 
-> **Status:** Respire is pre-release, so its API may still change. Automatic Sentinel failover and
-> RESP3 client-side caching are on the [roadmap](docs/API_DESIGN.md#18-roadmap-designed-for-not-v1).
+> **Status:** Respire is pre-release, so its API may still change. See the
+> [roadmap](docs/API_DESIGN.md#18-roadmap-designed-for-not-v1) for remaining work.
 
 ## Why Respire?
 
@@ -25,6 +25,9 @@ User? user = await redis.GetAsync<User>("user:1");
 - **Fast by default.** Respire coalesces commands from concurrent callers into fewer socket
   writes, parses replies from pooled buffers, and spreads work across multiplexed connections.
   No batching switch is required.
+- **Hot reads without a network round trip.** Optional RESP3 client-side caching stores eligible
+  reads in bounded process memory while Redis pushes invalidations when keys change. Existing APIs
+  become cache-aware without application-managed keys, subscriptions, or refresh code.
 - **Blocking commands that do not block everything else.** Commands such as `BLPOP` use a
   dedicated pooled connection, leaving normal traffic free to flow.
 - **An API that is easy to explore.** Commands are grouped by data type (`redis.Hashes`,
@@ -38,6 +41,35 @@ User? user = await redis.GetAsync<User>("user:1");
   dependency injection, typed serialization, and testable interfaces.
 
 ## Everyday patterns
+
+### Server-assisted client-side caching
+
+Turn on one option and keep using the same typed APIs:
+
+```csharp
+await using var cachedRedis = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = { new RespireEndpoint("localhost") },
+    ClientSideCache = new(),
+});
+
+// First call reads Redis. Repeated calls use the in-process cache.
+string? name = await cachedRedis.GetStringAsync("user:42:name");
+```
+
+Redis tracks only reads Respire opts into. When any client changes a tracked key, Redis pushes an
+invalidation and Respire evicts the local entry; the next read refreshes it lazily. Missing keys,
+`MGET`, hashes, collections, JSON, vector sets, and other deterministic keyed reads participate.
+
+StackExchange.Redis 3.1.13 does not provide an equivalent built-in server-assisted local cache.
+Its keyspace-notification APIs can be used to build application-owned invalidation, but storage,
+bounds, command eligibility, and race handling remain application concerns. In an official net10
+BenchmarkDotNet short run, a cached Respire `GET` took 151.5 ns versus 186.5 μs for a
+StackExchange.Redis server read. That difference measures removing the network round trip—not a
+1,000× difference between the clients' uncached wire paths, which measured the same statistically.
+
+[Learn how client-side caching works](https://thomhurst.github.io/Respire/docs/fundamentals/client-side-caching)
+or inspect the [benchmark run](https://github.com/thomhurst/Respire/actions/runs/31848970849).
 
 ### Blocking list reads
 
@@ -339,8 +371,8 @@ in seconds; pipelines and transactions are recorded as single operations.
 
 See [command coverage](docs/COMMAND_COVERAGE.md) for audited sources and regeneration details,
 and [API design](docs/API_DESIGN.md) for design decisions, wire architecture, and roadmap.
-Reproducible comparisons with StackExchange.Redis live in
-[`benchmarks/`](benchmarks/).
+Reproducible comparisons with StackExchange.Redis—including server reads versus Respire
+client-cache hits—live in [`benchmarks/`](benchmarks/).
 
 ## Documentation
 

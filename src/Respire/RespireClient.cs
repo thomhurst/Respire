@@ -184,6 +184,9 @@ public sealed partial class RespireClient : IRespireClient
     public bool IsConnected
         => !_core.Disposed && (_core.Cluster?.IsConnected ?? _core.Multiplexer.IsConnected);
 
+    /// <inheritdoc/>
+    public IRespireClientSideCache? ClientSideCache => _core.ClientCache;
+
     /// <summary>Raised when connection health changes, including endpoint and error context.</summary>
     public event Action<RespireConnectionStateChange>? ConnectionStateChanged
     {
@@ -487,15 +490,17 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken)
     {
         ValidateResultFlags(flags);
-        var (operation, tokens) = command.Build();
-        var storedProcedureName = StoredProcedureName(operation, tokens.AsSpan(1));
-        var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, firstArgumentIndex: 1);
-        var commandValue = new DynamicCommand(tokens, routingKeyIndex);
+        var (initialOperation, tokens) = command.Build();
+        var (operation, firstArgumentIndex) = NormalizeInterpolatedOperation(initialOperation, tokens);
+        var arguments = tokens.AsSpan(firstArgumentIndex);
+        var storedProcedureName = StoredProcedureName(operation, arguments);
+        var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, firstArgumentIndex);
+        var commandValue = new DynamicCommand(tokens, routingKeyIndex, firstArgumentIndex);
         var isBlocking = RespireCommand.IsBlocking(
-            operation, RespireCommand.Classify(operation), tokens.AsSpan(1));
+            operation, RespireCommand.Classify(operation), arguments);
         RespValue response;
         if (_core.Cluster is { } cluster
-            && DynamicCommandRouting.IsClusterWideMutation(operation, tokens.AsSpan(1)))
+            && DynamicCommandRouting.IsClusterWideMutation(operation, arguments))
         {
             ValidateClusterWideFlags(operation, flags);
             response = await SendClusterWideAsync(
@@ -533,14 +538,15 @@ public sealed partial class RespireClient : IRespireClient
         RespireCommandInterpolatedStringHandler command,
         CancellationToken cancellationToken)
     {
-        var (operation, tokens) = command.Build();
-        var arguments = tokens.AsSpan(1);
+        var (initialOperation, tokens) = command.Build();
+        var (operation, firstArgumentIndex) = NormalizeInterpolatedOperation(initialOperation, tokens);
+        var arguments = tokens.AsSpan(firstArgumentIndex);
         ValidateRawFireAndForgetCommand(operation, ReadOnlySpan<string>.Empty, arguments);
 
         var storedProcedureName = StoredProcedureName(operation, arguments);
         var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(
-            operation, tokens, firstArgumentIndex: 1);
-        var commandValue = new DynamicCommand(tokens, routingKeyIndex);
+            operation, tokens, firstArgumentIndex);
+        var commandValue = new DynamicCommand(tokens, routingKeyIndex, firstArgumentIndex);
         if (_core.Cluster is { } cluster
             && DynamicCommandRouting.IsClusterWideMutation(operation, arguments))
         {
@@ -690,7 +696,7 @@ public sealed partial class RespireClient : IRespireClient
         var storedProcedureName = words.Length == 1 ? StoredProcedureName(operation, args) : null;
         var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(
             operation, tokens, firstArgumentIndex);
-        return (storedProcedureName, new DynamicCommand(tokens, routingKeyIndex));
+        return (storedProcedureName, new DynamicCommand(tokens, routingKeyIndex, firstArgumentIndex));
     }
 
     private static string? StoredProcedureName(string operation, ReadOnlySpan<RespireValue> arguments)
@@ -710,28 +716,49 @@ public sealed partial class RespireClient : IRespireClient
             return command;
         }
 
-        var subcommand = KnownRawSubcommand(command, words[1]);
-        firstArgumentIndex = subcommand is null ? 1 : 2;
-        return subcommand is null ? command : $"{command} {subcommand}";
+        var operation = KnownRawOperation(command, words[1]);
+        firstArgumentIndex = operation is null ? 1 : 2;
+        return operation ?? command;
     }
 
-    private static string? KnownRawSubcommand(string command, string candidate)
+    private static (string Operation, int FirstArgumentIndex) NormalizeInterpolatedOperation(
+        string command,
+        RespireValue[] tokens)
+    {
+        if (tokens.Length > 1 && KnownRawOperation(command, tokens[1]) is { } operation)
+        {
+            return (operation, 2);
+        }
+
+        return (command, 1);
+    }
+
+    private static string? KnownRawOperation(string command, string candidate)
+        => KnownRawOperation(command, (RespireValue)candidate);
+
+    private static string? KnownRawOperation(string command, RespireValue candidate)
         => command switch
         {
-            "CONFIG" when candidate.Equals("GET", StringComparison.OrdinalIgnoreCase) => "GET",
-            "CONFIG" when candidate.Equals("SET", StringComparison.OrdinalIgnoreCase) => "SET",
-            "FUNCTION" when candidate.Equals("DELETE", StringComparison.OrdinalIgnoreCase) => "DELETE",
-            "FUNCTION" when candidate.Equals("FLUSH", StringComparison.OrdinalIgnoreCase) => "FLUSH",
-            "FUNCTION" when candidate.Equals("LOAD", StringComparison.OrdinalIgnoreCase) => "LOAD",
-            "FUNCTION" when candidate.Equals("RESTORE", StringComparison.OrdinalIgnoreCase) => "RESTORE",
-            "SCRIPT" when candidate.Equals("DEBUG", StringComparison.OrdinalIgnoreCase) => "DEBUG",
-            "SCRIPT" when candidate.Equals("EXISTS", StringComparison.OrdinalIgnoreCase) => "EXISTS",
-            "SCRIPT" when candidate.Equals("FLUSH", StringComparison.OrdinalIgnoreCase) => "FLUSH",
-            "SCRIPT" when candidate.Equals("HELP", StringComparison.OrdinalIgnoreCase) => "HELP",
-            "SCRIPT" when candidate.Equals("KILL", StringComparison.OrdinalIgnoreCase) => "KILL",
-            "SCRIPT" when candidate.Equals("LOAD", StringComparison.OrdinalIgnoreCase) => "LOAD",
-            "SCRIPT" when candidate.Equals("SHOW", StringComparison.OrdinalIgnoreCase) => "SHOW",
-            "XGROUP" when candidate.Equals("CREATE", StringComparison.OrdinalIgnoreCase) => "CREATE",
+            "CONFIG" when candidate.EqualsAsciiIgnoreCase("GET") => "CONFIG GET",
+            "CONFIG" when candidate.EqualsAsciiIgnoreCase("SET") => "CONFIG SET",
+            "CLIENT" when candidate.EqualsAsciiIgnoreCase("CACHING") => "CLIENT CACHING",
+            "CLIENT" when candidate.EqualsAsciiIgnoreCase("TRACKING") => "CLIENT TRACKING",
+            "MEMORY" when candidate.EqualsAsciiIgnoreCase("USAGE") => "MEMORY USAGE",
+            "OBJECT" when candidate.EqualsAsciiIgnoreCase("ENCODING") => "OBJECT ENCODING",
+            "FUNCTION" when candidate.EqualsAsciiIgnoreCase("DELETE") => "FUNCTION DELETE",
+            "FUNCTION" when candidate.EqualsAsciiIgnoreCase("FLUSH") => "FUNCTION FLUSH",
+            "FUNCTION" when candidate.EqualsAsciiIgnoreCase("LOAD") => "FUNCTION LOAD",
+            "FUNCTION" when candidate.EqualsAsciiIgnoreCase("RESTORE") => "FUNCTION RESTORE",
+            "SCRIPT" when candidate.EqualsAsciiIgnoreCase("DEBUG") => "SCRIPT DEBUG",
+            "SCRIPT" when candidate.EqualsAsciiIgnoreCase("EXISTS") => "SCRIPT EXISTS",
+            "SCRIPT" when candidate.EqualsAsciiIgnoreCase("FLUSH") => "SCRIPT FLUSH",
+            "SCRIPT" when candidate.EqualsAsciiIgnoreCase("HELP") => "SCRIPT HELP",
+            "SCRIPT" when candidate.EqualsAsciiIgnoreCase("KILL") => "SCRIPT KILL",
+            "SCRIPT" when candidate.EqualsAsciiIgnoreCase("LOAD") => "SCRIPT LOAD",
+            "SCRIPT" when candidate.EqualsAsciiIgnoreCase("SHOW") => "SCRIPT SHOW",
+            "XGROUP" when candidate.EqualsAsciiIgnoreCase("CREATE") => "XGROUP CREATE",
+            "XINFO" when candidate.EqualsAsciiIgnoreCase("GROUPS") => "XINFO GROUPS",
+            "XINFO" when candidate.EqualsAsciiIgnoreCase("STREAM") => "XINFO STREAM",
             _ => null,
         };
 
@@ -1083,6 +1110,387 @@ public sealed partial class RespireClient : IRespireClient
         return _core.Options.Serializer.Deserialize<T>(value.AsSpan());
     }
 
+    internal ValueTask<TResult> CachedGetAsync<TResult>(
+        RespireKey resolvedKey,
+        CancellationToken cancellationToken,
+        ResponseConverter<RespireClient, TResult> converter)
+    {
+        var cache = _core.ClientCache;
+        var command = new Cmd1(Verbs.Get, resolvedKey.AsValue());
+        if (cache is null)
+        {
+            return ConvertResponseAsync("GET", command, cancellationToken, this, converter);
+        }
+
+        if (cache.TryGet(in resolvedKey, out var cached))
+        {
+            return new ValueTask<TResult>(converter(this, in cached));
+        }
+
+        return GetAndCacheAsync(resolvedKey, cache, cancellationToken, converter);
+    }
+
+    internal ValueTask<TResult[]> CachedGetManyAsync<TResult>(
+        ReadOnlySpan<RespireKey> keys,
+        CancellationToken cancellationToken,
+        ResponseConverter<RespireClient, TResult> converter)
+    {
+        var cache = _core.ClientCache;
+        if (keys.Length == 0)
+        {
+            return ConvertResponseAsync(
+                "MGET",
+                new CmdN(Verbs.MGet, MapKeys(keys)),
+                cancellationToken,
+                this,
+                (RespireClient client, in RespValue response) =>
+                {
+                    var values = response.AsArray();
+                    var result = new TResult[values.Length];
+                    for (var i = 0; i < values.Length; i++)
+                    {
+                        result[i] = converter(client, in values[i]);
+                    }
+
+                    return result;
+                });
+        }
+
+        if (cache is null)
+        {
+            var arguments = new RespireValue[keys.Length];
+            int? clusterSlot = null;
+            for (var i = 0; i < keys.Length; i++)
+            {
+                var resolvedKey = ResolveKey(keys[i]);
+                arguments[i] = resolvedKey.AsValue();
+                ValidateMGetClusterSlot(in resolvedKey, ref clusterSlot);
+            }
+
+            return ConvertResponseAsync(
+                "MGET",
+                new CmdN(Verbs.MGet, arguments),
+                cancellationToken,
+                this,
+                (RespireClient client, in RespValue response) =>
+                {
+                    var values = response.AsArray();
+                    var converted = new TResult[values.Length];
+                    for (var i = 0; i < values.Length; i++)
+                    {
+                        converted[i] = converter(client, in values[i]);
+                    }
+
+                    return converted;
+                });
+        }
+
+        var result = new TResult[keys.Length];
+        RespireKey[]? missingKeys = null;
+        int[]? missingIndexes = null;
+        var missingCount = 0;
+        int? cachedClusterSlot = null;
+        for (var i = 0; i < keys.Length; i++)
+        {
+            var resolvedKey = ResolveKey(keys[i]);
+            ValidateMGetClusterSlot(in resolvedKey, ref cachedClusterSlot);
+            if (cache.TryGet(in resolvedKey, out var cached))
+            {
+                result[i] = converter(this, in cached);
+            }
+            else
+            {
+                if (missingKeys is null)
+                {
+                    missingKeys = new RespireKey[keys.Length];
+                    missingIndexes = new int[keys.Length];
+                }
+
+                missingKeys[missingCount] = resolvedKey;
+                missingIndexes![missingCount++] = i;
+            }
+        }
+
+        return missingCount == 0
+            ? new ValueTask<TResult[]>(result)
+            : GetManyAndCacheAsync(
+                missingKeys!,
+                result,
+                missingIndexes!,
+                missingCount,
+                cache,
+                cancellationToken,
+                converter);
+    }
+
+    private void ValidateMGetClusterSlot(in RespireKey key, ref int? clusterSlot)
+    {
+        if (_core.Cluster is null)
+        {
+            return;
+        }
+
+        var keySlot = key.ClusterSlot;
+        if (clusterSlot is { } expectedSlot && keySlot != expectedSlot)
+        {
+            throw new RespireServerException(
+                "CROSSSLOT Keys in request don't hash to the same slot", "MGET");
+        }
+
+        clusterSlot = keySlot;
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<TResult> GetAndCacheAsync<TResult>(
+        RespireKey resolvedKey,
+        ClientSideCacheCoordinator cache,
+        CancellationToken cancellationToken,
+        ResponseConverter<RespireClient, TResult> converter)
+    {
+        var token = cache.BeginRead(in resolvedKey);
+        var command = new Cmd1(Verbs.Get, token.State.Key.AsValue());
+        var response = default(RespValue);
+        var released = false;
+        var allowInsert = true;
+        Action<bool>? onRedirect = null;
+        if (_core.Cluster is not null)
+        {
+            onRedirect = cacheable =>
+            {
+                token = cache.RebaseRead(in token);
+                allowInsert = cacheable;
+            };
+        }
+
+        try
+        {
+            response = await SendTrackedAsync(
+                "GET", command, cancellationToken, onRedirect).ConfigureAwait(false);
+            released = true;
+            cache.CompleteRead(in token, in response, allowInsert);
+            return converter(this, in response);
+        }
+        finally
+        {
+            if (!released)
+            {
+                cache.CompleteRead(in token, in response, allowInsert: false);
+            }
+
+            response.Dispose();
+        }
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<TResult[]> GetManyAndCacheAsync<TResult>(
+        RespireKey[] missingKeys,
+        TResult[] result,
+        int[] missingIndexes,
+        int missingCount,
+        ClientSideCacheCoordinator cache,
+        CancellationToken cancellationToken,
+        ResponseConverter<RespireClient, TResult> converter)
+    {
+        var arguments = new RespireValue[missingCount];
+        var tokens = new ClientSideCacheCoordinator.ReadToken[missingCount];
+        for (var i = 0; i < missingCount; i++)
+        {
+            ref readonly var key = ref missingKeys[i];
+            tokens[i] = cache.BeginRead(in key);
+            arguments[i] = tokens[i].State.Key.AsValue();
+        }
+
+        var response = default(RespValue);
+        var completed = 0;
+        var allowInsert = true;
+        Action<bool>? onRedirect = null;
+        if (_core.Cluster is not null)
+        {
+            onRedirect = cacheable =>
+            {
+                for (var i = 0; i < tokens.Length; i++)
+                {
+                    tokens[i] = cache.RebaseRead(in tokens[i]);
+                }
+
+                allowInsert = cacheable;
+            };
+        }
+
+        try
+        {
+            response = await SendTrackedAsync(
+                "MGET", new CmdN(Verbs.MGet, arguments), cancellationToken, onRedirect).ConfigureAwait(false);
+            var values = response.AsArray();
+            if (values.Length != missingCount)
+            {
+                throw new RespireProtocolException(
+                    $"MGET returned {values.Length} values for {missingCount} keys.");
+            }
+
+            while (completed < missingCount)
+            {
+                var index = completed;
+                ref readonly var value = ref values[index];
+                cache.CompleteRead(in tokens[index], in value, allowInsert);
+                completed++;
+                result[missingIndexes[index]] = converter(this, in value);
+            }
+
+            return result;
+        }
+        finally
+        {
+            for (; completed < missingCount; completed++)
+            {
+                cache.CompleteRead(in tokens[completed], in response, allowInsert: false);
+            }
+
+            response.Dispose();
+        }
+    }
+
+    private async ValueTask<RespValue> SendTrackedAsync<TCommand>(
+        string operation,
+        TCommand command,
+        CancellationToken cancellationToken,
+        Action<bool>? onRedirect = null)
+        where TCommand : struct, IRespCommand
+    {
+        var core = _core;
+        ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (core.Cluster is { } cluster)
+        {
+            return await SendTrackedClusterAsync(
+                operation, cluster, command, cancellationToken, onRedirect).ConfigureAwait(false);
+        }
+
+        await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        var connection = core.Multiplexer.GetConnection();
+        var response = await SendTrackedOnConnectionAsync(
+            operation, connection, command, cancellationToken, sendAsking: false).ConfigureAwait(false);
+        if (response.IsError)
+        {
+            var error = ResponseReader.ServerError(in response, operation);
+            response.Dispose();
+            throw error;
+        }
+
+        return response;
+    }
+
+    private async ValueTask<RespValue> SendTrackedClusterAsync<TCommand>(
+        string operation,
+        ClusterRouter cluster,
+        TCommand command,
+        CancellationToken cancellationToken,
+        Action<bool>? onRedirect)
+        where TCommand : struct, IRespCommand
+    {
+        var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
+        var connection = await cluster.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
+        var sendAsking = false;
+        for (var attempt = 0; ; attempt++)
+        {
+            var response = await SendTrackedOnConnectionAsync(
+                operation, connection, command, cancellationToken, sendAsking).ConfigureAwait(false);
+
+            if (!response.IsError)
+            {
+                return response;
+            }
+
+            var error = ResponseReader.ServerError(in response, operation);
+            response.Dispose();
+            if (attempt >= ClusterRouter.RedirectLimit || !ClusterRouter.IsRedirect(error))
+            {
+                throw error;
+            }
+
+            _core.ClientCache?.FlushForContinuityLoss();
+            connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken)
+                .ConfigureAwait(false);
+            sendAsking = error.Code == RespireErrorCodes.Ask;
+            onRedirect?.Invoke(!sendAsking);
+        }
+    }
+
+    private ValueTask<RespValue> SendTrackedOnConnectionAsync<TCommand>(
+        string operation,
+        RespireConnection connection,
+        TCommand command,
+        CancellationToken cancellationToken,
+        bool sendAsking)
+        where TCommand : struct, IRespCommand
+        => RespireTelemetry.IsEnabled
+            ? SendTrackedOnConnectionInstrumentedAsync(
+                operation, connection, command, cancellationToken, sendAsking)
+            : SendTrackedOnConnectionCoreAsync(
+                operation, connection, command, cancellationToken, sendAsking);
+
+    private static ValueTask<RespValue> SendTrackedOnConnectionCoreAsync<TCommand>(
+        string operation,
+        RespireConnection connection,
+        TCommand command,
+        CancellationToken cancellationToken,
+        bool sendAsking)
+        where TCommand : struct, IRespCommand
+    {
+        if (sendAsking)
+        {
+            return ClusterRouter.SendAskingAsync(
+                connection, in command, cancellationToken, operation);
+        }
+
+        var caching = new ClientCachingCommand();
+        return connection.SendValidatedPrefixedAsync(
+            in caching, in command, cancellationToken, operation);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<RespValue> SendTrackedOnConnectionInstrumentedAsync<TCommand>(
+        string operation,
+        RespireConnection connection,
+        TCommand command,
+        CancellationToken cancellationToken,
+        bool sendAsking)
+        where TCommand : struct, IRespCommand
+    {
+        var telemetry = RespireTelemetry.StartOperation(
+            operation, connection.Host, connection.Port, _core.Options.Database);
+        try
+        {
+            var response = await SendTrackedOnConnectionCoreAsync(
+                operation, connection, command, cancellationToken, sendAsking).ConfigureAwait(false);
+            var error = response.IsError ? ResponseReader.ServerError(in response, operation) : null;
+            telemetry.Complete(
+                operation,
+                connection.Host,
+                connection.Port,
+                _core.Options.Database,
+                error: error,
+                connection: connection);
+            return response;
+        }
+        catch (Exception ex)
+        {
+            telemetry.Complete(
+                operation,
+                connection.Host,
+                connection.Port,
+                _core.Options.Database,
+                error: ex,
+                connection: connection);
+            throw;
+        }
+    }
+
     /// <summary>The central send path: lazy connect, optional command timeout, telemetry, error translation.</summary>
     internal ValueTask<RespValue> SendAsync<TCommand>(
         string operation,
@@ -1100,23 +1508,122 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        var cache = core.ClientCache;
+        if (flags == RespireCommandFlags.None
+            && cache is not null
+            && cache.TryCreateQuery(operation, in command, out var query))
+        {
+            if (cache.TryGet(in query, out var cached))
+            {
+                return new ValueTask<RespValue>(cached);
+            }
+
+            return QueryAndCacheAsync(operation, command, cache, query, cancellationToken);
+        }
+
+        var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
+        ValueTask<RespValue> response;
         if (core.Cluster is { } cluster)
         {
-            return SendClusterAsync(
+            response = SendClusterAsync(
                 operation,
                 cluster,
                 command,
                 cancellationToken,
                 noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect));
         }
-
-        if (!core.Multiplexer.IsInitialized)
+        else if (!core.Multiplexer.IsInitialized)
         {
-            return SendAfterConnectAsync(operation, command, cancellationToken);
+            response = SendAfterConnectAsync(operation, command, cancellationToken);
+        }
+        else
+        {
+            var connection = core.Multiplexer.GetConnection();
+            response = SendOnConnectionAsync(operation, connection, command, cancellationToken);
         }
 
-        var connection = core.Multiplexer.GetConnection();
-        return SendOnConnectionAsync(operation, connection, command, cancellationToken);
+        return mutationFence.IsRequired
+            ? CompleteMutationAsync(response, cache!, mutationFence)
+            : response;
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<RespValue> QueryAndCacheAsync<TCommand>(
+        string operation,
+        TCommand command,
+        ClientSideCacheCoordinator cache,
+        ClientSideCacheCoordinator.QueryRequest request,
+        CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var snapshot = SnapshotCommand.Create(in command);
+        var token = cache.BeginRead(operation, in request);
+        var completed = false;
+        var allowInsert = true;
+        Action<bool>? onRedirect = null;
+        if (_core.Cluster is not null)
+        {
+            onRedirect = cacheable =>
+            {
+                token = cache.RebaseRead(in token);
+                allowInsert = cacheable;
+            };
+        }
+
+        var response = default(RespValue);
+        try
+        {
+            response = await SendTrackedAsync(
+                operation, snapshot, cancellationToken, onRedirect).ConfigureAwait(false);
+            cache.CompleteRead(in token, in response, allowInsert);
+            completed = true;
+            return response;
+        }
+        finally
+        {
+            if (!completed)
+            {
+                cache.CompleteRead(in token, in response, allowInsert: false);
+            }
+        }
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private static async ValueTask<TResult> CompleteMutationAsync<TResult>(
+        ValueTask<TResult> response,
+        ClientSideCacheCoordinator cache,
+        ClientSideCacheCoordinator.MutationFence fence)
+    {
+        try
+        {
+            return await response.ConfigureAwait(false);
+        }
+        finally
+        {
+            cache.CompleteMutation(in fence);
+        }
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+#endif
+    private static async ValueTask CompleteMutationAsync(
+        ValueTask response,
+        ClientSideCacheCoordinator cache,
+        ClientSideCacheCoordinator.MutationFence fence)
+    {
+        try
+        {
+            await response.ConfigureAwait(false);
+        }
+        finally
+        {
+            cache.CompleteMutation(in fence);
+        }
     }
 
 #if NET
@@ -1148,24 +1655,36 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        if (core.Cluster is { } cluster)
+        var cache = core.ClientCache;
+        var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
+        try
         {
-            return await SendClusterAsync(
-                    operation,
-                    cluster,
-                    command,
-                    cancellationToken,
-                    storedProcedureName,
-                    HasFlag(flags, RespireCommandFlags.NoRedirect))
+            if (core.Cluster is { } cluster)
+            {
+                return await SendClusterAsync(
+                        operation,
+                        cluster,
+                        command,
+                        cancellationToken,
+                        storedProcedureName,
+                        HasFlag(flags, RespireCommandFlags.NoRedirect))
+                    .ConfigureAwait(false);
+            }
+
+            await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+
+            var connection = core.Multiplexer.GetConnection();
+            return await SendOnConnectionAsync(
+                    operation, connection, command, cancellationToken, storedProcedureName)
                 .ConfigureAwait(false);
         }
-
-        await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-
-        var connection = core.Multiplexer.GetConnection();
-        return await SendOnConnectionAsync(
-                operation, connection, command, cancellationToken, storedProcedureName)
-            .ConfigureAwait(false);
+        finally
+        {
+            if (mutationFence.IsRequired)
+            {
+                cache!.CompleteMutation(in mutationFence);
+            }
+        }
     }
 
 #if NET
@@ -1194,6 +1713,7 @@ public sealed partial class RespireClient : IRespireClient
             catch (RespireServerException error)
                 when (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.IsRedirect(error))
             {
+                _core.ClientCache?.FlushForContinuityLoss();
                 connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken)
                     .ConfigureAwait(false);
                 sendAsking = error.Code == RespireErrorCodes.Ask;
@@ -1211,40 +1731,52 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
-        var connections = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
-        var retainedReply = default(RespValue);
-        var hasRetainedReply = false;
+        var cache = _core.ClientCache;
+        var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
         try
         {
-            foreach (var connection in connections)
+            var connections = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
+            var retainedReply = default(RespValue);
+            var hasRetainedReply = false;
+            try
             {
-                var reply = await SendOnConnectionAsync(
-                        operation, connection, command, cancellationToken)
-                    .ConfigureAwait(false);
-                if (!hasRetainedReply)
+                foreach (var connection in connections)
                 {
-                    retainedReply = reply;
-                    hasRetainedReply = true;
+                    var reply = await SendOnConnectionAsync(
+                            operation, connection, command, cancellationToken)
+                        .ConfigureAwait(false);
+                    if (!hasRetainedReply)
+                    {
+                        retainedReply = reply;
+                        hasRetainedReply = true;
+                    }
+                    else
+                    {
+                        reply.Dispose();
+                    }
                 }
-                else
-                {
-                    reply.Dispose();
-                }
-            }
 
-            return hasRetainedReply
-                ? retainedReply
-                : throw new RespireConnectionException(
-                    $"{operation} did not reach any Redis Cluster master.");
+                return hasRetainedReply
+                    ? retainedReply
+                    : throw new RespireConnectionException(
+                        $"{operation} did not reach any Redis Cluster master.");
+            }
+            catch
+            {
+                if (hasRetainedReply)
+                {
+                    retainedReply.Dispose();
+                }
+
+                throw;
+            }
         }
-        catch
+        finally
         {
-            if (hasRetainedReply)
+            if (mutationFence.IsRequired)
             {
-                retainedReply.Dispose();
+                cache!.CompleteMutation(in mutationFence);
             }
-
-            throw;
         }
     }
 
@@ -1257,6 +1789,19 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        var cache = core.ClientCache;
+        var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
+        if (mutationFence.IsRequired)
+        {
+            return SendFencedFireAndForgetAsync(
+                operation,
+                command,
+                cancellationToken,
+                storedProcedureName,
+                cache!,
+                mutationFence);
+        }
+
         if (core.Cluster is { } cluster)
         {
             return SendFireAndForgetClusterAsync(
@@ -1272,6 +1817,56 @@ public sealed partial class RespireClient : IRespireClient
         var connection = core.Multiplexer.GetConnection();
         return SendFireAndForgetOnConnectionAsync(
             operation, connection, command, cancellationToken, storedProcedureName);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
+#endif
+    private async ValueTask SendFencedFireAndForgetAsync<TCommand>(
+        string operation,
+        TCommand command,
+        CancellationToken cancellationToken,
+        string? storedProcedureName,
+        ClientSideCacheCoordinator cache,
+        ClientSideCacheCoordinator.MutationFence mutationFence)
+        where TCommand : struct, IRespCommand
+    {
+        try
+        {
+            var core = _core;
+            if (core.Cluster is { } cluster)
+            {
+                await SendFireAndForgetClusterAsync(
+                        operation, cluster, command, cancellationToken, storedProcedureName)
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            var connection = core.Multiplexer.GetConnection();
+            if (RespireCommand.MayCloseWithoutReply(operation))
+            {
+                await SendFireAndForgetOnConnectionAsync(
+                        operation, connection, command, cancellationToken, storedProcedureName)
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            try
+            {
+                using var response = await SendOnConnectionAsync(
+                        operation, connection, command, cancellationToken, storedProcedureName)
+                    .ConfigureAwait(false);
+            }
+            catch (RespireServerException)
+            {
+                // Fire-and-forget preserves its contract by discarding ordinary server errors.
+            }
+        }
+        finally
+        {
+            cache.CompleteMutation(in mutationFence);
+        }
     }
 
     private ValueTask SendFireAndForgetOnConnectionAsync<TCommand>(
@@ -1385,31 +1980,43 @@ public sealed partial class RespireClient : IRespireClient
         string? storedProcedureName = null)
         where TCommand : struct, IRespCommand
     {
-        var connections = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
-        List<Exception>? failures = null;
-        foreach (var connection in connections)
+        var cache = _core.ClientCache;
+        var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
+            var connections = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
+            List<Exception>? failures = null;
+            foreach (var connection in connections)
             {
-                await SendFireAndForgetOnConnectionAsync(
-                        operation,
-                        connection,
-                        command,
-                        cancellationToken,
-                        storedProcedureName)
-                    .ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    await SendFireAndForgetOnConnectionAsync(
+                            operation,
+                            connection,
+                            command,
+                            cancellationToken,
+                            storedProcedureName)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    (failures ??= []).Add(ex);
+                }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+
+            if (failures is not null)
             {
-                (failures ??= []).Add(ex);
+                throw new AggregateException(
+                    "One or more Redis Cluster masters did not accept the command.", failures);
             }
         }
-
-        if (failures is not null)
+        finally
         {
-            throw new AggregateException(
-                "One or more Redis Cluster masters did not accept the command.", failures);
+            if (mutationFence.IsRequired)
+            {
+                cache!.CompleteMutation(in mutationFence);
+            }
         }
     }
 
@@ -1501,48 +2108,60 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        if (core.Cluster is { } cluster)
-        {
-            return await SendBlockingClusterAsync(
-                    operation, cluster, command, cancellationToken, storedProcedureName, noRedirect)
-                .ConfigureAwait(false);
-        }
-
-        var telemetry = RespireTelemetry.StartOperation(
-            operation,
-            core.Multiplexer.Host,
-            core.Multiplexer.Port,
-            core.Options.Database,
-            storedProcedureName: storedProcedureName);
-        RespireConnection? connection = null;
-        var returned = false;
+        var cache = core.ClientCache;
+        var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
         try
         {
-            connection = await core.DedicatedPool.RentAsync(cancellationToken).ConfigureAwait(false);
-            var response = await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken)
-                .ConfigureAwait(false);
-            core.DedicatedPool.Return(connection);
-            returned = true;
-            if (response.IsError)
+            if (core.Cluster is { } cluster)
             {
-                var error = ResponseReader.ServerError(in response, operation);
-                response.Dispose();
-                throw error;
+                return await SendBlockingClusterAsync(
+                        operation, cluster, command, cancellationToken, storedProcedureName, noRedirect)
+                    .ConfigureAwait(false);
             }
 
-            telemetry.Complete(core, operation, storedProcedureName, connection: connection);
-            return response;
+            var telemetry = RespireTelemetry.StartOperation(
+                operation,
+                core.Multiplexer.Host,
+                core.Multiplexer.Port,
+                core.Options.Database,
+                storedProcedureName: storedProcedureName);
+            RespireConnection? connection = null;
+            var returned = false;
+            try
+            {
+                connection = await core.DedicatedPool.RentAsync(cancellationToken).ConfigureAwait(false);
+                var response = await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken)
+                    .ConfigureAwait(false);
+                core.DedicatedPool.Return(connection);
+                returned = true;
+                if (response.IsError)
+                {
+                    var error = ResponseReader.ServerError(in response, operation);
+                    response.Dispose();
+                    throw error;
+                }
+
+                telemetry.Complete(core, operation, storedProcedureName, connection: connection);
+                return response;
+            }
+            catch (Exception ex)
+            {
+                telemetry.Complete(core, operation, storedProcedureName, ex, connection);
+                if (connection is not null && !returned)
+                {
+                    // The connection may still be mid-block server-side; don't return it to the pool.
+                    await core.DedicatedPool.DiscardAsync(connection).ConfigureAwait(false);
+                }
+
+                throw;
+            }
         }
-        catch (Exception ex)
+        finally
         {
-            telemetry.Complete(core, operation, storedProcedureName, ex, connection);
-            if (connection is not null && !returned)
+            if (mutationFence.IsRequired)
             {
-                // The connection may still be mid-block server-side; don't return it to the pool.
-                await core.DedicatedPool.DiscardAsync(connection).ConfigureAwait(false);
+                cache!.CompleteMutation(in mutationFence);
             }
-
-            throw;
         }
     }
 
@@ -1592,6 +2211,7 @@ public sealed partial class RespireClient : IRespireClient
                     response.Dispose();
                     if (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.IsRedirect(error))
                     {
+                        core.ClientCache?.FlushForContinuityLoss();
                         var redirectedPool = await cluster.GetRedirectDedicatedPoolAsync(
                                 error, connection, cancellationToken)
                             .ConfigureAwait(false);
@@ -1742,16 +2362,30 @@ public sealed partial class RespireClient : IRespireClient
         internal ValueTask<RespireResult> Response { get; set; }
     }
 
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    internal async ValueTask<RespireResult> ExecuteScriptAsync(
+    internal ValueTask<RespireResult> ExecuteScriptAsync(
         RespireScript script,
         RespireValue[] tail,
         CancellationToken cancellationToken)
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
+        var cache = core.ClientCache;
+        var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
+        var response = ExecuteScriptCoreAsync(script, tail, cancellationToken);
+        return mutationFence.IsRequired
+            ? CompleteMutationAsync(response, cache!, mutationFence)
+            : response;
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<RespireResult> ExecuteScriptCoreAsync(
+        RespireScript script,
+        RespireValue[] tail,
+        CancellationToken cancellationToken)
+    {
+        var core = _core;
         if (core.Cluster is { } cluster)
         {
             var arguments = tail[1..];
@@ -1813,39 +2447,56 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        var requiresIdentity = requireReliableCorrectionOrdering
-            || RequiresReliableCorrectionOrdering(cancellationToken);
-        var tail = BuildScriptTail(keys, args);
+        var cache = core.ClientCache;
+        var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
+        var responseOwnsFence = false;
+        try
+        {
+            var requiresIdentity = requireReliableCorrectionOrdering
+                || RequiresReliableCorrectionOrdering(cancellationToken);
+            var tail = BuildScriptTail(keys, args);
 
-        RespireConnection connection;
-        if (core.Cluster is { } cluster)
-        {
-            var command = new Cmd2N(Verbs.EvalSha, script.Sha1, tail[0], tail[1..]);
-            var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
-            connection = await GetTrackedClusterConnectionAsync(
-                    cluster, slot, requiresIdentity, cancellationToken)
-                .ConfigureAwait(false);
-        }
-        else
-        {
-            if (!core.Multiplexer.HasReliableCorrectionOrdering)
+            RespireConnection connection;
+            if (core.Cluster is { } cluster)
             {
-                throw new InvalidOperationException(
-                    "Reliable correction ordering must be initialized before a tracked script starts.");
+                var command = new Cmd2N(Verbs.EvalSha, script.Sha1, tail[0], tail[1..]);
+                var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
+                connection = await GetTrackedClusterConnectionAsync(
+                        cluster, slot, requiresIdentity, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                if (!core.Multiplexer.HasReliableCorrectionOrdering)
+                {
+                    throw new InvalidOperationException(
+                        "Reliable correction ordering must be initialized before a tracked script starts.");
+                }
+
+                connection = await GetTrackedConnectionAsync(core.Multiplexer, cancellationToken)
+                    .ConfigureAwait(false);
             }
 
-            connection = await GetTrackedConnectionAsync(core.Multiplexer, cancellationToken)
-                .ConfigureAwait(false);
+            var identity = GetTrackedConnectionIdentity(
+                connection, core.Cluster?.HasReliableCorrectionOrdering(connection) ?? true);
+            var execution = new TrackedScriptExecution(connection, identity);
+            var response = core.Cluster is { } router
+                ? ExecuteTrackedClusterScriptAsync(
+                    execution, router, connection, script, tail, requiresIdentity, cancellationToken)
+                : ExecuteScriptOnConnectionAsync(connection, script, tail, cancellationToken);
+            execution.Response = mutationFence.IsRequired
+                ? CompleteMutationAsync(response, cache!, mutationFence)
+                : response;
+            responseOwnsFence = mutationFence.IsRequired;
+            return execution;
         }
-
-        var identity = GetTrackedConnectionIdentity(
-            connection, core.Cluster?.HasReliableCorrectionOrdering(connection) ?? true);
-        var execution = new TrackedScriptExecution(connection, identity);
-        execution.Response = core.Cluster is { } router
-            ? ExecuteTrackedClusterScriptAsync(
-                execution, router, connection, script, tail, requiresIdentity, cancellationToken)
-            : ExecuteScriptOnConnectionAsync(connection, script, tail, cancellationToken);
-        return execution;
+        finally
+        {
+            if (mutationFence.IsRequired && !responseOwnsFence)
+            {
+                cache!.CompleteMutation(in mutationFence);
+            }
+        }
     }
 
     private async ValueTask<RespireConnection> GetTrackedConnectionAsync(
@@ -2340,21 +2991,33 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
-        var tail = new RespireValue[1 + keys.Length + args.Length];
-        tail[0] = keys.Length;
-        for (var i = 0; i < keys.Length; i++)
+        var cache = core.ClientCache;
+        var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
+        try
         {
-            tail[1 + i] = Key(in keys[i]);
-        }
+            var tail = new RespireValue[1 + keys.Length + args.Length];
+            tail[0] = keys.Length;
+            for (var i = 0; i < keys.Length; i++)
+            {
+                tail[1 + i] = Key(in keys[i]);
+            }
 
-        args.CopyTo(tail, 1 + keys.Length);
-        var multiplexer = core.Cluster is { } cluster && connectionIdentity.Endpoint.Host is not null
-            ? cluster.GetMultiplexer(connectionIdentity.Endpoint)
-            : core.Multiplexer;
-        await multiplexer.SendToAllConnectionsAsync(
-            new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]),
-            connectionIdentity.RequiresAsking,
-            CancellationToken.None).ConfigureAwait(false);
+            args.CopyTo(tail, 1 + keys.Length);
+            var multiplexer = core.Cluster is { } cluster && connectionIdentity.Endpoint.Host is not null
+                ? cluster.GetMultiplexer(connectionIdentity.Endpoint)
+                : core.Multiplexer;
+            await multiplexer.SendToAllConnectionsAsync(
+                new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]),
+                connectionIdentity.RequiresAsking,
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (mutationFence.IsRequired)
+            {
+                cache!.CompleteMutation(in mutationFence);
+            }
+        }
     }
 
     // Typed send helpers — one per reply shape, shared by every facet.
@@ -2381,13 +3044,20 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         if (!RespireTelemetry.IsEnabled
             && core.Cluster is null
-            && core.Multiplexer.IsInitialized)
+            && core.Multiplexer.IsInitialized
+            && (core.ClientCache is null
+                || !ClientSideCacheCoordinator.CanCacheOperation(operation)))
         {
             // CommandTimeout is enforced by the connection's deadline sweep and covers the
             // Redis response, not user converter work (conversion runs at the caller).
+            var cache = core.ClientCache;
+            var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
             var connection = core.Multiplexer.GetConnection();
-            return connection.SendConvertedAsync(
+            var response = connection.SendConvertedAsync(
                 in command, state, converter, transferOwnership, ct, operation);
+            return mutationFence.IsRequired
+                ? CompleteMutationAsync(response, cache!, mutationFence)
+                : response;
         }
 
         return PooledResponseSource<TState, TResult>.Create(
@@ -2467,13 +3137,20 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         if (!RespireTelemetry.IsEnabled
             && core.Cluster is null
-            && core.Multiplexer.IsInitialized)
+            && core.Multiplexer.IsInitialized
+            && (core.ClientCache is null
+                || !ClientSideCacheCoordinator.CanCacheOperation(operation)))
         {
             // Specialized bulk-string source: small buffered replies decode straight from the
             // receive buffer instead of round-tripping through a pooled RespValue payload.
             // CommandTimeout is enforced by the connection's deadline sweep.
+            var cache = core.ClientCache;
+            var mutationFence = cache is null ? default : cache.BeforeCommand(operation, in command);
             var connection = core.Multiplexer.GetConnection();
-            return connection.SendStringAsync(in command, ct, operation);
+            var response = connection.SendStringAsync(in command, ct, operation);
+            return mutationFence.IsRequired
+                ? CompleteMutationAsync(response, cache!, mutationFence)
+                : response;
         }
 
         return PooledResponseSource<RespireClient, string?>.Create(

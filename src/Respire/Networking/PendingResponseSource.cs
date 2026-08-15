@@ -160,14 +160,14 @@ internal abstract class PendingResponse
 }
 
 /// <summary>
-/// One pooled completion for every reply in a MULTI/EXEC sequence. Intermediate replies are
-/// drained in place; the first queue error replaces EXEC's reply so cluster redirects survive
-/// a following EXECABORT without allocating one task source per queued command.
+/// One pooled completion for an atomic multi-command sequence. Intermediate replies are drained
+/// in place; the first configured error replaces the final reply. This covers MULTI/EXEC queue
+/// errors and validated command preludes without allocating one source per reply.
 /// </summary>
-internal sealed class TransactionPendingResponseSource : PendingResponse, IValueTaskSource<RespValue>
+internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueTaskSource<RespValue>
 {
     private const int MaxPoolSize = 4096;
-    private static readonly ObjectPool<TransactionPendingResponseSource, PoolPolicy> Pool = new(MaxPoolSize);
+    private static readonly ObjectPool<MultiReplyPendingResponseSource, PoolPolicy> Pool = new(MaxPoolSize);
 
     private ManualResetValueTaskSourceCore<RespValue> _core = new() { RunContinuationsAsynchronously = false };
     private RespValue _queueError;
@@ -175,21 +175,26 @@ internal sealed class TransactionPendingResponseSource : PendingResponse, IValue
     private int _firstQueueReply;
     private int _replyIndex;
     private bool _hasQueueError;
+    private string? _commandName;
 
-    private TransactionPendingResponseSource()
+    private MultiReplyPendingResponseSource()
     {
     }
 
-    internal override string? CommandName => "MULTI/EXEC";
+    internal override string? CommandName => _commandName;
 
     internal ValueTask<RespValue> Task => new(this, _core.Version);
 
-    internal static TransactionPendingResponseSource Rent(int replyCount, int firstQueueReply)
+    internal static MultiReplyPendingResponseSource Rent(
+        int replyCount,
+        int firstQueueReply,
+        string commandName)
     {
         var source = Pool.Rent();
 
         source._replyCount = replyCount;
         source._firstQueueReply = firstQueueReply;
+        source._commandName = commandName;
         source.PrepareForUse(replyCount);
         return source;
     }
@@ -257,11 +262,11 @@ internal sealed class TransactionPendingResponseSource : PendingResponse, IValue
 
     protected override void ResetAndReturn() => Pool.Return(this);
 
-    private readonly struct PoolPolicy : IPooledObjectPolicy<TransactionPendingResponseSource>
+    private readonly struct PoolPolicy : IPooledObjectPolicy<MultiReplyPendingResponseSource>
     {
-        public TransactionPendingResponseSource Create() => new();
+        public MultiReplyPendingResponseSource Create() => new();
 
-        public bool TryReset(TransactionPendingResponseSource source)
+        public bool TryReset(MultiReplyPendingResponseSource source)
         {
             if (source._hasQueueError)
             {
@@ -273,6 +278,7 @@ internal sealed class TransactionPendingResponseSource : PendingResponse, IValue
             source._firstQueueReply = 0;
             source._replyIndex = 0;
             source._hasQueueError = false;
+            source._commandName = null;
             source._core.Reset();
             return true;
         }

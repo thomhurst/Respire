@@ -355,6 +355,23 @@ public class RespireConnectionTests
     }
 
     [Test]
+    public async Task FailureObserver_RunsBeforeInFlightCommandsFail()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            CloseConnectionAfterCommand = 1,
+        };
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        var observed = false;
+        connection.PendingCommandsFailing += () => observed = true;
+
+        var pending = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+
+        await Assert.That(async () => await pending).Throws<RespireConnectionException>();
+        await Assert.That(observed).IsTrue();
+    }
+
+    [Test]
     public async Task ResponseWatchdog_NoBytesWhilePending_AbortsConnection()
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);

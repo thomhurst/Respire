@@ -511,6 +511,44 @@ internal readonly struct GeoSearchCommand(
     Verb verb, RespireValue source, GeoSearchOrigin origin, GeoSearchShape shape,
     GeoSearchOptions options, RespireValue? destination, bool storeDistance) : IRespCommand
 {
+    public bool TryGetPrimaryKey(out RespireValue primaryKey)
+    {
+        primaryKey = source;
+        return true;
+    }
+
+    public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey cacheKey)
+    {
+        if (options.Any)
+        {
+            cacheKey = default;
+            return false;
+        }
+
+        RespireValue[] arguments =
+        [
+            source,
+            origin.Member ?? RespireValue.Null,
+            origin.Longitude,
+            origin.Latitude,
+            shape.IsRadius,
+            shape.Radius,
+            shape.Width,
+            shape.Height,
+            (int)shape.Unit,
+            (int)options.Sort,
+            options.Count ?? -1,
+            options.Any,
+            options.IncludeDistance,
+            options.IncludeHash,
+            options.IncludeCoordinates,
+            destination ?? RespireValue.Null,
+            storeDistance,
+        ];
+        cacheKey = new(operation, arguments);
+        return true;
+    }
+
     public bool TryGetClusterSlot(out int slot)
         => (destination ?? source).TryGetClusterSlot(out slot);
 

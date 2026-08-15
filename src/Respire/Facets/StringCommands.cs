@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using Respire.Commands;
+using Respire.Internal;
 using Respire.Serialization;
 
 namespace Respire;
@@ -219,20 +220,32 @@ public interface IStringCommands
 internal sealed class StringCommands(RespireClient client) : IStringCommands
 {
     public ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken cancellationToken = default)
-        => client.StringOrNullAsync("GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken);
+        => client.CachedGetAsync(
+            client.ResolveKey(key),
+            cancellationToken,
+            static (RespireClient _, in Protocol.RespValue value) => ResponseReader.StringOrNull(in value));
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?> GetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
-        => client.DeserializeAsync<T, Cmd1>("GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken);
+        => client.CachedGetAsync(
+            client.ResolveKey(key),
+            cancellationToken,
+            static (RespireClient state, in Protocol.RespValue value) => state.DeserializeBorrowed<T>(in value));
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
-        => client.TryDeserializeAsync<T, Cmd1>("GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken);
+        => client.CachedGetAsync(
+            client.ResolveKey(key),
+            cancellationToken,
+            static (RespireClient state, in Protocol.RespValue value) => state.TryDeserializeBorrowed<T>(in value));
 
     public ValueTask<byte[]?> GetBytesAsync(RespireKey key, CancellationToken cancellationToken = default)
-        => client.BytesOrNullAsync("GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken);
+        => client.CachedGetAsync(
+            client.ResolveKey(key),
+            cancellationToken,
+            static (RespireClient _, in Protocol.RespValue value) => ResponseReader.BytesOrNull(in value));
 
     public ValueTask<RespireLease> GetLeaseAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.LeaseAsync("GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken);
@@ -362,7 +375,13 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         => GetManyAsync(keys, CancellationToken.None);
 
     public ValueTask<string?[]> GetManyAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
-        => client.NullableStringArrayAsync("MGET", new CmdN(Verbs.MGet, client.MapKeys(keys)), cancellationToken);
+        => client.Core.ClientCache is null && client.Core.Cluster is null
+            ? client.NullableStringArrayAsync(
+                "MGET", new CmdN(Verbs.MGet, client.MapKeys(keys)), cancellationToken)
+            : client.CachedGetManyAsync(
+                keys,
+                cancellationToken,
+                static (RespireClient _, in Protocol.RespValue value) => value.IsNull ? null : value.AsString());
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
@@ -372,8 +391,13 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?[]> GetManyAsync<T>(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
-        => client.DeserializeNullableArrayAsync<T, CmdN>(
-            "MGET", new CmdN(Verbs.MGet, client.MapKeys(keys)), cancellationToken);
+        => client.Core.ClientCache is null && client.Core.Cluster is null
+            ? client.DeserializeNullableArrayAsync<T, CmdN>(
+                "MGET", new CmdN(Verbs.MGet, client.MapKeys(keys)), cancellationToken)
+            : client.CachedGetManyAsync(
+                keys,
+                cancellationToken,
+                static (RespireClient client, in Protocol.RespValue value) => client.DeserializeBorrowed<T>(in value));
 
     public ValueTask SetManyAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
         => SetManyAsync(pairs, CancellationToken.None);

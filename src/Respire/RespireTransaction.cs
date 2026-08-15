@@ -244,6 +244,9 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                 return true;
             }
 
+            // MULTI/EXEC bypasses the regular send path and can contain arbitrary mutations.
+            core.ClientCache?.FlushForUnknownCommand();
+
             RespValue result;
             try
             {
@@ -334,6 +337,11 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         }
         finally
         {
+            if (_ops.Count != 0)
+            {
+                core.ClientCache?.FlushForUnknownCommand();
+            }
+
             try
             {
                 await ReleaseAsync(returnWatchConnection).ConfigureAwait(false);

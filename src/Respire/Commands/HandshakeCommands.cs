@@ -54,6 +54,20 @@ internal readonly struct ClientSetNameCommand(string name) : IRespCommand
     }
 }
 
+/// <summary>CLIENT TRACKING ON OPTIN.</summary>
+internal readonly struct ClientTrackingCommand : IRespCommand
+{
+    public void Write(ref RespWriter writer)
+        => writer.WriteRaw("*4\r\n$6\r\nCLIENT\r\n$8\r\nTRACKING\r\n$2\r\nON\r\n$5\r\nOPTIN\r\n"u8);
+}
+
+/// <summary>CLIENT CACHING YES.</summary>
+internal readonly struct ClientCachingCommand : IRespCommand
+{
+    public void Write(ref RespWriter writer)
+        => writer.WriteRaw("*3\r\n$6\r\nCLIENT\r\n$7\r\nCACHING\r\n$3\r\nYES\r\n"u8);
+}
+
 /// <summary>CLIENT ID.</summary>
 internal readonly struct ClientIdCommand : IRespCommand
 {

@@ -37,6 +37,31 @@ internal static class RespireTelemetry
         unit: "{message}",
         description: "Messages discarded because a subscription buffer was full.");
 
+    public static readonly Counter<long> ClientCacheHits = Meter.CreateCounter<long>(
+        "respire.client_cache.hits",
+        unit: "{read}",
+        description: "Client-side cache reads served locally.");
+
+    public static readonly Counter<long> ClientCacheMisses = Meter.CreateCounter<long>(
+        "respire.client_cache.misses",
+        unit: "{read}",
+        description: "Client-side cache reads sent to Redis.");
+
+    public static readonly Counter<long> ClientCacheInvalidations = Meter.CreateCounter<long>(
+        "respire.client_cache.invalidations",
+        unit: "{key}",
+        description: "Key invalidations observed by the client-side cache.");
+
+    public static readonly Counter<long> ClientCacheEvictions = Meter.CreateCounter<long>(
+        "respire.client_cache.evictions",
+        unit: "{entry}",
+        description: "Client-side cache entries removed by capacity, expiration, or flush.");
+
+    public static readonly Counter<long> ClientCacheContinuityFlushes = Meter.CreateCounter<long>(
+        "respire.client_cache.continuity_flushes",
+        unit: "{flush}",
+        description: "Client-side cache flushes caused by uncertain tracking continuity.");
+
     public static bool IsEnabled => Source.HasListeners() || OperationDuration.Enabled;
 
     public static void RecordSubscriptionMessageDropped(

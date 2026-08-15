@@ -97,6 +97,25 @@ public class ServiceCollectionTests(RedisTestContainer fixture)
     }
 
     [Test]
+    public async Task OptionsBuilder_UseClientSideCaching_ConfiguresSharedClient()
+    {
+        var endpoint = RespireOptions.Parse(fixture.ConnectionString).Endpoints[0];
+        var services = new ServiceCollection();
+        services.AddRespire(options =>
+        {
+            options.Endpoints.Add(endpoint);
+            options.Database = fixture.Database;
+            options.UseClientSideCaching(new RespireClientSideCacheOptions { MaxEntries = 123 });
+        });
+
+        await using var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<RespireClient>();
+
+        await Assert.That(client.ClientSideCache).IsNotNull();
+        await Assert.That(client.Core.Options.ClientSideCache!.MaxEntries).IsEqualTo(123);
+    }
+
+    [Test]
     public async Task AddKeyedRespire_RegistersSeparateClients()
     {
         var services = new ServiceCollection();

@@ -15,6 +15,59 @@ public class RespireOptionsTests
         await Assert.That(options.Connections).IsEqualTo(1);
         await Assert.That(options.CommandTimeout).IsEqualTo(TimeSpan.FromSeconds(10));
         await Assert.That(options.Protocol).IsEqualTo(RespProtocol.Resp2);
+        await Assert.That(options.ClientSideCache).IsNull();
+    }
+
+    [Test]
+    public async Task ClientSideCache_PromotesValidatedSnapshotToResp3()
+    {
+        await using var client = RespireClient.Create(ValidOptions() with
+        {
+            Protocol = RespProtocol.Resp2,
+            ClientSideCache = new(),
+        });
+
+        await Assert.That(client.Core.Options.Protocol).IsEqualTo(RespProtocol.Resp3);
+        await Assert.That(client.ClientSideCache).IsNotNull();
+    }
+
+    [Test]
+    [Arguments(0L, 1L, 1)]
+    [Arguments(1L, 0L, 1)]
+    [Arguments(1L, 1L, 0)]
+    [Arguments(-1L, 1L, 1)]
+    [Arguments(1L, -1L, 1)]
+    [Arguments(1L, 1L, -1)]
+    public async Task ClientSideCache_RejectsInvalidBounds(
+        long maxEntries,
+        long maxSizeBytes,
+        int ttlMilliseconds)
+    {
+        var options = ValidOptions() with
+        {
+            ClientSideCache = new RespireClientSideCacheOptions
+            {
+                MaxEntries = (int)maxEntries,
+                MaxSizeBytes = maxSizeBytes,
+                TimeToLive = TimeSpan.FromMilliseconds(ttlMilliseconds),
+            },
+        };
+
+        await Assert.That(() => RespireClient.Create(options))
+            .ThrowsExactly<RespireConfigurationException>();
+    }
+
+    [Test]
+    public async Task ClientSideCache_RequiresTwoInflightSlots()
+    {
+        var options = ValidOptions() with
+        {
+            MaxInflightCommands = 1,
+            ClientSideCache = new(),
+        };
+
+        await Assert.That(() => RespireClient.Create(options))
+            .ThrowsExactly<RespireConfigurationException>();
     }
 
     [Test]
@@ -42,10 +95,10 @@ public class RespireOptionsTests
         await Assert.That(() => RespireClient.Create(new RespireOptions { Endpoints = [] }))
             .ThrowsExactly<RespireConfigurationException>();
         await Assert.That(() => RespireClient.Create(new RespireOptions
-            {
-                Connections = 0,
-                Endpoints = { new RespireEndpoint("localhost") },
-            }))
+        {
+            Connections = 0,
+            Endpoints = { new RespireEndpoint("localhost") },
+        }))
             .ThrowsExactly<RespireConfigurationException>();
     }
 

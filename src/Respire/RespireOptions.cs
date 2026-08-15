@@ -198,6 +198,12 @@ public sealed record RespireOptions
     /// <summary>Serializer behind non-primitive typed values. System.Text.Json by default.</summary>
     public IRespireSerializer Serializer { get; init; } = RespireSerializer.Default;
 
+    /// <summary>
+    /// Enables bounded RESP3 server-assisted client-side caching. Null (default) has no cache,
+    /// tracking commands, invalidation processing, or cache storage overhead.
+    /// </summary>
+    public RespireClientSideCacheOptions? ClientSideCache { get; init; }
+
     /// <summary>Optional factory for Respire diagnostic logs.</summary>
     public ILoggerFactory? LoggerFactory { get; init; }
 
@@ -277,6 +283,20 @@ public sealed record RespireOptions
             nameof(TcpKeepAliveRetryCount),
             "must be at least one");
 
+        if (ClientSideCache is { } cache)
+        {
+            Require(
+                MaxInflightCommands >= 2,
+                nameof(MaxInflightCommands),
+                "must be at least two when client-side caching is enabled");
+            Require(cache.MaxEntries >= 1, nameof(ClientSideCache), "must have MaxEntries of at least one");
+            Require(cache.MaxSizeBytes >= 1, nameof(ClientSideCache), "must have MaxSizeBytes of at least one");
+            Require(
+                cache.TimeToLive is null || cache.TimeToLive >= TimeSpan.FromMilliseconds(1),
+                nameof(ClientSideCache),
+                "must have a null TimeToLive or at least one millisecond");
+        }
+
         if (TcpKeepAliveTime is null
             && (TcpKeepAliveInterval is not null || TcpKeepAliveRetryCount is not null))
         {
@@ -294,7 +314,11 @@ public sealed record RespireOptions
             }
         }
 
-        return this with { Endpoints = new List<RespireEndpoint>(Endpoints) };
+        return this with
+        {
+            Endpoints = new List<RespireEndpoint>(Endpoints),
+            Protocol = ClientSideCache is null ? Protocol : RespProtocol.Resp3,
+        };
     }
 
     private static void Require(bool condition, string optionName, string requirement)
@@ -307,7 +331,9 @@ public sealed record RespireOptions
 
     internal ILogger? CreateLogger(string category) => LoggerFactory?.CreateLogger(category);
 
-    internal RespireConnectionOptions ToConnectionOptions(RespirePushHandler? pushHandler = null)
+    internal RespireConnectionOptions ToConnectionOptions(
+        RespirePushHandler? pushHandler = null,
+        bool enableClientTracking = false)
         => new()
         {
             ConnectTimeout = ConnectTimeout,
@@ -327,6 +353,7 @@ public sealed record RespireOptions
             WriteBufferSize = WriteBufferSize,
             MaxInflightCommands = MaxInflightCommands,
             PushHandler = pushHandler,
+            EnableClientTracking = enableClientTracking,
         };
 
     /// <summary>

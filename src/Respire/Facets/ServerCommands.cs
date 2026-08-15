@@ -139,7 +139,11 @@ public interface IServerCommands
     /// <summary>Resets one latency event. Redis: LATENCY RESET event.</summary>
     ValueTask<long> ResetLatencyAsync(string eventName, CancellationToken cancellationToken = default);
 
-    /// <summary>Approximate memory used by a key, or null when the key is missing. Redis: MEMORY USAGE.</summary>
+    /// <summary>
+    /// Memory used by a key, or null when the key is missing. With client-side caching enabled,
+    /// only exact <paramref name="samples"/> = 0 calls are cached; sampled estimates bypass it.
+    /// Redis: MEMORY USAGE.
+    /// </summary>
     ValueTask<long?> MemoryUsageAsync(
         RespireKey key,
         long? samples = null,
@@ -316,19 +320,32 @@ internal sealed class ServerCommands(RespireClient client) : IServerCommands
         byte[] command,
         CancellationToken cancellationToken)
     {
-        var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var connection in connections)
+        var cache = client.Core.ClientCache;
+        var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
+        try
         {
-            var reply = await client.SendOnConnectionAsync(
-                    operation, connection, new RawCommand(command), cancellationToken)
+            var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken)
                 .ConfigureAwait(false);
-            try
+            foreach (var connection in connections)
             {
-                ResponseReader.ExpectOk(in reply);
+                var reply = await client.SendOnConnectionAsync(
+                        operation, connection, new RawCommand(command), cancellationToken)
+                    .ConfigureAwait(false);
+                try
+                {
+                    ResponseReader.ExpectOk(in reply);
+                }
+                finally
+                {
+                    reply.Dispose();
+                }
             }
-            finally
+        }
+        finally
+        {
+            if (mutationFence.IsRequired)
             {
-                reply.Dispose();
+                cache!.CompleteMutation(in mutationFence);
             }
         }
     }

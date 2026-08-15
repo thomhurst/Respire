@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Respire.Infrastructure;
+using Respire.Networking;
 
 namespace Respire.Internal;
 
@@ -26,6 +27,7 @@ internal sealed class ClientCore : IAsyncDisposable
     public readonly ILogger? Logger;
     public readonly DedicatedConnectionPool DedicatedPool;
     public readonly ClusterRouter? Cluster;
+    public readonly ClientSideCacheCoordinator? ClientCache;
     public volatile bool Disposed;
 
     public ClientCore(RespireOptions options)
@@ -38,12 +40,20 @@ internal sealed class ClientCore : IAsyncDisposable
         Options = options;
         Logger = options.CreateLogger("Respire.RespireClient");
         var endpoint = options.PrimaryEndpoint;
-        var connectionOptions = options.ToConnectionOptions();
+        ClientCache = options.ClientSideCache is { } cacheOptions
+            ? new ClientSideCacheCoordinator(cacheOptions)
+            : null;
+        RespirePushHandler? pushHandler = ClientCache is null ? null : ClientCache.HandlePush;
+        var connectionOptions = options.ToConnectionOptions(
+            pushHandler,
+            enableClientTracking: ClientCache is not null);
         Multiplexer = RespireConnectionMultiplexer.Create(
             endpoint.Host, endpoint.Port, options.Connections, connectionOptions, Logger);
         DedicatedPool = new DedicatedConnectionPool(
-            endpoint.Host, endpoint.Port, connectionOptions, Logger);
-        Cluster = options.UseCluster ? new ClusterRouter(options, Multiplexer) : null;
+            endpoint.Host, endpoint.Port, options.ToConnectionOptions(), Logger);
+        Cluster = options.UseCluster
+            ? new ClusterRouter(options, Multiplexer, connectionOptions)
+            : null;
         if (Cluster is { } cluster)
         {
             cluster.SlotStateChanged += NotifyCommandStateChanged;
@@ -115,6 +125,11 @@ internal sealed class ClientCore : IAsyncDisposable
         int slot,
         RespireConnectionStateChange change)
     {
+        if (change.State != RespireConnectionState.Connected)
+        {
+            ClientCache?.FlushForContinuityLoss();
+        }
+
         lock (_stateGate)
         {
             var commandSlot = (node, slot);
@@ -142,6 +157,8 @@ internal sealed class ClientCore : IAsyncDisposable
 
     internal void NotifyCommandNodeRetired(RespireConnectionMultiplexer node)
     {
+        ClientCache?.FlushForContinuityLoss();
+
         lock (_stateGate)
         {
             _reconnectingCommandSlots.RemoveWhere(
@@ -267,6 +284,7 @@ internal sealed class ClientCore : IAsyncDisposable
         }
 
         Disposed = true;
+        ClientCache?.Clear();
         var commandEndpoints = Cluster?.GetActiveEndpoints() ?? [Options.PrimaryEndpoint];
         lock (_stateGate)
         {

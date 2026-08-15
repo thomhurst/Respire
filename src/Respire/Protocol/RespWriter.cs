@@ -3,6 +3,7 @@ using System.Buffers.Text;
 using System.Runtime.CompilerServices;
 using System.Text;
 using Respire.Networking;
+using Respire.Internal;
 
 namespace Respire.Protocol;
 
@@ -103,6 +104,13 @@ internal interface IRespCommand
 {
     void Write(ref RespWriter writer);
 
+    /// <summary>Returns the command's primary routing key when it is represented explicitly.</summary>
+    bool TryGetPrimaryKey(out RespireValue key)
+    {
+        key = default;
+        return false;
+    }
+
     /// <summary>
     /// Supplies a Redis Cluster hash slot when the command has a routing key. Custom commands
     /// may override this using <see cref="RespireKey.ClusterSlot"/>; the default lets a cluster
@@ -111,6 +119,13 @@ internal interface IRespCommand
     bool TryGetClusterSlot(out int slot)
     {
         slot = 0;
+        return false;
+    }
+
+    /// <summary>Builds an invocation identity for server-assisted client-side caching.</summary>
+    bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
+    {
+        key = default;
         return false;
     }
 }

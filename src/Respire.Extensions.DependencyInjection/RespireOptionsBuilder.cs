@@ -86,6 +86,16 @@ public sealed class RespireOptionsBuilder
     /// <inheritdoc cref="RespireOptions.Serializer"/>
     public IRespireSerializer Serializer { get; set; } = RespireSerializer.Default;
 
+    /// <inheritdoc cref="RespireOptions.ClientSideCache"/>
+    public RespireClientSideCacheOptions? ClientSideCache { get; set; }
+
+    /// <summary>Enables RESP3 server-assisted client-side caching with the supplied policy.</summary>
+    public RespireOptionsBuilder UseClientSideCaching(RespireClientSideCacheOptions? options = null)
+    {
+        ClientSideCache = options ?? new RespireClientSideCacheOptions();
+        return this;
+    }
+
     /// <inheritdoc cref="RespireOptions.LoggerFactory"/>
     public ILoggerFactory? LoggerFactory { get; set; }
 
@@ -135,6 +145,7 @@ public sealed class RespireOptionsBuilder
         CommandTimeout = CommandTimeout,
         Connections = Connections,
         Serializer = Serializer,
+        ClientSideCache = ClientSideCache,
         LoggerFactory = LoggerFactory,
         TcpKeepAliveTime = TcpKeepAliveTime,
         TcpKeepAliveInterval = TcpKeepAliveInterval,
