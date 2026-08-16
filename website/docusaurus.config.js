@@ -63,7 +63,9 @@ const config = {
           {type: 'docSidebar', sidebarId: 'docsSidebar', position: 'left', label: 'Docs'},
           {to: '/docs/guides/blocking-queues', label: 'Guides', position: 'left'},
           {to: '/docs/performance', label: 'Performance', position: 'left'},
+          {href: 'https://www.nuget.org/packages/Respire', label: 'NuGet', position: 'right'},
           {href: 'https://github.com/thomhurst/Respire', label: 'GitHub', position: 'right', className: 'navbar-github-link'},
+          {href: 'https://github.com/sponsors/thomhurst', label: '❤️ Sponsor', position: 'right'},
         ],
       },
       footer: {
