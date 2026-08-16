@@ -1,6 +1,22 @@
 // @ts-check
 import {themes as prismThemes} from 'prism-react-renderer';
 
+const algoliaExperiencesPlugin = () => ({
+  name: 'algolia-experiences',
+  injectHtmlTags() {
+    return {
+      postBodyTags: [
+        {
+          tagName: 'script',
+          attributes: {
+            src: 'https://cdn.jsdelivr.net/npm/@algolia/experiences/dist/experiences.js?appId=F2Z77IF01P&apiKey=1200f81db843bbb8cfbcbdf8e73f2670&experienceId=F2Z77IF01P&env=prod',
+          },
+        },
+      ],
+    };
+  },
+});
+
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: 'Respire',
@@ -36,6 +52,7 @@ const config = {
     },
   ],
   scripts: [{src: 'https://tluma.ai/widget.js', async: true}],
+  plugins: [algoliaExperiencesPlugin],
   presets: [
     [
       'classic',

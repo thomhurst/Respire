@@ -44,6 +44,7 @@ body { letter-spacing: -0.01em; }
 .navbar__title { font-size: 1.05rem; letter-spacing: -.03em; }
 .navbar__link { font-size: .9rem; font-weight: 600; }
 .navbar-github-link::after { content: '↗'; margin-left: .35rem; font-size: .8em; }
+.algolia-experience-search { width: clamp(11rem, 18vw, 16rem); }
 .footer { border-top: 1px solid rgba(115, 224, 192, 0.12); }
 .footer__title { color: var(--respire-mint); font-size: .78rem; letter-spacing: .12em; text-transform: uppercase; }
 .footer__copyright { color: rgba(245, 241, 232, .48); font-family: var(--ifm-font-family-monospace); font-size: .75rem; }
@@ -60,4 +61,5 @@ pre code { font-family: var(--ifm-font-family-monospace); }
 
 @media (max-width: 996px) {
   .navbar__items--right .navbar__item { display: none; }
+  .algolia-experience-search { width: clamp(8rem, 32vw, 11rem); margin-right: .75rem; }
 }
