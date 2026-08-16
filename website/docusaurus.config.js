@@ -17,6 +17,10 @@ const config = {
   i18n: {defaultLocale: 'en', locales: ['en']},
   headTags: [
     {
+      tagName: 'meta',
+      attributes: {name: 'algolia-site-verification', content: '17557AF2E465C739'},
+    },
+    {
       tagName: 'script',
       attributes: {},
       innerHTML: `window.tlumaConfig = {
