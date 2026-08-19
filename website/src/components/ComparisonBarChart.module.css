@@ -1,0 +1,132 @@
+.chart {
+  --chart-respire: #168d71;
+  --chart-respire-server: #4fb99d;
+  --chart-other: #718096;
+  background: color-mix(in srgb, var(--ifm-background-surface-color) 88%, var(--ifm-color-primary) 12%);
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 0.75rem;
+  margin: 1.5rem 0 2rem;
+  padding: 1.25rem;
+}
+
+.title,
+.description {
+  display: block;
+}
+
+.title {
+  color: var(--ifm-heading-color);
+  font-size: 1rem;
+}
+
+.description {
+  color: var(--ifm-color-emphasis-700);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  margin-top: 0.25rem;
+}
+
+.plot {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.25rem;
+}
+
+.group {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.groupLabel {
+  color: var(--ifm-font-color-base);
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.series {
+  align-items: center;
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: 8.5rem minmax(4rem, 1fr) 4.75rem;
+}
+
+.withRatios .series {
+  grid-template-columns: 8.5rem minmax(4rem, 1fr) 9rem;
+}
+
+.seriesLabel,
+.value {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.7rem;
+}
+
+.seriesLabel {
+  color: var(--ifm-color-emphasis-700);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.track {
+  background: var(--ifm-color-emphasis-200);
+  border-radius: 999px;
+  height: 0.55rem;
+  overflow: hidden;
+}
+
+.bar {
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+  min-width: 2px;
+}
+
+.empty {
+  min-width: 0;
+}
+
+.other {
+  background: var(--chart-other);
+}
+
+.respire {
+  background: var(--chart-respire);
+}
+
+.respireServer {
+  background: var(--chart-respire-server);
+}
+
+.value {
+  color: var(--ifm-font-color-base);
+  text-align: right;
+  white-space: nowrap;
+}
+
+[data-theme='dark'] .chart {
+  --chart-respire: #73e0c0;
+  --chart-respire-server: #35a98b;
+  --chart-other: #a0aec0;
+}
+
+@media (max-width: 576px) {
+  .chart {
+    margin-left: -0.5rem;
+    margin-right: -0.5rem;
+    padding: 1rem 0.75rem;
+  }
+
+  .series {
+    gap: 0.4rem;
+    grid-template-columns: 5.75rem minmax(2.5rem, 1fr) 4.25rem;
+  }
+
+  .withRatios .series {
+    grid-template-columns: 5.75rem minmax(2.5rem, 1fr) 7.75rem;
+  }
+
+  .seriesLabel,
+  .value {
+    font-size: 0.64rem;
+  }
+}

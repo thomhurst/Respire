@@ -3,6 +3,8 @@ title: Stress tests
 description: Latest sustained Respire and StackExchange.Redis stress-test results.
 ---
 
+import ComparisonBarChart from '@site/src/components/ComparisonBarChart';
+
 # Stress tests
 
 :::info Automated results
@@ -12,6 +14,21 @@ Generated 2026-08-16 03:15 UTC from commit `8e7acd92d73e`. See the [GitHub Actio
 3 min measured (+10s warmup) per scenario/client pass, 50 concurrent workers, 1,024 B values, .NET 10.0.11, Ubuntu 24.04.4 LTS.
 
 ## Throughput
+
+<ComparisonBarChart
+  title="Sustained throughput"
+  description="Operations per second. Longer bars are better."
+  format="integer"
+  data={[
+    {"label":"ping","other":194019,"respire":236375},
+    {"label":"get","other":120702,"respire":182543},
+    {"label":"set","other":139434,"respire":185499},
+    {"label":"incr","other":158885,"respire":204431},
+    {"label":"hash","other":60032,"respire":90488},
+    {"label":"list","other":59356,"respire":86166},
+    {"label":"mixed","other":118401,"respire":185919}
+  ]}
+/>
 
 | Scenario | StackExchange.Redis ops/s | Respire ops/s | Respire / StackExchange |
 |---|---:|---:|---:|

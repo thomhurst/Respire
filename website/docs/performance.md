@@ -3,6 +3,8 @@ title: Performance
 description: How Respire pipelines work and when to choose batches or leased reads.
 ---
 
+import ComparisonBarChart from '@site/src/components/ComparisonBarChart';
+
 # Performance
 
 Respire is designed to make the default path fast under real concurrency, without requiring performance-specific application APIs.
@@ -27,12 +29,35 @@ model for read-heavy workloads. After a miss, eligible repeated reads return fro
 in-process memory. Redis sends an invalidation when another client changes a tracked key, Respire
 evicts it, and the next read refreshes lazily.
 
-In the official net10 comparison run, a cached Respire `GET` measured 151.5 ns and 64 B allocated,
-versus 186.5 μs and 527 B for a StackExchange.Redis server read. Missing `GET` and `EXISTS` cache
-hits allocated nothing. StackExchange.Redis 3.1.13 has no equivalent built-in server-assisted
-local cache, so this comparison intentionally shows the cost eliminated by the feature. See the
+In the latest published net10 comparison run, a cached Respire `GET` measured 216.5 ns, versus
+144.6 μs for an uncached Respire server read and 148.6 μs for a StackExchange.Redis server read.
+Both Respire paths allocated 64 B, versus 527 B for StackExchange.Redis. StackExchange.Redis 3.1.13
+has no equivalent built-in server-assisted local cache, so its result is necessarily an ordinary
+server read. Missing `GET` and `EXISTS` cache hits allocated nothing. See the
 [benchmark source](https://github.com/thomhurst/Respire/blob/main/benchmarks/Respire.ComparisonBenchmarks/ClientSideCachingBenchmarks.cs)
-and [official run](https://github.com/thomhurst/Respire/actions/runs/31848970849).
+and [official run](https://github.com/thomhurst/Respire/actions/runs/31923908249).
+
+<ComparisonBarChart
+  title="GET latency: server reads vs cache hit"
+  description="Latest published net10 comparison run. Shorter bars are faster."
+  format="duration-ns"
+  respireLabel="Respire cache hit"
+  scale="group"
+  data={[
+    {label: 'GET', other: 148628.4, respireServer: 144572.8, respire: 216.5},
+  ]}
+/>
+
+<ComparisonBarChart
+  title="GET allocation: server reads vs cache hit"
+  description="Allocated bytes per operation in the same run. Shorter bars are better."
+  format="bytes"
+  respireLabel="Respire cache hit"
+  scale="group"
+  data={[
+    {label: 'GET', other: 527, respireServer: 64, respire: 64},
+  ]}
+/>
 
 ## Connection count tuning
 

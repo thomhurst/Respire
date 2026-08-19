@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 
 REPORT_NAME = "stress-report.md"
+CHART_IMPORT = "import ComparisonBarChart from '@site/src/components/ComparisonBarChart';"
 
 
 def _without_title(report: str) -> str:
@@ -19,8 +21,53 @@ def _without_title(report: str) -> str:
     return "\n".join(lines)
 
 
+def _throughput_rows(report: str) -> list[dict[str, str | int]]:
+    lines = report.splitlines()
+    for index, line in enumerate(lines):
+        if "| Scenario | StackExchange.Redis ops/s | Respire ops/s |" not in line:
+            continue
+
+        rows: list[dict[str, str | int]] = []
+        for row_line in lines[index + 2 :]:
+            if not row_line.strip().startswith("|"):
+                break
+            cells = [cell.strip() for cell in row_line.strip().strip("|").split("|")]
+            if len(cells) < 3:
+                continue
+            rows.append(
+                {
+                    "label": cells[0],
+                    "other": int(cells[1].replace(",", "")),
+                    "respire": int(cells[2].replace(",", "")),
+                }
+            )
+        return rows
+
+    return []
+
+
+def _with_throughput_chart(body: str) -> str:
+    rows = _throughput_rows(body)
+    if not rows:
+        return body
+
+    chart = "\n".join(
+        [
+            "<ComparisonBarChart",
+            '  title="Sustained throughput"',
+            '  description="Operations per second. Longer bars are better."',
+            '  format="integer"',
+            f"  data={{{json.dumps(rows, separators=(',', ':'))}}}",
+            "/>",
+            "",
+        ]
+    )
+    heading = "## Throughput\n\n"
+    return body.replace(heading, f"{heading}{chart}", 1)
+
+
 def build_document(report: str, commit: str, generated_at: str, run_url: str) -> str:
-    body = _without_title(report)
+    body = _with_throughput_chart(_without_title(report))
     if not body:
         raise ValueError("Stress report is empty")
 
@@ -29,6 +76,8 @@ def build_document(report: str, commit: str, generated_at: str, run_url: str) ->
         "title: Stress tests",
         "description: Latest sustained Respire and StackExchange.Redis stress-test results.",
         "---",
+        "",
+        CHART_IMPORT,
         "",
         "# Stress tests",
         "",

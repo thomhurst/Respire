@@ -3,6 +3,8 @@ title: Benchmarks
 description: Latest automated Respire and StackExchange.Redis benchmark results.
 ---
 
+import ComparisonBarChart from '@site/src/components/ComparisonBarChart';
+
 # Benchmarks
 
 :::info Automated results
@@ -10,6 +12,42 @@ Generated 2026-08-16 03:54 UTC from commit `3bfb048670b9`. See the [GitHub Actio
 :::
 
 StackExchange.Redis is the baseline. A ratio below `1.00` means Respire completed the operation faster.
+
+## Visual comparison
+
+StackExchange.Redis has no built-in server-assisted client cache, so its values are ordinary server reads. Respire server reads are included for a like-for-like uncached comparison.
+
+<ComparisonBarChart
+  title="Client-cache hit time — net10.0"
+  description="StackExchange.Redis and Respire server reads vs Respire client-cache hit. Shorter bars are faster."
+  format="duration-ns"
+  respireLabel="Respire cache hit"
+  scale="group"
+  showRatio
+  data={[
+    {"label":"EXISTS hot","other":141172.8,"respire":462.9,"respireServer":143008.8},
+    {"label":"GET hot","other":148628.4,"respire":216.5,"respireServer":144572.8},
+    {"label":"GET missing hot","other":146276.3,"respire":204.3,"respireServer":143698.3},
+    {"label":"HGET hot","other":149972.6,"respire":528.7,"respireServer":143865.4}
+  ]}
+/>
+
+<ComparisonBarChart
+  title="Selected operation time — net10.0"
+  description="Mean time. Shorter bars are faster."
+  format="duration-ns"
+  scale="group"
+  showRatio
+  data={[
+    {"label":"GET","other":147461,"respire":143686},
+    {"label":"GET x200 pipelined","other":1967,"respire":1945},
+    {"label":"GET x50 concurrent","other":4750,"respire":4875},
+    {"label":"HGET","other":149467,"respire":143299},
+    {"label":"HSET","other":143524,"respire":144752},
+    {"label":"LPUSH+LPOP","other":291163,"respire":283581},
+    {"label":"SET 1KB","other":148194,"respire":145042}
+  ]}
+/>
 
 ## net10.0
 
