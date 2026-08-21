@@ -129,6 +129,13 @@ foreach ($documentPath in $documentPaths)
                     [void]$installPackageIds.Add($Matches[1])
                 }
 
+                if ($command -match '^dotnet (?:add reference|reference add)\s+([^\s]+)')
+                {
+                    $referencePath = $Matches[1].Trim("'`"").Replace('\', '/') -replace
+                        '^path/to/Respire/', ''
+                    [void]$projectCommands.Add($referencePath)
+                }
+
                 if ($command -match '^dotnet run\s+.*--project\s+([^\s]+)')
                 {
                     [void]$projectCommands.Add($Matches[1].Trim("'`""))
