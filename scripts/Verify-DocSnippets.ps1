@@ -51,7 +51,7 @@ foreach ($documentPath in $documentPaths)
 
     for ($lineIndex = 0; $lineIndex -lt $lines.Count; $lineIndex++)
     {
-        if ($lines[$lineIndex] -match '^```csharp\s*$')
+        if ($lines[$lineIndex] -match '^```csharp(?:\s+.*)?$')
         {
             $csharpOrdinal++
             $startLine = $lineIndex + 2
@@ -119,12 +119,12 @@ foreach ($documentPath in $documentPaths)
             continue
         }
 
-        if ($lines[$lineIndex] -match '^```(?:bash|sh|shell|powershell|pwsh)\s*$')
+        if ($lines[$lineIndex] -match '^```(?:bash|sh|shell|powershell|pwsh)(?:\s+.*)?$')
         {
             for ($lineIndex++; $lineIndex -lt $lines.Count -and $lines[$lineIndex] -notmatch '^```\s*$'; $lineIndex++)
             {
                 $command = $lines[$lineIndex].Trim()
-                if ($command -match '^dotnet add package\s+([A-Za-z0-9_.-]+)')
+                if ($command -match '^dotnet (?:add package|package add)\s+([A-Za-z0-9_.-]+)')
                 {
                     [void]$installPackageIds.Add($Matches[1])
                 }
@@ -157,8 +157,13 @@ foreach ($packageId in $installPackageIds)
 foreach ($relativeProjectPath in $projectCommands)
 {
     $commandPath = Join-Path $repositoryRoot $relativeProjectPath
-    $projectExists = Test-Path -LiteralPath $commandPath -PathType Leaf
-    if (Test-Path -LiteralPath $commandPath -PathType Container)
+    $projectExists = $false
+    if (Test-Path -LiteralPath $commandPath -PathType Leaf)
+    {
+        $projectExists = (Get-Item -LiteralPath $commandPath).Extension -in
+            '.csproj', '.fsproj', '.vbproj'
+    }
+    elseif (Test-Path -LiteralPath $commandPath -PathType Container)
     {
         $projectExists = $null -ne (Get-ChildItem -LiteralPath $commandPath -File |
             Where-Object { $_.Extension -in '.csproj', '.fsproj', '.vbproj' } |
