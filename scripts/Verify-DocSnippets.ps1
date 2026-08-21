@@ -107,12 +107,6 @@ foreach ($documentPath in $documentPaths)
                 continue
             }
 
-            $sourceWithoutComments = [regex]::Replace($source, '(?s)/\*.*?\*/', '') -replace '(?m)//.*$', ''
-            if ($sourceWithoutComments -match '\.\.\.')
-            {
-                throw "Incomplete C# at $relativePath#$csharpOrdinal must have a doc-test-ignore directive with a reason."
-            }
-
             $snippets.Add([pscustomobject]@{
                 Id = "$relativePath#$csharpOrdinal"
                 SourcePath = $documentPath.Replace('\', '/')
@@ -139,6 +133,14 @@ foreach ($documentPath in $documentPaths)
                 {
                     [void]$projectCommands.Add($Matches[1].Trim("'`""))
                 }
+                elseif ($command -match '^dotnet test\s+--project\s+([^\s]+)')
+                {
+                    [void]$projectCommands.Add($Matches[1].Trim("'`""))
+                }
+                elseif ($command -match '^dotnet test\s+(?!-)([^\s]+)')
+                {
+                    [void]$projectCommands.Add($Matches[1].Trim("'`""))
+                }
             }
         }
     }
@@ -154,7 +156,16 @@ foreach ($packageId in $installPackageIds)
 
 foreach ($relativeProjectPath in $projectCommands)
 {
-    if (-not (Test-Path -LiteralPath (Join-Path $repositoryRoot $relativeProjectPath)))
+    $commandPath = Join-Path $repositoryRoot $relativeProjectPath
+    $projectExists = Test-Path -LiteralPath $commandPath -PathType Leaf
+    if (Test-Path -LiteralPath $commandPath -PathType Container)
+    {
+        $projectExists = $null -ne (Get-ChildItem -LiteralPath $commandPath -File |
+            Where-Object { $_.Extension -in '.csproj', '.fsproj', '.vbproj' } |
+            Select-Object -First 1)
+    }
+
+    if (-not $projectExists)
     {
         throw "Shell sample references missing project '$relativeProjectPath'."
     }
@@ -180,14 +191,47 @@ $builder = [Text.StringBuilder]::new()
 [void]$builder.AppendLine('using Respire.Extensions.Caching.Hybrid;')
 [void]$builder.AppendLine('using Respire.Extensions.DependencyInjection;')
 [void]$builder.AppendLine('using Respire.Serialization;')
-[void]$builder.AppendLine('namespace Respire.DocTests;')
 [void]$builder.AppendLine('#pragma warning disable')
 
+$usingPattern = '(?m)^\s*(?:global\s+)?using\s+(?:(?:static\s+)?[A-Za-z_][A-Za-z0-9_.]*|[A-Za-z_][A-Za-z0-9_]*\s*=\s*(?:global::)?[A-Za-z_][A-Za-z0-9_.]*)\s*;\s*(?://.*)?$'
 for ($snippetIndex = 0; $snippetIndex -lt $snippets.Count; $snippetIndex++)
 {
     $snippet = $snippets[$snippetIndex]
-    $source = $snippet.Source -replace '(?m)^\s*using\s+[A-Za-z0-9_.]+;\s*(?://.*)?$', ''
-    $source = $source -replace '(?m)^\s*#pragma\s+warning\s+(?:disable|restore).*$',''
+    $usingDirectives = [regex]::Matches($snippet.Source, $usingPattern) |
+        ForEach-Object { $_.Value.Trim() -replace '^global\s+', '' }
+    $source = [regex]::Replace($snippet.Source, $usingPattern, '')
+    $source = $source -replace '(?m)^\s*#pragma\s+warning\s+(?:disable|restore).*$', ''
+
+    $declarationLine = $snippet.Line
+    $statementLine = $snippet.Line
+    $sourceSplitIndex = -1
+    if ($null -ne $snippet.SplitBefore)
+    {
+        $originalSplitIndex = $snippet.Source.IndexOf($snippet.SplitBefore, [StringComparison]::Ordinal)
+        $sourceSplitIndex = $source.IndexOf($snippet.SplitBefore, [StringComparison]::Ordinal)
+        if ($originalSplitIndex -lt 0 -or $sourceSplitIndex -lt 0)
+        {
+            throw "Split marker '$($snippet.SplitBefore)' was not found in $($snippet.Id)."
+        }
+
+        $splitLine = $snippet.Line +
+            [regex]::Matches($snippet.Source.Substring(0, $originalSplitIndex), "`n").Count
+        if ($snippet.Mode -eq 'declaration')
+        {
+            $statementLine = $splitLine
+        }
+        else
+        {
+            $declarationLine = $splitLine
+        }
+    }
+
+    [void]$builder.AppendLine('namespace Respire.DocTests')
+    [void]$builder.AppendLine('{')
+    foreach ($usingDirective in $usingDirectives)
+    {
+        [void]$builder.AppendLine($usingDirective)
+    }
     [void]$builder.AppendLine("internal sealed partial class Snippet$snippetIndex : SnippetContext")
     [void]$builder.AppendLine('{')
 
@@ -200,17 +244,11 @@ for ($snippetIndex = 0; $snippetIndex -lt $snippets.Count; $snippetIndex++)
         }
         else
         {
-            $splitIndex = $source.IndexOf($snippet.SplitBefore, [StringComparison]::Ordinal)
-            if ($splitIndex -lt 0)
-            {
-                throw "Declaration split marker '$($snippet.SplitBefore)' was not found in $($snippet.Id)."
-            }
-
-            $declarationSource = $source.Substring(0, $splitIndex).TrimEnd()
-            $source = $source.Substring($splitIndex)
+            $declarationSource = $source.Substring(0, $sourceSplitIndex).TrimEnd()
+            $source = $source.Substring($sourceSplitIndex)
         }
 
-        [void]$builder.AppendLine("#line $($snippet.Line) `"$($snippet.SourcePath)`"")
+        [void]$builder.AppendLine("#line $declarationLine `"$($snippet.SourcePath)`"")
         foreach ($line in ($declarationSource -split "`n"))
         {
             [void]$builder.AppendLine("    $line")
@@ -219,15 +257,9 @@ for ($snippetIndex = 0; $snippetIndex -lt $snippets.Count; $snippetIndex++)
     }
     elseif ($snippet.Mode -eq 'tail-declaration')
     {
-        $splitIndex = $source.IndexOf($snippet.SplitBefore, [StringComparison]::Ordinal)
-        if ($splitIndex -lt 0)
-        {
-            throw "Tail declaration split marker '$($snippet.SplitBefore)' was not found in $($snippet.Id)."
-        }
-
-        $declarationSource = $source.Substring($splitIndex).TrimEnd()
-        $source = $source.Substring(0, $splitIndex).TrimEnd()
-        [void]$builder.AppendLine("#line $($snippet.Line) `"$($snippet.SourcePath)`"")
+        $declarationSource = $source.Substring($sourceSplitIndex).TrimEnd()
+        $source = $source.Substring(0, $sourceSplitIndex).TrimEnd()
+        [void]$builder.AppendLine("#line $declarationLine `"$($snippet.SourcePath)`"")
         foreach ($line in ($declarationSource -split "`n"))
         {
             [void]$builder.AppendLine("    $line")
@@ -239,7 +271,7 @@ for ($snippetIndex = 0; $snippetIndex -lt $snippets.Count; $snippetIndex++)
     [void]$builder.AppendLine('    {')
     if (-not [string]::IsNullOrWhiteSpace($source))
     {
-        [void]$builder.AppendLine("#line $($snippet.Line) `"$($snippet.SourcePath)`"")
+        [void]$builder.AppendLine("#line $statementLine `"$($snippet.SourcePath)`"")
         foreach ($line in ($source -split "`n"))
         {
             [void]$builder.AppendLine("        $line")
@@ -248,12 +280,16 @@ for ($snippetIndex = 0; $snippetIndex -lt $snippets.Count; $snippetIndex++)
     }
     [void]$builder.AppendLine('    }')
     [void]$builder.AppendLine('}')
+    [void]$builder.AppendLine('}')
 }
 
+[void]$builder.AppendLine('namespace Respire.DocTests')
+[void]$builder.AppendLine('{')
 [void]$builder.AppendLine('internal static class SnippetCatalog')
 [void]$builder.AppendLine('{')
 [void]$builder.AppendLine('    public static void Report() =>')
 [void]$builder.AppendLine("        Console.WriteLine(`"Compiled $($snippets.Count) C# documentation snippets.`");")
+[void]$builder.AppendLine('}')
 [void]$builder.AppendLine('}')
 
 [IO.File]::WriteAllText($generatedPath, $builder.ToString())
