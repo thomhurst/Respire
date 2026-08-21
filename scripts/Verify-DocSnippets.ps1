@@ -51,12 +51,25 @@ foreach ($documentPath in $documentPaths)
 
     for ($lineIndex = 0; $lineIndex -lt $lines.Count; $lineIndex++)
     {
-        if ($lines[$lineIndex] -match '^```csharp(?:\s+.*)?$')
+        $fenceMatch = [regex]::Match(
+            $lines[$lineIndex],
+            '^(?<indent> {0,3})(?<delimiter>`{3,}|~{3,})(?<info>.*)$')
+        if (-not $fenceMatch.Success)
+        {
+            continue
+        }
+
+        $delimiter = $fenceMatch.Groups['delimiter'].Value
+        $closingFencePattern = '^ {0,3}' + [regex]::Escape($delimiter[0]) +
+            "{$($delimiter.Length),}\s*$"
+        $info = $fenceMatch.Groups['info'].Value.Trim()
+
+        if ($info -match '^csharp(?:\s+.*)?$')
         {
             $csharpOrdinal++
             $startLine = $lineIndex + 2
             $body = [System.Collections.Generic.List[string]]::new()
-            for ($lineIndex++; $lineIndex -lt $lines.Count -and $lines[$lineIndex] -notmatch '^```\s*$'; $lineIndex++)
+            for ($lineIndex++; $lineIndex -lt $lines.Count -and $lines[$lineIndex] -notmatch $closingFencePattern; $lineIndex++)
             {
                 $body.Add($lines[$lineIndex])
             }
@@ -119,9 +132,9 @@ foreach ($documentPath in $documentPaths)
             continue
         }
 
-        if ($lines[$lineIndex] -match '^```(?:bash|sh|shell|powershell|pwsh)(?:\s+.*)?$')
+        if ($info -match '^(?:bash|sh|shell|powershell|pwsh)(?:\s+.*)?$')
         {
-            for ($lineIndex++; $lineIndex -lt $lines.Count -and $lines[$lineIndex] -notmatch '^```\s*$'; $lineIndex++)
+            for ($lineIndex++; $lineIndex -lt $lines.Count -and $lines[$lineIndex] -notmatch $closingFencePattern; $lineIndex++)
             {
                 $command = $lines[$lineIndex].Trim()
                 if ($command -match '^dotnet (?:add package|package add)\s+([A-Za-z0-9_.-]+)')
