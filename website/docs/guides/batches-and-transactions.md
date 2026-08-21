@@ -49,6 +49,7 @@ RespireBatchResult result = await batch.ExecuteAsync();
 Both types implement `IRespireCommandQueue`, which unifies every deferred facet and the root
 shortcuts. Helpers can therefore queue work across facets without choosing an execution model:
 
+<!-- doc-test-declaration: split-before=RespireBatch batch -->
 ```csharp
 static void QueueUserUpdate(IRespireCommandQueue queue, string userId)
 {

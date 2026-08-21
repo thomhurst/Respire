@@ -50,6 +50,7 @@ Console.WriteLine(state);
 
 The default serializer uses `System.Text.Json`:
 
+<!-- doc-test-declaration: split-before=await redis -->
 ```csharp
 public sealed record User(string Name, int LoginCount);
 

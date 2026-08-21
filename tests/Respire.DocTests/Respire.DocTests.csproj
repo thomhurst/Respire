@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks></TargetFrameworks>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Respire" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.Extensions.Caching" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.Extensions.Caching.Hybrid" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.Extensions.DependencyInjection" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.18.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="$(GeneratedSnippetsPath)" Link="GeneratedSnippets.g.cs" />
+  </ItemGroup>
+
+</Project>

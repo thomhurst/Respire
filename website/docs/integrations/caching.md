@@ -42,6 +42,7 @@ is set, it uses a separately registered `IRespireClient` without taking ownershi
 
 Inject the framework abstraction into application code:
 
+<!-- doc-test-declaration -->
 ```csharp
 public sealed class ProductCache(IDistributedCache cache)
 {
