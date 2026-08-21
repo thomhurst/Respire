@@ -162,6 +162,12 @@ foreach ($documentPath in $documentPaths)
                     [void]$projectCommands.Add($Matches[1].Trim("'`""))
                 }
             }
+
+            continue
+        }
+
+        for ($lineIndex++; $lineIndex -lt $lines.Count -and $lines[$lineIndex] -notmatch $closingFencePattern; $lineIndex++)
+        {
         }
     }
 }
