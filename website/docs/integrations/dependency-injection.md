@@ -25,6 +25,7 @@ builder.Services.AddRespire(
 
 Inject `IRespireClient`:
 
+<!-- doc-test-declaration -->
 ```csharp
 public sealed class SessionStore(IRespireClient redis)
 {
@@ -39,6 +40,7 @@ The container owns disposal.
 
 Use keyed services when an application talks to separate endpoints:
 
+<!-- doc-test-tail-declaration: split-before=public sealed class CartService -->
 ```csharp
 builder.Services.AddKeyedRespire("sessions", "redis://sessions-host");
 builder.Services.AddKeyedRespire("jobs", "redis://jobs-host");

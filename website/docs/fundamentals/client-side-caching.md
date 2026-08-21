@@ -83,6 +83,7 @@ clears affected cache state instead of trusting entries whose invalidations may 
 
 Tune entry count, approximate owned bytes, and local TTL together:
 
+<!-- doc-test-ignore: Object-initializer fragment for the RespireOptions.ClientSideCache property. -->
 ```csharp
 ClientSideCache = new RespireClientSideCacheOptions
 {

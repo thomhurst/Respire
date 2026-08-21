@@ -40,6 +40,15 @@ jobs:
       
       - name: Build
         run: dotnet build -c Release --no-restore
+
+      - name: Pack documentation dependencies
+        if: matrix.framework == 'net10.0'
+        run: dotnet pack Respire.slnx -c Release --no-build -p:Version=0.0.0-docs -o artifacts/package/release
+
+      - name: Compile documentation snippets
+        if: matrix.framework == 'net10.0'
+        shell: pwsh
+        run: ./scripts/Verify-DocSnippets.ps1 -PackagesPath artifacts/package/release -Version 0.0.0-docs
       
       - name: Run Unit Tests
         run: |

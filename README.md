@@ -277,6 +277,7 @@ pass through a Respire serializer.
 
 ### Dependency injection
 
+<!-- doc-test-tail-declaration: split-before=public sealed class CartService -->
 ```csharp
 builder.Services.AddRespire(builder.Configuration.GetConnectionString("redis")!);
 
@@ -297,6 +298,7 @@ Standalone clients surface setup exceptions directly, while cluster clients wrap
 Typed values use reflection-based System.Text.Json metadata by default. For a trimmed or NativeAOT
 application, generate metadata for every stored type and pass that context to Respire:
 
+<!-- doc-test-tail-declaration: split-before=[JsonSerializable -->
 ```csharp
 using System.Text.Json.Serialization;
 using Respire;

@@ -51,6 +51,7 @@ else if (hits == 0) { /* key holds 0 */ }
 
 `SetAsync<T>` and `GetAsync<T>` use `RespireOptions.Serializer` for object values. `SystemTextJsonSerializer` is the default. Supply an `IRespireSerializer` for another format:
 
+<!-- doc-test-ignore: MyMessagePackSerializer is the application's omitted IRespireSerializer implementation. -->
 ```csharp
 var options = new RespireOptions
 {

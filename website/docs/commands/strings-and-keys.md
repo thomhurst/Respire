@@ -32,6 +32,7 @@ bool created = await redis.SetAsync(
 `RespireExpiry` is the single expiry argument: nothing, a relative TTL, an absolute instant, or "keep the TTL the key already has". A `TimeSpan` or `DateTimeOffset` converts implicitly.
 
 ```csharp
+string token = "session-token";
 await redis.SetAsync("session:42", token);                                  // no TTL (clears any existing one)
 await redis.SetAsync("session:42", token, TimeSpan.FromMinutes(30));        // PX
 await redis.SetAsync("session:42", token, RespireExpiry.At(midnight));         // PXAT
