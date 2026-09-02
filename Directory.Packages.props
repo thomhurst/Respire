@@ -24,7 +24,7 @@
     <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.11" />
     <PackageVersion Include="ModularPipelines.DotNet" Version="3.2.8" />
     <PackageVersion Include="Polyfill" Version="11.2.0" />
-    <PackageVersion Include="Reservoir" Version="1.6.0" />
+    <PackageVersion Include="Reservoir" Version="1.6.3" />
     <PackageVersion Include="ModularPipelines.GitHub" Version="3.2.8" />
     <PackageVersion Include="StackExchange.Redis" Version="3.1.31" />
     <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="10.0.11" />
