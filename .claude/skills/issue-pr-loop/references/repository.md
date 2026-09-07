@@ -1,5 +1,7 @@
 # Respire
 
+Before heavy local work, follow [the shared performance lock workflow](../../../../scripts/PerformanceLock.md). Reserve `performance` through the current shared `C:/git/Dekaf/scripts/AgentLocks.ps1`, using `$performanceLocks` separately from this repository's `$agentLocks`. Acquire it after the item lock and release it first. Repository-local Redis namespaces do not provide cross-repository isolation.
+
 - Every local .NET command uses `scripts/Invoke-AgentDotNet.ps1`, invoked in-process in PowerShell (`& scripts/Invoke-AgentDotNet.ps1 -DotNetArguments @('build')`). Allow the outer timeout at least 30 seconds beyond the guard; exit 124/137 is a validation limit, not permission to raise limits.
 - Run relevant TUnit executable projects under `tests/`, selecting a supported framework and `--treenode-filter` for focus. Prefer `Respire.Tests`/`Respire.Pipeline.Tests` for fast feedback; integration tests require Docker/Testcontainers Redis. Website changes require `npm run build --prefix website`.
 - Library awaits use `ConfigureAwait(false)`. Never hand-edit `src/Respire/RespireCommands.g.cs`; change `tools/Generate-CommandCatalog.ps1` or an appropriate manual partial/extension. Review/simplification must respect that boundary.
