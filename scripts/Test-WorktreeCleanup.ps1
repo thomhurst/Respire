@@ -26,6 +26,7 @@ else {
 }
 
 function global:git {
+    $global:LASTEXITCODE = 0
     $script:gitCalled = $true
     if ($args -contains 'remove') {
         $target = $args[-1]
