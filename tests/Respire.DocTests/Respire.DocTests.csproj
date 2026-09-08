@@ -13,9 +13,9 @@
     <PackageReference Include="Respire.Extensions.Caching" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Extensions.Caching.Hybrid" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Extensions.DependencyInjection" Version="$(RespirePackageVersion)" />
-    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.11" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.12" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.18.0" />
   </ItemGroup>
 
