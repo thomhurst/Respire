@@ -13,7 +13,7 @@
   "bugs": {
     "url": "https://github.com/thomhurst/Respire/issues"
   },
-  "packageManager": "npm@12.0.2",
+  "packageManager": "npm@12.1.0",
   "scripts": {
     "start": "docusaurus start",
     "build": "docusaurus build",
