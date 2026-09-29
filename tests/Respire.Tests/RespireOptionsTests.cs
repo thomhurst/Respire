@@ -292,9 +292,13 @@ public class RespireOptionsTests
     [Arguments("redis://cache?cluster=true&serviceName=primary")]
     [Arguments("redis://cache?serviceName=primary&cluster=true")]
     [Arguments("cache-a,cache-b,serviceName= ")]
-    public async Task ConnectionString_RejectsConflictingOrEmptyMode(string connectionString)
+    [Arguments("redis://cache?serviceName=%20")]
+    [Arguments("cache,sslHost= ")]
+    [Arguments("cache,serviceName=primary,sentinelSslHost= ")]
+    public async Task ConnectionString_RejectsInvalidModesAndEmptyHosts(string connectionString)
     {
-        await Assert.That(() => RespireOptions.Parse(connectionString)).Throws<ArgumentException>();
+        var error = Assert.Throws<ArgumentException>(() => RespireOptions.Parse(connectionString));
+        await Assert.That(error.ParamName).IsEqualTo("connectionString");
     }
 
     [Test]

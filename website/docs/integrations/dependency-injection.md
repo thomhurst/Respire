@@ -70,4 +70,9 @@ builder.Services.AddRespire(options =>
 Default registrations and each service key may be added only once. A duplicate registration
 throws immediately instead of silently retaining the first configuration.
 
+The options builder accepts multiple `Endpoints` only when `UseCluster = true` or
+`SentinelPrimaryName` selects a Sentinel deployment. A standalone client with several endpoints
+throws `RespireConfigurationException` when the container first resolves it. Register separate
+named clients for independent deployments; endpoint order does not imply automatic failover.
+
 For ASP.NET Core cache abstractions, continue to [caching integrations](./caching).

@@ -15,6 +15,11 @@ public sealed class RespireOptionsBuilder
     private TimeSpan? _connectionIdleReadTimeout;
 
     /// <inheritdoc cref="RespireOptions.Endpoints"/>
+    /// <remarks>
+    /// Standalone clients accept at most one endpoint. Multiple endpoints require
+    /// <see cref="UseCluster"/> or <see cref="SentinelPrimaryName"/>; otherwise resolving
+    /// the registered client throws <see cref="RespireConfigurationException"/>.
+    /// </remarks>
     public IList<RespireEndpoint> Endpoints { get; } = [];
 
     /// <inheritdoc cref="RespireOptions.UseCluster"/>

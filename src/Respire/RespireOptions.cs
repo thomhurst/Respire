@@ -96,6 +96,8 @@ public enum SubscriptionOverflow
 /// </summary>
 public sealed record RespireOptions
 {
+    private const string ConnectionStringParameterName = "connectionString";
+
     private static readonly TimeSpan DefaultCommandTimeout = TimeSpan.FromSeconds(10);
     private bool _useCluster;
     private string? _sentinelPrimaryName;
@@ -383,6 +385,8 @@ public sealed record RespireOptions
     /// <c>sentinelPassword</c>, <c>sentinelTls</c> (true or false), and
     /// <c>allowAdmin</c> (true or false).
     /// Use <c>rediss://</c> to enable TLS.
+    /// In comma-delimited strings, <c>sslHost</c> enables TLS unless <c>ssl=false</c> is explicit;
+    /// <c>sentinelSslHost</c> similarly enables Sentinel TLS unless <c>sentinelTls=false</c> is explicit.
     /// URI connections contain one endpoint. Comma-delimited seed lists preserve endpoint order;
     /// they never imply failover between independent standalone deployments.
     /// </summary>
@@ -535,7 +539,7 @@ public sealed record RespireOptions
             {
                 throw new ArgumentException(
                     "Redis Cluster (cluster=true) and Sentinel (serviceName) cannot both be selected.",
-                    "connectionString");
+                    ConnectionStringParameterName);
             }
         }
 
@@ -549,7 +553,7 @@ public sealed record RespireOptions
                     break;
                 case "servicename":
                 case "sentinelprimaryname":
-                    ArgumentException.ThrowIfNullOrWhiteSpace(value, name);
+                    ArgumentException.ThrowIfNullOrWhiteSpace(value, ConnectionStringParameterName);
                     ServiceName = value;
                     break;
                 case "sentineluser":
@@ -573,7 +577,7 @@ public sealed record RespireOptions
     {
         if (!bool.TryParse(value, out var result))
         {
-            throw new ArgumentException($"Option '{name}' requires 'true' or 'false'.", "connectionString");
+            throw new ArgumentException($"Option '{name}' requires 'true' or 'false'.", ConnectionStringParameterName);
         }
 
         return result;
@@ -602,7 +606,7 @@ public sealed record RespireOptions
         {
             if (!Enum.TryParse<SslProtocols>(name, ignoreCase: true, out var protocol) || !IsCompleteSslProtocolMask(protocol))
             {
-                throw new ArgumentException($"Unsupported sslProtocols value '{name}'.", "connectionString");
+                throw new ArgumentException($"Unsupported sslProtocols value '{name}'.", ConnectionStringParameterName);
             }
 
             protocols |= protocol;
@@ -685,11 +689,11 @@ public sealed record RespireOptions
                     };
                     break;
                 case "sslhost":
-                    ArgumentException.ThrowIfNullOrWhiteSpace(value, name);
+                    ArgumentException.ThrowIfNullOrWhiteSpace(value, ConnectionStringParameterName);
                     (tlsOptions ??= new()).TargetHost = value;
                     break;
                 case "sentinelsslhost":
-                    ArgumentException.ThrowIfNullOrWhiteSpace(value, name);
+                    ArgumentException.ThrowIfNullOrWhiteSpace(value, ConnectionStringParameterName);
                     sentinelSslHost = value;
                     break;
                 case "sslprotocols":

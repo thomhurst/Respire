@@ -130,6 +130,10 @@ the primary's `sslHost`. This overrides only the Sentinel TLS target; protocol a
 settings remain inherited. It enables Sentinel TLS unless `sentinelTls=false` explicitly
 disables it. Without `sentinelSslHost`, Sentinel inherits the primary TLS settings.
 
+`sslHost`, `sentinelSslHost`, `sslProtocols`, and `checkCertificateRevocation` are options for
+the comma-delimited format, not URI query parameters. With `rediss://`, configure `TlsOptions`
+and `SentinelTlsOptions` on the parsed options in code when you need these overrides.
+
 Unknown or unsupported options still throw `ArgumentException`, catching spelling mistakes.
 For example, StackExchange.Redis `keepAlive` sends protocol messages; it is not equivalent to
 Respire's TCP keepalive settings. Configure `TcpKeepAliveTime` directly when kernel probes are
