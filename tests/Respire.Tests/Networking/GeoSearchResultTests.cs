@@ -1,0 +1,61 @@
+using System.Text;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+
+namespace Respire.Tests.Networking;
+
+public class GeoSearchResultTests
+{
+    [Test]
+    public async Task RawMember_AllocatesOnlyDecodedTextAndOwnedBytes()
+    {
+        byte[] member = Encoding.UTF8.GetBytes(new string('x', 4096));
+        _ = new GeoSearchResult(member.AsSpan());
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var text = Encoding.UTF8.GetString(member);
+        var bytes = member.AsSpan().ToArray();
+        var expected = GC.GetAllocatedBytesForCurrentThread() - before;
+        GC.KeepAlive(text);
+        GC.KeepAlive(bytes);
+
+        before = GC.GetAllocatedBytesForCurrentThread();
+        var result = new GeoSearchResult(member.AsSpan());
+        var actual = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        await Assert.That(actual).IsEqualTo(expected);
+        await Assert.That(result.Member).IsEqualTo(text);
+        await Assert.That(result.MemberBytes.Span.SequenceEqual(member)).IsTrue();
+    }
+
+    [Test]
+    public async Task RawMember_OwnsBytesAndPreservesDetailsAndDeconstruction()
+    {
+        byte[] member = [0xff, 0x00];
+        var position = new GeoPosition(2.5, 3.5);
+        var result = new GeoSearchResult(member.AsSpan(), 1.5, 123, position);
+        member[0] = 0;
+        var (text, distance, hash, coordinates) = result;
+
+        await Assert.That(text).IsEqualTo("\ufffd\0");
+        await Assert.That(distance).IsEqualTo(1.5);
+        await Assert.That(hash).IsEqualTo(123);
+        await Assert.That(coordinates).IsEqualTo(position);
+        await Assert.That(result.MemberBytes.Span.SequenceEqual(new byte[] { 0xff, 0x00 })).IsTrue();
+        await Assert.That(result).IsNotEqualTo(new GeoSearchResult(text, distance, hash, coordinates));
+    }
+
+    [Test]
+    public async Task TextAndRawMembers_HaveMatchingValueSemantics()
+    {
+        var text = new GeoSearchResult(Member: "café", Distance: 1.5, Hash: 123, Position: new(2.5, 3.5));
+        var raw = new GeoSearchResult("café"u8, 1.5, 123, new(2.5, 3.5));
+
+        await Assert.That(raw).IsEqualTo(text);
+        await Assert.That(raw.GetHashCode()).IsEqualTo(text.GetHashCode());
+        await Assert.That((raw with { Member = "new" }).MemberBytes.Span.SequenceEqual("new"u8)).IsTrue();
+        await Assert.That((raw with { Distance = 2 }).MemberBytes.Span.SequenceEqual("café"u8)).IsTrue();
+        await Assert.That(default(GeoSearchResult).MemberBytes.IsEmpty).IsTrue();
+    }
+}
