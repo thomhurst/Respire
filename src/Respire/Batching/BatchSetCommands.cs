@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Serialization;
@@ -24,6 +25,7 @@ public interface IBatchSetCommands
     /// <summary>Tests membership after serialization; booleans retain Redis 1/0 encoding. Redis: SISMEMBER.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(-1)]
     RespirePending<bool> Contains<T>(RespireKey key, T member);
 
     /// <summary>Number of members. Redis: SCARD.</summary>
@@ -84,6 +86,7 @@ internal sealed class BatchSetCommands(IPendingSink sink) : IBatchSetCommands
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(-1)]
     public RespirePending<bool> Contains<T>(RespireKey key, T member)
         => Contains(key, sink.Client.SerializeCollectionMember(member));
 

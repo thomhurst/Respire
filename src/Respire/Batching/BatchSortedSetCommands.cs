@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Serialization;
@@ -19,6 +20,7 @@ public interface IBatchSortedSetCommands
     /// <summary>Adds one serialized member; booleans retain Redis 1/0 encoding. True when new. Redis: ZADD.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(-1)]
     RespirePending<bool> Add<T>(RespireKey key, T member, double score);
 
     /// <summary>Adds or updates many binary-safe members; returns how many were new. Redis: ZADD.</summary>
@@ -187,6 +189,7 @@ internal sealed class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSe
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(-1)]
     public RespirePending<bool> Add<T>(RespireKey key, T member, double score)
         => Add(key, sink.Client.SerializeCollectionMember(member), score);
 

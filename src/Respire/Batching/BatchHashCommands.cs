@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Serialization;
@@ -25,11 +26,13 @@ public interface IBatchHashCommands
     /// <summary>Sets one serialized field. True when newly created. Redis: HSET.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(-1)]
     RespirePending<bool> Set<T>(RespireKey key, string field, T value);
 
     /// <summary>Conditionally sets one serialized field. Redis: HSET/HSETNX/HSETEX.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(-1)]
     RespirePending<bool> Set<T>(RespireKey key, string field, T value, SetWhen when);
 
     /// <summary>Sets many fields; returns how many were newly created. Redis: HSET.</summary>
@@ -139,11 +142,13 @@ internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(-1)]
     public RespirePending<bool> Set<T>(RespireKey key, string field, T value)
         => Set(key, field, sink.Client.SerializeRawCompatible(value));
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(-1)]
     public RespirePending<bool> Set<T>(RespireKey key, string field, T value, SetWhen when)
         => Set(key, field, sink.Client.SerializeRawCompatible(value), when);
 

@@ -69,6 +69,12 @@ execution. Hash `TryGet<T>` preserves the
 the default value when the list is empty. Typed set membership and sorted-set additions preserve
 Redis's `1`/`0` representation for boolean members, matching the immediate methods.
 
+The new hash writes, set membership checks, and sorted-set additions preserve existing raw
+`RespireValue` conversions when the type argument is omitted (C# 13 or later, as with the
+library's `params` span APIs). This includes GUIDs, timestamps,
+durations, and byte buffers. Specify the type argument explicitly, such as
+`batch.Hashes.Set<Guid>(key, field, id)`, to use typed serialization instead.
+
 Both types implement `IRespireCommandQueue`, which unifies every deferred facet and the root
 shortcuts. Helpers can therefore queue work across facets without choosing an execution model:
 
