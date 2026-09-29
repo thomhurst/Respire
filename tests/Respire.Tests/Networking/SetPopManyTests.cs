@@ -52,10 +52,11 @@ public class SetPopManyTests
             : results;
         await using var server = new FakeRespServer(replies);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        using var batch = client.CreateBatch();
+        using var batch = transactional ? null : client.CreateBatch();
         var transaction = transactional ? client.CreateTransaction() : null;
-        var sets = transaction?.Sets ?? batch.Sets;
-        var sortedSets = transaction?.SortedSets ?? batch.SortedSets;
+        IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
+        var sets = queue.Sets;
+        var sortedSets = queue.SortedSets;
 
         var member = sets.Pop("missing");
         var entry = sortedSets.Pop("missing", default);
@@ -66,7 +67,7 @@ public class SetPopManyTests
         if (transaction is not null)
             await transaction.CommitAsync();
         else
-            await batch.ExecuteAsync();
+            await batch!.ExecuteAsync();
 
         await Assert.That(member.Result).IsNull();
         await Assert.That(entry.Result).IsNull();
