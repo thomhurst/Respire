@@ -59,6 +59,18 @@ public class SentinelTests
     }
 
     [Test]
+    public async Task SentinelConnectionString_InheritsPrimaryTlsHostUnlessOverridden()
+    {
+        var primary = RespireOptions.Parse(
+            "sentinel,serviceName=primary,ssl=true,sslHost=shared.example,sslProtocols=Tls12");
+        var sentinel = SentinelResolver.CreateSentinelConnectionOptions(primary);
+
+        await Assert.That(sentinel.UseTls).IsTrue();
+        await Assert.That(sentinel.TlsOptions!.TargetHost).IsEqualTo("shared.example");
+        await Assert.That(sentinel.TlsOptions.EnabledSslProtocols).IsEqualTo(primary.TlsOptions!.EnabledSslProtocols);
+    }
+
+    [Test]
     public async Task SentinelConnectionString_SeparatesPrimaryAndSentinelTlsHostnames()
     {
         var primary = RespireOptions.Parse(

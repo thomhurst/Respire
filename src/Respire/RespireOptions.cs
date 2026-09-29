@@ -263,7 +263,7 @@ public sealed record RespireOptions
         if (Endpoints.Count > 1 && !UseCluster && string.IsNullOrWhiteSpace(SentinelPrimaryName))
         {
             throw new RespireConfigurationException(
-                "Multiple RespireOptions.Endpoints require UseCluster or SentinelPrimaryName. " +
+                $"The {Endpoints.Count} configured RespireOptions.Endpoints require UseCluster or SentinelPrimaryName. " +
                 "Use RespireClient.ConnectAnyAsync for connection-time fallback between standalone deployments.");
         }
 
@@ -562,23 +562,36 @@ public sealed record RespireOptions
     {
         if (!bool.TryParse(value, out var result))
         {
-            throw new ArgumentException($"Option '{name}' requires 'true' or 'false'.", nameof(value));
+            throw new ArgumentException($"Option '{name}' requires 'true' or 'false'.", "connectionString");
         }
 
         return result;
     }
 
-    private static readonly SslProtocols DefinedSslProtocolBits =
-        Enum.GetValues<SslProtocols>().Aggregate(SslProtocols.None, (bits, protocol) => bits | protocol);
+    private static readonly SslProtocols[] DefinedSslProtocols = Enum.GetValues<SslProtocols>();
+
+    private static bool IsCompleteSslProtocolMask(SslProtocols protocols)
+    {
+        // Individual protocols occupy multiple bits. A subset of those bits is not a protocol.
+        foreach (var defined in DefinedSslProtocols)
+        {
+            if ((protocols & defined) == defined)
+            {
+                protocols &= ~defined;
+            }
+        }
+
+        return protocols == SslProtocols.None;
+    }
 
     private static SslProtocols ParseSslProtocols(string value)
     {
         var protocols = SslProtocols.None;
         foreach (var name in value.Split('|', StringSplitOptions.TrimEntries))
         {
-            if (!Enum.TryParse<SslProtocols>(name, ignoreCase: true, out var protocol) || (protocol & ~DefinedSslProtocolBits) != 0)
+            if (!Enum.TryParse<SslProtocols>(name, ignoreCase: true, out var protocol) || !IsCompleteSslProtocolMask(protocol))
             {
-                throw new ArgumentException($"Unsupported sslProtocols value '{name}'.", nameof(value));
+                throw new ArgumentException($"Unsupported sslProtocols value '{name}'.", "connectionString");
             }
 
             protocols |= protocol;

@@ -359,17 +359,25 @@ public class RespireOptionsTests
     [Arguments("redis://cache?sentinelTls=invalid")]
     public async Task ConnectionString_RejectsInvalidBooleanOptions(string connectionString)
     {
-        await Assert.That(() => RespireOptions.Parse(connectionString)).Throws<ArgumentException>();
+        var error = await Assert.That(() => RespireOptions.Parse(connectionString)).Throws<ArgumentException>();
+        await Assert.That(error!.ParamName).IsEqualTo("connectionString");
     }
 
     [Test]
     [Arguments("999")]
     [Arguments("Tls12|999")]
     [Arguments("Unknown")]
+    [Arguments("1024")]
+    [Arguments("2048")]
+    [Arguments("4096")]
+    [Arguments("8192")]
+    [Arguments("Tls13|1024")]
+    [Arguments("-1")]
     public async Task StackExchangeConnectionString_RejectsUndefinedTlsProtocols(string protocols)
     {
-        await Assert.That(() => RespireOptions.Parse($"cache,sslProtocols={protocols}"))
+        var error = await Assert.That(() => RespireOptions.Parse($"cache,sslProtocols={protocols}"))
             .Throws<ArgumentException>();
+        await Assert.That(error!.ParamName).IsEqualTo("connectionString");
     }
 
     [Test]
