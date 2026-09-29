@@ -10,9 +10,11 @@ namespace Respire;
 /// <summary>
 /// The reply of a command (<see cref="RespireClient.ExecuteAsync(RespireCommand, RespireValue[])"/>)
 /// as a thin view over the RESP value. This is the one protocol-shaped public result type; the
-/// typed command surface returns plain .NET types instead. The root result is a lease over
-/// pooled memory — dispose it when done; disposal is idempotent across struct copies. Nested
+/// typed command surface returns plain .NET types instead. Immediate command results are leases over
+/// pooled memory — dispose them when done; disposal is idempotent across struct copies. Nested
 /// results obtained via the indexer are views into the root and must not outlive it.
+/// Deferred script results from <see cref="IBatchScriptCommands.Evaluate"/> use GC-owned storage
+/// instead: disposal is optional, but still invalidates the result and its nested views.
 /// </summary>
 public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
 {
@@ -150,7 +152,7 @@ public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>
     /// <inheritdoc/>
     public override string ToString() => Value.ToString();
 
-    /// <summary>Returns pooled buffers (root results only). Safe to call more than once.</summary>
+    /// <summary>Invalidates a root result and releases any pooled buffers. Optional for deferred script results; safe to call more than once.</summary>
     public void Dispose() => _owner?.Dispose();
 
     /// <summary>Enumerates non-owning views over an aggregate result's elements.</summary>
