@@ -120,7 +120,7 @@ public class MultiItemCancellationOverloadTests
         string[] fields = ["f1", "f2"];
         (RespireKey Key, RespireValue Value)[] pairs = [("a", "x")];
         (string Field, RespireValue Value)[] fieldValues = [("f1", "x")];
-        SortedSetEntry[] entries = [new SortedSetEntry("m", 1)];
+        (RespireValue Member, double Score)[] entries = [("m", 1)];
         GeoEntry[] geoEntries = [new GeoEntry(0, 0, "m")];
         BitFieldOperation[] operations = [BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), 0)];
         RespireStreamId[] ids = [new RespireStreamId("1-1")];

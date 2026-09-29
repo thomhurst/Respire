@@ -58,6 +58,7 @@ bool member = await redis.Sets.ContainsAsync("team:red", "ada");
 
 ```csharp
 await redis.SortedSets.AddAsync("scores", "ada", 98.5);
+await redis.SortedSets.AddAsync("scores", ("grace", 97.5), ("linus", 96.0));
 await redis.SortedSets.IncrementAsync("scores", "ada", 1.5);
 double?[] scores = await redis.SortedSets.ScoresManyAsync("scores", "ada", "missing");
 
@@ -100,6 +101,24 @@ Redis emits them together as `LIMIT offset count`. The same range APIs are avail
 and transactions without the `Async` suffix. Sorted-set intersection, union, and difference each
 have read and `Store` forms. Typed rank ranges, score ranges, and pops deserialize members while
 preserving their scores in `SortedSetEntry<T>`.
+
+Bulk adds accept `(RespireValue Member, double Score)` tuples. Members can be text, numbers,
+or raw bytes, just like single-member adds. `SortedSetEntry` is a read result; replace
+`new SortedSetEntry(member, score)` write inputs with `(member, score)`. Batches and transactions
+accept the same tuples through `SortedSets.Add`.
+
+Byte-backed members borrow the caller's memory. For batches and transactions, keep those bytes
+unchanged until `ExecuteAsync` or `CommitAsync` completes. If you must reuse a buffer earlier,
+copy it before queuing, for example `(buffer.ToArray(), score)`.
+
+```csharp
+byte[] member = [0xff, 0x00, 0x80];
+await redis.SortedSets.AddAsync("binary:scores", (member, 1.5), ("text", 2.5));
+
+// Use an explicit tuple array when retaining inputs for reuse or passing cancellation.
+(RespireValue Member, double Score)[] entries = [(member, 3.5), ("text", 4.5)];
+await redis.SortedSets.AddAsync("binary:scores", entries, cancellationToken);
+```
 
 ## Streams
 
