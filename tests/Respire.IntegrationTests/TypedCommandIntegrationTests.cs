@@ -294,7 +294,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         await client.SortedSets.AddAsync(
             second, new SortedSetEntry("two", 3), new SortedSetEntry("three", 4));
 
-        (await client.SortedSets.ScoresAsync(first, "one", "missing", "two"))
+        (await client.SortedSets.ScoresManyAsync(first, "one", "missing", "two"))
             .Should().Equal(1, null, 2);
         (await client.SortedSets.IntersectAsync(first, second)).Should().Equal("two");
         (await client.SortedSets.UnionAsync(first, second)).Should()

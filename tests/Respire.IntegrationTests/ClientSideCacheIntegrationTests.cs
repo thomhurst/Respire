@@ -190,7 +190,7 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
         await AssertAllAreCachedAsync(
             resources.Client,
             async () => _ = await resources.Client.SortedSets.ScoreAsync(first, "one"),
-            async () => _ = await resources.Client.SortedSets.ScoresAsync(first, "one", "missing"),
+            async () => _ = await resources.Client.SortedSets.ScoresManyAsync(first, "one", "missing"),
             async () => _ = await resources.Client.SortedSets.CountAsync(first),
             async () => _ = await resources.Client.SortedSets.CountByScoreAsync(first, 1, 2),
             async () => _ = await resources.Client.SortedSets.RankAsync(first, "two"),

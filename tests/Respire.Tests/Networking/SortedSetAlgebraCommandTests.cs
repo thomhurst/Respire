@@ -16,7 +16,7 @@ public class SortedSetAlgebraCommandTests
             ":1\r\n"u8.ToArray(), ":2\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var scores = await client.SortedSets.ScoresAsync("scores", "one", "missing", "two");
+        var scores = await client.SortedSets.ScoresManyAsync("scores", "one", "missing", "two");
         _ = await client.SortedSets.IntersectAsync("first", "second");
         _ = await client.SortedSets.UnionAsync("first", "second");
         _ = await client.SortedSets.DifferenceAsync("first", "second");
@@ -48,7 +48,7 @@ public class SortedSetAlgebraCommandTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var batch = client.CreateBatch();
 
-        var scores = batch.SortedSets.Scores("scores", "one", "missing");
+        var scores = batch.SortedSets.ScoresMany("scores", "one", "missing");
         _ = batch.SortedSets.Intersect("first", "second");
         _ = batch.SortedSets.Union("first", "second");
         _ = batch.SortedSets.Difference("first", "second");

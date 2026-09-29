@@ -23,7 +23,7 @@ public interface IBatchSortedSetCommands
     RespirePending<double?> Score(RespireKey key, RespireValue member);
 
     /// <summary>Scores for each member, preserving nulls for missing members. Redis: ZMSCORE.</summary>
-    RespirePending<double?[]> Scores(RespireKey key, params ReadOnlySpan<RespireValue> members);
+    RespirePending<double?[]> ScoresMany(RespireKey key, params ReadOnlySpan<RespireValue> members);
 
     /// <summary>Atomically adds to a member's score and returns the new score. Redis: ZINCRBY.</summary>
     RespirePending<double> Increment(RespireKey key, RespireValue member, double by);
@@ -179,7 +179,7 @@ internal sealed class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSe
             "ZSCORE", new Cmd2(Verbs.ZScore, sink.Client.Key(in key), member),
             static (c, v) => ResponseReader.DoubleOrNull(in v));
 
-    public RespirePending<double?[]> Scores(RespireKey key, params ReadOnlySpan<RespireValue> members)
+    public RespirePending<double?[]> ScoresMany(RespireKey key, params ReadOnlySpan<RespireValue> members)
         => sink.Add<Cmd1N, double?[]>(
             "ZMSCORE", new Cmd1N(Verbs.ZMScore, sink.Client.Key(in key), members.ToArray()),
             static (c, v) => ResponseReader.NullableDoubleArray(in v));
