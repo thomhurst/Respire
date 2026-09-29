@@ -302,6 +302,18 @@ public class RespireOptionsTests
     }
 
     [Test]
+    [Arguments("cache,serviceName= ", "serviceName")]
+    [Arguments("redis://cache?serviceName=%20", "serviceName")]
+    [Arguments("cache,sslHost= ", "sslHost")]
+    [Arguments("cache,serviceName=primary,sentinelSslHost= ", "sentinelSslHost")]
+    public async Task EmptyOption_DiagnosticNamesOptionAndPublicParameter(string connectionString, string option)
+    {
+        var error = Assert.Throws<ArgumentException>(() => RespireOptions.Parse(connectionString));
+        await Assert.That(error.ParamName).IsEqualTo("connectionString");
+        await Assert.That(error.Message).Contains(option);
+    }
+
+    [Test]
     public async Task StandaloneOptions_RejectIgnoredEndpoints()
     {
         var options = new RespireOptions { Endpoints = { new("first"), new("second") } };

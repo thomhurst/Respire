@@ -553,7 +553,7 @@ public sealed record RespireOptions
                     break;
                 case "servicename":
                 case "sentinelprimaryname":
-                    ArgumentException.ThrowIfNullOrWhiteSpace(value, ConnectionStringParameterName);
+                    RequireOptionValue(name, value);
                     ServiceName = value;
                     break;
                 case "sentineluser":
@@ -570,6 +570,14 @@ public sealed record RespireOptions
             }
 
             return true;
+        }
+    }
+
+    private static void RequireOptionValue(string name, string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new ArgumentException($"Option '{name}' requires a non-empty value.", ConnectionStringParameterName);
         }
     }
 
@@ -689,11 +697,11 @@ public sealed record RespireOptions
                     };
                     break;
                 case "sslhost":
-                    ArgumentException.ThrowIfNullOrWhiteSpace(value, ConnectionStringParameterName);
+                    RequireOptionValue(name, value);
                     (tlsOptions ??= new()).TargetHost = value;
                     break;
                 case "sentinelsslhost":
-                    ArgumentException.ThrowIfNullOrWhiteSpace(value, ConnectionStringParameterName);
+                    RequireOptionValue(name, value);
                     sentinelSslHost = value;
                     break;
                 case "sslprotocols":

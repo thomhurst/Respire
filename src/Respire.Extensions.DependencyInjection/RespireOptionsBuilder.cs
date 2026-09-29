@@ -16,9 +16,11 @@ public sealed class RespireOptionsBuilder
 
     /// <inheritdoc cref="RespireOptions.Endpoints"/>
     /// <remarks>
-    /// Standalone clients accept at most one endpoint. Multiple endpoints require
-    /// <see cref="UseCluster"/> or <see cref="SentinelPrimaryName"/>; otherwise resolving
-    /// the registered client throws <see cref="RespireConfigurationException"/>.
+    /// Standalone registrations accept at most one endpoint. Multiple endpoints require
+    /// <see cref="UseCluster"/>; otherwise resolving the registered client throws
+    /// <see cref="RespireConfigurationException"/>. Sentinel discovery requires
+    /// <see cref="RespireClient.ConnectAsync(RespireOptions, CancellationToken)"/>;
+    /// the lazy dependency-injection registrations do not support Sentinel configurations.
     /// </remarks>
     public IList<RespireEndpoint> Endpoints { get; } = [];
 
