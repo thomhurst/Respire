@@ -239,8 +239,7 @@ public interface ISortedSetCommands
 
     /// <summary>Removes members whose scores are within the range. Redis: ZREMRANGEBYSCORE.</summary>
     ValueTask<long> RemoveRangeByScoreAsync(
-        RespireKey key, RespireScoreRange range, CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("Typed sorted-set score ranges are not implemented.");
+        RespireKey key, RespireScoreRange range, CancellationToken cancellationToken = default);
 
     /// <summary>Removes members whose ranks are within the inclusive range. Redis: ZREMRANGEBYRANK.</summary>
     ValueTask<long> RemoveRangeByRankAsync(
@@ -251,8 +250,7 @@ public interface ISortedSetCommands
 
     /// <summary>Number of members whose scores are within the range. Redis: ZCOUNT.</summary>
     ValueTask<long> CountByScoreAsync(
-        RespireKey key, RespireScoreRange range, CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("Typed sorted-set score ranges are not implemented.");
+        RespireKey key, RespireScoreRange range, CancellationToken cancellationToken = default);
 
     /// <summary>The member's 0-based rank, or null when absent. Redis: ZRANK / ZREVRANK.</summary>
     ValueTask<long?> RankAsync(RespireKey key, RespireValue member, bool descending = false, CancellationToken cancellationToken = default);
@@ -293,8 +291,7 @@ public interface ISortedSetCommands
     /// <summary>Members within a score range, optionally paged. Redis: ZRANGE BYSCORE.</summary>
     ValueTask<string[]> RangeByScoreAsync(
         RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
-        bool descending = false, CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("Typed sorted-set score ranges are not implemented.");
+        bool descending = false, CancellationToken cancellationToken = default);
 
     /// <summary>Members within a score range, deserialized and optionally paged. Redis: ZRANGE BYSCORE.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -306,8 +303,7 @@ public interface ISortedSetCommands
     /// <summary>Members and scores within a score range, optionally paged. Redis: ZRANGE BYSCORE WITHSCORES.</summary>
     ValueTask<SortedSetEntry[]> RangeByScoreWithScoresAsync(
         RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
-        bool descending = false, CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("Sorted-set score ranges with scores are not implemented.");
+        bool descending = false, CancellationToken cancellationToken = default);
 
     /// <summary>Members and scores within a score range, with members deserialized. Redis: ZRANGE BYSCORE.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -358,28 +354,24 @@ public interface ISortedSetCommands
     /// <summary>Members within a lexicographical range, optionally paged. Redis: ZRANGE BYLEX.</summary>
     ValueTask<string[]> RangeByLexAsync(
         RespireKey key, RespireLexRange range, long offset = 0, long? count = null,
-        bool descending = false, CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("Sorted-set lexicographical ranges are not implemented.");
+        bool descending = false, CancellationToken cancellationToken = default);
 
     /// <summary>Stores a rank range in another sorted set. Redis: ZRANGESTORE.</summary>
     ValueTask<long> StoreRangeAsync(
         RespireKey destination, RespireKey source, long start = 0, long stop = -1,
-        bool descending = false, CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("Sorted-set range storage is not implemented.");
+        bool descending = false, CancellationToken cancellationToken = default);
 
     /// <summary>Stores a score range in another sorted set. Redis: ZRANGESTORE BYSCORE.</summary>
     ValueTask<long> StoreRangeByScoreAsync(
         RespireKey destination, RespireKey source, RespireScoreRange range,
         long offset = 0, long? count = null, bool descending = false,
-        CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("Sorted-set score-range storage is not implemented.");
+        CancellationToken cancellationToken = default);
 
     /// <summary>Stores a lexicographical range in another sorted set. Redis: ZRANGESTORE BYLEX.</summary>
     ValueTask<long> StoreRangeByLexAsync(
         RespireKey destination, RespireKey source, RespireLexRange range,
         long offset = 0, long? count = null, bool descending = false,
-        CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("Sorted-set lexicographical range storage is not implemented.");
+        CancellationToken cancellationToken = default);
 }
 
 internal sealed class SortedSetCommands(RespireClient client) : ISortedSetCommands

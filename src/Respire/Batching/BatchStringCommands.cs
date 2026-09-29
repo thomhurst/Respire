@@ -67,8 +67,7 @@ public interface IBatchStringCommands
     /// <summary>Gets and deserializes a key's value, then deletes the key. Redis: GETDEL.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    RespirePending<T?> GetAndDelete<T>(RespireKey key)
-        => throw new NotSupportedException("Typed GETDEL is not implemented.");
+    RespirePending<T?> GetAndDelete<T>(RespireKey key);
 
     /// <summary>Gets a key's value and updates or removes its expiry. Redis: GETEX.</summary>
     RespirePending<string?> GetAndExpire(RespireKey key, RespireExpiry expiry);
@@ -76,8 +75,7 @@ public interface IBatchStringCommands
     /// <summary>Gets and deserializes a key's value, then updates or removes its expiry. Redis: GETEX.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    RespirePending<T?> GetAndExpire<T>(RespireKey key, RespireExpiry expiry)
-        => throw new NotSupportedException("Typed GETEX is not implemented.");
+    RespirePending<T?> GetAndExpire<T>(RespireKey key, RespireExpiry expiry);
 
     /// <summary>Appends to a string and returns the new length. Redis: APPEND.</summary>
     RespirePending<long> Append(RespireKey key, RespireValue value);

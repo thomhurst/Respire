@@ -62,8 +62,7 @@ public interface IBatchSortedSetCommands
     RespirePending<long> RemoveRangeByScore(RespireKey key, double min, double max);
 
     /// <summary>Removes members whose scores are within the range. Redis: ZREMRANGEBYSCORE.</summary>
-    RespirePending<long> RemoveRangeByScore(RespireKey key, RespireScoreRange range)
-        => throw new NotSupportedException("Typed sorted-set score ranges are not implemented.");
+    RespirePending<long> RemoveRangeByScore(RespireKey key, RespireScoreRange range);
 
     /// <summary>Removes members whose ranks are within the inclusive range. Redis: ZREMRANGEBYRANK.</summary>
     RespirePending<long> RemoveRangeByRank(RespireKey key, long start, long stop);
@@ -72,8 +71,7 @@ public interface IBatchSortedSetCommands
     RespirePending<long> CountByScore(RespireKey key, double min, double max);
 
     /// <summary>Number of members whose scores are within the range. Redis: ZCOUNT.</summary>
-    RespirePending<long> CountByScore(RespireKey key, RespireScoreRange range)
-        => throw new NotSupportedException("Typed sorted-set score ranges are not implemented.");
+    RespirePending<long> CountByScore(RespireKey key, RespireScoreRange range);
 
     /// <summary>The member's 0-based rank, or null when absent. Redis: ZRANK / ZREVRANK.</summary>
     RespirePending<long?> Rank(RespireKey key, RespireValue member, bool descending = false);
@@ -107,8 +105,7 @@ public interface IBatchSortedSetCommands
     /// <summary>Members within a score range, optionally paged. Redis: ZRANGE BYSCORE.</summary>
     RespirePending<string[]> RangeByScore(
         RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
-        bool descending = false)
-        => throw new NotSupportedException("Typed sorted-set score ranges are not implemented.");
+        bool descending = false);
 
     /// <summary>Members within a score range, deserialized and optionally paged. Redis: ZRANGE BYSCORE.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -120,8 +117,7 @@ public interface IBatchSortedSetCommands
     /// <summary>Members and scores within a score range, optionally paged. Redis: ZRANGE BYSCORE WITHSCORES.</summary>
     RespirePending<SortedSetEntry[]> RangeByScoreWithScores(
         RespireKey key, RespireScoreRange range, long offset = 0, long? count = null,
-        bool descending = false)
-        => throw new NotSupportedException("Sorted-set score ranges with scores are not implemented.");
+        bool descending = false);
 
     /// <summary>Members and scores within a score range, with members deserialized.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -151,26 +147,22 @@ public interface IBatchSortedSetCommands
     /// <summary>Members within a lexicographical range, optionally paged. Redis: ZRANGE BYLEX.</summary>
     RespirePending<string[]> RangeByLex(
         RespireKey key, RespireLexRange range, long offset = 0, long? count = null,
-        bool descending = false)
-        => throw new NotSupportedException("Sorted-set lexicographical ranges are not implemented.");
+        bool descending = false);
 
     /// <summary>Stores a rank range in another sorted set. Redis: ZRANGESTORE.</summary>
     RespirePending<long> StoreRange(
         RespireKey destination, RespireKey source, long start = 0, long stop = -1,
-        bool descending = false)
-        => throw new NotSupportedException("Sorted-set range storage is not implemented.");
+        bool descending = false);
 
     /// <summary>Stores a score range in another sorted set. Redis: ZRANGESTORE BYSCORE.</summary>
     RespirePending<long> StoreRangeByScore(
         RespireKey destination, RespireKey source, RespireScoreRange range,
-        long offset = 0, long? count = null, bool descending = false)
-        => throw new NotSupportedException("Sorted-set score-range storage is not implemented.");
+        long offset = 0, long? count = null, bool descending = false);
 
     /// <summary>Stores a lexicographical range in another sorted set. Redis: ZRANGESTORE BYLEX.</summary>
     RespirePending<long> StoreRangeByLex(
         RespireKey destination, RespireKey source, RespireLexRange range,
-        long offset = 0, long? count = null, bool descending = false)
-        => throw new NotSupportedException("Sorted-set lexicographical range storage is not implemented.");
+        long offset = 0, long? count = null, bool descending = false);
 }
 
 internal sealed class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSetCommands

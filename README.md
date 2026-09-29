@@ -330,7 +330,42 @@ internal partial class AppJsonContext : JsonSerializerContext
 
 Add a `[JsonSerializable]` entry for each non-primitive type. Strings, byte arrays, Boolean values,
 and numeric values use Respire's built-in codecs and do not need generated JSON metadata. Custom
-serializers can also override the `Type`-based `IRespireSerializer` members for polymorphic adapters.
+serializers must implement all four `IRespireSerializer` members, including both `Type`-based
+methods. Forward the supplied declared type instead of substituting `object` or `value.GetType()`.
+For example, a serializer decorator preserves each overload:
+
+<!-- doc-test-declaration -->
+```csharp
+using System.Buffers;
+using System.Diagnostics.CodeAnalysis;
+using Respire.Serialization;
+
+public sealed class ForwardingSerializer(IRespireSerializer inner) : IRespireSerializer
+{
+    [RequiresUnreferencedCode("The wrapped serializer may use reflection.")]
+    [RequiresDynamicCode("The wrapped serializer may require runtime code generation.")]
+    public void Serialize<T>(IBufferWriter<byte> destination, T value)
+        => inner.Serialize(destination, value);
+
+    [RequiresUnreferencedCode("The wrapped serializer may use reflection.")]
+    [RequiresDynamicCode("The wrapped serializer may require runtime code generation.")]
+    public T? Deserialize<T>(ReadOnlySpan<byte> payload)
+        => inner.Deserialize<T>(payload);
+
+    [RequiresUnreferencedCode("The wrapped serializer may use reflection.")]
+    [RequiresDynamicCode("The wrapped serializer may require runtime code generation.")]
+    public void Serialize(IBufferWriter<byte> destination, Type type, object? value)
+        => inner.Serialize(destination, type, value);
+
+    [RequiresUnreferencedCode("The wrapped serializer may use reflection.")]
+    [RequiresDynamicCode("The wrapped serializer may require runtime code generation.")]
+    public object? Deserialize(Type type, ReadOnlySpan<byte> payload)
+        => inner.Deserialize(type, payload);
+}
+```
+
+These annotations preserve the interface's conservative trimming and NativeAOT warnings.
+Use a source-generated serializer, as shown above, when the application requires AOT safety.
 
 ### IDistributedCache and HybridCache
 

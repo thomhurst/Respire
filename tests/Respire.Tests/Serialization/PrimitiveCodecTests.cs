@@ -303,6 +303,12 @@ public class PrimitiveCodecTests
         public int SerializeCalls { get; private set; }
         public int DeserializeCalls { get; private set; }
 
+        public void Serialize(IBufferWriter<byte> destination, Type type, object? value)
+            => Serialize(destination, value);
+
+        public object? Deserialize(Type type, ReadOnlySpan<byte> payload)
+            => Deserialize<object>(payload);
+
         public void Serialize<T>(IBufferWriter<byte> destination, T value)
         {
             SerializeCalls++;
