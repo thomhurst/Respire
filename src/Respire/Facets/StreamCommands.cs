@@ -398,8 +398,7 @@ public interface IStreamCommands
         string group,
         string consumer,
         TimeSpan minIdle,
-        params ReadOnlySpan<RespireStreamId> ids)
-        => throw new NotSupportedException("Stream entry claiming is not implemented.");
+        params ReadOnlySpan<RespireStreamId> ids);
 
     /// <summary>Claims pending entries by id for a consumer. Redis: XCLAIM.</summary>
     ValueTask<RespireStreamEntry[]> ClaimAsync(
@@ -408,8 +407,7 @@ public interface IStreamCommands
         string consumer,
         TimeSpan minIdle,
         ReadOnlySpan<RespireStreamId> ids,
-        CancellationToken cancellationToken)
-        => throw new NotSupportedException("Stream entry claiming is not implemented.");
+        CancellationToken cancellationToken);
 
     /// <summary>Scans and claims idle pending entries for a consumer. Redis: XAUTOCLAIM.</summary>
     ValueTask<RespireStreamClaimResult> ClaimPendingAsync(
@@ -419,8 +417,7 @@ public interface IStreamCommands
         TimeSpan minIdle,
         RespireStreamId? start = null,
         int count = 100,
-        CancellationToken cancellationToken = default)
-        => throw new NotSupportedException("Automatic stream entry claiming is not implemented.");
+        CancellationToken cancellationToken = default);
 
     /// <summary>Returns stream metadata. Redis: XINFO STREAM.</summary>
     ValueTask<RespireStreamInfo> InfoAsync(
@@ -454,10 +451,7 @@ public interface IStreamCommands
     /// </summary>
     IAsyncEnumerable<RespireStreamEntry> ReadGroupAsync(
         RespireKey key, string group, string consumer, RespireStreamId? startAt,
-        int batchSize = 64, CancellationToken cancellationToken = default)
-        => startAt is null
-            ? ReadGroupAsync(key, group, consumer, batchSize, cancellationToken)
-            : throw new NotSupportedException("Consumer pending-entry replay is not implemented.");
+        int batchSize = 64, CancellationToken cancellationToken = default);
 }
 
 internal sealed class StreamCommands(RespireClient client) : IStreamCommands

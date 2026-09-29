@@ -105,6 +105,12 @@ The client root carries the string/key ops that dominate real usage. Everything 
 on a facet property per Redis data type. Facets are singleton classes created once per
 client (interface-friendly, no per-call allocation).
 
+Facet operations require explicit implementations. Interfaces must not supply placeholder
+implementations that throw `NotSupportedException`; missing support in a client, decorator,
+or test double must be caught at compile time. Functional forwarding aliases are allowed.
+Custom `IRespireSerializer` implementations likewise provide both generic and runtime-type
+serialization and deserialization.
+
 ```csharp
 public sealed class RespireClient : IRespireClient, IAsyncDisposable
 {

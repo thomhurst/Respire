@@ -1442,6 +1442,24 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ValueTask<long> PublishShardedAsync(string channel, RespireValue message, CancellationToken cancellationToken = default)
             => inner.PublishShardedAsync(channel, message, cancellationToken);
 
+        public ValueTask<RespireSubscription> SubscribeAsync(
+            string channel, RespireSubscriptionOptions options, CancellationToken cancellationToken)
+            => inner.SubscribeAsync(channel, options, cancellationToken);
+        public ValueTask<RespireSubscription> SubscribeAsync(
+            ReadOnlySpan<string> channels, RespireSubscriptionOptions options, CancellationToken cancellationToken)
+            => inner.SubscribeAsync(channels, options, cancellationToken);
+        public ValueTask<RespireSubscription> SubscribePatternAsync(
+            string pattern, RespireSubscriptionOptions options, CancellationToken cancellationToken)
+            => inner.SubscribePatternAsync(pattern, options, cancellationToken);
+        public ValueTask<RespireSubscription> SubscribePatternAsync(
+            ReadOnlySpan<string> patterns, RespireSubscriptionOptions options, CancellationToken cancellationToken)
+            => inner.SubscribePatternAsync(patterns, options, cancellationToken);
+        public ValueTask<RespireSubscription> SubscribeShardedAsync(
+            string channel, RespireSubscriptionOptions options, CancellationToken cancellationToken)
+            => inner.SubscribeShardedAsync(channel, options, cancellationToken);
+        public ValueTask<RespireSubscription> SubscribeShardedAsync(
+            ReadOnlySpan<string> channels, RespireSubscriptionOptions options, CancellationToken cancellationToken)
+            => inner.SubscribeShardedAsync(channels, options, cancellationToken);
         public ValueTask<RespireSubscription> SubscribeAsync(string channel, CancellationToken cancellationToken = default)
             => inner.SubscribeAsync(channel, cancellationToken);
         public ValueTask<RespireSubscription> SubscribeAsync(params ReadOnlySpan<string> channels)

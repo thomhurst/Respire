@@ -71,25 +71,12 @@ public class SystemTextJsonSerializerTests
     }
 
     [Test]
-    public async Task LegacySerializer_TypeBasedMembers_ExplainUnsupportedOperation()
+    public async Task SerializerContract_RequiresGenericAndTypeBasedMembers()
     {
-        IRespireSerializer serializer = new LegacySerializer();
-        var destination = new ArrayBufferWriter<byte>();
+        var methods = typeof(IRespireSerializer).GetMethods();
 
-        var serialize = () => serializer.Serialize(destination, typeof(Payload), new Payload("Ada", 36));
-        var deserialize = () => serializer.Deserialize(typeof(Payload), "{}"u8);
-
-        await Assert.That(serialize).Throws<NotSupportedException>();
-        await Assert.That(deserialize).Throws<NotSupportedException>();
-    }
-
-    private sealed class LegacySerializer : IRespireSerializer
-    {
-        public void Serialize<T>(IBufferWriter<byte> destination, T value)
-        {
-        }
-
-        public T? Deserialize<T>(ReadOnlySpan<byte> payload) => default;
+        await Assert.That(methods.Length).IsEqualTo(4);
+        await Assert.That(methods.All(method => method.IsAbstract)).IsTrue();
     }
 
     internal sealed record Payload(string Name, int Age);

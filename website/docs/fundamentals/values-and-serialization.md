@@ -60,6 +60,11 @@ var options = new RespireOptions
 };
 ```
 
+Custom serializers must implement all four `IRespireSerializer` methods: generic
+`Serialize<T>` / `Deserialize<T>` and runtime-type `Serialize(..., Type, object?)` /
+`Deserialize(Type, ...)`. Runtime-type methods use the supplied declared type. They have no
+default throwing implementation, so a missing method is reported at compile time.
+
 Typed `string`, `byte[]`, `char`, Boolean, and numeric primitive values bypass object serialization. Numbers use invariant Redis text. Boolean writes use Redis-native `1`/`0`; reads also accept `true`/`false` for interoperability with existing data. Nullable forms use the same fast path when they contain a value.
 
 Objects, enums, and other types use the configured serializer. Custom serializers therefore do not control primitive encoding. Pass a `RespireValue` explicitly when a command input must use raw Redis scalar conventions, as shown in [Keys and input values](#keys-and-input-values).
