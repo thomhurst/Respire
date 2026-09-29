@@ -128,7 +128,7 @@ is non-blocking and completes after the pending entries are exhausted.
 
 ```csharp
 bool wasActive = await redis.Bitmaps.SetAsync("active:2026-08-09", userId, true);
-long active = await redis.Bitmaps.CountAsync("active:2026-08-09");
+long active = await redis.Bitmaps.SetBitCountAsync("active:2026-08-09");
 long? firstActive = await redis.Bitmaps.PositionAsync("active:2026-08-09", true);
 long?[] bytes = await redis.Bitmaps.FieldReadOnlyAsync(
     "packed:counters",

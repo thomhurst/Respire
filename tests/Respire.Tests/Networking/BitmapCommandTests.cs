@@ -50,8 +50,8 @@ public class BitmapCommandTests
 
         await Assert.That(await client.Bitmaps.GetAsync("bits", 4)).IsTrue();
         await Assert.That(await client.Bitmaps.SetAsync("bits", 4, true)).IsFalse();
-        await Assert.That(await client.Bitmaps.CountAsync("bits")).IsEqualTo(3);
-        await Assert.That(await client.Bitmaps.CountAsync("bits", 1, 9, BitIndexUnit.Bit)).IsEqualTo(2);
+        await Assert.That(await client.Bitmaps.SetBitCountAsync("bits")).IsEqualTo(3);
+        await Assert.That(await client.Bitmaps.SetBitCountAsync("bits", 1, 9, BitIndexUnit.Bit)).IsEqualTo(2);
         await Assert.That(await client.Bitmaps.PositionAsync("bits", true)).IsEqualTo(8);
         await Assert.That(await client.Bitmaps.PositionAsync("bits", false, 2)).IsEqualTo(9);
         await Assert.That(await client.Bitmaps.PositionAsync("bits", true, 2, 8, BitIndexUnit.Bit)).IsEqualTo(10);
@@ -103,7 +103,7 @@ public class BitmapCommandTests
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Bitmaps.GetAsync("bits", -1))
             .Throws<ArgumentOutOfRangeException>();
-        await Assert.That(async () => await client.Bitmaps.CountAsync("bits", 0, 1, (BitIndexUnit)42))
+        await Assert.That(async () => await client.Bitmaps.SetBitCountAsync("bits", 0, 1, (BitIndexUnit)42))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Bitmaps.FieldAsync("bits", default(BitFieldOperation)))
             .Throws<ArgumentException>();

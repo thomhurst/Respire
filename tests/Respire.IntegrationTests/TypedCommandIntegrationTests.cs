@@ -122,15 +122,15 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
 
         (await client.Bitmaps.SetAsync("bits", 4, true)).Should().BeFalse();
         (await client.Bitmaps.GetAsync("bits", 4)).Should().BeTrue();
-        (await client.Bitmaps.CountAsync("bits")).Should().Be(1);
-        (await client.Bitmaps.CountAsync("bits", 4, 4, BitIndexUnit.Bit)).Should().Be(1);
+        (await client.Bitmaps.SetBitCountAsync("bits")).Should().Be(1);
+        (await client.Bitmaps.SetBitCountAsync("bits", 4, 4, BitIndexUnit.Bit)).Should().Be(1);
         (await client.Bitmaps.PositionAsync("bits", true)).Should().Be(4);
         (await client.Bitmaps.PositionAsync("missing-bits", true)).Should().BeNull();
 
         await client.Bitmaps.SetAsync("left", 0, true);
         await client.Bitmaps.SetAsync("right", 1, true);
         (await client.Bitmaps.OperateAsync(BitOperation.Or, "union", "left", "right")).Should().Be(1);
-        (await client.Bitmaps.CountAsync("union")).Should().Be(2);
+        (await client.Bitmaps.SetBitCountAsync("union")).Should().Be(2);
 
         (await client.Bitmaps.FieldAsync(
             "fields", BitFieldOperation.Set("u8", "0", 5), BitFieldOperation.Increment("u8", "0", 2)))

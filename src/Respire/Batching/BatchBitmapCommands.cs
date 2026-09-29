@@ -23,10 +23,10 @@ public interface IBatchBitmapCommands
     RespirePending<bool> GetAndSet(RespireKey key, long offset, bool value);
 
     /// <summary>Number of set bits. Redis: BITCOUNT.</summary>
-    RespirePending<long> Count(RespireKey key);
+    RespirePending<long> SetBitCount(RespireKey key);
 
     /// <summary>Number of set bits within a range. Redis: BITCOUNT.</summary>
-    RespirePending<long> Count(RespireKey key, long start, long end, BitIndexUnit unit = BitIndexUnit.Byte);
+    RespirePending<long> SetBitCount(RespireKey key, long start, long end, BitIndexUnit unit = BitIndexUnit.Byte);
 
     /// <summary>The first offset holding <paramref name="value"/>, or null when none is found. Redis: BITPOS.</summary>
     RespirePending<long?> Position(
@@ -65,12 +65,12 @@ internal sealed class BatchBitmapCommands(IPendingSink sink) : IBatchBitmapComma
     public RespirePending<bool> GetAndSet(RespireKey key, long offset, bool value)
         => Set(key, offset, value);
 
-    public RespirePending<long> Count(RespireKey key)
+    public RespirePending<long> SetBitCount(RespireKey key)
         => sink.Add<Cmd1, long>(
             "BITCOUNT", new Cmd1(RespireCommands.Bitmap.BITCOUNT.Verb, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.Integer(in v));
 
-    public RespirePending<long> Count(
+    public RespirePending<long> SetBitCount(
         RespireKey key, long start, long end, BitIndexUnit unit = BitIndexUnit.Byte)
         => sink.Add<Cmd4, long>(
             "BITCOUNT",

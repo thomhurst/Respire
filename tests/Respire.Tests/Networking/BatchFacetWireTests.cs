@@ -178,7 +178,7 @@ public class BatchFacetWireTests
         await client.Sets.IntersectStoreAsync("dest", "s1", "s2");
         await client.SortedSets.AddAsync("z", new SortedSetEntry("ada", 42), new SortedSetEntry("grace", 58));
         await client.SortedSets.CountByScoreAsync("z", 10, 50);
-        await client.Bitmaps.CountAsync("bits", 0, 8, BitIndexUnit.Bit);
+        await client.Bitmaps.SetBitCountAsync("bits", 0, 8, BitIndexUnit.Bit);
         await client.HyperLogLog.AddAsync("hll", "one", "two");
         await client.Geo.AddAsync("cities", new GeoEntry(-0.1276, 51.5072, "london"));
 
@@ -199,7 +199,7 @@ public class BatchFacetWireTests
         _ = batch.Sets.IntersectStore("dest", "s1", "s2");
         _ = batch.SortedSets.Add("z", new SortedSetEntry("ada", 42), new SortedSetEntry("grace", 58));
         _ = batch.SortedSets.CountByScore("z", 10, 50);
-        _ = batch.Bitmaps.Count("bits", 0, 8, BitIndexUnit.Bit);
+        _ = batch.Bitmaps.SetBitCount("bits", 0, 8, BitIndexUnit.Bit);
         _ = batch.HyperLogLog.Add("hll", "one", "two");
         _ = batch.Geo.Add("cities", new GeoEntry(-0.1276, 51.5072, "london"));
         await batch.ExecuteAsync();
