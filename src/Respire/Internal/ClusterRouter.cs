@@ -1,4 +1,5 @@
 using System.Runtime.ExceptionServices;
+using Microsoft.Extensions.Logging;
 using Respire.Commands;
 using Respire.Infrastructure;
 using Respire.Networking;
@@ -9,14 +10,14 @@ internal sealed class ClusterRouter : IAsyncDisposable
 {
     private const int MaxRedirects = 5;
     private static readonly RawCommand Asking = new("*1\r\n$6\r\nASKING\r\n"u8.ToArray());
-    // Slot parsing has no await while this scratch set is live.
-    [ThreadStatic]
-    private static HashSet<RespireConnectionMultiplexer>? t_activeTopologyNodes;
-
     private readonly RespireOptions _options;
+    private readonly ILogger? _logger;
     private readonly RespireConnectionOptions _commandConnectionOptions;
     private readonly RespireEndpoint[] _seeds;
     private readonly RespireConnectionMultiplexer _primary;
+    // All identity indexes are protected by _nodesGate. _nodes resolves endpoint aliases;
+    // the two ID maps enforce Redis node identity. _allNodes retains ownership of every
+    // transport until disposal, even after an endpoint is reassigned to another node.
     private readonly Dictionary<RespireEndpoint, RespireConnectionMultiplexer> _nodes = new(EndpointComparer.Instance);
     private readonly Dictionary<string, RespireConnectionMultiplexer> _nodesById = new(StringComparer.Ordinal);
     private readonly Dictionary<RespireConnectionMultiplexer, string> _nodeIds = [];
@@ -47,6 +48,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
         RespireConnectionOptions commandConnectionOptions)
     {
         _options = options;
+        _logger = options.CreateLogger("Respire.Cluster");
         _commandConnectionOptions = commandConnectionOptions;
         _seeds = options.Endpoints.Count == 0
             ? [new RespireEndpoint("localhost")]
@@ -779,62 +781,139 @@ internal sealed class ClusterRouter : IAsyncDisposable
         }
     }
 
-    // Caller holds _nodesGate. Node IDs and aliases identify a transport; neither changes
-    // the hostname already chosen for its connections or TLS certificate validation.
-    private RespireConnectionMultiplexer GetTopologyNode(
-        RespireEndpoint preferred, string? nodeId, List<RespireEndpoint> aliases)
+    private sealed record TopologyRange(
+        int Start, int End, RespireEndpoint Preferred, string? NodeId, List<RespireEndpoint> Aliases);
+
+    private void ApplyTopology(List<TopologyRange> ranges, long expectedVersion)
     {
+        var advertisedById = new Dictionary<string, HashSet<RespireEndpoint>>(StringComparer.Ordinal);
+        foreach (var range in ranges)
+        {
+            if (range.NodeId is not { } id)
+            {
+                continue;
+            }
+
+            if (!advertisedById.TryGetValue(id, out var endpoints))
+            {
+                advertisedById.Add(id, endpoints = new HashSet<RespireEndpoint>(EndpointComparer.Instance));
+            }
+
+            endpoints.Add(range.Preferred);
+            endpoints.UnionWith(range.Aliases);
+        }
+
+        List<RespireConnectionMultiplexer>? retiredNodes;
         lock (_nodesGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            RespireConnectionMultiplexer? node = null;
-            if (nodeId is not null && _nodesById.TryGetValue(nodeId, out var identified)
-                && identified.Port == preferred.Port && IsCurrentTransport(identified))
+            var selectedById = new Dictionary<string, RespireConnectionMultiplexer>(StringComparer.Ordinal);
+            var selectedEndpoints = new Dictionary<RespireEndpoint, RespireConnectionMultiplexer>(EndpointComparer.Instance);
+            var resolved = new List<(TopologyRange Range, RespireConnectionMultiplexer Node)>();
+            var activeNodes = new HashSet<RespireConnectionMultiplexer>();
+            var refreshedSlots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
+            foreach (var range in ranges)
             {
-                node = identified;
-            }
-
-            if (node is null && _nodes.TryGetValue(preferred, out var preferredNode)
-                && IsCurrentTransport(preferredNode) && HasCompatibleId(preferredNode, nodeId))
-            {
-                node = preferredNode;
-            }
-
-            if (node is null)
-            {
-                foreach (var alias in aliases)
+                RespireConnectionMultiplexer node;
+                if (range.NodeId is { } id && selectedById.TryGetValue(id, out var selected))
                 {
-                    if (_nodes.TryGetValue(alias, out var candidate)
-                        && IsCurrentTransport(candidate) && HasCompatibleId(candidate, nodeId))
+                    node = selected;
+                }
+                else
+                {
+                    var advertised = range.NodeId is { } knownId ? advertisedById[knownId]
+                        : new HashSet<RespireEndpoint>(range.Aliases, EndpointComparer.Instance) { range.Preferred };
+                    node = ResolveTopologyNode(range, advertised, selectedEndpoints);
+                    if (range.NodeId is { } nodeId)
                     {
-                        node = candidate;
-                        break;
+                        selectedById.Add(nodeId, node);
+                        _nodeIds[node] = nodeId;
+                    }
+                }
+
+                resolved.Add((range, node));
+                activeNodes.Add(node);
+                selectedEndpoints[range.Preferred] = node;
+                foreach (var alias in range.Aliases)
+                {
+                    selectedEndpoints.TryAdd(alias, node);
+                }
+
+                for (var slot = range.Start; slot <= range.End; slot++)
+                {
+                    refreshedSlots[slot] = node;
+                }
+            }
+
+            // Publish all preferred endpoints before metadata. An alias reassigned in this
+            // snapshot replaces its old owner, but cannot override another current preferred endpoint.
+            var published = new HashSet<RespireEndpoint>(EndpointComparer.Instance);
+            foreach (var (range, node) in resolved)
+            {
+                _nodes[range.Preferred] = node;
+                published.Add(range.Preferred);
+                ObserveNode(node);
+            }
+
+            foreach (var (range, node) in resolved)
+            {
+                foreach (var alias in range.Aliases)
+                {
+                    if (published.Add(alias))
+                    {
+                        _nodes[alias] = node;
                     }
                 }
             }
 
-            node ??= CreateNode(preferred);
-            if (nodeId is not null)
+            foreach (var (id, node) in selectedById)
             {
-                _nodesById[nodeId] = node;
-                _nodeIds[node] = nodeId;
+                _nodesById[id] = node;
             }
 
-            // A preferred endpoint is authoritative; metadata cannot steal an alias already
-            // assigned to a different known Redis node ID.
-            _nodes[preferred] = node;
-            foreach (var alias in aliases)
-            {
-                if (!_nodes.TryGetValue(alias, out var owner)
-                    || !IsCurrentTransport(owner) || HasCompatibleId(owner, nodeId))
-                {
-                    _nodes[alias] = node;
-                }
-            }
-
-            ObserveNode(node);
-            return node;
+            retiredNodes = ReplaceSlotOwnersLocked(refreshedSlots, activeNodes, expectedVersion);
         }
+
+        if (retiredNodes is not null)
+        {
+            foreach (var node in retiredNodes)
+            {
+                NodeRetired?.Invoke(node);
+            }
+        }
+    }
+
+    // Called under _nodesGate. Reuse a transport only while its immutable address remains
+    // advertised for this node; a stable node ID alone does not make an old host reachable.
+    private RespireConnectionMultiplexer ResolveTopologyNode(
+        TopologyRange range, HashSet<RespireEndpoint> advertised,
+        Dictionary<RespireEndpoint, RespireConnectionMultiplexer> selectedEndpoints)
+    {
+        if (range.NodeId is { } id && _nodesById.TryGetValue(id, out var identified)
+            && IsCurrentTransport(identified) && IsAdvertised(identified))
+        {
+            return identified;
+        }
+
+        foreach (var endpoint in advertised)
+        {
+            if (selectedEndpoints.TryGetValue(endpoint, out var selected)
+                && HasCompatibleId(selected, range.NodeId) && IsAdvertised(selected))
+            {
+                return selected;
+            }
+
+            if (_nodes.TryGetValue(endpoint, out var existing) && IsCurrentTransport(existing)
+                && HasCompatibleId(existing, range.NodeId) && IsAdvertised(existing))
+            {
+                return existing;
+            }
+        }
+
+        return CreateNode(range.Preferred);
+
+        bool IsAdvertised(RespireConnectionMultiplexer node)
+            => advertised.Contains(new RespireEndpoint(node.Host, node.Port));
     }
 
     private bool HasCompatibleId(RespireConnectionMultiplexer node, string? nodeId)
@@ -980,81 +1059,66 @@ internal sealed class ClusterRouter : IAsyncDisposable
         return true;
     }
 
-    private void ReplaceSlotOwners(
+    private List<RespireConnectionMultiplexer>? ReplaceSlotOwnersLocked(
         RespireConnectionMultiplexer?[] refreshedSlots,
         HashSet<RespireConnectionMultiplexer> activeNodes,
         long expectedVersion)
     {
-        List<RespireConnectionMultiplexer>? retiredNodes = null;
-        lock (_nodesGate)
+        // Preserve only slots changed since this request began. An unrelated MOVED
+        // must not discard useful discovery for a READONLY command's slot.
+        var publicationVersion = ++_topologyVersion;
+        activeNodes.Clear();
+        for (var slot = 0; slot < refreshedSlots.Length; slot++)
         {
-            // Preserve only slots changed since this request began. An unrelated MOVED
-            // must not discard useful discovery for a READONLY command's slot.
-            var publicationVersion = ++_topologyVersion;
-            activeNodes.Clear();
-            for (var slot = 0; slot < refreshedSlots.Length; slot++)
+            if (_slotVersions[slot] > expectedVersion)
             {
-                if (_slotVersions[slot] > expectedVersion)
-                {
-                    refreshedSlots[slot] = Volatile.Read(ref _slots[slot]);
-                }
-                if (refreshedSlots[slot] is { } node)
-                {
-                    activeNodes.Add(node);
-                }
+                refreshedSlots[slot] = Volatile.Read(ref _slots[slot]);
             }
-            foreach (var node in activeNodes)
+            if (refreshedSlots[slot] is { } node)
             {
-                ObserveNode(node);
-            }
-            var masters = activeNodes.ToArray();
-            var masterSlotCounts = new int[masters.Length];
-            var complete = true;
-            for (var slot = 0; slot < refreshedSlots.Length; slot++)
-            {
-                var node = refreshedSlots[slot];
-                if (_slotVersions[slot] <= expectedVersion)
-                {
-                    PublishSlotLocked(slot, node, publicationVersion);
-                }
-                complete &= node is not null;
-                if (node is not null)
-                {
-                    masterSlotCounts[Array.IndexOf(masters, node)]++;
-                }
-            }
-
-            _masterSlotCounts = masterSlotCounts;
-            Volatile.Write(ref _masters, masters);
-            Volatile.Write(ref _hasCompleteTopology, complete ? 1 : 0);
-
-            foreach (var node in _nodeStateHandlers.Keys)
-            {
-                if (activeNodes.Contains(node))
-                {
-                    continue;
-                }
-
-                (retiredNodes ??= []).Add(node);
-            }
-
-            if (retiredNodes is not null)
-            {
-                foreach (var node in retiredNodes)
-                {
-                    node.SlotStateChanged -= _nodeStateHandlers[node];
-                    _nodeStateHandlers.Remove(node);
-                }
+                activeNodes.Add(node);
             }
         }
-
+        foreach (var node in activeNodes)
+        {
+            ObserveNode(node);
+        }
+        List<RespireConnectionMultiplexer>? retiredNodes = null;
+        var masters = activeNodes.ToArray();
+        var masterSlotCounts = new int[masters.Length];
+        var complete = true;
+        for (var slot = 0; slot < refreshedSlots.Length; slot++)
+        {
+            var node = refreshedSlots[slot];
+            if (_slotVersions[slot] <= expectedVersion)
+            {
+                PublishSlotLocked(slot, node, publicationVersion);
+            }
+            complete &= node is not null;
+            if (node is not null)
+            {
+                masterSlotCounts[Array.IndexOf(masters, node)]++;
+            }
+        }
+        _masterSlotCounts = masterSlotCounts;
+        Volatile.Write(ref _masters, masters);
+        Volatile.Write(ref _hasCompleteTopology, complete ? 1 : 0);
+        foreach (var node in _nodeStateHandlers.Keys)
+        {
+            if (!activeNodes.Contains(node))
+            {
+                (retiredNodes ??= []).Add(node);
+            }
+        }
         if (retiredNodes is not null)
         {
             foreach (var node in retiredNodes)
             {
-                NodeRetired?.Invoke(node);
+                node.SlotStateChanged -= _nodeStateHandlers[node];
+                _nodeStateHandlers.Remove(node);
             }
         }
+        return retiredNodes;
     }
 
     private async ValueTask<RespireConnection> EnableCorrectionOrderingAsync(
@@ -1091,7 +1155,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 node.Host,
                 node.Port,
                 _options.ToConnectionOptions(),
-                _options.CreateLogger($"Respire.Cluster.Blocking.{endpoint.Host}:{endpoint.Port}"));
+                _options.CreateLogger($"Respire.Cluster.Blocking.{node.Host}:{node.Port}"));
             _dedicatedPools.Add(node, pool);
             return pool;
         }
@@ -1116,12 +1180,8 @@ internal sealed class ClusterRouter : IAsyncDisposable
                     return false;
                 }
 
-                var refreshedSlots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
                 var ranges = reply.AsArray();
-                var activeNodes = t_activeTopologyNodes ??=
-                    new HashSet<RespireConnectionMultiplexer>(ReferenceEqualityComparer.Instance);
-                activeNodes.Clear();
-                var discoveredRange = false;
+                List<TopologyRange> topology = [];
                 foreach (ref readonly var range in ranges)
                 {
                     var values = range.AsArray();
@@ -1140,8 +1200,16 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
                     var host = primary[0].AsString();
                     var port = primary[1].AsInteger();
-                    if (port is <= 0 or > 65_535 || host == "?")
+                    if (port is <= 0 or > 65_535)
                     {
+                        continue;
+                    }
+
+                    if (host == "?")
+                    {
+                        _logger?.LogDebug(
+                            "Skipping Redis Cluster slots {Start}-{End}: the preferred endpoint is unknown ('?').",
+                            start, end);
                         continue;
                     }
 
@@ -1173,24 +1241,16 @@ internal sealed class ClusterRouter : IAsyncDisposable
                         }
                     }
 
-                    var node = GetTopologyNode(preferred, nodeId, aliases);
-                    activeNodes.Add(node);
-
-                    for (var slot = (int)start; slot <= end; slot++)
-                    {
-                        refreshedSlots[slot] = node;
-                    }
-
-                    discoveredRange = true;
+                    topology.Add(new TopologyRange((int)start, (int)end, preferred, nodeId, aliases));
                 }
 
-                if (discoveredRange)
+                if (topology.Count == 0)
                 {
-                    ReplaceSlotOwners(refreshedSlots, activeNodes, topologyVersion);
+                    return false;
                 }
 
-                activeNodes.Clear();
-                return discoveredRange;
+                ApplyTopology(topology, topologyVersion);
+                return true;
             }
             finally
             {

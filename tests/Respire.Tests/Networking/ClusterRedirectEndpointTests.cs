@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text;
 using Respire.Commands;
 using Respire.Internal;
+using Respire.Infrastructure;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -172,11 +173,12 @@ public class ClusterRedirectEndpointTests
     private static async Task AssertNoUnknownTarget(RespireClient client)
     {
         var router = client.Core.Cluster!;
-        foreach (var name in new[] { "_nodes", "_dedicatedPools" })
-        {
-            var field = typeof(ClusterRouter).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!;
-            var endpoints = ((IDictionary)field.GetValue(router)!).Keys.Cast<RespireEndpoint>();
-            await Assert.That(endpoints.Any(endpoint => endpoint.Host == "?")).IsFalse();
-        }
+        var nodesField = typeof(ClusterRouter).GetField("_nodes", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var endpoints = ((IDictionary)nodesField.GetValue(router)!).Keys.Cast<RespireEndpoint>();
+        await Assert.That(endpoints.Any(endpoint => endpoint.Host == "?")).IsFalse();
+
+        var poolsField = typeof(ClusterRouter).GetField("_dedicatedPools", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var nodes = ((IDictionary)poolsField.GetValue(router)!).Keys.Cast<RespireConnectionMultiplexer>();
+        await Assert.That(nodes.Any(node => node.Host == "?")).IsFalse();
     }
 }

@@ -122,6 +122,44 @@ public class ClusterNodeIdentityTests
         await Assert.That(connections[0].Port).IsEqualTo(replacement.Port);
     }
 
+    [Test]
+    public async Task StableNodeIdMovingHostUsesNewTransport()
+    {
+        await using var target = new FakeRespServer(FakeRespServer.PongReply);
+        var original = Encoding.UTF8.GetBytes("*1\r\n" + Range(0, 16383, "127.0.0.2", target.Port, "same-node", "", includeAliases: false));
+        var replacement = Encoding.UTF8.GetBytes("*1\r\n" + Range(0, 16383, "127.0.0.1", target.Port, "same-node", "", includeAliases: false));
+        await using var seed = new FakeRespServer(original, replacement);
+        var options = Options(seed.Port);
+        await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", seed.Port, options: options.ToConnectionOptions());
+        await using var router = new ClusterRouter(options, primary);
+        await router.EnsureConnectedAsync(default);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var connections = await router.GetMasterConnectionsAsync(timeout.Token);
+
+        await Assert.That(connections[0].Host).IsEqualTo("127.0.0.1");
+    }
+
+    [Test]
+    public async Task ReassignedAliasResolvesToItsNewNodeId()
+    {
+        await using var target = new FakeRespServer(FakeRespServer.PongReply);
+        var original = Encoding.UTF8.GetBytes("*1\r\n" + Range(0, 16383, "old.invalid", target.Port, "old-node", "old.invalid"));
+        await using var seed = new FakeRespServer(original, Topology("localhost", target.Port, "new-node"));
+        var options = Options(seed.Port);
+        await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", seed.Port, options: options.ToConnectionOptions());
+        await using var router = new ClusterRouter(options, primary);
+        await router.EnsureConnectedAsync(default);
+        var address = new RespireEndpoint("127.0.0.1", target.Port);
+        var old = router.GetMultiplexer(address);
+        await router.GetMasterConnectionsAsync(default);
+
+        await Assert.That(ReferenceEquals(old, router.GetMultiplexer(address))).IsFalse();
+        await Assert.That(ReferenceEquals(router.GetMultiplexer(address),
+            router.GetMultiplexer(new RespireEndpoint("localhost", target.Port)))).IsTrue();
+        await Assert.That(ReferenceEquals(router.GetDedicatedPool(address),
+            router.GetDedicatedPool(new RespireEndpoint("localhost", target.Port)))).IsTrue();
+    }
+
     internal static byte[] Topology(string preferred, int port, string? nodeId)
         => Encoding.UTF8.GetBytes("*1\r\n" + Range(0, 16383, preferred, port, nodeId, "localhost"));
 
