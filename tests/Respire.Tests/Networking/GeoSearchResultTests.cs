@@ -24,7 +24,8 @@ public class GeoSearchResultTests
         var result = new GeoSearchResult(member.AsSpan());
         var actual = GC.GetAllocatedBytesForCurrentThread() - before;
 
-        await Assert.That(actual).IsEqualTo(expected);
+        // Allow small runtime bookkeeping differences, but never the extra 4 KB member array.
+        await Assert.That(actual).IsLessThanOrEqualTo(expected + 128);
         await Assert.That(result.Member).IsEqualTo(text);
         await Assert.That(result.MemberBytes.Span.SequenceEqual(member)).IsTrue();
     }

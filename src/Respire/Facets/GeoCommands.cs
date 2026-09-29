@@ -54,7 +54,7 @@ public readonly record struct GeoSearchResult
         GeoPosition? Position = null)
     {
         _member = Member;
-        _memberBytes = Member is null ? null : Encoding.UTF8.GetBytes(Member);
+        _memberBytes = EncodeMember(Member);
         this.Distance = Distance;
         this.Hash = Hash;
         this.Position = Position;
@@ -76,9 +76,12 @@ public readonly record struct GeoSearchResult
         init
         {
             _member = value;
-            _memberBytes = value is null ? null : Encoding.UTF8.GetBytes(value);
+            _memberBytes = EncodeMember(value);
         }
     }
+
+    private static byte[]? EncodeMember(string? member)
+        => member is null ? null : Encoding.UTF8.GetBytes(member);
 
     /// <summary>The exact Redis member payload, for binary-safe follow-up commands.</summary>
     public ReadOnlyMemory<byte> MemberBytes => _memberBytes ?? Array.Empty<byte>();
