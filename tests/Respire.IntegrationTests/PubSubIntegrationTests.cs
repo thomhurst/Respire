@@ -27,6 +27,44 @@ public class PubSubIntegrationTests
     }
 
     [Test]
+    [Arguments(RespProtocol.Resp2, SubscriptionKind.Channel)]
+    [Arguments(RespProtocol.Resp3, SubscriptionKind.Channel)]
+    [Arguments(RespProtocol.Resp2, SubscriptionKind.Pattern)]
+    [Arguments(RespProtocol.Resp3, SubscriptionKind.Pattern)]
+    [Arguments(RespProtocol.Resp2, SubscriptionKind.Sharded)]
+    [Arguments(RespProtocol.Resp3, SubscriptionKind.Sharded)]
+    public async Task BinaryChannels_RoundTrip(RespProtocol protocol, SubscriptionKind kind)
+    {
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint(_fixture.Host, _fixture.Port) },
+            Database = _fixture.Database,
+            Protocol = protocol,
+            Connections = 1,
+        });
+        byte[] prefix = [.. System.Text.Encoding.UTF8.GetBytes(IsolatedChannel("binary:")), 0xff, 0, (byte)':'];
+        RespireChannel channel = (byte[])[.. prefix, (byte)'x'];
+        RespireChannel target = kind switch
+        {
+            SubscriptionKind.Pattern => RespireChannel.Pattern((byte[])[.. prefix, (byte)'*']),
+            SubscriptionKind.Sharded => RespireChannel.Sharded(channel),
+            _ => channel,
+        };
+        await using var subscription = await client.SubscribeAsync(target);
+        var messageTask = ReadFirstAsync(subscription);
+        byte[] payload = [0xfe, 0, 0xff];
+        var count = kind == SubscriptionKind.Sharded
+            ? await client.PublishShardedAsync(channel, payload)
+            : await client.PublishAsync(channel, payload);
+        count.Should().Be(1);
+        var message = await messageTask.WaitAsync(TimeSpan.FromSeconds(5));
+        message.Channel.Should().Be(channel);
+        message.Payload.ToArray().Should().Equal(payload);
+        if (kind == SubscriptionKind.Pattern) message.Pattern.Should().Be(target);
+        else message.Pattern.Should().BeNull();
+    }
+
+    [Test]
     public async Task PublishSubscribe_Roundtrip()
     {
         var channel = IsolatedChannel("it:chan");
@@ -51,8 +89,8 @@ public class PubSubIntegrationTests
         (await _client.PublishAsync(channel, "pattern-payload")).Should().Be(1);
 
         var message = await firstMessage.WaitAsync(TimeSpan.FromSeconds(5));
-        message.Channel.Should().Be(channel);
-        message.Pattern.Should().Be(pattern);
+        message.Channel.Should().Be((RespireChannel)channel);
+        message.Pattern.Should().Be((RespireChannel)pattern);
         message.Text.Should().Be("pattern-payload");
     }
 
@@ -66,7 +104,7 @@ public class PubSubIntegrationTests
         (await _client.PublishShardedAsync(channel, "sharded-payload")).Should().Be(1);
 
         var message = await firstMessage.WaitAsync(TimeSpan.FromSeconds(5));
-        message.Channel.Should().Be(channel);
+        message.Channel.Should().Be((RespireChannel)channel);
         message.Pattern.Should().BeNull();
         message.Text.Should().Be("sharded-payload");
     }

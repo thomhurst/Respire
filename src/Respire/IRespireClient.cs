@@ -174,6 +174,54 @@ public interface IRespireClient : IAsyncDisposable
         RespireSubscriptionOptions options,
         CancellationToken cancellationToken);
 
+    /// <summary>Publishes raw channel bytes; sharded metadata selects SPUBLISH. Patterns cannot be published.</summary>
+    ValueTask<long> PublishAsync(RespireChannel channel, RespireValue message, CancellationToken cancellationToken = default);
+
+    /// <summary>Publishes raw bytes with SPUBLISH. Channel names are not prefixed.</summary>
+    ValueTask<long> PublishShardedAsync(RespireChannel channel, RespireValue message, CancellationToken cancellationToken = default);
+
+    /// <summary>Subscribes using the channel's explicit literal, pattern, or sharded kind.</summary>
+    ValueTask<RespireSubscription> SubscribeAsync(RespireChannel channel, CancellationToken cancellationToken = default);
+
+    /// <summary>Subscribes using explicit channel metadata and per-subscription buffer settings.</summary>
+    ValueTask<RespireSubscription> SubscribeAsync(
+        RespireChannel channel, RespireSubscriptionOptions options, CancellationToken cancellationToken);
+
+    /// <summary>Subscribes to owned binary channels. All targets must have the same kind.</summary>
+    ValueTask<RespireSubscription> SubscribeAsync(ReadOnlySpan<RespireChannel> channels, CancellationToken cancellationToken);
+
+    /// <summary>Subscribes to same-kind binary channels with per-subscription buffer settings.</summary>
+    ValueTask<RespireSubscription> SubscribeAsync(
+        ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options, CancellationToken cancellationToken);
+
+    /// <summary>Subscribes to raw bytes using the pattern command family.</summary>
+    ValueTask<RespireSubscription> SubscribePatternAsync(RespireChannel channel, CancellationToken cancellationToken = default);
+
+    /// <summary>Subscribes to raw bytes with per-subscription buffer settings.</summary>
+    ValueTask<RespireSubscription> SubscribePatternAsync(
+        RespireChannel channel, RespireSubscriptionOptions options, CancellationToken cancellationToken);
+
+    /// <summary>Subscribes to binary targets using the pattern command family.</summary>
+    ValueTask<RespireSubscription> SubscribePatternAsync(ReadOnlySpan<RespireChannel> channels, CancellationToken cancellationToken);
+
+    /// <summary>Subscribes to binary targets with per-subscription buffer settings.</summary>
+    ValueTask<RespireSubscription> SubscribePatternAsync(
+        ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options, CancellationToken cancellationToken);
+
+    /// <summary>Subscribes to raw bytes using the sharded command family.</summary>
+    ValueTask<RespireSubscription> SubscribeShardedAsync(RespireChannel channel, CancellationToken cancellationToken = default);
+
+    /// <summary>Subscribes to raw bytes with per-subscription buffer settings.</summary>
+    ValueTask<RespireSubscription> SubscribeShardedAsync(
+        RespireChannel channel, RespireSubscriptionOptions options, CancellationToken cancellationToken);
+
+    /// <summary>Subscribes to binary targets using the sharded command family.</summary>
+    ValueTask<RespireSubscription> SubscribeShardedAsync(ReadOnlySpan<RespireChannel> channels, CancellationToken cancellationToken);
+
+    /// <summary>Subscribes to binary targets with per-subscription buffer settings.</summary>
+    ValueTask<RespireSubscription> SubscribeShardedAsync(
+        ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options, CancellationToken cancellationToken);
+
     // Batches and transactions.
     /// <summary>Creates an explicit pipeline that queues commands until execution.</summary>
     RespireBatch CreateBatch();

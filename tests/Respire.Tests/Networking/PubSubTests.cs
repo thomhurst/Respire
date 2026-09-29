@@ -66,7 +66,7 @@ public class PubSubTests
         await using var subscription = await client.SubscribeAsync(channel);
 
         await Assert.That(subscription.Kind).IsEqualTo(SubscriptionKind.Channel);
-        await Assert.That(subscription.Targets).IsEquivalentTo([channel]);
+        await Assert.That(subscription.Targets).IsEquivalentTo([(RespireChannel)channel]);
         await Assert.That(subscription.IsDisposed).IsFalse();
 
         // Returning already implies the confirmation arrived — no waiting for the command to show up.
@@ -77,8 +77,8 @@ public class PubSubTests
         await server.SendRawAsync(MessageFrame);
 
         await Assert.That(await moveTask.AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
-        await Assert.That(enumerator.Current.Channel).IsEqualTo("ch");
-        await Assert.That(ReferenceEquals(enumerator.Current.Channel, channel)).IsTrue();
+        await Assert.That(enumerator.Current.Channel).IsEqualTo((RespireChannel)"ch");
+        await Assert.That(enumerator.Current.Channel.Bytes.Equals(subscription.Targets[0].Bytes)).IsTrue();
         await Assert.That(enumerator.Current.Text).IsEqualTo("hello");
 
         // Enumeration streams the buffer; it never resubscribes.
@@ -325,8 +325,8 @@ public class PubSubTests
         await server.SendRawAsync("*4\r\n$8\r\npmessage\r\n$3\r\nch*\r\n$3\r\nch1\r\n$4\r\ndata\r\n"u8.ToArray());
 
         await Assert.That(await moveTask.AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
-        await Assert.That(enumerator.Current.Channel).IsEqualTo("ch1");
-        await Assert.That(enumerator.Current.Pattern).IsEqualTo("ch*");
+        await Assert.That(enumerator.Current.Channel).IsEqualTo((RespireChannel)"ch1");
+        await Assert.That(enumerator.Current.Pattern).IsEqualTo((RespireChannel?)RespireChannel.Pattern("ch*"));
         await Assert.That(enumerator.Current.Text).IsEqualTo("data");
         await enumerator.DisposeAsync();
     }

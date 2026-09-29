@@ -769,11 +769,11 @@ public sealed partial class RespireClient : IRespireClient
 
     /// <summary>Publishes to a channel; returns the number of subscribers that received it. Redis: PUBLISH.</summary>
     public ValueTask<long> PublishAsync(string channel, RespireValue message, CancellationToken cancellationToken = default)
-        => IntegerAsync("PUBLISH", new Cmd2(Verbs.Publish, channel, message), cancellationToken);
+        => PublishAsync(new RespireChannel(channel), message, cancellationToken);
 
     /// <summary>Publishes to a sharded channel (Redis 7+). Redis: SPUBLISH.</summary>
     public ValueTask<long> PublishShardedAsync(string channel, RespireValue message, CancellationToken cancellationToken = default)
-        => IntegerAsync("SPUBLISH", new Cmd2(Verbs.SPublish, channel, message), cancellationToken);
+        => PublishShardedAsync(new RespireChannel(channel), message, cancellationToken);
 
     /// <summary>
     /// Subscribes to a channel and returns once the server has acknowledged the SUBSCRIBE, so the
@@ -782,12 +782,12 @@ public sealed partial class RespireClient : IRespireClient
     /// unsubscribes. Redis: SUBSCRIBE.
     /// </summary>
     public ValueTask<RespireSubscription> SubscribeAsync(string channel, CancellationToken cancellationToken = default)
-        => SubscribeCoreAsync(SubscriptionKind.Channel, [channel], default, cancellationToken);
+        => SubscribeAsync(new RespireChannel(channel), cancellationToken);
 
     /// <summary>Subscribes to one channel with per-subscription buffer settings. Redis: SUBSCRIBE.</summary>
     public ValueTask<RespireSubscription> SubscribeAsync(
         string channel, RespireSubscriptionOptions options, CancellationToken cancellationToken)
-        => SubscribeCoreAsync(SubscriptionKind.Channel, [channel], options, cancellationToken);
+        => SubscribeAsync(new RespireChannel(channel), options, cancellationToken);
 
     /// <inheritdoc cref="SubscribeAsync(string, CancellationToken)"/>
     public ValueTask<RespireSubscription> SubscribeAsync(params ReadOnlySpan<string> channels)
@@ -796,26 +796,26 @@ public sealed partial class RespireClient : IRespireClient
     /// <inheritdoc cref="SubscribeAsync(string, CancellationToken)"/>
     public ValueTask<RespireSubscription> SubscribeAsync(
         ReadOnlySpan<string> channels, CancellationToken cancellationToken)
-        => SubscribeCoreAsync(SubscriptionKind.Channel, channels.ToArray(), default, cancellationToken);
+        => SubscribeCoreAsync(SubscriptionKind.Channel, MapChannels(channels, SubscriptionKind.Channel), default, cancellationToken);
 
     /// <summary>Subscribes to channels with per-subscription buffer settings. Redis: SUBSCRIBE.</summary>
     public ValueTask<RespireSubscription> SubscribeAsync(
         ReadOnlySpan<string> channels,
         RespireSubscriptionOptions options,
         CancellationToken cancellationToken)
-        => SubscribeCoreAsync(SubscriptionKind.Channel, channels.ToArray(), options, cancellationToken);
+        => SubscribeCoreAsync(SubscriptionKind.Channel, MapChannels(channels, SubscriptionKind.Channel), options, cancellationToken);
 
     /// <summary>
     /// Subscribes to a glob pattern ("news.*") and returns once the server has acknowledged.
     /// Redis: PSUBSCRIBE.
     /// </summary>
     public ValueTask<RespireSubscription> SubscribePatternAsync(string pattern, CancellationToken cancellationToken = default)
-        => SubscribeCoreAsync(SubscriptionKind.Pattern, [pattern], default, cancellationToken);
+        => SubscribeAsync(new RespireChannel(pattern).WithKind(SubscriptionKind.Pattern), cancellationToken);
 
     /// <summary>Subscribes to one pattern with per-subscription buffer settings. Redis: PSUBSCRIBE.</summary>
     public ValueTask<RespireSubscription> SubscribePatternAsync(
         string pattern, RespireSubscriptionOptions options, CancellationToken cancellationToken)
-        => SubscribeCoreAsync(SubscriptionKind.Pattern, [pattern], options, cancellationToken);
+        => SubscribeAsync(new RespireChannel(pattern).WithKind(SubscriptionKind.Pattern), options, cancellationToken);
 
     /// <inheritdoc cref="SubscribePatternAsync(string, CancellationToken)"/>
     public ValueTask<RespireSubscription> SubscribePatternAsync(params ReadOnlySpan<string> patterns)
@@ -824,26 +824,26 @@ public sealed partial class RespireClient : IRespireClient
     /// <inheritdoc cref="SubscribePatternAsync(string, CancellationToken)"/>
     public ValueTask<RespireSubscription> SubscribePatternAsync(
         ReadOnlySpan<string> patterns, CancellationToken cancellationToken)
-        => SubscribeCoreAsync(SubscriptionKind.Pattern, patterns.ToArray(), default, cancellationToken);
+        => SubscribeCoreAsync(SubscriptionKind.Pattern, MapChannels(patterns, SubscriptionKind.Pattern), default, cancellationToken);
 
     /// <summary>Subscribes to patterns with per-subscription buffer settings. Redis: PSUBSCRIBE.</summary>
     public ValueTask<RespireSubscription> SubscribePatternAsync(
         ReadOnlySpan<string> patterns,
         RespireSubscriptionOptions options,
         CancellationToken cancellationToken)
-        => SubscribeCoreAsync(SubscriptionKind.Pattern, patterns.ToArray(), options, cancellationToken);
+        => SubscribeCoreAsync(SubscriptionKind.Pattern, MapChannels(patterns, SubscriptionKind.Pattern), options, cancellationToken);
 
     /// <summary>
     /// Subscribes to a sharded channel (Redis 7+) and returns once the server has acknowledged.
     /// Redis: SSUBSCRIBE.
     /// </summary>
     public ValueTask<RespireSubscription> SubscribeShardedAsync(string channel, CancellationToken cancellationToken = default)
-        => SubscribeCoreAsync(SubscriptionKind.Sharded, [channel], default, cancellationToken);
+        => SubscribeAsync(new RespireChannel(channel).WithKind(SubscriptionKind.Sharded), cancellationToken);
 
     /// <summary>Subscribes to one sharded channel with per-subscription buffer settings. Redis: SSUBSCRIBE.</summary>
     public ValueTask<RespireSubscription> SubscribeShardedAsync(
         string channel, RespireSubscriptionOptions options, CancellationToken cancellationToken)
-        => SubscribeCoreAsync(SubscriptionKind.Sharded, [channel], options, cancellationToken);
+        => SubscribeAsync(new RespireChannel(channel).WithKind(SubscriptionKind.Sharded), options, cancellationToken);
 
     /// <inheritdoc cref="SubscribeShardedAsync(string, CancellationToken)"/>
     public ValueTask<RespireSubscription> SubscribeShardedAsync(params ReadOnlySpan<string> channels)
@@ -852,21 +852,127 @@ public sealed partial class RespireClient : IRespireClient
     /// <inheritdoc cref="SubscribeShardedAsync(string, CancellationToken)"/>
     public ValueTask<RespireSubscription> SubscribeShardedAsync(
         ReadOnlySpan<string> channels, CancellationToken cancellationToken)
-        => SubscribeCoreAsync(SubscriptionKind.Sharded, channels.ToArray(), default, cancellationToken);
+        => SubscribeCoreAsync(SubscriptionKind.Sharded, MapChannels(channels, SubscriptionKind.Sharded), default, cancellationToken);
 
     /// <summary>Subscribes to sharded channels with per-subscription buffer settings. Redis: SSUBSCRIBE.</summary>
     public ValueTask<RespireSubscription> SubscribeShardedAsync(
         ReadOnlySpan<string> channels,
         RespireSubscriptionOptions options,
         CancellationToken cancellationToken)
-        => SubscribeCoreAsync(SubscriptionKind.Sharded, channels.ToArray(), options, cancellationToken);
+        => SubscribeCoreAsync(SubscriptionKind.Sharded, MapChannels(channels, SubscriptionKind.Sharded), options, cancellationToken);
 
     private ValueTask<RespireSubscription> SubscribeCoreAsync(
         SubscriptionKind kind,
-        string[] names,
+        RespireChannel[] names,
         RespireSubscriptionOptions options,
         CancellationToken cancellationToken)
         => _core.Hub.SubscribeAsync(kind, names, options, cancellationToken);
+
+    /// <summary>Publishes raw channel bytes; sharded metadata selects SPUBLISH. Patterns cannot be published.</summary>
+    public ValueTask<long> PublishAsync(RespireChannel channel, RespireValue message, CancellationToken cancellationToken = default)
+    {
+        if (channel.Kind == SubscriptionKind.Pattern)
+        {
+            throw new ArgumentException("A pattern cannot be published; use a literal channel.", nameof(channel));
+        }
+        return channel.Kind == SubscriptionKind.Sharded
+            ? PublishShardedAsync(channel, message, cancellationToken)
+            : IntegerAsync("PUBLISH", new Cmd2(Verbs.Publish, channel.AsValue(), message), cancellationToken);
+    }
+
+    /// <summary>Publishes raw bytes with SPUBLISH. Channel names are not prefixed.</summary>
+    public ValueTask<long> PublishShardedAsync(RespireChannel channel, RespireValue message, CancellationToken cancellationToken = default)
+    {
+        if (channel.Kind == SubscriptionKind.Pattern)
+        {
+            throw new ArgumentException("A pattern cannot be published; use a sharded channel.", nameof(channel));
+        }
+        return IntegerAsync("SPUBLISH", new Cmd2(Verbs.SPublish, channel.AsValue(), message), cancellationToken);
+    }
+
+    /// <summary>Subscribes using the channel's explicit literal, pattern, or sharded kind.</summary>
+    public ValueTask<RespireSubscription> SubscribeAsync(RespireChannel channel, CancellationToken cancellationToken = default)
+        => SubscribeCoreAsync(channel.Kind, [channel], default, cancellationToken);
+
+    /// <summary>Subscribes using explicit channel metadata and per-subscription buffer settings.</summary>
+    public ValueTask<RespireSubscription> SubscribeAsync(
+        RespireChannel channel, RespireSubscriptionOptions options, CancellationToken cancellationToken)
+        => SubscribeCoreAsync(channel.Kind, [channel], options, cancellationToken);
+
+    /// <summary>Subscribes to owned binary channels. All targets must have the same kind.</summary>
+    public ValueTask<RespireSubscription> SubscribeAsync(ReadOnlySpan<RespireChannel> channels, CancellationToken cancellationToken)
+        => SubscribeAsync(channels, default, cancellationToken);
+
+    /// <summary>Subscribes to same-kind binary channels with per-subscription buffer settings.</summary>
+    public ValueTask<RespireSubscription> SubscribeAsync(
+        ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options, CancellationToken cancellationToken)
+    {
+        var kind = channels.IsEmpty ? SubscriptionKind.Channel : channels[0].Kind;
+        foreach (var channel in channels)
+        {
+            if (channel.Kind != kind)
+            {
+                throw new ArgumentException("All targets in one subscription must have the same kind.", nameof(channels));
+            }
+        }
+        return SubscribeCoreAsync(kind, channels.ToArray(), options, cancellationToken);
+    }
+
+    /// <summary>Subscribes to raw bytes using the pattern command family.</summary>
+    public ValueTask<RespireSubscription> SubscribePatternAsync(RespireChannel channel, CancellationToken cancellationToken = default)
+        => SubscribeAsync(channel.WithKind(SubscriptionKind.Pattern), cancellationToken);
+
+    /// <summary>Subscribes to raw bytes with per-subscription buffer settings.</summary>
+    public ValueTask<RespireSubscription> SubscribePatternAsync(
+        RespireChannel channel, RespireSubscriptionOptions options, CancellationToken cancellationToken)
+        => SubscribeAsync(channel.WithKind(SubscriptionKind.Pattern), options, cancellationToken);
+
+    /// <summary>Subscribes to binary targets using the pattern command family.</summary>
+    public ValueTask<RespireSubscription> SubscribePatternAsync(ReadOnlySpan<RespireChannel> channels, CancellationToken cancellationToken)
+        => SubscribePatternAsync(channels, default, cancellationToken);
+
+    /// <summary>Subscribes to binary targets with per-subscription buffer settings.</summary>
+    public ValueTask<RespireSubscription> SubscribePatternAsync(
+        ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options, CancellationToken cancellationToken)
+        => SubscribeCoreAsync(SubscriptionKind.Pattern, MapChannels(channels, SubscriptionKind.Pattern), options, cancellationToken);
+
+    /// <summary>Subscribes to raw bytes using the sharded command family.</summary>
+    public ValueTask<RespireSubscription> SubscribeShardedAsync(RespireChannel channel, CancellationToken cancellationToken = default)
+        => SubscribeAsync(channel.WithKind(SubscriptionKind.Sharded), cancellationToken);
+
+    /// <summary>Subscribes to raw bytes with per-subscription buffer settings.</summary>
+    public ValueTask<RespireSubscription> SubscribeShardedAsync(
+        RespireChannel channel, RespireSubscriptionOptions options, CancellationToken cancellationToken)
+        => SubscribeAsync(channel.WithKind(SubscriptionKind.Sharded), options, cancellationToken);
+
+    /// <summary>Subscribes to binary targets using the sharded command family.</summary>
+    public ValueTask<RespireSubscription> SubscribeShardedAsync(ReadOnlySpan<RespireChannel> channels, CancellationToken cancellationToken)
+        => SubscribeShardedAsync(channels, default, cancellationToken);
+
+    /// <summary>Subscribes to binary targets with per-subscription buffer settings.</summary>
+    public ValueTask<RespireSubscription> SubscribeShardedAsync(
+        ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options, CancellationToken cancellationToken)
+        => SubscribeCoreAsync(SubscriptionKind.Sharded, MapChannels(channels, SubscriptionKind.Sharded), options, cancellationToken);
+
+    private static RespireChannel[] MapChannels(ReadOnlySpan<RespireChannel> channels, SubscriptionKind kind)
+    {
+        var names = channels.ToArray();
+        for (var i = 0; i < names.Length; i++)
+        {
+            names[i] = names[i].WithKind(kind);
+        }
+        return names;
+    }
+
+    private static RespireChannel[] MapChannels(ReadOnlySpan<string> names, SubscriptionKind kind)
+    {
+        var channels = new RespireChannel[names.Length];
+        for (var i = 0; i < names.Length; i++)
+        {
+            channels[i] = new RespireChannel(names[i]).WithKind(kind);
+        }
+        return channels;
+    }
 
     // Batches and transactions
 

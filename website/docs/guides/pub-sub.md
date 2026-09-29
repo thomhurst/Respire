@@ -43,6 +43,45 @@ long receivers = await redis.PublishAsync("orders", orderJson);
 long shardReceivers = await redis.PublishShardedAsync("events:eu-west", payload);
 ```
 
+## Binary channels and explicit subscription kinds
+
+`RespireChannel` owns the exact channel bytes. Strings convert implicitly after UTF-16 validation;
+byte arrays and `ReadOnlyMemory<byte>` convert implicitly by copying their contents. Mutating the
+original buffer after construction, subscription, or publication cannot change a channel's identity.
+Reuse a constructed channel to avoid copying it for each publication.
+
+```csharp
+RespireChannel binary = new byte[] { 0xff, 0x00, 0x3a, 0x41 };
+await using var subscription = await redis.SubscribeAsync(binary, stoppingToken);
+await redis.PublishAsync(binary, "payload", stoppingToken);
+
+var pattern = RespireChannel.Pattern(new byte[] { 0xff, 0x00, 0x3a, (byte)'*' });
+await using var patterns = await redis.SubscribeAsync(pattern, stoppingToken);
+var shard = RespireChannel.Sharded("events:{eu-west}");
+await using var sharded = await redis.SubscribeAsync(shard, stoppingToken);
+await redis.PublishAsync(shard, "payload", stoppingToken); // SPUBLISH
+
+RespireChannel[] targets = ["orders", binary];
+await using var multiple = await redis.SubscribeAsync(targets, stoppingToken);
+```
+
+The metadata-aware `SubscribeAsync` uses `Kind` to select SUBSCRIBE, PSUBSCRIBE, or SSUBSCRIBE.
+Multi-target subscriptions require one kind; use separate subscriptions for mixed kinds. Named
+`SubscribePatternAsync` and `SubscribeShardedAsync` also accept binary targets and explicitly select
+their command family. Patterns cannot be published. Existing string subscription and publication
+overloads remain available. Sharded subscriptions across Redis Cluster nodes remain unsupported.
+
+Equality and hashing compare only bytes, independently of kind. Equivalent text and UTF-8 byte
+targets deduplicate within a subscription. `ClusterSlot` uses raw bytes and Redis hash-tag rules.
+Empty channels, including `default(RespireChannel)`, are valid. Unpaired UTF-16 surrogates throw
+`ArgumentException` before subscription work begins; arbitrary binary values are accepted.
+Names such as `__keyspace@0__:key` remain ordinary channels, with no inferred notification routing.
+
+**Pre-release API change:** `RespireMessage.Channel`, nullable `Pattern`, and subscription `Targets`
+now contain `RespireChannel` values. Use `.Bytes` for lossless identity and `.ToString()` for UTF-8
+display. Display replaces invalid UTF-8 and can make distinct channels look identical. For exact
+diagnostics use `Convert.ToHexString(channel.Bytes.Span)`; channel bytes are not telemetry tags.
+
 ## Read message data
 
 `RespireMessage` exposes text, bytes, channel and pattern metadata. Deserialize application messages with the client's configured serializer:
@@ -50,6 +89,11 @@ long shardReceivers = await redis.PublishShardedAsync("events:eu-west", payload)
 ```csharp
 OrderCreated order = message.As<OrderCreated>();
 ```
+
+Channel, pattern, and payload bytes remain valid after enumeration advances. Exact-channel
+messages share immutable registered channel storage; pattern messages own a copy of the concrete
+channel name from the incoming frame. Accessing `.Bytes` does not allocate. Text conversion is
+explicit and can allocate; do not mutate the exposed read-only storage through unsafe APIs.
 
 ## Reconnection and pressure
 

@@ -332,7 +332,14 @@ await foreach (RespireMessage msg in sub.WithCancellation(cancellationToken))
 - Backed by a bounded `Channel<T>`; overflow policy is `DropOldest` (default) or
   `DropNewest`. Blocking and throwing policies are intentionally omitted because either would
   stop the shared pub/sub reader and affect unrelated subscriptions.
-- `RespireMessage` exposes `Channel`, `Pattern`, `Text`, `Payload`, `As<T>()`.
+- `RespireChannel` owns binary channel bytes. Text and byte inputs compare by encoded bytes;
+  `Literal`, `Pattern`, and `Sharded` factories carry explicit subscription metadata.
+  `SubscribeAsync(RespireChannel)` selects the command family from that metadata. Multi-target
+  binary overloads require one kind and an explicit cancellation argument.
+- **Pre-release API change:** `RespireMessage.Channel`, nullable `Pattern`, and subscription
+  `Targets` use `RespireChannel` instead of strings. `.Bytes` is lossless, allocation-free access;
+  `.ToString()` is UTF-8 display with replacement characters for invalid bytes. The message
+  also exposes owned `Payload`, `Text`, and `As<T>()`.
 - Publish is just `redis.PublishAsync(channel, value)` on the root.
 
 ## 8. Streams

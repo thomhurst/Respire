@@ -1,18 +1,17 @@
-using System.Text;
 using System.Diagnostics.CodeAnalysis;
 using Respire.Serialization;
 
 namespace Respire;
 
 /// <summary>
-/// One pub/sub message. The payload is an owned copy — safe to hold after the enumeration
-/// moves on.
+/// One pub/sub message. Channel, pattern, and payload bytes are owned and remain valid after
+/// enumeration moves on. Exact-channel messages may share immutable subscription storage.
 /// </summary>
 public readonly struct RespireMessage
 {
     private readonly IRespireSerializer _serializer;
 
-    internal RespireMessage(string channel, string? pattern, ReadOnlyMemory<byte> payload, IRespireSerializer serializer)
+    internal RespireMessage(RespireChannel channel, RespireChannel? pattern, ReadOnlyMemory<byte> payload, IRespireSerializer serializer)
     {
         Channel = channel;
         Pattern = pattern;
@@ -20,11 +19,11 @@ public readonly struct RespireMessage
         _serializer = serializer;
     }
 
-    /// <summary>The channel the message was published to.</summary>
-    public string Channel { get; }
+    /// <summary>The exact channel the message was published to. Use ToString() for UTF-8 display.</summary>
+    public RespireChannel Channel { get; }
 
     /// <summary>The glob pattern that matched, for pattern subscriptions; otherwise null.</summary>
-    public string? Pattern { get; }
+    public RespireChannel? Pattern { get; }
 
     /// <summary>The raw message payload as owned memory.</summary>
     public ReadOnlyMemory<byte> Payload { get; }
