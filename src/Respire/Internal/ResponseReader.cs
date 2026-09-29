@@ -91,6 +91,7 @@ internal static class ResponseReader
         return result == -1 ? null : result;
     }
 
+    /// <summary>Reads integer/boolean flags; SMISMEMBER returns an array even for a missing key.</summary>
     public static bool[] FlagArray(in RespValue value)
     {
         var elements = value.AsArray();

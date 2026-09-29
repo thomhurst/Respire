@@ -1,3 +1,5 @@
+using System.Text;
+using Respire.Internal;
 using TUnit.Assertions;
 using TUnit.Assertions.Enums;
 using TUnit.Assertions.Extensions;
@@ -76,6 +78,53 @@ public class SetMembershipCommandTests
                 "SMISMEMBER tenant:first a missing a", "SMOVE tenant:first tenant:second absent",
                 "SINTERCARD 2 tenant:first tenant:second", "SINTERCARD 2 tenant:first tenant:second LIMIT 2",
             }, CollectionOrdering.Matching);
+    }
+
+    [Test]
+    [Arguments("immediate")]
+    [Arguments("batch")]
+    [Arguments("transaction")]
+    public async Task IntersectCount_DispatchesToFirstKeyOwner(string path)
+    {
+        var slot = ClusterHash.GetSlot("tenant:{sets}:first");
+        await Assert.That(slot).IsNotEqualTo(ClusterHash.GetSlot("2"));
+        byte[][] replies = path == "transaction"
+            ? [FakeRespServer.OkReply, "+QUEUED\r\n"u8.ToArray(), "*1\r\n:1\r\n"u8.ToArray()]
+            : [":1\r\n"u8.ToArray()];
+        await using var owner = new FakeRespServer(replies);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n");
+        await using var seed = new FakeRespServer(topology, "-ERR command reached seed instead of slot owner\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            UseCluster = true,
+            Connections = 1,
+            Endpoints = { new("127.0.0.1", seed.Port) },
+        });
+        var view = client.WithKeyPrefix("tenant:");
+        long result;
+        if (path == "immediate")
+        {
+            result = await view.Sets.IntersectCountAsync(1, "{sets}:first", "{sets}:second");
+        }
+        else if (path == "batch")
+        {
+            using var batch = view.CreateBatch();
+            var pending = batch.Sets.IntersectCount(1, "{sets}:first", "{sets}:second");
+            await batch.ExecuteAsync();
+            result = pending.Result;
+        }
+        else
+        {
+            await using var transaction = view.CreateTransaction();
+            var pending = transaction.Sets.IntersectCount(1, "{sets}:first", "{sets}:second");
+            await transaction.CommitAsync();
+            result = pending.Result;
+        }
+        await Assert.That(result).IsEqualTo(1);
+        await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
+        await Assert.That(owner.ReceivedCommands.Where(command => command is not "MULTI" and not "EXEC"))
+            .IsEquivalentTo(["SINTERCARD 2 tenant:{sets}:first tenant:{sets}:second LIMIT 1"]);
     }
 
     [Test]
