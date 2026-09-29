@@ -119,6 +119,18 @@ internal sealed class ClusterNodeIdentityIndex
             }
         }
 
+        // Withdrawn aliases must not redirect a future MOVED/ASK to a different host.
+        // Keep immutable transport endpoints (including configured seeds) until #390
+        // implements draining; retaining an endpoint itself never substitutes another host.
+        foreach (var (endpoint, node) in _nodes.ToArray())
+        {
+            if (!published.Contains(endpoint)
+                && !EndpointComparer.Instance.Equals(endpoint, new RespireEndpoint(node.Host, node.Port)))
+            {
+                _nodes.Remove(endpoint);
+            }
+        }
+
         foreach (var (id, node) in selectedById)
         {
             _nodesById[id] = node;

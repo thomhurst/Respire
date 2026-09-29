@@ -76,6 +76,10 @@ internal sealed class ClusterRouter : IAsyncDisposable
     internal event Action<RespireConnectionMultiplexer, int, RespireConnectionStateChange>? SlotStateChanged;
     internal event Action<RespireConnectionMultiplexer>? NodeRetired;
 
+    // ClientCore acquires its health gate first, then this gate, through membership checks
+    // and health mutation. Router callbacks must always run outside this gate.
+    internal object NodeStateGate => _nodesGate;
+
     internal bool IsNodeObserved(RespireConnectionMultiplexer node)
     {
         lock (_nodesGate)
@@ -792,7 +796,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
             if (Volatile.Read(ref _seed) is { } seed)
             {
-                SetSeed(seed);
+                SetSeedLocked(seed);
             }
             retiredNodes = ReplaceSlotOwnersLocked(refreshedSlots, activeNodes, expectedVersion);
         }
@@ -807,23 +811,22 @@ internal sealed class ClusterRouter : IAsyncDisposable
     }
 
     // Publish the current identity, even when discovery completed on a superseded transport.
-    // ApplyTopology also calls this under _nodesGate; Monitor permits reentrant acquisition.
     private void SetSeed(RespireConnectionMultiplexer node)
     {
         lock (_nodesGate)
         {
-            node = _identities.GetCurrent(node);
-            Volatile.Write(ref _seed, node);
+            SetSeedLocked(node);
         }
     }
 
+    // Caller holds _nodesGate, including topology publication.
+    private void SetSeedLocked(RespireConnectionMultiplexer node)
+        => Volatile.Write(ref _seed, _identities.GetCurrent(node));
+
     private RespireConnectionMultiplexer CreateNode(RespireEndpoint endpoint)
-    {
-        var node = RespireConnectionMultiplexer.Create(
+        => RespireConnectionMultiplexer.Create(
             endpoint.Host, endpoint.Port, _options.Connections, _commandConnectionOptions,
             _options.CreateLogger($"Respire.Cluster.{endpoint.Host}:{endpoint.Port}"));
-        return node;
-    }
 
     private void ObserveNode(RespireConnectionMultiplexer node)
     {
@@ -996,9 +999,6 @@ internal sealed class ClusterRouter : IAsyncDisposable
         {
             foreach (var node in retiredNodes)
             {
-                _logger?.LogDebug(
-                    "Retired Redis Cluster observer at {Host}:{Port}; transport remains owned until draining is implemented (#390).",
-                    node.Host, node.Port);
                 node.SlotStateChanged -= _nodeStateHandlers[node];
                 _nodeStateHandlers.Remove(node);
             }

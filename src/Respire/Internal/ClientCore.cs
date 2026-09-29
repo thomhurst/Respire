@@ -132,28 +132,32 @@ internal sealed class ClientCore : IAsyncDisposable
 
         lock (_stateGate)
         {
-            if (Cluster is { } cluster && !cluster.IsNodeObserved(node))
+            // Keep observer membership stable until health mutation is complete.
+            lock (Cluster?.NodeStateGate ?? _stateGate)
             {
-                return;
-            }
-            var commandSlot = (node, slot);
-            switch (change.State)
-            {
-                case RespireConnectionState.Reconnecting:
-                    _disconnectedCommandSlots.Remove(commandSlot);
-                    _reconnectingCommandSlots.Add(commandSlot);
-                    break;
-                case RespireConnectionState.Disconnected:
-                    _reconnectingCommandSlots.Remove(commandSlot);
-                    _disconnectedCommandSlots.Add(commandSlot);
-                    break;
-                default:
-                    _reconnectingCommandSlots.Remove(commandSlot);
-                    _disconnectedCommandSlots.Remove(commandSlot);
-                    break;
-            }
+                if (Cluster is { } cluster && !cluster.IsNodeObserved(node))
+                {
+                    return;
+                }
+                var commandSlot = (node, slot);
+                switch (change.State)
+                {
+                    case RespireConnectionState.Reconnecting:
+                        _disconnectedCommandSlots.Remove(commandSlot);
+                        _reconnectingCommandSlots.Add(commandSlot);
+                        break;
+                    case RespireConnectionState.Disconnected:
+                        _reconnectingCommandSlots.Remove(commandSlot);
+                        _disconnectedCommandSlots.Add(commandSlot);
+                        break;
+                    default:
+                        _reconnectingCommandSlots.Remove(commandSlot);
+                        _disconnectedCommandSlots.Remove(commandSlot);
+                        break;
+                }
 
-            QueueEndpointStateLocked(change);
+                QueueEndpointStateLocked(change);
+            }
         }
 
         PublishQueuedStates();
@@ -165,18 +169,22 @@ internal sealed class ClientCore : IAsyncDisposable
 
         lock (_stateGate)
         {
-            // Topology publication and callbacks are separate. A node reactivated before
-            // this callback acquired the health lock must retain its current health state.
-            if (Cluster?.IsNodeObserved(node) == true)
+            // Keep observer membership stable until health mutation is complete.
+            lock (Cluster?.NodeStateGate ?? _stateGate)
             {
-                return;
+                // Topology publication and callbacks are separate. A node reactivated before
+                // this callback acquired the health lock must retain its current health state.
+                if (Cluster?.IsNodeObserved(node) == true)
+                {
+                    return;
+                }
+                _reconnectingCommandSlots.RemoveWhere(
+                    commandSlot => ReferenceEquals(commandSlot.Node, node));
+                _disconnectedCommandSlots.RemoveWhere(
+                    commandSlot => ReferenceEquals(commandSlot.Node, node));
+                QueueEndpointStateLocked(new RespireConnectionStateChange(
+                    new RespireEndpoint(node.Host, node.Port), RespireConnectionState.Connected, null));
             }
-            _reconnectingCommandSlots.RemoveWhere(
-                commandSlot => ReferenceEquals(commandSlot.Node, node));
-            _disconnectedCommandSlots.RemoveWhere(
-                commandSlot => ReferenceEquals(commandSlot.Node, node));
-            QueueEndpointStateLocked(new RespireConnectionStateChange(
-                new RespireEndpoint(node.Host, node.Port), RespireConnectionState.Connected, null));
         }
 
         PublishQueuedStates();
