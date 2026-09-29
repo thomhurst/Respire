@@ -123,6 +123,83 @@ public class ClusterReadOnlyTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task StalledCandidate_LeavesTimeForHealthySeed(bool duringConnect, bool cachedOwner)
+    {
+        await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(FakeRespServer.OkReply, ReadOnlyReply);
+        await using var stalled = new FakeRespServer(FakeRespServer.OkReply);
+        stalled.SuppressReply = command => duringConnect
+            ? command.StartsWith("CLIENT SETNAME ")
+            : command == "CLUSTER SLOTS";
+        var initial = SplitTopology(stalled.Port, replica.Port);
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply, initial, Topology(replacement.Port));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            UseCluster = true,
+            Connections = 1,
+            ClientName = "recovery",
+            ConnectTimeout = TimeSpan.FromSeconds(2),
+            CommandTimeout = null,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        replica.SuppressReply = command =>
+        {
+            if (!command.StartsWith("SET ")) return false;
+            received.TrySetResult();
+            return true;
+        };
+        var write = client.SetAsync("key", "value").AsTask();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (cachedOwner)
+        {
+            var router = client.Core.Cluster!;
+            router.SetSlotOwner(ClusterHash.GetSlot("key"),
+                router.GetMultiplexer(new RespireEndpoint("127.0.0.1", stalled.Port)));
+        }
+        await replica.SendRawAsync(ReadOnlyReply);
+
+        await Assert.That(await write.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        await Assert.That(stalled.ReceivedCommands).Contains(duringConnect ? "CLIENT SETNAME recovery" : "CLUSTER SLOTS");
+        await Assert.That(replacement.ReceivedCommands).Contains("SET key value");
+        await Assert.That(seed.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task UnrelatedMoved_PreservesUsefulRefreshAndNewerRoute()
+    {
+        await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
+        await using var moved = new FakeRespServer(FakeRespServer.OkReply);
+        await using var healthy = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(ReadOnlyReply);
+        await using var seed = new FakeRespServer(SplitTopology(healthy.Port, replica.Port),
+            "-NOPERM discovery denied\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(seed.Port, TimeSpan.FromSeconds(5));
+        var refreshing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        healthy.SuppressReply = _ => { refreshing.TrySetResult(); return true; };
+        var write = client.SetAsync("key", "value").AsTask();
+        await refreshing.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var router = client.Core.Cluster!;
+        var source = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", replica.Port)).GetConnection();
+        _ = await router.GetRedirectConnectionAsync(
+            new RespireServerException($"MOVED 0 127.0.0.1:{moved.Port}", "SET"), source, CancellationToken.None);
+        await healthy.SendRawAsync(SplitTopology(healthy.Port, replacement.Port));
+
+        await Assert.That(await write.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        await Assert.That(replacement.ReceivedCommands).IsEquivalentTo(["SET key value"]);
+        await Assert.That((await router.GetConnectionAsync(0, CancellationToken.None)).Port).IsEqualTo(moved.Port);
+        await Assert.That(seed.CommandsSeen).IsEqualTo(1);
+    }
+
+    private static byte[] SplitTopology(int firstPort, int remainingPort)
+        => Encoding.ASCII.GetBytes(
+            $"*2\r\n*3\r\n:0\r\n:0\r\n*2\r\n$9\r\n127.0.0.1\r\n:{firstPort}\r\n" +
+            $"*3\r\n:1\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{remainingPort}\r\n");
+
+    [Test]
     public async Task StaleTopology_PreservesReadOnlyWithoutResendingWrite()
     {
         await using var replica = new FakeRespServer(ReadOnlyReply);

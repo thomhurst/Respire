@@ -1696,11 +1696,10 @@ public sealed partial class RespireClient : IRespireClient
 #endif
     internal async ValueTask<RespValue> ResumeReadOnlyClusterSendAsync<TCommand>(
         string operation, TCommand command, RespireConnection source,
-        RespireServerException error, CancellationToken cancellationToken)
+        RespireServerException error, int slot, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
         var cluster = _core.Cluster!;
-        var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
         _core.ClientCache?.FlushForContinuityLoss();
         var replacement = await cluster.GetRedirectConnectionAsync(error, source, cancellationToken, slot)
             .ConfigureAwait(false);

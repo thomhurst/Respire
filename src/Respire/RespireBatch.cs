@@ -481,7 +481,7 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
                     if (error.Code == RespireErrorCodes.ReadOnly)
                     {
                         value = await client.ResumeReadOnlyClusterSendAsync(
-                                Operation, command, connection, error, cancellationToken)
+                                Operation, command, connection, error, slot, cancellationToken)
                             .ConfigureAwait(false);
                     }
                     else
