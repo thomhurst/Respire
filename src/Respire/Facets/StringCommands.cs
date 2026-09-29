@@ -98,10 +98,7 @@ public interface IStringCommands
         CancellationToken cancellationToken = default);
 
     /// <summary>Gets a key's value and deletes the key. Redis: GETDEL.</summary>
-#pragma warning disable CS0618 // Default preserves compatibility with existing interface implementations.
-    ValueTask<string?> GetAndDeleteAsync(RespireKey key, CancellationToken cancellationToken = default)
-        => GetDeleteAsync(key, cancellationToken);
-#pragma warning restore CS0618
+    ValueTask<string?> GetAndDeleteAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Gets and deserializes a key's value, then deletes the key. Redis: GETDEL.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -109,16 +106,9 @@ public interface IStringCommands
     ValueTask<T?> GetAndDeleteAsync<T>(RespireKey key, CancellationToken cancellationToken = default)
         => throw new NotSupportedException("Typed GETDEL is not implemented.");
 
-    /// <summary>Gets a key's value and deletes the key. Redis: GETDEL.</summary>
-    [Obsolete("Use GetAndDeleteAsync.")]
-    ValueTask<string?> GetDeleteAsync(RespireKey key, CancellationToken cancellationToken = default);
-
     /// <summary>Gets a key's value and updates or removes its expiry. Redis: GETEX.</summary>
-#pragma warning disable CS0618 // Default preserves compatibility with existing interface implementations.
     ValueTask<string?> GetAndExpireAsync(
-        RespireKey key, RespireExpiry expiry, CancellationToken cancellationToken = default)
-        => GetExpireAsync(key, expiry, cancellationToken);
-#pragma warning restore CS0618
+        RespireKey key, RespireExpiry expiry, CancellationToken cancellationToken = default);
 
     /// <summary>Gets and deserializes a key's value, then updates or removes its expiry. Redis: GETEX.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -126,11 +116,6 @@ public interface IStringCommands
     ValueTask<T?> GetAndExpireAsync<T>(
         RespireKey key, RespireExpiry expiry, CancellationToken cancellationToken = default)
         => throw new NotSupportedException("Typed GETEX is not implemented.");
-
-    /// <summary>Gets a key's value and updates or removes its expiry. Redis: GETEX.</summary>
-    [Obsolete("Use GetAndExpireAsync.")]
-    ValueTask<string?> GetExpireAsync(
-        RespireKey key, RespireExpiry expiry, CancellationToken cancellationToken = default);
 
     /// <summary>Appends to a string and returns the new length. Redis: APPEND.</summary>
     ValueTask<long> AppendAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken = default);
@@ -310,10 +295,6 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         => client.DeserializeAsync<T, Cmd1>(
             "GETDEL", new Cmd1(Verbs.GetDel, client.Key(in key)), cancellationToken);
 
-    [Obsolete("Use GetAndDeleteAsync.")]
-    public ValueTask<string?> GetDeleteAsync(RespireKey key, CancellationToken cancellationToken = default)
-        => GetAndDeleteAsync(key, cancellationToken);
-
     public ValueTask<string?> GetAndExpireAsync(
         RespireKey key, RespireExpiry expiry, CancellationToken cancellationToken = default)
     {
@@ -331,11 +312,6 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         return client.DeserializeAsync<T, GetExCommand>(
             "GETEX", new GetExCommand(client.Key(in key), expiry), cancellationToken);
     }
-
-    [Obsolete("Use GetAndExpireAsync.")]
-    public ValueTask<string?> GetExpireAsync(
-        RespireKey key, RespireExpiry expiry, CancellationToken cancellationToken = default)
-        => GetAndExpireAsync(key, expiry, cancellationToken);
 
     public ValueTask<long> AppendAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken = default)
     {

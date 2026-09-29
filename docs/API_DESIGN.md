@@ -20,6 +20,9 @@ users touch.
 >   covers cause and next steps.
 > - Open questions resolved: plural facet names; root shortcuts as in §2; `GetStringAsync` +
 >   `GetAsync<T>` (no non-generic string-returning `GetAsync`).
+> - Obsolete compatibility aliases are removed before the first release. Custom facet
+>   implementations must implement the canonical methods directly, including bitmap `Set`,
+>   combined string/hash reads, and lock `ResetExpiryAsync`.
 
 ## Design principles
 

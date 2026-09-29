@@ -99,28 +99,10 @@ public interface ILockCommands
         RespireKey key,
         RespireValue token,
         TimeSpan newDuration,
-        CancellationToken cancellationToken = default)
-#pragma warning disable CS0618 // Compatibility fallback for existing ILockCommands implementations.
-        => ExtendAsync(key, token, newDuration, cancellationToken);
-#pragma warning restore CS0618
-
-    /// <summary>
-    /// Resets the lock expiry from now only when its value still matches <paramref name="token"/>.
-    /// Redis: EVALSHA/EVAL compare-and-PEXPIRE.
-    /// </summary>
-    [Obsolete("Use ResetExpiryAsync; the duration is applied from now rather than added to the current expiry.")]
-    ValueTask<bool> ExtendAsync(
-        RespireKey key,
-        RespireValue token,
-        TimeSpan expiry,
         CancellationToken cancellationToken = default);
 
     /// <summary>Returns the lock's current owner token, or null when missing. Redis: GET.</summary>
     ValueTask<byte[]?> GetOwnerTokenAsync(RespireKey key, CancellationToken cancellationToken = default);
-
-    /// <summary>Whether <paramref name="mutex"/> still owns its key according to Redis.</summary>
-    [Obsolete("Use mutex.VerifyStillHeldAsync().")]
-    ValueTask<bool> IsHeldByAsync(RespireLock mutex, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Convenience operations composed from managed distributed-lock commands.</summary>
@@ -303,14 +285,6 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         return ExecuteBooleanScriptAsync(ExtendScript, key, [token, milliseconds], cancellationToken);
     }
 
-    [Obsolete("Use ResetExpiryAsync; the duration is applied from now rather than added to the current expiry.")]
-    public ValueTask<bool> ExtendAsync(
-        RespireKey key,
-        RespireValue token,
-        TimeSpan expiry,
-        CancellationToken cancellationToken = default)
-        => ResetExpiryAsync(key, token, expiry, cancellationToken);
-
     async ValueTask<bool> IManagedLockCommands.ExtendManagedAsync(
         RespireKey key,
         RespireValue token,
@@ -346,14 +320,6 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
 
     public ValueTask<byte[]?> GetOwnerTokenAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.BytesOrNullAsync("GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken);
-
-    public async ValueTask<bool> IsHeldByAsync(
-        RespireLock mutex,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(mutex);
-        return await mutex.IsHeldByOriginAsync(cancellationToken).ConfigureAwait(false);
-    }
 
     private async ValueTask<bool> ExecuteBooleanScriptAsync(
         RespireScript script,
