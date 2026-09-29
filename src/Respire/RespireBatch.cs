@@ -161,7 +161,8 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
     /// <summary>
     /// Sends every queued command and completes all pendings, then rethrows the first failure
     /// in original queue order. Successful pending results remain available when another command
-    /// fails. Use <see cref="TryExecuteAsync"/> to inspect failures without rethrowing them.
+    /// fails. Use <see cref="TryExecuteAsync"/> and <see cref="RespireBatchResult.Failures"/>
+    /// to inspect every failure without rethrowing the first one.
     /// </summary>
     public async ValueTask<RespireBatchResult> ExecuteAsync(CancellationToken cancellationToken = default)
     {

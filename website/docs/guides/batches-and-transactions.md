@@ -66,7 +66,7 @@ RespirePending<bool> stored = batch.Hashes.Set("user:1", "name", "Ada");
 RespirePending<long> ranked = batch.SortedSets.Add(
     "leaderboard", ("ada", 42));
 
-RespireBatchResult result = await batch.ExecuteAsync();
+await batch.ExecuteAsync();
 ```
 
 `Keys.RenameAsync`, `Lists.TrimAsync`, `HyperLogLog.MergeAsync`, and `Strings.SetManyAsync`
