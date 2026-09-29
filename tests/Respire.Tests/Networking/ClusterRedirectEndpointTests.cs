@@ -173,8 +173,8 @@ public class ClusterRedirectEndpointTests
     private static async Task AssertNoUnknownTarget(RespireClient client)
     {
         var router = client.Core.Cluster!;
-        var nodesField = typeof(ClusterRouter).GetField("_nodes", BindingFlags.Instance | BindingFlags.NonPublic)!;
-        var endpoints = ((IDictionary)nodesField.GetValue(router)!).Keys.Cast<RespireEndpoint>();
+        var indexField = typeof(ClusterRouter).GetField("_identities", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var endpoints = ((ClusterNodeIdentityIndex)indexField.GetValue(router)!).Endpoints;
         await Assert.That(endpoints.Any(endpoint => endpoint.Host == "?")).IsFalse();
 
         var poolsField = typeof(ClusterRouter).GetField("_dedicatedPools", BindingFlags.Instance | BindingFlags.NonPublic)!;
