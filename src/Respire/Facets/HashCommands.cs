@@ -102,11 +102,11 @@ public interface IHashCommands
         RespireKey key, string? match = null, int countHint = 250,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Deletes fields; returns how many existed. Redis: HDEL.</summary>
-    ValueTask<long> DeleteAsync(RespireKey key, params ReadOnlySpan<string> fields);
+    /// <summary>Removes fields; returns how many existed. Redis: HDEL.</summary>
+    ValueTask<long> RemoveAsync(RespireKey key, params ReadOnlySpan<string> fields);
 
-    /// <summary>Deletes fields; returns how many existed. Redis: HDEL.</summary>
-    ValueTask<long> DeleteAsync(RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
+    /// <summary>Removes fields; returns how many existed. Redis: HDEL.</summary>
+    ValueTask<long> RemoveAsync(RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
 
     /// <summary>Whether the named field exists. Redis: HEXISTS.</summary>
     ValueTask<bool> ExistsAsync(RespireKey key, string field, CancellationToken cancellationToken = default);
@@ -153,23 +153,23 @@ public interface IHashCommands
         ReadOnlySpan<string> fields,
         CancellationToken cancellationToken);
 
-    /// <summary>Gets fields and deletes them atomically. Redis: HGETDEL.</summary>
+    /// <summary>Gets fields and removes them atomically. Redis: HGETDEL.</summary>
 #pragma warning disable CS0618 // Defaults preserve compatibility with existing interface implementations.
-    ValueTask<string?[]> GetAndDeleteAsync(RespireKey key, params ReadOnlySpan<string> fields)
+    ValueTask<string?[]> GetAndRemoveAsync(RespireKey key, params ReadOnlySpan<string> fields)
         => GetDeleteAsync(key, fields);
 
-    /// <summary>Gets fields and deletes them atomically. Redis: HGETDEL.</summary>
-    ValueTask<string?[]> GetAndDeleteAsync(
+    /// <summary>Gets fields and removes them atomically. Redis: HGETDEL.</summary>
+    ValueTask<string?[]> GetAndRemoveAsync(
         RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
         => GetDeleteAsync(key, fields, cancellationToken);
 #pragma warning restore CS0618
 
-    /// <summary>Gets fields and deletes them atomically. Redis: HGETDEL.</summary>
-    [Obsolete("Use GetAndDeleteAsync.")]
+    /// <summary>Gets fields and removes them atomically. Redis: HGETDEL.</summary>
+    [Obsolete("Use GetAndRemoveAsync.")]
     ValueTask<string?[]> GetDeleteAsync(RespireKey key, params ReadOnlySpan<string> fields);
 
-    /// <summary>Gets fields and deletes them atomically. Redis: HGETDEL.</summary>
-    [Obsolete("Use GetAndDeleteAsync.")]
+    /// <summary>Gets fields and removes them atomically. Redis: HGETDEL.</summary>
+    [Obsolete("Use GetAndRemoveAsync.")]
     ValueTask<string?[]> GetDeleteAsync(
         RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
 
@@ -314,10 +314,10 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
             client, "HSCAN", RespireCommands.Hash.HSCAN.Verb, key, match, countHint,
             ParseScanEntries, cancellationToken);
 
-    public ValueTask<long> DeleteAsync(RespireKey key, params ReadOnlySpan<string> fields)
-        => DeleteAsync(key, fields, CancellationToken.None);
+    public ValueTask<long> RemoveAsync(RespireKey key, params ReadOnlySpan<string> fields)
+        => RemoveAsync(key, fields, CancellationToken.None);
 
-    public ValueTask<long> DeleteAsync(RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
+    public ValueTask<long> RemoveAsync(RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
         => client.IntegerAsync("HDEL", new Cmd1N(Verbs.HDel, client.Key(in key), ToValues(fields)), cancellationToken);
 
     public ValueTask<bool> ExistsAsync(RespireKey key, string field, CancellationToken cancellationToken = default)
@@ -422,24 +422,24 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
             new Cmd1N(verb, client.Key(in key), ExpireFieldsBlock(value, when, fields)),
             cancellationToken);
 
-    public ValueTask<string?[]> GetAndDeleteAsync(RespireKey key, params ReadOnlySpan<string> fields)
-        => GetAndDeleteAsync(key, fields, CancellationToken.None);
+    public ValueTask<string?[]> GetAndRemoveAsync(RespireKey key, params ReadOnlySpan<string> fields)
+        => GetAndRemoveAsync(key, fields, CancellationToken.None);
 
-    public ValueTask<string?[]> GetAndDeleteAsync(
+    public ValueTask<string?[]> GetAndRemoveAsync(
         RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
         => client.NullableStringArrayAsync(
             "HGETDEL",
             new Cmd1N(RespireCommands.Hash.HGETDEL.Verb, client.Key(in key), FieldsBlock(fields)),
             cancellationToken);
 
-    [Obsolete("Use GetAndDeleteAsync.")]
+    [Obsolete("Use GetAndRemoveAsync.")]
     public ValueTask<string?[]> GetDeleteAsync(RespireKey key, params ReadOnlySpan<string> fields)
-        => GetAndDeleteAsync(key, fields);
+        => GetAndRemoveAsync(key, fields);
 
-    [Obsolete("Use GetAndDeleteAsync.")]
+    [Obsolete("Use GetAndRemoveAsync.")]
     public ValueTask<string?[]> GetDeleteAsync(
         RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
-        => GetAndDeleteAsync(key, fields, cancellationToken);
+        => GetAndRemoveAsync(key, fields, cancellationToken);
 
     public ValueTask<string?[]> GetAndExpireAsync(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)

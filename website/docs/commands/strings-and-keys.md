@@ -81,7 +81,7 @@ CachedJob? job = await redis.Strings.GetAndDeleteAsync<CachedJob>("jobs:next");
 ```
 
 The generic combined-get forms deserialize through the client's configured serializer. Hash
-field equivalents use the same `GetAndDeleteAsync` and `GetAndExpireAsync` naming.
+field equivalents use `GetAndRemoveAsync` and `GetAndExpireAsync`; removing fields keeps the hash key unless it becomes empty.
 
 `TypeAsync` returns `RespireKeyType` rather than a server string. Conditional rename and copy are
 available without dropping to raw commands:

@@ -34,7 +34,7 @@ public class MultiItemCancellationTests(RedisTestContainer fixture)
         await Throws(() => client.Strings.SetManyExpireAsync(
             TimeSpan.FromMinutes(1), SetWhen.Always, pairs, token));
         await Throws(() => client.Hashes.GetManyAsync("cancel:hash", fields, token));
-        await Throws(() => client.Hashes.DeleteAsync("cancel:hash", fields, token));
+        await Throws(() => client.Hashes.RemoveAsync("cancel:hash", fields, token));
         await Throws(() => client.Lists.RightPushAsync("cancel:list", values, token));
         await Throws(() => client.Sets.AddAsync("cancel:set", values, token));
         await Throws(() => client.SortedSets.AddAsync("cancel:zset", [new SortedSetEntry("m", 1)], token));
@@ -64,7 +64,7 @@ public class MultiItemCancellationTests(RedisTestContainer fixture)
 
         (await client.Hashes.SetAsync("live:hash", [("f1", "one"), ("f2", "two")], token)).Should().Be(2);
         (await client.Hashes.GetManyAsync("live:hash", ["f1", "f2"], token)).Should().Equal("one", "two");
-        (await client.Hashes.DeleteAsync("live:hash", ["f1"], token)).Should().Be(1);
+        (await client.Hashes.RemoveAsync("live:hash", ["f1"], token)).Should().Be(1);
 
         (await client.Keys.DeleteAsync(keys, token)).Should().Be(2);
     }

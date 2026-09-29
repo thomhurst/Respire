@@ -191,7 +191,7 @@ public class StreamManagementCommandTests
             ConsumerInfoReply());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        await Assert.That(await client.Streams.DeleteAsync("events", "1-0", "2-0")).IsEqualTo(2);
+        await Assert.That(await client.Streams.RemoveAsync("events", "1-0", "2-0")).IsEqualTo(2);
         await Assert.That(await client.Streams.TrimByMaxLengthAsync("events", 100)).IsEqualTo(3);
         await Assert.That(await client.Streams.TrimByMaxLengthAsync("events", 50, approximate: true)).IsEqualTo(4);
         await Assert.That(await client.Streams.DeleteGroupAsync("events", "workers")).IsTrue();
