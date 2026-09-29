@@ -209,7 +209,7 @@ await using var mutex = await redis.Locks.AcquireOrThrowAsync(
 callers that must share ownership between processes or outlive the acquiring process:
 
 ```csharp
-var token = Guid.NewGuid().ToString("N");
+RespireLockToken token = Guid.NewGuid().ToString("N");
 
 if (await redis.Locks.TryTakeAsync("locks:report", token, TimeSpan.FromSeconds(30)))
 {

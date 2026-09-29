@@ -121,7 +121,7 @@ Use `TryTakeAsync`, `ResetExpiryAsync`, `ReleaseAsync`, and `GetOwnerTokenAsync`
 shared with another process or outlive the acquiring process:
 
 ```csharp
-var token = Guid.NewGuid().ToString("N");
+RespireLockToken token = Guid.NewGuid().ToString("N");
 
 if (await redis.Locks.TryTakeAsync("locks:report", token, TimeSpan.FromSeconds(30), cancellationToken))
 {
@@ -138,3 +138,30 @@ if (await redis.Locks.TryTakeAsync("locks:report", token, TimeSpan.FromSeconds(3
 
 Keep tokens unique and secret to the owners. Release and extension succeed only when the stored
 token matches. Client key prefixes apply to lock keys exactly as they do to other Respire commands.
+
+`TryTakeAsync`, `ResetExpiryAsync`, and `ReleaseAsync` accept `RespireLockToken`.
+`GetOwnerTokenAsync` returns `RespireLockToken?` (`null` means the key is missing), and
+`RespireLock.Token` uses the same type. Strings convert implicitly as UTF-8; unpaired UTF-16 surrogates throw
+`EncoderFallbackException` instead of silently changing the token. For binary tokens,
+construct `new RespireLockToken(bytes)` or use an explicit cast from a byte array or memory slice.
+These operations copy the bytes without text decoding, so later changes to the original buffer
+cannot change ownership checks. Reuse the constructed token to avoid repeated copying.
+
+Compare tokens with `==` or `Equals`; equality and hash codes use the exact bytes. Use `Bytes` for
+binary transport. `ToString()` and the debugger show lossless uppercase hexadecimal. Use
+`ToUtf8String()` for text tokens; it throws `DecoderFallbackException` for invalid UTF-8 rather
+than replacing bytes. Compare tokens directly for ownership checks.
+Default and empty tokens are rejected by take, release, and renewal commands.
+
+```csharp
+RespireLockToken token = "owner-42";
+RespireLockToken? owner = await redis.Locks.GetOwnerTokenAsync("locks:report", cancellationToken);
+bool sameOwner = owner == token;
+```
+
+Migration: replace explicitly typed `RespireValue` lock-token variables and custom interface
+parameters with `RespireLockToken`. Owner queries now return `RespireLockToken?` instead of
+`byte[]?`; access `owner.Value.Bytes` after checking for `null`. Managed handles expose bytes as
+`mutex.Token.Bytes` instead of `mutex.Token`. String command arguments still convert implicitly;
+wrap byte-array or memory arguments in `new RespireLockToken(...)`. Reuse a constructed token
+across operations to avoid repeated encoding or copying.

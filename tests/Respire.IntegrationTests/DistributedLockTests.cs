@@ -43,16 +43,42 @@ public class DistributedLockTests(RedisTestContainer fixture)
     }
 
     [Test]
+    public async Task OwnerTokensRoundTripAsTheSameBinarySafeType()
+    {
+        var key = $"locks:token:{Guid.NewGuid():N}";
+        byte[] storage = [1, 0xff, 0, 0xc3, 0x28, 2];
+        var token = new RespireLockToken(storage.AsMemory(1, 4));
+        storage[1] = 0;
+
+        await Assert.That(await Client.Locks.TryTakeAsync(key, token, TimeSpan.FromSeconds(30))).IsTrue();
+        var owner = await Client.Locks.GetOwnerTokenAsync(key);
+        await Assert.That(owner == token).IsTrue();
+        await Assert.That(await Client.Locks.ResetExpiryAsync(key, owner!.Value, TimeSpan.FromSeconds(45))).IsTrue();
+        await Assert.That(await Client.Locks.ReleaseAsync(key, new RespireLockToken(new byte[] { 0xfe, 0, 0xc3, 0x28 }))).IsFalse();
+        await Assert.That(await Client.Locks.ReleaseAsync(key, owner.Value)).IsTrue();
+        await Assert.That(await Client.Locks.GetOwnerTokenAsync(key)).IsNull();
+
+        RespireLockToken text = "owner-雪";
+        await Assert.That(await Client.Locks.TryTakeAsync(key, text, TimeSpan.FromSeconds(30))).IsTrue();
+        await Assert.That(await Client.Locks.GetOwnerTokenAsync(key) == text).IsTrue();
+        await Assert.That(await Client.Locks.ReleaseAsync(key, text)).IsTrue();
+
+        await using var mutex = await Client.Locks.AcquireOrThrowAsync(key, TimeSpan.FromSeconds(30));
+        await Assert.That(await Client.Locks.GetOwnerTokenAsync(key) == mutex.Token).IsTrue();
+        await Assert.That(await mutex.VerifyStillHeldAsync()).IsTrue();
+    }
+
+    [Test]
     public async Task Acquire_WhenFree_StoresGeneratedTokenUnderTheKey()
     {
         await using var mutex = await Client.Locks.AcquireOrThrowAsync(Key, TimeSpan.FromSeconds(30));
 
         await Assert.That(mutex.Key.ToString()).IsEqualTo(Key);
         await Assert.That(mutex.Duration).IsEqualTo(TimeSpan.FromSeconds(30));
-        await Assert.That(mutex.Token.Length).IsEqualTo(32);
+        await Assert.That(mutex.Token.Bytes.Length).IsEqualTo(32);
 
         var stored = (byte[]?)await Db.StringGetAsync(Key);
-        await Assert.That(stored!.AsSpan().SequenceEqual(mutex.Token.Span)).IsTrue();
+        await Assert.That(stored!.AsSpan().SequenceEqual(mutex.Token.Bytes.Span)).IsTrue();
     }
 
     [Test]
@@ -160,7 +186,7 @@ public class DistributedLockTests(RedisTestContainer fixture)
 
         var stored = (byte[]?)await Db.StringGetAsync(Key);
         await Assert.That(stored).IsNotNull();
-        await Assert.That(stored!.AsSpan().SequenceEqual(next.Token.Span)).IsTrue();
+        await Assert.That(stored!.AsSpan().SequenceEqual(next.Token.Bytes.Span)).IsTrue();
     }
 
     [Test]
@@ -235,7 +261,7 @@ public class DistributedLockTests(RedisTestContainer fixture)
         await Assert.That(await holder.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.NotOwned);
 
         var stored = (byte[]?)await Db.StringGetAsync(Key);
-        await Assert.That(Encoding.UTF8.GetString(stored!)).IsEqualTo(Encoding.UTF8.GetString(contender.Token.Span));
+        await Assert.That(Encoding.UTF8.GetString(stored!)).IsEqualTo(Encoding.UTF8.GetString(contender.Token.Bytes.Span));
     }
 
     [Test]
