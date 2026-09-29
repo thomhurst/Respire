@@ -330,6 +330,17 @@ public class RespireOptionsTests
     }
 
     [Test]
+    [Arguments("cache,ssl=false,sslHost=cache.example")]
+    [Arguments("cache,sslHost=cache.example,ssl=false")]
+    public async Task StackExchangeConnectionString_ExplicitTlsDisableOverridesHost(string connectionString)
+    {
+        var options = RespireOptions.Parse(connectionString);
+
+        await Assert.That(options.UseTls).IsFalse();
+        await Assert.That(options.TlsOptions!.TargetHost).IsEqualTo("cache.example");
+    }
+
+    [Test]
     public async Task StackExchangeConnectionString_TlsSettingsDoNotEnableTls()
     {
         var options = RespireOptions.Parse("cache,sslProtocols=Tls12,checkCertificateRevocation=true");

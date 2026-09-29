@@ -106,11 +106,12 @@ Cluster and Sentinel cannot both be selected in one comma-delimited string.
 Supported options are `user` (or `username`), `password`, `ssl`, `sslHost`, `sslProtocols`,
 `checkCertificateRevocation`, `clientName` (or `name`), `defaultDatabase` (or `db`),
 `connectTimeout`, `asyncTimeout` (or `syncTimeout`), `protocol` (`resp2` or `resp3`), and
-`allowAdmin`. `sslHost` sets the TLS certificate/SNI target and enables TLS; `sslProtocols`
+`allowAdmin`. `sslHost` sets the TLS certificate/SNI target and enables TLS unless
+`ssl=false` explicitly disables it, regardless of option order. `sslProtocols`
 accepts pipe-separated enum names, such as `Tls12|Tls13`, or numeric masks combining defined
 protocol bits, such as `15360`. `sslProtocols` and `checkCertificateRevocation` configure TLS
 settings but do not enable TLS by themselves; those settings have no effect on a plaintext
-connection. Use `ssl=true` or `sslHost` to enable TLS. Boolean options accept `true` or `false`
+connection. Use `ssl=true` or `sslHost` without `ssl=false` to enable TLS. Boolean options accept `true` or `false`
 (case-insensitive); other values throw `ArgumentException`. Existing password splitting and
 async-timeout precedence stay unchanged.
 

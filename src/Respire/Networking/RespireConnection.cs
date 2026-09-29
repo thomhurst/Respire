@@ -228,16 +228,17 @@ internal sealed class RespireConnection : IAsyncDisposable
         return connection;
     }
 
-    private static SslClientAuthenticationOptions CreateTlsOptions(
+    internal static SslClientAuthenticationOptions CreateTlsOptions(
         SslClientAuthenticationOptions? configured,
-        string host)
+        string host,
+        bool overrideTargetHost = false)
     {
         if (configured is null)
         {
             return new SslClientAuthenticationOptions { TargetHost = host };
         }
 
-        if (!string.IsNullOrWhiteSpace(configured.TargetHost))
+        if (!overrideTargetHost && !string.IsNullOrWhiteSpace(configured.TargetHost))
         {
             return configured;
         }

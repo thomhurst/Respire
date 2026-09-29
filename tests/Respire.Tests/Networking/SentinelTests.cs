@@ -75,6 +75,40 @@ public class SentinelTests
     }
 
     [Test]
+    [Arguments("sentinelTls=false,sentinelSslHost=sentinel.example")]
+    [Arguments("sentinelSslHost=sentinel.example,sentinelTls=false")]
+    public async Task SentinelConnectionString_ExplicitTlsDisableOverridesHost(string settings)
+    {
+        var primary = RespireOptions.Parse($"sentinel,serviceName=primary,ssl=true,{settings}");
+        var sentinel = SentinelResolver.CreateSentinelConnectionOptions(primary);
+
+        await Assert.That(primary.UseTls).IsTrue();
+        await Assert.That(sentinel.UseTls).IsFalse();
+        await Assert.That(sentinel.TlsOptions!.TargetHost).IsEqualTo("sentinel.example");
+    }
+
+    [Test]
+    public async Task TlsHostOverride_PreservesConfiguredOptionsWithoutMutation()
+    {
+        var primary = new SslClientAuthenticationOptions
+        {
+            TargetHost = "primary.example",
+            AllowRenegotiation = false,
+            RemoteCertificateValidationCallback = (_, _, _, _) => true,
+            ApplicationProtocols = [SslApplicationProtocol.Http2],
+        };
+        var sentinel = Respire.Networking.RespireConnection.CreateTlsOptions(
+            primary, "sentinel.example", overrideTargetHost: true);
+
+        await Assert.That(primary.TargetHost).IsEqualTo("primary.example");
+        await Assert.That(sentinel.TargetHost).IsEqualTo("sentinel.example");
+        await Assert.That(sentinel.AllowRenegotiation).IsFalse();
+        await Assert.That(ReferenceEquals(sentinel.RemoteCertificateValidationCallback,
+            primary.RemoteCertificateValidationCallback)).IsTrue();
+        await Assert.That(sentinel.ApplicationProtocols).IsEquivalentTo(primary.ApplicationProtocols);
+    }
+
+    [Test]
     public async Task ConnectionString_RejectsEmptyServiceName()
     {
         var error = Assert.Throws<ArgumentException>(

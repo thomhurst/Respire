@@ -446,11 +446,7 @@ public sealed record RespireOptions
         TimeSpan? commandTimeout = DefaultCommandTimeout;
         TimeSpan? responseTimeout = null;
         var protocol = RespProtocol.Resp2;
-        var cluster = false;
-        string? serviceName = null;
-        string? sentinelUser = null;
-        string? sentinelPassword = null;
-        bool? sentinelUseTls = null;
+        var mode = new ConnectionStringMode();
         var allowAdmin = false;
 
         foreach (var pair in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
@@ -458,6 +454,11 @@ public sealed record RespireOptions
             var eq = pair.IndexOf('=');
             var name = eq < 0 ? pair : pair[..eq];
             var value = eq < 0 ? string.Empty : Uri.UnescapeDataString(pair[(eq + 1)..]);
+            if (mode.TryApply(name, value))
+            {
+                continue;
+            }
+
             switch (name.ToLowerInvariant())
             {
                 case "clientname":
@@ -488,30 +489,6 @@ public sealed record RespireOptions
                 case "db":
                     database = int.Parse(value, CultureInfo.InvariantCulture);
                     break;
-                case "cluster":
-                case "usecluster":
-                    cluster = ParseBooleanOption(name, value);
-                    break;
-                case "servicename":
-                case "sentinelprimaryname":
-                    if (string.IsNullOrWhiteSpace(value))
-                    {
-                        throw new ArgumentException(
-                            "Connection string parameter 'serviceName' cannot be empty.",
-                            nameof(connectionString));
-                    }
-
-                    serviceName = value;
-                    break;
-                case "sentineluser":
-                    sentinelUser = value;
-                    break;
-                case "sentinelpassword":
-                    sentinelPassword = value;
-                    break;
-                case "sentineltls":
-                    sentinelUseTls = ParseBooleanOption(name, value);
-                    break;
                 case "allowadmin":
                     allowAdmin = ParseBooleanOption(name, value);
                     break;
@@ -520,15 +497,15 @@ public sealed record RespireOptions
             }
         }
 
-        var defaultPort = serviceName is null ? 6379 : 26379;
+        var defaultPort = mode.ServiceName is null ? 6379 : 26379;
         return new RespireOptions
         {
             Endpoints = { new RespireEndpoint(uri.Host, uri.IsDefaultPort ? defaultPort : uri.Port) },
             Username = username,
             Password = password,
-            SentinelUsername = sentinelUser,
-            SentinelPassword = sentinelPassword,
-            SentinelUseTls = sentinelUseTls,
+            SentinelUsername = mode.SentinelUsername,
+            SentinelPassword = mode.SentinelPassword,
+            SentinelUseTls = mode.SentinelUseTls,
             ClientName = clientName,
             Database = database,
             Connections = connections,
@@ -537,10 +514,48 @@ public sealed record RespireOptions
             CommandTimeout = commandTimeout,
             ConnectionIdleReadTimeout = responseTimeout,
             Protocol = protocol,
-            UseCluster = cluster,
-            SentinelPrimaryName = serviceName,
+            UseCluster = mode.UseCluster,
+            SentinelPrimaryName = mode.ServiceName,
             AllowAdmin = allowAdmin,
         }.ValidateAndSnapshot();
+    }
+
+    private sealed class ConnectionStringMode
+    {
+        public bool UseCluster { get; private set; }
+        public string? ServiceName { get; private set; }
+        public string? SentinelUsername { get; private set; }
+        public string? SentinelPassword { get; private set; }
+        public bool? SentinelUseTls { get; private set; }
+
+        public bool TryApply(string name, string value)
+        {
+            switch (name.ToLowerInvariant())
+            {
+                case "cluster":
+                case "usecluster":
+                    UseCluster = ParseBooleanOption(name, value);
+                    break;
+                case "servicename":
+                case "sentinelprimaryname":
+                    ArgumentException.ThrowIfNullOrWhiteSpace(value, name);
+                    ServiceName = value;
+                    break;
+                case "sentineluser":
+                    SentinelUsername = value;
+                    break;
+                case "sentinelpassword":
+                    SentinelPassword = value;
+                    break;
+                case "sentineltls":
+                    SentinelUseTls = ParseBooleanOption(name, value);
+                    break;
+                default:
+                    return false;
+            }
+
+            return true;
+        }
     }
 
     private static bool ParseBooleanOption(string name, string value)
@@ -553,18 +568,15 @@ public sealed record RespireOptions
         return result;
     }
 
+    private static readonly SslProtocols DefinedSslProtocolBits =
+        Enum.GetValues<SslProtocols>().Aggregate(SslProtocols.None, (bits, protocol) => bits | protocol);
+
     private static SslProtocols ParseSslProtocols(string value)
     {
-        var definedBits = SslProtocols.None;
-        foreach (var definedProtocol in Enum.GetValues<SslProtocols>())
-        {
-            definedBits |= definedProtocol;
-        }
-
         var protocols = SslProtocols.None;
         foreach (var name in value.Split('|', StringSplitOptions.TrimEntries))
         {
-            if (!Enum.TryParse<SslProtocols>(name, ignoreCase: true, out var protocol) || (protocol & ~definedBits) != 0)
+            if (!Enum.TryParse<SslProtocols>(name, ignoreCase: true, out var protocol) || (protocol & ~DefinedSslProtocolBits) != 0)
             {
                 throw new ArgumentException($"Unsupported sslProtocols value '{name}'.", nameof(value));
             }
@@ -582,17 +594,13 @@ public sealed record RespireOptions
         string? password = null;
         string? clientName = null;
         var database = 0;
-        var useTls = false;
+        bool? useTls = null;
         var connectTimeout = TimeSpan.FromSeconds(10);
         TimeSpan? asyncTimeout = null;
         TimeSpan? syncTimeout = null;
         var protocol = RespProtocol.Resp2;
         var allowAdmin = false;
-        var cluster = false;
-        string? serviceName = null;
-        string? sentinelUser = null;
-        string? sentinelPassword = null;
-        bool? sentinelUseTls = null;
+        var mode = new ConnectionStringMode();
         SslClientAuthenticationOptions? tlsOptions = null;
         string? sentinelSslHost = null;
 
@@ -609,6 +617,11 @@ public sealed record RespireOptions
 
             var name = segment[..equals].Trim();
             var value = segment[(equals + 1)..].Trim();
+            if (mode.TryApply(name, value))
+            {
+                continue;
+            }
+
             switch (name.ToLowerInvariant())
             {
                 case "user":
@@ -647,24 +660,6 @@ public sealed record RespireOptions
                             $"Unsupported protocol '{value}' in connection string.", nameof(connectionString)),
                     };
                     break;
-                case "cluster":
-                case "usecluster":
-                    cluster = ParseBooleanOption(name, value);
-                    break;
-                case "servicename":
-                case "sentinelprimaryname":
-                    ArgumentException.ThrowIfNullOrWhiteSpace(value, name);
-                    serviceName = value;
-                    break;
-                case "sentineluser":
-                    sentinelUser = value;
-                    break;
-                case "sentinelpassword":
-                    sentinelPassword = value;
-                    break;
-                case "sentineltls":
-                    sentinelUseTls = ParseBooleanOption(name, value);
-                    break;
                 case "sslhost":
                     ArgumentException.ThrowIfNullOrWhiteSpace(value, name);
                     (tlsOptions ??= new()).TargetHost = value;
@@ -699,14 +694,14 @@ public sealed record RespireOptions
                 nameof(connectionString));
         }
 
-        if (cluster && serviceName is not null)
+        if (mode.UseCluster && mode.ServiceName is not null)
         {
             throw new ArgumentException(
                 "Redis Cluster (cluster=true) and Sentinel (serviceName) cannot both be selected.",
                 nameof(connectionString));
         }
 
-        if (endpointTexts.Count > 1 && !cluster && serviceName is null)
+        if (endpointTexts.Count > 1 && !mode.UseCluster && mode.ServiceName is null)
         {
             throw new ArgumentException(
                 "Connection strings with multiple endpoints require cluster=true for Cluster seeds " +
@@ -715,7 +710,7 @@ public sealed record RespireOptions
                 nameof(connectionString));
         }
 
-        var defaultPort = serviceName is null ? 6379 : 26379;
+        var defaultPort = mode.ServiceName is null ? 6379 : 26379;
         var endpoints = endpointTexts.Select(endpoint => RespireEndpoint.Parse(endpoint, defaultPort)).ToList();
 
         return new RespireOptions
@@ -726,19 +721,15 @@ public sealed record RespireOptions
             ClientName = clientName,
             Database = database,
             ConnectTimeout = connectTimeout,
-            UseTls = useTls || !string.IsNullOrEmpty(tlsOptions?.TargetHost),
+            UseTls = useTls ?? !string.IsNullOrEmpty(tlsOptions?.TargetHost),
             TlsOptions = tlsOptions,
-            UseCluster = cluster,
-            SentinelPrimaryName = serviceName,
-            SentinelUsername = sentinelUser,
-            SentinelPassword = sentinelPassword,
-            SentinelUseTls = sentinelUseTls ?? (sentinelSslHost is null ? null : true),
-            SentinelTlsOptions = sentinelSslHost is null ? null : new SslClientAuthenticationOptions
-            {
-                TargetHost = sentinelSslHost,
-                EnabledSslProtocols = tlsOptions?.EnabledSslProtocols ?? SslProtocols.None,
-                CertificateRevocationCheckMode = tlsOptions?.CertificateRevocationCheckMode ?? X509RevocationMode.NoCheck,
-            },
+            UseCluster = mode.UseCluster,
+            SentinelPrimaryName = mode.ServiceName,
+            SentinelUsername = mode.SentinelUsername,
+            SentinelPassword = mode.SentinelPassword,
+            SentinelUseTls = mode.SentinelUseTls ?? (sentinelSslHost is null ? null : true),
+            SentinelTlsOptions = sentinelSslHost is null ? null
+                : RespireConnection.CreateTlsOptions(tlsOptions, sentinelSslHost, overrideTargetHost: true),
             CommandTimeout = asyncTimeout ?? syncTimeout ?? DefaultCommandTimeout,
             Protocol = protocol,
             AllowAdmin = allowAdmin,
