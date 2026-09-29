@@ -115,6 +115,22 @@ public class SortedSetSinglePopTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Immediate_PreservesInfiniteScores(bool resp3)
+    {
+        var positive = resp3 ? "*1\r\n*2\r\n$1\r\n7\r\n,inf\r\n" : "*2\r\n$1\r\n7\r\n$3\r\ninf\r\n";
+        var negative = resp3 ? "*1\r\n*2\r\n$1\r\n7\r\n,-inf\r\n" : "*2\r\n$1\r\n7\r\n$4\r\n-inf\r\n";
+        await using var server = new FakeRespServer(Encoding.UTF8.GetBytes(positive), Encoding.UTF8.GetBytes(negative));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await Assert.That(await client.SortedSets.PopAsync("scores"))
+            .IsEqualTo(new SortedSetEntry("7", double.PositiveInfinity));
+        await Assert.That(await client.SortedSets.PopAsync<int>("scores"))
+            .IsEqualTo(new SortedSetEntry<int>(7, double.NegativeInfinity));
+    }
+
+    [Test]
     public async Task Parsers_RejectMalformedPairShapesAndAcceptNull()
     {
         await using var server = new FakeRespServer();
