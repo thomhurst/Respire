@@ -78,7 +78,7 @@ internal static class ResponseReader
             return double.NaN;
         }
 
-        throw new RespireProtocolException("Expected a complete numeric reply.");
+        throw new RespireProtocolException($"Expected a complete numeric reply; received {bytes.Length} bytes.");
     }
 
     public static double? DoubleOrNull(in RespValue value) => value.IsNull ? null : Double(in value);

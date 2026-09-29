@@ -16,6 +16,8 @@ public class ResponseReaderTests
     [Arguments("1.25", 1.25)]
     [Arguments("-2.5e+2", -250)]
     [Arguments("0", 0)]
+    [Arguments("1e999", double.PositiveInfinity)]
+    [Arguments("-1e999", double.NegativeInfinity)]
     public async Task Double_ReadsResp2NumbersAndInfinitySpellings(string text, double expected)
     {
         using var reply = RespValue.BulkString(text);
