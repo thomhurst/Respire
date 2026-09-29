@@ -164,11 +164,18 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         (await client.Bitmaps.SetBitCountAsync("union")).Should().Be(2);
 
         (await client.Bitmaps.FieldAsync(
-            "fields", BitFieldOperation.Set("u8", "0", 5), BitFieldOperation.Increment("u8", "0", 2)))
+            "fields", BitFieldOperation.Set(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(0), 5), BitFieldOperation.Increment(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(0), 2)))
             .Should().Equal(0, 7);
         (await client.Bitmaps.FieldReadOnlyAsync(
-            "fields", BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), 0)))
+            "fields", BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(0))))
             .Should().Equal(7);
+        (await client.Bitmaps.FieldAsync(
+            "fields",
+            BitFieldOperation.Set(BitFieldEncoding.Unsigned(8), BitFieldOffset.Fields(1), 255),
+            BitFieldOperation.Get(BitFieldEncoding.Signed(8), BitFieldOffset.Bits(8)),
+            BitFieldOperation.SetOverflow(BitFieldOverflow.Fail),
+            BitFieldOperation.Increment(BitFieldEncoding.Unsigned(8), BitFieldOffset.Fields(1), 1)))
+            .Should().Equal(0, -1, null);
     }
 
     [Test]

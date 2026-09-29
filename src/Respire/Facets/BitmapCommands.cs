@@ -1,5 +1,4 @@
 using System.Buffers.Text;
-using System.Globalization;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
@@ -97,64 +96,59 @@ public readonly record struct BitFieldEncoding
     internal bool IsValid => Width > 0;
 }
 
+/// <summary>An absolute bit offset or an index multiplied by the BITFIELD encoding width. The default is bit offset zero.</summary>
+public readonly record struct BitFieldOffset
+{
+    private BitFieldOffset(long value, bool isFieldIndex)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(value);
+        Value = value;
+        IsFieldIndex = isFieldIndex;
+    }
+
+    /// <summary>The non-negative bit offset or field index.</summary>
+    public long Value { get; }
+
+    /// <summary>Whether Redis multiplies the value by the encoding width (the # form).</summary>
+    public bool IsFieldIndex { get; }
+
+    /// <summary>Creates an absolute offset measured in bits.</summary>
+    public static BitFieldOffset Bits(long offset) => new(offset, false);
+
+    /// <summary>Creates a zero-based field index, multiplied by the operation's encoding width.</summary>
+    public static BitFieldOffset Fields(long index) => new(index, true);
+}
+
 /// <summary>One GET, SET, INCRBY, or OVERFLOW operation inside Redis BITFIELD.</summary>
 public readonly struct BitFieldOperation
 {
-    private BitFieldOperation(string command, string? encoding, string? offset, long value, BitFieldOverflow? overflow)
+    private BitFieldOperation(
+        string command, BitFieldEncoding encoding, BitFieldOffset offset, long value, BitFieldOverflow? overflow = null)
     {
         Command = command;
         Encoding = encoding;
         Offset = offset;
         Value = value;
         Overflow = overflow;
-        StructuredEncoding = default;
-        OffsetInFieldUnits = false;
-    }
-
-    private BitFieldOperation(BitFieldEncoding encoding, long offset, bool offsetInFieldUnits)
-    {
-        Command = "GET";
-        Encoding = null;
-        Offset = null;
-        Value = offset;
-        Overflow = null;
-        StructuredEncoding = encoding;
-        OffsetInFieldUnits = offsetInFieldUnits;
     }
 
     internal string Command { get; }
-    internal string? Encoding { get; }
-    internal string? Offset { get; }
+    internal BitFieldEncoding Encoding { get; }
+    internal BitFieldOffset Offset { get; }
     internal long Value { get; }
     internal BitFieldOverflow? Overflow { get; }
-    internal BitFieldEncoding StructuredEncoding { get; }
-    internal bool OffsetInFieldUnits { get; }
-    internal bool HasStructuredArguments => StructuredEncoding.IsValid;
     internal int TokenCount => Command == "OVERFLOW" ? 2 : Command == "GET" ? 3 : 4;
 
     /// <summary>Reads a signed or unsigned field. Redis: BITFIELD GET.</summary>
-    public static BitFieldOperation Get(string encoding, string offset)
+    public static BitFieldOperation Get(BitFieldEncoding encoding, BitFieldOffset offset)
         => ValueOperation("GET", encoding, offset, 0);
 
-    /// <summary>Reads a typed signed or unsigned field. Redis: BITFIELD GET.</summary>
-    public static BitFieldOperation Get(
-        BitFieldEncoding encoding, long offset, bool offsetInFieldUnits = false)
-    {
-        if (!encoding.IsValid)
-        {
-            throw new ArgumentException("Use BitFieldEncoding.Signed or Unsigned.", nameof(encoding));
-        }
-
-        ArgumentOutOfRangeException.ThrowIfNegative(offset);
-        return new(encoding, offset, offsetInFieldUnits);
-    }
-
     /// <summary>Writes a field and returns its previous value. Redis: BITFIELD SET.</summary>
-    public static BitFieldOperation Set(string encoding, string offset, long value)
+    public static BitFieldOperation Set(BitFieldEncoding encoding, BitFieldOffset offset, long value)
         => ValueOperation("SET", encoding, offset, value);
 
     /// <summary>Increments a field and returns its new value. Redis: BITFIELD INCRBY.</summary>
-    public static BitFieldOperation Increment(string encoding, string offset, long by)
+    public static BitFieldOperation Increment(BitFieldEncoding encoding, BitFieldOffset offset, long by)
         => ValueOperation("INCRBY", encoding, offset, by);
 
     /// <summary>Changes overflow behavior for later writes. Redis: BITFIELD OVERFLOW.</summary>
@@ -165,46 +159,18 @@ public readonly struct BitFieldOperation
             throw new ArgumentOutOfRangeException(nameof(overflow));
         }
 
-        return new("OVERFLOW", null, null, 0, overflow);
+        return new("OVERFLOW", default, default, 0, overflow);
     }
 
-    private static BitFieldOperation ValueOperation(string command, string encoding, string offset, long value)
+    private static BitFieldOperation ValueOperation(
+        string command, BitFieldEncoding encoding, BitFieldOffset offset, long value)
     {
-        ArgumentException.ThrowIfNullOrEmpty(encoding);
-        ArgumentException.ThrowIfNullOrEmpty(offset);
-
-        if (!TryParseEncoding(encoding))
+        if (!encoding.IsValid)
         {
-            throw new ArgumentException("Encoding must be i1-i64 or u1-u63.", nameof(encoding));
+            throw new ArgumentException("Use BitFieldEncoding.Signed or Unsigned.", nameof(encoding));
         }
 
-        ReadOnlySpan<char> numericOffset = offset;
-        if (numericOffset[0] == '#')
-        {
-            numericOffset = numericOffset[1..];
-        }
-
-        if (!long.TryParse(numericOffset, NumberStyles.None, CultureInfo.InvariantCulture, out _))
-        {
-            throw new ArgumentException("Offset must be a non-negative integer, optionally prefixed with '#'.", nameof(offset));
-        }
-
-        return new(command, encoding, offset, value, null);
-    }
-
-    private static bool TryParseEncoding(string encoding)
-    {
-        if (encoding.Length is < 2 or > 3 || encoding[0] is not ('i' or 'u'))
-        {
-            return false;
-        }
-
-        if (!int.TryParse(encoding.AsSpan(1), NumberStyles.None, CultureInfo.InvariantCulture, out var width))
-        {
-            return false;
-        }
-
-        return encoding[0] == 'i' ? width is >= 1 and <= 64 : width is >= 1 and <= 63;
+        return new(command, encoding, offset, value);
     }
 }
 
@@ -468,12 +434,12 @@ internal readonly struct BitFieldCommand(Verb verb, RespireValue key, BitFieldOp
             var item = operations[index];
             var offset = 1 + index * 7;
             arguments[offset] = item.Command;
-            arguments[offset + 1] = item.Encoding;
-            arguments[offset + 2] = item.Offset;
-            arguments[offset + 3] = item.Value;
-            arguments[offset + 4] = item.Overflow.HasValue ? (int)item.Overflow.Value : -1;
-            arguments[offset + 5] = item.StructuredEncoding.Width;
-            arguments[offset + 6] = item.OffsetInFieldUnits;
+            arguments[offset + 1] = item.Encoding.IsSigned;
+            arguments[offset + 2] = item.Encoding.Width;
+            arguments[offset + 3] = item.Offset.Value;
+            arguments[offset + 4] = item.Offset.IsFieldIndex;
+            arguments[offset + 5] = item.Value;
+            arguments[offset + 6] = item.Overflow.HasValue ? (int)item.Overflow.Value : -1;
         }
 
         cacheKey = new(operation, arguments);
@@ -510,28 +476,19 @@ internal readonly struct BitFieldCommand(Verb verb, RespireValue key, BitFieldOp
                 continue;
             }
 
-            if (operation.HasStructuredArguments)
-            {
-                encodingBuffer[0] = operation.StructuredEncoding.IsSigned ? (byte)'i' : (byte)'u';
-                Utf8Formatter.TryFormat(
-                    operation.StructuredEncoding.Width, encodingBuffer[1..], out var encodingLength);
-                writer.WriteBulkString(encodingBuffer[..(encodingLength + 1)]);
+            encodingBuffer[0] = operation.Encoding.IsSigned ? (byte)'i' : (byte)'u';
+            Utf8Formatter.TryFormat(operation.Encoding.Width, encodingBuffer[1..], out var encodingLength);
+            writer.WriteBulkString(encodingBuffer[..(encodingLength + 1)]);
 
-                if (operation.OffsetInFieldUnits)
-                {
-                    offsetBuffer[0] = (byte)'#';
-                    Utf8Formatter.TryFormat(operation.Value, offsetBuffer[1..], out var offsetLength);
-                    writer.WriteBulkString(offsetBuffer[..(offsetLength + 1)]);
-                }
-                else
-                {
-                    writer.WriteBulkInteger(operation.Value);
-                }
+            if (operation.Offset.IsFieldIndex)
+            {
+                offsetBuffer[0] = (byte)'#';
+                Utf8Formatter.TryFormat(operation.Offset.Value, offsetBuffer[1..], out var offsetLength);
+                writer.WriteBulkString(offsetBuffer[..(offsetLength + 1)]);
             }
             else
             {
-                writer.WriteBulkString(operation.Encoding!);
-                writer.WriteBulkString(operation.Offset!);
+                writer.WriteBulkInteger(operation.Offset.Value);
             }
 
             if (operation.Command != "GET")

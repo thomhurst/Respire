@@ -166,7 +166,11 @@ long active = await redis.Bitmaps.SetBitCountAsync("active:2026-08-09");
 long? firstActive = await redis.Bitmaps.PositionAsync("active:2026-08-09", true);
 long?[] bytes = await redis.Bitmaps.FieldReadOnlyAsync(
     "packed:counters",
-    BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), offset: 2, offsetInFieldUnits: true));
+    BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Fields(2)));
+long?[] updated = await redis.Bitmaps.FieldAsync(
+    "packed:counters",
+    BitFieldOperation.Set(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(16), 10),
+    BitFieldOperation.Increment(BitFieldEncoding.Unsigned(8), BitFieldOffset.Fields(2), 1));
 
 await redis.HyperLogLog.AddAsync("visitors", sessionId);
 long estimate = await redis.HyperLogLog.CountAsync("visitors");
@@ -177,5 +181,7 @@ GeoSearchResult[] nearby = await redis.Geo.SearchAsync(
     GeoSearchOrigin.FromCoordinates(-0.1, 51.5),
     GeoSearchShape.Circle(10, GeoUnit.Kilometers));
 ```
+
+BITFIELD operations use `BitFieldEncoding.Signed(width)` (1–64 bits) or `Unsigned(width)` (1–63 bits). `BitFieldOffset.Bits(n)` is an absolute bit offset; `Fields(n)` multiplies the index by the encoding width (Redis `#n`). Both offset factories reject negative values. The default offset is bit zero. `Get`, `Set`, and `Increment` all accept these types; `FieldReadOnlyAsync` accepts only `Get` operations.
 
 For uncommon operations and modules, use the [complete command catalog](../guides/raw-commands).

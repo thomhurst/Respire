@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Net.Security;
+using System.Reflection;
 using System.Text;
 using Respire;
 using Respire.Commands;
@@ -304,29 +306,46 @@ public class RespireConnectionTests
     [Test]
     public async Task FireAndForget_CancellationStopsWaitingButPreservesWrite()
     {
-        await using var server = new FakeRespServer(FakeRespServer.PongReply);
-        server.SuppressReply = _ => true;
-        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
-
-        var pending = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        var firstReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            SuppressReply = command =>
+            {
+                (command == "PING" ? firstReceived : secondReceived).TrySetResult();
+                return true;
+            },
+        };
+        using var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+        await socket.ConnectAsync("127.0.0.1", server.Port);
+        using var transport = new GatedWriteStream(new NetworkStream(socket, ownsSocket: false));
+        // Inject a controllable stream into the existing TLS transport slot without changing
+        // the production flush loop or relying on platform-specific socket buffering.
+        await using var connection = (RespireConnection)Activator.CreateInstance(
+            typeof(RespireConnection), BindingFlags.Instance | BindingFlags.NonPublic, binder: null,
+            args: [socket, transport, "127.0.0.1", server.Port, RespireConnectionOptions.Default, null],
+            culture: null)!;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (server.CommandsSeen == 0)
-        {
-            await Task.Delay(10, timeout.Token);
-        }
+        var pending = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        await firstReceived.Task.WaitAsync(timeout.Token);
 
+        transport.PauseWrites = true;
         using var cancellation = new CancellationTokenSource();
-        var write = connection.SendFireAndForgetAsync(
-            new SetCommand("key", new string('x', 512 * 1024)), cancellation.Token).AsTask();
-        cancellation.Cancel();
-
-        await Assert.That(async () => await write).Throws<OperationCanceledException>();
-        while (server.CommandsSeen < 2)
+        var write = connection.SendFireAndForgetAsync(new SetCommand("key", "value"), cancellation.Token).AsTask();
+        try
         {
-            await Task.Delay(10, timeout.Token);
+            await transport.WriteStarted.Task.WaitAsync(timeout.Token);
+            cancellation.Cancel();
+            await Assert.That(async () => await write).Throws<OperationCanceledException>();
+        }
+        finally
+        {
+            // Release even when an assertion fails so connection disposal can drain its writer.
+            transport.ResumeWrites.TrySetResult();
         }
 
-        await Assert.That(server.CommandsSeen).IsEqualTo(2);
+        await secondReceived.Task.WaitAsync(timeout.Token);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(["PING", "SET key value"]);
         await connection.DisposeAsync();
         await Assert.That(async () => await pending).Throws<RespireConnectionException>();
     }
@@ -609,6 +628,27 @@ public class RespireConnectionTests
         await Assert.That(second).IsEqualTo(42);
         await Assert.That(thirdIsNull).IsTrue();
         response.Dispose();
+    }
+
+    private sealed class GatedWriteStream(Stream transport) : SslStream(transport)
+    {
+        public bool PauseWrites { get; set; }
+        public TaskCompletionSource WriteStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ResumeWrites { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+            => InnerStream.ReadAsync(buffer, cancellationToken);
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (PauseWrites)
+            {
+                WriteStarted.TrySetResult();
+                await ResumeWrites.Task.WaitAsync(cancellationToken);
+            }
+
+            await InnerStream.WriteAsync(buffer, cancellationToken);
+        }
     }
 
     /// <summary>SET key value, serialized through the public writer API.</summary>

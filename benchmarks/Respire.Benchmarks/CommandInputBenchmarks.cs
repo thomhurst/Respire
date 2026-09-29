@@ -8,9 +8,13 @@ namespace Respire.Benchmarks;
 [ShortRunJob]
 public class CommandInputBenchmarks
 {
+    private int _bitFieldWidth = 64;
+    private long _bitFieldIndex = 1024;
+    private long _increment = 1;
+
     [Benchmark]
     public BitFieldOperation CreateBitFieldOperation()
-        => BitFieldOperation.Increment("i64", "#1024", 1);
+        => BitFieldOperation.Increment(BitFieldEncoding.Signed(_bitFieldWidth), BitFieldOffset.Fields(_bitFieldIndex), _increment);
 
     [Benchmark]
     public GeoSearchShape CreateGeoSearchShape()
