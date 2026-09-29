@@ -329,8 +329,8 @@ public class MultiItemCancellationOverloadTests
 
         public IAsyncEnumerable<string> ScanAsync(
             string? match = null,
-            int countHint = 250,
             RespireKeyType? type = null,
+            int countHint = 250,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
     }

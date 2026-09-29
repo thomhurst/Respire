@@ -117,8 +117,8 @@ public interface IKeyCommands
     /// </summary>
     IAsyncEnumerable<string> ScanAsync(
         string? match = null,
-        int countHint = 250,
         RespireKeyType? type = null,
+        int countHint = 250,
         CancellationToken cancellationToken = default);
 }
 
@@ -234,8 +234,8 @@ internal sealed class KeyCommands(RespireClient client) : IKeyCommands
 
     public async IAsyncEnumerable<string> ScanAsync(
         string? match = null,
-        int countHint = 250,
         RespireKeyType? type = null,
+        int countHint = 250,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(countHint);

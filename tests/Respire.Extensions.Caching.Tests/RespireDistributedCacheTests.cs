@@ -1552,9 +1552,9 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
 
         public IAsyncEnumerable<string> ScanAsync(
             string? match = null,
-            int countHint = 250,
             RespireKeyType? type = null,
+            int countHint = 250,
             CancellationToken cancellationToken = default)
-            => inner.ScanAsync(match, countHint, type, cancellationToken);
+            => inner.ScanAsync(match, type, countHint, cancellationToken);
     }
 }
