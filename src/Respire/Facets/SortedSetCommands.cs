@@ -449,7 +449,7 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
     public ValueTask<SortedSetEntry?> PopAsync(
         RespireKey key, bool descending = false, CancellationToken cancellationToken = default)
     {
-        var command = descending ? RespireCommands.SortedSet.ZPOPMAX : RespireCommands.SortedSet.ZPOPMIN;
+        var command = PopCommand(descending);
         return client.ConvertResponseAsync(
             command.Name, new Cmd1(command.Verb, client.Key(in key)), cancellationToken, this,
             static (SortedSetCommands _, in RespValue value) => ParseEntry(in value));
@@ -460,7 +460,7 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
     public ValueTask<SortedSetEntry<T>?> PopAsync<T>(
         RespireKey key, bool descending = false, CancellationToken cancellationToken = default)
     {
-        var command = descending ? RespireCommands.SortedSet.ZPOPMAX : RespireCommands.SortedSet.ZPOPMIN;
+        var command = PopCommand(descending);
         return client.ConvertResponseAsync(
             command.Name, new Cmd1(command.Verb, client.Key(in key)), cancellationToken, client,
             static (RespireClient state, in RespValue value) => ParseEntry<T>(state, in value));
@@ -471,7 +471,7 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
         CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(count);
-        var command = descending ? RespireCommands.SortedSet.ZPOPMAX : RespireCommands.SortedSet.ZPOPMIN;
+        var command = PopCommand(descending);
         return client.ConvertResponseAsync(
             command.Name, new Cmd2(command.Verb, client.Key(in key), count), cancellationToken, this,
             static (SortedSetCommands _, in RespValue value) => ParseEntries(in value));
@@ -484,7 +484,7 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
         CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(count);
-        var command = descending ? RespireCommands.SortedSet.ZPOPMAX : RespireCommands.SortedSet.ZPOPMIN;
+        var command = PopCommand(descending);
         return client.ConvertResponseAsync(
             command.Name, new Cmd2(command.Verb, client.Key(in key), count), cancellationToken, client,
             static (RespireClient state, in RespValue value) => ParseEntries<T>(state, in value));
@@ -779,6 +779,9 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
 
         return arguments;
     }
+
+    internal static RespireCommand PopCommand(bool descending)
+        => descending ? RespireCommands.SortedSet.ZPOPMAX : RespireCommands.SortedSet.ZPOPMIN;
 
     internal static SortedSetEntry? ParseEntry(in RespValue reply)
     {

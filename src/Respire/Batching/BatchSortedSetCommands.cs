@@ -209,7 +209,7 @@ internal sealed class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSe
 
     public RespirePending<SortedSetEntry?> Pop(RespireKey key, bool descending = false)
     {
-        var command = descending ? RespireCommands.SortedSet.ZPOPMAX : RespireCommands.SortedSet.ZPOPMIN;
+        var command = SortedSetCommands.PopCommand(descending);
         return sink.Add<Cmd1, SortedSetEntry?>(
             command.Name, new Cmd1(command.Verb, sink.Client.Key(in key)),
             static (c, v) => SortedSetCommands.ParseEntry(in v));
@@ -219,7 +219,7 @@ internal sealed class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSe
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public RespirePending<SortedSetEntry<T>?> Pop<T>(RespireKey key, bool descending = false)
     {
-        var command = descending ? RespireCommands.SortedSet.ZPOPMAX : RespireCommands.SortedSet.ZPOPMIN;
+        var command = SortedSetCommands.PopCommand(descending);
         return sink.Add<Cmd1, SortedSetEntry<T>?>(
             command.Name, new Cmd1(command.Verb, sink.Client.Key(in key)),
             static (c, v) => SortedSetCommands.ParseEntry<T>(c, in v));
@@ -229,7 +229,7 @@ internal sealed class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSe
         RespireKey key, long count, bool descending = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(count);
-        var command = descending ? RespireCommands.SortedSet.ZPOPMAX : RespireCommands.SortedSet.ZPOPMIN;
+        var command = SortedSetCommands.PopCommand(descending);
         return sink.Add<Cmd2, SortedSetEntry[]>(
             command.Name, new Cmd2(command.Verb, sink.Client.Key(in key), count),
             static (c, v) => SortedSetCommands.ParseEntries(in v));
@@ -241,7 +241,7 @@ internal sealed class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSe
         RespireKey key, long count, bool descending = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(count);
-        var command = descending ? RespireCommands.SortedSet.ZPOPMAX : RespireCommands.SortedSet.ZPOPMIN;
+        var command = SortedSetCommands.PopCommand(descending);
         return sink.Add<Cmd2, SortedSetEntry<T>[]>(
             command.Name, new Cmd2(command.Verb, sink.Client.Key(in key), count),
             static (c, v) => SortedSetCommands.ParseEntries<T>(c, in v));
