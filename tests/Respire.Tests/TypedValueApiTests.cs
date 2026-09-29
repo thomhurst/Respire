@@ -39,7 +39,9 @@ public class TypedValueApiTests
         var mapping = typeof(RespireClient).GetInterfaceMap(typeof(IRespireClient));
         foreach (var method in methods)
         {
-            var implementation = mapping.TargetMethods[Array.IndexOf(mapping.InterfaceMethods, method)];
+            var index = Array.IndexOf(mapping.InterfaceMethods, method);
+            await Assert.That(index).IsGreaterThanOrEqualTo(0);
+            var implementation = mapping.TargetMethods[index];
             await Assert.That(implementation.DeclaringType).IsEqualTo(typeof(RespireClient));
             await Assert.That(implementation.IsAbstract).IsFalse();
         }

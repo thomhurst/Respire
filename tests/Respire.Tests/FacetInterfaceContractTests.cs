@@ -6,6 +6,14 @@ namespace Respire.Tests;
 
 public class FacetInterfaceContractTests
 {
+    private static readonly HashSet<(Type Contract, string Name)> ForwardingAliases =
+    [
+        (typeof(IStringCommands), nameof(IStringCommands.GetAndDeleteAsync)),
+        (typeof(IStringCommands), nameof(IStringCommands.GetAndExpireAsync)),
+        (typeof(IBatchStringCommands), nameof(IBatchStringCommands.GetAndDelete)),
+        (typeof(IBatchStringCommands), nameof(IBatchStringCommands.GetAndExpire)),
+    ];
+
     [Test]
     public async Task SubscriptionOptions_RequireExplicitImplementations()
     {
@@ -19,17 +27,17 @@ public class FacetInterfaceContractTests
     }
 
     [Test]
-    [Arguments(typeof(ISortedSetCommands), false)]
-    [Arguments(typeof(IBatchSortedSetCommands), false)]
-    [Arguments(typeof(IStreamCommands), false)]
-    [Arguments(typeof(IStringCommands), true)]
-    [Arguments(typeof(IBatchStringCommands), true)]
-    public async Task CommandContracts_RequireImplementations(Type contract, bool onlyGenericMethods)
+    [Arguments(typeof(ISortedSetCommands))]
+    [Arguments(typeof(IBatchSortedSetCommands))]
+    [Arguments(typeof(IStreamCommands))]
+    [Arguments(typeof(IStringCommands))]
+    [Arguments(typeof(IBatchStringCommands))]
+    public async Task CommandContracts_RequireImplementations(Type contract)
     {
-        // Non-generic string aliases still have functional forwarding bodies.
-        // These operations must instead be implemented explicitly by every client or decorator.
+        // Only these named, non-generic aliases may retain functional forwarding bodies.
         var defaults = contract.GetMethods()
-            .Where(method => (!onlyGenericMethods || method.IsGenericMethod) && !method.IsAbstract)
+            .Where(method => !method.IsAbstract &&
+                (method.IsGenericMethod || !ForwardingAliases.Contains((contract, method.Name))))
             .Select(method => method.ToString())
             .ToArray();
 
