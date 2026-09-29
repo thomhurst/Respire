@@ -94,6 +94,10 @@ or raw bytes, just like single-member adds. `SortedSetEntry` is a read result; r
 `new SortedSetEntry(member, score)` write inputs with `(member, score)`. Batches and transactions
 accept the same tuples through `SortedSets.Add`.
 
+Byte-backed members borrow the caller's memory. For batches and transactions, keep those bytes
+unchanged until `ExecuteAsync` or `CommitAsync` completes. If you must reuse a buffer earlier,
+copy it before queuing, for example `(buffer.ToArray(), score)`.
+
 ```csharp
 byte[] member = [0xff, 0x00, 0x80];
 await redis.SortedSets.AddAsync("binary:scores", (member, 1.5), ("text", 2.5));

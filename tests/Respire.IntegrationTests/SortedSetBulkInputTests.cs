@@ -63,5 +63,7 @@ public class SortedSetBulkInputTests(RedisTestContainer fixture)
         // A single tuple must bind to the bulk params overload, including binary updates.
         (await client.SortedSets.AddAsync(key, (first, 9.5))).Should().Be(0);
         (await client.SortedSets.ScoreAsync(key, first)).Should().Be(9.5);
+        (await client.SortedSets.AddAsync(key, ("plain", 1))).Should().Be(1);
+        (await client.SortedSets.ScoreAsync(key, "plain")).Should().Be(1);
     }
 }

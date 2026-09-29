@@ -17,6 +17,10 @@ public interface IBatchSortedSetCommands
     RespirePending<bool> Add(RespireKey key, RespireValue member, double score);
 
     /// <summary>Adds or updates many binary-safe members; returns how many were new. Redis: ZADD.</summary>
+    /// <remarks>
+    /// Byte-backed members borrow their storage. Keep the bytes unchanged until batch execution
+    /// or transaction commit completes. Copy the bytes before queuing if the buffer must be reused earlier.
+    /// </remarks>
     RespirePending<long> Add(RespireKey key, params ReadOnlySpan<(RespireValue Member, double Score)> entries);
 
     /// <summary>The member's score, or null when absent. Redis: ZSCORE.</summary>
