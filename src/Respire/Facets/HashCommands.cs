@@ -108,7 +108,7 @@ public interface IHashCommands
     /// <summary>Deletes fields; returns how many existed. Redis: HDEL.</summary>
     ValueTask<long> DeleteAsync(RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
 
-    /// <summary>Whether the named field exists. Named keys and fields use Exists; member values use Contains. Redis: HEXISTS.</summary>
+    /// <summary>Whether the named field exists. Redis: HEXISTS.</summary>
     ValueTask<bool> ExistsAsync(RespireKey key, string field, CancellationToken cancellationToken = default);
 
     /// <summary>Number of fields in the hash. Redis: HLEN.</summary>

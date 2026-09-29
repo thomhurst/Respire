@@ -126,7 +126,7 @@ long count = await redis.Lists.CountAsync("queue");            // LLEN
 bool added = await redis.SortedSets.AddAsync("board", "tom", 42.0); // ZADD
 ```
 
-Membership naming follows the kind of item being queried: `Exists` checks a key or a named hash field, while `Contains` checks a member value. Use `Keys.ExistsAsync(key)`, `Hashes.ExistsAsync(key, field)`, and `Sets.ContainsAsync(key, member)`. Batch and transaction facets use the same names without `Async`. New membership APIs must follow this rule.
+New membership APIs must follow the [membership naming rule](../website/docs/commands/collections.md): `Exists` for named keys or fields, `Contains` for member values. The command guide is the source for examples and deferred-facet usage.
 
 Multi-key operations fit naturally on facets (they never fit key-scoped handle designs):
 

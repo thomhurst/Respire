@@ -50,7 +50,7 @@ public interface IBatchHashCommands
     /// <summary>Deletes fields; returns how many existed. Redis: HDEL.</summary>
     RespirePending<long> Delete(RespireKey key, params ReadOnlySpan<string> fields);
 
-    /// <summary>Whether the named field exists. Named keys and fields use Exists; member values use Contains. Redis: HEXISTS.</summary>
+    /// <summary>Whether the named field exists. Redis: HEXISTS.</summary>
     RespirePending<bool> Exists(RespireKey key, string field);
 
     /// <summary>Number of fields in the hash. Redis: HLEN.</summary>
