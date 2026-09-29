@@ -12,7 +12,8 @@ public interface IBatchScriptCommands
 {
     /// <summary>
     /// Queues a script evaluation. Keys are prefixed by the client and args are passed through
-    /// ARGV. The result is a lease and must be disposed. Redis: EVAL.
+    /// ARGV. The result owns GC-managed storage, so disposal is optional and unread results do not
+    /// retain pooled reply buffers. Disposing a result invalidates it and its nested views. Redis: EVAL.
     /// </summary>
     RespirePending<RespireResult> Evaluate(
         RespireScript script,
@@ -36,6 +37,7 @@ internal sealed class BatchScriptCommands(IPendingSink sink) : IBatchScriptComma
             keys.AsSpan(),
             static (client, value) =>
             {
+                // Deferred results may never be read: never transfer pooled reply ownership to a pending.
                 var owned = value.ToOwned();
                 return client.CreateResult(in owned);
             });

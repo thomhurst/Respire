@@ -71,6 +71,17 @@ Execution remains specific to the concrete type: batches call `ExecuteAsync`; tr
 
 Blocking variants (a `waitFor` argument, i.e. `BLPOP` / `BLMOVE`) and streaming operations (`Keys.ScanAsync`, `Strings.GetLeaseAsync`) have no deferred form — a queue cannot block, and a lease borrows reply memory that is released once the batch completes. `Streams`, `Server`, and `Locks` remain client-only.
 
+## Deferred script result ownership
+
+`batch.Scripts.Evaluate(...)` and `transaction.Scripts.Evaluate(...)` copy replies, including
+nested arrays and payloads, into GC-owned storage. Their `RespireResult` does not retain pooled
+reply buffers, even if you never read the pending result or another queued command fails.
+Disposal is optional for these deferred results. If you dispose a root result, its nested views
+become invalid too. Disposing the batch or transaction does not invalidate a successful result.
+
+Immediate `redis.Scripts.ExecuteAsync(...)` and raw `redis.ExecuteAsync(...)` results remain
+pooled leases and must be disposed with `using`.
+
 ## Atomic transactions
 
 ```csharp
