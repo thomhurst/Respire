@@ -47,6 +47,8 @@ bool member = await redis.Sets.ContainsAsync("team:red", "ada");
 await redis.SortedSets.AddAsync("scores", "ada", 98.5);
 await redis.SortedSets.IncrementAsync("scores", "ada", 1.5);
 double?[] scores = await redis.SortedSets.ScoresManyAsync("scores", "ada", "missing");
+SortedSetEntry? next = await redis.SortedSets.PopAsync("ready:scores");
+SortedSetEntry<int>? highest = await redis.SortedSets.PopAsync<int>("player:scores", descending: true);
 
 SortedSetEntry[] top = await redis.SortedSets.RangeWithScoresAsync(
     "scores",

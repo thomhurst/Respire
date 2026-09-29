@@ -34,6 +34,14 @@ public interface IBatchSortedSetCommands
     /// <summary>Number of members. Redis: ZCARD.</summary>
     RespirePending<long> Count(RespireKey key);
 
+    /// <summary>Removes one member with its score, or returns null if empty. Redis: ZPOPMIN / ZPOPMAX.</summary>
+    RespirePending<SortedSetEntry?> Pop(RespireKey key, bool descending = false);
+
+    /// <summary>Removes and deserializes one member with its score, or returns null if empty. Redis: ZPOPMIN / ZPOPMAX.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    RespirePending<SortedSetEntry<T>?> Pop<T>(RespireKey key, bool descending = false);
+
     /// <summary>
     /// Removes and returns up to <paramref name="count"/> members, lowest-scored first unless
     /// <paramref name="descending"/> is true. Redis: ZPOPMIN / ZPOPMAX.
@@ -198,6 +206,24 @@ internal sealed class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSe
         => sink.Add<Cmd1, long>(
             "ZCARD", new Cmd1(Verbs.ZCard, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.Integer(in v));
+
+    public RespirePending<SortedSetEntry?> Pop(RespireKey key, bool descending = false)
+    {
+        var command = descending ? RespireCommands.SortedSet.ZPOPMAX : RespireCommands.SortedSet.ZPOPMIN;
+        return sink.Add<Cmd1, SortedSetEntry?>(
+            command.Name, new Cmd1(command.Verb, sink.Client.Key(in key)),
+            static (c, v) => SortedSetCommands.ParseEntry(in v));
+    }
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public RespirePending<SortedSetEntry<T>?> Pop<T>(RespireKey key, bool descending = false)
+    {
+        var command = descending ? RespireCommands.SortedSet.ZPOPMAX : RespireCommands.SortedSet.ZPOPMIN;
+        return sink.Add<Cmd1, SortedSetEntry<T>?>(
+            command.Name, new Cmd1(command.Verb, sink.Client.Key(in key)),
+            static (c, v) => SortedSetCommands.ParseEntry<T>(c, in v));
+    }
 
     public RespirePending<SortedSetEntry[]> Pop(
         RespireKey key, long count, bool descending = false)

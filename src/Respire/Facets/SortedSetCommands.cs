@@ -207,6 +207,16 @@ public interface ISortedSetCommands
         RespireKey key, string? match = null, int countHint = 250,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Removes the lowest-scored member, or the highest when descending; returns null if empty. Redis: ZPOPMIN / ZPOPMAX.</summary>
+    ValueTask<SortedSetEntry?> PopAsync(
+        RespireKey key, bool descending = false, CancellationToken cancellationToken = default);
+
+    /// <summary>Removes and deserializes one member with its score, or returns null if empty. Redis: ZPOPMIN / ZPOPMAX.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    ValueTask<SortedSetEntry<T>?> PopAsync<T>(
+        RespireKey key, bool descending = false, CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Removes and returns up to <paramref name="count"/> members, lowest-scored first unless
     /// <paramref name="descending"/> is true. Redis: ZPOPMIN / ZPOPMAX.
@@ -434,6 +444,26 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
         => CollectionScan.EnumerateAsync(
             client, "ZSCAN", RespireCommands.SortedSet.ZSCAN.Verb, key, match, countHint,
             ParseEntries, cancellationToken);
+
+    public ValueTask<SortedSetEntry?> PopAsync(
+        RespireKey key, bool descending = false, CancellationToken cancellationToken = default)
+    {
+        var command = descending ? RespireCommands.SortedSet.ZPOPMAX : RespireCommands.SortedSet.ZPOPMIN;
+        return client.ConvertResponseAsync(
+            command.Name, new Cmd1(command.Verb, client.Key(in key)), cancellationToken, this,
+            static (SortedSetCommands _, in RespValue value) => ParseEntry(in value));
+    }
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public ValueTask<SortedSetEntry<T>?> PopAsync<T>(
+        RespireKey key, bool descending = false, CancellationToken cancellationToken = default)
+    {
+        var command = descending ? RespireCommands.SortedSet.ZPOPMAX : RespireCommands.SortedSet.ZPOPMIN;
+        return client.ConvertResponseAsync(
+            command.Name, new Cmd1(command.Verb, client.Key(in key)), cancellationToken, client,
+            static (RespireClient state, in RespValue value) => ParseEntry<T>(state, in value));
+    }
 
     public ValueTask<SortedSetEntry[]> PopAsync(
         RespireKey key, long count, bool descending = false,
@@ -747,6 +777,32 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
         }
 
         return arguments;
+    }
+
+    internal static SortedSetEntry? ParseEntry(in RespValue reply)
+    {
+        var elements = reply.AsArray();
+        if (elements.Length == 0)
+        {
+            return null;
+        }
+
+        var pair = elements[0].Type == RespDataType.Array ? elements[0].AsArray() : elements;
+        return new SortedSetEntry(pair[0].AsString(), ResponseReader.Double(in pair[1]));
+    }
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    internal static SortedSetEntry<T>? ParseEntry<T>(RespireClient client, in RespValue reply)
+    {
+        var elements = reply.AsArray();
+        if (elements.Length == 0)
+        {
+            return null;
+        }
+
+        var pair = elements[0].Type == RespDataType.Array ? elements[0].AsArray() : elements;
+        return new SortedSetEntry<T>(client.DeserializeBorrowed<T>(in pair[0])!, ResponseReader.Double(in pair[1]));
     }
 
     /// <summary>WITHSCORES replies alternate member,score (RESP2 flat array; RESP3 pairs are flattened too).</summary>
