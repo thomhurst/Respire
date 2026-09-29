@@ -166,13 +166,22 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     [Test]
     public async Task Refresh_ExtendsSlidingEntry()
     {
-        var options = new DistributedCacheEntryOptions { SlidingExpiration = TimeSpan.FromSeconds(2) };
+        var slidingWindow = TimeSpan.FromMinutes(5);
+        var options = new DistributedCacheEntryOptions { SlidingExpiration = slidingWindow };
         await Cache.SetAsync("refreshable", [9], options);
 
-        await Task.Delay(TimeSpan.FromSeconds(1.2));
-        await Cache.RefreshAsync("refreshable");
-        await Task.Delay(TimeSpan.FromSeconds(1.2));
+        // Age only the server TTL; retain the sliding-window metadata that Refresh must apply.
+        await Client.Keys.ExpireAsync("refreshable", TimeSpan.FromMinutes(1));
+        var beforeRefresh = await PttlAsync("refreshable");
+        await Assert.That(beforeRefresh).IsGreaterThan(0);
+        await Assert.That(beforeRefresh).IsLessThanOrEqualTo(60_000);
 
+        await Cache.RefreshAsync("refreshable");
+
+        // Inspect Redis directly before Get, which would itself refresh the entry.
+        var afterRefresh = await PttlAsync("refreshable");
+        await Assert.That(afterRefresh).IsGreaterThan(60_000);
+        await Assert.That(afterRefresh).IsLessThanOrEqualTo((long)slidingWindow.TotalMilliseconds);
         await Assert.That(await Cache.GetAsync("refreshable")).IsNotNull();
     }
 
