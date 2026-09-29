@@ -1694,7 +1694,26 @@ public sealed partial class RespireClient : IRespireClient
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
-    internal async ValueTask<RespValue> SendClusterAsync<TCommand>(
+    internal async ValueTask<RespValue> ResumeReadOnlyClusterSendAsync<TCommand>(
+        string operation, TCommand command, RespireConnection source,
+        RespireServerException error, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var cluster = _core.Cluster!;
+        var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
+        _core.ClientCache?.FlushForContinuityLoss();
+        var replacement = await cluster.GetRedirectConnectionAsync(error, source, cancellationToken, slot)
+            .ConfigureAwait(false);
+        // The pipelined send already consumed one attempt from the shared retry budget.
+        return await SendClusterAsync(operation, cluster, command, cancellationToken,
+                initialConnection: replacement, firstAttempt: 1)
+            .ConfigureAwait(false);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<RespValue> SendClusterAsync<TCommand>(
         string operation,
         ClusterRouter cluster,
         TCommand command,

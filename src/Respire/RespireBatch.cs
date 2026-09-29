@@ -480,13 +480,8 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
                 {
                     if (error.Code == RespireErrorCodes.ReadOnly)
                     {
-                        var cluster = client.Core.Cluster!;
-                        var replacement = await cluster.GetRedirectConnectionAsync(
-                                error, connection, cancellationToken, slot)
-                            .ConfigureAwait(false);
-                        value = await client.SendClusterAsync(
-                                Operation, cluster, command, cancellationToken,
-                                initialConnection: replacement, firstAttempt: 1)
+                        value = await client.ResumeReadOnlyClusterSendAsync(
+                                Operation, command, connection, error, cancellationToken)
                             .ConfigureAwait(false);
                     }
                     else

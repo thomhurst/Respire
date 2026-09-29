@@ -365,10 +365,10 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         async ValueTask<RespValue> SendAsync(CancellationToken token)
         {
             var cluster = core.Cluster;
+            var slot = _hasClusterSlot ? _clusterSlot : (int?)null;
             for (var attempt = 0; ; attempt++)
             {
-                connection ??= await _client.AcquireConnectionAsync(
-                        _hasClusterSlot ? _clusterSlot : null, token)
+                connection ??= await _client.AcquireConnectionAsync(slot, token)
                     .ConfigureAwait(false);
                 var reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, token)
                     .ConfigureAwait(false);
@@ -378,7 +378,6 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                 }
 
                 var redirect = ResponseReader.ServerError(in reply, "MULTI/EXEC");
-                var slot = _hasClusterSlot ? _clusterSlot : (int?)null;
                 // EXEC result arrays can contain partial success and are returned above.
                 // Cluster WATCH transactions are rejected when they are created.
                 if (!ClusterRouter.CanRecover(redirect, slot))

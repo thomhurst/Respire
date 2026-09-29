@@ -57,6 +57,72 @@ public class ClusterReadOnlyTests
     }
 
     [Test]
+    public async Task UnavailableCachedReplacement_ContinuesThroughSeeds()
+    {
+        await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(ReadOnlyReply);
+        await using var seed = new FakeRespServer(Topology(replica.Port), Topology(replacement.Port));
+        await using var unavailable = new FakeRespServer(FakeRespServer.OkReply);
+        var unavailablePort = unavailable.Port;
+        await unavailable.DisposeAsync();
+        await using var client = await ConnectAsync(seed.Port, TimeSpan.FromSeconds(5));
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        replica.SuppressReply = _ => { received.TrySetResult(); return true; };
+        var write = client.SetAsync("key", "value").AsTask();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var router = client.Core.Cluster!;
+        router.SetSlotOwner(ClusterHash.GetSlot("key"),
+            router.GetMultiplexer(new RespireEndpoint("127.0.0.1", unavailablePort)));
+        await replica.SendRawAsync(ReadOnlyReply);
+
+        await Assert.That(await write.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        await Assert.That(replacement.ReceivedCommands).IsEquivalentTo(["SET key value"]);
+        await Assert.That(seed.CommandsSeen).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task OlderRefresh_DoesNotReplaceNewerOwner(bool topologyUpdate)
+    {
+        await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
+        await using var healthy = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(ReadOnlyReply);
+        var initial = Encoding.ASCII.GetBytes(
+            $"*2\r\n*3\r\n:0\r\n:0\r\n*2\r\n$9\r\n127.0.0.1\r\n:{healthy.Port}\r\n" +
+            $"*3\r\n:1\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{replica.Port}\r\n");
+        var refreshed = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{replacement.Port}\r\n");
+        await using var seed = new FakeRespServer(initial, refreshed);
+        await using var client = await ConnectAsync(seed.Port);
+        var refreshing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        healthy.SuppressReply = _ => { refreshing.TrySetResult(); return true; };
+        var write = client.SetAsync("key", "first").AsTask();
+        await refreshing.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var router = client.Core.Cluster!;
+        if (topologyUpdate)
+        {
+            _ = await router.GetMasterConnectionsAsync(CancellationToken.None);
+        }
+        else
+        {
+            var slot = ClusterHash.GetSlot("key");
+            var source = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", replica.Port)).GetConnection();
+            _ = await router.GetRedirectConnectionAsync(
+                new RespireServerException($"MOVED {slot} 127.0.0.1:{replacement.Port}", "SET"),
+                source, CancellationToken.None);
+        }
+        await healthy.SendRawAsync(initial);
+
+        await Assert.That(await write.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        await client.SetAsync("key", "second");
+        await Assert.That(replacement.ReceivedCommands)
+            .IsEquivalentTo(["SET key first", "SET key second"], CollectionOrdering.Matching);
+        await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["SET key first"]);
+        await Assert.That(seed.CommandsSeen).IsEqualTo(topologyUpdate ? 2 : 1);
+    }
+
+    [Test]
     public async Task StaleTopology_PreservesReadOnlyWithoutResendingWrite()
     {
         await using var replica = new FakeRespServer(ReadOnlyReply);
@@ -155,7 +221,7 @@ public class ClusterReadOnlyTests
         {
             using var batch = client.CreateBatch();
             var pending = batch.Set("key", "value");
-            await batch.ExecuteAsync();
+            await batch.TryExecuteAsync();
             await Assert.That(pending.Error).IsTypeOf<RespireServerException>();
         }
         else
