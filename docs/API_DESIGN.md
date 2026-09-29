@@ -126,6 +126,8 @@ long count = await redis.Lists.CountAsync("queue");            // LLEN
 bool added = await redis.SortedSets.AddAsync("board", "tom", 42.0); // ZADD
 ```
 
+New membership APIs must follow the [membership naming rule](../website/docs/commands/collections.md): `Exists` for named keys or fields, `Contains` for member values. The command guide is the source for examples and deferred-facet usage.
+
 Multi-key operations fit naturally on facets (they never fit key-scoped handle designs):
 
 ```csharp

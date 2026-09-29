@@ -7,6 +7,14 @@ description: Work with hashes, lists, sets, sorted sets, and streams.
 
 Collection commands are grouped by Redis data type. Method names omit the Redis prefix because the facet supplies the context. Bitmap, HyperLogLog, and geo operations also have typed facets.
 
+Membership checks use `ExistsAsync` for a key or named hash field and `ContainsAsync` for a member value. Batch and transaction facets follow the same rule without the `Async` suffix.
+
+```csharp
+bool keyExists = await redis.Keys.ExistsAsync("user:42");
+bool fieldExists = await redis.Hashes.ExistsAsync("user:42", "name");
+bool containsMember = await redis.Sets.ContainsAsync("team:red", "ada");
+```
+
 ## Hashes
 
 ```csharp
