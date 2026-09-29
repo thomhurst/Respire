@@ -208,6 +208,7 @@ public interface ISortedSetCommands
         CancellationToken cancellationToken = default);
 
     /// <summary>Removes the lowest-scored member, or the highest when descending; returns null if empty. Redis: ZPOPMIN / ZPOPMAX.</summary>
+    /// <remarks>For multiple members, use the count overload (for example, <c>PopAsync(key, count: 1)</c> returns an array).</remarks>
     ValueTask<SortedSetEntry?> PopAsync(
         RespireKey key, bool descending = false, CancellationToken cancellationToken = default);
 
