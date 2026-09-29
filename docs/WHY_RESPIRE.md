@@ -78,7 +78,7 @@ When you *do* want zero-copy or explicit flushing, both are spelled out:
 
 ```csharp
 using var lease = await redis.Strings.GetLeaseAsync("blob");   // pooled, no copy
-var batch = redis.CreateBatch(); … await batch.ExecuteAsync();    // one explicit flush
+using var batch = redis.CreateBatch(); … await batch.ExecuteAsync();    // one explicit flush
 ```
 
 `benchmarks/Respire.ComparisonBenchmarks` tracks throughput and allocations against

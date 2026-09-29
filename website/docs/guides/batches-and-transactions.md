@@ -10,7 +10,7 @@ Respire pipelines concurrent commands automatically. Explicit batches help seque
 ## Batch one flush
 
 ```csharp
-RespireBatch batch = redis.CreateBatch();
+using var batch = redis.CreateBatch();
 
 RespirePending<string?> name = batch.GetString("name");
 RespirePending<long> visits = batch.Increment("visits");
@@ -20,6 +20,10 @@ result.ThrowIfAnyFailed();
 
 Console.WriteLine($"{name.Result}: {visits.Result}");
 ```
+
+Always declare batches with `using var`. Disposal faults queued pendings when a batch is never
+executed, including after an early return or exception. After execution, disposal preserves all
+pending results and errors. Repeated disposal is safe.
 
 `RespirePending<T>` is awaitable and exposes `.Result`. Inspect `Status`, `HasResult`, `Error`, or
 use `TryGetResult` when exception-free state handling is preferable. Access before `ExecuteAsync`
@@ -36,7 +40,7 @@ The flush itself does not throw for command or connection-acquisition failures; 
 Batches and transactions expose the client's facets — `Strings`, `Keys`, `Hashes`, `Lists`, `Sets`, `SortedSets`, `Bitmaps`, `HyperLogLog`, `Geo`, and `Scripts`. Except for `Scripts`, commands have matching names minus the `Async` suffix and the same parameter shapes. The missing suffix signals that each call only queues work. Deferred scripts use `Evaluate` rather than mirroring the client's `ExecuteAsync` variants. The return type is `RespirePending<T>` instead of `ValueTask<T>`, and there is no `CancellationToken` because `ExecuteAsync` / `CommitAsync` owns cancellation.
 
 ```csharp
-RespireBatch batch = redis.CreateBatch();
+using var batch = redis.CreateBatch();
 
 RespirePending<long> pushed = batch.Lists.RightPush("queue", "job-1", "job-2");
 RespirePending<bool> stored = batch.Hashes.Set("user:1", "name", "Ada");
@@ -49,7 +53,7 @@ RespireBatchResult result = await batch.ExecuteAsync();
 Both types implement `IRespireCommandQueue`, which unifies every deferred facet and the root
 shortcuts. Helpers can therefore queue work across facets without choosing an execution model:
 
-<!-- doc-test-declaration: split-before=RespireBatch batch -->
+<!-- doc-test-declaration: split-before=using var batch -->
 ```csharp
 static void QueueUserUpdate(IRespireCommandQueue queue, string userId)
 {
@@ -57,7 +61,7 @@ static void QueueUserUpdate(IRespireCommandQueue queue, string userId)
     queue.Expire($"user:{userId}", TimeSpan.FromHours(1));
 }
 
-RespireBatch batch = redis.CreateBatch();
+using var batch = redis.CreateBatch();
 QueueUserUpdate(batch, "42");
 await batch.ExecuteAsync();
 
