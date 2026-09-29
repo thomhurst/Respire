@@ -7,6 +7,22 @@ namespace Respire.Tests;
 
 public class DeferredFacetParityTests
 {
+    private static readonly HashSet<MethodInfo> ImmediateOnlyMethods =
+    [
+        // Cursor scans issue multiple commands while streaming; they are not one queued result.
+        typeof(IKeyCommands).GetMethod(nameof(IKeyCommands.ScanAsync),
+            [typeof(string), typeof(RespireKeyType?), typeof(int), typeof(CancellationToken)])!,
+        typeof(IHashCommands).GetMethod(nameof(IHashCommands.ScanAsync),
+            [typeof(RespireKey), typeof(string), typeof(int), typeof(CancellationToken)])!,
+        typeof(ISetCommands).GetMethod(nameof(ISetCommands.ScanAsync),
+            [typeof(RespireKey), typeof(string), typeof(int), typeof(CancellationToken)])!,
+        typeof(ISortedSetCommands).GetMethod(nameof(ISortedSetCommands.ScanAsync),
+            [typeof(RespireKey), typeof(string), typeof(int), typeof(CancellationToken)])!,
+        // Leased replies require explicit pooled-buffer ownership outside deferred completion.
+        typeof(IStringCommands).GetMethod(nameof(IStringCommands.GetLeaseAsync),
+            [typeof(RespireKey), typeof(CancellationToken)])!,
+    ];
+
     [Test]
     [Arguments("Strings")]
     [Arguments("Keys")]
@@ -22,7 +38,7 @@ public class DeferredFacetParityTests
         var immediate = typeof(IRespireClient).GetProperty(facet)!.PropertyType;
         var deferred = typeof(IRespireCommandQueue).GetProperty(facet)!.PropertyType;
         var expected = immediate.GetMethods()
-            .Where(method => method.Name is not "ScanAsync" and not "GetLeaseAsync")
+            .Where(method => !ImmediateOnlyMethods.Contains(method))
             .Select(method => Signature(method, immediate: true));
         var actual = deferred.GetMethods().Select(method => Signature(method, immediate: false));
 
