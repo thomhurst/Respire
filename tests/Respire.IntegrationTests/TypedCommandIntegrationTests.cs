@@ -15,7 +15,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         var key = $"sorted:single-pop:{Guid.NewGuid():N}";
         await client.SortedSets.AddAsync(key, 7, 1.5);
         await client.SortedSets.AddAsync(key, 9, 2.5);
-        (await client.SortedSets.PopManyAsync(key)).Should().Be(new SortedSetEntry("7", 1.5));
+        (await client.SortedSets.PopAsync(key)).Should().Be(new SortedSetEntry("7", 1.5));
         (await client.SortedSets.PopAsync<int>(key, descending: true)).Should().Be(new SortedSetEntry<int>(9, 2.5));
         (await client.SortedSets.PopAsync(key)).Should().BeNull();
         (await client.SortedSets.PopAsync<int>(key)).Should().BeNull();
