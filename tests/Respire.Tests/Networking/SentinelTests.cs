@@ -176,7 +176,8 @@ public class SentinelTests
     {
         await using var primary = new FakeRespServer(FakeRespServer.PongReply);
         await using var unresponsiveSentinel = new FakeRespServer(PrimaryReply(primary.Port));
-        unresponsiveSentinel.DelayReply(0, 2_000);
+        // Never race a delayed successful reply against the discovery deadline.
+        unresponsiveSentinel.SuppressReply = static _ => true;
         await using var responsiveSentinel = new FakeRespServer(PrimaryReply(primary.Port));
 
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
@@ -187,11 +188,10 @@ public class SentinelTests
                 new RespireEndpoint("127.0.0.1", responsiveSentinel.Port),
             },
             SentinelPrimaryName = "mymaster",
-            ConnectTimeout = TimeSpan.FromSeconds(1),
-            // Keep sentinel timeout well below its 2-second stall while leaving enough headroom
-            // for the follow-up primary PING on loaded CI runners.
-            CommandTimeout = TimeSpan.FromMilliseconds(500),
-        });
+            // Exercise the discovery timeout itself, without a competing command watchdog.
+            // Healthy fallback connections need scheduling headroom on parallel CI runners.
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+        }).AsTask().WaitAsync(TimeSpan.FromSeconds(20));
 
         _ = await client.PingAsync();
 
