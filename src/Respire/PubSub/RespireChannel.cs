@@ -20,7 +20,8 @@ public readonly struct RespireChannel : IEquatable<RespireChannel>
     }
 
     /// <summary>Creates a literal channel by copying the supplied bytes.</summary>
-    public RespireChannel(ReadOnlyMemory<byte> value) => _bytes = value.ToArray();
+    public RespireChannel(ReadOnlyMemory<byte> value)
+        => _bytes = value.IsEmpty ? ReadOnlyMemory<byte>.Empty : value.ToArray();
 
     private RespireChannel(ReadOnlyMemory<byte> bytes, SubscriptionKind kind)
     {

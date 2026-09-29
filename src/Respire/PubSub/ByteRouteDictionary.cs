@@ -61,9 +61,12 @@ internal sealed class ByteRouteDictionary<TValue>
             bucket = [];
             _entries.Add(hash, bucket);
         }
-        if (bucket.Any(entry => entry.Name == name))
+        foreach (var entry in bucket)
         {
-            throw new ArgumentException("A route with the same bytes already exists.", nameof(name));
+            if (entry.Name == name)
+            {
+                throw new ArgumentException("A route with the same bytes already exists.", nameof(name));
+            }
         }
         bucket.Add((name, value));
 #endif

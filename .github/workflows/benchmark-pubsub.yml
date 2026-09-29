@@ -16,16 +16,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: |
             8.0.x
             10.0.x
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: baseline
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           path: candidate
@@ -35,7 +35,7 @@ jobs:
           set -euo pipefail
           for phase in validation baseline-a candidate baseline-b; do
             source=baseline
-            job=Short
+            job=Medium
             filter='*PubSubLookupBenchmarks.Utf8Lookup'
             if [ "$phase" = candidate ] || [ "$phase" = validation ]; then source=candidate; fi
             if [ "$phase" = validation ]; then job=Dry; filter='*PubSub*Benchmarks*'; fi
@@ -71,7 +71,7 @@ jobs:
               if [ -f "$report" ]; then cat "$report" >> "$GITHUB_STEP_SUMMARY"; fi
             done
           done
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: pubsub-dispatch-comparison

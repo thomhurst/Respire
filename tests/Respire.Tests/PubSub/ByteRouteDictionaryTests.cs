@@ -8,6 +8,53 @@ namespace Respire.Tests.PubSub;
 public class ByteRouteDictionaryTests
 {
     [Test]
+    public async Task RandomOperationsMatchLosslessReferenceDictionary()
+    {
+        var random = new Random(300);
+        var channels = Enumerable.Range(0, 80).Select(length =>
+        {
+            var bytes = new byte[length];
+            random.NextBytes(bytes);
+            return new RespireChannel(bytes);
+        }).ToArray();
+        var routes = new ByteRouteDictionary<int>();
+        var expected = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var operation = 0; operation < 1000; operation++)
+        {
+            var channel = channels[random.Next(channels.Length)];
+            var key = Convert.ToHexString(channel.Bytes.Span);
+            switch (random.Next(4))
+            {
+                case 0:
+                    if (expected.TryAdd(key, operation)) routes.Add(channel, operation);
+                    else await Assert.That(() => routes.Add(channel, operation)).Throws<ArgumentException>();
+                    break;
+                case 1:
+                    await Assert.That(routes.Remove(channel)).IsEqualTo(expected.Remove(key));
+                    break;
+                default:
+                    var found = expected.TryGetValue(key, out var expectedValue);
+                    await Assert.That(routes.TryGetValue(channel.Bytes.Span, out var cached, out var value)).IsEqualTo(found);
+                    if (found)
+                    {
+                        await Assert.That(cached).IsEqualTo(channel);
+                        await Assert.That(value).IsEqualTo(expectedValue);
+                    }
+                    break;
+            }
+
+            await Assert.That(routes.Names.Select(name => Convert.ToHexString(name.Bytes.Span)))
+                .IsEquivalentTo(expected.Keys);
+            await Assert.That(routes.Values).IsEquivalentTo(expected.Values);
+            if (operation % 200 == 199)
+            {
+                routes.Clear();
+                expected.Clear();
+            }
+        }
+    }
+
+    [Test]
     public async Task BinaryNamesRemainDistinctAndLongNamesRoundTrip()
     {
         var routes = new ByteRouteDictionary<int>();
