@@ -50,13 +50,13 @@ public interface IBatchSortedSetCommands
     /// Removes and returns up to <paramref name="count"/> members, lowest-scored first unless
     /// <paramref name="descending"/> is true. Redis: ZPOPMIN / ZPOPMAX.
     /// </summary>
-    RespirePending<SortedSetEntry[]> Pop(
+    RespirePending<SortedSetEntry[]> PopMany(
         RespireKey key, long count, bool descending = false);
 
     /// <summary>Removes members and deserializes them with their scores. Redis: ZPOPMIN / ZPOPMAX.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    RespirePending<SortedSetEntry<T>[]> Pop<T>(RespireKey key, long count, bool descending = false);
+    RespirePending<SortedSetEntry<T>[]> PopMany<T>(RespireKey key, long count, bool descending = false);
 
     /// <summary>Removes members whose scores are within the inclusive range. Redis: ZREMRANGEBYSCORE.</summary>
     RespirePending<long> RemoveRangeByScore(RespireKey key, double min, double max);
@@ -221,7 +221,7 @@ internal sealed class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSe
             static (c, v) => SortedSetCommands.ParseEntry<T>(c, in v));
     }
 
-    public RespirePending<SortedSetEntry[]> Pop(
+    public RespirePending<SortedSetEntry[]> PopMany(
         RespireKey key, long count, bool descending = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(count);
@@ -233,7 +233,7 @@ internal sealed class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSe
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public RespirePending<SortedSetEntry<T>[]> Pop<T>(
+    public RespirePending<SortedSetEntry<T>[]> PopMany<T>(
         RespireKey key, long count, bool descending = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(count);

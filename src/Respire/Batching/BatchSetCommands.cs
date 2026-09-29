@@ -36,7 +36,7 @@ public interface IBatchSetCommands
     RespirePending<string?> Pop(RespireKey key);
 
     /// <summary>Removes and returns up to <paramref name="count"/> random members. Redis: SPOP.</summary>
-    RespirePending<string[]> Pop(RespireKey key, long count);
+    RespirePending<string[]> PopMany(RespireKey key, long count);
 
     /// <summary>Returns random members without removing them. Negative counts allow duplicates. Redis: SRANDMEMBER.</summary>
     RespirePending<string[]> RandomMembers(RespireKey key, long count);
@@ -99,7 +99,7 @@ internal sealed class BatchSetCommands(IPendingSink sink) : IBatchSetCommands
             "SPOP", new Cmd1(Verbs.SPop, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.StringOrNull(in v));
 
-    public RespirePending<string[]> Pop(RespireKey key, long count)
+    public RespirePending<string[]> PopMany(RespireKey key, long count)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(count);
         return sink.Add<Cmd2, string[]>(

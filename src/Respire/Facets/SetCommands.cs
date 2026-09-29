@@ -60,7 +60,7 @@ public interface ISetCommands
     ValueTask<string?> PopAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Removes and returns up to <paramref name="count"/> random members. Redis: SPOP.</summary>
-    ValueTask<string[]> PopAsync(RespireKey key, long count, CancellationToken cancellationToken = default);
+    ValueTask<string[]> PopManyAsync(RespireKey key, long count, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Returns random members without removing them. Negative counts allow duplicates. Redis: SRANDMEMBER.
@@ -155,7 +155,7 @@ internal sealed class SetCommands(RespireClient client) : ISetCommands
     public ValueTask<string?> PopAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.StringOrNullAsync("SPOP", new Cmd1(Verbs.SPop, client.Key(in key)), cancellationToken);
 
-    public ValueTask<string[]> PopAsync(
+    public ValueTask<string[]> PopManyAsync(
         RespireKey key, long count, CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(count);

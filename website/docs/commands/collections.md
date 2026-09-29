@@ -52,7 +52,14 @@ await redis.Sets.AddAsync("on-call", "ada");
 
 string[] both = await redis.Sets.IntersectAsync("team:red", "on-call");
 bool member = await redis.Sets.ContainsAsync("team:red", "ada");
+string? random = await redis.Sets.PopAsync("available");
+string[] randomBatch = await redis.Sets.PopManyAsync("available", count: 2);
 ```
+
+Count-based pops use `PopManyAsync` and return an empty array when the key is missing.
+Single-member `PopAsync` returns null when missing. Batch and transaction facets use
+`PopMany` for arrays and `Pop` for scalars. Pre-release count-based `PopAsync`/`Pop` overloads
+are removed; rename those calls without changing their arguments.
 
 ## Sorted sets
 
@@ -62,6 +69,8 @@ await redis.SortedSets.AddAsync("scores", ("grace", 97.5), ("linus", 96.0));
 await redis.SortedSets.IncrementAsync("scores", "ada", 1.5);
 double?[] scores = await redis.SortedSets.ScoresManyAsync("scores", "ada", "missing");
 SortedSetEntry? next = await redis.SortedSets.PopAsync("ready:scores");
+SortedSetEntry[] nextBatch = await redis.SortedSets.PopManyAsync("ready:scores", count: 2);
+SortedSetEntry<int>[] nextPlayers = await redis.SortedSets.PopManyAsync<int>("player:scores", count: 2);
 SortedSetEntry<int>? highest = await redis.SortedSets.PopAsync<int>("player:scores", descending: true);
 
 SortedSetEntry[] top = await redis.SortedSets.RangeWithScoresAsync(

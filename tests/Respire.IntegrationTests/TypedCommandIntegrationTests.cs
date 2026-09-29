@@ -38,6 +38,43 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task PopMany_RoundTripsImmediateBatchAndTransaction(int protocol)
+    {
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        var setKey = $"set:many-pop:{Guid.NewGuid():N}";
+        var sortedKey = $"sorted:many-pop:{Guid.NewGuid():N}";
+        await client.Sets.AddAsync(setKey, "one", "two");
+        (await client.Sets.PopManyAsync(setKey, 2)).Should().BeEquivalentTo("one", "two");
+        (await client.Sets.PopManyAsync(setKey, 2)).Should().BeEmpty();
+        await client.SortedSets.AddAsync(sortedKey, 7, 1.5);
+        (await client.SortedSets.PopManyAsync<int>(sortedKey, 2)).Should()
+            .Equal(new SortedSetEntry<int>(7, 1.5));
+        (await client.SortedSets.PopManyAsync(sortedKey, 2)).Should().BeEmpty();
+        (await client.SortedSets.PopManyAsync<int>(sortedKey, 2)).Should().BeEmpty();
+
+        await client.Sets.AddAsync(setKey, "three");
+        await client.SortedSets.AddAsync(sortedKey, 9, 2.5);
+        using var batch = client.CreateBatch();
+        var members = batch.Sets.PopMany(setKey, 2);
+        var entries = batch.SortedSets.PopMany(sortedKey, 2);
+        await batch.ExecuteAsync();
+        members.Result.Should().Equal("three");
+        entries.Result.Should().Equal(new SortedSetEntry("9", 2.5));
+
+        await client.SortedSets.AddAsync(sortedKey, 11, 3.5);
+        var transaction = client.CreateTransaction();
+        var absentMembers = transaction.Sets.PopMany(setKey, 2);
+        var typedEntries = transaction.SortedSets.PopMany<int>(sortedKey, 2, descending: true);
+        var absentEntries = transaction.SortedSets.PopMany(sortedKey, 2);
+        await transaction.CommitAsync();
+        absentMembers.Result.Should().BeEmpty();
+        typedEntries.Result.Should().Equal(new SortedSetEntry<int>(11, 3.5));
+        absentEntries.Result.Should().BeEmpty();
+    }
+
+    [Test]
     public async Task StreamAddOptionsAndDescendingRange_RoundTripAgainstRedis()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
@@ -251,7 +288,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         var random = await client.Sets.RandomMembersAsync(setKey, count: -5);
         random.Should().HaveCount(5).And.OnlyContain(
             member => member == "one" || member == "two" || member == "three");
-        (await client.Sets.PopAsync(setKey, count: 2)).Should().HaveCount(2);
+        (await client.Sets.PopManyAsync(setKey, count: 2)).Should().HaveCount(2);
         (await client.Sets.CountAsync(setKey)).Should().Be(1);
 
         await client.SortedSets.AddAsync(
@@ -260,7 +297,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
             ("two", 2),
             ("three", 3),
             ("four", 4));
-        (await client.SortedSets.PopAsync(sortedSetKey, count: 1)).Should()
+        (await client.SortedSets.PopManyAsync(sortedSetKey, count: 1)).Should()
             .Equal(new SortedSetEntry("one", 1));
         (await client.SortedSets.RemoveRangeByScoreAsync(sortedSetKey, 2, 3)).Should().Be(2);
         (await client.SortedSets.RemoveRangeByRankAsync(sortedSetKey, 0, 0)).Should().Be(1);
@@ -350,7 +387,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         (await client.SortedSets.RangeWithScoresAsync<int>(typed)).Should().Equal(expected);
         (await client.SortedSets.RangeByScoreWithScoresAsync<int>(
             typed, new RespireScoreRange(1, 2))).Should().Equal(expected);
-        (await client.SortedSets.PopAsync<int>(typed, 2)).Should().Equal(expected);
+        (await client.SortedSets.PopManyAsync<int>(typed, 2)).Should().Equal(expected);
 
         await client.DeleteAsync(first, second, intersection, union, difference, typed);
     }
