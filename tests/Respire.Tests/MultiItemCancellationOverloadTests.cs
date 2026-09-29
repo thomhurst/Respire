@@ -228,7 +228,7 @@ public class MultiItemCancellationOverloadTests
     {
         if (candidate.Name != original.Name
             || candidate.GetGenericArguments().Length != original.GetGenericArguments().Length
-            || Describe(candidate.ReturnType) != Describe(original.ReturnType))
+            || !TypesEquivalent(candidate.ReturnType, original.ReturnType))
         {
             return false;
         }
@@ -242,7 +242,7 @@ public class MultiItemCancellationOverloadTests
             return false;
         }
 
-        return !parameters.Where((parameter, index) => Describe(parameter.ParameterType) != Describe(expected[index])).Any();
+        return !parameters.Where((parameter, index) => !TypesEquivalent(parameter.ParameterType, expected[index])).Any();
     }
 
     /// <summary>
@@ -255,6 +255,48 @@ public class MultiItemCancellationOverloadTests
             && parameter.GetCustomAttributes(inherit: false)
                 .Any(static attribute => attribute.GetType().Name
                     is "ParamArrayAttribute" or "ParamCollectionAttribute");
+
+    private static bool TypesEquivalent(Type left, Type right)
+    {
+        if (left == right)
+        {
+            return true;
+        }
+        // Method parameters are scoped to their overload, so match them by position.
+        // Declaring-type parameters retain exact identity (handled above).
+        if (left.IsGenericMethodParameter && right.IsGenericMethodParameter)
+        {
+            return left.GenericParameterPosition == right.GenericParameterPosition;
+        }
+        if (left.IsArray && right.IsArray)
+        {
+            return left.GetArrayRank() == right.GetArrayRank()
+                && left.IsSZArray == right.IsSZArray
+                && TypesEquivalent(left.GetElementType()!, right.GetElementType()!);
+        }
+        if ((left.IsByRef && right.IsByRef) || (left.IsPointer && right.IsPointer))
+        {
+            return TypesEquivalent(left.GetElementType()!, right.GetElementType()!);
+        }
+        return left.IsGenericType && right.IsGenericType
+            && left.GetGenericTypeDefinition() == right.GetGenericTypeDefinition()
+            && left.GetGenericArguments().Zip(right.GetGenericArguments())
+                .All(pair => TypesEquivalent(pair.First, pair.Second));
+    }
+
+    [Test]
+    public async Task TypeMatchingRejectsNameAndArrayShapeCollisions()
+    {
+        await Assert.That(TypesEquivalent(typeof(Task<int>), typeof(OtherNamespace.Task<int>))).IsFalse();
+        await Assert.That(TypesEquivalent(typeof(int[]), typeof(int[,]))).IsFalse();
+        await Assert.That(TypesEquivalent(typeof(int[]), typeof(int).MakeArrayType(1))).IsFalse();
+        await Assert.That(TypesEquivalent(typeof(List<int>), typeof(List<string>))).IsFalse();
+    }
+
+    private static class OtherNamespace
+    {
+        public sealed class Task<T> { }
+    }
 
     private static string Describe(Type type)
     {
