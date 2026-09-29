@@ -16,12 +16,13 @@ internal sealed class ByteRouteDictionary<TValue>
 #else
     // A hash bucket keeps span lookup available without decoding or allocating on net8.
     private readonly Dictionary<int, List<(RespireChannel Name, TValue Value)>> _entries = new();
+    // Enumeration is used only for reconnect snapshots and client disposal, never message dispatch.
     public IEnumerable<RespireChannel> Names => _entries.Values.SelectMany(static bucket => bucket.Select(static entry => entry.Name));
     public IEnumerable<TValue> Values => _entries.Values.SelectMany(static bucket => bucket.Select(static entry => entry.Value));
 #endif
 
     public bool TryGetValue(RespireChannel name, out TValue value)
-        => TryGetValue(name.Bytes.Span, out _, out value);
+        => TryGetValue(name.Span, out _, out value);
 
     public bool TryGetValue(ReadOnlySpan<byte> bytes, out RespireChannel name, out TValue value)
     {
@@ -36,7 +37,7 @@ internal sealed class ByteRouteDictionary<TValue>
         {
             foreach (var entry in bucket)
             {
-                if (bytes.SequenceEqual(entry.Name.Bytes.Span))
+                if (bytes.SequenceEqual(entry.Name.Span))
                 {
                     name = entry.Name;
                     value = entry.Value;
@@ -53,9 +54,9 @@ internal sealed class ByteRouteDictionary<TValue>
     public void Add(RespireChannel name, TValue value)
     {
 #if NET9_0_OR_GREATER
-        _entries.Add(new ByteRouteKey(name, ByteRouteKeyComparer.Instance.Hash(name.Bytes.Span)), value);
+        _entries.Add(new ByteRouteKey(name, ByteRouteKeyComparer.Instance.Hash(name.Span)), value);
 #else
-        var hash = ByteRouteKeyComparer.Instance.Hash(name.Bytes.Span);
+        var hash = ByteRouteKeyComparer.Instance.Hash(name.Span);
         if (!_entries.TryGetValue(hash, out var bucket))
         {
             bucket = [];
@@ -75,9 +76,9 @@ internal sealed class ByteRouteDictionary<TValue>
     public bool Remove(RespireChannel name)
     {
 #if NET9_0_OR_GREATER
-        return _lookup.Remove(name.Bytes.Span);
+        return _lookup.Remove(name.Span);
 #else
-        var hash = ByteRouteKeyComparer.Instance.Hash(name.Bytes.Span);
+        var hash = ByteRouteKeyComparer.Instance.Hash(name.Span);
         if (!_entries.TryGetValue(hash, out var bucket))
         {
             return false;
@@ -119,7 +120,7 @@ internal sealed class ByteRouteKeyComparer : IEqualityComparer<ByteRouteKey>
     public bool Equals(ByteRouteKey? x, ByteRouteKey? y)
         => ReferenceEquals(x, y) || (x is not null && y is not null && x.Name == y.Name);
     public int GetHashCode(ByteRouteKey obj) => obj.HashCode;
-    public bool Equals(ReadOnlySpan<byte> alternate, ByteRouteKey other) => alternate.SequenceEqual(other.Name.Bytes.Span);
+    public bool Equals(ReadOnlySpan<byte> alternate, ByteRouteKey other) => alternate.SequenceEqual(other.Name.Span);
     public int GetHashCode(ReadOnlySpan<byte> alternate) => Hash(alternate);
     public ByteRouteKey Create(ReadOnlySpan<byte> alternate) => new(RespireChannel.FromOwnedBytes(alternate.ToArray()), Hash(alternate));
     internal int Hash(ReadOnlySpan<byte> value) => unchecked((int)XxHash32.HashToUInt32(value, _seed));

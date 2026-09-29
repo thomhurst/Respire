@@ -9,7 +9,7 @@ namespace Respire;
 /// </summary>
 public readonly struct RespireChannel : IEquatable<RespireChannel>
 {
-    private readonly ReadOnlyMemory<byte> _bytes;
+    private readonly byte[]? _bytes;
 
     /// <summary>Creates a literal channel from valid UTF-16 text, encoded as UTF-8.</summary>
     /// <exception cref="ArgumentException">The text contains an unpaired surrogate.</exception>
@@ -21,9 +21,9 @@ public readonly struct RespireChannel : IEquatable<RespireChannel>
 
     /// <summary>Creates a literal channel by copying the supplied bytes.</summary>
     public RespireChannel(ReadOnlyMemory<byte> value)
-        => _bytes = value.IsEmpty ? ReadOnlyMemory<byte>.Empty : value.ToArray();
+        => _bytes = value.IsEmpty ? [] : value.ToArray();
 
-    private RespireChannel(ReadOnlyMemory<byte> bytes, SubscriptionKind kind)
+    private RespireChannel(byte[]? bytes, SubscriptionKind kind)
     {
         _bytes = bytes;
         Kind = kind;
@@ -37,7 +37,7 @@ public readonly struct RespireChannel : IEquatable<RespireChannel>
     public SubscriptionKind Kind { get; }
 
     /// <summary>The Redis Cluster slot computed from the raw bytes, including hash tags.</summary>
-    public int ClusterSlot => ClusterHash.GetSlot(_bytes.Span);
+    public int ClusterSlot => ClusterHash.GetSlot(_bytes.AsSpan());
 
     /// <summary>Marks a channel for SUBSCRIBE, without changing its bytes.</summary>
     public static RespireChannel Literal(RespireChannel value) => value.WithKind(SubscriptionKind.Channel);
@@ -62,13 +62,14 @@ public readonly struct RespireChannel : IEquatable<RespireChannel>
     public static implicit operator RespireChannel(ReadOnlyMemory<byte> value) => new(value);
 
     /// <summary>Compares the exact bytes, independently of subscription kind.</summary>
-    public bool Equals(RespireChannel other) => _bytes.Span.SequenceEqual(other._bytes.Span);
+    public bool Equals(RespireChannel other) => _bytes.AsSpan().SequenceEqual(other._bytes.AsSpan());
 
     /// <inheritdoc/>
     public override bool Equals(object? obj) => obj is RespireChannel other && Equals(other);
 
-    /// <inheritdoc/>
-    public override int GetHashCode() => ByteRouteKeyComparer.Instance.Hash(_bytes.Span);
+    /// <summary>Returns a process-local hash of the channel bytes.</summary>
+    /// <remarks>The hash is seeded per process. Do not persist it or use it as a stable identifier.</remarks>
+    public override int GetHashCode() => ByteRouteKeyComparer.Instance.Hash(_bytes.AsSpan());
 
     /// <summary>Tests two channel names for byte equality.</summary>
     public static bool operator ==(RespireChannel left, RespireChannel right) => left.Equals(right);
@@ -77,10 +78,12 @@ public readonly struct RespireChannel : IEquatable<RespireChannel>
     public static bool operator !=(RespireChannel left, RespireChannel right) => !left.Equals(right);
 
     /// <summary>Decodes UTF-8 for display, replacing invalid bytes. Never use display text as identity.</summary>
-    public override string ToString() => Utf8String.GetString(_bytes);
+    public override string ToString() => Utf8String.GetString(Bytes);
 
     internal static RespireChannel FromOwnedBytes(byte[] bytes) => new(bytes, SubscriptionKind.Channel);
 
+    internal ReadOnlySpan<byte> Span => _bytes;
+
     internal RespireChannel WithKind(SubscriptionKind kind) => new(_bytes, kind);
-    internal RespireValue AsValue() => new(_bytes);
+    internal RespireValue AsValue() => new(Bytes);
 }
