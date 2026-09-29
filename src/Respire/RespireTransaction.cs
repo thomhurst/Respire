@@ -378,13 +378,17 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                 }
 
                 var redirect = ResponseReader.ServerError(in reply, "MULTI/EXEC");
-                if (!ClusterRouter.IsRedirect(redirect))
+                var slot = _hasClusterSlot ? _clusterSlot : (int?)null;
+                // EXEC result arrays can contain partial success and are returned above.
+                // Cluster WATCH transactions are rejected when they are created.
+                if (!ClusterRouter.CanRecover(redirect, slot))
                 {
                     return reply;
                 }
 
                 reply.Dispose();
-                if (!ClusterRouter.TryParseRedirect(redirect, connection.Host, out _, out _))
+                if (ClusterRouter.IsRedirect(redirect)
+                    && !ClusterRouter.TryParseRedirect(redirect, connection.Host, out _, out _))
                 {
                     throw redirect;
                 }
@@ -396,7 +400,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                         redirect);
                 }
 
-                connection = await cluster.GetRedirectConnectionAsync(redirect, connection, token)
+                connection = await cluster.GetRedirectConnectionAsync(redirect, connection, token, slot)
                     .ConfigureAwait(false);
             }
         }

@@ -173,8 +173,16 @@ internal sealed class ClusterRouter : IAsyncDisposable
     internal async ValueTask<RespireConnection> GetRedirectConnectionAsync(
         RespireServerException error,
         RespireConnection source,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int? commandSlot = null)
     {
+        if (error.Code == RespireErrorCodes.ReadOnly)
+        {
+            var replacement = await RefreshReadOnlyOwnerAsync(error, source, commandSlot, cancellationToken)
+                .ConfigureAwait(false);
+            return replacement.GetConnection(commandSlot!.Value);
+        }
+
         if (!TryParseRedirect(error, source.Host, out var slot, out var endpoint))
         {
             throw error;
@@ -203,9 +211,11 @@ internal sealed class ClusterRouter : IAsyncDisposable
         RespireServerException error,
         RespireConnection source,
         bool requireIdentity,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int? commandSlot = null)
     {
-        var connection = await GetRedirectConnectionAsync(error, source, cancellationToken).ConfigureAwait(false);
+        var connection = await GetRedirectConnectionAsync(error, source, cancellationToken, commandSlot)
+            .ConfigureAwait(false);
         return await EnableCorrectionOrderingAsync(
                 connection, requireIdentity, cancellationToken, observe: error.Code != "ASK")
             .ConfigureAwait(false);
@@ -246,8 +256,16 @@ internal sealed class ClusterRouter : IAsyncDisposable
     internal async ValueTask<DedicatedConnectionPool> GetRedirectDedicatedPoolAsync(
         RespireServerException error,
         RespireConnection source,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int? commandSlot = null)
     {
+        if (error.Code == RespireErrorCodes.ReadOnly)
+        {
+            var replacement = await RefreshReadOnlyOwnerAsync(error, source, commandSlot, cancellationToken)
+                .ConfigureAwait(false);
+            return GetOrCreateDedicatedPool(new RespireEndpoint(replacement.Host, replacement.Port));
+        }
+
         if (!TryParseRedirect(error, source.Host, out var slot, out var endpoint))
         {
             throw error;
@@ -278,6 +296,91 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
     internal static bool IsRedirect(RespireServerException error)
         => error.Code is RespireErrorCodes.Moved or RespireErrorCodes.Ask;
+
+    internal static bool CanRecover(RespireServerException error, int? commandSlot)
+        => IsRedirect(error) || (commandSlot is not null && error.Code == RespireErrorCodes.ReadOnly);
+
+    private async ValueTask<RespireConnectionMultiplexer> RefreshReadOnlyOwnerAsync(
+        RespireServerException error, RespireConnection source, int? commandSlot, CancellationToken cancellationToken)
+    {
+        if (commandSlot is not { } slot)
+        {
+            throw error;
+        }
+
+        var candidates = new List<RespireConnectionMultiplexer>(Volatile.Read(ref _masters));
+        var owner = Volatile.Read(ref _slots[slot]);
+        if (owner is not null && IsSource(owner))
+        {
+            ClearSlotOwner(slot, owner);
+        }
+
+        // Prefer other discovered primaries, then configured seeds, then the demoted node.
+        candidates.RemoveAll(IsSource);
+        foreach (var seed in _seeds)
+        {
+            var node = GetOrCreateNode(seed);
+            if (!IsSource(node) && !candidates.Contains(node))
+            {
+                candidates.Add(node);
+            }
+        }
+        candidates.Add(GetOrCreateNode(new RespireEndpoint(source.Host, source.Port)));
+
+        // One discovery round has one deadline, even when several nodes are unavailable.
+        using var timeout = CommandTimeoutCancellation.Create(cancellationToken, _options.ConnectTimeout);
+        try
+        {
+            // A previous command in this batch (or a concurrent refresh) may already have
+            // replaced the route while this replica's reply was still in flight.
+            owner = Volatile.Read(ref _slots[slot]);
+            if (owner is not null && !IsSource(owner))
+            {
+                await owner.EnsureConnectedAsync(timeout.Token).ConfigureAwait(false);
+                return owner;
+            }
+
+            foreach (var candidate in candidates)
+            {
+                timeout.Token.ThrowIfCancellationRequested();
+                try
+                {
+                    await candidate.EnsureConnectedAsync(timeout.Token).ConfigureAwait(false);
+                    if (!await TryLoadSlotsAsync(candidate, timeout.Token).ConfigureAwait(false))
+                    {
+                        continue;
+                    }
+
+                    owner = Volatile.Read(ref _slots[slot]);
+                    if (owner is null)
+                    {
+                        continue;
+                    }
+                    if (IsSource(owner))
+                    {
+                        ClearSlotOwner(slot, owner);
+                        continue;
+                    }
+
+                    await owner.EnsureConnectedAsync(timeout.Token).ConfigureAwait(false);
+                    return owner;
+                }
+                catch (Exception) when (!timeout.IsCancellationRequested)
+                {
+                    // Try the next known node, retaining the original server error if all fail.
+                }
+            }
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw error;
+        }
+
+        throw error;
+
+        bool IsSource(RespireConnectionMultiplexer node)
+            => node.Port == source.Port && string.Equals(node.Host, source.Host, StringComparison.OrdinalIgnoreCase);
+    }
 
     internal static bool TryParseRedirect(
         RespireServerException error,
