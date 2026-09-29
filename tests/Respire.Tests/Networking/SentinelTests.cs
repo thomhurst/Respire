@@ -145,13 +145,15 @@ public class SentinelTests
     }
 
     [Test]
-    public async Task ConnectAsync_FallsBackWhenSentinelReturnsInvalidPort()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ConnectAsync_FallsBackWhenSentinelReturnsInvalidPort(bool useConnectionString)
     {
         await using var primary = new FakeRespServer(FakeRespServer.PongReply);
         await using var invalidSentinel = new FakeRespServer(PrimaryReply(65536));
         await using var validSentinel = new FakeRespServer(PrimaryReply(primary.Port));
 
-        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        var options = new RespireOptions
         {
             Endpoints =
             {
@@ -160,7 +162,13 @@ public class SentinelTests
             },
             SentinelPrimaryName = "mymaster",
             ConnectTimeout = TimeSpan.FromSeconds(1),
-        });
+        };
+        if (useConnectionString)
+        {
+            options = RespireOptions.Parse(
+                $"127.0.0.1:{invalidSentinel.Port},127.0.0.1:{validSentinel.Port},serviceName=mymaster,connectTimeout=1000");
+        }
+        await using var client = await RespireClient.ConnectAsync(options);
 
         _ = await client.PingAsync();
 
