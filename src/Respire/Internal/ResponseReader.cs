@@ -40,6 +40,10 @@ internal static class ResponseReader
 
     public static byte[]? BytesOrNull(in RespValue value) => value.IsNull ? null : value.AsSpan().ToArray();
 
+    /// <summary>
+    /// Reads a complete numeric reply, preserving infinity and NaN. Malformed text, empty
+    /// strings, and null are protocol errors; use <see cref="DoubleOrNull"/> for nullable replies.
+    /// </summary>
     public static double Double(in RespValue value)
     {
         if (value.Type == RespDataType.Double)
@@ -53,7 +57,7 @@ internal static class ResponseReader
         }
 
         var bytes = value.AsSpan();
-        if (Utf8Parser.TryParse(bytes, out double parsed, out _))
+        if (Utf8Parser.TryParse(bytes, out double parsed, out var consumed) && consumed == bytes.Length)
         {
             return parsed;
         }
@@ -64,7 +68,17 @@ internal static class ResponseReader
             return double.PositiveInfinity;
         }
 
-        return bytes.SequenceEqual("-inf"u8) ? double.NegativeInfinity : 0;
+        if (bytes.SequenceEqual("-inf"u8))
+        {
+            return double.NegativeInfinity;
+        }
+
+        if (bytes.SequenceEqual("nan"u8))
+        {
+            return double.NaN;
+        }
+
+        throw new RespireProtocolException("Expected a complete numeric reply.");
     }
 
     public static double? DoubleOrNull(in RespValue value) => value.IsNull ? null : Double(in value);

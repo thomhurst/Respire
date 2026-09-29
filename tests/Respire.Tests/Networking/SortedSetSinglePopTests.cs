@@ -157,6 +157,21 @@ public class SortedSetSinglePopTests
         await Assert.That(SortedSetCommands.ParseEntry<int>(client, in nullReply)).IsNull();
     }
 
+    [Test]
+    [Arguments("invalid")]
+    [Arguments("1.5junk")]
+    public async Task Immediate_RejectsMalformedScoreAndPreservesNextReply(string score)
+    {
+        var malformed = Encoding.UTF8.GetBytes($"*2\r\n$1\r\n7\r\n${score.Length}\r\n{score}\r\n");
+        await using var server = new FakeRespServer(malformed, EntryReply(false));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await Assert.That(async () => await client.SortedSets.PopAsync("bad"))
+            .Throws<RespireProtocolException>();
+        await Assert.That(await client.SortedSets.PopAsync("good"))
+            .IsEqualTo(new SortedSetEntry("7", 1.5));
+    }
+
     private static string Verb(bool descending) => descending ? "ZPOPMAX" : "ZPOPMIN";
 
     private static byte[] EntryReply(bool nested)
