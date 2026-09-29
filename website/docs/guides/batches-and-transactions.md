@@ -15,8 +15,7 @@ using var batch = redis.CreateBatch();
 RespirePending<string?> name = batch.GetString("name");
 RespirePending<long> visits = batch.Increment("visits");
 
-RespireBatchResult result = await batch.ExecuteAsync();
-result.ThrowIfAnyFailed();
+await batch.ExecuteAsync();
 
 Console.WriteLine($"{name.Result}: {visits.Result}");
 ```
@@ -32,8 +31,28 @@ flushed; command failures set `Status` to `Faulted` and expose the exception thr
 `RespireBatchResult` summarizes the whole flush with `Count`, `FailureCount`, and `FirstError`.
 Its `Failures` list identifies every faulted command by original queue index, operation name, and
 exception; the list is empty without per-result allocation when all commands succeed.
-The flush itself does not throw for command or connection-acquisition failures; call
-`ThrowIfAnyFailed()` when fail-fast handling is preferable.
+`ExecuteAsync` completes every pending, then throws the first failure in original queue order.
+It does not stop sending at the first error or roll back successful commands. Command errors,
+conversion failures, timeouts, cancellation, and connection-acquisition failures follow this rule.
+Successful results remain readable even when another command fails.
+
+Use `TryExecuteAsync` when the application needs to inspect all failures instead of catching the
+first one. It returns the same summary without rethrowing execution failures; invalid lifecycle
+use (disposed or already-sent batches) still throws. Pre-release code that inspects failed
+`ExecuteAsync` summaries must switch to `TryExecuteAsync`:
+
+```csharp
+using var batch = redis.CreateBatch();
+batch.GetString("name");
+batch.Increment("visits");
+RespireBatchResult result = await batch.TryExecuteAsync();
+foreach (var failure in result.Failures)
+{
+    Console.WriteLine($"Command {failure.Index} ({failure.Operation}): {failure.Error.Message}");
+}
+```
+
+`result.ThrowIfAnyFailed()` remains available when inspection code later chooses to rethrow.
 
 ## The same facets as the client
 

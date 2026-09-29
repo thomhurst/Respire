@@ -121,8 +121,7 @@ using var batch = redis.CreateBatch();
 var name = batch.GetString("name");
 var visits = batch.Increment("visits");
 var profile = batch.Hashes.GetAll("user:1");
-RespireBatchResult batchResult = await batch.ExecuteAsync();
-batchResult.ThrowIfAnyFailed();
+await batch.ExecuteAsync();
 
 Console.WriteLine($"{name.Result}: {visits.Result} ({profile.Result.Count} fields)");
 
@@ -131,6 +130,9 @@ var balance = transaction.Increment("balance", -100);
 transaction.Lists.RightPush("audit", "withdraw:100");
 await transaction.CommitAsync();
 ```
+
+`ExecuteAsync` throws the first command failure after every pending completes. Use
+`TryExecuteAsync` to inspect a `RespireBatchResult` without rethrowing execution failures.
 
 Always declare batches with `using var`. See [batch disposal guarantees](https://thomhurst.github.io/Respire/docs/guides/batches-and-transactions)
 for pending commands, completed results, and repeated disposal.

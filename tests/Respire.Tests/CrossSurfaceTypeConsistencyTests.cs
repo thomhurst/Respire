@@ -85,7 +85,7 @@ public class CrossSurfaceTypeConsistencyTests
 
         using var batch = client.CreateBatch();
         var pending = QueueWrites(batch);
-        var execution = await batch.ExecuteAsync();
+        var execution = await batch.TryExecuteAsync();
         await Assert.That(execution.FailureCount).IsEqualTo(4);
         foreach (var result in pending)
         {

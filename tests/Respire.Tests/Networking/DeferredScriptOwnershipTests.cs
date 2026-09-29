@@ -26,7 +26,7 @@ public class DeferredScriptOwnershipTests
         using var batch = client.CreateBatch();
         var pending = batch.Scripts.Evaluate(RespireScript.Create("return {'outer', {'inner', 7}}"));
         _ = batch.Strings.GetString("wrong-type");
-        var execution = await batch.ExecuteAsync();
+        var execution = await batch.TryExecuteAsync();
         batch.Dispose();
 
         await Assert.That(execution.FailureCount).IsEqualTo(1);

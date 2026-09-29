@@ -386,7 +386,9 @@ public class ClusterTests
     }
 
     [Test]
-    public async Task Batch_FirstErrorFollowsOriginalQueueOrderAcrossNodes()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Batch_FirstErrorFollowsOriginalQueueOrderAcrossNodes(bool inspect)
     {
         const string firstKey = "{first}a";
         const string secondKey = "{second}b";
@@ -413,7 +415,16 @@ public class ClusterTests
         var second = batch.GetString(secondKey);
         var third = batch.GetString(thirdKey);
 
-        var result = await batch.ExecuteAsync();
+        if (!inspect)
+        {
+            var error = await Assert.That(async () => await batch.ExecuteAsync())
+                .ThrowsExactly<RespireServerException>();
+            await Assert.That(error).IsSameReferenceAs(second.Error);
+            await Assert.That(first.Result).IsEqualTo("one");
+            await Assert.That(third.Error).IsNotNull();
+            return;
+        }
+        var result = await batch.TryExecuteAsync();
 
         await Assert.That(first.Result).IsEqualTo("one");
         await Assert.That(result.FailureCount).IsEqualTo(2);

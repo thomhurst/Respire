@@ -47,6 +47,7 @@ using var batch = redis.CreateBatch();
 var a = batch.GetString("greeting");
 var b = batch.Increment("stats:hits");
 var profile = batch.Hashes.GetAll("user:1:profile");
+// Throws on command failure after every pending completes; use TryExecuteAsync to inspect errors.
 await batch.ExecuteAsync();
 Console.WriteLine($"batched: {a.Result} / hits={b.Result} / profile fields={profile.Result.Count}");
 
