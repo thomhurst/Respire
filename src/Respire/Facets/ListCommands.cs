@@ -117,8 +117,8 @@ public interface IListCommands
     /// </summary>
     ValueTask<long> RemoveAsync(RespireKey key, RespireValue value, long count = 0, CancellationToken cancellationToken = default);
 
-    /// <summary>Trims the list to the inclusive index range. Redis: LTRIM.</summary>
-    ValueTask TrimAsync(RespireKey key, long start, long stop, CancellationToken cancellationToken = default);
+    /// <summary>Trims the list to the inclusive index range; returns true on OK. Redis: LTRIM.</summary>
+    ValueTask<bool> TrimAsync(RespireKey key, long start, long stop, CancellationToken cancellationToken = default);
 }
 
 internal sealed class ListCommands(RespireClient client) : IListCommands
@@ -303,8 +303,8 @@ internal sealed class ListCommands(RespireClient client) : IListCommands
     public ValueTask<long> RemoveAsync(RespireKey key, RespireValue value, long count = 0, CancellationToken cancellationToken = default)
         => client.IntegerAsync("LREM", new Cmd3(Verbs.LRem, client.Key(in key), count, value), cancellationToken);
 
-    public ValueTask TrimAsync(RespireKey key, long start, long stop, CancellationToken cancellationToken = default)
-        => client.OkAsync("LTRIM", new Cmd3(Verbs.LTrim, client.Key(in key), start, stop), cancellationToken);
+    public ValueTask<bool> TrimAsync(RespireKey key, long start, long stop, CancellationToken cancellationToken = default)
+        => client.OkResultAsync("LTRIM", new Cmd3(Verbs.LTrim, client.Key(in key), start, stop), cancellationToken);
 
     /// <summary>Redis blocking timeouts are seconds (fractional allowed); 0 waits forever.</summary>
     internal static RespireValue ToSeconds(TimeSpan waitFor)

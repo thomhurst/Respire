@@ -17,11 +17,11 @@ public interface IHyperLogLogCommands
     /// <summary>Returns estimated cardinality across one or more HyperLogLogs. Redis: PFCOUNT.</summary>
     ValueTask<long> CountAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
 
-    /// <summary>Merges HyperLogLogs into <paramref name="destination"/>. Redis: PFMERGE.</summary>
-    ValueTask MergeAsync(RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys);
+    /// <summary>Merges HyperLogLogs into <paramref name="destination"/>; returns true on OK. Redis: PFMERGE.</summary>
+    ValueTask<bool> MergeAsync(RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys);
 
-    /// <summary>Merges HyperLogLogs into <paramref name="destination"/>. Redis: PFMERGE.</summary>
-    ValueTask MergeAsync(
+    /// <summary>Merges HyperLogLogs into <paramref name="destination"/>; returns true on OK. Redis: PFMERGE.</summary>
+    ValueTask<bool> MergeAsync(
         RespireKey destination, ReadOnlySpan<RespireKey> sourceKeys, CancellationToken cancellationToken);
 }
 
@@ -50,10 +50,10 @@ internal sealed class HyperLogLogCommands(RespireClient client) : IHyperLogLogCo
             "PFCOUNT", new CmdN(RespireCommands.HyperLogLog.PFCOUNT.Verb, client.MapKeys(keys)), cancellationToken);
     }
 
-    public ValueTask MergeAsync(RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys)
+    public ValueTask<bool> MergeAsync(RespireKey destination, params ReadOnlySpan<RespireKey> sourceKeys)
         => MergeAsync(destination, sourceKeys, CancellationToken.None);
 
-    public ValueTask MergeAsync(
+    public ValueTask<bool> MergeAsync(
         RespireKey destination, ReadOnlySpan<RespireKey> sourceKeys, CancellationToken cancellationToken)
     {
         if (sourceKeys.IsEmpty)
@@ -61,7 +61,7 @@ internal sealed class HyperLogLogCommands(RespireClient client) : IHyperLogLogCo
             throw new ArgumentException("At least one source key is required.", nameof(sourceKeys));
         }
 
-        return client.OkAsync(
+        return client.OkResultAsync(
             "PFMERGE",
             new Cmd1N(RespireCommands.HyperLogLog.PFMERGE.Verb, client.Key(in destination), client.MapKeys(sourceKeys)),
             cancellationToken);

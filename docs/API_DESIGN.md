@@ -240,6 +240,15 @@ suffix and the same parameter shapes. The return type is deferred, and cancellat
 `ExecuteAsync`. Blocking
 (`waitFor`) and streaming (`ScanAsync`, `GetLeaseAsync`) members have no deferred form.
 
+`Keys.RenameAsync`, `Lists.TrimAsync`, `HyperLogLog.MergeAsync`, and `Strings.SetManyAsync`
+return `ValueTask<bool>`, matching the `RespirePending<bool>` result of their batch and transaction
+counterparts. Each returns `true` only after an `OK` confirmation; an unexpected reply or Redis
+error faults the operation rather than returning `false`.
+
+Migration: calls that simply await and ignore the result need no changes. Update custom facet
+implementations, wrappers, delegates, and variables that explicitly use the previous non-generic
+`ValueTask` return type to `ValueTask<bool>`.
+
 `RespirePending<T>` is awaitable *and* has `.Result`, but both throw
 `RespirePendingNotReadyException` if touched before `ExecuteAsync`. The synchronous queueing names
 make accidental early awaits conspicuous, while the exception prevents a deadlock. `Status`, `HasResult`, `Error`,
