@@ -319,6 +319,16 @@ public class RespireOptionsTests
     }
 
     [Test]
+    [Arguments("999")]
+    [Arguments("Tls12|999")]
+    [Arguments("Unknown")]
+    public async Task StackExchangeConnectionString_RejectsUndefinedTlsProtocols(string protocols)
+    {
+        await Assert.That(() => RespireOptions.Parse($"cache,sslProtocols={protocols}"))
+            .Throws<ArgumentException>();
+    }
+
+    [Test]
     public async Task StackExchangeConnectionString_UnknownOptionFailsClearly()
     {
         var exception = Assert.Throws<ArgumentException>(

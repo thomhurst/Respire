@@ -111,10 +111,15 @@ accepts pipe-separated enum names, such as `Tls12|Tls13`. Revocation checking ma
 settings. Existing password splitting and async-timeout precedence stay unchanged.
 
 Mode options are `cluster` (or `useCluster`) and `serviceName` (or `sentinelPrimaryName`).
-Sentinel also accepts `sentinelUser`, `sentinelPassword`, and `sentinelTls`; an empty
+Sentinel also accepts `sentinelUser`, `sentinelPassword`, `sentinelTls`, and `sentinelSslHost`; an empty
 `sentinelPassword=` disables inherited authentication. Omitted ports default to 26379 in
 Sentinel mode and retain Respire's existing 6379 default otherwise, including TLS. Explicit
 ports always take precedence.
+
+Set `sentinelSslHost=sentinel.example` when Sentinel certificates use a different hostname from
+the primary's `sslHost`. This overrides only the Sentinel TLS target; protocol and revocation
+settings remain inherited. It enables Sentinel TLS unless `sentinelTls=false` explicitly
+disables it. Without `sentinelSslHost`, Sentinel inherits the primary TLS settings.
 
 Unknown or unsupported options still throw `ArgumentException`, catching spelling mistakes.
 For example, StackExchange.Redis `keepAlive` sends protocol messages; it is not equivalent to

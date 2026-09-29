@@ -59,6 +59,22 @@ public class SentinelTests
     }
 
     [Test]
+    public async Task SentinelConnectionString_SeparatesPrimaryAndSentinelTlsHostnames()
+    {
+        var primary = RespireOptions.Parse(
+            "sentinel-a,sentinel-b,serviceName=primary,sslHost=primary.example," +
+            "sentinelSslHost=sentinel.example,sslProtocols=Tls12|Tls13,checkCertificateRevocation=true");
+        var sentinel = SentinelResolver.CreateSentinelConnectionOptions(primary);
+
+        await Assert.That(primary.TlsOptions!.TargetHost).IsEqualTo("primary.example");
+        await Assert.That(sentinel.TlsOptions!.TargetHost).IsEqualTo("sentinel.example");
+        await Assert.That(sentinel.UseTls).IsTrue();
+        await Assert.That(sentinel.TlsOptions.EnabledSslProtocols).IsEqualTo(primary.TlsOptions.EnabledSslProtocols);
+        await Assert.That(sentinel.TlsOptions.CertificateRevocationCheckMode)
+            .IsEqualTo(primary.TlsOptions.CertificateRevocationCheckMode);
+    }
+
+    [Test]
     public async Task ConnectionString_RejectsEmptyServiceName()
     {
         var error = Assert.Throws<ArgumentException>(

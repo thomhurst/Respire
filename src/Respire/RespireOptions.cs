@@ -543,6 +543,22 @@ public sealed record RespireOptions
         }.ValidateAndSnapshot();
     }
 
+    private static SslProtocols ParseSslProtocols(string value)
+    {
+        var protocols = SslProtocols.None;
+        foreach (var name in value.Split('|', StringSplitOptions.TrimEntries))
+        {
+            if (!Enum.TryParse<SslProtocols>(name, ignoreCase: true, out var protocol) || !Enum.IsDefined(protocol))
+            {
+                throw new ArgumentException($"Unsupported sslProtocols value '{name}'.", nameof(value));
+            }
+
+            protocols |= protocol;
+        }
+
+        return protocols;
+    }
+
     private static RespireOptions ParseStackExchangeConnectionString(string connectionString)
     {
         List<string> endpointTexts = [];
@@ -562,6 +578,7 @@ public sealed record RespireOptions
         string? sentinelPassword = null;
         bool? sentinelUseTls = null;
         SslClientAuthenticationOptions? tlsOptions = null;
+        string? sentinelSslHost = null;
 
         var segments = connectionString.Split(
             ',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -636,9 +653,12 @@ public sealed record RespireOptions
                     ArgumentException.ThrowIfNullOrWhiteSpace(value, name);
                     (tlsOptions ??= new()).TargetHost = value;
                     break;
+                case "sentinelsslhost":
+                    ArgumentException.ThrowIfNullOrWhiteSpace(value, name);
+                    sentinelSslHost = value;
+                    break;
                 case "sslprotocols":
-                    (tlsOptions ??= new()).EnabledSslProtocols =
-                        Enum.Parse<SslProtocols>(value.Replace('|', ','), ignoreCase: true);
+                    (tlsOptions ??= new()).EnabledSslProtocols = ParseSslProtocols(value);
                     break;
                 case "checkcertificaterevocation":
                     (tlsOptions ??= new()).CertificateRevocationCheckMode = bool.Parse(value)
@@ -696,7 +716,13 @@ public sealed record RespireOptions
             SentinelPrimaryName = serviceName,
             SentinelUsername = sentinelUser,
             SentinelPassword = sentinelPassword,
-            SentinelUseTls = sentinelUseTls,
+            SentinelUseTls = sentinelUseTls ?? (sentinelSslHost is null ? null : true),
+            SentinelTlsOptions = sentinelSslHost is null ? null : new SslClientAuthenticationOptions
+            {
+                TargetHost = sentinelSslHost,
+                EnabledSslProtocols = tlsOptions?.EnabledSslProtocols ?? SslProtocols.None,
+                CertificateRevocationCheckMode = tlsOptions?.CertificateRevocationCheckMode ?? X509RevocationMode.NoCheck,
+            },
             CommandTimeout = asyncTimeout ?? syncTimeout ?? DefaultCommandTimeout,
             Protocol = protocol,
             AllowAdmin = allowAdmin,
