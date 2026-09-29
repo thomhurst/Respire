@@ -20,7 +20,7 @@ public class LockCommandTests
 
         await Assert.That(await client.Locks.TryTakeAsync("resource", "owner", TimeSpan.FromSeconds(30))).IsTrue();
         var queriedToken = await client.Locks.GetOwnerTokenAsync("resource");
-        await Assert.That(queriedToken!.AsSpan().SequenceEqual("owner"u8)).IsTrue();
+        await Assert.That(queriedToken == (RespireLockToken)"owner").IsTrue();
         await Assert.That(await client.Locks.ResetExpiryAsync("resource", "owner", TimeSpan.FromSeconds(45))).IsTrue();
         await Assert.That(await client.Locks.ReleaseAsync("resource", "owner")).IsTrue();
 
@@ -59,8 +59,8 @@ public class LockCommandTests
 
         var token = await client.Locks.GetOwnerTokenAsync("resource");
 
-        await Assert.That(token!.AsSpan().SequenceEqual(expectedToken)).IsTrue();
-        await Assert.That(await client.Locks.ReleaseAsync("resource", token!)).IsTrue();
+        await Assert.That(token!.Value.Bytes.Span.SequenceEqual(expectedToken)).IsTrue();
+        await Assert.That(await client.Locks.ReleaseAsync("resource", token!.Value)).IsTrue();
     }
 
     [Test]
@@ -112,7 +112,7 @@ public class LockCommandTests
         await using var server = new FakeRespServer();
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        await Assert.That(async () => await client.Locks.TryTakeAsync("resource", RespireValue.Null, TimeSpan.FromSeconds(1)))
+        await Assert.That(async () => await client.Locks.TryTakeAsync("resource", default(RespireLockToken), TimeSpan.FromSeconds(1)))
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Locks.TryTakeAsync("resource", "", TimeSpan.FromSeconds(1)))
             .Throws<ArgumentException>();
@@ -120,7 +120,7 @@ public class LockCommandTests
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Locks.TryTakeAsync("resource", "owner", TimeSpan.FromTicks(1)))
             .Throws<ArgumentOutOfRangeException>();
-        await Assert.That(async () => await client.Locks.ReleaseAsync("resource", RespireValue.Null))
+        await Assert.That(async () => await client.Locks.ReleaseAsync("resource", default(RespireLockToken)))
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Locks.ResetExpiryAsync("resource", "", TimeSpan.FromSeconds(1)))
             .Throws<ArgumentException>();
@@ -147,7 +147,7 @@ public class LockCommandTests
         await Assert.That(mutex.RemainingEstimate).IsLessThanOrEqualTo(mutex.Duration);
         await Assert.That(mutex.ExpiresAtEstimate).IsGreaterThan(DateTimeOffset.UtcNow);
         await Assert.That(mutex.IsReleased).IsFalse();
-        var token = Encoding.UTF8.GetString(mutex.Token.Span);
+        var token = mutex.Token.ToString();
         await Assert.That(token.Length).IsEqualTo(32);
 
         await mutex.DisposeAsync();
@@ -217,7 +217,7 @@ public class LockCommandTests
         var first = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
         var second = await client.Locks.AcquireOrThrowAsync("other", TimeSpan.FromSeconds(30));
 
-        await Assert.That(first.Token.Span.SequenceEqual(second.Token.Span)).IsFalse();
+        await Assert.That(first.Token == second.Token).IsFalse();
     }
 
     [Test]
@@ -231,7 +231,7 @@ public class LockCommandTests
         key.AsSpan().Fill((byte)'x');
         await mutex.DisposeAsync();
 
-        var token = Encoding.UTF8.GetString(mutex.Token.Span);
+        var token = mutex.Token.ToString();
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
         {
             $"SET resource {token} NX PX 30000",
@@ -686,7 +686,7 @@ public class LockCommandTests
         var client = owner.WithKeyPrefix("tenant:");
 
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
-        var token = Encoding.UTF8.GetString(mutex.Token.Span);
+        var token = mutex.Token.ToString();
         await mutex.DisposeAsync();
 
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
@@ -705,7 +705,7 @@ public class LockCommandTests
         await using var root = await FakeRespServer.ConnectClientAsync(server.Port);
         var prefixed = root.WithKeyPrefix("tenant:");
         var mutex = await prefixed.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
-        Encoding.ASCII.GetBytes($"$32\r\n{Encoding.ASCII.GetString(mutex.Token.Span)}\r\n")
+        Encoding.ASCII.GetBytes($"$32\r\n{mutex.Token.ToString()}\r\n")
             .CopyTo(ownerReply, 0);
 
         await Assert.That(await mutex.VerifyStillHeldAsync()).IsTrue();
@@ -863,7 +863,7 @@ public class LockCommandTests
 
         async ValueTask<bool> IManagedLockCommands.ExtendManagedAsync(
             RespireKey key,
-            RespireValue token,
+            RespireLockToken token,
             TimeSpan expiry,
             Action? onOutcomeUncertain,
             CancellationToken cancellationToken)
@@ -895,7 +895,7 @@ public class LockCommandTests
 
         public ValueTask<bool> ResetExpiryAsync(
             RespireKey key,
-            RespireValue token,
+            RespireLockToken token,
             TimeSpan expiry,
             CancellationToken cancellationToken = default)
         {
@@ -957,13 +957,13 @@ public class LockCommandTests
 
         public ValueTask<bool> TryTakeAsync(
             RespireKey key,
-            RespireValue token,
+            RespireLockToken token,
             TimeSpan expiry,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
         public async ValueTask<bool> ReleaseAsync(
             RespireKey key,
-            RespireValue token,
+            RespireLockToken token,
             CancellationToken cancellationToken = default)
         {
             if (!_raceOwnershipLoss)
@@ -976,7 +976,7 @@ public class LockCommandTests
             throw new RespireServerException("NOPERM release denied", "EVAL");
         }
 
-        public ValueTask<byte[]?> GetOwnerTokenAsync(
+        public ValueTask<RespireLockToken?> GetOwnerTokenAsync(
             RespireKey key,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }

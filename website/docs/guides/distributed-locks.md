@@ -121,7 +121,7 @@ Use `TryTakeAsync`, `ResetExpiryAsync`, `ReleaseAsync`, and `GetOwnerTokenAsync`
 shared with another process or outlive the acquiring process:
 
 ```csharp
-var token = Guid.NewGuid().ToString("N");
+RespireLockToken token = Guid.NewGuid().ToString("N");
 
 if (await redis.Locks.TryTakeAsync("locks:report", token, TimeSpan.FromSeconds(30), cancellationToken))
 {
@@ -138,3 +138,27 @@ if (await redis.Locks.TryTakeAsync("locks:report", token, TimeSpan.FromSeconds(3
 
 Keep tokens unique and secret to the owners. Release and extension succeed only when the stored
 token matches. Client key prefixes apply to lock keys exactly as they do to other Respire commands.
+
+`TryTakeAsync`, `ResetExpiryAsync`, and `ReleaseAsync` accept `RespireLockToken`.
+`GetOwnerTokenAsync` returns `RespireLockToken?` (`null` means the key is missing), and
+`RespireLock.Token` uses the same type. Strings convert as UTF-8; byte arrays and memory slices
+convert without text decoding. Token construction copies caller-supplied bytes, so later changes
+to the original buffer cannot change ownership checks.
+
+Compare tokens with `==` or `Equals`; equality and hash codes use the exact bytes. Use `Bytes` for
+binary transport and `ToString()` for tokens known to contain UTF-8 text. Decoding arbitrary binary
+tokens can replace invalid sequences, so compare tokens directly rather than their decoded text.
+Default and empty tokens are rejected by take, release, and renewal commands.
+
+```csharp
+RespireLockToken token = "owner-42";
+RespireLockToken? owner = await redis.Locks.GetOwnerTokenAsync("locks:report", cancellationToken);
+bool sameOwner = owner == token;
+```
+
+Migration: replace explicitly typed `RespireValue` lock-token variables and custom interface
+parameters with `RespireLockToken`. Owner queries now return `RespireLockToken?` instead of
+`byte[]?`; access `owner.Value.Bytes` after checking for `null`. Managed handles expose bytes as
+`mutex.Token.Bytes` instead of `mutex.Token`. Existing string and byte-array command arguments
+still convert implicitly. Reuse a constructed token across operations to avoid repeated encoding
+or copying.

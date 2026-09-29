@@ -78,7 +78,7 @@ public interface ILockCommands
     /// </summary>
     ValueTask<bool> TryTakeAsync(
         RespireKey key,
-        RespireValue token,
+        RespireLockToken token,
         TimeSpan expiry,
         CancellationToken cancellationToken = default);
 
@@ -88,7 +88,7 @@ public interface ILockCommands
     /// </summary>
     ValueTask<bool> ReleaseAsync(
         RespireKey key,
-        RespireValue token,
+        RespireLockToken token,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -97,12 +97,12 @@ public interface ILockCommands
     /// </summary>
     ValueTask<bool> ResetExpiryAsync(
         RespireKey key,
-        RespireValue token,
+        RespireLockToken token,
         TimeSpan newDuration,
         CancellationToken cancellationToken = default);
 
     /// <summary>Returns the lock's current owner token, or null when missing. Redis: GET.</summary>
-    ValueTask<byte[]?> GetOwnerTokenAsync(RespireKey key, CancellationToken cancellationToken = default);
+    ValueTask<RespireLockToken?> GetOwnerTokenAsync(RespireKey key, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Convenience operations composed from managed distributed-lock commands.</summary>
@@ -143,7 +143,7 @@ internal interface IManagedLockCommands
 {
     ValueTask<bool> ExtendManagedAsync(
         RespireKey key,
-        RespireValue token,
+        RespireLockToken token,
         TimeSpan expiry,
         Action? onOutcomeUncertain,
         CancellationToken cancellationToken);
@@ -253,7 +253,7 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
 
     public ValueTask<bool> TryTakeAsync(
         RespireKey key,
-        RespireValue token,
+        RespireLockToken token,
         TimeSpan expiry,
         CancellationToken cancellationToken = default)
     {
@@ -261,33 +261,33 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         var milliseconds = ValidateExpiry(expiry);
         return client.OkOrNullAsync(
             "SET",
-            new LockTakeCommand(client.Key(in key), token, milliseconds),
+            new LockTakeCommand(client.Key(in key), token.AsValue(), milliseconds),
             cancellationToken);
     }
 
     public ValueTask<bool> ReleaseAsync(
         RespireKey key,
-        RespireValue token,
+        RespireLockToken token,
         CancellationToken cancellationToken = default)
     {
         ValidateToken(token);
-        return ExecuteBooleanScriptAsync(ReleaseScript, key, [token], cancellationToken);
+        return ExecuteBooleanScriptAsync(ReleaseScript, key, [token.AsValue()], cancellationToken);
     }
 
     public ValueTask<bool> ResetExpiryAsync(
         RespireKey key,
-        RespireValue token,
+        RespireLockToken token,
         TimeSpan newDuration,
         CancellationToken cancellationToken = default)
     {
         ValidateToken(token);
         var milliseconds = ValidateExpiry(newDuration, nameof(newDuration));
-        return ExecuteBooleanScriptAsync(ExtendScript, key, [token, milliseconds], cancellationToken);
+        return ExecuteBooleanScriptAsync(ExtendScript, key, [token.AsValue(), milliseconds], cancellationToken);
     }
 
     async ValueTask<bool> IManagedLockCommands.ExtendManagedAsync(
         RespireKey key,
-        RespireValue token,
+        RespireLockToken token,
         TimeSpan expiry,
         Action? onOutcomeUncertain,
         CancellationToken cancellationToken)
@@ -299,7 +299,7 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         try
         {
             execution = await client.StartTrackedScriptExecutionAsync(
-                    ExtendScript, [key], [token, milliseconds], cancellationToken,
+                    ExtendScript, [key], [token.AsValue(), milliseconds], cancellationToken,
                     requireReliableCorrectionOrdering: true)
                 .ConfigureAwait(false);
             using var result = await execution.Response.ConfigureAwait(false);
@@ -318,8 +318,12 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         }
     }
 
-    public ValueTask<byte[]?> GetOwnerTokenAsync(RespireKey key, CancellationToken cancellationToken = default)
-        => client.BytesOrNullAsync("GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken);
+    public ValueTask<RespireLockToken?> GetOwnerTokenAsync(RespireKey key, CancellationToken cancellationToken = default)
+        => client.ConvertResponseAsync<Cmd1, LockCommands, RespireLockToken?>(
+            "GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken, this,
+            static (LockCommands _, in RespValue value) => value.IsNull
+                ? (RespireLockToken?)null
+                : RespireLockToken.FromOwnedBytes(value.AsSpan().ToArray()));
 
     private async ValueTask<bool> ExecuteBooleanScriptAsync(
         RespireScript script,
@@ -335,9 +339,9 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         return result.AsInteger() >= 1;
     }
 
-    private static void ValidateToken(RespireValue token)
+    private static void ValidateToken(RespireLockToken token)
     {
-        if (token.IsNull || token.IsEmpty)
+        if (token.IsEmpty)
         {
             throw new ArgumentException("Lock token must not be null or empty.", nameof(token));
         }

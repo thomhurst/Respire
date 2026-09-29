@@ -1,0 +1,51 @@
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+
+namespace Respire.Tests;
+
+public class RespireLockTokenTests
+{
+    [Test]
+    public async Task TextAndBytesHaveIdenticalEqualityAndHashCodes()
+    {
+        RespireLockToken text = "owner-雪";
+        RespireLockToken bytes = "owner-雪"u8.ToArray();
+
+        await Assert.That(text == bytes).IsTrue();
+        await Assert.That(text.Equals((object)bytes)).IsTrue();
+        await Assert.That(text.GetHashCode()).IsEqualTo(bytes.GetHashCode());
+        await Assert.That(bytes.ToString()).IsEqualTo("owner-雪");
+        await Assert.That(text != (RespireLockToken)"other").IsTrue();
+    }
+
+    [Test]
+    public async Task BinaryTokensPreserveSlicesAndSnapshotCallerStorage()
+    {
+        byte[] storage = [1, 0xff, 0, 0xfe, 2];
+        RespireLockToken token = storage.AsMemory(1, 3);
+        var hash = token.GetHashCode();
+        storage[1] = 0;
+
+        await Assert.That(token.Bytes.Span.SequenceEqual(new byte[] { 0xff, 0, 0xfe })).IsTrue();
+        await Assert.That(token.GetHashCode()).IsEqualTo(hash);
+        await Assert.That(token == (RespireLockToken)new byte[] { 0xff, 0, 0xfe }).IsTrue();
+        await Assert.That(token != (RespireLockToken)new byte[] { 0xfe, 0, 0xff }).IsTrue();
+    }
+
+    [Test]
+    public async Task NullInputsAreRejectedAtConstruction()
+    {
+        await Assert.That(() => new RespireLockToken((string)null!)).Throws<ArgumentNullException>();
+        await Assert.That(() => (RespireLockToken)(byte[])null!).Throws<ArgumentNullException>();
+    }
+
+    [Test]
+    public async Task DefaultAndEmptyTokensCompareEqually()
+    {
+        RespireLockToken empty = "";
+        await Assert.That(default(RespireLockToken).IsEmpty).IsTrue();
+        await Assert.That(empty == default).IsTrue();
+        await Assert.That(empty.GetHashCode()).IsEqualTo(default(RespireLockToken).GetHashCode());
+    }
+}

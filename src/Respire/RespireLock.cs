@@ -70,7 +70,7 @@ public sealed class RespireLock : IAsyncDisposable
     internal RespireLock(
         ILockCommands locks,
         RespireKey key,
-        ReadOnlyMemory<byte> token,
+        RespireLockToken token,
         TimeSpan duration,
         long acquiredTimestamp)
     {
@@ -89,7 +89,7 @@ public sealed class RespireLock : IAsyncDisposable
     /// as bytes so it compares byte-for-byte with the value the server round-trips, and with
     /// <see cref="ILockCommands.GetOwnerTokenAsync"/>.
     /// </summary>
-    public ReadOnlyMemory<byte> Token { get; }
+    public RespireLockToken Token { get; }
 
     /// <summary>
     /// The lease duration currently applied to the lock: the one it was acquired with, or the one
@@ -345,11 +345,11 @@ public sealed class RespireLock : IAsyncDisposable
     }
 
     /// <summary>Generates a fresh owner token: a <see cref="Guid"/> as 32 ASCII hex bytes.</summary>
-    internal static ReadOnlyMemory<byte> NewToken()
+    internal static RespireLockToken NewToken()
     {
         var token = new byte[TokenLength];
         Guid.NewGuid().TryFormat(token.AsSpan(), out _, "N");
-        return token;
+        return RespireLockToken.FromOwnedBytes(token);
     }
 
     internal void KeepAliveStopped() => Volatile.Write(ref _keepAlive, 0);
@@ -357,7 +357,7 @@ public sealed class RespireLock : IAsyncDisposable
     internal async ValueTask<bool> IsHeldByOriginAsync(CancellationToken cancellationToken)
     {
         var token = await _locks.GetOwnerTokenAsync(Key, cancellationToken).ConfigureAwait(false);
-        return token is not null && token.AsSpan().SequenceEqual(Token.Span);
+        return token is { } owner && owner == Token;
     }
 
     private void SignalLeaseChanged()
