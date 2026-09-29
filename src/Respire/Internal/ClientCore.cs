@@ -132,6 +132,10 @@ internal sealed class ClientCore : IAsyncDisposable
 
         lock (_stateGate)
         {
+            if (Cluster is { } cluster && !cluster.IsNodeObserved(node))
+            {
+                return;
+            }
             var commandSlot = (node, slot);
             switch (change.State)
             {
@@ -161,6 +165,12 @@ internal sealed class ClientCore : IAsyncDisposable
 
         lock (_stateGate)
         {
+            // Topology publication and callbacks are separate. A node reactivated before
+            // this callback acquired the health lock must retain its current health state.
+            if (Cluster?.IsNodeObserved(node) == true)
+            {
+                return;
+            }
             _reconnectingCommandSlots.RemoveWhere(
                 commandSlot => ReferenceEquals(commandSlot.Node, node));
             _disconnectedCommandSlots.RemoveWhere(

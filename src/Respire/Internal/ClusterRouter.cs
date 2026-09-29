@@ -83,6 +83,14 @@ internal sealed class ClusterRouter : IAsyncDisposable
     internal event Action<RespireConnectionMultiplexer, int, RespireConnectionStateChange>? SlotStateChanged;
     internal event Action<RespireConnectionMultiplexer>? NodeRetired;
 
+    internal bool IsNodeObserved(RespireConnectionMultiplexer node)
+    {
+        lock (_nodesGate)
+        {
+            return _nodeStateHandlers.ContainsKey(node);
+        }
+    }
+
     internal bool IsSlotConnected(int slot)
         => Volatile.Read(ref _slots[slot])?.IsConnected == true;
 
@@ -128,7 +136,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 try
                 {
                     await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-                    Volatile.Write(ref _seed, node);
+                    SetSeed(node);
                     _ = await TryLoadSlotsAsync(node, cancellationToken).ConfigureAwait(false);
                     return;
                 }
@@ -572,7 +580,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             {
                 if (await TryRefreshTopologyAsync(master, cancellationToken).ConfigureAwait(false))
                 {
-                    Volatile.Write(ref _seed, master);
+                    SetSeed(master);
                     refreshed = true;
                     break;
                 }
@@ -694,7 +702,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             try
             {
                 await owner.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-                Volatile.Write(ref _seed, master);
+                SetSeed(master);
                 return owner;
             }
             catch (Exception) when (!cancellationToken.IsCancellationRequested)
@@ -808,6 +816,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             var selectedById = new Dictionary<string, RespireConnectionMultiplexer>(StringComparer.Ordinal);
+            var selectedNodeIds = new Dictionary<RespireConnectionMultiplexer, string>();
             var selectedEndpoints = new Dictionary<RespireEndpoint, RespireConnectionMultiplexer>(EndpointComparer.Instance);
             var resolved = new List<(TopologyRange Range, RespireConnectionMultiplexer Node)>();
             var activeNodes = new HashSet<RespireConnectionMultiplexer>();
@@ -823,11 +832,11 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 {
                     var advertised = range.NodeId is { } knownId ? advertisedById[knownId]
                         : new HashSet<RespireEndpoint>(range.Aliases, EndpointComparer.Instance) { range.Preferred };
-                    node = ResolveTopologyNode(range, advertised, selectedEndpoints);
+                    node = ResolveTopologyNode(range, advertised, selectedEndpoints, selectedNodeIds);
                     if (range.NodeId is { } nodeId)
                     {
                         selectedById.Add(nodeId, node);
-                        _nodeIds[node] = nodeId;
+                        selectedNodeIds[node] = nodeId;
                     }
                 }
 
@@ -869,8 +878,13 @@ internal sealed class ClusterRouter : IAsyncDisposable
             foreach (var (id, node) in selectedById)
             {
                 _nodesById[id] = node;
+                _nodeIds[node] = id;
             }
 
+            if (Volatile.Read(ref _seed) is { } seed)
+            {
+                SetSeed(seed);
+            }
             retiredNodes = ReplaceSlotOwnersLocked(refreshedSlots, activeNodes, expectedVersion);
         }
 
@@ -887,7 +901,8 @@ internal sealed class ClusterRouter : IAsyncDisposable
     // advertised for this node; a stable node ID alone does not make an old host reachable.
     private RespireConnectionMultiplexer ResolveTopologyNode(
         TopologyRange range, HashSet<RespireEndpoint> advertised,
-        Dictionary<RespireEndpoint, RespireConnectionMultiplexer> selectedEndpoints)
+        Dictionary<RespireEndpoint, RespireConnectionMultiplexer> selectedEndpoints,
+        Dictionary<RespireConnectionMultiplexer, string> selectedNodeIds)
     {
         if (range.NodeId is { } id && _nodesById.TryGetValue(id, out var identified)
             && IsCurrentTransport(identified) && IsAdvertised(identified))
@@ -895,33 +910,68 @@ internal sealed class ClusterRouter : IAsyncDisposable
             return identified;
         }
 
+        // Metadata is a fallback; an existing compatible preferred transport wins.
+        if (ResolveEndpoint(range.Preferred) is { } preferred)
+        {
+            return preferred;
+        }
         foreach (var endpoint in advertised)
         {
-            if (selectedEndpoints.TryGetValue(endpoint, out var selected)
-                && HasCompatibleId(selected, range.NodeId) && IsAdvertised(selected))
+            if (ResolveEndpoint(endpoint) is { } alias)
             {
-                return selected;
-            }
-
-            if (_nodes.TryGetValue(endpoint, out var existing) && IsCurrentTransport(existing)
-                && HasCompatibleId(existing, range.NodeId) && IsAdvertised(existing))
-            {
-                return existing;
+                return alias;
             }
         }
 
         return CreateNode(range.Preferred);
 
+        RespireConnectionMultiplexer? ResolveEndpoint(RespireEndpoint endpoint)
+        {
+            if (selectedEndpoints.TryGetValue(endpoint, out var selected)
+                && HasCompatibleId(selected) && IsAdvertised(selected))
+            {
+                return selected;
+            }
+
+            if (_nodes.TryGetValue(endpoint, out var existing) && IsCurrentTransport(existing)
+                && HasCompatibleId(existing) && IsAdvertised(existing))
+            {
+                return existing;
+            }
+            return null;
+        }
+
         bool IsAdvertised(RespireConnectionMultiplexer node)
             => advertised.Contains(new RespireEndpoint(node.Host, node.Port));
-    }
 
-    private bool HasCompatibleId(RespireConnectionMultiplexer node, string? nodeId)
-        => nodeId is null || !_nodeIds.TryGetValue(node, out var knownId) || knownId == nodeId;
+        bool HasCompatibleId(RespireConnectionMultiplexer node)
+            => range.NodeId is null
+                || !(selectedNodeIds.TryGetValue(node, out var knownId) || _nodeIds.TryGetValue(node, out knownId))
+                || knownId == range.NodeId;
+    }
 
     private bool IsCurrentTransport(RespireConnectionMultiplexer node)
         => _nodes.TryGetValue(new RespireEndpoint(node.Host, node.Port), out var owner)
             && ReferenceEquals(owner, node);
+
+    private void SetSeed(RespireConnectionMultiplexer node)
+    {
+        lock (_nodesGate)
+        {
+            // A discovery request can finish on a transport that its own reply supersedes.
+            // Keep the seed on the current identity/endpoint even when that old TCP is healthy.
+            if (_nodeIds.TryGetValue(node, out var id)
+                && _nodesById.TryGetValue(id, out var identified) && IsCurrentTransport(identified))
+            {
+                node = identified;
+            }
+            else if (_nodes.TryGetValue(new RespireEndpoint(node.Host, node.Port), out var current))
+            {
+                node = current;
+            }
+            Volatile.Write(ref _seed, node);
+        }
+    }
 
     private RespireConnectionMultiplexer CreateNode(RespireEndpoint endpoint)
     {
@@ -1236,6 +1286,8 @@ internal sealed class ClusterRouter : IAsyncDisposable
                             var alias = metadata[pairIndex + 1].AsString();
                             if (!string.IsNullOrEmpty(alias) && alias != "?")
                             {
+                                // CLUSTER SLOTS metadata supplies host names only; all aliases
+                                // share the node's advertised client port.
                                 aliases.Add(new RespireEndpoint(alias, (int)port));
                             }
                         }

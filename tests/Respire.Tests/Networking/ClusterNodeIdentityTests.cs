@@ -51,6 +51,127 @@ public class ClusterNodeIdentityTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SupersededSeedUsesReplacementForSlotlessCommands(bool movedHost)
+    {
+        var firstDiscovery = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var discoveries = 0;
+        // The same listener represents either a new node at the old address or a node whose
+        // newly advertised hostname replaces its old address without an alias relationship.
+        await using var seed = new FakeRespServer(2, FakeRespServer.PongReply)
+        {
+            SuppressReply = _ =>
+            {
+                if (Interlocked.Increment(ref discoveries) == 1)
+                {
+                    firstDiscovery.TrySetResult();
+                }
+                return true;
+            },
+        };
+        var options = Options(seed.Port);
+        await using var primary = RespireConnectionMultiplexer.Create(
+            "127.0.0.1", seed.Port, options: options.ToConnectionOptions());
+        await using var router = new ClusterRouter(options, primary);
+        var connect = router.EnsureConnectedAsync(default).AsTask();
+        await firstDiscovery.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var initial = Encoding.UTF8.GetBytes("*1\r\n" + Range(
+            0, 16383, "127.0.0.1", seed.Port, "original", "", includeAliases: false));
+        await seed.SendRawAsync(initial);
+        await connect;
+
+        var preferred = movedHost ? "localhost" : "127.0.0.1";
+        var replacement = Encoding.UTF8.GetBytes("*1\r\n" + Range(
+            0, 16383, preferred, seed.Port, movedHost ? "original" : "replacement", "", includeAliases: false));
+        var refreshReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        seed.SuppressReply = _ => { refreshReceived.TrySetResult(); return true; };
+        var refresh = router.GetMasterConnectionsAsync(default).AsTask();
+        await refreshReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await seed.SendRawAsync(replacement);
+        await refresh;
+
+        var current = router.GetMultiplexer(new RespireEndpoint(preferred, seed.Port));
+        await Assert.That(ReferenceEquals(current, primary)).IsFalse();
+        await Assert.That(primary.IsConnected).IsTrue();
+        var slotless = await router.GetConnectionAsync(null, default);
+        await Assert.That(ReferenceEquals(slotless, current.GetConnection())).IsTrue();
+        await Assert.That(router.SeedEndpoint.Host).IsEqualTo(preferred);
+    }
+
+    [Test]
+    public async Task MissingNodeIdPrefersExistingPreferredTransportOverAlias()
+    {
+        await using var target = new FakeRespServer(FakeRespServer.PongReply);
+        await using var seed = new FakeRespServer(Topology("127.0.0.1", target.Port, null));
+        var options = Options(seed.Port);
+        await using var primary = RespireConnectionMultiplexer.Create(
+            "127.0.0.1", seed.Port, options: options.ToConnectionOptions());
+        await using var router = new ClusterRouter(options, primary);
+        var preferred = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", target.Port));
+        var alias = router.GetMultiplexer(new RespireEndpoint("localhost", target.Port));
+        await router.EnsureConnectedAsync(default);
+
+        await Assert.That(ReferenceEquals(preferred, alias)).IsFalse();
+        await Assert.That(ReferenceEquals(preferred,
+            router.GetMultiplexer(new RespireEndpoint("localhost", target.Port)))).IsTrue();
+        await Assert.That(ReferenceEquals(preferred,
+            router.GetMultiplexer(new RespireEndpoint("127.0.0.1", target.Port)))).IsTrue();
+    }
+
+    [Test]
+    [Arguments(RespireConnectionState.Reconnecting)]
+    [Arguments(RespireConnectionState.Disconnected)]
+    public async Task DelayedRetirementDoesNotClearReactivatedNodeHealth(RespireConnectionState state)
+    {
+        await using var oldServer = new FakeRespServer();
+        await using var newServer = new FakeRespServer();
+        var slot = ClusterHash.GetSlot("key");
+        await using var seed = new FakeRespServer(Encoding.UTF8.GetBytes("*1\r\n" + Range(
+            slot, slot, "127.0.0.1", oldServer.Port, "original", "", includeAliases: false)));
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+        var core = client.Core;
+        var router = core.Cluster!;
+        var original = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", oldServer.Port));
+        var replacement = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", newServer.Port));
+        router.SetSlotOwner(slot, replacement);
+        router.SetSlotOwner(slot, original);
+        var states = new List<RespireConnectionState>();
+        core.ConnectionStateChanged += change => states.Add(change.State);
+        core.NotifyCommandStateChanged(original, 0, state);
+
+        // Model an earlier retirement callback delivered after the node was reactivated.
+        core.NotifyCommandNodeRetired(original);
+
+        await Assert.That(states).IsEquivalentTo([state]);
+    }
+
+    [Test]
+    [Arguments(RespireConnectionState.Reconnecting)]
+    [Arguments(RespireConnectionState.Disconnected)]
+    public async Task RetiredNodeLateHealthNotificationIsIgnored(RespireConnectionState state)
+    {
+        await using var oldServer = new FakeRespServer();
+        await using var newServer = new FakeRespServer();
+        var slot = ClusterHash.GetSlot("key");
+        await using var seed = new FakeRespServer(Encoding.UTF8.GetBytes("*1\r\n" + Range(
+            slot, slot, "127.0.0.1", oldServer.Port, "original", "", includeAliases: false)));
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+        var core = client.Core;
+        var router = core.Cluster!;
+        var original = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", oldServer.Port));
+        var replacement = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", newServer.Port));
+        router.SetSlotOwner(slot, replacement);
+        var states = new List<RespireConnectionState>();
+        core.ConnectionStateChanged += change => states.Add(change.State);
+
+        // A transport can already have captured its event delegate before unsubscription.
+        core.NotifyCommandStateChanged(original, 0, state);
+
+        await Assert.That(states).IsEmpty();
+    }
+
+    [Test]
     public async Task DifferentNodeIdsDoNotMergeThroughConflictingMetadata()
     {
         await using var first = new FakeRespServer();
