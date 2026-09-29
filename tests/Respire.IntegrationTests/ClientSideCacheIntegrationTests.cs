@@ -242,7 +242,7 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
             async () => _ = await resources.Client.Bitmaps.SetBitCountAsync(key, 0, 7, BitIndexUnit.Bit),
             async () => _ = await resources.Client.Bitmaps.PositionAsync(key, true),
             async () => _ = await resources.Client.Bitmaps.FieldReadOnlyAsync(
-                key, BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), 0)));
+                key, BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(0))));
 
         await resources.Database.StringSetBitAsync(key, 4, false);
         await WaitForCacheEvictionAsync(resources.Client);

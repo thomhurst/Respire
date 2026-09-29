@@ -446,7 +446,7 @@ public class ClientSideCacheTests
             FakeRespServer.OkReply,
             "*1\r\n:7\r\n"u8.ToArray());
         await using var client = await ConnectAsync(server);
-        var operation = BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), 0);
+        var operation = BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(0));
 
         await Assert.That(await client.Bitmaps.FieldReadOnlyAsync("key", operation))
             .IsEquivalentTo((long?[])[7]);
@@ -455,6 +455,40 @@ public class ClientSideCacheTests
 
         await Assert.That(server.ReceivedCommands.Count(static command => command == "BITFIELD_RO key GET u8 0"))
             .IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task BitFieldReadOnly_CacheDistinguishesSignednessWidthAndOffset()
+    {
+        await using var server = new FakeRespServer(
+            HelloReply, FakeRespServer.OkReply,
+            FakeRespServer.OkReply, "*1\r\n:255\r\n"u8.ToArray(),
+            FakeRespServer.OkReply, "*1\r\n:-1\r\n"u8.ToArray(),
+            FakeRespServer.OkReply, "*1\r\n:127\r\n"u8.ToArray(),
+            FakeRespServer.OkReply, "*1\r\n:42\r\n"u8.ToArray(),
+            FakeRespServer.OkReply, "*1\r\n:63\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+        BitFieldOperation[] operations =
+        [
+            BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(1)),
+            BitFieldOperation.Get(BitFieldEncoding.Signed(8), BitFieldOffset.Bits(1)),
+            BitFieldOperation.Get(BitFieldEncoding.Unsigned(7), BitFieldOffset.Bits(1)),
+            BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Fields(1)),
+            BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(2)),
+        ];
+        long[] expected = [255, -1, 127, 42, 63];
+
+        for (var pass = 0; pass < 2; pass++)
+        {
+            for (var index = 0; index < operations.Length; index++)
+            {
+                var result = await client.Bitmaps.FieldReadOnlyAsync("key", operations[index]);
+                await Assert.That(result[0]).IsEqualTo(expected[index]);
+            }
+        }
+
+        await Assert.That(server.ReceivedCommands.Count(static command => command.StartsWith("BITFIELD_RO ")))
+            .IsEqualTo(operations.Length);
     }
 
     [Test]

@@ -25,7 +25,7 @@ public class BitmapCommandTests
         var command = new BitFieldCommand(
             RespireCommands.Bitmap.BITFIELD.Verb,
             "bitmap-key",
-            [BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), 0)]);
+            [BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(0))]);
 
         await Assert.That(command.TryGetClusterSlot(out var slot)).IsTrue();
         await Assert.That(slot).IsEqualTo(Respire.Internal.ClusterHash.GetSlot("bitmap-key"));
@@ -59,17 +59,17 @@ public class BitmapCommandTests
         await Assert.That(await client.Bitmaps.OperateAsync(BitOperation.Xor, "dest", "one", "two")).IsEqualTo(4);
         await Assert.That(await client.Bitmaps.FieldAsync(
             "bits",
-            BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), 0),
+            BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(0)),
             BitFieldOperation.SetOverflow(BitFieldOverflow.Fail),
-            BitFieldOperation.Increment("i8", "#1", 2),
-            BitFieldOperation.Set("u4", "12", 3))).IsEquivalentTo(
+            BitFieldOperation.Increment(BitFieldEncoding.Signed(8), BitFieldOffset.Fields(1), 2),
+            BitFieldOperation.Set(BitFieldEncoding.Unsigned(4), BitFieldOffset.Bits(12), 3))).IsEquivalentTo(
                 new long?[] { 1, 2, null, 3 }, TUnit.Assertions.Enums.CollectionOrdering.Matching);
         await Assert.That(await client.Bitmaps.FieldReadOnlyAsync(
             "bits",
-            BitFieldOperation.Get(BitFieldEncoding.Signed(1), 0),
-            BitFieldOperation.Get(BitFieldEncoding.Signed(64), 1),
-            BitFieldOperation.Get(BitFieldEncoding.Unsigned(1), 2, offsetInFieldUnits: true),
-            BitFieldOperation.Get(BitFieldEncoding.Unsigned(63), long.MaxValue, offsetInFieldUnits: true)))
+            BitFieldOperation.Get(BitFieldEncoding.Signed(1), BitFieldOffset.Bits(0)),
+            BitFieldOperation.Get(BitFieldEncoding.Signed(64), BitFieldOffset.Bits(1)),
+            BitFieldOperation.Get(BitFieldEncoding.Unsigned(1), BitFieldOffset.Fields(2)),
+            BitFieldOperation.Get(BitFieldEncoding.Unsigned(63), BitFieldOffset.Fields(long.MaxValue))))
             .IsEquivalentTo(new long?[] { 7, 8, 9, 10 }, TUnit.Assertions.Enums.CollectionOrdering.Matching);
 
         await AssertCommands(server.ReceivedCommands,
@@ -99,7 +99,7 @@ public class BitmapCommandTests
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Bitmaps.OperateAsync(BitOperation.Not, "dest", "a", "b"))
             .Throws<ArgumentException>();
-        await Assert.That(async () => await client.Bitmaps.FieldReadOnlyAsync("bits", BitFieldOperation.Set("u8", "0", 1)))
+        await Assert.That(async () => await client.Bitmaps.FieldReadOnlyAsync("bits", BitFieldOperation.Set(BitFieldEncoding.Unsigned(8), BitFieldOffset.Bits(0), 1)))
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Bitmaps.GetAsync("bits", -1))
             .Throws<ArgumentOutOfRangeException>();
@@ -113,23 +113,42 @@ public class BitmapCommandTests
         await Assert.That(() => BitFieldEncoding.Signed(65)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => BitFieldEncoding.Unsigned(0)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => BitFieldEncoding.Unsigned(64)).Throws<ArgumentOutOfRangeException>();
-        await Assert.That(() => BitFieldOperation.Get(default, 0)).Throws<ArgumentException>();
-        await Assert.That(() => BitFieldOperation.Get(BitFieldEncoding.Unsigned(8), -1))
-            .Throws<ArgumentOutOfRangeException>();
-
-        foreach (var encoding in new[] { "i0", "i65", "u0", "u64", "x8", "i", "i1x" })
-        {
-            await Assert.That(() => BitFieldOperation.Get(encoding, "0"))
-                .Throws<ArgumentException>();
-        }
-
-        foreach (var offset in new[] { "-1", "#-1", "#", "+1", "1.5", "value" })
-        {
-            await Assert.That(() => BitFieldOperation.Get("u8", offset))
-                .Throws<ArgumentException>();
-        }
+        await Assert.That(() => BitFieldOperation.Get(default, BitFieldOffset.Bits(0))).Throws<ArgumentException>();
+        await Assert.That(() => BitFieldOperation.Set(default, default, 1)).Throws<ArgumentException>();
+        await Assert.That(() => BitFieldOperation.Increment(default, default, 1)).Throws<ArgumentException>();
+        await Assert.That(() => BitFieldOffset.Bits(-1)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => BitFieldOffset.Fields(-1)).Throws<ArgumentOutOfRangeException>();
 
         await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TypedOperations_PreserveOffsetsAndValuesInImmediateAndBatchCommands(bool fieldIndex)
+    {
+        var offset = fieldIndex ? BitFieldOffset.Fields(long.MaxValue) : BitFieldOffset.Bits(long.MaxValue);
+        var reply = "*3\r\n:0\r\n:1\r\n:-2\r\n"u8.ToArray();
+        await using var server = new FakeRespServer(reply, reply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        BitFieldOperation[] operations =
+        [
+            BitFieldOperation.Get(BitFieldEncoding.Signed(64), offset),
+            BitFieldOperation.Set(BitFieldEncoding.Unsigned(63), offset, long.MaxValue),
+            BitFieldOperation.Increment(BitFieldEncoding.Signed(64), offset, long.MinValue),
+        ];
+
+        var immediate = await client.Bitmaps.FieldAsync("bits", operations);
+        var batch = client.CreateBatch();
+        var deferred = batch.Bitmaps.Field("bits", operations);
+        await batch.ExecuteAsync();
+
+        await Assert.That(immediate).IsEquivalentTo(new long?[] { 0, 1, -2 }, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+        await Assert.That(deferred.Result).IsEquivalentTo(immediate, TUnit.Assertions.Enums.CollectionOrdering.Matching);
+        var wireOffset = fieldIndex ? "#9223372036854775807" : "9223372036854775807";
+        var expected = $"BITFIELD bits GET i64 {wireOffset} SET u63 {wireOffset} 9223372036854775807 INCRBY i64 {wireOffset} -9223372036854775808";
+        await AssertCommands(server.ReceivedCommands, expected, expected);
+        await Assert.That(default(BitFieldOffset)).IsEqualTo(BitFieldOffset.Bits(0));
     }
 
     private static async Task AssertCommands(IReadOnlyList<string> actual, params string[] expected)
