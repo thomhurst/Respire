@@ -232,6 +232,12 @@ No API returns pooled memory without `Lease` in its name.
   A `params` parameter must come last, so each variadic command also has a sibling
   `DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken ct)` — non-params items and a
   required token. The token is required, not optional, so the two forms never overlap.
+  This pair is the chosen convention: retain bare varargs such as `DeleteAsync("a", "b")`
+  and use `DeleteAsync(["a", "b"], ct)` when cancellation is needed. Collapsing the pair to
+  one optional-token span overload would remove bare-varargs calls. Both forms use the same
+  span-based command path; the convenience overload forwards `CancellationToken.None`.
+  Deferred facets omit per-command tokens because execution owns cancellation. The public
+  surface regression checks the matching generic arity, return type, item types, and required token.
 - **`Async` suffix stays.** Analyzer ecosystem and reader expectation beat the saved
   keystrokes.
 - **SCAN-family returns `IAsyncEnumerable`**, cursor handled internally:

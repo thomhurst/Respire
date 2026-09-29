@@ -48,7 +48,7 @@ public class MultiItemCancellationOverloadTests
                     .Append(typeof(CancellationToken))
                     .ToArray();
 
-                if (!methods.Any(candidate => Matches(candidate, method.Name, expected)))
+                if (!methods.Any(candidate => Matches(candidate, method, expected)))
                 {
                     missing.Add($"{type.Name}.{method.Name}({string.Join(", ", expected.Select(Describe))})");
                 }
@@ -224,20 +224,25 @@ public class MultiItemCancellationOverloadTests
         _ = client.Streams.AcknowledgeAsync("st", "group", ids, token);
     }
 
-    private static bool Matches(MethodInfo candidate, string name, Type[] expected)
+    private static bool Matches(MethodInfo candidate, MethodInfo original, Type[] expected)
     {
-        if (candidate.Name != name)
+        if (candidate.Name != original.Name
+            || candidate.GetGenericArguments().Length != original.GetGenericArguments().Length
+            || !TypesEquivalent(candidate.ReturnType, original.ReturnType))
         {
             return false;
         }
 
         var parameters = candidate.GetParameters();
-        if (parameters.Length != expected.Length || IsParamsSpan(parameters[^1]))
+        if (parameters.Length != expected.Length
+            || parameters[^1].ParameterType != typeof(CancellationToken)
+            || parameters[^1].IsOptional
+            || parameters.Any(IsParamsSpan))
         {
             return false;
         }
 
-        return !parameters.Where((parameter, index) => parameter.ParameterType != expected[index]).Any();
+        return !parameters.Where((parameter, index) => !TypesEquivalent(parameter.ParameterType, expected[index])).Any();
     }
 
     /// <summary>
@@ -251,10 +256,62 @@ public class MultiItemCancellationOverloadTests
                 .Any(static attribute => attribute.GetType().Name
                     is "ParamArrayAttribute" or "ParamCollectionAttribute");
 
+    private static bool TypesEquivalent(Type left, Type right)
+    {
+        if (left == right)
+        {
+            return true;
+        }
+        // Method parameters are scoped to their overload, so match them by position.
+        // Declaring-type parameters retain exact identity (handled above).
+        if (left.IsGenericMethodParameter && right.IsGenericMethodParameter)
+        {
+            return left.GenericParameterPosition == right.GenericParameterPosition;
+        }
+        if (left.IsArray && right.IsArray)
+        {
+            return left.GetArrayRank() == right.GetArrayRank()
+                && left.IsSZArray == right.IsSZArray
+                && TypesEquivalent(left.GetElementType()!, right.GetElementType()!);
+        }
+        if ((left.IsByRef && right.IsByRef) || (left.IsPointer && right.IsPointer))
+        {
+            return TypesEquivalent(left.GetElementType()!, right.GetElementType()!);
+        }
+        return left.IsGenericType && right.IsGenericType
+            && left.GetGenericTypeDefinition() == right.GetGenericTypeDefinition()
+            && left.GetGenericArguments().Zip(right.GetGenericArguments())
+                .All(pair => TypesEquivalent(pair.First, pair.Second));
+    }
+
+    [Test]
+    public async Task TypeMatchingRejectsNameAndArrayShapeCollisions()
+    {
+        await Assert.That(TypesEquivalent(typeof(Task<int>), typeof(OtherNamespace.Task<int>))).IsFalse();
+        await Assert.That(TypesEquivalent(typeof(int[]), typeof(int[,]))).IsFalse();
+        await Assert.That(TypesEquivalent(typeof(int[]), typeof(int).MakeArrayType(1))).IsFalse();
+        await Assert.That(TypesEquivalent(typeof(List<int>), typeof(List<string>))).IsFalse();
+    }
+
+    private static class OtherNamespace
+    {
+        public sealed class Task<T> { }
+    }
+
     private static string Describe(Type type)
-        => type.IsGenericType
+    {
+        if (type.IsGenericParameter)
+        {
+            return $"T{type.GenericParameterPosition}";
+        }
+        if (type.IsArray)
+        {
+            return $"{Describe(type.GetElementType()!)}[]";
+        }
+        return type.IsGenericType
             ? $"{type.Name[..type.Name.IndexOf('`')]}<{string.Join(", ", type.GetGenericArguments().Select(Describe))}>"
-            : type.Name;
+            : type.FullName ?? type.Name;
+    }
 
     private enum Overload
     {
