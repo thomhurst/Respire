@@ -107,15 +107,18 @@ internal sealed class BatchListCommands(IPendingSink sink) : IBatchListCommands
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public RespirePending<T?> LeftPop<T>(RespireKey key)
-        => sink.Add<Cmd1, T?>(
-            "LPOP", new Cmd1(Verbs.LPop, sink.Client.Key(in key)),
-            static (c, v) => c.DeserializeBorrowed<T>(in v));
+        => Pop<T>(key, Verbs.LPop, "LPOP");
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public RespirePending<T?> RightPop<T>(RespireKey key)
+        => Pop<T>(key, Verbs.RPop, "RPOP");
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    private RespirePending<T?> Pop<T>(RespireKey key, Verb verb, string operation)
         => sink.Add<Cmd1, T?>(
-            "RPOP", new Cmd1(Verbs.RPop, sink.Client.Key(in key)),
+            operation, new Cmd1(verb, sink.Client.Key(in key)),
             static (c, v) => c.DeserializeBorrowed<T>(in v));
 
     public RespirePending<string[]> LeftPopMany(RespireKey key, long count)

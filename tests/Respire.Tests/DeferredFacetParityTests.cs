@@ -31,6 +31,7 @@ public class DeferredFacetParityTests
 
     private static string Signature(MethodInfo method, bool immediate)
     {
+        // Compare generic parameters by position; this shape audit does not compare their constraints.
         var name = immediate ? method.Name[..^"Async".Length] : method.Name;
         var parameters = method.GetParameters()
             .Where(parameter => !immediate || (parameter.ParameterType != typeof(CancellationToken)
