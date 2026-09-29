@@ -24,6 +24,24 @@ users touch.
 >   implementations must implement the canonical methods directly, including bitmap `Set`,
 >   combined string/hash reads, and lock `ResetExpiryAsync`.
 
+## Pre-release alias migration
+
+The first release exposes only the canonical names. Replace the removed names below in both
+immediate (`Async`) and deferred calls where applicable:
+
+| Removed member | Replacement |
+| --- | --- |
+| String `GetDelete` | `GetAndDelete` |
+| Hash `GetDelete` | `GetAndRemove` |
+| String/hash `GetExpire` | `GetAndExpire` |
+| Bitmap `GetAndSet` | `Set` |
+| Lock commands and lock handles `ExtendAsync` | `ResetExpiryAsync` |
+| Lock commands `IsHeldByAsync(mutex)` | `mutex.VerifyStillHeldAsync()` |
+| Subscription `Channels` | `Targets` |
+
+Custom facet implementations must provide the canonical members directly; the compatibility
+forwarders are no longer default interface implementations.
+
 ## Design principles
 
 1. **The 90% path is one line.** Connect with a URI, `GetAsync`/`SetAsync` on the client root.

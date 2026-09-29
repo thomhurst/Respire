@@ -15,15 +15,15 @@ namespace Respire.Tests;
 public class TypedValueApiTests
 {
     [Test]
-    public async Task BitmapSetAliases_HaveDefaultInterfaceImplementations()
+    public async Task BitmapSet_RequiresConcreteImplementations()
     {
         var clientSet = typeof(IBitmapCommands).GetMethod(nameof(IBitmapCommands.SetAsync));
         var batchSet = typeof(IBatchBitmapCommands).GetMethod(nameof(IBatchBitmapCommands.Set));
 
         await Assert.That(clientSet).IsNotNull();
-        await Assert.That(clientSet!.IsAbstract).IsFalse();
+        await Assert.That(clientSet!.IsAbstract).IsTrue();
         await Assert.That(batchSet).IsNotNull();
-        await Assert.That(batchSet!.IsAbstract).IsFalse();
+        await Assert.That(batchSet!.IsAbstract).IsTrue();
     }
 
     [Test]
@@ -40,7 +40,7 @@ public class TypedValueApiTests
     }
 
     [Test]
-    public async Task RenamedCombinedGets_HaveDefaultInterfaceImplementations()
+    public async Task CombinedGets_RequireConcreteImplementations()
     {
         (Type Type, string Name)[] methods =
         [
@@ -60,7 +60,7 @@ public class TypedValueApiTests
                 .Where(method => method.Name == name && !method.IsGenericMethod)
                 .ToArray();
             await Assert.That(untyped).IsNotEmpty();
-            await Assert.That(untyped.All(method => !method.IsAbstract)).IsTrue();
+            await Assert.That(untyped.All(method => method.IsAbstract)).IsTrue();
         }
     }
 
