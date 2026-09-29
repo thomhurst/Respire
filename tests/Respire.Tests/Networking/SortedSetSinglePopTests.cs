@@ -1,4 +1,5 @@
 using System.Text;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -111,6 +112,33 @@ public class SortedSetSinglePopTests
         cancellation.Cancel();
 
         await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+    }
+
+    [Test]
+    public async Task Parsers_RejectMalformedPairShapesAndAcceptNull()
+    {
+        await using var server = new FakeRespServer();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        RespValue[] malformed =
+        [
+            RespValue.Integer(7),
+            RespValue.Array(RespValue.BulkString("7")),
+            RespValue.Array(RespValue.Array(Array.Empty<RespValue>())),
+            RespValue.Array(RespValue.Array(RespValue.BulkString("7"))),
+            RespValue.Array(RespValue.BulkString("7"), RespValue.Double(1.5), RespValue.Integer(2)),
+            RespValue.Array(
+                RespValue.Array(RespValue.BulkString("7"), RespValue.Double(1.5)),
+                RespValue.Array(RespValue.BulkString("9"), RespValue.Double(2.5))),
+        ];
+        foreach (var reply in malformed)
+        {
+            await Assert.That(() => SortedSetCommands.ParseEntry(in reply)).Throws<RespireProtocolException>();
+            await Assert.That(() => SortedSetCommands.ParseEntry<int>(client, in reply)).Throws<RespireProtocolException>();
+        }
+
+        var nullReply = RespValue.Null;
+        await Assert.That(SortedSetCommands.ParseEntry(in nullReply)).IsNull();
+        await Assert.That(SortedSetCommands.ParseEntry<int>(client, in nullReply)).IsNull();
     }
 
     private static string Verb(bool descending) => descending ? "ZPOPMAX" : "ZPOPMIN";

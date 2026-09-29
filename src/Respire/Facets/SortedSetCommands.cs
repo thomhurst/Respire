@@ -782,28 +782,53 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
 
     internal static SortedSetEntry? ParseEntry(in RespValue reply)
     {
-        var elements = reply.AsArray();
-        if (elements.Length == 0)
-        {
-            return null;
-        }
-
-        var pair = elements[0].Type == RespDataType.Array ? elements[0].AsArray() : elements;
-        return new SortedSetEntry(pair[0].AsString(), ResponseReader.Double(in pair[1]));
+        var pair = SingleEntryPair(in reply);
+        return pair.IsEmpty ? null : new SortedSetEntry(pair[0].AsString(), ResponseReader.Double(in pair[1]));
     }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     internal static SortedSetEntry<T>? ParseEntry<T>(RespireClient client, in RespValue reply)
     {
-        var elements = reply.AsArray();
-        if (elements.Length == 0)
+        var pair = SingleEntryPair(in reply);
+        return pair.IsEmpty ? null : new SortedSetEntry<T>(
+            client.DeserializeBorrowed<T>(in pair[0])!, ResponseReader.Double(in pair[1]));
+    }
+
+    private static ReadOnlySpan<RespValue> SingleEntryPair(in RespValue reply)
+    {
+        if (reply.IsNull)
         {
-            return null;
+            return default;
         }
 
-        var pair = elements[0].Type == RespDataType.Array ? elements[0].AsArray() : elements;
-        return new SortedSetEntry<T>(client.DeserializeBorrowed<T>(in pair[0])!, ResponseReader.Double(in pair[1]));
+        if (reply.Type != RespDataType.Array)
+        {
+            throw new RespireProtocolException("A single sorted-set pop must return an array.");
+        }
+
+        var elements = reply.AsArray();
+        if (elements.IsEmpty)
+        {
+            return default;
+        }
+
+        if (elements[0].Type == RespDataType.Array)
+        {
+            if (elements.Length != 1)
+            {
+                throw new RespireProtocolException("A single sorted-set pop returned multiple entries.");
+            }
+
+            elements = elements[0].AsArray();
+        }
+
+        if (elements.Length != 2)
+        {
+            throw new RespireProtocolException("A sorted-set entry must contain a member and score.");
+        }
+
+        return elements;
     }
 
     /// <summary>WITHSCORES replies alternate member,score (RESP2 flat array; RESP3 pairs are flattened too).</summary>
