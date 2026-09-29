@@ -1,6 +1,10 @@
 # GET Operation Flow Comparison: Respire vs StackExchange.Redis
 
-## Allocation Targets
+> Historical investigation from before the current networking rewrite. The estimates and
+> method names below are not current API or benchmark claims. Numbered flows are pseudocode.
+> For current measurements, see the [benchmark guide](../website/docs/benchmarks.md).
+
+## Historical Allocation Targets
 - **StackExchange.Redis**: ~232 bytes per GET
 - **Respire (current)**: ~616 bytes per GET  
 - **Gap**: 384 bytes
@@ -14,7 +18,7 @@
 4. **Direct Buffers**: ReadOnlySequence<byte> instead of byte arrays
 
 ### Flow Steps
-```csharp
+```text
 // Simplified StackExchange.Redis GET flow
 1. StringGetAsync(key) called
 2. Message.Create(database, flags, RedisCommand.GET, key)
@@ -42,7 +46,7 @@
 ## Respire GET Flow (Current)
 
 ### Flow Steps
-```csharp
+```text
 // Current Respire GET flow
 1. GetAsync(key) called
 2. Fast path check (if enabled)
