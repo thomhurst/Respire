@@ -165,7 +165,7 @@ public interface IServerCommands
     ValueTask<string[]> CommandListAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Configuration values matching a glob pattern. Redis: CONFIG GET.</summary>
-    ValueTask<Dictionary<string, string>> GetConfigAsync(string pattern, CancellationToken cancellationToken = default);
+    ValueTask<Dictionary<string, string>> ConfigAsync(string pattern, CancellationToken cancellationToken = default);
 
     /// <summary>Sets a configuration value. Requires <see cref="RespireOptions.AllowAdmin"/>. Redis: CONFIG SET.</summary>
     ValueTask SetConfigAsync(string name, RespireValue value, CancellationToken cancellationToken = default);
@@ -361,7 +361,7 @@ internal sealed class ServerCommands(RespireClient client) : IServerCommands
                 return FromUnixTimeSeconds(seconds).Add(FromMicroseconds(microseconds));
             });
 
-    public ValueTask<Dictionary<string, string>> GetConfigAsync(string pattern, CancellationToken cancellationToken = default)
+    public ValueTask<Dictionary<string, string>> ConfigAsync(string pattern, CancellationToken cancellationToken = default)
         => client.StringMapAsync("CONFIG GET", new Cmd1(Verbs.ConfigGet, pattern), cancellationToken);
 
     public ValueTask SetConfigAsync(string name, RespireValue value, CancellationToken cancellationToken = default)

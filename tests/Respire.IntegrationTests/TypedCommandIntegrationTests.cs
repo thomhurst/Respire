@@ -78,7 +78,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         replayed.Select(entry => entry.Id).Should().Equal("1-0", "2-0");
         (await client.Streams.AcknowledgeAsync(key, group, replayed.Select(entry => entry.Id).ToArray()))
             .Should().Be(2);
-        (await client.Streams.GetPendingSummaryAsync(key, group)).Count.Should().Be(0);
+        (await client.Streams.PendingSummaryAsync(key, group)).Count.Should().Be(0);
 
         (await client.Streams.DeleteGroupAsync(key, group)).Should().BeTrue();
         await client.DeleteAsync(key);

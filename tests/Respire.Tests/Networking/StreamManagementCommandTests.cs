@@ -177,7 +177,7 @@ public class StreamManagementCommandTests
         await client.Streams.SetGroupPositionAsync("events", "workers", RespireStreamId.New);
         await client.Streams.SetGroupPositionAsync("events", "workers", RespireStreamId.Beginning, entriesRead: 7);
 
-        var pendingSummary = await client.Streams.GetPendingSummaryAsync("events", "workers");
+        var pendingSummary = await client.Streams.PendingSummaryAsync("events", "workers");
         await Assert.That(pendingSummary.Count).IsEqualTo(3);
         await Assert.That(pendingSummary.SmallestId?.ToString()).IsEqualTo("1-0");
         await Assert.That(pendingSummary.GreatestId?.ToString()).IsEqualTo("3-0");
@@ -187,14 +187,14 @@ public class StreamManagementCommandTests
             new RespireStreamConsumerPendingCount("bob", 1),
         });
 
-        var pending = await client.Streams.GetPendingAsync("events", "workers", count: 2, consumer: "alice");
+        var pending = await client.Streams.PendingAsync("events", "workers", count: 2, consumer: "alice");
         await Assert.That(pending).IsEquivalentTo(new[]
         {
             new RespireStreamPendingEntry("1-0", "alice", TimeSpan.FromMilliseconds(1200), 2),
             new RespireStreamPendingEntry("3-0", "alice", TimeSpan.FromMilliseconds(50), 1),
         });
 
-        var streamInfo = await client.Streams.GetInfoAsync("events");
+        var streamInfo = await client.Streams.InfoAsync("events");
         await Assert.That(streamInfo.Length).IsEqualTo(7);
         await Assert.That(streamInfo.RadixTreeKeys).IsEqualTo(1);
         await Assert.That(streamInfo.RadixTreeNodes).IsEqualTo(2);
@@ -208,14 +208,14 @@ public class StreamManagementCommandTests
         await Assert.That(streamInfo.LastEntry?.Id.ToString()).IsEqualTo("9-0");
         await Assert.That(streamInfo.LastEntry?.GetString("name")).IsEqualTo("zed");
 
-        var groups = await client.Streams.GetGroupInfoAsync("events");
+        var groups = await client.Streams.GroupInfoAsync("events");
         await Assert.That(groups).IsEquivalentTo(new[]
         {
             new RespireStreamGroupInfo("workers", 2, 3, "3-0", 8, 4),
             new RespireStreamGroupInfo("archivers", 1, 0, "0-0", null, null),
         });
 
-        var consumers = await client.Streams.GetConsumerInfoAsync("events", "workers");
+        var consumers = await client.Streams.ConsumerInfoAsync("events", "workers");
         await Assert.That(consumers).IsEquivalentTo(new[]
         {
             new RespireStreamConsumerInfo("alice", 2, TimeSpan.FromMilliseconds(50), TimeSpan.FromMilliseconds(75)),
@@ -245,7 +245,7 @@ public class StreamManagementCommandTests
         await using var server = new FakeRespServer(Resp(0, null, null, null));
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var summary = await client.Streams.GetPendingSummaryAsync("events", "workers");
+        var summary = await client.Streams.PendingSummaryAsync("events", "workers");
 
         await Assert.That(summary.Count).IsEqualTo(0);
         await Assert.That(summary.SmallestId).IsNull();
