@@ -122,8 +122,8 @@ public class ByteRouteDictionaryTests
     [Test]
     public async Task Hash_UsesPerDictionarySeed()
     {
-        var first = new ByteRouteKeyComparer(1);
-        var second = new ByteRouteKeyComparer(2);
+        var first = new ByteRouteHasher(1);
+        var second = new ByteRouteHasher(2);
 
         await Assert.That(first.Hash("notifications"u8)).IsNotEqualTo(second.Hash("notifications"u8));
     }

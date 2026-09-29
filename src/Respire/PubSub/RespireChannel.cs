@@ -69,7 +69,7 @@ public readonly struct RespireChannel : IEquatable<RespireChannel>
 
     /// <summary>Returns a process-local hash of the channel bytes.</summary>
     /// <remarks>The hash is seeded per process. Do not persist it or use it as a stable identifier.</remarks>
-    public override int GetHashCode() => ByteRouteKeyComparer.Instance.Hash(_bytes.AsSpan());
+    public override int GetHashCode() => ByteRouteHasher.Instance.Hash(_bytes.AsSpan());
 
     /// <summary>Tests two channel names for byte equality.</summary>
     public static bool operator ==(RespireChannel left, RespireChannel right) => left.Equals(right);

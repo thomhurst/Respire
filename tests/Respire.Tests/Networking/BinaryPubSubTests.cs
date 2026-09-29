@@ -120,7 +120,7 @@ public class BinaryPubSubTests
     {
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = CreateClient(server.Port);
-        RespireChannel[] channels = ["literal", RespireChannel.Pattern("pattern*")];
+        RespireChannel[] channels = ["same", RespireChannel.Pattern("same")];
         await Assert.That(async () => await client.SubscribeAsync(channels, CancellationToken.None)).Throws<ArgumentException>();
         await Assert.That(async () => await client.PublishAsync(channels[1], "payload")).Throws<ArgumentException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(0);

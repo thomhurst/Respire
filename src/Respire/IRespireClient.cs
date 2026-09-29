@@ -175,12 +175,15 @@ public interface IRespireClient : IAsyncDisposable
         CancellationToken cancellationToken);
 
     /// <summary>Publishes raw channel bytes; sharded metadata selects SPUBLISH. Patterns cannot be published.</summary>
+    /// <remarks>Implicit conversion to RespireChannel snapshots byte buffers and encodes strings, rejecting invalid UTF-16. Reuse a channel value to avoid repeated copies.</remarks>
     ValueTask<long> PublishAsync(RespireChannel channel, RespireValue message, CancellationToken cancellationToken = default);
 
     /// <summary>Publishes raw bytes with SPUBLISH. Channel names are not prefixed.</summary>
+    /// <remarks>Implicit conversion to RespireChannel snapshots byte buffers and encodes strings, rejecting invalid UTF-16. Reuse a channel value to avoid repeated copies.</remarks>
     ValueTask<long> PublishShardedAsync(RespireChannel channel, RespireValue message, CancellationToken cancellationToken = default);
 
     /// <summary>Subscribes using the channel's explicit literal, pattern, or sharded kind.</summary>
+    /// <remarks>Implicit conversion to RespireChannel snapshots byte buffers and encodes strings, rejecting invalid UTF-16. Reuse a channel value to avoid repeated copies.</remarks>
     ValueTask<RespireSubscription> SubscribeAsync(RespireChannel channel, CancellationToken cancellationToken = default);
 
     /// <summary>Subscribes using explicit channel metadata and per-subscription buffer settings.</summary>
@@ -195,6 +198,7 @@ public interface IRespireClient : IAsyncDisposable
         ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options, CancellationToken cancellationToken);
 
     /// <summary>Subscribes to raw bytes using the pattern command family.</summary>
+    /// <remarks>Implicit conversion to RespireChannel snapshots byte buffers and encodes strings, rejecting invalid UTF-16. Reuse a channel value to avoid repeated copies.</remarks>
     ValueTask<RespireSubscription> SubscribePatternAsync(RespireChannel channel, CancellationToken cancellationToken = default);
 
     /// <summary>Subscribes to raw bytes with per-subscription buffer settings.</summary>
@@ -209,6 +213,7 @@ public interface IRespireClient : IAsyncDisposable
         ReadOnlySpan<RespireChannel> channels, RespireSubscriptionOptions options, CancellationToken cancellationToken);
 
     /// <summary>Subscribes to raw bytes using the sharded command family.</summary>
+    /// <remarks>Implicit conversion to RespireChannel snapshots byte buffers and encodes strings, rejecting invalid UTF-16. Reuse a channel value to avoid repeated copies.</remarks>
     ValueTask<RespireSubscription> SubscribeShardedAsync(RespireChannel channel, CancellationToken cancellationToken = default);
 
     /// <summary>Subscribes to raw bytes with per-subscription buffer settings.</summary>
