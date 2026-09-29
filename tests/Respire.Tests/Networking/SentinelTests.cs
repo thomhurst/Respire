@@ -190,6 +190,7 @@ public class SentinelTests
             SentinelPrimaryName = "mymaster",
             // Exercise the discovery timeout itself, without a competing command watchdog.
             // Healthy fallback connections need scheduling headroom on parallel CI runners.
+            CommandTimeout = null,
             ConnectTimeout = TimeSpan.FromSeconds(5),
         }).AsTask().WaitAsync(TimeSpan.FromSeconds(20));
 
