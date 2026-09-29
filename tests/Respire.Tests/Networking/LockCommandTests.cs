@@ -147,7 +147,7 @@ public class LockCommandTests
         await Assert.That(mutex.RemainingEstimate).IsLessThanOrEqualTo(mutex.Duration);
         await Assert.That(mutex.ExpiresAtEstimate).IsGreaterThan(DateTimeOffset.UtcNow);
         await Assert.That(mutex.IsReleased).IsFalse();
-        var token = mutex.Token.ToString();
+        var token = mutex.Token.ToUtf8String();
         await Assert.That(token.Length).IsEqualTo(32);
 
         await mutex.DisposeAsync();
@@ -231,7 +231,7 @@ public class LockCommandTests
         key.AsSpan().Fill((byte)'x');
         await mutex.DisposeAsync();
 
-        var token = mutex.Token.ToString();
+        var token = mutex.Token.ToUtf8String();
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
         {
             $"SET resource {token} NX PX 30000",
@@ -384,7 +384,7 @@ public class LockCommandTests
         var mutex = new RespireLock(
             commands,
             "resource",
-            "owner"u8.ToArray(),
+            "owner",
             TimeSpan.FromSeconds(30),
             Stopwatch.GetTimestamp());
 
@@ -450,7 +450,7 @@ public class LockCommandTests
         var mutex = new RespireLock(
             commands,
             "resource",
-            "owner"u8.ToArray(),
+            "owner",
             TimeSpan.FromSeconds(30),
             Stopwatch.GetTimestamp());
 
@@ -496,7 +496,7 @@ public class LockCommandTests
         var mutex = new RespireLock(
             commands,
             "resource",
-            "owner"u8.ToArray(),
+            "owner",
             TimeSpan.FromMinutes(1),
             Stopwatch.GetTimestamp());
 
@@ -519,7 +519,7 @@ public class LockCommandTests
         var mutex = new RespireLock(
             commands,
             "resource",
-            "owner"u8.ToArray(),
+            "owner",
             TimeSpan.FromSeconds(5),
             Stopwatch.GetTimestamp());
         await using var keepAlive = await mutex.KeepAliveAsync();
@@ -545,7 +545,7 @@ public class LockCommandTests
         var mutex = new RespireLock(
             commands,
             "resource",
-            "owner"u8.ToArray(),
+            "owner",
             TimeSpan.FromMilliseconds(500),
             Stopwatch.GetTimestamp());
         var keepAlive = await mutex.KeepAliveAsync();
@@ -567,7 +567,7 @@ public class LockCommandTests
         var mutex = new RespireLock(
             commands,
             "resource",
-            "owner"u8.ToArray(),
+            "owner",
             TimeSpan.FromMilliseconds(500),
             Stopwatch.GetTimestamp());
         var keepAlive = await mutex.KeepAliveAsync();
@@ -589,7 +589,7 @@ public class LockCommandTests
         var mutex = new RespireLock(
             commands,
             "resource",
-            "owner"u8.ToArray(),
+            "owner",
             TimeSpan.FromSeconds(30),
             Stopwatch.GetTimestamp());
         var keepAlive = await mutex.KeepAliveAsync();
@@ -619,7 +619,7 @@ public class LockCommandTests
         var mutex = new RespireLock(
             commands,
             "resource",
-            "owner"u8.ToArray(),
+            "owner",
             TimeSpan.FromSeconds(30),
             Stopwatch.GetTimestamp());
 
@@ -686,7 +686,7 @@ public class LockCommandTests
         var client = owner.WithKeyPrefix("tenant:");
 
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
-        var token = mutex.Token.ToString();
+        var token = mutex.Token.ToUtf8String();
         await mutex.DisposeAsync();
 
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
@@ -705,7 +705,7 @@ public class LockCommandTests
         await using var root = await FakeRespServer.ConnectClientAsync(server.Port);
         var prefixed = root.WithKeyPrefix("tenant:");
         var mutex = await prefixed.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));
-        Encoding.ASCII.GetBytes($"$32\r\n{mutex.Token.ToString()}\r\n")
+        Encoding.ASCII.GetBytes($"$32\r\n{mutex.Token.ToUtf8String()}\r\n")
             .CopyTo(ownerReply, 0);
 
         await Assert.That(await mutex.VerifyStillHeldAsync()).IsTrue();

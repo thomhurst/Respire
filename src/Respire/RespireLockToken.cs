@@ -10,6 +10,7 @@ namespace Respire;
 [DebuggerDisplay("{DebuggerDisplay,nq}")]
 public readonly struct RespireLockToken : IEquatable<RespireLockToken>
 {
+    private static readonly Encoding StrictUtf8 = new UTF8Encoding(false, true);
     private readonly ReadOnlyMemory<byte> _bytes;
 
     /// <summary>Creates a token by encoding text as UTF-8.</summary>
@@ -38,17 +39,17 @@ public readonly struct RespireLockToken : IEquatable<RespireLockToken>
     public static implicit operator RespireLockToken(string token) => new(token);
 
     /// <summary>Creates a token by copying a byte array.</summary>
-    public static implicit operator RespireLockToken(byte[] token)
+    public static explicit operator RespireLockToken(byte[] token)
     {
         ArgumentNullException.ThrowIfNull(token);
         return new RespireLockToken(token.AsMemory());
     }
 
     /// <summary>Creates a token by copying read-only bytes.</summary>
-    public static implicit operator RespireLockToken(ReadOnlyMemory<byte> token) => new(token);
+    public static explicit operator RespireLockToken(ReadOnlyMemory<byte> token) => new(token);
 
     /// <summary>Creates a token by copying bytes.</summary>
-    public static implicit operator RespireLockToken(Memory<byte> token) => new(token);
+    public static explicit operator RespireLockToken(Memory<byte> token) => new(token);
 
     /// <summary>Tests tokens for exact byte equality.</summary>
     public static bool operator ==(RespireLockToken left, RespireLockToken right) => left.Equals(right);
@@ -65,13 +66,14 @@ public readonly struct RespireLockToken : IEquatable<RespireLockToken>
     /// <inheritdoc/>
     public override int GetHashCode() => AsValue().GetHashCode();
 
-    /// <summary>
-    /// Decodes the token as UTF-8. Invalid byte sequences use replacement characters; use
-    /// <see cref="Bytes"/> for lossless binary transport and equality for ownership comparisons.
-    /// </summary>
-    public override string ToString() => Encoding.UTF8.GetString(_bytes.Span);
+    /// <summary>Returns the exact token bytes as uppercase hexadecimal for lossless display.</summary>
+    public override string ToString() => Convert.ToHexString(_bytes.Span);
 
-    private string DebuggerDisplay => Convert.ToHexString(_bytes.Span);
+    /// <summary>Decodes a text token as UTF-8, rejecting invalid byte sequences.</summary>
+    /// <exception cref="DecoderFallbackException">The token contains invalid UTF-8.</exception>
+    public string ToUtf8String() => StrictUtf8.GetString(_bytes.Span);
+
+    private string DebuggerDisplay => ToString();
 
     internal RespireValue AsValue() => new(_bytes);
 

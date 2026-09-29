@@ -318,6 +318,7 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         }
     }
 
+    // Reply payloads are pooled; the returned token must own its bytes.
     public ValueTask<RespireLockToken?> GetOwnerTokenAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.ConvertResponseAsync<Cmd1, LockCommands, RespireLockToken?>(
             "GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken, this,

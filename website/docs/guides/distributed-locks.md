@@ -141,13 +141,15 @@ token matches. Client key prefixes apply to lock keys exactly as they do to othe
 
 `TryTakeAsync`, `ResetExpiryAsync`, and `ReleaseAsync` accept `RespireLockToken`.
 `GetOwnerTokenAsync` returns `RespireLockToken?` (`null` means the key is missing), and
-`RespireLock.Token` uses the same type. Strings convert as UTF-8; byte arrays and memory slices
-convert without text decoding. Token construction copies caller-supplied bytes, so later changes
-to the original buffer cannot change ownership checks.
+`RespireLock.Token` uses the same type. Strings convert implicitly as UTF-8. For binary tokens,
+construct `new RespireLockToken(bytes)` or use an explicit cast from a byte array or memory slice.
+These operations copy the bytes without text decoding, so later changes to the original buffer
+cannot change ownership checks. Reuse the constructed token to avoid repeated copying.
 
 Compare tokens with `==` or `Equals`; equality and hash codes use the exact bytes. Use `Bytes` for
-binary transport and `ToString()` for tokens known to contain UTF-8 text. Decoding arbitrary binary
-tokens can replace invalid sequences, so compare tokens directly rather than their decoded text.
+binary transport. `ToString()` and the debugger show lossless uppercase hexadecimal. Use
+`ToUtf8String()` for text tokens; it throws `DecoderFallbackException` for invalid UTF-8 rather
+than replacing bytes. Compare tokens directly for ownership checks.
 Default and empty tokens are rejected by take, release, and renewal commands.
 
 ```csharp
@@ -159,6 +161,6 @@ bool sameOwner = owner == token;
 Migration: replace explicitly typed `RespireValue` lock-token variables and custom interface
 parameters with `RespireLockToken`. Owner queries now return `RespireLockToken?` instead of
 `byte[]?`; access `owner.Value.Bytes` after checking for `null`. Managed handles expose bytes as
-`mutex.Token.Bytes` instead of `mutex.Token`. Existing string and byte-array command arguments
-still convert implicitly. Reuse a constructed token across operations to avoid repeated encoding
-or copying.
+`mutex.Token.Bytes` instead of `mutex.Token`. String command arguments still convert implicitly;
+wrap byte-array or memory arguments in `new RespireLockToken(...)`. Reuse a constructed token
+across operations to avoid repeated encoding or copying.

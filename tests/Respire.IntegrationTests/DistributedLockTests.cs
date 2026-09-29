@@ -47,14 +47,14 @@ public class DistributedLockTests(RedisTestContainer fixture)
     {
         var key = $"locks:token:{Guid.NewGuid():N}";
         byte[] storage = [1, 0xff, 0, 0xc3, 0x28, 2];
-        RespireLockToken token = storage.AsMemory(1, 4);
+        var token = new RespireLockToken(storage.AsMemory(1, 4));
         storage[1] = 0;
 
         await Assert.That(await Client.Locks.TryTakeAsync(key, token, TimeSpan.FromSeconds(30))).IsTrue();
         var owner = await Client.Locks.GetOwnerTokenAsync(key);
         await Assert.That(owner == token).IsTrue();
         await Assert.That(await Client.Locks.ResetExpiryAsync(key, owner!.Value, TimeSpan.FromSeconds(45))).IsTrue();
-        await Assert.That(await Client.Locks.ReleaseAsync(key, new byte[] { 0xfe, 0, 0xc3, 0x28 })).IsFalse();
+        await Assert.That(await Client.Locks.ReleaseAsync(key, new RespireLockToken(new byte[] { 0xfe, 0, 0xc3, 0x28 }))).IsFalse();
         await Assert.That(await Client.Locks.ReleaseAsync(key, owner.Value)).IsTrue();
         await Assert.That(await Client.Locks.GetOwnerTokenAsync(key)).IsNull();
 
