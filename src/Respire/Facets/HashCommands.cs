@@ -143,13 +143,13 @@ public interface IHashCommands
 
     /// <summary>Sets field expiry with an NX, XX, GT, or LT condition. Redis: HPEXPIRE/HPEXPIREAT.</summary>
     ValueTask<HashFieldExpiryResult[]> ExpireAsync(
-        RespireKey key, RespireExpiry expiry, HashFieldExpireWhen when, params ReadOnlySpan<string> fields);
+        RespireKey key, RespireExpiry expiry, ExpireWhen when, params ReadOnlySpan<string> fields);
 
     /// <summary>Sets field expiry with an NX, XX, GT, or LT condition. Redis: HPEXPIRE/HPEXPIREAT.</summary>
     ValueTask<HashFieldExpiryResult[]> ExpireAsync(
         RespireKey key,
         RespireExpiry expiry,
-        HashFieldExpireWhen when,
+        ExpireWhen when,
         ReadOnlySpan<string> fields,
         CancellationToken cancellationToken);
 
@@ -363,26 +363,26 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
 
     public ValueTask<HashFieldExpiryResult[]> ExpireAsync(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)
-        => ExpireAsync(key, expiry, HashFieldExpireWhen.Always, fields, CancellationToken.None);
+        => ExpireAsync(key, expiry, ExpireWhen.Always, fields, CancellationToken.None);
 
     public ValueTask<HashFieldExpiryResult[]> ExpireAsync(
         RespireKey key, RespireExpiry expiry, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
-        => ExpireAsync(key, expiry, HashFieldExpireWhen.Always, fields, cancellationToken);
+        => ExpireAsync(key, expiry, ExpireWhen.Always, fields, cancellationToken);
 
     public ValueTask<HashFieldExpiryResult[]> ExpireAsync(
-        RespireKey key, RespireExpiry expiry, HashFieldExpireWhen when, params ReadOnlySpan<string> fields)
+        RespireKey key, RespireExpiry expiry, ExpireWhen when, params ReadOnlySpan<string> fields)
         => ExpireAsync(key, expiry, when, fields, CancellationToken.None);
 
     public ValueTask<HashFieldExpiryResult[]> ExpireAsync(
         RespireKey key,
         RespireExpiry expiry,
-        HashFieldExpireWhen when,
+        ExpireWhen when,
         ReadOnlySpan<string> fields,
         CancellationToken cancellationToken)
     {
         if (expiry.IsPersist)
         {
-            if (when != HashFieldExpireWhen.Always)
+            if (when != ExpireWhen.Always)
             {
                 throw new ArgumentException("HPERSIST does not support NX, XX, GT, or LT.", nameof(when));
             }
@@ -414,7 +414,7 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
         Verb verb,
         RespireKey key,
         long value,
-        HashFieldExpireWhen when,
+        ExpireWhen when,
         ReadOnlySpan<string> fields,
         CancellationToken cancellationToken)
         => client.HashFieldExpiryResultArrayAsync(
@@ -588,10 +588,10 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
     }
 
     internal static RespireValue[] ExpireFieldsBlock(
-        long milliseconds, HashFieldExpireWhen when, ReadOnlySpan<string> fields)
+        long milliseconds, ExpireWhen when, ReadOnlySpan<string> fields)
     {
         ValidateFields(fields);
-        var condition = FieldExpireWhenToken(when);
+        var condition = KeyCommands.ExpireWhenToken(when);
         var args = new RespireValue[1 + (condition is null ? 0 : 1) + 2 + fields.Length];
         var index = 0;
         args[index++] = milliseconds;
@@ -668,17 +668,6 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
 
         return args;
     }
-
-    private static string? FieldExpireWhenToken(HashFieldExpireWhen when)
-        => when switch
-        {
-            HashFieldExpireWhen.Always => null,
-            HashFieldExpireWhen.NotExists => "NX",
-            HashFieldExpireWhen.Exists => "XX",
-            HashFieldExpireWhen.GreaterThan => "GT",
-            HashFieldExpireWhen.LessThan => "LT",
-            _ => throw new ArgumentOutOfRangeException(nameof(when), when, null),
-        };
 
     private static string? HashSetWhenToken(SetWhen when)
         => when switch

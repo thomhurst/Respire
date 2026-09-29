@@ -9,6 +9,39 @@ namespace Respire.Tests.Networking;
 public class ModernRedisTypedCommandTests
 {
     [Test]
+    [Arguments(ExpireWhen.Always, "")]
+    [Arguments(ExpireWhen.NotExists, " NX")]
+    [Arguments(ExpireWhen.Exists, " XX")]
+    [Arguments(ExpireWhen.GreaterThan, " GT")]
+    [Arguments(ExpireWhen.LessThan, " LT")]
+    public async Task HashFieldExpiry_UsesSharedConditionsForImmediateAndDeferredCommands(
+        ExpireWhen when, string condition)
+    {
+        var reply = "*1\r\n:1\r\n"u8.ToArray();
+        await using var server = new FakeRespServer(reply, reply, reply, reply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var relative = RespireExpiry.In(TimeSpan.FromSeconds(2));
+        var absolute = RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(123456789));
+
+        var immediateRelative = await client.Hashes.ExpireAsync("hash", relative, when, "field");
+        var immediateAbsolute = await client.Hashes.ExpireAsync("hash", absolute, when, "field");
+        var batch = client.CreateBatch();
+        var deferredRelative = batch.Hashes.Expire("hash", relative, when, "field");
+        var deferredAbsolute = batch.Hashes.Expire("hash", absolute, when, "field");
+        await batch.ExecuteAsync();
+
+        await Assert.That(immediateRelative[0]).IsEqualTo(HashFieldExpiryResult.Applied);
+        await Assert.That(immediateAbsolute[0]).IsEqualTo(HashFieldExpiryResult.Applied);
+        await Assert.That(deferredRelative.Result[0]).IsEqualTo(HashFieldExpiryResult.Applied);
+        await Assert.That(deferredAbsolute.Result[0]).IsEqualTo(HashFieldExpiryResult.Applied);
+        await AssertCommands(server.ReceivedCommands,
+            $"HPEXPIRE hash 2000{condition} FIELDS 1 field",
+            $"HPEXPIREAT hash 123456789{condition} FIELDS 1 field",
+            $"HPEXPIRE hash 2000{condition} FIELDS 1 field",
+            $"HPEXPIREAT hash 123456789{condition} FIELDS 1 field");
+    }
+
+    [Test]
     public async Task MSetExCommand_RoutesByFirstKeyAfterCount()
     {
         var command = new MSetExCommand(
@@ -37,7 +70,7 @@ public class ModernRedisTypedCommandTests
 
         var expiries = await client.Hashes.ExpiryAsync("hash", "a", "b", "c");
         var expireResults = await client.Hashes.ExpireAsync(
-            "hash", TimeSpan.FromMilliseconds(2500), HashFieldExpireWhen.GreaterThan, "a", "b", "c", "d");
+            "hash", TimeSpan.FromMilliseconds(2500), ExpireWhen.GreaterThan, "a", "b", "c", "d");
         var expireAtResults = await client.Hashes.ExpireAsync(
             "hash", RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(123456789)), "a");
         var persistResults = await client.Hashes.ExpireAsync("hash", RespireExpiry.Persist, "a", "b", "c");
@@ -200,7 +233,7 @@ public class ModernRedisTypedCommandTests
         await Assert.That(async () => await client.Hashes.ExpireAsync("hash", TimeSpan.FromSeconds(1)))
             .Throws<ArgumentException>();
         await Assert.That(async () => await client.Hashes.ExpireAsync(
-            "hash", TimeSpan.FromSeconds(1), (HashFieldExpireWhen)42, "field"))
+            "hash", TimeSpan.FromSeconds(1), (ExpireWhen)42, "field"))
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Hashes.SetExpireAsync("hash", TimeSpan.FromSeconds(1)))
             .Throws<ArgumentException>();

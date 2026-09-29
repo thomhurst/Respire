@@ -1,24 +1,5 @@
 namespace Respire;
 
-/// <summary>Condition for hash field expiry updates. Redis: HPEXPIRE/HPEXPIREAT.</summary>
-public enum HashFieldExpireWhen
-{
-    /// <summary>Set or update the expiry unconditionally.</summary>
-    Always,
-
-    /// <summary>Only set expiry when the field has no expiry. Redis: NX.</summary>
-    NotExists,
-
-    /// <summary>Only set expiry when the field already has an expiry. Redis: XX.</summary>
-    Exists,
-
-    /// <summary>Only set expiry when the new expiry is greater than the current expiry. Redis: GT.</summary>
-    GreaterThan,
-
-    /// <summary>Only set expiry when the new expiry is less than the current expiry. Redis: LT.</summary>
-    LessThan,
-}
-
 /// <summary>Per-field result for hash field expiry mutations.</summary>
 public enum HashFieldExpiryResult
 {
