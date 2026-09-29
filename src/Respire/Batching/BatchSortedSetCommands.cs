@@ -18,6 +18,11 @@ public interface IBatchSortedSetCommands
     RespirePending<bool> Add(RespireKey key, RespireValue member, double score);
 
     /// <summary>Adds one serialized member; booleans retain Redis 1/0 encoding. True when new. Redis: ZADD.</summary>
+    /// <remarks>
+    /// Specify the type argument explicitly to select typed serialization for values with an
+    /// implicit RespireValue conversion. Inferred calls retain their existing raw encoding.
+    /// This overload priority requires C# 13 or later.
+    /// </remarks>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     [OverloadResolutionPriority(-1)]

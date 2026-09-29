@@ -73,7 +73,12 @@ The new hash writes, set membership checks, and sorted-set additions preserve ex
 `RespireValue` conversions when the type argument is omitted (C# 13 or later, as with the
 library's `params` span APIs). This includes GUIDs, timestamps,
 durations, and byte buffers. Specify the type argument explicitly, such as
-`batch.Hashes.Set<Guid>(key, field, id)`, to use typed serialization instead.
+`batch.Hashes.Set<Guid>(key, field, id)`, to use typed serialization instead. When moving an
+inferred immediate call such as `client.Hashes.SetAsync(key, field, id)` into a deferred queue,
+use `Set<Guid>` to retain that immediate call's typed encoding. The pre-existing inferred
+batch call `Set(key, field, id)` retains raw GUID text for compatibility. Older C# compilers
+ignore overload priority and may select a different encoding; use C# 13 or later, or specify
+the type argument or `RespireValue` conversion explicitly.
 
 Both types implement `IRespireCommandQueue`, which unifies every deferred facet and the root
 shortcuts. Helpers can therefore queue work across facets without choosing an execution model:

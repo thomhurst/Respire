@@ -23,6 +23,11 @@ public interface IBatchSetCommands
     RespirePending<bool> Contains(RespireKey key, RespireValue member);
 
     /// <summary>Tests membership after serialization; booleans retain Redis 1/0 encoding. Redis: SISMEMBER.</summary>
+    /// <remarks>
+    /// Specify the type argument explicitly to select typed serialization for values with an
+    /// implicit RespireValue conversion. Inferred calls retain their existing raw encoding.
+    /// This overload priority requires C# 13 or later.
+    /// </remarks>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     [OverloadResolutionPriority(-1)]

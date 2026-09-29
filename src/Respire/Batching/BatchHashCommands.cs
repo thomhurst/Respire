@@ -24,12 +24,22 @@ public interface IBatchHashCommands
         RespireKey key, string field, RespireValue value, SetWhen when);
 
     /// <summary>Sets one serialized field. True when newly created. Redis: HSET.</summary>
+    /// <remarks>
+    /// Specify the type argument explicitly to select typed serialization for values with an
+    /// implicit RespireValue conversion. Inferred calls retain their existing raw encoding.
+    /// This overload priority requires C# 13 or later.
+    /// </remarks>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     [OverloadResolutionPriority(-1)]
     RespirePending<bool> Set<T>(RespireKey key, string field, T value);
 
     /// <summary>Conditionally sets one serialized field. Redis: HSET/HSETNX/HSETEX.</summary>
+    /// <remarks>
+    /// Specify the type argument explicitly to select typed serialization for values with an
+    /// implicit RespireValue conversion. Inferred calls retain their existing raw encoding.
+    /// This overload priority requires C# 13 or later.
+    /// </remarks>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     [OverloadResolutionPriority(-1)]
