@@ -5,16 +5,16 @@ using Respire.Protocol;
 
 namespace Respire;
 
-/// <summary>Condition for key expiry updates. Redis: PEXPIRE/PEXPIREAT.</summary>
+/// <summary>Condition for key or hash field expiry updates. Redis: PEXPIRE/PEXPIREAT/HPEXPIRE/HPEXPIREAT.</summary>
 public enum ExpireWhen
 {
     /// <summary>Set or update the expiry unconditionally.</summary>
     Always,
 
-    /// <summary>Only set expiry when the key has no expiry. Redis: NX.</summary>
+    /// <summary>Only set expiry when the key or hash field has no expiry. Redis: NX.</summary>
     NotExists,
 
-    /// <summary>Only set expiry when the key already has an expiry. Redis: XX.</summary>
+    /// <summary>Only set expiry when the key or hash field already has an expiry. Redis: XX.</summary>
     Exists,
 
     /// <summary>Only set expiry when the new expiry is greater than the current expiry. Redis: GT.</summary>
