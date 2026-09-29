@@ -17,9 +17,12 @@ internal sealed class ClusterRouter : IAsyncDisposable
     private readonly RespireConnectionOptions _commandConnectionOptions;
     private readonly RespireEndpoint[] _seeds;
     private readonly RespireConnectionMultiplexer _primary;
-    private readonly Dictionary<RespireEndpoint, RespireConnectionMultiplexer> _nodes = [];
+    private readonly Dictionary<RespireEndpoint, RespireConnectionMultiplexer> _nodes = new(EndpointComparer.Instance);
+    private readonly Dictionary<string, RespireConnectionMultiplexer> _nodesById = new(StringComparer.Ordinal);
+    private readonly Dictionary<RespireConnectionMultiplexer, string> _nodeIds = [];
+    private readonly HashSet<RespireConnectionMultiplexer> _allNodes = [];
     private readonly Dictionary<RespireConnectionMultiplexer, Action<int, RespireConnectionStateChange>> _nodeStateHandlers = [];
-    private readonly Dictionary<RespireEndpoint, DedicatedConnectionPool> _dedicatedPools = [];
+    private readonly Dictionary<RespireConnectionMultiplexer, DedicatedConnectionPool> _dedicatedPools = [];
     private readonly object _nodesGate = new();
     private readonly RespireConnectionMultiplexer?[] _slots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
     private RespireConnectionMultiplexer[] _masters = [];
@@ -50,6 +53,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             : options.Endpoints.ToArray();
         _primary = primary;
         _nodes.Add(options.PrimaryEndpoint, primary);
+        _allNodes.Add(primary);
         ObserveNode(primary);
     }
 
@@ -764,12 +768,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 return existing;
             }
 
-            var node = RespireConnectionMultiplexer.Create(
-                endpoint.Host,
-                endpoint.Port,
-                _options.Connections,
-                _commandConnectionOptions,
-                _options.CreateLogger($"Respire.Cluster.{endpoint.Host}:{endpoint.Port}"));
+            var node = CreateNode(endpoint);
             if (observe)
             {
                 ObserveNode(node);
@@ -778,6 +777,91 @@ internal sealed class ClusterRouter : IAsyncDisposable
             _nodes.Add(endpoint, node);
             return node;
         }
+    }
+
+    // Caller holds _nodesGate. Node IDs and aliases identify a transport; neither changes
+    // the hostname already chosen for its connections or TLS certificate validation.
+    private RespireConnectionMultiplexer GetTopologyNode(
+        RespireEndpoint preferred, string? nodeId, List<RespireEndpoint> aliases)
+    {
+        lock (_nodesGate)
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            RespireConnectionMultiplexer? node = null;
+            if (nodeId is not null && _nodesById.TryGetValue(nodeId, out var identified)
+                && identified.Port == preferred.Port && IsCurrentTransport(identified))
+            {
+                node = identified;
+            }
+
+            if (node is null && _nodes.TryGetValue(preferred, out var preferredNode)
+                && IsCurrentTransport(preferredNode) && HasCompatibleId(preferredNode, nodeId))
+            {
+                node = preferredNode;
+            }
+
+            if (node is null)
+            {
+                foreach (var alias in aliases)
+                {
+                    if (_nodes.TryGetValue(alias, out var candidate)
+                        && IsCurrentTransport(candidate) && HasCompatibleId(candidate, nodeId))
+                    {
+                        node = candidate;
+                        break;
+                    }
+                }
+            }
+
+            node ??= CreateNode(preferred);
+            if (nodeId is not null)
+            {
+                _nodesById[nodeId] = node;
+                _nodeIds[node] = nodeId;
+            }
+
+            // A preferred endpoint is authoritative; metadata cannot steal an alias already
+            // assigned to a different known Redis node ID.
+            _nodes[preferred] = node;
+            foreach (var alias in aliases)
+            {
+                if (!_nodes.TryGetValue(alias, out var owner)
+                    || !IsCurrentTransport(owner) || HasCompatibleId(owner, nodeId))
+                {
+                    _nodes[alias] = node;
+                }
+            }
+
+            ObserveNode(node);
+            return node;
+        }
+    }
+
+    private bool HasCompatibleId(RespireConnectionMultiplexer node, string? nodeId)
+        => nodeId is null || !_nodeIds.TryGetValue(node, out var knownId) || knownId == nodeId;
+
+    private bool IsCurrentTransport(RespireConnectionMultiplexer node)
+        => _nodes.TryGetValue(new RespireEndpoint(node.Host, node.Port), out var owner)
+            && ReferenceEquals(owner, node);
+
+    private RespireConnectionMultiplexer CreateNode(RespireEndpoint endpoint)
+    {
+        var node = RespireConnectionMultiplexer.Create(
+            endpoint.Host, endpoint.Port, _options.Connections, _commandConnectionOptions,
+            _options.CreateLogger($"Respire.Cluster.{endpoint.Host}:{endpoint.Port}"));
+        _allNodes.Add(node);
+        return node;
+    }
+
+    private sealed class EndpointComparer : IEqualityComparer<RespireEndpoint>
+    {
+        public static readonly EndpointComparer Instance = new();
+
+        public bool Equals(RespireEndpoint left, RespireEndpoint right)
+            => left.Port == right.Port && StringComparer.OrdinalIgnoreCase.Equals(left.Host, right.Host);
+
+        public int GetHashCode(RespireEndpoint endpoint)
+            => HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(endpoint.Host), endpoint.Port);
     }
 
     private void ObserveNode(RespireConnectionMultiplexer node)
@@ -997,17 +1081,18 @@ internal sealed class ClusterRouter : IAsyncDisposable
         lock (_nodesGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            if (_dedicatedPools.TryGetValue(endpoint, out var existing))
+            var node = GetOrCreateNode(endpoint, observe: false);
+            if (_dedicatedPools.TryGetValue(node, out var existing))
             {
                 return existing;
             }
 
             var pool = new DedicatedConnectionPool(
-                endpoint.Host,
-                endpoint.Port,
+                node.Host,
+                node.Port,
                 _options.ToConnectionOptions(),
                 _options.CreateLogger($"Respire.Cluster.Blocking.{endpoint.Host}:{endpoint.Port}"));
-            _dedicatedPools.Add(endpoint, pool);
+            _dedicatedPools.Add(node, pool);
             return pool;
         }
     }
@@ -1055,30 +1140,41 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
                     var host = primary[0].AsString();
                     var port = primary[1].AsInteger();
+                    if (port is <= 0 or > 65_535 || host == "?")
+                    {
+                        continue;
+                    }
+
+                    var preferred = new RespireEndpoint(string.IsNullOrEmpty(host) ? seed.Host : host, (int)port);
+                    var nodeId = primary.Length > 2 && !primary[2].IsNull ? primary[2].AsString() : null;
+                    if (string.IsNullOrEmpty(nodeId))
+                    {
+                        nodeId = null;
+                    }
+
+                    List<RespireEndpoint> aliases = [];
                     for (var metadataIndex = 3; metadataIndex < primary.Length; metadataIndex++)
                     {
                         var metadata = primary[metadataIndex].AsArray();
                         for (var pairIndex = 0; pairIndex + 1 < metadata.Length; pairIndex += 2)
                         {
-                            if (metadata[pairIndex].AsSpan().SequenceEqual("hostname"u8)
-                                && !metadata[pairIndex + 1].IsNull)
+                            var name = metadata[pairIndex].AsSpan();
+                            if ((!name.SequenceEqual("hostname"u8) && !name.SequenceEqual("ip"u8))
+                                || metadata[pairIndex + 1].IsNull)
                             {
-                                var announcedHost = metadata[pairIndex + 1].AsString();
-                                if (!string.IsNullOrEmpty(announcedHost))
-                                {
-                                    host = announcedHost;
-                                }
+                                continue;
+                            }
+
+                            var alias = metadata[pairIndex + 1].AsString();
+                            if (!string.IsNullOrEmpty(alias) && alias != "?")
+                            {
+                                aliases.Add(new RespireEndpoint(alias, (int)port));
                             }
                         }
                     }
 
-                    if (port is <= 0 or > 65_535)
-                    {
-                        continue;
-                    }
-
-                    var node = GetOrCreateNode(new RespireEndpoint(
-                        string.IsNullOrEmpty(host) ? seed.Host : host, (int)port), observe: false);
+                    var node = GetTopologyNode(preferred, nodeId, aliases);
+                    activeNodes.Add(node);
 
                     for (var slot = (int)start; slot <= end; slot++)
                     {
@@ -1121,7 +1217,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
         DedicatedConnectionPool[] dedicatedPools;
         lock (_nodesGate)
         {
-            nodes = _nodes.Values.ToArray();
+            nodes = _allNodes.ToArray();
             stateHandlers = _nodeStateHandlers.ToArray();
             dedicatedPools = _dedicatedPools.Values.ToArray();
         }
