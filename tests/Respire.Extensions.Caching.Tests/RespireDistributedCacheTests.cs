@@ -1338,6 +1338,12 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
                 return owner._onScript(call, () => inner.ExecuteAsync(script, keys, args, sendToken));
             }
 
+            public ValueTask<RespireResult> ExecuteSpanAsync(
+                RespireScript script, ReadOnlySpan<RespireKey> keys, ReadOnlySpan<RespireValue> args,
+                CancellationToken cancellationToken = default)
+                // This test interceptor retains a callback to simulate delayed sends, so it owns copies.
+                => ExecuteAsync(script, keys.ToArray(), args.ToArray(), cancellationToken);
+
             public ValueTask<string> LoadAsync(RespireScript script, CancellationToken cancellationToken = default)
                 => inner.LoadAsync(script, cancellationToken);
         }

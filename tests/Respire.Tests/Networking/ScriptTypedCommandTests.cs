@@ -40,17 +40,24 @@ public class ScriptTypedCommandTests
     {
         await using var server = new FakeRespServer(
             "-NOSCRIPT missing\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
-        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var owner = await FakeRespServer.ConnectClientAsync(server.Port);
+        var client = owner.WithKeyPrefix("tenant:");
         var script = RespireScript.Create("return #KEYS + #ARGV");
-        RespireKey[] keys = ["key"];
-        RespireValue[] args = ["argument"];
+        RespireKey[] keys = ["ignored", "key", "ignored"];
+        RespireValue[] args = ["ignored", "argument", "ignored"];
 
-        using var result = await client.Scripts.ExecuteSpanAsync(
-            script, keys.AsSpan(), args.AsSpan());
+        var execution = client.Scripts.ExecuteSpanAsync(
+            script, keys.AsSpan(1, 1), args.AsSpan(1, 1));
+        // The caller can reuse its span storage even while NOSCRIPT fallback is pending.
+        keys[1] = "changed";
+        args[1] = "changed";
+        using var result = await execution;
 
         await Assert.That(result.AsInteger()).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands[0]).IsEqualTo(
+            $"EVALSHA {script.Sha1} 1 tenant:key argument");
         await Assert.That(server.ReceivedCommands[1]).IsEqualTo(
-            "EVAL return #KEYS + #ARGV 1 key argument");
+            "EVAL return #KEYS + #ARGV 1 tenant:key argument");
     }
 
     [Test]
