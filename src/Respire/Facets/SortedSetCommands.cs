@@ -7,7 +7,7 @@ using Respire.Protocol;
 
 namespace Respire;
 
-/// <summary>A sorted-set member with its score.</summary>
+/// <summary>A sorted-set read result containing a UTF-8 member and its score.</summary>
 public readonly record struct SortedSetEntry(string Member, double Score);
 
 /// <summary>A deserialized sorted-set member with its score.</summary>
@@ -166,7 +166,7 @@ public interface ISortedSetCommands
     /// An argument already typed as <see cref="RespireValue"/> picks the non-generic overload;
     /// any other type picks this one. Boolean members retain the Redis-native <c>1</c>/<c>0</c>
     /// encoding used by the other member APIs; other types use normal typed serialization.
-    /// <paramref name="score"/> has no default, so a lone <see cref="SortedSetEntry"/> still binds
+    /// <paramref name="score"/> has no default, so a lone member/score tuple still binds
     /// to the <c>params</c> overload.
     /// </para>
     /// </summary>
@@ -174,11 +174,11 @@ public interface ISortedSetCommands
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<bool> AddAsync<T>(RespireKey key, T member, double score, CancellationToken cancellationToken = default);
 
-    /// <summary>Adds or updates many members; returns how many were new. Redis: ZADD.</summary>
-    ValueTask<long> AddAsync(RespireKey key, params ReadOnlySpan<SortedSetEntry> entries);
+    /// <summary>Adds or updates many binary-safe members; returns how many were new. Redis: ZADD.</summary>
+    ValueTask<long> AddAsync(RespireKey key, params ReadOnlySpan<(RespireValue Member, double Score)> entries);
 
-    /// <summary>Adds or updates many members; returns how many were new. Redis: ZADD.</summary>
-    ValueTask<long> AddAsync(RespireKey key, ReadOnlySpan<SortedSetEntry> entries, CancellationToken cancellationToken);
+    /// <summary>Adds or updates many binary-safe members; returns how many were new. Redis: ZADD.</summary>
+    ValueTask<long> AddAsync(RespireKey key, ReadOnlySpan<(RespireValue Member, double Score)> entries, CancellationToken cancellationToken);
 
     /// <summary>The member's score, or null when absent. Redis: ZSCORE.</summary>
     ValueTask<double?> ScoreAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken = default);
@@ -384,16 +384,16 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
             new Cmd3(Verbs.ZAdd, client.Key(in key), score, client.SerializeCollectionMember(member)),
             cancellationToken);
 
-    public ValueTask<long> AddAsync(RespireKey key, params ReadOnlySpan<SortedSetEntry> entries)
+    public ValueTask<long> AddAsync(RespireKey key, params ReadOnlySpan<(RespireValue Member, double Score)> entries)
         => AddAsync(key, entries, CancellationToken.None);
 
     public ValueTask<long> AddAsync(
-        RespireKey key, ReadOnlySpan<SortedSetEntry> entries, CancellationToken cancellationToken)
+        RespireKey key, ReadOnlySpan<(RespireValue Member, double Score)> entries, CancellationToken cancellationToken)
         => client.IntegerAsync(
             "ZADD", new Cmd1N(Verbs.ZAdd, client.Key(in key), ScoreMemberPairs(entries)), cancellationToken);
 
     /// <summary>score member… — shared with the deferred (batch/transaction) facet.</summary>
-    internal static RespireValue[] ScoreMemberPairs(ReadOnlySpan<SortedSetEntry> entries)
+    internal static RespireValue[] ScoreMemberPairs(ReadOnlySpan<(RespireValue Member, double Score)> entries)
     {
         var args = new RespireValue[entries.Length * 2];
         for (var i = 0; i < entries.Length; i++)

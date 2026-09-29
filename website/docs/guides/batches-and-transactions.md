@@ -41,7 +41,7 @@ RespireBatch batch = redis.CreateBatch();
 RespirePending<long> pushed = batch.Lists.RightPush("queue", "job-1", "job-2");
 RespirePending<bool> stored = batch.Hashes.Set("user:1", "name", "Ada");
 RespirePending<long> ranked = batch.SortedSets.Add(
-    "leaderboard", new SortedSetEntry("ada", 42));
+    "leaderboard", ("ada", 42));
 
 RespireBatchResult result = await batch.ExecuteAsync();
 ```

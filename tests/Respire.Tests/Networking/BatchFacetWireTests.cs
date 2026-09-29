@@ -176,7 +176,7 @@ public class BatchFacetWireTests
         await client.Lists.RemoveAsync("l", "x", count: -1);
         await client.Lists.CountAsync("l");
         await client.Sets.IntersectStoreAsync("dest", "s1", "s2");
-        await client.SortedSets.AddAsync("z", new SortedSetEntry("ada", 42), new SortedSetEntry("grace", 58));
+        await client.SortedSets.AddAsync("z", ("ada", 42), ("grace", 58));
         await client.SortedSets.CountByScoreAsync("z", 10, 50);
         await client.Bitmaps.SetBitCountAsync("bits", 0, 8, BitIndexUnit.Bit);
         await client.HyperLogLog.AddAsync("hll", "one", "two");
@@ -197,7 +197,7 @@ public class BatchFacetWireTests
         _ = batch.Lists.Remove("l", "x", count: -1);
         _ = batch.Lists.Count("l");
         _ = batch.Sets.IntersectStore("dest", "s1", "s2");
-        _ = batch.SortedSets.Add("z", new SortedSetEntry("ada", 42), new SortedSetEntry("grace", 58));
+        _ = batch.SortedSets.Add("z", ("ada", 42), ("grace", 58));
         _ = batch.SortedSets.CountByScore("z", 10, 50);
         _ = batch.Bitmaps.SetBitCount("bits", 0, 8, BitIndexUnit.Bit);
         _ = batch.HyperLogLog.Add("hll", "one", "two");

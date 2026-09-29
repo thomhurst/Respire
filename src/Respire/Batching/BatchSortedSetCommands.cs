@@ -16,8 +16,8 @@ public interface IBatchSortedSetCommands
     /// <summary>Adds or updates one member. True when the member was new. Redis: ZADD.</summary>
     RespirePending<bool> Add(RespireKey key, RespireValue member, double score);
 
-    /// <summary>Adds or updates many members; returns how many were new. Redis: ZADD.</summary>
-    RespirePending<long> Add(RespireKey key, params ReadOnlySpan<SortedSetEntry> entries);
+    /// <summary>Adds or updates many binary-safe members; returns how many were new. Redis: ZADD.</summary>
+    RespirePending<long> Add(RespireKey key, params ReadOnlySpan<(RespireValue Member, double Score)> entries);
 
     /// <summary>The member's score, or null when absent. Redis: ZSCORE.</summary>
     RespirePending<double?> Score(RespireKey key, RespireValue member);
@@ -168,7 +168,7 @@ internal sealed class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSe
             "ZADD", new Cmd3(Verbs.ZAdd, sink.Client.Key(in key), score, member),
             static (c, v) => ResponseReader.Flag(in v));
 
-    public RespirePending<long> Add(RespireKey key, params ReadOnlySpan<SortedSetEntry> entries)
+    public RespirePending<long> Add(RespireKey key, params ReadOnlySpan<(RespireValue Member, double Score)> entries)
         => sink.Add<Cmd1N, long>(
             "ZADD",
             new Cmd1N(Verbs.ZAdd, sink.Client.Key(in key), SortedSetCommands.ScoreMemberPairs(entries)),

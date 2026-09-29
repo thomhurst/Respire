@@ -166,7 +166,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
             hashKey, ("profile:name", "Ada"), ("profile:role", "admin"), ("other", "ignored"));
         await client.Sets.AddAsync(setKey, "alpha", "beta", "alpine");
         await client.SortedSets.AddAsync(
-            sortedSetKey, new SortedSetEntry("ada", 1.5), new SortedSetEntry("grace", 2.5));
+            sortedSetKey, ("ada", 1.5), ("grace", 2.5));
 
         var hashEntries = new List<KeyValuePair<string, string>>();
         await foreach (var entry in client.Hashes.ScanAsync(hashKey, "profile:*", countHint: 1))
@@ -218,10 +218,10 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
 
         await client.SortedSets.AddAsync(
             sortedSetKey,
-            new SortedSetEntry("one", 1),
-            new SortedSetEntry("two", 2),
-            new SortedSetEntry("three", 3),
-            new SortedSetEntry("four", 4));
+            ("one", 1),
+            ("two", 2),
+            ("three", 3),
+            ("four", 4));
         (await client.SortedSets.PopAsync(sortedSetKey, count: 1)).Should()
             .Equal(new SortedSetEntry("one", 1));
         (await client.SortedSets.RemoveRangeByScoreAsync(sortedSetKey, 2, 3)).Should().Be(2);
@@ -244,16 +244,16 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
 
         await client.SortedSets.AddAsync(
             scores,
-            new SortedSetEntry("one", 1),
-            new SortedSetEntry("two", 2),
-            new SortedSetEntry("three", 3),
-            new SortedSetEntry("four", 4));
+            ("one", 1),
+            ("two", 2),
+            ("three", 3),
+            ("four", 4));
         await client.SortedSets.AddAsync(
             lex,
-            new SortedSetEntry("alpha", 0),
-            new SortedSetEntry("beta", 0),
-            new SortedSetEntry("omega", 0),
-            new SortedSetEntry("zulu", 0));
+            ("alpha", 0),
+            ("beta", 0),
+            ("omega", 0),
+            ("zulu", 0));
 
         var aboveOne = new RespireScoreRange(RespireScoreBound.Exclusive(1), RespireScoreBound.Max);
         (await client.SortedSets.RangeByScoreAsync(scores, aboveOne, offset: 1, count: 2))
@@ -290,9 +290,9 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
         var typed = prefix + "typed";
 
         await client.SortedSets.AddAsync(
-            first, new SortedSetEntry("one", 1), new SortedSetEntry("two", 2));
+            first, ("one", 1), ("two", 2));
         await client.SortedSets.AddAsync(
-            second, new SortedSetEntry("two", 3), new SortedSetEntry("three", 4));
+            second, ("two", 3), ("three", 4));
 
         (await client.SortedSets.ScoresManyAsync(first, "one", "missing", "two"))
             .Should().Equal(1, null, 2);

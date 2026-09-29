@@ -63,7 +63,7 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
         var contains = batch.Sets.Contains("batch:set", "x");
         var count = batch.Sets.Count("batch:set");
         var ranked = batch.SortedSets.Add(
-            "batch:z", new SortedSetEntry("ada", 42), new SortedSetEntry("grace", 58));
+            "batch:z", ("ada", 42), ("grace", 58));
         var score = batch.SortedSets.Score("batch:z", "grace");
         var leaderboard = batch.SortedSets.RangeWithScores("batch:z", descending: true);
 
