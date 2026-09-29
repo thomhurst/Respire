@@ -227,10 +227,10 @@ public interface IBitmapCommands
         RespireKey key, long offset, bool value, CancellationToken cancellationToken = default);
 
     /// <summary>Counts set bits across the whole value. Redis: BITCOUNT.</summary>
-    ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default);
+    ValueTask<long> SetBitCountAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>Counts set bits in an inclusive byte or bit range. Redis: BITCOUNT.</summary>
-    ValueTask<long> CountAsync(
+    ValueTask<long> SetBitCountAsync(
         RespireKey key, long start, long end, BitIndexUnit unit = BitIndexUnit.Byte,
         CancellationToken cancellationToken = default);
 
@@ -287,11 +287,11 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
         RespireKey key, long offset, bool value, CancellationToken cancellationToken = default)
         => SetAsync(key, offset, value, cancellationToken);
 
-    public ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default)
+    public ValueTask<long> SetBitCountAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.IntegerAsync(
             "BITCOUNT", new Cmd1(RespireCommands.Bitmap.BITCOUNT.Verb, client.Key(in key)), cancellationToken);
 
-    public ValueTask<long> CountAsync(
+    public ValueTask<long> SetBitCountAsync(
         RespireKey key, long start, long end, BitIndexUnit unit = BitIndexUnit.Byte,
         CancellationToken cancellationToken = default)
         => client.IntegerAsync(

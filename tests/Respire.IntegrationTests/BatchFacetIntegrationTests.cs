@@ -98,7 +98,7 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
 
         var batch = client.CreateBatch();
         var bitSet = batch.Bitmaps.Set("batch:bits", 4, true);
-        var bitCount = batch.Bitmaps.Count("batch:bits");
+        var bitCount = batch.Bitmaps.SetBitCount("batch:bits");
         var bitPosition = batch.Bitmaps.Position("batch:bits", true);
         var hllAdded = batch.HyperLogLog.Add("batch:hll", "ada", "grace");
         var hllCount = batch.HyperLogLog.Count("batch:hll");
