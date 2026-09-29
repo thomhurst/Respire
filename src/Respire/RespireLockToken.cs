@@ -14,8 +14,9 @@ public readonly struct RespireLockToken : IEquatable<RespireLockToken>
     private readonly ReadOnlyMemory<byte> _bytes;
 
     /// <summary>Creates a token by encoding text as UTF-8.</summary>
+    /// <exception cref="EncoderFallbackException">The text contains an unpaired UTF-16 surrogate.</exception>
     public RespireLockToken(string token)
-        => _bytes = Encoding.UTF8.GetBytes(token ?? throw new ArgumentNullException(nameof(token)));
+        => _bytes = StrictUtf8.GetBytes(token ?? throw new ArgumentNullException(nameof(token)));
 
     /// <summary>Creates a token by copying the supplied bytes, including any slice boundaries.</summary>
     public RespireLockToken(ReadOnlyMemory<byte> token) : this(token, copy: true)
@@ -67,6 +68,7 @@ public readonly struct RespireLockToken : IEquatable<RespireLockToken>
     public override int GetHashCode() => AsValue().GetHashCode();
 
     /// <summary>Returns the exact token bytes as uppercase hexadecimal for lossless display.</summary>
+    /// <remarks>Text tokens also use hexadecimal display. Use <see cref="ToUtf8String"/> to recover text.</remarks>
     public override string ToString() => Convert.ToHexString(_bytes.Span);
 
     /// <summary>Decodes a text token as UTF-8, rejecting invalid byte sequences.</summary>

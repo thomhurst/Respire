@@ -8,15 +8,32 @@ namespace Respire.Tests;
 public class RespireLockTokenTests
 {
     [Test]
-    public async Task TextAndBytesHaveIdenticalEqualityAndHashCodes()
+    [Arguments(0xD800)]
+    [Arguments(0xDC00)]
+    public async Task Text_RejectsUnpairedSurrogates(int codeUnit)
     {
-        RespireLockToken text = "owner-雪";
-        var bytes = new RespireLockToken("owner-雪"u8.ToArray());
+        var invalid = new string((char)codeUnit, 1);
+        await Assert.That(() => new RespireLockToken(invalid)).ThrowsExactly<EncoderFallbackException>();
+        await Assert.That(() =>
+        {
+            RespireLockToken token = invalid;
+            return token;
+        }).ThrowsExactly<EncoderFallbackException>();
+    }
+
+    [Test]
+    [Arguments("owner-雪")]
+    [Arguments("owner-\U0001F512")]
+    [Arguments("owner-\uFFFD")]
+    public async Task TextAndBytesHaveIdenticalEqualityAndHashCodes(string value)
+    {
+        RespireLockToken text = value;
+        var bytes = new RespireLockToken(Encoding.UTF8.GetBytes(value));
 
         await Assert.That(text == bytes).IsTrue();
         await Assert.That(text.Equals((object)bytes)).IsTrue();
         await Assert.That(text.GetHashCode()).IsEqualTo(bytes.GetHashCode());
-        await Assert.That(bytes.ToUtf8String()).IsEqualTo("owner-雪");
+        await Assert.That(bytes.ToUtf8String()).IsEqualTo(value);
         await Assert.That(text != (RespireLockToken)"other").IsTrue();
     }
 

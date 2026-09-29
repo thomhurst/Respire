@@ -141,7 +141,8 @@ token matches. Client key prefixes apply to lock keys exactly as they do to othe
 
 `TryTakeAsync`, `ResetExpiryAsync`, and `ReleaseAsync` accept `RespireLockToken`.
 `GetOwnerTokenAsync` returns `RespireLockToken?` (`null` means the key is missing), and
-`RespireLock.Token` uses the same type. Strings convert implicitly as UTF-8. For binary tokens,
+`RespireLock.Token` uses the same type. Strings convert implicitly as UTF-8; unpaired UTF-16 surrogates throw
+`EncoderFallbackException` instead of silently changing the token. For binary tokens,
 construct `new RespireLockToken(bytes)` or use an explicit cast from a byte array or memory slice.
 These operations copy the bytes without text decoding, so later changes to the original buffer
 cannot change ownership checks. Reuse the constructed token to avoid repeated copying.
