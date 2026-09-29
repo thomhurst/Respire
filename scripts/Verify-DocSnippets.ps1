@@ -1,3 +1,11 @@
+<#
+Compiles C# fences in README, website/docs, and docs against the packed packages.
+Place doc-test directives immediately before their C# fence. Use
+<!-- doc-test-declaration: split-before=FIRST_STATEMENT --> for leading declarations,
+or <!-- doc-test-tail-declaration: split-before=FIRST_DECLARATION --> for trailing types.
+The split text must occur literally in the fence; missing markers fail with the snippet ID.
+-UseAgentGuard retains the repository's standard time and memory limits for local runs.
+#>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]

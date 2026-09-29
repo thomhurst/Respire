@@ -397,7 +397,7 @@ Strings convert implicitly to `RespireCommand`, so raw and catalog calls share t
 method shapes and two fire-and-forget shapes. Interpolation holes use invariant `IFormattable`
 formatting or `ToString()`; they are not routed through a Respire serializer.
 
-`RespireResult` is the one public protocol-shaped type: `Kind`, `AsString()`,
+`RespireResult` is the one public protocol-shaped type: `Type`, `AsString()`,
 `AsInteger()`, serializer-backed `As<T>()`, `AsSpan()`, and allocation-free array enumeration.
 It owns pooled memory and must be disposed (`using`); `IsDisposed` exposes its lifetime state and
 access after disposal throws `ObjectDisposedException`. It exists only on the raw layer. The
@@ -486,7 +486,7 @@ RespireException
 ```
 
 Top-level server errors throw `RespireServerException` from both the friendly APIs and
-`SendRawAsync`. A raw aggregate reply can contain nested error elements; inspect those with
+`ExecuteAsync`. A raw aggregate reply can contain nested error elements; inspect those with
 `RespireResult.IsError`. `RespireResult` has no public `Kind` property.
 
 ## 16. Dependency injection (`Respire.Extensions.DependencyInjection`)
