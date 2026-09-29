@@ -7,6 +7,37 @@ namespace Respire.IntegrationTests;
 public class TypedCommandIntegrationTests(RedisTestContainer fixture)
 {
     [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task SortedSetSinglePop_RoundTripsImmediateBatchAndTransaction(int protocol)
+    {
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        var key = $"sorted:single-pop:{Guid.NewGuid():N}";
+        await client.SortedSets.AddAsync(key, 7, 1.5);
+        await client.SortedSets.AddAsync(key, 9, 2.5);
+        (await client.SortedSets.PopAsync(key)).Should().Be(new SortedSetEntry("7", 1.5));
+        (await client.SortedSets.PopAsync<int>(key, descending: true)).Should().Be(new SortedSetEntry<int>(9, 2.5));
+        (await client.SortedSets.PopAsync(key)).Should().BeNull();
+        (await client.SortedSets.PopAsync<int>(key)).Should().BeNull();
+
+        await client.SortedSets.AddAsync(key, 7, 1.5);
+        using var batch = client.CreateBatch();
+        var batched = batch.SortedSets.Pop<int>(key);
+        var absent = batch.SortedSets.Pop(key);
+        await batch.ExecuteAsync();
+        batched.Result.Should().Be(new SortedSetEntry<int>(7, 1.5));
+        absent.Result.Should().BeNull();
+
+        await client.SortedSets.AddAsync(key, 9, 2.5);
+        var transaction = client.CreateTransaction();
+        var transactional = transaction.SortedSets.Pop(key, descending: true);
+        var absentTyped = transaction.SortedSets.Pop<int>(key);
+        await transaction.CommitAsync();
+        transactional.Result.Should().Be(new SortedSetEntry("9", 2.5));
+        absentTyped.Result.Should().BeNull();
+    }
+
+    [Test]
     public async Task StreamAddOptionsAndDescendingRange_RoundTripAgainstRedis()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);

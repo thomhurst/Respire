@@ -38,6 +38,14 @@ public interface IBatchSortedSetCommands
     /// <summary>Number of members. Redis: ZCARD.</summary>
     RespirePending<long> Count(RespireKey key);
 
+    /// <summary>Removes one member with its score, or returns null if empty. Redis: ZPOPMIN / ZPOPMAX.</summary>
+    RespirePending<SortedSetEntry?> Pop(RespireKey key, bool descending = false);
+
+    /// <summary>Removes and deserializes one member with its score, or returns null if empty. Redis: ZPOPMIN / ZPOPMAX.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    RespirePending<SortedSetEntry<T>?> Pop<T>(RespireKey key, bool descending = false);
+
     /// <summary>
     /// Removes and returns up to <paramref name="count"/> members, lowest-scored first unless
     /// <paramref name="descending"/> is true. Redis: ZPOPMIN / ZPOPMAX.
@@ -203,11 +211,29 @@ internal sealed class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSe
             "ZCARD", new Cmd1(Verbs.ZCard, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.Integer(in v));
 
+    public RespirePending<SortedSetEntry?> Pop(RespireKey key, bool descending = false)
+    {
+        var command = SortedSetCommands.PopCommand(descending);
+        return sink.Add<Cmd1, SortedSetEntry?>(
+            command.Name, new Cmd1(command.Verb, sink.Client.Key(in key)),
+            static (c, v) => SortedSetCommands.ParseEntry(in v));
+    }
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public RespirePending<SortedSetEntry<T>?> Pop<T>(RespireKey key, bool descending = false)
+    {
+        var command = SortedSetCommands.PopCommand(descending);
+        return sink.Add<Cmd1, SortedSetEntry<T>?>(
+            command.Name, new Cmd1(command.Verb, sink.Client.Key(in key)),
+            static (c, v) => SortedSetCommands.ParseEntry<T>(c, in v));
+    }
+
     public RespirePending<SortedSetEntry[]> Pop(
         RespireKey key, long count, bool descending = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(count);
-        var command = descending ? RespireCommands.SortedSet.ZPOPMAX : RespireCommands.SortedSet.ZPOPMIN;
+        var command = SortedSetCommands.PopCommand(descending);
         return sink.Add<Cmd2, SortedSetEntry[]>(
             command.Name, new Cmd2(command.Verb, sink.Client.Key(in key), count),
             static (c, v) => SortedSetCommands.ParseEntries(in v));
@@ -219,7 +245,7 @@ internal sealed class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSe
         RespireKey key, long count, bool descending = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(count);
-        var command = descending ? RespireCommands.SortedSet.ZPOPMAX : RespireCommands.SortedSet.ZPOPMIN;
+        var command = SortedSetCommands.PopCommand(descending);
         return sink.Add<Cmd2, SortedSetEntry<T>[]>(
             command.Name, new Cmd2(command.Verb, sink.Client.Key(in key), count),
             static (c, v) => SortedSetCommands.ParseEntries<T>(c, in v));

@@ -52,7 +52,19 @@ internal static class ResponseReader
             return value.AsInteger();
         }
 
-        return Utf8Parser.TryParse(value.AsSpan(), out double parsed, out _) ? parsed : 0;
+        var bytes = value.AsSpan();
+        if (Utf8Parser.TryParse(bytes, out double parsed, out _))
+        {
+            return parsed;
+        }
+
+        // Redis uses inf/-inf for RESP2 scores, unlike Utf8Parser's Infinity spelling.
+        if (bytes.SequenceEqual("inf"u8) || bytes.SequenceEqual("+inf"u8))
+        {
+            return double.PositiveInfinity;
+        }
+
+        return bytes.SequenceEqual("-inf"u8) ? double.NegativeInfinity : 0;
     }
 
     public static double? DoubleOrNull(in RespValue value) => value.IsNull ? null : Double(in value);
