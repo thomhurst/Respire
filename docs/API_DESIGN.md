@@ -485,8 +485,9 @@ RespireException
 └── RespireServerException         // .Code, .CommandName, and .IsTransient
 ```
 
-Server errors always throw at the friendly layer — no error-as-value inspection. Only
-`RespireResult` (raw layer) exposes `Kind == Error` for people who asked for the wire.
+Top-level server errors throw `RespireServerException` from both the friendly APIs and
+`SendRawAsync`. A raw aggregate reply can contain nested error elements; inspect those with
+`RespireResult.IsError`. `RespireResult` has no public `Kind` property.
 
 ## 16. Dependency injection (`Respire.Extensions.DependencyInjection`)
 
