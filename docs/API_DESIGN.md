@@ -230,8 +230,8 @@ result.ThrowIfAnyFailed();
 string? av = a.Result;   // valid only after ExecuteAsync
 ```
 
-Always declare batches with `using var`. Disposal faults pending commands if execution never
-starts; after execution, it preserves their results and errors. Repeated disposal is safe.
+Always declare batches with `using var`. See [batch disposal guarantees](../website/docs/guides/batches-and-transactions.md)
+for pending commands, completed results, and repeated disposal.
 
 A batch carries the same facets as the client (`Strings`, `Keys`, `Hashes`, `Lists`, `Sets`,
 `SortedSets`, `Bitmaps`, `HyperLogLog`, `Geo`) with matching command names minus the `Async`

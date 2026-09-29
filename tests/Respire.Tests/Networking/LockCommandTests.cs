@@ -512,19 +512,21 @@ public class LockCommandTests
     public async Task RespireLock_KeepAliveCancelsAtLeaseDeadlineWhileRenewalIsInFlight()
     {
         var commands = new CoordinatedLockCommands(waitForCancellation: true);
+        // Renewal starts halfway through the lease. Leave enough scheduling time for the
+        // parallel suite to enter the blocked renewal before the deadline expires.
         var mutex = new RespireLock(
             commands,
             "resource",
             "owner"u8.ToArray(),
-            TimeSpan.FromMilliseconds(200),
+            TimeSpan.FromSeconds(5),
             Stopwatch.GetTimestamp());
         await using var keepAlive = await mutex.KeepAliveAsync();
 
-        await commands.FirstExtensionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await commands.FirstExtensionStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
         try
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, keepAlive.CancellationToken)
-                .WaitAsync(TimeSpan.FromSeconds(5));
+                .WaitAsync(TimeSpan.FromSeconds(10));
         }
         catch (OperationCanceledException)
         {

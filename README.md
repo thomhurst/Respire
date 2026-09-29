@@ -132,8 +132,8 @@ transaction.Lists.RightPush("audit", "withdraw:100");
 await transaction.CommitAsync();
 ```
 
-Always declare batches with `using var`. Disposal faults pending commands if execution never
-starts; after execution, it preserves their results and errors. Repeated disposal is safe.
+Always declare batches with `using var`. See [batch disposal guarantees](website/docs/guides/batches-and-transactions.md)
+for pending commands, completed results, and repeated disposal.
 
 Always commit or dispose a transaction so its pooled buffer and any dedicated WATCH connection
 are released. `await using` protects early-return and command-queuing failure paths; disposal is
