@@ -118,6 +118,7 @@ an explicit implementation. Existing implementations that inherited the removed 
 now fail to compile until those members are supplied. Client calls keep the same signatures.
 
 ```csharp
+// The connected client also exposes these APIs through its interface.
 IRespireClient client = redis;
 string? text = await client.GetStringAsync("user:1:name", cancellationToken);
 User? user = await client.GetAsync<User>("user:1", cancellationToken);
@@ -345,7 +346,7 @@ await redis.Streams.CreateGroupAsync("events", "processors", createStream: true)
 await foreach (var entry in redis.Streams.ReadGroupAsync(
     "events", group: "processors", consumer: Environment.MachineName, cancellationToken: cancellationToken))
 {
-    Console.WriteLine(entry["type"]); // field access on the entry
+    Console.WriteLine(entry.GetString("type")); // decoded field value
     await entry.AckAsync();
 }
 ```
@@ -493,6 +494,7 @@ Server errors always throw at the friendly layer — no error-as-value inspectio
 ```csharp
 builder.Services.AddRespire(builder.Configuration.GetConnectionString("redis")!);
 
+// The explicit parameter type selects the options-builder action overload.
 // Multiple clients via keyed services
 builder.Services.AddKeyedRespire("cache",    (RespireOptionsBuilder o) => o.Endpoints.Add(new("cache-host")));
 builder.Services.AddKeyedRespire("sessions", (RespireOptionsBuilder o) => o.Endpoints.Add(new("sess-host")));
