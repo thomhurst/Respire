@@ -319,6 +319,39 @@ public class RespireOptionsTests
     }
 
     [Test]
+    [Arguments("15360")]
+    [Arguments("Tls12|12288")]
+    public async Task StackExchangeConnectionString_AcceptsCombinedTlsMasks(string protocols)
+    {
+        var options = RespireOptions.Parse($"cache,ssl=true,sslProtocols={protocols}");
+
+        await Assert.That(options.TlsOptions!.EnabledSslProtocols).IsEqualTo(
+            System.Security.Authentication.SslProtocols.Tls12 | System.Security.Authentication.SslProtocols.Tls13);
+    }
+
+    [Test]
+    public async Task StackExchangeConnectionString_TlsSettingsDoNotEnableTls()
+    {
+        var options = RespireOptions.Parse("cache,sslProtocols=Tls12,checkCertificateRevocation=true");
+
+        await Assert.That(options.UseTls).IsFalse();
+        await Assert.That(options.TlsOptions!.EnabledSslProtocols)
+            .IsEqualTo(System.Security.Authentication.SslProtocols.Tls12);
+        await Assert.That(options.TlsOptions.CertificateRevocationCheckMode)
+            .IsEqualTo(System.Security.Cryptography.X509Certificates.X509RevocationMode.Online);
+    }
+
+    [Test]
+    [Arguments("cache,cluster=invalid")]
+    [Arguments("cache,ssl=invalid")]
+    [Arguments("cache,checkCertificateRevocation=invalid")]
+    [Arguments("redis://cache?sentinelTls=invalid")]
+    public async Task ConnectionString_RejectsInvalidBooleanOptions(string connectionString)
+    {
+        await Assert.That(() => RespireOptions.Parse(connectionString)).Throws<ArgumentException>();
+    }
+
+    [Test]
     [Arguments("999")]
     [Arguments("Tls12|999")]
     [Arguments("Unknown")]

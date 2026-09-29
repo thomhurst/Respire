@@ -490,7 +490,7 @@ public sealed record RespireOptions
                     break;
                 case "cluster":
                 case "usecluster":
-                    cluster = bool.Parse(value);
+                    cluster = ParseBooleanOption(name, value);
                     break;
                 case "servicename":
                 case "sentinelprimaryname":
@@ -510,10 +510,10 @@ public sealed record RespireOptions
                     sentinelPassword = value;
                     break;
                 case "sentineltls":
-                    sentinelUseTls = bool.Parse(value);
+                    sentinelUseTls = ParseBooleanOption(name, value);
                     break;
                 case "allowadmin":
-                    allowAdmin = bool.Parse(value);
+                    allowAdmin = ParseBooleanOption(name, value);
                     break;
                 default:
                     throw new ArgumentException($"Unknown connection string parameter '{name}'.", nameof(connectionString));
@@ -543,12 +543,28 @@ public sealed record RespireOptions
         }.ValidateAndSnapshot();
     }
 
+    private static bool ParseBooleanOption(string name, string value)
+    {
+        if (!bool.TryParse(value, out var result))
+        {
+            throw new ArgumentException($"Option '{name}' requires 'true' or 'false'.", nameof(value));
+        }
+
+        return result;
+    }
+
     private static SslProtocols ParseSslProtocols(string value)
     {
+        var definedBits = SslProtocols.None;
+        foreach (var definedProtocol in Enum.GetValues<SslProtocols>())
+        {
+            definedBits |= definedProtocol;
+        }
+
         var protocols = SslProtocols.None;
         foreach (var name in value.Split('|', StringSplitOptions.TrimEntries))
         {
-            if (!Enum.TryParse<SslProtocols>(name, ignoreCase: true, out var protocol) || !Enum.IsDefined(protocol))
+            if (!Enum.TryParse<SslProtocols>(name, ignoreCase: true, out var protocol) || (protocol & ~definedBits) != 0)
             {
                 throw new ArgumentException($"Unsupported sslProtocols value '{name}'.", nameof(value));
             }
@@ -603,7 +619,7 @@ public sealed record RespireOptions
                     password = value;
                     break;
                 case "ssl":
-                    useTls = bool.Parse(value);
+                    useTls = ParseBooleanOption(name, value);
                     break;
                 case "name":
                 case "clientname":
@@ -633,7 +649,7 @@ public sealed record RespireOptions
                     break;
                 case "cluster":
                 case "usecluster":
-                    cluster = bool.Parse(value);
+                    cluster = ParseBooleanOption(name, value);
                     break;
                 case "servicename":
                 case "sentinelprimaryname":
@@ -647,7 +663,7 @@ public sealed record RespireOptions
                     sentinelPassword = value;
                     break;
                 case "sentineltls":
-                    sentinelUseTls = bool.Parse(value);
+                    sentinelUseTls = ParseBooleanOption(name, value);
                     break;
                 case "sslhost":
                     ArgumentException.ThrowIfNullOrWhiteSpace(value, name);
@@ -661,12 +677,12 @@ public sealed record RespireOptions
                     (tlsOptions ??= new()).EnabledSslProtocols = ParseSslProtocols(value);
                     break;
                 case "checkcertificaterevocation":
-                    (tlsOptions ??= new()).CertificateRevocationCheckMode = bool.Parse(value)
+                    (tlsOptions ??= new()).CertificateRevocationCheckMode = ParseBooleanOption(name, value)
                         ? X509RevocationMode.Online
                         : X509RevocationMode.NoCheck;
                     break;
                 case "allowadmin":
-                    allowAdmin = bool.Parse(value);
+                    allowAdmin = ParseBooleanOption(name, value);
                     break;
                 default:
                     throw new ArgumentException(
