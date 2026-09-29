@@ -73,7 +73,62 @@ public class BatchFacetWireTests
     }
 
     [Test]
-    public async Task ExecuteAsync_ReturnsPerCommandFailureSummary()
+    public async Task ExecuteAsync_ThrowsFirstFailureAfterCompletingEveryPending()
+    {
+        await using var server = new FakeRespServer(
+            "-WRONGTYPE first failed\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray(),
+            "-ERR last failed\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var batch = client.CreateBatch();
+        var first = batch.GetString("first");
+        var succeeded = batch.Exists("present");
+        var last = batch.GetString("last");
+
+        var error = await Assert.That(async () => await batch.ExecuteAsync())
+            .ThrowsExactly<RespireServerException>();
+
+        await Assert.That(error).IsSameReferenceAs(first.Error);
+        await Assert.That(succeeded.Result).IsTrue();
+        await Assert.That(last.Error).IsTypeOf<RespireServerException>();
+        batch.Dispose();
+        await Assert.That(succeeded.Result).IsTrue();
+        await Assert.That(first.Error).IsSameReferenceAs(error);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ExecuteAsync_CancellationFaultsPendingsAndRemainsSingleShot(bool inspect)
+    {
+        await using var client = RespireClient.Create("localhost:6379");
+        using var batch = client.CreateBatch();
+        var pending = batch.GetString("key");
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        if (inspect)
+        {
+            var result = await batch.TryExecuteAsync(cancellation.Token);
+            await Assert.That(result.FirstError).IsSameReferenceAs(pending.Error);
+            await Assert.That(result.FailureCount).IsEqualTo(1);
+        }
+        else
+        {
+            var error = await Assert.That(async () => await batch.ExecuteAsync(cancellation.Token))
+                .Throws<OperationCanceledException>();
+            await Assert.That(error).IsSameReferenceAs(pending.Error);
+        }
+        await Assert.That(pending.Error is OperationCanceledException).IsTrue();
+        await Assert.That(batch.IsSent).IsTrue();
+        await Assert.That(async () => await batch.ExecuteAsync()).ThrowsExactly<InvalidOperationException>();
+        await Assert.That(async () => await batch.TryExecuteAsync()).ThrowsExactly<InvalidOperationException>();
+        batch.Dispose();
+        await Assert.That(async () => await batch.TryExecuteAsync()).ThrowsExactly<ObjectDisposedException>();
+    }
+
+    [Test]
+    public async Task TryExecuteAsync_ReturnsPerCommandFailureSummary()
     {
         await using var server = new FakeRespServer(
             "-WRONGTYPE bad value\r\n"u8.ToArray(),
@@ -84,7 +139,7 @@ public class BatchFacetWireTests
         var failed = batch.GetString("wrong-type");
         var succeeded = batch.Exists("present");
 
-        var result = await batch.ExecuteAsync();
+        var result = await batch.TryExecuteAsync();
 
         await Assert.That(result.Count).IsEqualTo(2);
         await Assert.That(result.FailureCount).IsEqualTo(1);
@@ -99,7 +154,9 @@ public class BatchFacetWireTests
     }
 
     [Test]
-    public async Task ExecuteAsync_CommandTimeout_CarriesOperationName()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ExecuteAsync_CommandTimeout_CarriesOperationName(bool inspect)
     {
         await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
         server.SuppressReply = static command => command == "GET key";
@@ -113,9 +170,17 @@ public class BatchFacetWireTests
         var batch = client.CreateBatch();
         var timedOut = batch.GetString("key");
 
-        var result = await batch.ExecuteAsync();
-
-        await Assert.That(result.FailureCount).IsEqualTo(1);
+        if (inspect)
+        {
+            var result = await batch.TryExecuteAsync();
+            await Assert.That(result.FailureCount).IsEqualTo(1);
+        }
+        else
+        {
+            var thrown = await Assert.That(async () => await batch.ExecuteAsync())
+                .ThrowsExactly<RespireTimeoutException>();
+            await Assert.That(thrown).IsSameReferenceAs(timedOut.Error);
+        }
         var error = await Assert.That(timedOut.Error).IsTypeOf<RespireTimeoutException>();
         await Assert.That(error!.CommandName).IsEqualTo("GET");
     }
@@ -136,7 +201,9 @@ public class BatchFacetWireTests
     }
 
     [Test]
-    public async Task ExecuteAsync_ConnectionFailureReturnsSummaryAndFaultsPendings()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ExecuteAsync_ConnectionFailureFaultsEveryPending(bool inspect)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -152,7 +219,14 @@ public class BatchFacetWireTests
         var first = batch.GetString("first");
         var second = batch.Exists("second");
 
-        var result = await batch.ExecuteAsync();
+        if (!inspect)
+        {
+            var error = await Assert.That(async () => await batch.ExecuteAsync()).Throws<Exception>();
+            await Assert.That(first.Error).IsSameReferenceAs(error);
+            await Assert.That(second.Error).IsSameReferenceAs(error);
+            return;
+        }
+        var result = await batch.TryExecuteAsync();
 
         await Assert.That(result.Count).IsEqualTo(2);
         await Assert.That(result.FailureCount).IsEqualTo(2);
@@ -177,7 +251,7 @@ public class BatchFacetWireTests
         var batch = client.CreateBatch();
         var pending = batch.GetString("key");
 
-        await batch.ExecuteAsync();
+        await Assert.That(async () => await batch.ExecuteAsync()).ThrowsExactly<RespireServerException>();
         var error = Assert.Throws<RespireServerException>(() => _ = pending.Result);
         await Assert.That(error.CommandName).IsEqualTo("GET");
     }

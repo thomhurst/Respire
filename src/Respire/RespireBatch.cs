@@ -45,7 +45,7 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
 
     internal RespireBatch(RespireClient client) => _client = client;
 
-    /// <summary>Gets whether <see cref="ExecuteAsync"/> has started.</summary>
+    /// <summary>Gets whether <see cref="ExecuteAsync"/> or <see cref="TryExecuteAsync"/> has started.</summary>
     public bool IsSent => _sent;
 
     /// <summary>Gets the number of queued commands.</summary>
@@ -159,16 +159,30 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
         => Add<TCommand, T>(operation, in command, convert);
 
     /// <summary>
+    /// Sends every queued command and completes all pendings, then rethrows the first failure
+    /// in original queue order. Successful pending results remain available when another command
+    /// fails. Use <see cref="TryExecuteAsync"/> and <see cref="RespireBatchResult.Failures"/>
+    /// to inspect every failure without rethrowing the first one.
+    /// </summary>
+    public async ValueTask<RespireBatchResult> ExecuteAsync(CancellationToken cancellationToken = default)
+    {
+        var result = await TryExecuteAsync(cancellationToken).ConfigureAwait(false);
+        result.ThrowIfAnyFailed();
+        return result;
+    }
+
+    /// <summary>
     /// Sends every queued command in one flush and completes all pendings. Per-command failures
     /// (server errors, <see cref="RespireOptions.CommandTimeout"/> expiry) fault that command's
     /// pending and are summarized in the returned result.
     /// In cluster mode, commands are grouped by slot and each group shares one connection so its
     /// commands retain queue order. Different slot groups may run out of order, and an acquisition
     /// failure faults only its group. Connection-acquisition failures use the same result contract
-    /// in standalone and cluster modes; call <see cref="RespireBatchResult.ThrowIfAnyFailed"/> when
-    /// fail-fast behavior is preferred.
+    /// in standalone and cluster modes. Command, conversion, timeout, cancellation, and
+    /// connection-acquisition failures are reported in the result rather than rethrown.
+    /// Invalid lifecycle use, such as executing a disposed or already-sent batch, still throws.
     /// </summary>
-    public async ValueTask<RespireBatchResult> ExecuteAsync(CancellationToken cancellationToken = default)
+    public async ValueTask<RespireBatchResult> TryExecuteAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (_sent)

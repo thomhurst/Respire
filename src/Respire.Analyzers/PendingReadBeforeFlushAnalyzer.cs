@@ -24,6 +24,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
     internal const string TransactionBaseTypeName = "Respire.RespireTransactionBase";
 
     private const string SendAsync = "SendAsync";
+    private const string ExecuteAsync = "ExecuteAsync";
+    private const string TryExecuteAsync = "TryExecuteAsync";
     private const string CommitAsync = "CommitAsync";
     private const string ResultPropertyName = "Result";
     private const string GetAwaiter = "GetAwaiter";
@@ -195,7 +197,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
             }
 
             context.ReportDiagnostic(Diagnostic.Create(
-                Rule, read.GetLocation(), batch.Name, isTransaction ? CommitAsync : SendAsync));
+                Rule, read.GetLocation(), batch.Name, isTransaction ? CommitAsync : ExecuteAsync));
             return;
         }
     }
@@ -437,7 +439,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                         && context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol
                             is IMethodSymbol { ReducedFrom: not null }
                         && (!allowNamedFlushExtension
-                            || member.Name.Identifier.ValueText is not (SendAsync or CommitAsync))
+                            || member.Name.Identifier.ValueText is not (SendAsync or ExecuteAsync or TryExecuteAsync or CommitAsync))
                         && DominatesRead(context, scope, invocation, before))
                     {
                         return true;
@@ -862,12 +864,13 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
     private static bool IsFlushInvocation(
         SyntaxNodeAnalysisContext context, InvocationExpressionSyntax invocation, ILocalSymbol batch)
     {
-        var expectedName = batch.Type.ToDisplayString() == BatchTypeName ? SendAsync : CommitAsync;
+        var isBatch = batch.Type.ToDisplayString() == BatchTypeName;
         return ScopeWalker.Unwrap(invocation.Expression) is MemberAccessExpressionSyntax member
-               && member.Name.Identifier.ValueText == expectedName
                && context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol
                    is IMethodSymbol method
-               && method.Name == expectedName
+               && (isBatch
+                   ? method.Name is SendAsync or ExecuteAsync or TryExecuteAsync
+                   : method.Name == CommitAsync)
                && SymbolEqualityComparer.Default.Equals(method.ContainingType, batch.Type)
                && context.SemanticModel.GetSymbolInfo(
                    ScopeWalker.Unwrap(member.Expression), context.CancellationToken).Symbol is ILocalSymbol target

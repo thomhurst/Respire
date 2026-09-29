@@ -12,6 +12,36 @@ namespace Respire.IntegrationTests;
 public class BatchFacetIntegrationTests(RedisTestContainer fixture)
 {
     [Test]
+    [Arguments(2, false)]
+    [Arguments(2, true)]
+    [Arguments(3, false)]
+    [Arguments(3, true)]
+    public async Task Batch_FailureHandlingPreservesSuccessfulCommands(int protocol, bool inspect)
+    {
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        var key = $"batch:failure:{Guid.NewGuid():N}";
+        await client.Hashes.SetAsync(key, "field", "value");
+        using var batch = client.CreateBatch();
+        var failed = batch.GetString(key);
+        var successful = batch.Hashes.GetString(key, "field");
+        if (inspect)
+        {
+            var result = await batch.TryExecuteAsync();
+            result.FailureCount.Should().Be(1);
+            result.FirstError.Should().BeSameAs(failed.Error);
+        }
+        else
+        {
+            Func<Task> execute = async () => { await batch.ExecuteAsync(); };
+            var thrown = await execute.Should().ThrowAsync<RespireServerException>();
+            thrown.Which.Should().BeSameAs(failed.Error);
+        }
+        successful.Result.Should().Be("value");
+        failed.Error.Should().BeOfType<RespireServerException>();
+        await client.Keys.DeleteAsync(key);
+    }
+
+    [Test]
     public async Task Batch_StringAndKeyFacets_RoundTrip()
     {
         await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);

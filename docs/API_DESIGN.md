@@ -267,8 +267,7 @@ using var batch = redis.CreateBatch();
 RespirePending<string?> a = batch.GetString("a");
 RespirePending<long>    n = batch.Increment("hits");
 RespirePending<long>    q = batch.Lists.RightPush("queue", "job-1");
-RespireBatchResult result = await batch.ExecuteAsync(ct);
-result.ThrowIfAnyFailed();
+await batch.ExecuteAsync(ct);
 
 string? av = a.Result;   // valid only after ExecuteAsync
 ```
@@ -295,9 +294,12 @@ implementations, wrappers, delegates, and variables that explicitly use the prev
 `RespirePendingNotReadyException` if touched before `ExecuteAsync`. The synchronous queueing names
 make accidental early awaits conspicuous, while the exception prevents a deadlock. `Status`, `HasResult`, `Error`,
 and `TryGetResult` expose pending, successful, faulted, and aborted outcomes without try/catch.
-`ExecuteAsync` returns the batch-wide `Count`, `FailureCount`, and `FirstError`; command and
-connection-acquisition failures fault their pendings and do not throw unless the caller invokes
-`ThrowIfAnyFailed`.
+`ExecuteAsync` completes all pendings, then throws the first failure in original queue order.
+Successful pending results remain readable, and the returned summary describes a successful flush.
+Use `TryExecuteAsync` to inspect `Count`, `FailureCount`, `FirstError`, and `Failures` without
+rethrowing command or connection-acquisition errors. Both methods preserve timeout/cancellation
+errors on their pendings and reject disposed or already-sent batches. **Breaking behavior change:**
+pre-release callers that inspect failed summaries must migrate from `ExecuteAsync` to `TryExecuteAsync`.
 
 ## 6. Transactions
 

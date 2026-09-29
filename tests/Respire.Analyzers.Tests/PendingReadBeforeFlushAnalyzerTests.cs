@@ -6,6 +6,95 @@ namespace Respire.Analyzers.Tests;
 public class PendingReadBeforeFlushAnalyzerTests
 {
     [Test]
+    [Arguments("ExecuteAsync")]
+    [Arguments("TryExecuteAsync")]
+    public async Task ExecuteThenRead_IsNotFlagged(string method) => await Verify.VerifyAsync(
+        $$$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                var summary = await batch.{{{method}}}().ConfigureAwait(false);
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("ExecuteAsync")]
+    [Arguments("TryExecuteAsync")]
+    public async Task StoredExecuteThenRead_IsNotFlagged(string method) => await Verify.VerifyAsync(
+        $$$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                var flush = batch.{{{method}}}();
+                await flush;
+                Console.WriteLine(pending.Result);
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("ExecuteAsync")]
+    [Arguments("TryExecuteAsync")]
+    public async Task UnawaitedExecuteThenRead_IsFlagged(string method) => await Verify.VerifyAsync(
+        $$$"""
+        using System;
+        using Respire;
+
+        public class Caller
+        {
+            public void Run(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                var flush = batch.{{{method}}}();
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
+    [Arguments("ExecuteAsync")]
+    [Arguments("TryExecuteAsync")]
+    public async Task SameNamedExecuteExtension_IsFlagged(string method) => await Verify.VerifyAsync(
+        $$$"""
+        using System;
+        using System.Threading.Tasks;
+        using Respire;
+
+        public static class Extensions
+        {
+            public static ValueTask {{{method}}}(this RespireBatch batch, bool ignored) => default;
+        }
+
+        public class Caller
+        {
+            public async Task RunAsync(RespireClient client)
+            {
+                var batch = client.CreateBatch();
+                var pending = batch.GetStringAsync("key");
+                await batch.{{{method}}}(false);
+                Console.WriteLine({|RESP002:pending.Result|});
+            }
+        }
+        """);
+
+    [Test]
     public async Task ResultReadBeforeSend_IsFlagged() => await Verify.VerifyAsync(
         """
         using System;
