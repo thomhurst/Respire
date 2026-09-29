@@ -184,10 +184,10 @@ public interface ISortedSetCommands
     ValueTask<double?> ScoreAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken = default);
 
     /// <summary>The scores for each member, preserving nulls for absent members. Redis: ZMSCORE.</summary>
-    ValueTask<double?[]> ScoresAsync(RespireKey key, params ReadOnlySpan<RespireValue> members);
+    ValueTask<double?[]> ScoresManyAsync(RespireKey key, params ReadOnlySpan<RespireValue> members);
 
     /// <summary>The scores for each member, preserving nulls for absent members. Redis: ZMSCORE.</summary>
-    ValueTask<double?[]> ScoresAsync(
+    ValueTask<double?[]> ScoresManyAsync(
         RespireKey key, ReadOnlySpan<RespireValue> members, CancellationToken cancellationToken);
 
     /// <summary>Atomically adds to a member's score and returns the new score. Redis: ZINCRBY.</summary>
@@ -408,10 +408,10 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
     public ValueTask<double?> ScoreAsync(RespireKey key, RespireValue member, CancellationToken cancellationToken = default)
         => client.DoubleOrNullAsync("ZSCORE", new Cmd2(Verbs.ZScore, client.Key(in key), member), cancellationToken);
 
-    public ValueTask<double?[]> ScoresAsync(RespireKey key, params ReadOnlySpan<RespireValue> members)
-        => ScoresAsync(key, members, CancellationToken.None);
+    public ValueTask<double?[]> ScoresManyAsync(RespireKey key, params ReadOnlySpan<RespireValue> members)
+        => ScoresManyAsync(key, members, CancellationToken.None);
 
-    public ValueTask<double?[]> ScoresAsync(
+    public ValueTask<double?[]> ScoresManyAsync(
         RespireKey key, ReadOnlySpan<RespireValue> members, CancellationToken cancellationToken)
         => client.NullableDoubleArrayAsync(
             "ZMSCORE", new Cmd1N(Verbs.ZMScore, client.Key(in key), members.ToArray()), cancellationToken);
