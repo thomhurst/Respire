@@ -545,3 +545,13 @@ var json = redis.As<IJsonCommands>();
    serialized objects and `GetStringAsync` for the raw-string common case, so that
    `GetAsync<string>` vs `GetStringAsync` never ambiguity-trap users. Alternative: make
    non-generic `GetAsync` return `string?` and require `<T>` for objects.
+
+### Single-member and multi-member pops
+
+Sets and sorted sets use `PopAsync` for one member and `PopManyAsync(key, count, ...)`
+for an array. Batch and transaction facets use `Pop` and `PopMany`. Sorted-set typed
+operations follow the same naming. Lists retain `LeftPopManyAsync`/`RightPopManyAsync`
+and their deferred forms. Missing keys return null for scalar pops and empty arrays
+for multi-member pops. Rename pre-release count-based `PopAsync`/`Pop` calls to their
+`Many` forms; no compatibility aliases remain. Redis commands and count semantics
+are unchanged, including an empty result for a zero count.

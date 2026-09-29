@@ -115,8 +115,8 @@ public class SetSortedSetCoverageTests
             "*1\r\n*2\r\n$5\r\nthree\r\n$3\r\n3.5\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var minimum = await client.SortedSets.PopAsync("scores", count: 2);
-        var maximum = await client.SortedSets.PopAsync("scores", count: 1, descending: true);
+        var minimum = await client.SortedSets.PopManyAsync("scores", count: 2);
+        var maximum = await client.SortedSets.PopManyAsync("scores", count: 1, descending: true);
 
         await Assert.That(minimum).IsEquivalentTo(new[]
         {
@@ -157,7 +157,7 @@ public class SetSortedSetCoverageTests
             "*2\r\n$3\r\none\r\n$3\r\none\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        var popped = await client.Sets.PopAsync("set", count: 2);
+        var popped = await client.Sets.PopManyAsync("set", count: 2);
         var random = await client.Sets.RandomMembersAsync("set", count: -2);
 
         await Assert.That(popped).IsEquivalentTo(new[] { "one", "two" });
@@ -181,9 +181,9 @@ public class SetSortedSetCoverageTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var batch = client.CreateBatch();
 
-        var popped = batch.Sets.Pop("set", count: 2);
+        var popped = batch.Sets.PopMany("set", count: 2);
         var random = batch.Sets.RandomMembers("set", count: -2);
-        var sorted = batch.SortedSets.Pop("scores", count: 1);
+        var sorted = batch.SortedSets.PopMany("scores", count: 1);
         var byScore = batch.SortedSets.RemoveRangeByScore("scores", 1.5, 3.5);
         var byRank = batch.SortedSets.RemoveRangeByRank("scores", 0, 2);
 
@@ -210,14 +210,14 @@ public class SetSortedSetCoverageTests
         await using var server = new FakeRespServer();
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        await Assert.That(async () => await client.Sets.PopAsync("set", -1))
+        await Assert.That(async () => await client.Sets.PopManyAsync("set", -1))
             .ThrowsExactly<ArgumentOutOfRangeException>();
-        await Assert.That(async () => await client.SortedSets.PopAsync("scores", -1))
+        await Assert.That(async () => await client.SortedSets.PopManyAsync("scores", -1))
             .ThrowsExactly<ArgumentOutOfRangeException>();
         var batch = client.CreateBatch();
-        await Assert.That(() => batch.Sets.Pop("set", -1))
+        await Assert.That(() => batch.Sets.PopMany("set", -1))
             .ThrowsExactly<ArgumentOutOfRangeException>();
-        await Assert.That(() => batch.SortedSets.Pop("scores", -1))
+        await Assert.That(() => batch.SortedSets.PopMany("scores", -1))
             .ThrowsExactly<ArgumentOutOfRangeException>();
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }

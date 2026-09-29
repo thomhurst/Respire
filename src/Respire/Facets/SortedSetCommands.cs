@@ -208,7 +208,7 @@ public interface ISortedSetCommands
         CancellationToken cancellationToken = default);
 
     /// <summary>Removes the lowest-scored member, or the highest when descending; returns null if empty. Redis: ZPOPMIN / ZPOPMAX.</summary>
-    /// <remarks>For multiple members, use the count overload (for example, <c>PopAsync(key, count: 1)</c> returns an array).</remarks>
+    /// <remarks>For multiple members, use <c>PopManyAsync</c> (for example, <c>PopManyAsync(key, count: 1)</c> returns an array).</remarks>
     ValueTask<SortedSetEntry?> PopAsync(
         RespireKey key, bool descending = false, CancellationToken cancellationToken = default);
 
@@ -222,14 +222,14 @@ public interface ISortedSetCommands
     /// Removes and returns up to <paramref name="count"/> members, lowest-scored first unless
     /// <paramref name="descending"/> is true. Redis: ZPOPMIN / ZPOPMAX.
     /// </summary>
-    ValueTask<SortedSetEntry[]> PopAsync(
+    ValueTask<SortedSetEntry[]> PopManyAsync(
         RespireKey key, long count, bool descending = false,
         CancellationToken cancellationToken = default);
 
     /// <summary>Removes members and deserializes them with their scores. Redis: ZPOPMIN / ZPOPMAX.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    ValueTask<SortedSetEntry<T>[]> PopAsync<T>(
+    ValueTask<SortedSetEntry<T>[]> PopManyAsync<T>(
         RespireKey key, long count, bool descending = false,
         CancellationToken cancellationToken = default);
 
@@ -466,7 +466,7 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
             static (RespireClient state, in RespValue value) => ParseEntry<T>(state, in value));
     }
 
-    public ValueTask<SortedSetEntry[]> PopAsync(
+    public ValueTask<SortedSetEntry[]> PopManyAsync(
         RespireKey key, long count, bool descending = false,
         CancellationToken cancellationToken = default)
     {
@@ -479,7 +479,7 @@ internal sealed class SortedSetCommands(RespireClient client) : ISortedSetComman
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public ValueTask<SortedSetEntry<T>[]> PopAsync<T>(
+    public ValueTask<SortedSetEntry<T>[]> PopManyAsync<T>(
         RespireKey key, long count, bool descending = false,
         CancellationToken cancellationToken = default)
     {

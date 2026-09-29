@@ -86,7 +86,7 @@ public class SortedSetAlgebraCommandTests
         var byScore = await client.SortedSets.RangeByScoreAsync<int>("typed", 1, 2);
         var scoreEntries = await client.SortedSets.RangeByScoreWithScoresAsync<int>(
             "typed", new RespireScoreRange(1, 2));
-        var popped = await client.SortedSets.PopAsync<int>("typed", 2);
+        var popped = await client.SortedSets.PopManyAsync<int>("typed", 2);
 
         await Assert.That(byRank).IsEquivalentTo(new[] { 7, 9 });
         await Assert.That(byScore).IsEquivalentTo(new[] { 7, 9 });
@@ -119,7 +119,7 @@ public class SortedSetAlgebraCommandTests
         var byScore = batch.SortedSets.RangeByScore<int>("typed", 1, 2);
         var scoreEntries = batch.SortedSets.RangeByScoreWithScores<int>(
             "typed", new RespireScoreRange(1, 2));
-        var popped = batch.SortedSets.Pop<int>("typed", 2);
+        var popped = batch.SortedSets.PopMany<int>("typed", 2);
 
         await batch.ExecuteAsync();
 
