@@ -201,7 +201,7 @@ No API returns pooled memory without `Lease` in its name.
 
 ```csharp
 await foreach (var key in redis.Keys.ScanAsync(
-    match: "user:*", countHint: 250, type: "hash", cancellationToken: ct))
+    match: "user:*", type: RespireKeyType.Hash, countHint: 250, cancellationToken: ct))
 {
     Console.WriteLine(key);
 }

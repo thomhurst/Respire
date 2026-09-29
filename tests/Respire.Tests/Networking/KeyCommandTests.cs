@@ -29,7 +29,7 @@ public class KeyCommandTests
         await Assert.That(await client.Keys.CopyAsync("source", "target")).IsFalse();
         await Assert.That(await client.Keys.CopyAsync("source", "target", replace: true)).IsTrue();
         var keys = await CollectAsync(client.Keys.ScanAsync(
-            "user:*", countHint: 12, type: RespireKeyType.Hash));
+            "user:*", RespireKeyType.Hash, 12, CancellationToken.None));
 
         await Assert.That(keys).IsEquivalentTo(["k1", "k2"]);
         await Assert.That(server.ReceivedCommands).IsEquivalentTo([
@@ -57,9 +57,9 @@ public class KeyCommandTests
         await using var server = new FakeRespServer("*2\r\n$1\r\n0\r\n*0\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
-        _ = await CollectAsync(client.Keys.ScanAsync(type: type));
+        _ = await CollectAsync(client.Keys.ScanAsync("user:*", type));
 
-        await Assert.That(server.ReceivedCommands[0]).IsEqualTo($"SCAN 0 COUNT 250 TYPE {token}");
+        await Assert.That(server.ReceivedCommands[0]).IsEqualTo($"SCAN 0 MATCH user:* COUNT 250 TYPE {token}");
     }
 
     [Test]

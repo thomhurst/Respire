@@ -99,13 +99,15 @@ bool copied = await redis.Keys.CopyAsync("template", "working-copy", replace: tr
 ```csharp
 await foreach (string key in redis.Keys.ScanAsync(
     match: "session:*",
-    countHint: 500,
     type: RespireKeyType.Hash,
+    countHint: 500,
     cancellationToken: stoppingToken))
 {
     await InspectAsync(key);
 }
 ```
+
+Use `ScanAsync("session:*", RespireKeyType.Hash)` to filter by type with the default count hint.
 
 `countHint` maps to Redis `COUNT`; it guides work per iteration but does not guarantee page size.
 Prefer `SCAN` over `KEYS` in production; each page yields control and avoids a single server-blocking sweep.
