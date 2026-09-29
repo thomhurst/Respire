@@ -43,7 +43,7 @@ foreach (var entry in await redis.SortedSets.RangeWithScoresAsync("leaderboard",
 // ── Batch: explicit pipeline, one flush ──────────────────────────────────────
 // Batches and transactions carry the same facets as the client — batch.Hashes.Set
 // mirrors redis.Hashes.SetAsync — but return a pending instead of awaiting.
-var batch = redis.CreateBatch();
+using var batch = redis.CreateBatch();
 var a = batch.GetString("greeting");
 var b = batch.Increment("stats:hits");
 var profile = batch.Hashes.GetAll("user:1:profile");

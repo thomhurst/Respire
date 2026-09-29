@@ -10,8 +10,9 @@ namespace Respire;
 /// An explicit pipeline: queue commands, then <see cref="ExecuteAsync"/> flushes them to one
 /// connection together and completes every queued <see cref="RespirePending{T}"/>. Not atomic —
 /// use <see cref="RespireTransaction"/> for MULTI/EXEC semantics. Single-shot and not
-/// thread-safe: build, send once, discard. Dispose an unsent batch to fault its queued pendings
-/// with <see cref="RespireBatchDiscardedException"/>.
+/// thread-safe: build, send once, discard. Always use a <c>using</c> declaration. Disposing an
+/// unsent batch faults its queued pendings with <see cref="RespireBatchDiscardedException"/>;
+/// disposing after execution preserves their results and errors.
 /// </summary>
 /// <remarks>
 /// Commands are grouped into the same facets as the client — <c>batch.Hashes.Set</c>
@@ -291,7 +292,8 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
 
     /// <summary>
     /// Discards an unsent batch and faults every queued pending with
-    /// <see cref="RespireBatchDiscardedException"/>.
+    /// <see cref="RespireBatchDiscardedException"/>. After execution, preserves all pending results
+    /// and errors. Repeated disposal is safe; always use a <c>using</c> declaration.
     /// </summary>
     public void Dispose()
     {

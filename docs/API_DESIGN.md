@@ -245,7 +245,7 @@ Auto-pipelining already happens under concurrency; `CreateBatch` exists for the
 sequential-code case where you want N commands in one flush:
 
 ```csharp
-var batch = redis.CreateBatch();
+using var batch = redis.CreateBatch();
 RespirePending<string?> a = batch.GetString("a");
 RespirePending<long>    n = batch.Increment("hits");
 RespirePending<long>    q = batch.Lists.RightPush("queue", "job-1");
@@ -254,6 +254,9 @@ result.ThrowIfAnyFailed();
 
 string? av = a.Result;   // valid only after ExecuteAsync
 ```
+
+Always declare batches with `using var`. See [batch disposal guarantees](../website/docs/guides/batches-and-transactions.md)
+for pending commands, completed results, and repeated disposal.
 
 A batch carries the same facets as the client (`Strings`, `Keys`, `Hashes`, `Lists`, `Sets`,
 `SortedSets`, `Bitmaps`, `HyperLogLog`, `Geo`) with matching command names minus the `Async`

@@ -497,34 +497,38 @@ public class LockCommandTests
             commands,
             "resource",
             "owner"u8.ToArray(),
-            TimeSpan.FromSeconds(30),
+            TimeSpan.FromMinutes(1),
             Stopwatch.GetTimestamp());
 
+        // Keep the shortened lease long enough for parallel CI scheduling. The 10-second
+        // observation window still expires before the original 30-second renewal delay.
         await using var keepAlive = await mutex.KeepAliveAsync();
-        await Assert.That(await mutex.ResetExpiryAsync(TimeSpan.FromMilliseconds(200))).IsTrue();
+        await Assert.That(await mutex.ResetExpiryAsync(TimeSpan.FromSeconds(5))).IsTrue();
 
-        await commands.SecondExtensionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await commands.SecondExtensionStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(commands.Expiries).IsEquivalentTo(
-            [TimeSpan.FromMilliseconds(200), TimeSpan.FromMilliseconds(200)]);
+            [TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5)]);
     }
 
     [Test]
     public async Task RespireLock_KeepAliveCancelsAtLeaseDeadlineWhileRenewalIsInFlight()
     {
         var commands = new CoordinatedLockCommands(waitForCancellation: true);
+        // Renewal starts halfway through the lease. Leave enough scheduling time for the
+        // parallel suite to enter the blocked renewal before the deadline expires.
         var mutex = new RespireLock(
             commands,
             "resource",
             "owner"u8.ToArray(),
-            TimeSpan.FromMilliseconds(200),
+            TimeSpan.FromSeconds(5),
             Stopwatch.GetTimestamp());
         await using var keepAlive = await mutex.KeepAliveAsync();
 
-        await commands.FirstExtensionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await commands.FirstExtensionStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
         try
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, keepAlive.CancellationToken)
-                .WaitAsync(TimeSpan.FromSeconds(5));
+                .WaitAsync(TimeSpan.FromSeconds(10));
         }
         catch (OperationCanceledException)
         {

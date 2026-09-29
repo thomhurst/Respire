@@ -870,7 +870,8 @@ public sealed partial class RespireClient : IRespireClient
     /// <summary>
     /// Starts an explicit pipeline: queue commands, then <see cref="RespireBatch.ExecuteAsync"/>
     /// flushes them together. Queued results are unreadable until the batch is sent — awaiting
-    /// early throws instead of deadlocking. Dispose an unsent batch to fault its queued pendings.
+    /// early throws instead of deadlocking. Always use a <c>using</c> declaration: disposal faults
+    /// unsent pendings and preserves their results and errors after execution.
     /// </summary>
     public RespireBatch CreateBatch() => new(this);
 

@@ -117,7 +117,7 @@ results. Both carry the same facets as the client — `batch.Lists.RightPush` mi
 `redis.Lists.RightPushAsync` — but return a `RespirePending<T>` instead of awaiting.
 
 ```csharp
-var batch = redis.CreateBatch();
+using var batch = redis.CreateBatch();
 var name = batch.GetString("name");
 var visits = batch.Increment("visits");
 var profile = batch.Hashes.GetAll("user:1");
@@ -131,6 +131,9 @@ var balance = transaction.Increment("balance", -100);
 transaction.Lists.RightPush("audit", "withdraw:100");
 await transaction.CommitAsync();
 ```
+
+Always declare batches with `using var`. See [batch disposal guarantees](https://thomhurst.github.io/Respire/docs/guides/batches-and-transactions)
+for pending commands, completed results, and repeated disposal.
 
 Always commit or dispose a transaction so its pooled buffer and any dedicated WATCH connection
 are released. `await using` protects early-return and command-queuing failure paths; disposal is
