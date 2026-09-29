@@ -377,7 +377,12 @@ long count = await redis.Scripts.ExecuteIntegerAsync(RateLimit,
 
 Scripts also expose `ExecuteAsync<T>()` and `ExecuteStringAsync()` conveniences that dispose the
 pooled raw result after conversion. `ExecuteSpanAsync()` accepts `ReadOnlySpan<T>` inputs; both raw
-entry points return a `RespireResult` that the caller must dispose.
+entry points return a `RespireResult` that the caller must dispose. The span member is the required
+implementation core; the array convenience forwards spans without allocating input copies. The
+built-in client consumes input spans synchronously and keeps one combined command tail for async
+execution and NOSCRIPT fallback. That tail still allocates; the span path avoids separate key and
+argument arrays. `ExecuteSpanAsync` retains its distinct name to keep array and collection-expression
+calls unambiguous. Custom `IScriptCommands` implementations must implement the span member.
 
 - SHA1 computed once at `Create`; `ExecuteAsync` tries EVALSHA, falls back to EVAL on
   NOSCRIPT, transparently.

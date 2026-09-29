@@ -81,23 +81,26 @@ public interface IScriptCommands
     /// <summary>
     /// Executes a script. Keys go through KEYS[…] (and get this view's key prefix); args through
     /// ARGV[…]. The result is a lease — dispose it. Redis: EVALSHA / EVAL.
+    /// Arrays are forwarded as spans without copying; null arrays mean empty inputs.
     /// </summary>
     ValueTask<RespireResult> ExecuteAsync(
         RespireScript script,
         RespireKey[]? keys = null,
         RespireValue[]? args = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default)
+        => ExecuteSpanAsync(script, keys.AsSpan(), args.AsSpan(), cancellationToken);
 
     /// <summary>
     /// Executes a script from span-based key and argument collections. The result owns pooled
     /// memory and must be disposed. Redis: EVALSHA / EVAL.
+    /// Implementations must consume the spans before returning; callers may reuse their input
+    /// storage as soon as this method returns its pending operation.
     /// </summary>
     ValueTask<RespireResult> ExecuteSpanAsync(
         RespireScript script,
         ReadOnlySpan<RespireKey> keys,
         ReadOnlySpan<RespireValue> args,
-        CancellationToken cancellationToken = default)
-        => ExecuteAsync(script, keys.ToArray(), args.ToArray(), cancellationToken);
+        CancellationToken cancellationToken = default);
 
     /// <summary>Executes a script and deserializes its scalar result. Redis: EVALSHA / EVAL.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -143,11 +146,7 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
     public ValueTask<RespireResult> ExecuteAsync(
         RespireScript script, RespireKey[]? keys = null, RespireValue[]? args = null,
         CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(script);
-        var tail = client.BuildScriptTail(keys, args);
-        return client.ExecuteScriptAsync(script, tail, cancellationToken);
-    }
+        => ExecuteSpanAsync(script, keys.AsSpan(), args.AsSpan(), cancellationToken);
 
     public ValueTask<RespireResult> ExecuteSpanAsync(
         RespireScript script,
