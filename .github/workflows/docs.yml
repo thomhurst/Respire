@@ -17,7 +17,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: pages
+  # PR validation must not replace another PR's pending build. Keep deployments serialized.
+  group: ${{ github.event_name == 'pull_request' && format('pages-{0}', github.ref) || 'pages' }}
   cancel-in-progress: false
 
 jobs:
