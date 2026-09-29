@@ -280,8 +280,8 @@ and `TryGetResult` expose pending, successful, faulted, and aborted outcomes wit
 Successful pending results remain readable, and the returned summary describes a successful flush.
 Use `TryExecuteAsync` to inspect `Count`, `FailureCount`, `FirstError`, and `Failures` without
 rethrowing command or connection-acquisition errors. Both methods preserve timeout/cancellation
-errors on their pendings and reject disposed or already-sent batches. Pre-release callers that
-inspect failed summaries must migrate from `ExecuteAsync` to `TryExecuteAsync`.
+errors on their pendings and reject disposed or already-sent batches. **Breaking behavior change:**
+pre-release callers that inspect failed summaries must migrate from `ExecuteAsync` to `TryExecuteAsync`.
 
 ## 6. Transactions
 

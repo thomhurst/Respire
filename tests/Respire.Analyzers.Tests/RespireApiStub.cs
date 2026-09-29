@@ -47,12 +47,16 @@ internal static class RespireApiStub
                 public void UnsafeOnCompleted(Action continuation) { continuation(); }
             }
 
+            public readonly struct RespireBatchResult { }
+
             public sealed class RespireBatch
             {
                 public BatchHashCommands Hashes => new BatchHashCommands();
                 public RespirePending<string> GetStringAsync(string key) => new RespirePending<string>();
                 public RespirePending<long> IncrementAsync(string key) => new RespirePending<long>();
                 public ValueTask SendAsync() => default;
+                public ValueTask<RespireBatchResult> ExecuteAsync() => default;
+                public ValueTask<RespireBatchResult> TryExecuteAsync() => default;
             }
 
             public abstract class RespireTransactionBase : IAsyncDisposable
