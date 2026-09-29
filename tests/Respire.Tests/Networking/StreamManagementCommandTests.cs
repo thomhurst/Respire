@@ -9,6 +9,28 @@ namespace Respire.Tests.Networking;
 public class StreamManagementCommandTests
 {
     [Test]
+    public async Task Range_DefaultsToAscendingAndAcceptsTrailingDirection()
+    {
+        var reply = "*0\r\n"u8.ToArray();
+        await using var server = new FakeRespServer(reply, reply, reply, reply);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        _ = await client.Streams.RangeAsync("events");
+        _ = await client.Streams.RangeAsync("events", descending: true);
+        _ = await client.Streams.RangeAsync("events", "1-0", "9-0", 2);
+        _ = await client.Streams.RangeAsync(
+            "events", "1-0", "9-0", 2, descending: true, cancellationToken: CancellationToken.None);
+
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        {
+            "XRANGE events - +",
+            "XREVRANGE events + -",
+            "XRANGE events 1-0 9-0 COUNT 2",
+            "XREVRANGE events 9-0 1-0 COUNT 2",
+        });
+    }
+
+    [Test]
     public async Task StreamRecovery_ClaimsEntriesAndReplaysOwnPendingEntries()
     {
         var entry = Arr("1-0", Arr("type", "job"));

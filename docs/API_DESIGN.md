@@ -311,7 +311,8 @@ await foreach (var entry in redis.Streams.ReadGroupAsync(
 (comparable struct, not string).
 Pass `StreamAddOptions` to select an id, trim with `MAXLEN`, or require an existing stream.
 The options overload returns `null` when `CreateStream` is false and the stream is absent.
-`RangeAsync(..., descending: true)` reads the newest matching entries first with `XREVRANGE`.
+`RangeAsync(key, start, end, count, descending: true)` reads the newest matching entries first with `XREVRANGE`.
+Streams and sorted sets use an optional `descending = false` parameter immediately before the cancellation token.
 
 Consumer recovery is typed as well. `ClaimAsync` transfers known pending ids with `XCLAIM`;
 `ClaimPendingAsync` scans idle entries with `XAUTOCLAIM` and returns the next scan position,

@@ -317,21 +317,13 @@ public interface IStreamCommands
     /// <summary>Number of entries. Redis: XLEN.</summary>
     ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default);
 
-    /// <summary>Entries in an inclusive id range. Redis: XRANGE.</summary>
-    ValueTask<RespireStreamEntry[]> RangeAsync(
-        RespireKey key,
-        RespireStreamId? start = null,
-        RespireStreamId? end = null,
-        int? count = null,
-        CancellationToken cancellationToken = default);
-
     /// <summary>Entries in an inclusive id range, optionally newest first. Redis: XRANGE or XREVRANGE.</summary>
     ValueTask<RespireStreamEntry[]> RangeAsync(
         RespireKey key,
-        bool descending,
         RespireStreamId? start = null,
         RespireStreamId? end = null,
         int? count = null,
+        bool descending = false,
         CancellationToken cancellationToken = default);
 
     /// <summary>Deletes stream entries; returns the number removed. Redis: XDEL.</summary>
@@ -561,12 +553,7 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
 
     public ValueTask<RespireStreamEntry[]> RangeAsync(
         RespireKey key, RespireStreamId? start = null, RespireStreamId? end = null, int? count = null,
-        CancellationToken cancellationToken = default)
-        => RangeAsync(key, descending: false, start, end, count, cancellationToken);
-
-    public ValueTask<RespireStreamEntry[]> RangeAsync(
-        RespireKey key, bool descending, RespireStreamId? start = null, RespireStreamId? end = null, int? count = null,
-        CancellationToken cancellationToken = default)
+        bool descending = false, CancellationToken cancellationToken = default)
     {
         var from = (descending ? end ?? RespireStreamId.Max : start ?? RespireStreamId.Min).Value;
         var to = (descending ? start ?? RespireStreamId.Min : end ?? RespireStreamId.Max).Value;
