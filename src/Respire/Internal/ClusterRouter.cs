@@ -320,6 +320,13 @@ internal sealed class ClusterRouter : IAsyncDisposable
             host = host[1..^1];
         }
 
+        // Redis uses ? when hostname routing is configured but the target has no announced
+        // hostname. It is not a DNS name and must not use the empty-host fallback.
+        if (host.SequenceEqual("?"))
+        {
+            return false;
+        }
+
         endpoint = new RespireEndpoint(host.IsEmpty ? sourceHost : host.ToString(), port);
         return true;
     }

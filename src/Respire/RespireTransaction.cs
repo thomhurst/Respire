@@ -384,6 +384,11 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                 }
 
                 reply.Dispose();
+                if (!ClusterRouter.TryParseRedirect(redirect, connection.Host, out _, out _))
+                {
+                    throw redirect;
+                }
+
                 if (redirect.Code == RespireErrorCodes.Ask)
                 {
                     throw new RespireConnectionException(
