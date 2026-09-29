@@ -48,7 +48,7 @@ public class MultiItemCancellationOverloadTests
                     .Append(typeof(CancellationToken))
                     .ToArray();
 
-                if (!methods.Any(candidate => Matches(candidate, method.Name, expected)))
+                if (!methods.Any(candidate => Matches(candidate, method, expected)))
                 {
                     missing.Add($"{type.Name}.{method.Name}({string.Join(", ", expected.Select(Describe))})");
                 }
@@ -224,20 +224,25 @@ public class MultiItemCancellationOverloadTests
         _ = client.Streams.AcknowledgeAsync("st", "group", ids, token);
     }
 
-    private static bool Matches(MethodInfo candidate, string name, Type[] expected)
+    private static bool Matches(MethodInfo candidate, MethodInfo original, Type[] expected)
     {
-        if (candidate.Name != name)
+        if (candidate.Name != original.Name
+            || candidate.GetGenericArguments().Length != original.GetGenericArguments().Length
+            || Describe(candidate.ReturnType) != Describe(original.ReturnType))
         {
             return false;
         }
 
         var parameters = candidate.GetParameters();
-        if (parameters.Length != expected.Length || IsParamsSpan(parameters[^1]))
+        if (parameters.Length != expected.Length
+            || parameters[^1].ParameterType != typeof(CancellationToken)
+            || parameters[^1].IsOptional
+            || parameters.Any(IsParamsSpan))
         {
             return false;
         }
 
-        return !parameters.Where((parameter, index) => parameter.ParameterType != expected[index]).Any();
+        return !parameters.Where((parameter, index) => Describe(parameter.ParameterType) != Describe(expected[index])).Any();
     }
 
     /// <summary>
@@ -252,9 +257,19 @@ public class MultiItemCancellationOverloadTests
                     is "ParamArrayAttribute" or "ParamCollectionAttribute");
 
     private static string Describe(Type type)
-        => type.IsGenericType
+    {
+        if (type.IsGenericParameter)
+        {
+            return $"T{type.GenericParameterPosition}";
+        }
+        if (type.IsArray)
+        {
+            return $"{Describe(type.GetElementType()!)}[]";
+        }
+        return type.IsGenericType
             ? $"{type.Name[..type.Name.IndexOf('`')]}<{string.Join(", ", type.GetGenericArguments().Select(Describe))}>"
-            : type.Name;
+            : type.FullName ?? type.Name;
+    }
 
     private enum Overload
     {

@@ -59,6 +59,9 @@ string?[] values = await redis.Strings.GetManyAsync("feature:a", "feature:b");
 long removed = await redis.DeleteAsync("feature:a", "feature:b");
 ```
 
+Respire deliberately retains bare-varargs calls such as `DeleteAsync("a", "b")`, so multi-item
+commands use a uniform pair of overloads rather than a single optional-token span overload.
+
 Variadic APIs use `params ReadOnlySpan<T>` where possible, avoiding a params-array allocation on supported C# toolchains. Because a `params` parameter must come last, each of these has a sibling overload taking the items non-params plus a required `CancellationToken`:
 
 ```csharp
