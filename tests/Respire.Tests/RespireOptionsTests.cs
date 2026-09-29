@@ -198,10 +198,11 @@ public class RespireOptionsTests
     public async Task UriOptions_ExposeDescriptivePropertyNames()
     {
         var options = RespireOptions.Parse(
-            "redis://localhost?useCluster=true&sentinelPrimaryName=primary&connectionIdleReadTimeoutMs=2500");
+            "redis://localhost?useCluster=true&connectionIdleReadTimeoutMs=2500");
+        var sentinel = RespireOptions.Parse("redis://localhost?sentinelPrimaryName=primary");
 
         await Assert.That(options.UseCluster).IsTrue();
-        await Assert.That(options.SentinelPrimaryName).IsEqualTo("primary");
+        await Assert.That(sentinel.SentinelPrimaryName).IsEqualTo("primary");
         await Assert.That(options.ConnectionIdleReadTimeout)
             .IsEqualTo(TimeSpan.FromMilliseconds(2500));
     }
@@ -288,8 +289,10 @@ public class RespireOptionsTests
 
     [Test]
     [Arguments("cache-a,cache-b,cluster=true,serviceName=primary")]
+    [Arguments("redis://cache?cluster=true&serviceName=primary")]
+    [Arguments("redis://cache?serviceName=primary&cluster=true")]
     [Arguments("cache-a,cache-b,serviceName= ")]
-    public async Task StackExchangeConnectionString_RejectsConflictingOrEmptyMode(string connectionString)
+    public async Task ConnectionString_RejectsConflictingOrEmptyMode(string connectionString)
     {
         await Assert.That(() => RespireOptions.Parse(connectionString)).Throws<ArgumentException>();
     }

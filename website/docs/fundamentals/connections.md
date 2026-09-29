@@ -115,6 +115,10 @@ connection. Use `ssl=true` or `sslHost` without `ssl=false` to enable TLS. Boole
 (case-insensitive); other values throw `ArgumentException`. Existing password splitting and
 async-timeout precedence stay unchanged.
 
+In Cluster mode, an explicit `sslHost` applies the same certificate/SNI target to every seed
+and discovered node. Use it only when every node certificate covers that shared name; omit it
+to validate each connection's own hostname.
+
 Mode options are `cluster` (or `useCluster`) and `serviceName` (or `sentinelPrimaryName`).
 Sentinel also accepts `sentinelUser`, `sentinelPassword`, `sentinelTls`, and `sentinelSslHost`; an empty
 `sentinelPassword=` disables inherited authentication. Omitted ports default to 26379 in

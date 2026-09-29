@@ -497,6 +497,7 @@ public sealed record RespireOptions
             }
         }
 
+        mode.Validate();
         var defaultPort = mode.ServiceName is null ? 6379 : 26379;
         return new RespireOptions
         {
@@ -527,6 +528,16 @@ public sealed record RespireOptions
         public string? SentinelUsername { get; private set; }
         public string? SentinelPassword { get; private set; }
         public bool? SentinelUseTls { get; private set; }
+
+        public void Validate()
+        {
+            if (UseCluster && ServiceName is not null)
+            {
+                throw new ArgumentException(
+                    "Redis Cluster (cluster=true) and Sentinel (serviceName) cannot both be selected.",
+                    "connectionString");
+            }
+        }
 
         public bool TryApply(string name, string value)
         {
@@ -707,12 +718,7 @@ public sealed record RespireOptions
                 nameof(connectionString));
         }
 
-        if (mode.UseCluster && mode.ServiceName is not null)
-        {
-            throw new ArgumentException(
-                "Redis Cluster (cluster=true) and Sentinel (serviceName) cannot both be selected.",
-                nameof(connectionString));
-        }
+        mode.Validate();
 
         if (endpointTexts.Count > 1 && !mode.UseCluster && mode.ServiceName is null)
         {
