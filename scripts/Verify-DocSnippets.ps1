@@ -1,10 +1,20 @@
+<#
+Compiles C# fences in README, website/docs, and docs against the packed packages.
+Place doc-test directives immediately before their C# fence. Use
+<!-- doc-test-declaration: split-before=FIRST_STATEMENT --> for leading declarations,
+or <!-- doc-test-tail-declaration: split-before=FIRST_DECLARATION --> for trailing types.
+The split text must occur literally in the fence; missing markers fail with the snippet ID.
+-UseAgentGuard retains the repository's standard time and memory limits for local runs.
+#>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
     [string]$PackagesPath,
 
     [Parameter(Mandatory)]
-    [string]$Version
+    [string]$Version,
+
+    [switch]$UseAgentGuard
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,7 +28,7 @@ $restorePackagesPath = Join-Path $generatedDirectory 'packages'
 $projectPath = Join-Path $repositoryRoot 'tests/Respire.DocTests/Respire.DocTests.csproj'
 $documentPaths = @(
     (Join-Path $repositoryRoot 'README.md')
-    Get-ChildItem (Join-Path $repositoryRoot 'website/docs') -Recurse -File -Include '*.md', '*.mdx' |
+    Get-ChildItem @((Join-Path $repositoryRoot 'website/docs'), (Join-Path $repositoryRoot 'docs')) -Recurse -File -Include '*.md', '*.mdx' |
         Sort-Object FullName |
         ForEach-Object FullName
 )
@@ -338,20 +348,28 @@ for ($snippetIndex = 0; $snippetIndex -lt $snippets.Count; $snippetIndex++)
 </configuration>
 "@)
 
-& dotnet restore $projectPath --configfile $nugetConfigPath --force --packages $restorePackagesPath `
-    "-p:RespirePackageVersion=$Version" `
-    "-p:GeneratedSnippetsPath=$generatedPath"
-
-if ($LASTEXITCODE -ne 0)
+function Invoke-DocumentationDotNet([string[]]$Arguments)
 {
-    throw "Documentation snippet restore failed with exit code $LASTEXITCODE."
+    if ($UseAgentGuard)
+    {
+        & (Join-Path $PSScriptRoot 'Invoke-AgentDotNet.ps1') -SingleNode -DotNetArguments $Arguments
+    }
+    else
+    {
+        & dotnet @Arguments
+    }
+
+    if ($LASTEXITCODE -ne 0)
+    {
+        throw "Documentation snippet command failed with exit code $LASTEXITCODE."
+    }
 }
 
-& dotnet run --project $projectPath -c Release --no-restore `
-    "-p:RespirePackageVersion=$Version" `
-    "-p:GeneratedSnippetsPath=$generatedPath"
-
-if ($LASTEXITCODE -ne 0)
-{
-    throw "Documentation snippet project failed with exit code $LASTEXITCODE."
-}
+Invoke-DocumentationDotNet @(
+    'restore', $projectPath, '--configfile', $nugetConfigPath, '--force', '--packages', $restorePackagesPath,
+    "-p:RespirePackageVersion=$Version", "-p:GeneratedSnippetsPath=$generatedPath"
+)
+Invoke-DocumentationDotNet @(
+    'run', '--project', $projectPath, '-c', 'Release', '--no-restore',
+    "-p:RespirePackageVersion=$Version", "-p:GeneratedSnippetsPath=$generatedPath"
+)

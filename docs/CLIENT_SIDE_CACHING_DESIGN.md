@@ -213,10 +213,12 @@ for mutation safety.
 
 ## Microsoft.Extensions integration
 
-`Respire.Extensions.DependencyInjection` mirrors the core option and provides an idiomatic helper:
+`Respire.Extensions.DependencyInjection` mirrors the core option and provides an idiomatic helper.
+The action receives `RespireOptionsBuilder`, whose `Endpoints` collection supports `Add`.
+The explicit parameter type selects this overload instead of the service-provider factory:
 
 ```csharp
-services.AddRespire(options =>
+builder.Services.AddRespire((RespireOptionsBuilder options) =>
 {
     options.Endpoints.Add(new RespireEndpoint("redis.internal"));
     options.UseClientSideCaching();

@@ -49,7 +49,11 @@ pool of dedicated connections that blocking calls transparently rent:
 ```csharp
 string? job = await redis.Lists.LeftPopAsync("jobs", waitFor: TimeSpan.FromSeconds(30));
 var moved  = await redis.Lists.MoveAsync("todo", "doing", waitFor: TimeSpan.FromSeconds(5));
-await foreach (var entry in redis.Streams.ReadGroupAsync("events", "grp", consumer)) { … }
+await foreach (var entry in redis.Streams.ReadGroupAsync("events", "grp", "worker-1"))
+{
+    Console.WriteLine(entry.Id);
+    await entry.AckAsync();
+}
 ```
 
 Work queues, reliable-queue patterns (`BLMOVE`), and stream consumer groups work the way the
@@ -78,7 +82,10 @@ When you *do* want zero-copy or explicit flushing, both are spelled out:
 
 ```csharp
 using var lease = await redis.Strings.GetLeaseAsync("blob");   // pooled, no copy
-using var batch = redis.CreateBatch(); … await batch.ExecuteAsync();    // one explicit flush
+using var batch = redis.CreateBatch();
+var pending = batch.GetString("key");
+await batch.ExecuteAsync(); // one explicit flush
+Console.WriteLine(pending.Result);
 ```
 
 `benchmarks/Respire.ComparisonBenchmarks` tracks throughput and allocations against

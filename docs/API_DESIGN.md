@@ -1,7 +1,7 @@
 # Respire API Design Spec
 
-Greenfield API design for a modern .NET Redis/RESP client. Pre-release — nothing here is
-constrained by the current public surface. The wire layer (multiplexed connections, FIFO
+Current API design and explicitly marked roadmap for a modern .NET Redis/RESP client.
+The public surface is pre-release. The wire layer (multiplexed connections, FIFO
 inflight ring, auto-pipelining, persistent flush task) stays as-is; this spec is about what
 users touch.
 
@@ -73,7 +73,7 @@ forwarders are no longer default interface implementations.
 await using var redis = await RespireClient.ConnectAsync("redis://localhost");
 
 // Full control — options record, init-only
-await using var redis = await RespireClient.ConnectAsync(new RespireOptions
+await using var configuredRedis = await RespireClient.ConnectAsync(new RespireOptions
 {
     Endpoints = { new("cache.example.com", 6379) },
     Password = builder.Configuration["Redis:Password"],
@@ -82,7 +82,7 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
     ConnectTimeout = TimeSpan.FromSeconds(5),
     CommandTimeout = TimeSpan.FromSeconds(2),
     Connections = 4,
-    Serializer = SystemTextJsonSerializer.FromContext(AppJsonContext.Default),
+    Serializer = new SystemTextJsonSerializer(),
     LoggerFactory = loggerFactory,
 });
 ```
@@ -118,37 +118,23 @@ an explicit implementation. Existing implementations that inherited the removed 
 now fail to compile until those members are supplied. Client calls keep the same signatures.
 
 ```csharp
-public sealed class RespireClient : IRespireClient, IAsyncDisposable
-{
-    // Root shortcuts (delegate to Strings/Keys facets)
-    ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken ct = default);
-    ValueTask<T?>      GetAsync<T>(RespireKey key, CancellationToken ct = default);
-    ValueTask<bool>    SetAsync(RespireKey key, RespireValue value,
-                                RespireExpiry expiry = default,   // none | In | At | Keep
-                                SetWhen when = SetWhen.Always,
-                                CancellationToken ct = default);
-    ValueTask<bool>    SetAsync<T>(RespireKey key, T value, /* same options */);
-    ValueTask<long>    DeleteAsync(params ReadOnlySpan<RespireKey> keys);
-    ValueTask<long>    DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken ct);
-    ValueTask<bool>    ExistsAsync(RespireKey key, CancellationToken ct = default);
-    ValueTask<long>    IncrementAsync(RespireKey key, long by = 1, CancellationToken ct = default);
-    ValueTask<bool>    ExpireAsync(RespireKey key, RespireExpiry expiry,
-                                   ExpireWhen when = ExpireWhen.Always,
-                                   CancellationToken ct = default);
-    ValueTask<TimeSpan> PingAsync(CancellationToken ct = default);   // returns measured RTT
-
-    // Facets
-    IStringCommands    Strings    { get; }
-    IKeyCommands       Keys       { get; }   // EXPIRE, TTL, TYPE, SCAN, RENAME, PERSIST…
-    IHashCommands      Hashes     { get; }
-    IListCommands      Lists      { get; }
-    ISetCommands       Sets       { get; }
-    ISortedSetCommands SortedSets { get; }
-    IStreamCommands    Streams    { get; }
-    IScriptCommands    Scripts    { get; }
-    IServerCommands    Server     { get; }   // INFO, DBSIZE, FLUSHDB, CONFIG…
-}
+// The connected client also exposes these APIs through its interface.
+IRespireClient client = redis;
+string? text = await client.GetStringAsync("user:1:name", cancellationToken);
+User? user = await client.GetAsync<User>("user:1", cancellationToken);
+bool stored = await client.SetAsync("user:1:name", "Ada",
+    expiry: TimeSpan.FromMinutes(5), cancellationToken: cancellationToken);
+long removed = await client.DeleteAsync(["old:a", "old:b"], cancellationToken);
+bool exists = await client.ExistsAsync("user:1", cancellationToken);
+long hits = await client.IncrementAsync("hits", cancellationToken: cancellationToken);
+bool expires = await client.ExpireAsync("user:1", TimeSpan.FromMinutes(5),
+    cancellationToken: cancellationToken);
+TimeSpan roundTrip = await client.PingAsync(cancellationToken);
 ```
+
+The facet properties are `Strings`, `Keys`, `Hashes`, `Lists`, `Sets`, `SortedSets`, `Streams`,
+`Bitmaps`, `HyperLogLog`, `Geo`, `Scripts`, `Locks`, and `Server`. See `IRespireClient` for
+complete signatures; the snippets use application-defined model types such as `User`.
 
 Naming inside facets drops the Redis prefix — the facet *is* the prefix:
 
@@ -184,13 +170,14 @@ long n = await redis.Sets.IntersectStoreAsync(destination: "both", "set:a", "set
 Two small readonly structs with implicit conversions kill the overload explosion:
 
 ```csharp
-public readonly struct RespireKey    // from: string, byte[], ReadOnlyMemory<byte>
-public readonly struct RespireValue  // from: key/text/binary, numeric primitives, bool,
-                                     //       Guid, DateTimeOffset, TimeSpan, char
+RespireKey textKey = "user:42";
+RespireKey binaryKey = new byte[] { 0xff, 0x00, 0x42 };
+RespireValue numericValue = 42;
+RespireValue binaryValue = new byte[] { 0xff, 0x00 };
 ```
 
-`RespireValue` is *input-only*. (The current parse-side `RespireValue` union becomes an
-internal type; results surface as plain .NET types.) Equality compares the exact bulk-string
+`RespireValue` is *input-only*. The parse-side `RespValue` is internal; friendly results
+surface as plain .NET types. Equality compares the exact bulk-string
 payload written to Redis, so equivalent text, bytes, and scalar values compare equal.
 
 ### Outputs: real types, serializer for objects
@@ -204,8 +191,8 @@ payload written to Redis, so equivalent text, bytes, and scalar values compare e
 | TTL | `RespireTtl` (readonly struct: `Exists`, `HasExpiry`, `TimeToLive`) | `Exists == false` |
 
 `GetAsync<T>` / `SetAsync<T>` run through `RespireOptions.Serializer`
-(`IRespireSerializer`: `Serialize<T>(T, IBufferWriter<byte>)` /
-`Deserialize<T>(ReadOnlySequence<byte>)`). Default: `System.Text.Json` with source-gen
+(`IRespireSerializer`: `Serialize<T>(IBufferWriter<byte>, T)` /
+`Deserialize<T>(ReadOnlySpan<byte>)`, plus runtime-type overloads). Default: `System.Text.Json` with source-gen
 context support. `string`, `byte[]`, and primitives bypass the serializer.
 
 ### Zero-copy: the lease API
@@ -226,14 +213,14 @@ No API returns pooled memory without `Lease` in its name.
 - **Time is `TimeSpan`/`DateTimeOffset`.** Expiry inputs use `RespireExpiry.In(TimeSpan)` or
   `.At(DateTimeOffset)` (both also convert implicitly), plus `.Keep`/`.Persist`. Never `int seconds`.
 - **Options with more than ~3 knobs become an options struct** (e.g. `SetWhen.Always /
-  NotExists / Exists`, `GetExAsync` variants), but common cases stay optional parameters.
+  NotExists / Exists`, `GetAndExpireAsync` variants), but common cases stay optional parameters.
 - **Variadic where Redis is variadic**: `DeleteAsync(params ReadOnlySpan<RespireKey> keys)`
   (C# 13 params-span, zero alloc), `Hashes.SetAsync(key, [("name","Tom"), ("age","34")])`.
   A `params` parameter must come last, so each variadic command also has a sibling
-  `DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken ct)` — non-params items and a
+  `DeleteAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)` — non-params items and a
   required token. The token is required, not optional, so the two forms never overlap.
   This pair is the chosen convention: retain bare varargs such as `DeleteAsync("a", "b")`
-  and use `DeleteAsync(["a", "b"], ct)` when cancellation is needed. Collapsing the pair to
+  and use `DeleteAsync(["a", "b"], cancellationToken)` when cancellation is needed. Collapsing the pair to
   one optional-token span overload would remove bare-varargs calls. Both forms use the same
   span-based command path; the convenience overload forwards `CancellationToken.None`.
   Deferred facets omit per-command tokens because execution owns cancellation. The public
@@ -244,12 +231,12 @@ No API returns pooled memory without `Lease` in its name.
 
 ```csharp
 await foreach (var key in redis.Keys.ScanAsync(
-    match: "user:*", type: RespireKeyType.Hash, countHint: 250, cancellationToken: ct))
+    match: "user:*", type: RespireKeyType.Hash, countHint: 250, cancellationToken: cancellationToken))
 {
     Console.WriteLine(key);
 }
 
-await foreach (var field in redis.Hashes.ScanAsync("user:1", match: "profile:*", cancellationToken: ct))
+await foreach (var field in redis.Hashes.ScanAsync("user:1", match: "profile:*", cancellationToken: cancellationToken))
 {
     Console.WriteLine($"{field.Key} = {field.Value}");
 }
@@ -267,7 +254,7 @@ using var batch = redis.CreateBatch();
 RespirePending<string?> a = batch.GetString("a");
 RespirePending<long>    n = batch.Increment("hits");
 RespirePending<long>    q = batch.Lists.RightPush("queue", "job-1");
-await batch.ExecuteAsync(ct);
+await batch.ExecuteAsync(cancellationToken);
 
 string? av = a.Result;   // valid only after ExecuteAsync
 ```
@@ -309,10 +296,10 @@ Same pending-value shape as batch. `CreateTransaction()` returns `RespireTransac
 EXEC won:
 
 ```csharp
-await using var tx = await redis.CreateTransactionAsync(["balance"], ct);
+await using var tx = await redis.CreateTransactionAsync(["balance"], cancellationToken);
 var newBal = tx.Increment("balance", -100);
 var log    = tx.Lists.RightPush("audit", "withdraw:100");
-bool committed = await tx.CommitAsync(ct);
+bool committed = await tx.CommitAsync(cancellationToken);
 ```
 
 When WATCH aborts EXEC, `committed` is false, each pending reports
@@ -327,12 +314,12 @@ the operation can be expressed server-side because they avoid round trips and re
 
 ## 7. Pub/Sub: `IAsyncEnumerable`
 
-Subscriptions are async streams. Unsubscribe = dispose/cancel. No delegate soup, no
-handler-ordering questions:
+Subscriptions are async streams. Dispose the subscription to unsubscribe. Cancelling an
+enumerator stops that reader; it does not dispose the subscription:
 
 ```csharp
 await using var sub = await redis.SubscribeAsync("orders");  // also: patterns, sharded
-await foreach (RespireMessage msg in sub.WithCancellation(ct))
+await foreach (RespireMessage msg in sub.WithCancellation(cancellationToken))
 {
     Console.WriteLine($"{msg.Channel}: {msg.Text}");
     var order = msg.As<Order>();                            // serializer-backed
@@ -340,12 +327,12 @@ await foreach (RespireMessage msg in sub.WithCancellation(ct))
 ```
 
 - `SubscribeAsync(channel | channels)`, `SubscribePatternAsync(pattern)`,
-  `SubscribeShardedAsync(channel)` (RESP3 SSUBSCRIBE). Subscribing is always awaited: the
+  `SubscribeShardedAsync(channel)` (Redis 7+ SSUBSCRIBE). Subscribing is always awaited: the
   task completes once the server has acknowledged, so the next publish reaches the stream.
 - Backed by a bounded `Channel<T>`; overflow policy is `DropOldest` (default) or
   `DropNewest`. Blocking and throwing policies are intentionally omitted because either would
   stop the shared pub/sub reader and affect unrelated subscriptions.
-- `RespireMessage` exposes `Channel`, `Pattern`, `Text`, `Memory`, `As<T>()`.
+- `RespireMessage` exposes `Channel`, `Pattern`, `Text`, `Payload`, `As<T>()`.
 - Publish is just `redis.PublishAsync(channel, value)` on the root.
 
 ## 8. Streams
@@ -357,9 +344,9 @@ entry:
 await redis.Streams.CreateGroupAsync("events", "processors", createStream: true);
 
 await foreach (var entry in redis.Streams.ReadGroupAsync(
-    "events", group: "processors", consumer: Environment.MachineName, ct))
+    "events", group: "processors", consumer: Environment.MachineName, cancellationToken: cancellationToken))
 {
-    Handle(entry["type"]);          // field access on the entry
+    Console.WriteLine(entry.GetString("type")); // decoded field value
     await entry.AckAsync();
 }
 ```
@@ -384,7 +371,7 @@ have a connection pool — blocking commands automatically route to a dedicated 
 connection:
 
 ```csharp
-string? job = await redis.Lists.LeftPopAsync("jobs", waitFor: TimeSpan.FromSeconds(30), ct);
+string? job = await redis.Lists.LeftPopAsync("jobs", waitFor: TimeSpan.FromSeconds(30), cancellationToken: cancellationToken);
 ```
 
 `waitFor: null` (default) = non-blocking LPOP; a value = BLPOP on a dedicated connection.
@@ -393,6 +380,7 @@ One method, one mental model. This is a headline capability — spec it early, m
 ## 10. Raw commands and the interpolated escape hatch
 
 ```csharp
+RespireKey key = "user:1";
 // Complete generated catalog — discoverable and pre-encoded
 using RespireResult catalogResult = await redis.ExecuteAsync(
     RespireCommands.Key.OBJECT_ENCODING, "user:1");
@@ -409,7 +397,7 @@ Strings convert implicitly to `RespireCommand`, so raw and catalog calls share t
 method shapes and two fire-and-forget shapes. Interpolation holes use invariant `IFormattable`
 formatting or `ToString()`; they are not routed through a Respire serializer.
 
-`RespireResult` is the one public protocol-shaped type: `Kind`, `AsString()`,
+`RespireResult` is the one public protocol-shaped type: `Type`, `AsString()`,
 `AsInteger()`, serializer-backed `As<T>()`, `AsSpan()`, and allocation-free array enumeration.
 It owns pooled memory and must be disposed (`using`); `IsDisposed` exposes its lifetime state and
 access after disposal throws `ObjectDisposedException`. It exists only on the raw layer. The
@@ -419,6 +407,7 @@ experimental server extensions.
 
 ## 11. Scripts and functions
 
+<!-- doc-test-declaration: split-before=long count -->
 ```csharp
 static readonly RespireScript RateLimit = RespireScript.Create("""
     local n = redis.call('INCR', KEYS[1])
@@ -446,25 +435,27 @@ calls unambiguous. Custom `IScriptCommands` implementations must implement the s
 ## 12. Key-prefixed views
 
 ```csharp
+var tenantId = "42";
+var cart = new { Items = new[] { "book" } };
 IRespireClient tenant = redis.WithKeyPrefix($"t:{tenantId}:");
 await tenant.SetAsync("cart", cart);     // key = "t:42:cart"
 ```
 
 Cheap decorator over the same connections; composes (`WithKeyPrefix` on a prefixed view
-concatenates). Also the natural seam for a future `WithLocalCache(...)` view.
+concatenates). Client-side caching is configured through `RespireOptions.ClientSideCache`, not a separate view.
 
 ## 13. Resilience
 
-- **Reconnect**: automatic, policy from options; commands issued while reconnecting wait
-  (bounded by `CommandTimeout`) rather than failing instantly; `ConnectionStateChanged`
-  fires transitions.
-- **Timeouts**: `CommandTimeout` default per client; per-call `CancellationToken` for
-  tighter control. Timeout throws `RespireTimeoutException` whose message includes the
-  diagnostic snapshot (queue depth, inflight count, last successful flush age) — the
-  anti-SE.Redis-cryptic-timeout feature.
-- **No automatic command retry in v1.** Retrying non-idempotent commands is a data bug;
-  document the pattern (Polly around idempotent calls) instead of shipping a footgun.
-  `ReconnectPolicy` ≠ retry policy.
+- **Reconnect**: failed multiplexed connections are replaced automatically. Failed replacement attempts retry on the next use. Pub/sub uses its own reconnect/resubscribe loop. `ConnectionStateChanged` reports
+  transitions. There is no configurable `ReconnectPolicy` today; that is tracked in
+  [#401](https://github.com/thomhurst/Respire/issues/401).
+- **Timeouts**: `CommandTimeout` is the client default; each call accepts a `CancellationToken`
+  for tighter control. `RespireTimeoutException` names the operation and explains that a sent
+  command may still execute. A queue/inflight diagnostic snapshot is planned in
+  [#404](https://github.com/thomhurst/Respire/issues/404), not part of the current exception.
+- **No general automatic replay after connection failure.** Retrying non-idempotent commands
+  can duplicate effects. Redis Cluster MOVED/ASK routing and script NOSCRIPT recovery are
+  targeted protocol recovery paths; they are separate from a general application retry policy.
 - Cancellation cancels the wait, never an in-flight send (wire invariant).
 
 ## 14. Observability
@@ -474,7 +465,14 @@ concatenates). Also the natural seam for a future `WithLocalCache(...)` view.
   error attrs). Query text stays excluded because arbitrary Redis command values cannot be
   reliably sanitized. Pipelines and transactions emit one span with `db.operation.batch.size`.
 - `Meter("Respire")` — stable `db.client.operation.duration` histogram in seconds.
-- `Respire.Extensions.OpenTelemetry`: `AddRespireInstrumentation()` one-liners.
+- Register the built-in source and meter with OpenTelemetry's standard extensions. There is
+  no `Respire.Extensions.OpenTelemetry` package or `AddRespireInstrumentation()` API.
+
+```csharp
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing => tracing.AddSource("Respire"))
+    .WithMetrics(metrics => metrics.AddMeter("Respire"));
+```
 
 ## 15. Errors
 
@@ -487,17 +485,20 @@ RespireException
 └── RespireServerException         // .Code, .CommandName, and .IsTransient
 ```
 
-Server errors always throw at the friendly layer — no error-as-value inspection. Only
-`RespireResult` (raw layer) exposes `Kind == Error` for people who asked for the wire.
+Top-level server errors throw `RespireServerException` from both the friendly APIs and
+`ExecuteAsync`. A raw aggregate reply can contain nested error elements; inspect those with
+`RespireResult.IsError`. `RespireResult` has no public `Kind` property.
 
 ## 16. Dependency injection (`Respire.Extensions.DependencyInjection`)
 
+<!-- doc-test-tail-declaration: split-before=public sealed class CartService -->
 ```csharp
 builder.Services.AddRespire(builder.Configuration.GetConnectionString("redis")!);
 
+// The explicit parameter type selects the options-builder action overload.
 // Multiple clients via keyed services
-builder.Services.AddKeyedRespire("cache",    o => o.Endpoints.Add(new("cache-host")));
-builder.Services.AddKeyedRespire("sessions", o => o.Endpoints.Add(new("sess-host")));
+builder.Services.AddKeyedRespire("cache",    (RespireOptionsBuilder o) => o.Endpoints.Add(new("cache-host")));
+builder.Services.AddKeyedRespire("sessions", (RespireOptionsBuilder o) => o.Endpoints.Add(new("sess-host")));
 
 public sealed class CartService([FromKeyedServices("cache")] IRespireClient redis) { }
 ```
@@ -507,7 +508,8 @@ public sealed class CartService([FromKeyedServices("cache")] IRespireClient redi
   non-blocking commands. Blocking commands use their explicit wait timeout, and caller
   cancellation applies throughout. Cluster seed failures are wrapped in
   `RespireConnectionException`, and the next command retries connection.
-- Configuration accepts a connection string, an `Action<RespireOptionsBuilder>`, or a
+- `RespireOptionsBuilder.Endpoints` is a mutable `IList<RespireEndpoint>`; `Endpoints.Add(...)`
+  is valid in the action overload. Configuration accepts a connection string, an `Action<RespireOptionsBuilder>`, or a
   service-provider factory returning `RespireOptions`; the package does not bind `IOptions`.
 - Health integrations can inspect `IsConnected` and subscribe to `ConnectionStateChanged`;
   the package does not register a health check.
@@ -528,18 +530,10 @@ public sealed class CartService([FromKeyedServices("cache")] IRespireClient redi
 2. **RESP3-first internals**: broader native RESP3 adoption for maps, doubles, and booleans.
 3. **Sentinel**: automatic primary discovery and failover. Redis Cluster already uses
    `Endpoints` as seeds and handles `CLUSTER SLOTS`, MOVED, ASK, and hash-slot validation.
-4. **Source-generated custom commands** (Refit-style) for modules (RedisJSON, Search):
-
-```csharp
-[RespireCommands]
-public partial interface IJsonCommands
-{
-    [Command("JSON.GET")] ValueTask<string?> GetAsync(RespireKey key, string path = "$");
-}
-var json = redis.As<IJsonCommands>();
-```
-
-5. **Interactive WATCH transactions** on dedicated connections (§6).
+4. **Source-generated custom commands** for modules such as RedisJSON and Search are planned
+   in [#417](https://github.com/thomhurst/Respire/issues/417). Attribute-based declarations and
+   `redis.As<T>()` are not available; use the generated command catalog or raw `ExecuteAsync`.
+5. **Interactive WATCH transactions** are already delivered on dedicated connections (§6).
 
 ## 19. What this deletes from today's surface
 
