@@ -96,6 +96,7 @@ public readonly record struct GeoSearchResult
         Position = position;
     }
 
+    // Keep this signature aligned with the public text constructor to preserve positional-record usage.
     /// <summary>Deconstructs the member and optional details.</summary>
     public void Deconstruct(out string Member, out double? Distance, out long? Hash, out GeoPosition? Position)
     {
