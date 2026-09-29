@@ -111,6 +111,12 @@ or test double must be caught at compile time. Functional forwarding aliases are
 Custom `IRespireSerializer` implementations likewise provide both generic and runtime-type
 serialization and deserialization.
 
+Pre-release migration for custom implementations: implement the newly required sorted-set range,
+stream claim/replay, typed GETDEL/GETEX, subscription-options, and runtime-type serializer members.
+Decorators should forward each member to the wrapped implementation; test doubles should provide
+an explicit implementation. Existing implementations that inherited the removed throwing defaults
+now fail to compile until those members are supplied. Client calls keep the same signatures.
+
 ```csharp
 public sealed class RespireClient : IRespireClient, IAsyncDisposable
 {

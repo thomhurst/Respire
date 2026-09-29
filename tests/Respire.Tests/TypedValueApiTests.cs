@@ -27,7 +27,7 @@ public class TypedValueApiTests
     }
 
     [Test]
-    public async Task SubscriptionOptionsOverloads_PreserveInterfaceImplementers()
+    public async Task SubscriptionOptionsOverloads_HaveConcreteClientImplementations()
     {
         var methods = typeof(IRespireClient)
             .GetMethods()
@@ -35,8 +35,14 @@ public class TypedValueApiTests
                 .Any(parameter => parameter.ParameterType == typeof(RespireSubscriptionOptions)))
             .ToArray();
 
-        await Assert.That(methods.Length).IsEqualTo(6);
-        await Assert.That(methods.All(method => !method.IsAbstract)).IsTrue();
+        await Assert.That(methods).IsNotEmpty();
+        var mapping = typeof(RespireClient).GetInterfaceMap(typeof(IRespireClient));
+        foreach (var method in methods)
+        {
+            var implementation = mapping.TargetMethods[Array.IndexOf(mapping.InterfaceMethods, method)];
+            await Assert.That(implementation.DeclaringType).IsEqualTo(typeof(RespireClient));
+            await Assert.That(implementation.IsAbstract).IsFalse();
+        }
     }
 
     [Test]

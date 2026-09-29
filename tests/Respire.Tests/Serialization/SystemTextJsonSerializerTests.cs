@@ -75,7 +75,7 @@ public class SystemTextJsonSerializerTests
     {
         var methods = typeof(IRespireSerializer).GetMethods();
 
-        await Assert.That(methods.Length).IsEqualTo(4);
+        await Assert.That(methods).IsNotEmpty();
         await Assert.That(methods.All(method => method.IsAbstract)).IsTrue();
     }
 

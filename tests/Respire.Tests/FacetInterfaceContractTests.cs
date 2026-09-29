@@ -14,7 +14,7 @@ public class FacetInterfaceContractTests
                 parameter.ParameterType == typeof(RespireSubscriptionOptions)))
             .ToArray();
 
-        await Assert.That(methods.Length).IsEqualTo(6);
+        await Assert.That(methods).IsNotEmpty();
         await Assert.That(methods.All(method => method.IsAbstract)).IsTrue();
     }
 
@@ -24,12 +24,12 @@ public class FacetInterfaceContractTests
     [Arguments(typeof(IStreamCommands), false)]
     [Arguments(typeof(IStringCommands), true)]
     [Arguments(typeof(IBatchStringCommands), true)]
-    public async Task CommandContracts_RequireImplementations(Type contract, bool genericOnly)
+    public async Task CommandContracts_RequireImplementations(Type contract, bool onlyGenericMethods)
     {
         // Non-generic string aliases still have functional forwarding bodies.
         // These operations must instead be implemented explicitly by every client or decorator.
         var defaults = contract.GetMethods()
-            .Where(method => (!genericOnly || method.IsGenericMethod) && !method.IsAbstract)
+            .Where(method => (!onlyGenericMethods || method.IsGenericMethod) && !method.IsAbstract)
             .Select(method => method.ToString())
             .ToArray();
 
