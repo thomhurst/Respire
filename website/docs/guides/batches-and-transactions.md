@@ -78,6 +78,27 @@ Migration: calls that simply await and ignore the result need no changes. Update
 implementations, wrappers, delegates, and variables that explicitly use the previous non-generic
 `ValueTask` return type to `ValueTask<bool>`.
 
+Typed overloads follow the immediate facets too: hash `Set<T>` and `TryGet<T>`, set
+`Contains<T>`, sorted-set `Add<T>`, and list `LeftPop<T>` / `RightPop<T>`. Typed values are
+serialized when queued, but byte-backed arguments borrow their storage, including typed
+`byte[]` and `ReadOnlyMemory<byte>` inputs. Keep their bytes unchanged until batch execution or
+transaction commit completes, or copy them before queuing. Results are deserialized after
+execution. Hash `TryGet<T>` preserves the
+`Found` flag, distinguishing a missing field from a stored default value. Typed list pops return
+the default value when the list is empty. Typed set membership and sorted-set additions preserve
+Redis's `1`/`0` representation for boolean members, matching the immediate methods.
+
+The new hash writes, set membership checks, and sorted-set additions preserve existing raw
+`RespireValue` conversions when the type argument is omitted (C# 13 or later, as with the
+library's `params` span APIs). This includes GUIDs, timestamps,
+durations, and byte buffers. Specify the type argument explicitly, such as
+`batch.Hashes.Set<Guid>(key, field, id)`, to use typed serialization instead. When moving an
+inferred immediate call such as `client.Hashes.SetAsync(key, field, id)` into a deferred queue,
+use `Set<Guid>` to retain that immediate call's typed encoding. The pre-existing inferred
+batch call `Set(key, field, id)` retains raw GUID text for compatibility. Older C# compilers
+ignore overload priority and may select a different encoding; use C# 13 or later, or specify
+the type argument or `RespireValue` conversion explicitly.
+
 Both types implement `IRespireCommandQueue`, which unifies every deferred facet and the root
 shortcuts. Helpers can therefore queue work across facets without choosing an execution model:
 

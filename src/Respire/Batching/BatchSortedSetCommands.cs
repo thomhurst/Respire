@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Serialization;
@@ -15,6 +16,17 @@ public interface IBatchSortedSetCommands
 {
     /// <summary>Adds or updates one member. True when the member was new. Redis: ZADD.</summary>
     RespirePending<bool> Add(RespireKey key, RespireValue member, double score);
+
+    /// <summary>Adds one serialized member; booleans retain Redis 1/0 encoding. True when new. Redis: ZADD.</summary>
+    /// <remarks>
+    /// Specify the type argument explicitly to select typed serialization for values with an
+    /// implicit RespireValue conversion. Inferred calls retain their existing raw encoding.
+    /// This overload priority requires C# 13 or later.
+    /// </remarks>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(-1)]
+    RespirePending<bool> Add<T>(RespireKey key, T member, double score);
 
     /// <summary>Adds or updates many binary-safe members; returns how many were new. Redis: ZADD.</summary>
     /// <remarks>
@@ -171,6 +183,12 @@ internal sealed class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSe
         => sink.Add<Cmd3, bool>(
             "ZADD", new Cmd3(Verbs.ZAdd, sink.Client.Key(in key), score, member),
             static (c, v) => ResponseReader.Flag(in v));
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(-1)]
+    public RespirePending<bool> Add<T>(RespireKey key, T member, double score)
+        => Add(key, sink.Client.SerializeCollectionMember(member), score);
 
     public RespirePending<long> Add(RespireKey key, params ReadOnlySpan<(RespireValue Member, double Score)> entries)
         => sink.Add<Cmd1N, long>(

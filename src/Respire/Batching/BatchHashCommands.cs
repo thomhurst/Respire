@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Serialization;
@@ -22,6 +23,28 @@ public interface IBatchHashCommands
     RespirePending<bool> Set(
         RespireKey key, string field, RespireValue value, SetWhen when);
 
+    /// <summary>Sets one serialized field. True when newly created. Redis: HSET.</summary>
+    /// <remarks>
+    /// Specify the type argument explicitly to select typed serialization for values with an
+    /// implicit RespireValue conversion. Inferred calls retain their existing raw encoding.
+    /// This overload priority requires C# 13 or later.
+    /// </remarks>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(-1)]
+    RespirePending<bool> Set<T>(RespireKey key, string field, T value);
+
+    /// <summary>Conditionally sets one serialized field. Redis: HSET/HSETNX/HSETEX.</summary>
+    /// <remarks>
+    /// Specify the type argument explicitly to select typed serialization for values with an
+    /// implicit RespireValue conversion. Inferred calls retain their existing raw encoding.
+    /// This overload priority requires C# 13 or later.
+    /// </remarks>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(-1)]
+    RespirePending<bool> Set<T>(RespireKey key, string field, T value, SetWhen when);
+
     /// <summary>Sets many fields; returns how many were newly created. Redis: HSET.</summary>
     RespirePending<long> Set(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
 
@@ -32,6 +55,11 @@ public interface IBatchHashCommands
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     RespirePending<T?> Get<T>(RespireKey key, string field);
+
+    /// <summary>Gets a typed field while distinguishing a missing field from a stored default value. Redis: HGET.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    RespirePending<RespireGet<T>> TryGet<T>(RespireKey key, string field);
 
     /// <summary>Gets a field's raw bytes, or null when missing. Redis: HGET.</summary>
     RespirePending<byte[]?> GetBytes(RespireKey key, string field);
@@ -122,6 +150,18 @@ internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
             _ => throw new ArgumentOutOfRangeException(nameof(when), when, null),
         };
 
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(-1)]
+    public RespirePending<bool> Set<T>(RespireKey key, string field, T value)
+        => Set(key, field, sink.Client.SerializeRawCompatible(value));
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    [OverloadResolutionPriority(-1)]
+    public RespirePending<bool> Set<T>(RespireKey key, string field, T value, SetWhen when)
+        => Set(key, field, sink.Client.SerializeRawCompatible(value), when);
+
     public RespirePending<long> Set(
         RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
         => sink.Add<Cmd1N, long>(
@@ -139,6 +179,13 @@ internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
         => sink.Add<Cmd2, T?>(
             "HGET", new Cmd2(Verbs.HGet, sink.Client.Key(in key), field),
             static (c, v) => c.DeserializeBorrowed<T>(in v));
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public RespirePending<RespireGet<T>> TryGet<T>(RespireKey key, string field)
+        => sink.Add<Cmd2, RespireGet<T>>(
+            "HGET", new Cmd2(Verbs.HGet, sink.Client.Key(in key), field),
+            static (c, v) => c.TryDeserializeBorrowed<T>(in v));
 
     public RespirePending<byte[]?> GetBytes(RespireKey key, string field)
         => sink.Add<Cmd2, byte[]?>(
