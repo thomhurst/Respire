@@ -52,9 +52,30 @@ await redis.Sets.AddAsync("on-call", "ada");
 
 string[] both = await redis.Sets.IntersectAsync("team:red", "on-call");
 bool member = await redis.Sets.ContainsAsync("team:red", "ada");
+bool[] membership = await redis.Sets.ContainsManyAsync("team:red", "ada", "missing", "ada");
+long sharedCount = await redis.Sets.IntersectCountAsync("team:red", "on-call");
+long atMostOne = await redis.Sets.IntersectCountAsync(limit: 1, "team:red", "on-call");
+bool moved = await redis.Sets.MoveAsync("team:red", "team:blue", "grace");
 string? random = await redis.Sets.PopAsync("available");
 string[] randomBatch = await redis.Sets.PopManyAsync("available", count: 2);
 ```
+
+`ContainsManyAsync` preserves input order and duplicates; missing members produce `false`.
+It maps to [SMISMEMBER](https://redis.io/docs/latest/commands/smismember/) (Redis 6.2+).
+`MoveAsync` atomically transfers one member and returns `false` if it was absent from the
+source, including when the source key is missing. An existing destination member still
+counts as a successful move from the source.
+
+`IntersectCountAsync` uses [SINTERCARD](https://redis.io/docs/latest/commands/sintercard/)
+(Redis 7+) without fetching members. The optional limit overload puts `limit` before the
+variadic keys; zero means unlimited, and negative limits are rejected. Membership checks
+require at least one member; intersection counts require at least one key. For cancellation,
+pass a key/member span and a required trailing token, for example
+`IntersectCountAsync(1, ["team:red", "on-call"], cancellationToken)`.
+
+Batch and transaction facets expose `ContainsMany`, `Move`, and `IntersectCount` with the
+same results through `RespirePending<T>`. Redis Cluster requires all keys in a move or
+intersection to share a hash slot. Key prefixes apply to every source and destination key.
 
 Count-based pops use `PopManyAsync` and return an empty array when the key is missing.
 Single-member `PopAsync` returns null when missing. Batch and transaction facets use

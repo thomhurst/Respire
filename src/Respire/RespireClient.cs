@@ -3214,6 +3214,12 @@ public sealed partial class RespireClient : IRespireClient
             operation, command, ct,
             static (RespireClient _, in RespValue value) => ResponseReader.HashFieldExpiryResultArray(in value));
 
+    internal ValueTask<bool[]> FlagArrayAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
+        where TCommand : struct, IRespCommand
+        => ConvertAsync(
+            operation, command, ct,
+            static (RespireClient _, in RespValue value) => ResponseReader.FlagArray(in value));
+
     internal ValueTask<string[]> StringArrayAsync<TCommand>(string operation, TCommand command, CancellationToken ct)
         where TCommand : struct, IRespCommand
         => ConvertAsync(

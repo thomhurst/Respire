@@ -91,6 +91,21 @@ internal static class ResponseReader
         return result == -1 ? null : result;
     }
 
+    public static bool[] FlagArray(in RespValue value)
+    {
+        var elements = value.AsArray();
+        if (elements.IsEmpty)
+        {
+            return [];
+        }
+        var result = new bool[elements.Length];
+        for (var index = 0; index < elements.Length; index++)
+        {
+            result[index] = Flag(in elements[index]);
+        }
+        return result;
+    }
+
     public static string[] StringArray(in RespValue value)
     {
         var elements = value.AsArray();

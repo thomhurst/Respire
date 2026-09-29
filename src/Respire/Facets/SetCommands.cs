@@ -40,6 +40,29 @@ public interface ISetCommands
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<bool> ContainsAsync<T>(RespireKey key, T member, CancellationToken cancellationToken = default);
 
+    /// <summary>Tests each member in input order, including duplicates. Redis 6.2+: SMISMEMBER.</summary>
+    ValueTask<bool[]> ContainsManyAsync(RespireKey key, params ReadOnlySpan<RespireValue> members);
+
+    /// <summary>Tests each member in input order, including duplicates. Redis 6.2+: SMISMEMBER.</summary>
+    ValueTask<bool[]> ContainsManyAsync(
+        RespireKey key, ReadOnlySpan<RespireValue> members, CancellationToken cancellationToken);
+
+    /// <summary>Moves a member atomically; returns false if absent from the source. Redis: SMOVE.</summary>
+    ValueTask<bool> MoveAsync(
+        RespireKey source, RespireKey destination, RespireValue member, CancellationToken cancellationToken = default);
+
+    /// <summary>Counts the intersection without returning its members. Redis 7+: SINTERCARD.</summary>
+    ValueTask<long> IntersectCountAsync(params ReadOnlySpan<RespireKey> keys);
+
+    /// <summary>Counts the intersection without returning its members. Redis 7+: SINTERCARD.</summary>
+    ValueTask<long> IntersectCountAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
+
+    /// <summary>Counts up to a non-negative limit; zero means unlimited. Redis 7+: SINTERCARD LIMIT.</summary>
+    ValueTask<long> IntersectCountAsync(long limit, params ReadOnlySpan<RespireKey> keys);
+
+    /// <summary>Counts up to a non-negative limit; zero means unlimited. Redis 7+: SINTERCARD LIMIT.</summary>
+    ValueTask<long> IntersectCountAsync(long limit, ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
+
     /// <summary>Number of members. Redis: SCARD.</summary>
     ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default);
 
@@ -132,6 +155,65 @@ internal sealed class SetCommands(RespireClient client) : ISetCommands
             "SISMEMBER",
             new Cmd2(Verbs.SIsMember, client.Key(in key), client.SerializeCollectionMember(member)),
             cancellationToken);
+
+    public ValueTask<bool[]> ContainsManyAsync(RespireKey key, params ReadOnlySpan<RespireValue> members)
+        => ContainsManyAsync(key, members, CancellationToken.None);
+
+    public ValueTask<bool[]> ContainsManyAsync(
+        RespireKey key, ReadOnlySpan<RespireValue> members, CancellationToken cancellationToken)
+    {
+        ValidateMembers(members);
+        return client.FlagArrayAsync(
+            "SMISMEMBER", new Cmd1N(Verbs.SMisMember, client.Key(in key), members.ToArray()), cancellationToken);
+    }
+
+    public ValueTask<bool> MoveAsync(
+        RespireKey source, RespireKey destination, RespireValue member, CancellationToken cancellationToken = default)
+        => client.FlagAsync("SMOVE",
+            new Cmd3(Verbs.SMove, client.Key(in source), client.Key(in destination), member), cancellationToken);
+
+    public ValueTask<long> IntersectCountAsync(params ReadOnlySpan<RespireKey> keys)
+        => IntersectCountAsync(0, keys, CancellationToken.None);
+
+    public ValueTask<long> IntersectCountAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
+        => IntersectCountAsync(0, keys, cancellationToken);
+
+    public ValueTask<long> IntersectCountAsync(long limit, params ReadOnlySpan<RespireKey> keys)
+        => IntersectCountAsync(limit, keys, CancellationToken.None);
+
+    public ValueTask<long> IntersectCountAsync(
+        long limit, ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
+        => client.IntegerAsync("SINTERCARD",
+            new CmdN(Verbs.SInterCard, IntersectCountArguments(client, keys, limit)), cancellationToken);
+
+    internal static void ValidateMembers(ReadOnlySpan<RespireValue> members)
+    {
+        if (members.IsEmpty)
+        {
+            throw new ArgumentException("At least one member is required.", nameof(members));
+        }
+    }
+
+    internal static RespireValue[] IntersectCountArguments(RespireClient client, ReadOnlySpan<RespireKey> keys, long limit)
+    {
+        if (keys.IsEmpty)
+        {
+            throw new ArgumentException("At least one key is required.", nameof(keys));
+        }
+        ArgumentOutOfRangeException.ThrowIfNegative(limit);
+        var arguments = new RespireValue[keys.Length + (limit == 0 ? 1 : 3)];
+        arguments[0] = keys.Length;
+        for (var index = 0; index < keys.Length; index++)
+        {
+            arguments[index + 1] = client.Key(in keys[index]);
+        }
+        if (limit != 0)
+        {
+            arguments[^2] = "LIMIT";
+            arguments[^1] = limit;
+        }
+        return arguments;
+    }
 
     public ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.IntegerAsync("SCARD", new Cmd1(Verbs.SCard, client.Key(in key)), cancellationToken);
