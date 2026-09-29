@@ -377,13 +377,13 @@ public interface IStreamCommands
         RespireKey key, string group, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken);
 
     /// <summary>Summarizes pending entries for a group. Redis: XPENDING.</summary>
-    ValueTask<RespireStreamPendingSummary> GetPendingSummaryAsync(
+    ValueTask<RespireStreamPendingSummary> PendingSummaryAsync(
         RespireKey key,
         string group,
         CancellationToken cancellationToken = default);
 
     /// <summary>Returns pending entries in an inclusive id range. Redis: XPENDING range form.</summary>
-    ValueTask<RespireStreamPendingEntry[]> GetPendingAsync(
+    ValueTask<RespireStreamPendingEntry[]> PendingAsync(
         RespireKey key,
         string group,
         RespireStreamId? start = null,
@@ -423,17 +423,17 @@ public interface IStreamCommands
         => throw new NotSupportedException("Automatic stream entry claiming is not implemented.");
 
     /// <summary>Returns stream metadata. Redis: XINFO STREAM.</summary>
-    ValueTask<RespireStreamInfo> GetInfoAsync(
+    ValueTask<RespireStreamInfo> InfoAsync(
         RespireKey key,
         CancellationToken cancellationToken = default);
 
     /// <summary>Returns consumer group metadata for a stream. Redis: XINFO GROUPS.</summary>
-    ValueTask<RespireStreamGroupInfo[]> GetGroupInfoAsync(
+    ValueTask<RespireStreamGroupInfo[]> GroupInfoAsync(
         RespireKey key,
         CancellationToken cancellationToken = default);
 
     /// <summary>Returns consumer metadata for a stream group. Redis: XINFO CONSUMERS.</summary>
-    ValueTask<RespireStreamConsumerInfo[]> GetConsumerInfoAsync(
+    ValueTask<RespireStreamConsumerInfo[]> ConsumerInfoAsync(
         RespireKey key,
         string group,
         CancellationToken cancellationToken = default);
@@ -687,7 +687,7 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
             "XACK", new Cmd2N(Verbs.XAck, client.Key(in key), group, args), cancellationToken);
     }
 
-    public ValueTask<RespireStreamPendingSummary> GetPendingSummaryAsync(
+    public ValueTask<RespireStreamPendingSummary> PendingSummaryAsync(
         RespireKey key,
         string group,
         CancellationToken cancellationToken = default)
@@ -695,7 +695,7 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
             "XPENDING", new Cmd2(XPending, client.Key(in key), group), cancellationToken, this,
             static (StreamCommands _, in RespValue value) => ParsePendingSummary(in value));
 
-    public ValueTask<RespireStreamPendingEntry[]> GetPendingAsync(
+    public ValueTask<RespireStreamPendingEntry[]> PendingAsync(
         RespireKey key,
         string group,
         RespireStreamId? start = null,
@@ -781,21 +781,21 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
                 ParseClaimResult(in value, state.Client, state.ResolvedKey, state.Group));
     }
 
-    public ValueTask<RespireStreamInfo> GetInfoAsync(
+    public ValueTask<RespireStreamInfo> InfoAsync(
         RespireKey key,
         CancellationToken cancellationToken = default)
         => client.ConvertResponseAsync(
             "XINFO STREAM", new Cmd1(XInfoStream, client.Key(in key)), cancellationToken, this,
             static (StreamCommands _, in RespValue value) => ParseStreamInfo(in value));
 
-    public ValueTask<RespireStreamGroupInfo[]> GetGroupInfoAsync(
+    public ValueTask<RespireStreamGroupInfo[]> GroupInfoAsync(
         RespireKey key,
         CancellationToken cancellationToken = default)
         => client.ConvertResponseAsync(
             "XINFO GROUPS", new Cmd1(XInfoGroups, client.Key(in key)), cancellationToken, this,
             static (StreamCommands _, in RespValue value) => ParseGroupInfo(in value));
 
-    public ValueTask<RespireStreamConsumerInfo[]> GetConsumerInfoAsync(
+    public ValueTask<RespireStreamConsumerInfo[]> ConsumerInfoAsync(
         RespireKey key,
         string group,
         CancellationToken cancellationToken = default)
