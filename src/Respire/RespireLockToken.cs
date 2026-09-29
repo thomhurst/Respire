@@ -68,7 +68,10 @@ public readonly struct RespireLockToken : IEquatable<RespireLockToken>
     public override int GetHashCode() => AsValue().GetHashCode();
 
     /// <summary>Returns the exact token bytes as uppercase hexadecimal for lossless display.</summary>
-    /// <remarks>Text tokens also use hexadecimal display. Use <see cref="ToUtf8String"/> to recover text.</remarks>
+    /// <remarks>
+    /// Text tokens also use hexadecimal display. Use <see cref="ToUtf8String"/> to recover text.
+    /// This method and the debugger display reveal the full token; do not log tokens used as capabilities.
+    /// </remarks>
     public override string ToString() => Convert.ToHexString(_bytes.Span);
 
     /// <summary>Decodes a text token as UTF-8, rejecting invalid byte sequences.</summary>
