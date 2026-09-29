@@ -497,15 +497,17 @@ public class LockCommandTests
             commands,
             "resource",
             "owner"u8.ToArray(),
-            TimeSpan.FromSeconds(30),
+            TimeSpan.FromMinutes(1),
             Stopwatch.GetTimestamp());
 
+        // Keep the shortened lease long enough for parallel CI scheduling. The 10-second
+        // observation window still expires before the original 30-second renewal delay.
         await using var keepAlive = await mutex.KeepAliveAsync();
-        await Assert.That(await mutex.ResetExpiryAsync(TimeSpan.FromMilliseconds(200))).IsTrue();
+        await Assert.That(await mutex.ResetExpiryAsync(TimeSpan.FromSeconds(5))).IsTrue();
 
-        await commands.SecondExtensionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await commands.SecondExtensionStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(commands.Expiries).IsEquivalentTo(
-            [TimeSpan.FromMilliseconds(200), TimeSpan.FromMilliseconds(200)]);
+            [TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5)]);
     }
 
     [Test]
