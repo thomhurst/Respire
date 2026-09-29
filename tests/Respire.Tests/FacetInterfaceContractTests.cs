@@ -6,14 +6,6 @@ namespace Respire.Tests;
 
 public class FacetInterfaceContractTests
 {
-    private static readonly HashSet<(Type Contract, string Name)> ForwardingAliases =
-    [
-        (typeof(IStringCommands), nameof(IStringCommands.GetAndDeleteAsync)),
-        (typeof(IStringCommands), nameof(IStringCommands.GetAndExpireAsync)),
-        (typeof(IBatchStringCommands), nameof(IBatchStringCommands.GetAndDelete)),
-        (typeof(IBatchStringCommands), nameof(IBatchStringCommands.GetAndExpire)),
-    ];
-
     [Test]
     public async Task SubscriptionOptions_RequireExplicitImplementations()
     {
@@ -34,10 +26,8 @@ public class FacetInterfaceContractTests
     [Arguments(typeof(IBatchStringCommands))]
     public async Task CommandContracts_RequireImplementations(Type contract)
     {
-        // Only these named, non-generic aliases may retain functional forwarding bodies.
         var defaults = contract.GetMethods()
-            .Where(method => !method.IsAbstract &&
-                (method.IsGenericMethod || !ForwardingAliases.Contains((contract, method.Name))))
+            .Where(method => !method.IsAbstract)
             .Select(method => method.ToString())
             .ToArray();
 
