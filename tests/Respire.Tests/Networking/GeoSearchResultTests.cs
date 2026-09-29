@@ -51,8 +51,10 @@ public class GeoSearchResultTests
     {
         var text = new GeoSearchResult(Member: "café", Distance: 1.5, Hash: 123, Position: new(2.5, 3.5));
         var raw = new GeoSearchResult("café"u8, 1.5, 123, new(2.5, 3.5));
+        text.Deconstruct(Member: out var member, Distance: out var distance, Hash: out var hash, Position: out var position);
 
         await Assert.That(raw).IsEqualTo(text);
+        await Assert.That(new GeoSearchResult(member, distance, hash, position)).IsEqualTo(text);
         await Assert.That(raw.GetHashCode()).IsEqualTo(text.GetHashCode());
         await Assert.That((raw with { Member = "new" }).MemberBytes.Span.SequenceEqual("new"u8)).IsTrue();
         await Assert.That((raw with { Distance = 2 }).MemberBytes.Span.SequenceEqual("café"u8)).IsTrue();
