@@ -313,67 +313,56 @@ internal sealed class ClusterRouter : IAsyncDisposable
     private async ValueTask<RespireConnectionMultiplexer> RefreshReadOnlyOwnerAsync(
         RespireServerException error, RespireConnection source, int slot, CancellationToken cancellationToken)
     {
-        var candidates = new List<RespireConnectionMultiplexer>(Volatile.Read(ref _masters));
         var owner = Volatile.Read(ref _slots[slot]);
-        if (owner is not null && IsSource(owner))
+        if (owner is not null && IsSameEndpoint(owner, source))
         {
             ClearSlotOwner(slot, owner);
         }
+        var candidates = BuildReadOnlyCandidates(source);
 
-        // Prefer other discovered primaries, then configured seeds, then the demoted node.
-        candidates.RemoveAll(IsSource);
-        foreach (var seed in _seeds)
-        {
-            var node = GetOrCreateNode(seed);
-            if (!IsSource(node) && !candidates.Contains(node))
-            {
-                candidates.Add(node);
-            }
-        }
-        candidates.Add(GetOrCreateNode(new RespireEndpoint(source.Host, source.Port)));
-
-        // One discovery round has one deadline, even when several nodes are unavailable.
+        // One round has one deadline. A stalled attempt leaves half the original budget
+        // for fallback; a large cluster never reduces a healthy attempt to a tiny share.
+        // The linked round token always bounds the attempt by the actual remaining time.
         using var timeout = CommandTimeoutCancellation.Create(cancellationToken, _options.ConnectTimeout);
-        // Reserve an equal share for each candidate and the initial cached-owner probe.
-        var attemptTimeout = TimeSpan.FromTicks(Math.Max(1, _options.ConnectTimeout.Ticks / (candidates.Count + 1)));
-        RespireConnectionMultiplexer? unavailableOwner = null;
+        var attemptTimeout = TimeSpan.FromTicks(Math.Max(1, _options.ConnectTimeout.Ticks / 2));
+        RespireConnectionMultiplexer? unavailableOwner;
         try
         {
-            // A previous command in this batch (or a concurrent refresh) may already have
-            // replaced the route while this replica's reply was still in flight.
+            // Another command may replace the route while this replica's reply is in flight.
             using (var attempt = CommandTimeoutCancellation.Create(timeout.Token, attemptTimeout))
             {
-                if (await TryConnectOwnerAsync(attempt.Token).ConfigureAwait(false) is { } cachedReplacement)
+                var cached = await TryConnectReadOnlyOwnerAsync(slot, source, attempt.Token, timeout.Token)
+                    .ConfigureAwait(false);
+                if (cached.Replacement is { } replacement)
                 {
-                    return cachedReplacement;
+                    return replacement;
                 }
+                unavailableOwner = cached.Unavailable;
             }
 
-            foreach (var candidate in candidates)
+            for (var index = 0; index < candidates.Count; index++)
             {
+                var candidate = candidates[index];
                 if (ReferenceEquals(candidate, unavailableOwner))
                 {
                     continue;
                 }
                 timeout.Token.ThrowIfCancellationRequested();
-                using var attempt = CommandTimeoutCancellation.Create(timeout.Token, attemptTimeout);
-                try
+                // The last fallback may use all time that remains in the round.
+                var allowance = index == candidates.Count - 1 ? _options.ConnectTimeout : attemptTimeout;
+                using var attempt = CommandTimeoutCancellation.Create(timeout.Token, allowance);
+                if (!await TryDiscoverReadOnlyOwnerAsync(candidate, attempt.Token, timeout.Token).ConfigureAwait(false))
                 {
-                    await candidate.EnsureConnectedAsync(attempt.Token).ConfigureAwait(false);
-                    _ = await TryLoadSlotsAsync(candidate, attempt.Token).ConfigureAwait(false);
-                }
-                catch (Exception exception) when (!timeout.IsCancellationRequested
-                    && (IsDiscoveryFailure(exception) || exception is OperationCanceledException))
-                {
-                    // Try the next known node, retaining the original server error if all fail.
                     continue;
                 }
 
-                // Discovery preserves newer slot updates; use the resulting current owner.
-                if (await TryConnectOwnerAsync(attempt.Token).ConfigureAwait(false) is { } replacement)
+                var discovered = await TryConnectReadOnlyOwnerAsync(slot, source, attempt.Token, timeout.Token)
+                    .ConfigureAwait(false);
+                if (discovered.Replacement is { } replacement)
                 {
                     return replacement;
                 }
+                unavailableOwner = discovered.Unavailable ?? unavailableOwner;
             }
         }
         catch (Exception exception) when (!cancellationToken.IsCancellationRequested
@@ -383,35 +372,71 @@ internal sealed class ClusterRouter : IAsyncDisposable
         }
 
         throw error;
+    }
 
-        bool IsSource(RespireConnectionMultiplexer node)
-            => node.Port == source.Port && string.Equals(node.Host, source.Host, StringComparison.OrdinalIgnoreCase);
-
-        async ValueTask<RespireConnectionMultiplexer?> TryConnectOwnerAsync(CancellationToken attemptToken)
+    private List<RespireConnectionMultiplexer> BuildReadOnlyCandidates(RespireConnection source)
+    {
+        // Prefer other discovered primaries, then configured seeds, then the demoted node.
+        var candidates = new List<RespireConnectionMultiplexer>(Volatile.Read(ref _masters));
+        candidates.RemoveAll(node => IsSameEndpoint(node, source));
+        foreach (var seed in _seeds)
         {
-            var current = Volatile.Read(ref _slots[slot]);
-            if (current is null)
+            var node = GetOrCreateNode(seed);
+            if (!IsSameEndpoint(node, source) && !candidates.Contains(node))
             {
-                return null;
+                candidates.Add(node);
             }
-            if (!IsSource(current))
-            {
-                try
-                {
-                    await current.EnsureConnectedAsync(attemptToken).ConfigureAwait(false);
-                    return current;
-                }
-                catch (Exception exception) when (!timeout.IsCancellationRequested
-                    && (IsDiscoveryFailure(exception) || exception is OperationCanceledException))
-                {
-                    // An unavailable cached replacement must not prevent seed discovery.
-                    unavailableOwner = current;
-                }
-            }
-            ClearSlotOwner(slot, current);
-            return null;
+        }
+        candidates.Add(GetOrCreateNode(new RespireEndpoint(source.Host, source.Port)));
+        return candidates;
+    }
+
+    private async ValueTask<bool> TryDiscoverReadOnlyOwnerAsync(
+        RespireConnectionMultiplexer candidate, CancellationToken attemptToken, CancellationToken roundToken)
+    {
+        try
+        {
+            await candidate.EnsureConnectedAsync(attemptToken).ConfigureAwait(false);
+            _ = await TryLoadSlotsAsync(candidate, attemptToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception exception) when (!roundToken.IsCancellationRequested
+            && (IsDiscoveryFailure(exception) || exception is OperationCanceledException))
+        {
+            return false;
         }
     }
+
+    private async ValueTask<(RespireConnectionMultiplexer? Replacement, RespireConnectionMultiplexer? Unavailable)>
+        TryConnectReadOnlyOwnerAsync(int slot, RespireConnection source,
+            CancellationToken attemptToken, CancellationToken roundToken)
+    {
+        var current = Volatile.Read(ref _slots[slot]);
+        if (current is null)
+        {
+            return default;
+        }
+        RespireConnectionMultiplexer? unavailable = null;
+        if (!IsSameEndpoint(current, source))
+        {
+            try
+            {
+                await current.EnsureConnectedAsync(attemptToken).ConfigureAwait(false);
+                return (current, null);
+            }
+            catch (Exception exception) when (!roundToken.IsCancellationRequested
+                && (IsDiscoveryFailure(exception) || exception is OperationCanceledException))
+            {
+                // An unavailable cached replacement must not prevent seed discovery.
+                unavailable = current;
+            }
+        }
+        ClearSlotOwner(slot, current);
+        return (null, unavailable);
+    }
+
+    private static bool IsSameEndpoint(RespireConnectionMultiplexer node, RespireConnection source)
+        => node.Port == source.Port && string.Equals(node.Host, source.Host, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsDiscoveryFailure(Exception exception)
         => exception is RespireException or IOException or System.Net.Sockets.SocketException
@@ -746,15 +771,14 @@ internal sealed class ClusterRouter : IAsyncDisposable
         RespireConnectionMultiplexer? retiredNode = null;
         lock (_nodesGate)
         {
-            _slotVersions[slot] = ++_topologyVersion;
             ObserveNode(node);
             var previous = Volatile.Read(ref _slots[slot]);
+            PublishSlotLocked(slot, node, ++_topologyVersion);
             if (ReferenceEquals(previous, node))
             {
                 return;
             }
 
-            Volatile.Write(ref _slots[slot], node);
             AddSlot(node);
             if (previous is not null && RemoveSlot(previous))
             {
@@ -778,8 +802,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 return;
             }
 
-            Volatile.Write(ref _slots[slot], null);
-            _slotVersions[slot] = ++_topologyVersion;
+            PublishSlotLocked(slot, null, ++_topologyVersion);
             Volatile.Write(ref _hasCompleteTopology, 0);
             if (RemoveSlot(node))
             {
@@ -791,6 +814,13 @@ internal sealed class ClusterRouter : IAsyncDisposable
         {
             NodeRetired?.Invoke(retiredNode);
         }
+    }
+
+    // Every slot publication carries its discovery-order fence under _nodesGate.
+    private void PublishSlotLocked(int slot, RespireConnectionMultiplexer? node, long version)
+    {
+        _slotVersions[slot] = version;
+        Volatile.Write(ref _slots[slot], node);
     }
 
     private void AddSlot(RespireConnectionMultiplexer node)
@@ -857,10 +887,6 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 {
                     refreshedSlots[slot] = Volatile.Read(ref _slots[slot]);
                 }
-                else
-                {
-                    _slotVersions[slot] = publicationVersion;
-                }
                 if (refreshedSlots[slot] is { } node)
                 {
                     activeNodes.Add(node);
@@ -876,7 +902,10 @@ internal sealed class ClusterRouter : IAsyncDisposable
             for (var slot = 0; slot < refreshedSlots.Length; slot++)
             {
                 var node = refreshedSlots[slot];
-                Volatile.Write(ref _slots[slot], node);
+                if (_slotVersions[slot] <= expectedVersion)
+                {
+                    PublishSlotLocked(slot, node, publicationVersion);
+                }
                 complete &= node is not null;
                 if (node is not null)
                 {

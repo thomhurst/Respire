@@ -169,6 +169,35 @@ public class ClusterReadOnlyTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task HealthyDiscoveryBudgetDoesNotShrinkWithCandidateCount(bool manyPrimaries)
+    {
+        await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(ReadOnlyReply);
+        await using var other = new FakeRespServer(manyPrimaries
+            ? Topology(replacement.Port) : "-NOPERM discovery denied\r\n"u8.ToArray());
+        await using var seed = new FakeRespServer(SplitTopology(other.Port, replica.Port), Topology(replacement.Port));
+        if (manyPrimaries) other.DelayReply(0, 600);
+        else seed.DelayReply(1, 600);
+        await using var client = await ConnectAsync(seed.Port, TimeSpan.FromSeconds(2));
+        if (manyPrimaries)
+        {
+            var router = client.Core.Cluster!;
+            // No sockets are opened for these unused candidates. Their count must not
+            // shorten the healthy first primary's topology request allowance.
+            for (var slot = 1; slot < 32; slot++)
+            {
+                router.SetSlotOwner(slot, router.GetMultiplexer(new RespireEndpoint($"unused-{slot}.invalid")));
+            }
+        }
+
+        await Assert.That(await client.SetAsync("key", "value")).IsTrue();
+        await Assert.That(replacement.ReceivedCommands).Contains("SET key value");
+        await Assert.That(seed.CommandsSeen).IsEqualTo(manyPrimaries ? 1 : 2);
+    }
+
+    [Test]
     public async Task UnrelatedMoved_PreservesUsefulRefreshAndNewerRoute()
     {
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
