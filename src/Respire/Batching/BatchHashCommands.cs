@@ -80,25 +80,10 @@ public interface IBatchHashCommands
         RespireKey key, RespireExpiry expiry, ExpireWhen when, params ReadOnlySpan<string> fields);
 
     /// <summary>Gets fields and removes them atomically. Redis: HGETDEL.</summary>
-#pragma warning disable CS0618 // Defaults preserve compatibility with existing interface implementations.
-    RespirePending<string?[]> GetAndRemove(RespireKey key, params ReadOnlySpan<string> fields)
-        => GetDelete(key, fields);
-#pragma warning restore CS0618
-
-    /// <summary>Gets fields and removes them atomically. Redis: HGETDEL.</summary>
-    [Obsolete("Use GetAndRemove.")]
-    RespirePending<string?[]> GetDelete(RespireKey key, params ReadOnlySpan<string> fields);
+    RespirePending<string?[]> GetAndRemove(RespireKey key, params ReadOnlySpan<string> fields);
 
     /// <summary>Gets fields and updates or removes their expiry metadata. Redis: HGETEX.</summary>
-#pragma warning disable CS0618 // Defaults preserve compatibility with existing interface implementations.
     RespirePending<string?[]> GetAndExpire(
-        RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)
-        => GetExpire(key, expiry, fields);
-#pragma warning restore CS0618
-
-    /// <summary>Gets fields and updates or removes their expiry metadata. Redis: HGETEX.</summary>
-    [Obsolete("Use GetAndExpire.")]
-    RespirePending<string?[]> GetExpire(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields);
 
     /// <summary>Sets fields and applies a relative, absolute, or retained expiry. Redis: HSETEX.</summary>
@@ -258,10 +243,6 @@ internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
             new Cmd1N(RespireCommands.Hash.HGETDEL.Verb, sink.Client.Key(in key), HashCommands.FieldsBlock(fields)),
             static (c, v) => ResponseReader.NullableStringArray(in v));
 
-    [Obsolete("Use GetAndRemove.")]
-    public RespirePending<string?[]> GetDelete(RespireKey key, params ReadOnlySpan<string> fields)
-        => GetAndRemove(key, fields);
-
     public RespirePending<string?[]> GetAndExpire(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)
     {
@@ -283,11 +264,6 @@ internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
         throw new ArgumentException(
             "HGETEX expiry must be relative, absolute, or RespireExpiry.Persist.", nameof(expiry));
     }
-
-    [Obsolete("Use GetAndExpire.")]
-    public RespirePending<string?[]> GetExpire(
-        RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)
-        => GetAndExpire(key, expiry, fields);
 
     public RespirePending<bool> SetExpire(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<(string Field, RespireValue Value)> fields)

@@ -879,7 +879,7 @@ public class LockCommandTests
 
             if (!_reportUncertain)
             {
-                return await ExtendAsync(key, token, expiry, cancellationToken);
+                return await ResetExpiryAsync(key, token, expiry, cancellationToken);
             }
 
             onOutcomeUncertain?.Invoke();
@@ -889,7 +889,7 @@ public class LockCommandTests
             throw new RespireConnectionException("renewal outcome is uncertain");
         }
 
-        public ValueTask<bool> ExtendAsync(
+        public ValueTask<bool> ResetExpiryAsync(
             RespireKey key,
             RespireValue token,
             TimeSpan expiry,
@@ -974,10 +974,6 @@ public class LockCommandTests
 
         public ValueTask<byte[]?> GetOwnerTokenAsync(
             RespireKey key,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
-
-        public ValueTask<bool> IsHeldByAsync(
-            RespireLock mutex,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 }

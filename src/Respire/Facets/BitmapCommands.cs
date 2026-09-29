@@ -215,15 +215,7 @@ public interface IBitmapCommands
     ValueTask<bool> GetAsync(RespireKey key, long offset, CancellationToken cancellationToken = default);
 
     /// <summary>Sets the bit at an offset and returns its previous value. Redis: SETBIT.</summary>
-#pragma warning disable CS0618 // Default preserves compatibility with existing interface implementations.
     ValueTask<bool> SetAsync(
-        RespireKey key, long offset, bool value, CancellationToken cancellationToken = default)
-        => GetAndSetAsync(key, offset, value, cancellationToken);
-#pragma warning restore CS0618
-
-    /// <summary>Sets the bit at an offset and returns its previous value. Redis: SETBIT.</summary>
-    [Obsolete("Use SetAsync; SETBIT returns the previous bit.")]
-    ValueTask<bool> GetAndSetAsync(
         RespireKey key, long offset, bool value, CancellationToken cancellationToken = default);
 
     /// <summary>Counts set bits across the whole value. Redis: BITCOUNT.</summary>
@@ -281,11 +273,6 @@ internal sealed class BitmapCommands(RespireClient client) : IBitmapCommands
         return client.FlagAsync(
             "SETBIT", new Cmd3(RespireCommands.Bitmap.SETBIT.Verb, client.Key(in key), offset, value), cancellationToken);
     }
-
-    [Obsolete("Use SetAsync; SETBIT returns the previous bit.")]
-    public ValueTask<bool> GetAndSetAsync(
-        RespireKey key, long offset, bool value, CancellationToken cancellationToken = default)
-        => SetAsync(key, offset, value, cancellationToken);
 
     public ValueTask<long> SetBitCountAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.IntegerAsync(

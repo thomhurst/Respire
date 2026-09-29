@@ -62,9 +62,7 @@ public interface IBatchStringCommands
         RespireKey key, T value, RespireExpiry expiry = default, SetWhen when = SetWhen.Always);
 
     /// <summary>Gets a key's value and deletes the key. Redis: GETDEL.</summary>
-#pragma warning disable CS0618 // Default preserves compatibility with existing interface implementations.
-    RespirePending<string?> GetAndDelete(RespireKey key) => GetDelete(key);
-#pragma warning restore CS0618
+    RespirePending<string?> GetAndDelete(RespireKey key);
 
     /// <summary>Gets and deserializes a key's value, then deletes the key. Redis: GETDEL.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -72,25 +70,14 @@ public interface IBatchStringCommands
     RespirePending<T?> GetAndDelete<T>(RespireKey key)
         => throw new NotSupportedException("Typed GETDEL is not implemented.");
 
-    /// <summary>Gets a key's value and deletes the key. Redis: GETDEL.</summary>
-    [Obsolete("Use GetAndDelete.")]
-    RespirePending<string?> GetDelete(RespireKey key);
-
     /// <summary>Gets a key's value and updates or removes its expiry. Redis: GETEX.</summary>
-#pragma warning disable CS0618 // Default preserves compatibility with existing interface implementations.
-    RespirePending<string?> GetAndExpire(RespireKey key, RespireExpiry expiry)
-        => GetExpire(key, expiry);
-#pragma warning restore CS0618
+    RespirePending<string?> GetAndExpire(RespireKey key, RespireExpiry expiry);
 
     /// <summary>Gets and deserializes a key's value, then updates or removes its expiry. Redis: GETEX.</summary>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     RespirePending<T?> GetAndExpire<T>(RespireKey key, RespireExpiry expiry)
         => throw new NotSupportedException("Typed GETEX is not implemented.");
-
-    /// <summary>Gets a key's value and updates or removes its expiry. Redis: GETEX.</summary>
-    [Obsolete("Use GetAndExpire.")]
-    RespirePending<string?> GetExpire(RespireKey key, RespireExpiry expiry);
 
     /// <summary>Appends to a string and returns the new length. Redis: APPEND.</summary>
     RespirePending<long> Append(RespireKey key, RespireValue value);
@@ -226,9 +213,6 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
             "GETDEL", new Cmd1(Verbs.GetDel, sink.Client.Key(in key)),
             static (c, v) => c.DeserializeBorrowed<T>(in v));
 
-    [Obsolete("Use GetAndDelete.")]
-    public RespirePending<string?> GetDelete(RespireKey key) => GetAndDelete(key);
-
     public RespirePending<string?> GetAndExpire(RespireKey key, RespireExpiry expiry)
     {
         GetExCommand.ValidateExpiry(expiry);
@@ -246,10 +230,6 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
             "GETEX", new GetExCommand(sink.Client.Key(in key), expiry),
             static (c, v) => c.DeserializeBorrowed<T>(in v));
     }
-
-    [Obsolete("Use GetAndExpire.")]
-    public RespirePending<string?> GetExpire(RespireKey key, RespireExpiry expiry)
-        => GetAndExpire(key, expiry);
 
     public RespirePending<long> Append(RespireKey key, RespireValue value)
     {

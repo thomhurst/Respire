@@ -106,10 +106,6 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
     /// <summary>The channels or patterns covered by this subscription. The collection is immutable.</summary>
     public IReadOnlyList<string> Targets { get; }
 
-    /// <summary>The channels or patterns covered by this subscription. The collection is immutable.</summary>
-    [Obsolete("Use Targets; subscriptions may cover channel patterns.")]
-    public IReadOnlyList<string> Channels => Targets;
-
     /// <summary>Whether this subscription has ended because it or its owning client was disposed.</summary>
     public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 

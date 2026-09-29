@@ -146,11 +146,6 @@ public sealed class RespireLock : IAsyncDisposable
         CancellationToken cancellationToken = default)
         => ExtendCoreAsync(newDuration, signalLeaseChanged: true, MarkOwnershipLost, cancellationToken);
 
-    /// <summary>Resets the lock expiry to <paramref name="expiry"/> from now.</summary>
-    [Obsolete("Use ResetExpiryAsync; the duration is applied from now rather than added to the current expiry.")]
-    public ValueTask<bool> ExtendAsync(TimeSpan expiry, CancellationToken cancellationToken = default)
-        => ResetExpiryAsync(expiry, cancellationToken);
-
     /// <summary>Checks Redis to verify that this handle's owner token still holds the key.</summary>
     public ValueTask<bool> VerifyStillHeldAsync(CancellationToken cancellationToken = default)
         => IsHeldByOriginAsync(cancellationToken);

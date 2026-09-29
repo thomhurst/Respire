@@ -154,44 +154,18 @@ public interface IHashCommands
         CancellationToken cancellationToken);
 
     /// <summary>Gets fields and removes them atomically. Redis: HGETDEL.</summary>
-#pragma warning disable CS0618 // Defaults preserve compatibility with existing interface implementations.
-    ValueTask<string?[]> GetAndRemoveAsync(RespireKey key, params ReadOnlySpan<string> fields)
-        => GetDeleteAsync(key, fields);
+    ValueTask<string?[]> GetAndRemoveAsync(RespireKey key, params ReadOnlySpan<string> fields);
 
     /// <summary>Gets fields and removes them atomically. Redis: HGETDEL.</summary>
     ValueTask<string?[]> GetAndRemoveAsync(
-        RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
-        => GetDeleteAsync(key, fields, cancellationToken);
-#pragma warning restore CS0618
-
-    /// <summary>Gets fields and removes them atomically. Redis: HGETDEL.</summary>
-    [Obsolete("Use GetAndRemoveAsync.")]
-    ValueTask<string?[]> GetDeleteAsync(RespireKey key, params ReadOnlySpan<string> fields);
-
-    /// <summary>Gets fields and removes them atomically. Redis: HGETDEL.</summary>
-    [Obsolete("Use GetAndRemoveAsync.")]
-    ValueTask<string?[]> GetDeleteAsync(
         RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
 
     /// <summary>Gets fields and updates or removes their expiry metadata. Redis: HGETEX.</summary>
-#pragma warning disable CS0618 // Defaults preserve compatibility with existing interface implementations.
     ValueTask<string?[]> GetAndExpireAsync(
-        RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)
-        => GetExpireAsync(key, expiry, fields);
+        RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields);
 
     /// <summary>Gets fields and updates or removes their expiry metadata. Redis: HGETEX.</summary>
     ValueTask<string?[]> GetAndExpireAsync(
-        RespireKey key, RespireExpiry expiry, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
-        => GetExpireAsync(key, expiry, fields, cancellationToken);
-#pragma warning restore CS0618
-
-    /// <summary>Gets fields and updates or removes their expiry metadata. Redis: HGETEX.</summary>
-    [Obsolete("Use GetAndExpireAsync.")]
-    ValueTask<string?[]> GetExpireAsync(RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields);
-
-    /// <summary>Gets fields and updates or removes their expiry metadata. Redis: HGETEX.</summary>
-    [Obsolete("Use GetAndExpireAsync.")]
-    ValueTask<string?[]> GetExpireAsync(
         RespireKey key, RespireExpiry expiry, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
 
     /// <summary>Sets fields and applies a relative, absolute, or retained expiry. Redis: HSETEX.</summary>
@@ -432,15 +406,6 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
             new Cmd1N(RespireCommands.Hash.HGETDEL.Verb, client.Key(in key), FieldsBlock(fields)),
             cancellationToken);
 
-    [Obsolete("Use GetAndRemoveAsync.")]
-    public ValueTask<string?[]> GetDeleteAsync(RespireKey key, params ReadOnlySpan<string> fields)
-        => GetAndRemoveAsync(key, fields);
-
-    [Obsolete("Use GetAndRemoveAsync.")]
-    public ValueTask<string?[]> GetDeleteAsync(
-        RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
-        => GetAndRemoveAsync(key, fields, cancellationToken);
-
     public ValueTask<string?[]> GetAndExpireAsync(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)
         => GetAndExpireAsync(key, expiry, fields, CancellationToken.None);
@@ -466,16 +431,6 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
         throw new ArgumentException(
             "HGETEX expiry must be relative, absolute, or RespireExpiry.Persist.", nameof(expiry));
     }
-
-    [Obsolete("Use GetAndExpireAsync.")]
-    public ValueTask<string?[]> GetExpireAsync(
-        RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)
-        => GetAndExpireAsync(key, expiry, fields);
-
-    [Obsolete("Use GetAndExpireAsync.")]
-    public ValueTask<string?[]> GetExpireAsync(
-        RespireKey key, RespireExpiry expiry, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
-        => GetAndExpireAsync(key, expiry, fields, cancellationToken);
 
     public ValueTask<bool> SetExpireAsync(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
