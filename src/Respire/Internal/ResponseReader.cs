@@ -19,7 +19,7 @@ internal static class ResponseReader
     /// <summary>+OK → true, null → false (conditional writes like SET NX).</summary>
     public static bool OkOrNull(in RespValue value) => !value.IsNull;
 
-    /// <summary>+OK → true; anything else throws. For deferred results, whose readers must return a value.</summary>
+    /// <summary>+OK → true; anything else throws. Shared by immediate and deferred confirmations.</summary>
     public static bool Ok(in RespValue value)
     {
         ExpectOk(in value);

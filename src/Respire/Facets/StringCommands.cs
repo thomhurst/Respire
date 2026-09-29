@@ -170,11 +170,11 @@ public interface IStringCommands
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<T?[]> GetManyAsync<T>(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
 
-    /// <summary>Sets many keys atomically. Redis: MSET.</summary>
-    ValueTask SetManyAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
+    /// <summary>Sets many keys atomically; returns true on OK. Redis: MSET.</summary>
+    ValueTask<bool> SetManyAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
 
-    /// <summary>Sets many keys atomically. Redis: MSET.</summary>
-    ValueTask SetManyAsync(
+    /// <summary>Sets many keys atomically; returns true on OK. Redis: MSET.</summary>
+    ValueTask<bool> SetManyAsync(
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs, CancellationToken cancellationToken);
 
     /// <summary>
@@ -399,12 +399,12 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
                 cancellationToken,
                 static (RespireClient client, in Protocol.RespValue value) => client.DeserializeBorrowed<T>(in value));
 
-    public ValueTask SetManyAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+    public ValueTask<bool> SetManyAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
         => SetManyAsync(pairs, CancellationToken.None);
 
-    public ValueTask SetManyAsync(
+    public ValueTask<bool> SetManyAsync(
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs, CancellationToken cancellationToken)
-        => client.OkAsync(
+        => client.OkResultAsync(
             "MSET", new CmdN(Verbs.MSet, SetManyArgs(client, pairs)), cancellationToken);
 
     public ValueTask<bool> SetManyExpireAsync(
