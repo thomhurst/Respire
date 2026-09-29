@@ -256,14 +256,17 @@ public interface IRespireClient : IAsyncDisposable
         CancellationToken cancellationToken = default);
 
     /// <summary>Queues a command and discards its reply.</summary>
+    /// <remarks>Cluster redirects that cannot be followed are surfaced as server errors.</remarks>
     ValueTask ExecuteFireAndForgetAsync(RespireCommand command, params RespireValue[] args);
 
     /// <summary>Queues a command with cancellation and discards its reply.</summary>
+    /// <remarks>Cluster redirects that cannot be followed are surfaced as server errors.</remarks>
     ValueTask ExecuteFireAndForgetAsync(
         RespireCommand command, RespireValue[] args, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Queues an interpolated command and discards its reply; each hole is one argument.
+    /// Cluster redirects that cannot be followed are surfaced as server errors.
     /// </summary>
     ValueTask ExecuteFireAndForgetAsync(
         RespireCommandInterpolatedStringHandler command,

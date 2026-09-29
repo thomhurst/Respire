@@ -270,7 +270,8 @@ public sealed partial class RespireClient : IRespireClient
     /// </summary>
     /// <remarks>
     /// Standalone execution returns after writing. Cluster execution may await replies to process
-    /// <c>MOVED</c> and <c>ASK</c> redirects, adding round-trip latency.
+    /// <c>MOVED</c> and <c>ASK</c> redirects, adding round-trip latency. Redirects that cannot be
+    /// followed are surfaced as server errors; ordinary command errors are discarded.
     /// </remarks>
     public ValueTask ExecuteFireAndForgetAsync(RespireCommand command, params RespireValue[] args)
         => ExecuteCommandFireAndForgetAsync(command, args, CancellationToken.None);
@@ -280,7 +281,8 @@ public sealed partial class RespireClient : IRespireClient
     /// </summary>
     /// <remarks>
     /// Standalone execution returns after writing. Cluster execution may await replies to process
-    /// <c>MOVED</c> and <c>ASK</c> redirects, adding round-trip latency.
+    /// <c>MOVED</c> and <c>ASK</c> redirects, adding round-trip latency. Redirects that cannot be
+    /// followed are surfaced as server errors; ordinary command errors are discarded.
     /// </remarks>
     public ValueTask ExecuteFireAndForgetAsync(
         RespireCommand command, RespireValue[] args, CancellationToken cancellationToken = default)
@@ -291,6 +293,7 @@ public sealed partial class RespireClient : IRespireClient
     /// splits on spaces; every interpolation hole is exactly one argument and is never
     /// re-tokenized, so values containing spaces are safe.
     /// </summary>
+    /// <remarks>Cluster redirects that cannot be followed are surfaced as server errors.</remarks>
     public ValueTask ExecuteFireAndForgetAsync(
         RespireCommandInterpolatedStringHandler command,
         CancellationToken cancellationToken = default)
@@ -1967,9 +1970,9 @@ public sealed partial class RespireClient : IRespireClient
                     operation, cluster, command, cancellationToken, storedProcedureName)
                 .ConfigureAwait(false);
         }
-        catch (RespireServerException)
+        catch (RespireServerException error) when (!ClusterRouter.IsRedirect(error))
         {
-            // Fire-and-forget still discards ordinary server errors after processing redirects.
+            // Discard ordinary server errors, but surface redirects that could not be followed.
         }
     }
 
