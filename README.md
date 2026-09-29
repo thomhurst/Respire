@@ -132,7 +132,7 @@ transaction.Lists.RightPush("audit", "withdraw:100");
 await transaction.CommitAsync();
 ```
 
-Always declare batches with `using var`. See [batch disposal guarantees](website/docs/guides/batches-and-transactions.md)
+Always declare batches with `using var`. See [batch disposal guarantees](https://thomhurst.github.io/Respire/docs/guides/batches-and-transactions)
 for pending commands, completed results, and repeated disposal.
 
 Always commit or dispose a transaction so its pooled buffer and any dedicated WATCH connection
