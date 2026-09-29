@@ -16,6 +16,11 @@ public interface IBatchSortedSetCommands
     /// <summary>Adds or updates one member. True when the member was new. Redis: ZADD.</summary>
     RespirePending<bool> Add(RespireKey key, RespireValue member, double score);
 
+    /// <summary>Adds one serialized member; booleans retain Redis 1/0 encoding. True when new. Redis: ZADD.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    RespirePending<bool> Add<T>(RespireKey key, T member, double score);
+
     /// <summary>Adds or updates many binary-safe members; returns how many were new. Redis: ZADD.</summary>
     /// <remarks>
     /// Byte-backed members borrow their storage. Keep the bytes unchanged until batch execution
@@ -179,6 +184,11 @@ internal sealed class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSe
         => sink.Add<Cmd3, bool>(
             "ZADD", new Cmd3(Verbs.ZAdd, sink.Client.Key(in key), score, member),
             static (c, v) => ResponseReader.Flag(in v));
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public RespirePending<bool> Add<T>(RespireKey key, T member, double score)
+        => Add(key, sink.Client.SerializeCollectionMember(member), score);
 
     public RespirePending<long> Add(RespireKey key, params ReadOnlySpan<(RespireValue Member, double Score)> entries)
         => sink.Add<Cmd1N, long>(

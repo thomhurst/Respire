@@ -19,8 +19,10 @@ namespace Respire;
 /// mirrors <c>client.Hashes.SetAsync</c> — with the <c>Async</c> suffix removed because queuing is
 /// synchronous, but otherwise identical parameter shapes. The return type is a pending, not a task,
 /// and there is no per-command cancellation token:
-/// <see cref="ExecuteAsync"/> owns cancellation. Members that block (a <c>waitFor</c> argument) or
-/// stream (<c>ScanAsync</c>, <c>GetLeaseAsync</c>) have no deferred form.
+/// <see cref="ExecuteAsync"/> owns cancellation. List pop and move commands expose only their
+/// non-blocking form, without the client's <c>waitFor</c> argument. Streaming and leased reads
+/// (<c>ScanAsync</c>, <c>GetLeaseAsync</c>) have no deferred form. Script commands use
+/// <c>Evaluate</c> rather than the client's <c>ExecuteAsync</c> name and return owned results.
 /// Streams, server administration, and distributed locks remain client-only because their
 /// blocking, streaming, connection-scoped, or managed-lifetime semantics do not fit a deferred
 /// single-flush command queue.

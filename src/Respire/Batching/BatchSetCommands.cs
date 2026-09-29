@@ -21,6 +21,11 @@ public interface IBatchSetCommands
     /// <summary>Whether the member is in the set. Redis: SISMEMBER.</summary>
     RespirePending<bool> Contains(RespireKey key, RespireValue member);
 
+    /// <summary>Tests membership after serialization; booleans retain Redis 1/0 encoding. Redis: SISMEMBER.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    RespirePending<bool> Contains<T>(RespireKey key, T member);
+
     /// <summary>Number of members. Redis: SCARD.</summary>
     RespirePending<long> Count(RespireKey key);
 
@@ -76,6 +81,11 @@ internal sealed class BatchSetCommands(IPendingSink sink) : IBatchSetCommands
         => sink.Add<Cmd2, bool>(
             "SISMEMBER", new Cmd2(Verbs.SIsMember, sink.Client.Key(in key), member),
             static (c, v) => ResponseReader.Flag(in v));
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public RespirePending<bool> Contains<T>(RespireKey key, T member)
+        => Contains(key, sink.Client.SerializeCollectionMember(member));
 
     public RespirePending<long> Count(RespireKey key)
         => sink.Add<Cmd1, long>(

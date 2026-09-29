@@ -25,6 +25,16 @@ public interface IBatchListCommands
     /// <summary>Pops from the tail; null when the list is empty. Redis: RPOP.</summary>
     RespirePending<string?> RightPop(RespireKey key);
 
+    /// <summary>Pops and deserializes from the head; default when empty. Redis: LPOP.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    RespirePending<T?> LeftPop<T>(RespireKey key);
+
+    /// <summary>Pops and deserializes from the tail; default when empty. Redis: RPOP.</summary>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    RespirePending<T?> RightPop<T>(RespireKey key);
+
     /// <summary>Removes and returns up to <paramref name="count"/> elements from the head. Redis: LPOP.</summary>
     RespirePending<string[]> LeftPopMany(RespireKey key, long count);
 
@@ -93,6 +103,20 @@ internal sealed class BatchListCommands(IPendingSink sink) : IBatchListCommands
         => sink.Add<Cmd1, string?>(
             "RPOP", new Cmd1(Verbs.RPop, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.StringOrNull(in v));
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public RespirePending<T?> LeftPop<T>(RespireKey key)
+        => sink.Add<Cmd1, T?>(
+            "LPOP", new Cmd1(Verbs.LPop, sink.Client.Key(in key)),
+            static (c, v) => c.DeserializeBorrowed<T>(in v));
+
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    public RespirePending<T?> RightPop<T>(RespireKey key)
+        => sink.Add<Cmd1, T?>(
+            "RPOP", new Cmd1(Verbs.RPop, sink.Client.Key(in key)),
+            static (c, v) => c.DeserializeBorrowed<T>(in v));
 
     public RespirePending<string[]> LeftPopMany(RespireKey key, long count)
         => Pop(key, count, Verbs.LPop, "LPOP");

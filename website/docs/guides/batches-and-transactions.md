@@ -59,6 +59,13 @@ Migration: calls that simply await and ignore the result need no changes. Update
 implementations, wrappers, delegates, and variables that explicitly use the previous non-generic
 `ValueTask` return type to `ValueTask<bool>`.
 
+Typed overloads follow the immediate facets too: hash `Set<T>` and `TryGet<T>`, set
+`Contains<T>`, sorted-set `Add<T>`, and list `LeftPop<T>` / `RightPop<T>`. Serialization happens
+when queuing, and results are deserialized after execution. Hash `TryGet<T>` preserves the
+`Found` flag, distinguishing a missing field from a stored default value. Typed list pops return
+the default value when the list is empty. Typed set membership and sorted-set additions preserve
+Redis's `1`/`0` representation for boolean members, matching the immediate methods.
+
 Both types implement `IRespireCommandQueue`, which unifies every deferred facet and the root
 shortcuts. Helpers can therefore queue work across facets without choosing an execution model:
 

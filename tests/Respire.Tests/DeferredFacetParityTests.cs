@@ -1,0 +1,57 @@
+using System.Reflection;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+
+namespace Respire.Tests;
+
+public class DeferredFacetParityTests
+{
+    [Test]
+    [Arguments("Strings")]
+    [Arguments("Keys")]
+    [Arguments("Hashes")]
+    [Arguments("Lists")]
+    [Arguments("Sets")]
+    [Arguments("SortedSets")]
+    [Arguments("Bitmaps")]
+    [Arguments("HyperLogLog")]
+    [Arguments("Geo")]
+    public async Task EveryQueueableClientOverloadHasMatchingDeferredShape(string facet)
+    {
+        var immediate = typeof(IRespireClient).GetProperty(facet)!.PropertyType;
+        var deferred = typeof(IRespireCommandQueue).GetProperty(facet)!.PropertyType;
+        var expected = immediate.GetMethods()
+            .Where(method => method.Name is not "ScanAsync" and not "GetLeaseAsync")
+            .Select(method => Signature(method, immediate: true));
+        var actual = deferred.GetMethods().Select(method => Signature(method, immediate: false));
+
+        await Assert.That(expected.Except(actual).ToArray()).IsEmpty();
+    }
+
+    private static string Signature(MethodInfo method, bool immediate)
+    {
+        var name = immediate ? method.Name[..^"Async".Length] : method.Name;
+        var parameters = method.GetParameters()
+            .Where(parameter => !immediate || (parameter.ParameterType != typeof(CancellationToken)
+                && !(parameter.Name == "waitFor" && parameter.ParameterType == typeof(TimeSpan?))))
+            .Select(parameter => TypeName(parameter.ParameterType));
+        var result = method.ReturnType.GetGenericArguments().Single();
+        return $"{name}`{method.GetGenericArguments().Length}({string.Join(", ", parameters)}): {TypeName(result)}";
+    }
+
+    private static string TypeName(Type type)
+    {
+        if (type.IsGenericParameter)
+        {
+            return $"T{type.GenericParameterPosition}";
+        }
+        if (type.IsArray)
+        {
+            return $"{TypeName(type.GetElementType()!)}[]";
+        }
+        return type.IsGenericType
+            ? $"{type.GetGenericTypeDefinition().Name}<{string.Join(", ", type.GetGenericArguments().Select(TypeName))}>"
+            : type.Name;
+    }
+}
