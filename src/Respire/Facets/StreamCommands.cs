@@ -326,11 +326,11 @@ public interface IStreamCommands
         bool descending = false,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Deletes stream entries; returns the number removed. Redis: XDEL.</summary>
-    ValueTask<long> DeleteAsync(RespireKey key, params ReadOnlySpan<RespireStreamId> ids);
+    /// <summary>Removes stream entries; returns the number removed. Redis: XDEL.</summary>
+    ValueTask<long> RemoveAsync(RespireKey key, params ReadOnlySpan<RespireStreamId> ids);
 
-    /// <summary>Deletes stream entries; returns the number removed. Redis: XDEL.</summary>
-    ValueTask<long> DeleteAsync(
+    /// <summary>Removes stream entries; returns the number removed. Redis: XDEL.</summary>
+    ValueTask<long> RemoveAsync(
         RespireKey key, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken);
 
     /// <summary>Trims a stream by maximum length; returns the number removed. Redis: XTRIM MAXLEN.</summary>
@@ -570,10 +570,10 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
                     ParseEntries(in value, client: null, resolvedKey: default, group: null));
     }
 
-    public ValueTask<long> DeleteAsync(RespireKey key, params ReadOnlySpan<RespireStreamId> ids)
-        => DeleteAsync(key, ids, CancellationToken.None);
+    public ValueTask<long> RemoveAsync(RespireKey key, params ReadOnlySpan<RespireStreamId> ids)
+        => RemoveAsync(key, ids, CancellationToken.None);
 
-    public ValueTask<long> DeleteAsync(
+    public ValueTask<long> RemoveAsync(
         RespireKey key, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken)
     {
         RequireIds(ids);

@@ -47,8 +47,8 @@ public interface IBatchHashCommands
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     RespirePending<Dictionary<string, T>> GetAll<T>(RespireKey key);
 
-    /// <summary>Deletes fields; returns how many existed. Redis: HDEL.</summary>
-    RespirePending<long> Delete(RespireKey key, params ReadOnlySpan<string> fields);
+    /// <summary>Removes fields; returns how many existed. Redis: HDEL.</summary>
+    RespirePending<long> Remove(RespireKey key, params ReadOnlySpan<string> fields);
 
     /// <summary>Whether the named field exists. Redis: HEXISTS.</summary>
     RespirePending<bool> Exists(RespireKey key, string field);
@@ -79,14 +79,14 @@ public interface IBatchHashCommands
     RespirePending<HashFieldExpiryResult[]> Expire(
         RespireKey key, RespireExpiry expiry, ExpireWhen when, params ReadOnlySpan<string> fields);
 
-    /// <summary>Gets fields and deletes them atomically. Redis: HGETDEL.</summary>
+    /// <summary>Gets fields and removes them atomically. Redis: HGETDEL.</summary>
 #pragma warning disable CS0618 // Defaults preserve compatibility with existing interface implementations.
-    RespirePending<string?[]> GetAndDelete(RespireKey key, params ReadOnlySpan<string> fields)
+    RespirePending<string?[]> GetAndRemove(RespireKey key, params ReadOnlySpan<string> fields)
         => GetDelete(key, fields);
 #pragma warning restore CS0618
 
-    /// <summary>Gets fields and deletes them atomically. Redis: HGETDEL.</summary>
-    [Obsolete("Use GetAndDelete.")]
+    /// <summary>Gets fields and removes them atomically. Redis: HGETDEL.</summary>
+    [Obsolete("Use GetAndRemove.")]
     RespirePending<string?[]> GetDelete(RespireKey key, params ReadOnlySpan<string> fields);
 
     /// <summary>Gets fields and updates or removes their expiry metadata. Redis: HGETEX.</summary>
@@ -177,7 +177,7 @@ internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
             "HGETALL", new Cmd1(Verbs.HGetAll, sink.Client.Key(in key)),
             static (c, v) => c.DeserializeMap<T>(in v));
 
-    public RespirePending<long> Delete(RespireKey key, params ReadOnlySpan<string> fields)
+    public RespirePending<long> Remove(RespireKey key, params ReadOnlySpan<string> fields)
         => sink.Add<Cmd1N, long>(
             "HDEL", new Cmd1N(Verbs.HDel, sink.Client.Key(in key), HashCommands.ToValues(fields)),
             static (c, v) => ResponseReader.Integer(in v));
@@ -252,15 +252,15 @@ internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
             "Hash expiry must be relative, absolute, or RespireExpiry.Persist.", nameof(expiry));
     }
 
-    public RespirePending<string?[]> GetAndDelete(RespireKey key, params ReadOnlySpan<string> fields)
+    public RespirePending<string?[]> GetAndRemove(RespireKey key, params ReadOnlySpan<string> fields)
         => sink.Add<Cmd1N, string?[]>(
             "HGETDEL",
             new Cmd1N(RespireCommands.Hash.HGETDEL.Verb, sink.Client.Key(in key), HashCommands.FieldsBlock(fields)),
             static (c, v) => ResponseReader.NullableStringArray(in v));
 
-    [Obsolete("Use GetAndDelete.")]
+    [Obsolete("Use GetAndRemove.")]
     public RespirePending<string?[]> GetDelete(RespireKey key, params ReadOnlySpan<string> fields)
-        => GetAndDelete(key, fields);
+        => GetAndRemove(key, fields);
 
     public RespirePending<string?[]> GetAndExpire(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)

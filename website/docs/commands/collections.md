@@ -28,6 +28,11 @@ string? name = await redis.Hashes.GetStringAsync("user:42", "name");
 Dictionary<string, string> profile = await redis.Hashes.GetAllAsync("user:42");
 ```
 
+Pre-release migration: replace `Hashes.DeleteAsync` and `Streams.DeleteAsync` with
+`RemoveAsync`, and `Hashes.GetAndDeleteAsync` with `GetAndRemoveAsync`. Deferred hash commands
+use `Remove` and `GetAndRemove`. Whole-key deletion and stream group/consumer lifecycle methods
+keep their `Delete` names.
+
 ## Lists
 
 ```csharp

@@ -143,14 +143,14 @@ public class MultiItemCancellationOverloadTests
 
         _ = client.Hashes.SetAsync("h", fieldValues, token);
         _ = client.Hashes.GetManyAsync("h", fields, token);
-        _ = client.Hashes.DeleteAsync("h", fields, token);
+        _ = client.Hashes.RemoveAsync("h", fields, token);
         _ = client.Hashes.ExpiryAsync("h", fields, token);
         _ = client.Hashes.ExpireAsync("h", expiry, fields, token);
         _ = client.Hashes.ExpireAsync("h", expiry, ExpireWhen.Exists, fields, token);
         _ = client.Hashes.ExpireAsync("h", RespireExpiry.At(expireAt), fields, token);
         _ = client.Hashes.ExpireAsync("h", RespireExpiry.At(expireAt), ExpireWhen.Exists, fields, token);
         _ = client.Hashes.ExpireAsync("h", RespireExpiry.Persist, fields, token);
-        _ = client.Hashes.GetAndDeleteAsync("h", fields, token);
+        _ = client.Hashes.GetAndRemoveAsync("h", fields, token);
         _ = client.Hashes.GetAndExpireAsync("h", expiry, fields, token);
         _ = client.Hashes.GetAndExpireAsync("h", RespireExpiry.At(expireAt), fields, token);
         _ = client.Hashes.GetAndExpireAsync("h", RespireExpiry.Persist, fields, token);
@@ -220,7 +220,7 @@ public class MultiItemCancellationOverloadTests
         _ = client.Geo.PositionAsync("g", values, token);
 
         _ = client.Streams.AddAsync("st", fieldValues, token);
-        _ = client.Streams.DeleteAsync("st", ids, token);
+        _ = client.Streams.RemoveAsync("st", ids, token);
         _ = client.Streams.AcknowledgeAsync("st", "group", ids, token);
     }
 

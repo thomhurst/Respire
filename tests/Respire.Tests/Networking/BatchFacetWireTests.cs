@@ -15,6 +15,33 @@ namespace Respire.Tests.Networking;
 public class BatchFacetWireTests
 {
     [Test]
+    public async Task HashRemoval_MatchesDeferredFacets()
+    {
+        var removed = ":2\r\n"u8.ToArray();
+        var values = "*2\r\n$3\r\none\r\n$-1\r\n"u8.ToArray();
+        await using var server = new FakeRespServer(removed, values, removed, values);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        await Assert.That(await client.Hashes.RemoveAsync("hash", "first", "second")).IsEqualTo(2);
+        var immediateValues = await client.Hashes.GetAndRemoveAsync("hash", "first", "missing");
+        var batch = client.CreateBatch();
+        var deferredCount = batch.Hashes.Remove("hash", "first", "second");
+        var deferredValues = batch.Hashes.GetAndRemove("hash", "first", "missing");
+        await batch.ExecuteAsync();
+
+        await Assert.That(deferredCount.Result).IsEqualTo(2);
+        await Assert.That(immediateValues).IsEquivalentTo(new string?[] { "one", null }, CollectionOrdering.Matching);
+        await Assert.That(deferredValues.Result).IsEquivalentTo(immediateValues, CollectionOrdering.Matching);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
+        {
+            "HDEL hash first second",
+            "HGETDEL hash FIELDS 2 first missing",
+            "HDEL hash first second",
+            "HGETDEL hash FIELDS 2 first missing",
+        }, CollectionOrdering.Matching);
+    }
+
+    [Test]
     public async Task ConditionalHashSetAndStringSetRange_MatchDeferredFacets()
     {
         await using var server = new FakeRespServer(

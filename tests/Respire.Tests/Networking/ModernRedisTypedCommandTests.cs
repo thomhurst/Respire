@@ -74,7 +74,7 @@ public class ModernRedisTypedCommandTests
         var expireAtResults = await client.Hashes.ExpireAsync(
             "hash", RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(123456789)), "a");
         var persistResults = await client.Hashes.ExpireAsync("hash", RespireExpiry.Persist, "a", "b", "c");
-        var deleted = await client.Hashes.GetAndDeleteAsync("hash", "a", "missing");
+        var deleted = await client.Hashes.GetAndRemoveAsync("hash", "a", "missing");
         var getExpire = await client.Hashes.GetAndExpireAsync("hash", TimeSpan.FromSeconds(5), "a", "b");
         var getExpireAt = await client.Hashes.GetAndExpireAsync(
             "hash", RespireExpiry.At(DateTimeOffset.FromUnixTimeMilliseconds(987654321)), "c");

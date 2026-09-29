@@ -46,11 +46,11 @@ public class TypedValueApiTests
         [
             (typeof(IStringCommands), nameof(IStringCommands.GetAndDeleteAsync)),
             (typeof(IStringCommands), nameof(IStringCommands.GetAndExpireAsync)),
-            (typeof(IHashCommands), nameof(IHashCommands.GetAndDeleteAsync)),
+            (typeof(IHashCommands), nameof(IHashCommands.GetAndRemoveAsync)),
             (typeof(IHashCommands), nameof(IHashCommands.GetAndExpireAsync)),
             (typeof(IBatchStringCommands), nameof(IBatchStringCommands.GetAndDelete)),
             (typeof(IBatchStringCommands), nameof(IBatchStringCommands.GetAndExpire)),
-            (typeof(IBatchHashCommands), nameof(IBatchHashCommands.GetAndDelete)),
+            (typeof(IBatchHashCommands), nameof(IBatchHashCommands.GetAndRemove)),
             (typeof(IBatchHashCommands), nameof(IBatchHashCommands.GetAndExpire)),
         ];
 
