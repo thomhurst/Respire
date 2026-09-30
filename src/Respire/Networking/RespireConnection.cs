@@ -411,7 +411,7 @@ internal sealed class RespireConnection : IAsyncDisposable
         if (hello.IsError)
         {
             if (!IsUnsupportedHello(in hello)) throw CreateHandshakeException(in hello, "HELLO");
-            _logger?.LogDebug("HELLO 3 is unsupported by {Host}:{Port}; using RESP2 on this connection", Host, Port);
+            _logger?.LogInformation("HELLO 3 is unsupported by {Host}:{Port}; using RESP2 on this connection", Host, Port);
             return RespProtocol.Resp2;
         }
         ValidateHelloProtocol(in hello);
