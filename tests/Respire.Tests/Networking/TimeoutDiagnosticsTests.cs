@@ -130,11 +130,14 @@ public class TimeoutDiagnosticsTests
     public async Task GuardedRemovalHandshakePreservesDeadlineAndLeaseSafety(bool cancelCaller)
     {
         var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        long leasePlaced = 0;
         var selects = 0;
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
         {
             SuppressReply = command =>
             {
+                if (command.StartsWith("SET ", StringComparison.Ordinal))
+                    Volatile.Write(ref leasePlaced, System.Diagnostics.Stopwatch.GetTimestamp());
                 if (command != "SELECT 1" || Interlocked.Increment(ref selects) != 2) return false;
                 handshake.TrySetResult();
                 return true;
@@ -148,7 +151,6 @@ public class TimeoutDiagnosticsTests
         // Use the guarded removal's fallback deadline without arming a competing SELECT deadline.
         client.RemovalLeaseTtl = TimeSpan.FromSeconds(1);
         using var caller = new CancellationTokenSource();
-        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         var pending = client.UnlinkGuardedAsync("private-key", caller.Token).AsTask();
         await handshake.Task.WaitAsync(TimeSpan.FromSeconds(5));
         if (cancelCaller)
@@ -178,7 +180,8 @@ public class TimeoutDiagnosticsTests
         {
             // Without revocation, cleanup waits for the TTL plus its one-second safety margin.
             // Check the server lease lifetime, not an exact CancelAfter/Stopwatch timer boundary.
-            await Assert.That(System.Diagnostics.Stopwatch.GetElapsedTime(started)).IsGreaterThanOrEqualTo(client.RemovalLeaseTtl);
+            await Assert.That(System.Diagnostics.Stopwatch.GetElapsedTime(Volatile.Read(ref leasePlaced)))
+                .IsGreaterThanOrEqualTo(client.RemovalLeaseTtl);
         }
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("EVAL "))).IsFalse();
     }
@@ -418,7 +421,11 @@ public class TimeoutDiagnosticsTests
             }
             if (command.StartsWith("UNLINK ", StringComparison.Ordinal))
             {
-                revocationSeen.TrySetResult(target.ReceivedConnectionIds[^1]);
+                // Recorded command indices remain stable if another connection appends a command.
+                var commands = target.ReceivedArguments;
+                var index = Enumerable.Range(0, commands.Count)
+                    .Single(i => commands[i][0].AsSpan().SequenceEqual("UNLINK"u8));
+                revocationSeen.TrySetResult(target.ReceivedConnectionIds[index]);
                 return true;
             }
             return false;
