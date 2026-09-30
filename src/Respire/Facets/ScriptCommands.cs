@@ -35,6 +35,7 @@ public sealed class RespireScript
     public string Sha1 { get; }
 
     /// <summary>Whether execution uses EVALSHA_RO / EVAL_RO (Redis 7+), which reject writes.</summary>
+    /// <remarks>This selects the Redis command contract; it does not select a replica connection.</remarks>
     public bool IsReadOnly { get; }
 
     internal string EvalOperation => IsReadOnly ? "EVAL_RO" : "EVAL";
@@ -173,14 +174,16 @@ public interface IScriptCommands
         => ExistsAsync(sha1s, CancellationToken.None);
 
     /// <summary>Checks script SHA1 digests, with cancellation. Redis: SCRIPT EXISTS.</summary>
-    ValueTask<bool[]> ExistsAsync(ReadOnlySpan<string> sha1s, CancellationToken cancellationToken);
+    ValueTask<bool[]> ExistsAsync(ReadOnlySpan<string> sha1s, CancellationToken cancellationToken)
+        => throw new NotSupportedException("This implementation does not support SCRIPT EXISTS.");
 
     /// <summary>
     /// Clears the script cache on the server, or every discovered Cluster primary. This does not
     /// delete keys. The default mode follows the server's lazyfree-lazy-user-flush setting.
     /// Explicit SYNC / ASYNC requires Redis 6.2+. Redis: SCRIPT FLUSH.
     /// </summary>
-    ValueTask FlushAsync(ScriptFlushMode mode = ScriptFlushMode.Default, CancellationToken cancellationToken = default);
+    ValueTask FlushAsync(ScriptFlushMode mode = ScriptFlushMode.Default, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("This implementation does not support SCRIPT FLUSH.");
 }
 
 internal sealed class ScriptCommands(RespireClient client) : IScriptCommands

@@ -1228,6 +1228,32 @@ public class ClientSideCacheTests
         await Assert.That(server.ReceivedCommands.Count).IsEqualTo(6);
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ScriptExistsPreservesCachedValues(bool deferred)
+    {
+        await using var server = new FakeRespServer(HelloReply, FakeRespServer.OkReply,
+            FakeRespServer.OkReply, "$5\r\nvalue\r\n"u8.ToArray(), "*1\r\n:0\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+        await client.GetStringAsync("key");
+        if (deferred)
+        {
+            using var batch = client.CreateBatch();
+            var pending = batch.Scripts.Exists("digest");
+            await batch.ExecuteAsync();
+            await Assert.That(pending.Result).IsEquivalentTo([false]);
+        }
+        else
+        {
+            await Assert.That(await client.Scripts.ExistsAsync("digest")).IsEquivalentTo([false]);
+        }
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        await Assert.That(client.ClientSideCache.GetStatistics().Hits).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(5);
+    }
+
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server)
         => RespireClient.ConnectAsync(new RespireOptions
         {

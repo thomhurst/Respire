@@ -81,8 +81,8 @@ public class ScriptCacheCommandTests
     public async Task InvalidInputsAreRejectedBeforeSending()
     {
         await using var client = RespireClient.Create(new RespireOptions());
-        await Assert.That(() => client.Scripts.ExistsAsync()).ThrowsExactly<ArgumentException>();
-        await Assert.That(() => client.Scripts.FlushAsync((ScriptFlushMode)99)).ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.Scripts.ExistsAsync()).ThrowsExactly<ArgumentException>();
+        await Assert.That(async () => await client.Scripts.FlushAsync((ScriptFlushMode)99)).ThrowsExactly<ArgumentOutOfRangeException>();
         using var batch = client.CreateBatch();
         await Assert.That(() => batch.Scripts.Exists()).ThrowsExactly<ArgumentException>();
         await Assert.That(() => batch.Scripts.Flush((ScriptFlushMode)99)).ThrowsExactly<ArgumentOutOfRangeException>();

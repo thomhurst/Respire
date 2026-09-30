@@ -22,16 +22,19 @@ public interface IBatchScriptCommands
         RespireValue[]? args = null);
 
     /// <summary>Queues SCRIPT LOAD on the execution node. Cluster execution does not fan out.</summary>
-    RespirePending<string> Load(RespireScript script);
+    RespirePending<string> Load(RespireScript script)
+        => throw new NotSupportedException("This implementation does not support deferred SCRIPT LOAD.");
 
     /// <summary>Queues SCRIPT EXISTS on the execution node. Results follow input digest order.</summary>
-    RespirePending<bool[]> Exists(params ReadOnlySpan<string> sha1s);
+    RespirePending<bool[]> Exists(params ReadOnlySpan<string> sha1s)
+        => throw new NotSupportedException("This implementation does not support deferred SCRIPT EXISTS.");
 
     /// <summary>
     /// Queues SCRIPT FLUSH on the execution node. In Cluster, this clears only that node's cache;
     /// use IScriptCommands.FlushAsync for all discovered primaries. Returns true for OK.
     /// </summary>
-    RespirePending<bool> Flush(ScriptFlushMode mode = ScriptFlushMode.Default);
+    RespirePending<bool> Flush(ScriptFlushMode mode = ScriptFlushMode.Default)
+        => throw new NotSupportedException("This implementation does not support deferred SCRIPT FLUSH.");
 }
 
 internal sealed class BatchScriptCommands(IPendingSink sink) : IBatchScriptCommands

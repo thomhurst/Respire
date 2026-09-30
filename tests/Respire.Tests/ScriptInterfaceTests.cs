@@ -38,6 +38,14 @@ public class ScriptInterfaceTests
         await Assert.That(implementation.OriginalStorage).IsTrue();
     }
 
+    [Test]
+    public async Task ExistingImplementationsHaveExplicitUnsupportedCacheDefaults()
+    {
+        IScriptCommands commands = new SpanOnlyScripts([], []);
+        await Assert.That(async () => await commands.ExistsAsync("digest")).ThrowsExactly<NotSupportedException>();
+        await Assert.That(async () => await commands.FlushAsync()).ThrowsExactly<NotSupportedException>();
+    }
+
     private sealed class SpanOnlyScripts(RespireKey[] expectedKeys, RespireValue[] expectedArgs) : IScriptCommands
     {
         public int Calls { get; private set; }
@@ -57,12 +65,6 @@ public class ScriptInterfaceTests
         }
 
         public ValueTask<string> LoadAsync(RespireScript script, CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
-
-        public ValueTask<bool[]> ExistsAsync(ReadOnlySpan<string> sha1s, CancellationToken cancellationToken)
-            => throw new NotSupportedException();
-
-        public ValueTask FlushAsync(ScriptFlushMode mode = ScriptFlushMode.Default, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
         private static bool SameStorage<T>(ReadOnlySpan<T> actual, T[] expected)
