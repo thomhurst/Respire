@@ -12,6 +12,37 @@ public class ClusterReadOnlyTests
     private static readonly byte[] ReadOnlyReply = "-READONLY You can't write against a read only replica.\r\n"u8.ToArray();
 
     [Test]
+    public async Task TwoStalledPrimariesStillLeaveTimeForSeedDiscovery()
+    {
+        await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(ReadOnlyReply);
+        await using var first = new FakeRespServer { SuppressReply = _ => true };
+        await using var second = new FakeRespServer { SuppressReply = _ => true };
+        await using var seed = new FakeRespServer(SplitTopology(first.Port, replica.Port), Topology(replacement.Port));
+        seed.DelayReply(1, 600);
+        await using var client = await ConnectAsync(seed.Port, TimeSpan.FromSeconds(2));
+        var router = client.Core.Cluster!;
+        router.SetSlotOwner(1, router.GetMultiplexer(new RespireEndpoint("127.0.0.1", second.Port)));
+
+        await Assert.That(await client.SetAsync("key", "value")).IsTrue();
+        await Assert.That(seed.CommandsSeen).IsEqualTo(2);
+        await Assert.That(replacement.ReceivedCommands).Contains("SET key value");
+    }
+
+    [Test]
+    public async Task FireAndForgetSurfacesReadOnlyWhenRecoveryFails()
+    {
+        await using var replica = new FakeRespServer(ReadOnlyReply, ReadOnlyReply);
+        await using var seed = new FakeRespServer(Topology(replica.Port), Topology(replica.Port));
+        await using var client = await ConnectAsync(seed.Port);
+
+        var error = await Assert.That(async () =>
+            await client.ExecuteFireAndForgetAsync(RespireCommands.String.SET, "key", "value"))
+            .Throws<RespireServerException>();
+        await Assert.That(error!.Code).IsEqualTo(RespireErrorCodes.ReadOnly);
+    }
+
+    [Test]
     [Arguments("facet")]
     [Arguments("raw")]
     [Arguments("catalog")]

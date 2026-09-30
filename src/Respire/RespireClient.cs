@@ -1991,9 +1991,10 @@ public sealed partial class RespireClient : IRespireClient
                     operation, cluster, command, cancellationToken, storedProcedureName)
                 .ConfigureAwait(false);
         }
-        catch (RespireServerException error) when (!ClusterRouter.IsRedirect(error))
+        catch (RespireServerException error) when (!ClusterRouter.CanRecover(
+            error, command.TryGetClusterSlot(out var failedSlot) ? failedSlot : null))
         {
-            // Discard ordinary server errors, but surface redirects that could not be followed.
+            // Discard ordinary errors, but surface exhausted redirect or READONLY recovery.
         }
     }
 

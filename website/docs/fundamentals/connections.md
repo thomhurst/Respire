@@ -49,7 +49,9 @@ Respire refreshes `CLUSTER SLOTS` through other discovered primaries or configur
 retries against a different owner. The replacement is cached for later commands. One refresh
 round is bounded by `ConnectTimeout`, and commands share the existing five-retry redirect
 budget. If discovery fails or still identifies the same node, the original `READONLY` error is
-returned. Caller cancellation still cancels recovery.
+returned, including for keyed fire-and-forget commands. Cached-owner probes and discovered
+primaries share at most half of the round deadline, leaving time for configured seeds.
+Caller cancellation still cancels recovery.
 
 This applies to immediate, raw/catalog, fire-and-forget, batch, blocking/dedicated, and tracked
 script commands. Transactions retry only when a queue error aborted the whole transaction;

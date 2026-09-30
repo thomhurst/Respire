@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using Respire.Commands;
 using Respire.Infrastructure;
 using Respire.Networking;
@@ -27,6 +28,8 @@ internal sealed class ClusterRouter : IAsyncDisposable
     private RespireConnectionMultiplexer? _seed;
     private int _hasCompleteTopology;
     private long _topologyVersion;
+    // Per-slot versions reject stale discovery even when a route changes away and back
+    // to the same transport (an owner-reference comparison cannot detect that ABA case).
     private readonly long[] _slotVersions = new long[ClusterHash.SlotCount];
     private int _disposed;
 
@@ -318,77 +321,90 @@ internal sealed class ClusterRouter : IAsyncDisposable
         {
             ClearSlotOwner(slot, owner);
         }
-        var candidates = BuildReadOnlyCandidates(source);
-
-        // One round has one deadline. A stalled attempt leaves half the original budget
-        // for fallback; a large cluster never reduces a healthy attempt to a tiny share.
-        // The linked round token always bounds the attempt by the actual remaining time.
-        using var timeout = CommandTimeoutCancellation.Create(cancellationToken, _options.ConnectTimeout);
-        var attemptTimeout = TimeSpan.FromTicks(Math.Max(1, _options.ConnectTimeout.Ticks / 2));
-        RespireConnectionMultiplexer? unavailableOwner;
+        var (primaries, fallbacks) = BuildReadOnlyCandidates(source);
+        using var budget = new ClusterRecoveryBudget(cancellationToken, _options.ConnectTimeout);
         try
         {
-            // Another command may replace the route while this replica's reply is in flight.
-            using (var attempt = CommandTimeoutCancellation.Create(timeout.Token, attemptTimeout))
+            // Cached-owner probing and all discovered primaries share one half-round phase.
+            // Their count cannot consume the time reserved for configured seeds.
+            var cached = await TryConnectReadOnlyOwnerAsync(slot, source, budget.PrimaryToken, budget.Token)
+                .ConfigureAwait(false);
+            var replacement = cached.Replacement;
+            if (replacement is not null)
             {
-                var cached = await TryConnectReadOnlyOwnerAsync(slot, source, attempt.Token, timeout.Token)
-                    .ConfigureAwait(false);
-                if (cached.Replacement is { } replacement)
-                {
-                    return replacement;
-                }
-                unavailableOwner = cached.Unavailable;
+                return replacement;
             }
-
-            for (var index = 0; index < candidates.Count; index++)
+            replacement = await TryReadOnlyCandidatesAsync(primaries, source, slot, budget,
+                primaryPhase: true, cached.Unavailable).ConfigureAwait(false);
+            replacement ??= await TryReadOnlyCandidatesAsync(fallbacks, source, slot, budget,
+                primaryPhase: false, cached.Unavailable).ConfigureAwait(false);
+            if (replacement is not null)
             {
-                var candidate = candidates[index];
-                if (ReferenceEquals(candidate, unavailableOwner))
-                {
-                    continue;
-                }
-                timeout.Token.ThrowIfCancellationRequested();
-                // The last fallback may use all time that remains in the round.
-                var allowance = index == candidates.Count - 1 ? _options.ConnectTimeout : attemptTimeout;
-                using var attempt = CommandTimeoutCancellation.Create(timeout.Token, allowance);
-                if (!await TryDiscoverReadOnlyOwnerAsync(candidate, attempt.Token, timeout.Token).ConfigureAwait(false))
-                {
-                    continue;
-                }
-
-                var discovered = await TryConnectReadOnlyOwnerAsync(slot, source, attempt.Token, timeout.Token)
-                    .ConfigureAwait(false);
-                if (discovered.Replacement is { } replacement)
-                {
-                    return replacement;
-                }
-                unavailableOwner = discovered.Unavailable ?? unavailableOwner;
+                return replacement;
             }
         }
         catch (Exception exception) when (!cancellationToken.IsCancellationRequested
             && (exception is OperationCanceledException || IsDiscoveryFailure(exception)))
         {
-            throw error;
+            // Preserve the original rejection and its stack when discovery expires or fails.
         }
 
-        throw error;
+        ExceptionDispatchInfo.Capture(error).Throw();
+        throw new InvalidOperationException("Unreachable after rethrowing the original READONLY error.");
     }
 
-    private List<RespireConnectionMultiplexer> BuildReadOnlyCandidates(RespireConnection source)
+    private async ValueTask<RespireConnectionMultiplexer?> TryReadOnlyCandidatesAsync(
+        List<RespireConnectionMultiplexer> candidates, RespireConnection source, int slot,
+        ClusterRecoveryBudget budget, bool primaryPhase, RespireConnectionMultiplexer? unavailableOwner)
     {
-        // Prefer other discovered primaries, then configured seeds, then the demoted node.
-        var candidates = new List<RespireConnectionMultiplexer>(Volatile.Read(ref _masters));
-        candidates.RemoveAll(node => IsSameEndpoint(node, source));
+        for (var index = 0; index < candidates.Count; index++)
+        {
+            if (primaryPhase && budget.PrimaryToken.IsCancellationRequested)
+            {
+                break;
+            }
+            var candidate = candidates[index];
+            if (ReferenceEquals(candidate, unavailableOwner))
+            {
+                continue;
+            }
+            budget.Token.ThrowIfCancellationRequested();
+            // Give the final configured seed all remaining time; the demoted source is
+            // only a best-effort fallback if that seed fails before the deadline.
+            using var attempt = primaryPhase ? null : budget.CreateFallbackAttempt(index >= candidates.Count - 2);
+            var attemptToken = attempt?.Token ?? budget.PrimaryToken;
+            if (!await TryDiscoverReadOnlyOwnerAsync(candidate, attemptToken, budget.Token).ConfigureAwait(false))
+            {
+                continue;
+            }
+            var discovered = await TryConnectReadOnlyOwnerAsync(slot, source, attemptToken, budget.Token)
+                .ConfigureAwait(false);
+            if (discovered.Replacement is { } replacement)
+            {
+                return replacement;
+            }
+            unavailableOwner = discovered.Unavailable ?? unavailableOwner;
+        }
+        return null;
+    }
+
+    private (List<RespireConnectionMultiplexer> Primaries, List<RespireConnectionMultiplexer> Fallbacks)
+        BuildReadOnlyCandidates(RespireConnection source)
+    {
+        var fallbacks = new List<RespireConnectionMultiplexer>();
+        var seeds = new HashSet<RespireConnectionMultiplexer>();
         foreach (var seed in _seeds)
         {
             var node = GetOrCreateNode(seed);
-            if (!IsSameEndpoint(node, source) && !candidates.Contains(node))
+            if (!IsSameEndpoint(node, source) && seeds.Add(node))
             {
-                candidates.Add(node);
+                fallbacks.Add(node);
             }
         }
-        candidates.Add(GetOrCreateNode(new RespireEndpoint(source.Host, source.Port)));
-        return candidates;
+        var primaries = new List<RespireConnectionMultiplexer>(Volatile.Read(ref _masters));
+        primaries.RemoveAll(node => IsSameEndpoint(node, source) || seeds.Contains(node));
+        fallbacks.Add(GetOrCreateNode(new RespireEndpoint(source.Host, source.Port)));
+        return (primaries, fallbacks);
     }
 
     private async ValueTask<bool> TryDiscoverReadOnlyOwnerAsync(
