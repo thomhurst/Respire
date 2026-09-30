@@ -15,6 +15,7 @@ internal sealed class BroadcastPrefixSet : IReadOnlyList<RespireKey>
 
     internal static BroadcastPrefixSet Create(IReadOnlyList<RespireKey> prefixes)
     {
+        // This sealed type already owns immutable byte snapshots; sharing it is safe.
         if (prefixes is BroadcastPrefixSet owned) return owned;
         if (prefixes.Count == 0) return Empty;
         var keys = new RespireKey[prefixes.Count];
@@ -37,6 +38,7 @@ internal sealed class BroadcastPrefixSet : IReadOnlyList<RespireKey>
         return new BroadcastPrefixSet(keys, sorted);
     }
 
+    // No PREFIX arguments means BCAST covers every key, not an empty coverage set.
     internal bool Contains(in RespireKey key) => Count == 0 || key.StartsWithAny(this);
 
     internal bool Matches(ReadOnlySpan<byte> key)
