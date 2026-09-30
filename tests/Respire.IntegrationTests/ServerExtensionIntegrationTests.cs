@@ -30,7 +30,10 @@ public class ServerExtensionIntegrationTests
         added.AsInteger().Should().Be(1);
         using var ttl = await client.ExecuteAsync(RespireCommands.Dragonfly.FIELDTTL, "members", member);
         ttl.AsInteger().Should().BeInRange(1, 60);
+        // Dragonfly 2.0.0 returns a per-member array for FIELDEXPIRE, but scalar
+        // integers for SADDEX and FIELDTTL, under both RESP2 and RESP3.
         using var expiry = await client.ExecuteAsync(RespireCommands.Dragonfly.FIELDEXPIRE, "members", 120, member);
+        expiry.Count.Should().Be(1);
         expiry[0].AsInteger().Should().Be(1);
         using var members = await client.ExecuteAsync(RespireCommands.Set.SMEMBERS, "members");
         members[0].AsBytes().Should().Equal(member);
@@ -69,6 +72,12 @@ public class ServerExtensionIntegrationTests
         renamed.AsInteger().Should().Be(1);
         using var value = await client.ExecuteAsync(RespireCommands.Hash.HGET, "hash", "new");
         value.AsBytes().Should().Equal(member);
+        // KeyDB 6.3.4 accepts multiple keys and returns a position-preserving boolean array.
+        using var exists = await client.ExecuteAsync(RespireCommands.KeyDb.KEYDB_MEXISTS, "members", "missing", "hash");
+        exists.Count.Should().Be(3);
+        exists[0].AsBoolean().Should().BeTrue();
+        exists[1].AsBoolean().Should().BeFalse();
+        exists[2].AsBoolean().Should().BeTrue();
         Func<Task> invalid = async () =>
         {
             using var result = await client.ExecuteAsync(RespireCommands.KeyDb.EXPIREMEMBER, "members", member, "invalid");

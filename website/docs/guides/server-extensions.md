@@ -59,11 +59,21 @@ These commands retain the raw execution contract: arguments are separate binary-
 tokens, caller keys are explicit, and prefixed views reject immediate catalog execution.
 Key-based descriptors route using their first key argument. Administrative commands and
 the `RM` cursor have no routing key and run on one selected node, without Cluster fan-out.
+`KEYDB.MEXISTS key [key ...]` is a multi-key command. This raw catalog routes using
+only its first key; it does not validate all key slots locally or split the request across
+nodes. On KeyDB Cluster, supply keys sharing a hash slot (for example, `{user}:a` and
+`{user}:b`); the server returns `CROSSSLOT` for incompatible keys. Its result contains
+one boolean per supplied key, in input order (integer 0/1 replies under RESP2).
 For node-specific administration, use a standalone client aimed at the intended endpoint.
 These vendor descriptors are not added to the deferred raw API's supported key layouts;
 unsupported layouts continue to fail before enqueueing.
 Typed facets continue to provide their documented Redis/Valkey contracts; selecting a
 descriptor does not negotiate a different typed API.
+
+The real-server smoke tests verify `CL.THROTTLE`, `SADDEX`, `FIELDTTL`, and
+`FIELDEXPIRE` on Dragonfly 2.0.0, and `EXPIREMEMBER`, `PEXPIREMEMBERAT`,
+`KEYDB.HRENAME`, and `KEYDB.MEXISTS` on KeyDB 6.3.4, each under RESP2 and RESP3.
+These scenarios do not certify every descriptor against those image versions.
 
 References: [Dragonfly command documentation](https://github.com/dragonflydb/documentation/tree/31881bce033d4cec47cb2e85865d46745760e499/docs/command-reference),
 [Dragonfly Cluster administration](https://github.com/dragonflydb/dragonfly/blob/v2.0.0/docs/cluster-mode.md),
