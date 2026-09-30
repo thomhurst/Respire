@@ -45,7 +45,7 @@ internal sealed partial class DedicatedConnectionPool
 
                 if (episode == 0) episode = Interlocked.Increment(ref _nextRecoveryEpisode);
                 if (attempt < int.MaxValue) attempt++;
-                var delay = policy.GetDelay(attempt, Random.Shared.NextDouble());
+                var delay = policy.GetDelay(attempt);
                 QueueRecovery(RespireConnectionState.Reconnecting, failure, attempt, episode, delay);
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }

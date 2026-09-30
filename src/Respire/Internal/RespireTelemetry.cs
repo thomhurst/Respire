@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Globalization;
+using Microsoft.Extensions.Logging;
 using Respire.Networking;
 
 namespace Respire.Internal;
@@ -39,10 +40,10 @@ internal static class RespireTelemetry
     public static readonly Histogram<long> ReconnectAttempts = Meter.CreateHistogram<long>(
         "respire.connection.reconnect.attempt", unit: "{attempt}", description: "One-based scheduled replacement attempt within a failed connection episode.");
     public static readonly Histogram<double> ReconnectDelays = Meter.CreateHistogram<double>(
-        "respire.connection.reconnect.delay", unit: "s", description: "Scheduled delay before a configured connection replacement attempt.");
+        "respire.connection.reconnect.delay", unit: "s", description: "Scheduled delay before a configured connection replacement or discovery fallback attempt.");
 
     public static readonly Counter<long> ReconnectExhaustions = Meter.CreateCounter<long>(
-        "respire.connection.reconnect.exhausted", unit: "{episode}", description: "Recovery episodes that reached the configured replacement attempt limit.");
+        "respire.connection.reconnect.exhausted", unit: "{episode}", description: "Recovery episodes stopped by the configured replacement attempt limit.");
 
     internal static void RecordReconnectExhaustion(string host, int port, RespireReconnectSource source = RespireReconnectSource.Command)
         => ReconnectExhaustions.Add(1, new KeyValuePair<string, object?>("server.address", host),
@@ -64,6 +65,31 @@ internal static class RespireTelemetry
         RespireReconnectSource.Dedicated => "dedicated",
         _ => "unspecified",
     };
+
+    internal static void RecordDiscoveryReconnect(RespireEndpoint endpoint, string scope, int attempt,
+        TimeSpan? delay, ILogger? logger)
+    {
+        try
+        {
+            var address = new KeyValuePair<string, object?>("server.address", endpoint.Host);
+            var port = new KeyValuePair<string, object?>("server.port", endpoint.Port);
+            var scopeTag = new KeyValuePair<string, object?>("respire.reconnect.scope", scope);
+            if (delay is { } scheduled)
+            {
+                ReconnectAttempts.Record(attempt, address, port, scopeTag);
+                ReconnectDelays.Record(scheduled.TotalSeconds, address, port, scopeTag);
+            }
+            else
+            {
+                ReconnectExhaustions.Add(1, address, port, scopeTag);
+            }
+        }
+        catch (Exception error)
+        {
+            // Meter listeners are user code and must not change discovery or its budget.
+            logger?.LogWarning(error, "Reconnect telemetry listener threw for {Scope}", scope);
+        }
+    }
 
     public static readonly Histogram<double> OperationDuration = Meter.CreateHistogram<double>(
         "db.client.operation.duration",

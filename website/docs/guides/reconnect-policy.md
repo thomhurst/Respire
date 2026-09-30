@@ -138,14 +138,50 @@ The `Respire` meter records `respire.connection.reconnect.attempt` (attempt numb
 and `respire.connection.source` (`command` or `dedicated`).
 They record scheduled replacement attempts, including waits later cancelled by disposal.
 They are histograms of events, not live countdown gauges. The counter
-`respire.connection.reconnect.exhausted` records each episode that reaches its limit, with the same
+`respire.connection.reconnect.exhausted` records each episode stopped by its attempt limit, with the same
 endpoint tags, so operators can alert on terminal recovery failures. Successful command execution
 does not record these instruments or inspect policy counters.
 
+## Sentinel discovery fallback
+
+Sentinel resolution keeps its first candidate immediate. With a configured policy,
+each later configured or learned Sentinel candidate consumes one fallback attempt and
+waits the policy delay before I/O. `MaxAttempts = 1` therefore permits the first
+candidate plus one fallback. A rejected primary `ROLE` response consumes that same
+candidate attempt; peer expansion and primary connection do not start nested budgets.
+For example, with configured candidates A and B and peers C and D learned from A,
+`MaxAttempts = 1` allows A then B. If both fail, C and D remain untried and the policy
+exhaustion counter increments. With only A and B available, both still run, but their
+failure ends through candidate depletion rather than policy exhaustion.
+The existing finite traversal still stops when candidates run out, even with a null
+`MaxAttempts`. Endpoints are not cycled indefinitely.
+
+A successful validated primary ends the resolution. Exhaustion preserves the final
+`RespireConnectionException` and its underlying discovery or primary-validation error.
+A new explicit `ConnectAsync` call starts a fresh resolution budget. Null policy retains
+immediate fallback across all available candidates. Caller cancellation bounds every
+wait, while each candidate retains its existing discovery and connection timeout.
+Policy delays sit outside those per-candidate timeouts. Supply a caller deadline to
+bound the total resolution, including backoff and every candidate.
+No application command is replayed during discovery.
+
+The same attempt/delay/exhaustion instruments carry the candidate's `server.address`
+and `server.port` plus `respire.reconnect.scope = sentinel-discovery`. Exhaustion is
+attributed to the final failed fallback. Scheduling is recorded before delay, including
+waits later cancelled by the caller. Exhaustion is recorded only when the failed fallback
+uses the budget and at least one candidate remains untried. Successful fallback and running
+out of candidates do not record exhaustion, even when the final candidate coincides with
+the attempt limit. Observe the returned connection exception to detect every terminal
+discovery failure.
+Initial Sentinel resolution has no returned client for `ConnectionStateChanged`
+subscriptions; lifecycle events for ongoing failover belong to #396. This policy does
+not enable automatic failover or lazy Sentinel routing.
+
 ## Remaining recovery paths
 
-The policy covers command multiplexers and dedicated pools. Pub/sub retains its existing reconnect/resubscribe
-loop (#545); Sentinel and Cluster discovery retain their current fallback behavior (#546).
+The policy covers command multiplexers, dedicated pools, and Sentinel fallback. Pub/sub retains
+its existing reconnect/resubscribe loop (#545); Cluster discovery retains its current fallback
+behavior (#568 under #546).
 Those native children extend the same policy contract under parent #401. Sentinel currently
 resolves at connection time; automatic Sentinel failover is tracked separately in #396,
 and periodic Cluster refresh in #397. Setting this option does not enable those features.

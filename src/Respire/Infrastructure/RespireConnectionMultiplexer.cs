@@ -756,8 +756,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             if (_options.ReconnectPolicy is { } policy)
             {
                 attempt = _reconnectAttempts![slot] = (int)Math.Min((long)_reconnectAttempts[slot] + 1, int.MaxValue);
-                var randomUnit = policy.JitterRatio > 0 ? Random.Shared.NextDouble() : 0.5;
-                delay = policy.GetDelay(attempt, randomUnit);
+                delay = policy.GetDelay(attempt);
             }
             _activeReconnects++;
             publish = QueueLifecycleNotificationUnderLock(new StateNotification(slot, RespireConnectionState.Reconnecting, error,

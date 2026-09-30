@@ -34,11 +34,16 @@ internal static class SentinelResolver
         var sentinelOptions = CreateSentinelConnectionOptions(options);
         var logger = options.CreateLogger("Respire.Sentinel");
         Exception? lastError = null;
+        var fallbackBudget = new SentinelFallbackBudget(options.ReconnectPolicy, logger);
 
         for (var index = 0; index < sentinelEndpoints.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var endpoint = sentinelEndpoints[index];
+            if (fallbackBudget.Schedule(index, endpoint) is { } delay)
+            {
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            }
             using var discoveryTimeoutSource = CommandTimeoutCancellation.Create(
                 cancellationToken,
                 options.CommandTimeout ?? options.ConnectTimeout);
@@ -89,9 +94,14 @@ internal static class SentinelResolver
                     "Redis Sentinel discovery or primary connection failed through {Host}:{Port}",
                     endpoint.Host,
                     endpoint.Port);
+                if (fallbackBudget.StopAfterFailure(endpoint, index + 1 < sentinelEndpoints.Count))
+                {
+                    break;
+                }
             }
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         var message =
             $"Unable to discover and connect to Redis Sentinel service '{options.SentinelPrimaryName}' " +
             $"from {sentinelEndpoints.Count} endpoint(s).";
@@ -102,6 +112,32 @@ internal static class SentinelResolver
         void AddPeer(RespireEndpoint endpoint)
         {
             if (discoveryState.TryAdd(endpoint)) sentinelEndpoints.Add(endpoint);
+        }
+    }
+
+    private struct SentinelFallbackBudget(RespireReconnectPolicy? policy, ILogger? logger)
+    {
+        private const string ReconnectScope = "sentinel-discovery";
+        private int _attempts;
+
+        internal TimeSpan? Schedule(int candidateIndex, RespireEndpoint endpoint)
+        {
+            // Initial setup is immediate. Configured/learned peers and ROLE rejection
+            // share one replacement budget for this resolution.
+            if (candidateIndex == 0 || policy is null) return null;
+            var delay = policy.GetDelay(++_attempts);
+            RespireTelemetry.RecordDiscoveryReconnect(endpoint, ReconnectScope, _attempts, delay, logger);
+            return delay;
+        }
+
+        internal readonly bool StopAfterFailure(RespireEndpoint endpoint, bool hasRemainingCandidate)
+        {
+            if (_attempts == 0 || policy?.IsExhausted(_attempts) != true) return false;
+            // Exhaustion means the policy prevented trying a remaining candidate.
+            // Reaching the same count on the final candidate is ordinary depletion.
+            if (hasRemainingCandidate)
+                RespireTelemetry.RecordDiscoveryReconnect(endpoint, ReconnectScope, _attempts, null, logger);
+            return true;
         }
     }
 
