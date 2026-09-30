@@ -324,10 +324,12 @@ public sealed record RespireOptions
 
         if (ClientSideCache is { } cache)
         {
+            // OPTIN prefixes reads with CACHING YES; Cluster redirects pair ASKING with the read.
+            var needsCommandPair = cache.TrackingMode != RespireClientTrackingMode.Broadcast || UseCluster;
             Require(
-                MaxInflightCommands >= 2,
+                !needsCommandPair || MaxInflightCommands >= 2,
                 nameof(MaxInflightCommands),
-                "must be at least two when client-side caching is enabled");
+                "must be at least two for OPTIN caching or Cluster caching with ASK redirects");
             Require(cache.MaxEntries >= 1, nameof(ClientSideCache), "must have MaxEntries of at least one");
             Require(cache.MaxSizeBytes >= 1, nameof(ClientSideCache), "must have MaxSizeBytes of at least one");
             Require(
@@ -357,6 +359,7 @@ public sealed record RespireOptions
         {
             Endpoints = new List<RespireEndpoint>(Endpoints),
             Protocol = ClientSideCache is null ? Protocol : RespProtocol.Resp3,
+            ClientSideCache = ClientSideCache?.SnapshotTracking(),
         };
     }
 
@@ -396,6 +399,8 @@ public sealed record RespireOptions
             MaxInflightCommands = MaxInflightCommands,
             PushHandler = pushHandler,
             EnableClientTracking = enableClientTracking,
+            ClientTrackingOptions = enableClientTracking && ClientSideCache is { } cache
+                ? new(cache.TrackingMode, cache.BroadcastPrefixes) : default,
         };
 
     /// <summary>

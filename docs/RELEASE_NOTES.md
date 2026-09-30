@@ -6,6 +6,14 @@
 
 Added binary-safe keyspace, keyevent, and Redis 8.8 subkey channel factories and allocation-free notification parsing. Explicit physical-key prefixes, database scopes, unknown events, and malformed-frame handling are documented. Notification descriptors are server-owned and cannot be published. Cluster delivery remains #298; subscriptions never change server configuration.
 
+### Broadcast client-cache tracking
+
+- `RespireClientSideCacheOptions.TrackingMode` adds optional `Broadcast` tracking with
+  literal, binary-safe `BroadcastPrefixes`. OPTIN remains the default. Prefixes use physical
+  key bytes and are snapshotted at client creation; overlapping prefixes are rejected.
+  Reads outside coverage never enter the cache, and every dependency of a multi-key
+  projection must be covered. Reconnect restores tracking before admitting cached reads.
+  See [broadcast configuration](../website/docs/fundamentals/client-side-caching.md#broadcast-tracking-and-physical-prefixes).
 
 ### Configurable pub/sub recovery
 

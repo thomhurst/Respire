@@ -22,6 +22,7 @@ public sealed partial class RespireClient : IRespireClient
     private readonly string? _keyPrefix;
     private readonly byte[]? _keyPrefixBytes;
     private readonly bool _ownsCore;
+    private readonly bool _broadcastTracking;
 
     private RespireClient(ClientCore core, string? keyPrefix, bool ownsCore)
     {
@@ -29,6 +30,7 @@ public sealed partial class RespireClient : IRespireClient
         _keyPrefix = keyPrefix;
         _keyPrefixBytes = keyPrefix is null ? null : System.Text.Encoding.UTF8.GetBytes(keyPrefix);
         _ownsCore = ownsCore;
+        _broadcastTracking = core.Options.ClientSideCache?.TrackingMode == RespireClientTrackingMode.Broadcast;
         Strings = new StringCommands(this);
         Keys = new KeyCommands(this);
         Locks = new LockCommands(this);
@@ -1645,7 +1647,7 @@ public sealed partial class RespireClient : IRespireClient
             : SendTrackedOnConnectionCoreAsync(
                 operation, connection, command, cancellationToken, sendAsking);
 
-    private static ValueTask<RespValue> SendTrackedOnConnectionCoreAsync<TCommand>(
+    private ValueTask<RespValue> SendTrackedOnConnectionCoreAsync<TCommand>(
         string operation,
         RespireConnection connection,
         TCommand command,
@@ -1659,6 +1661,8 @@ public sealed partial class RespireClient : IRespireClient
                 connection, in command, cancellationToken, operation);
         }
 
+        if (_broadcastTracking)
+            return connection.SendAsync(command, cancellationToken, commandName: operation);
         var caching = new ClientCachingCommand();
         return connection.SendValidatedPrefixedAsync(
             in caching, in command, cancellationToken, operation);

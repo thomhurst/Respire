@@ -197,6 +197,11 @@ public class PubSubTests
         await using var client = CreateLazyClient(server.Port);
 
         await using var warm = await client.SubscribeAsync("warm");
+        var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.State == RespireConnectionState.Connected) recovered.TrySetResult();
+        };
         using var cts = new CancellationTokenSource();
         var failedSubscription = client.SubscribeAsync("ch", cts.Token).AsTask();
         await WaitForCommandsAsync(server, 2);
@@ -208,8 +213,10 @@ public class PubSubTests
         await Assert.That(Stopwatch.GetElapsedTime(cancellationStarted)).IsLessThan(TimeSpan.FromSeconds(1));
 
         // Failed cleanup closes the uncertain connection instead of queueing an UNSUBSCRIBE on
-        // its stalled response stream. Existing routes reconnect, then replacement activation is
-        // serialized behind that recovery and remains subscribed.
+        // its stalled response stream. Explicitly finish recovery before replacement activation:
+        // the legacy policy also permits activation to win the gate, followed by an idempotent
+        // recovery SUBSCRIBE for that new route. This test exercises the recovery-first order.
+        await recovered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await using var replacement = await client.SubscribeAsync("ch").AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(server.ReceivedCommands).DoesNotContain("UNSUBSCRIBE ch");
         await Assert.That(server.ReceivedCommands.Count(command => command == "SUBSCRIBE ch")).IsEqualTo(2);
@@ -219,6 +226,11 @@ public class PubSubTests
             .Select(entry => entry.connectionId)
             .ToArray();
         await Assert.That(channelConnectionIds[0]).IsNotEqualTo(channelConnectionIds[1]);
+        await using var messages = replacement.GetAsyncEnumerator();
+        var message = messages.MoveNextAsync().AsTask();
+        await server.SendRawAsync(MessageFrame, channelConnectionIds[1]);
+        await Assert.That(await message.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        await Assert.That(messages.Current.Text).IsEqualTo("hello");
     }
 
     private static async Task WaitForCommandsAsync(FakeRespServer server, int count)

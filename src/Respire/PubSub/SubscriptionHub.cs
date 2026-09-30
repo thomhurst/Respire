@@ -10,8 +10,9 @@ namespace Respire.Internal;
 /// routes incoming messages to subscription buffers. If the connection dies, reconnects with
 /// backoff and resubscribes everything that is still subscribed. Ordered markers report delivery gaps.
 /// </summary>
-internal sealed partial class SubscriptionHub(ClientCore core) : IAsyncDisposable
+internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? timeProvider = null) : IAsyncDisposable
 {
+    private readonly TimeProvider _recoveryClock = timeProvider ?? TimeProvider.System;
     private static readonly TimeSpan DisposeConnectionPollInterval = TimeSpan.FromMilliseconds(10);
 
     private readonly object _gate = new();

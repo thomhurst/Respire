@@ -81,6 +81,57 @@ With `OPTIN`, Redis tracks only misses Respire deliberately sends with `CLIENT C
 Local mutations also evict before and after execution. If tracking continuity is lost, Respire
 clears affected cache state instead of trusting entries whose invalidations may have been missed.
 
+## Broadcast tracking and physical prefixes
+
+`OptIn` remains the default. Choose `Broadcast` when invalidations for a known keyspace are
+preferable to Redis registering each read key:
+
+```csharp
+await using var redis = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = { new RespireEndpoint("localhost") },
+    ClientSideCache = new()
+    {
+        TrackingMode = RespireClientTrackingMode.Broadcast,
+        BroadcastPrefixes = ["tenant:products:", "tenant:prices:"],
+    },
+});
+```
+
+Each cache-bearing connection sends `CLIENT TRACKING ON BCAST PREFIX ...` during setup and
+repeats it on reconnect. Broadcast reads omit `CLIENT CACHING YES`. Prefixes are literal
+bytes, not Redis glob patterns; `*`, `?`, NUL, and non-UTF-8 bytes retain their literal meaning.
+Pass binary prefixes as `RespireKey` values. Options snapshot both the list and its storage.
+
+Prefixes identify **physical wire keys**. A `WithKeyPrefix("tenant:")` view does not add that
+prefix to the tracking configuration. The example covers `products:42` through that view,
+but not an unprefixed `products:42` call. Empty `BroadcastPrefixes` means every key.
+Duplicates and overlapping prefixes are rejected before connecting; one empty prefix covers
+everything and therefore cannot accompany another prefix. Prefixes are invalid in `OptIn` mode.
+
+Uncovered reads still go to Redis and are returned normally, but are never inserted locally.
+Mixed `MGET` calls retain covered hits and fetch misses together, caching only covered keys.
+A cached multi-key projection requires **every** dependency to be covered. Hash fields inherit
+their physical hash key's coverage. Local writes, in-flight invalidations, and reconnect
+continuity use the same eviction and stale-insertion checks as `OptIn`.
+
+RESP3 remains required. Standalone, discovered Sentinel data connections, and Redis/Valkey
+Cluster data nodes retain the selected configuration; Cluster slot and database restrictions
+still apply. Blocking/dedicated commands, batches, and transactions continue to bypass caching.
+Changing mode or prefixes requires creating a new client. Non-Cluster `Broadcast` clients can
+use one in-flight command slot. `OptIn` needs two for its validated command prefix, and Cluster
+caching needs two in either mode for atomic `ASKING` plus command redirects.
+
+Redis documents that BCAST trades per-read tracking entries for invalidations on all matching
+writes, even when this client never read those keys. More prefixes add server work, and broad
+prefixes can increase network and eviction traffic. See [CLIENT TRACKING](https://redis.io/docs/latest/commands/client-tracking/)
+and the [broadcast reference](https://redis.io/docs/latest/develop/reference/client-side-caching/#broadcasting-mode).
+The cache-tracking CI benchmark compares local hits and an external write/invalidation/read
+cycle for OPTIN, BCAST-all, and BCAST with one or 256 prefixes, plus OPTIN against two pinned
+baseline controls. The invalidation cycle includes cooperative polling until the application
+observes eviction; its CPU totals include that work. Process totals also include warmup and
+background work; no universal performance win is implied.
+
 ## Bounds
 
 Tune entry count, approximate owned bytes, and local TTL together:

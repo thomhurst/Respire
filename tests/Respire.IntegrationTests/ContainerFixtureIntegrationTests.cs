@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using System.Text.RegularExpressions;
 using Docker.DotNet;
 using DotNet.Testcontainers.Containers;
@@ -164,53 +166,66 @@ public class ContainerFixtureIntegrationTests
         RespireContainerServer server, RespireContainerTopology topology)
     {
         var options = new RespireContainerOptions { Server = server, Topology = topology };
-        IContainer? blocker = null;
+        var competingOwner = await StartCompetingOwnerAsync(options);
+        await using var blocker = competingOwner.Container;
         var createdIds = new List<string>();
         var selectedPorts = new List<int[]>();
-        try
+        await using var fixture = await RespireContainerFixture.StartAsync(options, default, async (ports, token) =>
         {
-            // Let Docker reserve the competitor's port atomically before fixture selection.
-            // Starting a blocker on a probed port can itself lose the race under parallel CI.
-            blocker = RespireContainerFixture.BuildContainer(options with { Topology = RespireContainerTopology.Standalone }, [6379]);
-            using var deadline = new CancellationTokenSource(options.StartupTimeout);
-            await blocker.StartAsync(deadline.Token);
-            var occupiedPort = blocker.GetMappedPublicPort(6379);
-            await using var fixture = await RespireContainerFixture.StartAsync(options, deadline.Token, async (ports, token) =>
+            if (selectedPorts.Count == 0)
             {
-                if (selectedPorts.Count == 0)
-                {
-                    // Inject the known occupied port into the first fixture attempt. The real
-                    // Docker bind must fail, while the independent competing owner stays alive.
-                    ports[0] = occupiedPort;
-                }
-                else
-                {
-                    createdIds.Should().HaveCount(selectedPorts.Count);
-                    foreach (var id in createdIds) await AssertContainerRemovedAsync(id);
-                    ports.Should().NotIntersectWith(selectedPorts.SelectMany(previous => previous));
-                }
-                selectedPorts.Add(ports.ToArray());
-                var container = RespireContainerFixture.BuildContainer(options, ports);
-                container.Created += (_, _) => createdIds.Add(container.Id);
-                return container;
-            });
-            selectedPorts.Count.Should().BeInRange(2, 3);
-            createdIds.Should().HaveCount(selectedPorts.Count);
-            foreach (var id in createdIds.SkipLast(1)) await AssertContainerRemovedAsync(id);
-            await using (var client = await RespireClient.ConnectAsync(fixture.CreateOptions()))
-            {
-                (await client.SetAsync("{retry}:key", "ready")).Should().BeTrue();
-                (await client.GetStringAsync("{retry}:key")).Should().Be("ready");
+                // Inject the already-owned Docker port into the first startup attempt.
+                ports[0] = competingOwner.Port;
             }
-            await fixture.DisposeAsync();
-            await AssertContainerRemovedAsync(createdIds[^1]);
-            using var docker = TestcontainersSettings.OS.DockerEndpointAuthConfig
-                .GetDockerClientBuilder(Guid.NewGuid()).WithTimeout(TimeSpan.FromSeconds(5)).Build();
-            (await docker.Containers.InspectContainerAsync(blocker!.Id)).State.Running.Should().BeTrue();
-        }
-        finally
+            else
+            {
+                createdIds.Should().HaveCount(selectedPorts.Count);
+                foreach (var id in createdIds) await AssertContainerRemovedAsync(id);
+                ports.Should().NotIntersectWith(selectedPorts.SelectMany(previous => previous));
+            }
+            selectedPorts.Add(ports.ToArray());
+            var container = RespireContainerFixture.BuildContainer(options, ports);
+            container.Created += (_, _) => createdIds.Add(container.Id);
+            return container;
+        });
+        selectedPorts.Count.Should().BeInRange(2, 3);
+        createdIds.Should().HaveCount(selectedPorts.Count);
+        foreach (var id in createdIds.SkipLast(1)) await AssertContainerRemovedAsync(id);
+        await using (var client = await RespireClient.ConnectAsync(fixture.CreateOptions()))
         {
-            if (blocker is not null) await blocker.DisposeAsync();
+            (await client.SetAsync("{retry}:key", "ready")).Should().BeTrue();
+            (await client.GetStringAsync("{retry}:key")).Should().Be("ready");
+        }
+        await fixture.DisposeAsync();
+        await AssertContainerRemovedAsync(createdIds[^1]);
+        using var docker = TestcontainersSettings.OS.DockerEndpointAuthConfig
+            .GetDockerClientBuilder(Guid.NewGuid()).WithTimeout(TimeSpan.FromSeconds(5)).Build();
+        (await docker.Containers.InspectContainerAsync(blocker.Id)).State.Running.Should().BeTrue();
+    }
+
+    private static async Task<(IContainer Container, int Port)> StartCompetingOwnerAsync(RespireContainerOptions options)
+    {
+        using var deadline = new CancellationTokenSource(options.StartupTimeout);
+        while (true)
+        {
+            deadline.Token.ThrowIfCancellationRequested();
+            // Use identical host/container ports, as the fixture does on Docker Desktop.
+            // The released probe is not a reservation: retry only a confirmed Docker bind race.
+            using var probe = new TcpListener(IPAddress.Loopback, 0);
+            probe.Start();
+            var port = ((IPEndPoint)probe.LocalEndpoint).Port;
+            probe.Stop();
+            var container = RespireContainerFixture.BuildContainer(options, [port]);
+            try
+            {
+                await container.StartAsync(deadline.Token);
+                return (container, port);
+            }
+            catch (Exception error)
+            {
+                await container.DisposeAsync();
+                if (!ContainerPortCollision.IsMatch(error, [port])) throw;
+            }
         }
     }
 

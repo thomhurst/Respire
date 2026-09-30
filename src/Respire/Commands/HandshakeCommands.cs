@@ -54,11 +54,31 @@ internal readonly struct ClientSetNameCommand(string name) : IRespCommand
     }
 }
 
-/// <summary>CLIENT TRACKING ON OPTIN.</summary>
-internal readonly struct ClientTrackingCommand : IRespCommand
+/// <summary>Validated wire configuration; the default value preserves OPTIN.</summary>
+internal readonly record struct ClientTrackingConfiguration
+{
+    internal RespireClientTrackingMode Mode { get; }
+    internal Internal.BroadcastPrefixSet? Prefixes { get; }
+
+    internal ClientTrackingConfiguration(RespireClientTrackingMode mode, IReadOnlyList<RespireKey> prefixes)
+        => (Mode, Prefixes) = (mode, Internal.BroadcastPrefixSet.Create(prefixes));
+}
+
+/// <summary>CLIENT TRACKING ON with the selected registration mode.</summary>
+internal readonly struct ClientTrackingCommand(ClientTrackingConfiguration configuration = default) : IRespCommand
 {
     public void Write(ref RespWriter writer)
-        => writer.WriteRaw("*4\r\n$6\r\nCLIENT\r\n$8\r\nTRACKING\r\n$2\r\nON\r\n$5\r\nOPTIN\r\n"u8);
+    {
+        if (configuration.Mode != RespireClientTrackingMode.Broadcast)
+        {
+            writer.WriteRaw("*4\r\n$6\r\nCLIENT\r\n$8\r\nTRACKING\r\n$2\r\nON\r\n$5\r\nOPTIN\r\n"u8);
+            return;
+        }
+        var prefixes = configuration.Prefixes ?? Internal.BroadcastPrefixSet.Empty;
+        writer.WriteArrayHeader(checked(4 + prefixes.Count * 2));
+        writer.WriteRaw("$6\r\nCLIENT\r\n$8\r\nTRACKING\r\n$2\r\nON\r\n$5\r\nBCAST\r\n"u8);
+        prefixes.WritePrefixes(ref writer);
+    }
 }
 
 /// <summary>CLIENT CACHING YES.</summary>

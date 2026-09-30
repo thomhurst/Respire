@@ -1,0 +1,114 @@
+name: Client cache tracking benchmarks
+
+on:
+  pull_request:
+    paths:
+      - 'src/Respire/RespireClientSideCache.cs'
+      - 'src/Respire/RespireClient.cs'
+      - 'src/Respire/RespireOptions.cs'
+      - 'src/Respire/RespireKey.cs'
+      - 'src/Respire/Commands/HandshakeCommands.cs'
+      - 'src/Respire/Networking/RespireConnection.cs'
+      - 'benchmarks/Respire.Benchmarks/ClientCacheTrackingBenchmarks.cs'
+      - '.github/workflows/benchmark-client-cache.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  tracking:
+    name: Compare cache tracking (informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      redis:
+        image: redis:8.10@sha256:6f81e8915c60b065a524e6967e0ad1c639ba6efa84d669f823683ea04d9150ee
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+    steps:
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: baseline
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+      - name: Validate then compare pinned builds on one runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp candidate/benchmarks/Respire.Benchmarks/ClientCacheTrackingBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
+          for phase in validation baseline-a candidate baseline-b; do
+            source=baseline
+            job=Medium
+            export RESPIRE_BENCH_BASELINE=1
+            if [ "$phase" = candidate ] || [ "$phase" = validation ]; then
+              source=candidate
+              export RESPIRE_BENCH_BASELINE=0
+            fi
+            if [ "$phase" = validation ]; then job=Dry; fi
+            (
+              cd "$source"
+              git rev-parse HEAD
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
+                --filter '*ClientCacheTrackingBenchmarks*' --job "$job" --exporters json markdown \
+                --artifacts "$GITHUB_WORKSPACE/cache-results/$phase"
+            ) > "$GITHUB_WORKSPACE/cache-$phase.log" 2>&1
+          done
+      - name: Require completed cases and no extra hit allocations
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          hit_allocations = {}
+          for phase in ("validation", "baseline-a", "candidate", "baseline-b"):
+              reports = list(Path("cache-results", phase, "results").glob("*-report-full-compressed.json"))
+              assert len(reports) == 1, f"Missing or duplicate report: {phase}"
+              cases = json.loads(reports[0].read_text(encoding="utf-8"))["Benchmarks"]
+              expected = 8 if phase in ("candidate", "validation") else 2
+              assert len(cases) == expected, f"Wrong case count: {phase}"
+              for case in cases:
+                  assert case["Statistics"] and case["Statistics"]["Mean"] > 0, case["FullName"]
+                  if phase != "validation" and case["Method"] == "Hit":
+                      hit_allocations.setdefault(phase, []).append(case["Memory"]["BytesAllocatedPerOperation"])
+              metrics = [json.loads(line.split("CACHE_TRACKING_PROCESS_METRICS ", 1)[1])
+                         for line in Path(f"cache-{phase}.log").read_text(encoding="utf-8").splitlines()
+                         if line.startswith("CACHE_TRACKING_PROCESS_METRICS ")]
+              expected_modes = {"OptIn", "Broadcast", "BroadcastPrefix", "BroadcastManyPrefixes"} if expected == 8 else {"OptIn"}
+              assert {row["Mode"] for row in metrics} == expected_modes, phase
+              assert all(row["elapsedSeconds"] > 0 and row["cpuMilliseconds"] >= 0 and row["allocatedBytes"] >= 0 for row in metrics)
+          # GetStringAsync materializes an owned string even on a hit (64 B for this fixture).
+          # Compare against both old-build controls instead of claiming this public API allocates zero.
+          baseline_limit = min(hit_allocations["baseline-a"] + hit_allocations["baseline-b"])
+          assert all(value <= baseline_limit for value in hit_allocations["candidate"]), hit_allocations
+      - name: Publish mode and build comparisons
+        if: always()
+        shell: bash
+        run: |
+          echo 'Compare OPTIN against both baseline controls; compare BCAST modes within the candidate run. Process totals include warmup/calibration and background work, not just measured operations.' >> "$GITHUB_STEP_SUMMARY"
+          for phase in baseline-a candidate baseline-b; do
+            echo "## $phase" >> "$GITHUB_STEP_SUMMARY"
+            for report in cache-results/$phase/results/*-report-default.md; do
+              if [ -f "$report" ]; then cat "$report" >> "$GITHUB_STEP_SUMMARY"; fi
+            done
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: cache-tracking-comparison
+          path: |
+            cache-results/
+            cache-*.log

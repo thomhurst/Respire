@@ -444,7 +444,7 @@ internal sealed class RespireConnection : IAsyncDisposable
         if (options.EnableClientTracking && !options.RequireClusterDatabaseSupport)
         {
             (pending ??= new(4)).Add(("CLIENT TRACKING", SendAsync(
-                new Commands.ClientTrackingCommand(), cancellationToken, armCommandDeadline: armCommandDeadline)));
+                new Commands.ClientTrackingCommand(options.ClientTrackingOptions), cancellationToken, armCommandDeadline: armCommandDeadline)));
         }
 
         if (pending is null)
@@ -500,7 +500,7 @@ internal sealed class RespireConnection : IAsyncDisposable
                 cancellationToken, armCommandDeadline).ConfigureAwait(false);
             if (options.EnableClientTracking)
             {
-                await CompleteHandshakeStepAsync("CLIENT TRACKING", new Commands.ClientTrackingCommand(),
+                await CompleteHandshakeStepAsync("CLIENT TRACKING", new Commands.ClientTrackingCommand(options.ClientTrackingOptions),
                     cancellationToken, armCommandDeadline).ConfigureAwait(false);
             }
         }
@@ -2384,8 +2384,11 @@ internal sealed record RespireConnectionOptions
     /// <summary>Observes subscription acknowledgements before FIFO completion; must not dispose the frame.</summary>
     public RespirePushHandler? SubscriptionConfirmationHandler { get; init; }
 
-    /// <summary>Enables CLIENT TRACKING ON OPTIN before this connection is published.</summary>
+    /// <summary>Enables CLIENT TRACKING before this connection is published.</summary>
     public bool EnableClientTracking { get; init; }
+
+    /// <summary>Validated wire tracking configuration; the default value selects OPTIN.</summary>
+    public Commands.ClientTrackingConfiguration ClientTrackingOptions { get; init; }
 
     /// <summary>Timeout for the initial TCP connect.</summary>
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(10);
