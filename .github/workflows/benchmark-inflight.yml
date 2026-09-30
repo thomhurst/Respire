@@ -4,7 +4,11 @@ on:
   pull_request:
     paths:
       - 'src/Respire/Networking/InflightRing.cs'
+      - 'src/Respire/Networking/RespireConnection.cs'
+      - 'src/Respire/Networking/PendingResponseSource.cs'
+      - 'src/Respire/RespireTransaction.cs'
       - 'benchmarks/Respire.Benchmarks/InflightRingBenchmarks.cs'
+      - 'benchmarks/Respire.Benchmarks/DiagnosticsPipelineBenchmarks.cs'
       - '.github/workflows/benchmark-inflight.yml'
 
 permissions:
@@ -34,7 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           # The new coverage case must run against identical sources in both checkouts.
-          cp candidate/benchmarks/Respire.Benchmarks/InflightRingBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
+          cp candidate/benchmarks/Respire.Benchmarks/{InflightRingBenchmarks,DiagnosticsPipelineBenchmarks}.cs baseline/benchmarks/Respire.Benchmarks/
           for phase in validation baseline-a candidate baseline-b; do
             source=baseline
             job=Medium
@@ -45,7 +49,7 @@ jobs:
               cd "$source"
               git rev-parse HEAD
               dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
-                --filter "$filter" --job "$job" --exporters json markdown \
+                --filter "$filter" '*DiagnosticsPipelineBenchmarks*' --job "$job" --exporters json markdown \
                 --artifacts "$GITHUB_WORKSPACE/results/$phase"
             ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
           done

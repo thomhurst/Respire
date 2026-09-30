@@ -21,6 +21,7 @@ public enum RespireCommandStage
 /// <remarks>
 /// Counters can change concurrently and are not an atomic view of the connection. Null means
 /// the information was unavailable. No keys, values, credentials, or command arguments are captured.
+/// The exception message includes the observed endpoint host and port when available.
 /// Sending bytes does not prove that Redis received or executed them. Cause hints are diagnostic
 /// possibilities, not a determination of server or network health.
 /// </remarks>

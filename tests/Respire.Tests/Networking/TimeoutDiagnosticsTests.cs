@@ -38,11 +38,15 @@ public class TimeoutDiagnosticsTests
     [Arguments(false, true)]
     public async Task AcquisitionTimeoutReportsConnecting(bool cluster, bool correctionSetup)
     {
-        await using var server = new FakeRespServer { SuppressReply = _ => true };
+        // Accept TCP but never answer the TLS handshake: no RESP command can reach its
+        // reply deadline before the enclosing acquisition timeout cancels initialization.
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         await using var client = RespireClient.Create(new RespireOptions
         {
-            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
-            Connections = 1, UseCluster = cluster, Protocol = RespProtocol.Resp3,
+            Endpoints = { new RespireEndpoint("127.0.0.1", port) },
+            Connections = 1, UseCluster = cluster, UseTls = true,
             CommandTimeout = TimeSpan.FromMilliseconds(200), ConnectTimeout = TimeSpan.FromSeconds(5)
         });
         RespireTimeoutException? error;
@@ -60,7 +64,8 @@ public class TimeoutDiagnosticsTests
         }
         await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
         await Assert.That(error.Diagnostics.ConnectionId).IsNull();
-        await Assert.That(error.Diagnostics.Endpoint).IsEqualTo(cluster ? null : new RespireEndpoint("127.0.0.1", server.Port));
+        RespireEndpoint? expectedEndpoint = cluster ? (RespireEndpoint?)null : new RespireEndpoint("127.0.0.1", port);
+        await Assert.That(error.Diagnostics.Endpoint).IsEqualTo(expectedEndpoint);
         await Assert.That(error.Diagnostics.Hint).StartsWith("Connection initialization");
     }
 
@@ -288,6 +293,32 @@ public class TimeoutDiagnosticsTests
         var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         await Assert.That(allocated).IsEqualTo(0);
         await Assert.That(ring.CompletedWriteEnd).IsEqualTo(1010);
+    }
+
+    [Test]
+    public async Task ReusedResponseSourceReceivesNewCommandOffsets()
+    {
+        await using var server = new FakeRespServer();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        var stamp = typeof(RespireConnection).GetMethod("StampWritePosition",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var pool = new PendingResponsePool(1);
+        var source = pool.Rent();
+        stamp.Invoke(connection, [source, 10]);
+        source.TrySetResult(Respire.Protocol.RespValue.Integer(1));
+        source.ReleaseRef();
+        (await source.Task).Dispose();
+        var reused = pool.Rent();
+        await Assert.That(reused).IsSameReferenceAs(source);
+        stamp.Invoke(connection, [reused, 7]);
+        await Assert.That(reused.WriteStart).IsEqualTo(10);
+        await Assert.That(reused.WriteEnd).IsEqualTo(17);
+        var snapshot = RespireTimeoutDiagnostics.Capture(writtenBytes: 10)
+            .ForCommand(reused.WriteStart, reused.WriteEnd);
+        await Assert.That(snapshot.Stage).IsEqualTo(RespireCommandStage.Buffered);
+        reused.TrySetResult(Respire.Protocol.RespValue.Integer(1));
+        reused.ReleaseRef();
+        (await reused.Task).Dispose();
     }
 
     [Test]
