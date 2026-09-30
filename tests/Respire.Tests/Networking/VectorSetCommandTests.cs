@@ -140,15 +140,17 @@ public class VectorSetCommandTests
     }
 
     [Test]
-    public async Task InvalidExplorationFactorNamesThePublicOption()
+    public async Task InvalidExplorationFactorNamesOptionsAndExplainsTheMember()
     {
         await using var client = RespireClient.Create("redis://localhost:1");
         var addError = await Assert.That(async () => await client.VectorSets.AddAsync("k", new[] { 1f }, "m",
             new() { ExplorationFactor = 0 })).ThrowsExactly<ArgumentOutOfRangeException>();
         var searchError = await Assert.That(async () => await client.VectorSets.SearchAsync("k", new[] { 1f },
             new() { ExplorationFactor = 1_000_001 })).ThrowsExactly<ArgumentOutOfRangeException>();
-        await Assert.That(addError!.ParamName).IsEqualTo(nameof(RespireVectorAddOptions.ExplorationFactor));
-        await Assert.That(searchError!.ParamName).IsEqualTo(nameof(RespireVectorSearchOptions.ExplorationFactor));
+        await Assert.That(addError!.ParamName).IsEqualTo("options");
+        await Assert.That(searchError!.ParamName).IsEqualTo("options");
+        await Assert.That(addError.Message).Contains(nameof(RespireVectorAddOptions.ExplorationFactor));
+        await Assert.That(searchError.Message).Contains(nameof(RespireVectorSearchOptions.ExplorationFactor));
     }
 
     [Test]

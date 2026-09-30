@@ -138,10 +138,10 @@ internal sealed class VectorSetCommands(RespireClient client) : IVectorSetComman
     {
         ValidateVector(vector.Span, encoding);
         RespireValue.ThrowIfNull(member, nameof(member));
-        if (options.ReduceDimensions is <= 0) throw new ArgumentOutOfRangeException(nameof(options.ReduceDimensions));
-        ValidateEffort(options.ExplorationFactor, nameof(options.ExplorationFactor));
-        if (options.Links is < 4 or > 4096) throw new ArgumentOutOfRangeException(nameof(options.Links));
-        if (!Enum.IsDefined(options.Quantization)) throw new ArgumentOutOfRangeException(nameof(options.Quantization));
+        if (options.ReduceDimensions is <= 0) throw new ArgumentOutOfRangeException(nameof(options), "ReduceDimensions must be positive.");
+        ValidateEffort(options.ExplorationFactor, nameof(options));
+        if (options.Links is < 4 or > 4096) throw new ArgumentOutOfRangeException(nameof(options), "Links must be between 4 and 4096.");
+        if (!Enum.IsDefined(options.Quantization)) throw new ArgumentOutOfRangeException(nameof(options), "Quantization must be a supported value.");
         RespireValue[] before = options.ReduceDimensions is { } dimensions ? ["REDUCE", dimensions] : [];
         List<RespireValue> after = [member];
         if (options.CheckAndSet) after.Add("CAS");
@@ -168,11 +168,11 @@ internal sealed class VectorSetCommands(RespireClient client) : IVectorSetComman
 
     private static RespireValue[] SearchArguments(RespireVectorSearchOptions options)
     {
-        if (options.Count is <= 0) throw new ArgumentOutOfRangeException(nameof(options.Count));
-        ValidateEffort(options.ExplorationFactor, nameof(options.ExplorationFactor));
-        if (options.FilterExplorationFactor is <= 0) throw new ArgumentOutOfRangeException(nameof(options.FilterExplorationFactor));
+        if (options.Count is <= 0) throw new ArgumentOutOfRangeException(nameof(options), "Count must be positive.");
+        ValidateEffort(options.ExplorationFactor, nameof(options));
+        if (options.FilterExplorationFactor is <= 0) throw new ArgumentOutOfRangeException(nameof(options), "FilterExplorationFactor must be positive.");
         if (options.Epsilon is { } epsilon && (!double.IsFinite(epsilon) || epsilon is < 0 or > 1))
-            throw new ArgumentOutOfRangeException(nameof(options.Epsilon));
+            throw new ArgumentOutOfRangeException(nameof(options), "Epsilon must be finite and between 0 and 1.");
         List<RespireValue> args = [];
         if (options.IncludeScores) args.Add("WITHSCORES");
         if (options.IncludeAttributes) args.Add("WITHATTRIBS");
@@ -197,7 +197,8 @@ internal sealed class VectorSetCommands(RespireClient client) : IVectorSetComman
 
     private static void ValidateEffort(int? effort, string parameterName)
     {
-        if (effort is <= 0 or > 1_000_000) throw new ArgumentOutOfRangeException(parameterName);
+        if (effort is <= 0 or > 1_000_000)
+            throw new ArgumentOutOfRangeException(parameterName, "ExplorationFactor must be between 1 and 1000000.");
     }
 
     internal static Cmd1N Build(RespireClient client, Verb verb, RespireKey key, params RespireValue[] arguments)
