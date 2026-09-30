@@ -1010,14 +1010,18 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 // Disposal escalates a drain and cancels control fencing. A failed fence is
                 // still visible to the retirement caller, but cannot prevent explicit disposal.
                 try { await retirement.Task.ConfigureAwait(false); }
-                catch { }
+                catch (Exception error)
+                {
+                    _logger?.LogDebug(error, "Retirement did not finish cleanly before disposal of {Host}:{Port}", Host, Port);
+                }
             }
             // A caller may have started an explicit fence retry independently of retirement.
             // Its linked token observes the abort; await its control-connection cleanup too.
             await _retiredFenceGate.WaitAsync().ConfigureAwait(false);
             _retiredFenceGate.Release();
-            _stopConnecting.Dispose();
-            _abortCancellation.Dispose();
+            // Late entrants and retirement actions outside _lifecycleGate may still read or
+            // cancel these sources. They have no timers/wait handles; cancellation has removed
+            // registrations, so leave the cancelled managed sources for GC rather than race disposal.
             completion.TrySetResult();
         }
         catch (Exception ex)

@@ -62,6 +62,32 @@ public class TransportRetirementTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CommandTimeoutKeepsAcceptedReplyOwnedUntilDrainOrAbort(bool abort)
+    {
+        var seen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            SuppressReply = _ => { seen.TrySetResult(); return true; }
+        };
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new RespireConnectionOptions { CommandTimeout = TimeSpan.FromMilliseconds(150) });
+        var accepted = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        await seen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var retirement = connection.RetireAsync();
+        await Assert.That(async () => await accepted.WaitAsync(TimeSpan.FromSeconds(5))).ThrowsExactly<RespireTimeoutException>();
+        // A timeout abandons the caller's wait, not the FIFO slot or server-side operation.
+        await Assert.That(retirement.IsCompleted).IsFalse();
+        await Assert.That(connection.IsConnected).IsTrue();
+        if (abort) await connection.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        else await server.SendRawAsync(FakeRespServer.PongReply);
+        await retirement.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(connection.DrainedSuccessfully).IsEqualTo(!abort);
+        await Assert.That(connection.IsConnected).IsFalse();
+    }
+
+    [Test]
     public async Task MultiplexerStopsSelectionButDrainsAnAcceptedReply()
     {
         var seen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -105,9 +131,11 @@ public class TransportRetirementTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task RetirementCancelsUnpublishedHandshake(bool reconnect)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task RetirementCancelsUnpublishedHandshake(bool reconnect, bool dispose)
     {
         var blockedHandshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var handshakes = 0;
@@ -132,12 +160,22 @@ public class TransportRetirementTests
         }
         else initialization = multiplexer.EnsureConnectedAsync().AsTask();
         await blockedHandshake.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await multiplexer.RetireAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        var retirement = multiplexer.RetireAsync();
+        if (dispose) await multiplexer.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await retirement.WaitAsync(TimeSpan.FromSeconds(5));
         if (initialization is not null)
             await Assert.That(async () => await initialization).Throws<OperationCanceledException>();
         await Assert.That(multiplexer.IsConnected).IsFalse();
-        await Assert.That(() => multiplexer.GetConnection()).ThrowsExactly<RespireConnectionRetiredException>();
-        await Assert.That(async () => await multiplexer.EnsureConnectedAsync()).ThrowsExactly<RespireConnectionRetiredException>();
+        if (dispose)
+        {
+            await Assert.That(() => multiplexer.GetConnection()).ThrowsExactly<ObjectDisposedException>();
+            await Assert.That(async () => await multiplexer.EnsureConnectedAsync()).ThrowsExactly<ObjectDisposedException>();
+        }
+        else
+        {
+            await Assert.That(() => multiplexer.GetConnection()).ThrowsExactly<RespireConnectionRetiredException>();
+            await Assert.That(async () => await multiplexer.EnsureConnectedAsync()).ThrowsExactly<RespireConnectionRetiredException>();
+        }
         await Assert.That(handshakes).IsEqualTo(reconnect ? 2 : 1);
     }
 

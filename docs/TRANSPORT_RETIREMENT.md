@@ -2,7 +2,11 @@
 
 `RespireConnection.RetireAsync()` rejects new command acceptance under the same write gate that publishes serialized frames to the response FIFO. A command already accepted continues writing its complete frame and consumes its reply, even if its caller has cancelled. An operation waiting for FIFO capacity has not been accepted and wakes immediately with `RespireConnectionRetiredException`.
 
-The retirement task is shared across callers. It completes after accepted writes, response parsing, scheduled response completions, and socket cleanup finish. `IsAcceptingCommands` becomes false immediately; physical `IsConnected` remains true while draining. No cancellation interrupts a partially written frame. An ordinary socket failure or configured timeout retains its existing behavior.
+The retirement task is shared across callers. It completes after accepted writes, response parsing, scheduled response completions, and socket cleanup finish. `IsAcceptingCommands` becomes false immediately; physical `IsConnected` remains true while draining. No cancellation interrupts a partially written frame. An ordinary socket failure or configured timeout retains its existing behavior. `CommandTimeout`
+only abandons the caller's wait; it does not remove the accepted FIFO slot or prove that Redis
+finished the command. Retirement therefore still waits for its reply. There is no implicit drain
+timeout: an owner can bound its wait and explicitly dispose to abort a silent peer. A configured
+connection response watchdog still aborts the socket according to its existing policy.
 
 `RespireConnectionMultiplexer.RetireAsync()` stops connection selection and background reconnects, cancels pending handshakes, and prevents initialization or reconnect publication after retirement. It retires existing transports immediately, waits for unpublished connection cleanup, and then awaits their drain tasks. Lifecycle notifications are queued in transition order and delivered outside lifecycle locks.
 
