@@ -184,7 +184,7 @@ public class HashMultiReadCacheTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task ClusterRedirectsPreserveTrackingAndOnlyMovedRepliesAreCached(bool moved)
+    public async Task ClusterRedirectsPreserveTrackingAndCacheTrackedReplies(bool moved)
     {
         await using var target = Server(command => command.StartsWith("HMGET ")
             ? "*2\r\n$1\r\nA\r\n$1\r\nB\r\n"u8.ToArray() : FakeRespServer.OkReply);
@@ -199,10 +199,10 @@ public class HashMultiReadCacheTests
         for (var read = 0; read < 2; read++)
             await Assert.That(await client.Hashes.GetManyAsync("hash", "a", "b"))
                 .IsEquivalentTo(new string?[] { "A", "B" });
-        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(moved ? 2 : 0);
-        await Assert.That(target.ReceivedCommands.Count(command => command == "HMGET hash a b")).IsEqualTo(moved ? 1 : 2);
-        await Assert.That(target.ReceivedCommands.Count(command => command == "ASKING")).IsEqualTo(moved ? 0 : 2);
-        await Assert.That(target.ReceivedCommands.Count(command => command == "CLIENT CACHING YES")).IsEqualTo(moved ? 1 : 0);
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(2);
+        await Assert.That(target.ReceivedCommands.Count(command => command == "HMGET hash a b")).IsEqualTo(1);
+        await Assert.That(target.ReceivedCommands.Count(command => command == "ASKING")).IsEqualTo(moved ? 0 : 1);
+        await Assert.That(target.ReceivedCommands.Count(command => command == "CLIENT CACHING YES")).IsEqualTo(1);
     }
 
     [Test]

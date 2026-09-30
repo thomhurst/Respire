@@ -65,6 +65,45 @@ public class FencedLockTests(RedisTestContainer fixture)
     }
 
     [Test]
+    public async Task AcquireWaitsForOwnerReleaseNotification()
+    {
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,
+            Connections = 1, Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+        });
+        var pair = Keys();
+        var coordination = new RespireCoordination(client);
+        await using var owner = await coordination.TryAcquireFencedLockAsync(pair.Key, pair.Counter, Lease);
+
+        var waiting = coordination.AcquireFencedLockAsync(pair.Key, pair.Counter, Lease).AsTask();
+        await Task.Delay(100);
+        await Assert.That(waiting.IsCompleted).IsFalse();
+
+        await Assert.That(await owner.Lock.ReleaseAsync()).IsEqualTo(LockReleaseOutcome.Released);
+        await using var acquired = await waiting.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(acquired.FencingToken).IsEqualTo(owner.Lock.FencingToken + 1);
+    }
+
+    [Test]
+    public async Task AcquireWaitsForLeaseExpiryNotification()
+    {
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,
+            Connections = 1, Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+        });
+        var pair = Keys();
+        var coordination = new RespireCoordination(client);
+        await using var owner = await coordination.TryAcquireFencedLockAsync(
+            pair.Key, pair.Counter, TimeSpan.FromMilliseconds(300));
+
+        await using var acquired = await coordination.AcquireFencedLockAsync(pair.Key, pair.Counter, Lease)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(acquired.FencingToken).IsEqualTo(owner.Lock.FencingToken + 1);
+    }
+
+    [Test]
     public async Task ExpiryAndReconnectKeepCounterHistory()
     {
         var pair = Keys();

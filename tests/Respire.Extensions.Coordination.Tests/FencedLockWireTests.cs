@@ -105,6 +105,183 @@ public class FencedLockWireTests
     }
 
     [Test]
+    public async Task AcquireWaitsForTrackedInvalidationAndRetriesAtomicScript()
+    {
+        var attempts = 0;
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                "GET tenant:{job}:lease" => "$-1\r\n"u8.ToArray(),
+                var value when value.StartsWith("PTTL ", StringComparison.Ordinal)
+                    => ":-1\r\n"u8.ToArray(),
+                var value when value.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                    => Interlocked.Increment(ref attempts) == 1 ? "_\r\n"u8.ToArray() : "$1\r\n1\r\n"u8.ToArray(),
+                var value when value.StartsWith("DELEX tenant:{job}:lease IFEQ ", StringComparison.Ordinal)
+                    => ":1\r\n"u8.ToArray(),
+                _ => FakeRespServer.OkReply,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp3,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            ClientSideCache = new(),
+        });
+        var view = client.WithKeyPrefix("tenant:");
+        var pending = new RespireCoordination(view).AcquireFencedLockAsync(
+            "{job}:lease", "{job}:counter", TimeSpan.FromSeconds(10)).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (Volatile.Read(ref attempts) == 0) await Task.Delay(5, timeout.Token);
+
+        var commandConnection = server.ReceivedConnectionIds[
+            server.ReceivedCommands.ToList().IndexOf("GET tenant:{job}:lease")];
+        await server.SendRawAsync(
+            ">2\r\n+invalidate\r\n*1\r\n$18\r\ntenant:{job}:lease\r\n"u8.ToArray(), commandConnection);
+
+        await using var lease = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(lease.FencingToken).IsEqualTo(1);
+        await Assert.That(Volatile.Read(ref attempts)).IsEqualTo(2);
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)))
+            .IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task AcquireWaitClampsExpiryBeyondSemaphoreTimeoutLimit()
+    {
+        var attempts = 0;
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                "GET lease" => "$-1\r\n"u8.ToArray(),
+                // 30 days: beyond SemaphoreSlim's Int32.MaxValue millisecond timeout limit.
+                "PTTL lease" => ":2592000000\r\n"u8.ToArray(),
+                var value when value.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                    => Interlocked.Increment(ref attempts) == 1 ? "_\r\n"u8.ToArray() : "$1\r\n1\r\n"u8.ToArray(),
+                var value when value.StartsWith("DELEX lease IFEQ ", StringComparison.Ordinal)
+                    => ":1\r\n"u8.ToArray(),
+                _ => FakeRespServer.OkReply,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp3,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            ClientSideCache = new(),
+        });
+        var pending = new RespireCoordination(client).AcquireFencedLockAsync(
+            "lease", "counter", TimeSpan.FromDays(30)).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!server.ReceivedCommands.Contains("PTTL lease")) await Task.Delay(5, timeout.Token);
+        await Task.Delay(50, timeout.Token);
+        await Assert.That(pending.IsFaulted).IsFalse();
+
+        var commandConnection = server.ReceivedConnectionIds[
+            server.ReceivedCommands.ToList().IndexOf("GET lease")];
+        await server.SendRawAsync(">2\r\n+invalidate\r\n*1\r\n$5\r\nlease\r\n"u8.ToArray(), commandConnection);
+
+        await using var lease = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(Volatile.Read(ref attempts)).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task AcquireWaitCancellationStopsWaitingWithoutRetrying()
+    {
+        var attempts = 0;
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                "GET lease" => "$-1\r\n"u8.ToArray(),
+                "PTTL lease" => ":-1\r\n"u8.ToArray(),
+                var value when value.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                    => ReturnContended(),
+                _ => FakeRespServer.OkReply,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp3,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            ClientSideCache = new(),
+        });
+        using var cancellation = new CancellationTokenSource();
+        var pending = new RespireCoordination(client).AcquireFencedLockAsync(
+            "lease", "counter", TimeSpan.FromSeconds(10), cancellation.Token).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (Volatile.Read(ref attempts) == 0) await Task.Delay(5, timeout.Token);
+
+        cancellation.Cancel();
+
+        await Assert.That(async () => await pending).ThrowsExactly<OperationCanceledException>();
+        await Assert.That(Volatile.Read(ref attempts)).IsEqualTo(1);
+
+        byte[] ReturnContended()
+        {
+            Interlocked.Increment(ref attempts);
+            return "_\r\n"u8.ToArray();
+        }
+    }
+
+    [Test]
+    public async Task AcquireWaitRequiresClientTracking()
+    {
+        await using var client = RespireClient.Create(new RespireOptions { Endpoints = ["unused.invalid"] });
+
+        await Assert.That(async () => await new RespireCoordination(client)
+                .AcquireFencedLockAsync("lease", "counter", TimeSpan.FromSeconds(10)))
+            .ThrowsExactly<RespireConfigurationException>();
+    }
+
+    [Test]
+    public async Task ClientDisposalStopsAcquireWait()
+    {
+        var attempts = 0;
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                "GET lease" => "$-1\r\n"u8.ToArray(),
+                "PTTL lease" => ":-1\r\n"u8.ToArray(),
+                var value when value.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                    => ReturnContended(),
+                _ => FakeRespServer.OkReply,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp3,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            ClientSideCache = new(),
+        });
+        var pending = new RespireCoordination(client).AcquireFencedLockAsync(
+            "lease", "counter", TimeSpan.FromSeconds(10)).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (Volatile.Read(ref attempts) == 0) await Task.Delay(5, timeout.Token);
+        await Task.Delay(50, timeout.Token);
+
+        await client.DisposeAsync();
+
+        await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+            .ThrowsExactly<ObjectDisposedException>();
+
+        byte[] ReturnContended()
+        {
+            Interlocked.Increment(ref attempts);
+            return "_\r\n"u8.ToArray();
+        }
+    }
+
+    [Test]
     public async Task NoScriptFallbackOccursOnlyAfterDefinitiveRejection()
     {
         await using var server = new FakeRespServer("-NOSCRIPT No matching script\r\n"u8.ToArray(), "$1\r\n7\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());

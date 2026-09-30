@@ -37,6 +37,11 @@ public interface IRespireClientCacheInvalidationSubscription : IDisposable
 
     /// <summary>The most recent callback failure, or null if no callback has thrown.</summary>
     Exception? LastObserverException { get; }
+
+    /// <summary>Is canceled when the observer or its owning cache stops the subscription.</summary>
+    /// <remarks>Cancellation is signaled after cleanup. Exceptions from callbacks registered on this
+    /// token are retained in <see cref="LastObserverException"/> instead of escaping disposal.</remarks>
+    CancellationToken Stopped => CancellationToken.None;
 }
 
 internal sealed class RespireClientCacheInvalidationSubscription : IRespireClientCacheInvalidationSubscription
@@ -45,6 +50,8 @@ internal sealed class RespireClientCacheInvalidationSubscription : IRespireClien
     private readonly Action<RespireClientCacheInvalidation> _observer;
     private readonly Lock _gate = new();
     private CancellationTokenRegistration _cancellation;
+    private readonly CancellationTokenSource _stopped = new();
+    private readonly CancellationToken _stoppedToken;
     private RespireClientCacheInvalidationReason _pending;
     private bool _dispatching;
     private int _disposed;
@@ -52,7 +59,10 @@ internal sealed class RespireClientCacheInvalidationSubscription : IRespireClien
 
     internal RespireClientCacheInvalidationSubscription(ClientSideCacheCoordinator owner,
         RespireKey key, Action<RespireClientCacheInvalidation> observer)
-        => (_owner, Key, _observer) = (owner, key, observer);
+    {
+        (_owner, Key, _observer) = (owner, key, observer);
+        _stoppedToken = _stopped.Token;
+    }
 
     /// <summary>The owned physical key supplied at registration.</summary>
     public RespireKey Key { get; }
@@ -62,6 +72,8 @@ internal sealed class RespireClientCacheInvalidationSubscription : IRespireClien
 
     /// <summary>The most recent callback failure, or null if no callback has thrown.</summary>
     public Exception? LastObserverException => Volatile.Read(ref _lastObserverException);
+
+    public CancellationToken Stopped => _stoppedToken;
 
     internal void RegisterCancellation(CancellationToken cancellationToken)
     {
@@ -130,5 +142,8 @@ internal sealed class RespireClientCacheInvalidationSubscription : IRespireClien
             _pending = RespireClientCacheInvalidationReason.None;
         }
         registration.Unregister();
+        // Signal last so a throwing Stopped callback cannot skip cleanup or abort owner shutdown.
+        try { _stopped.Cancel(); }
+        catch (Exception error) { Volatile.Write(ref _lastObserverException, error); }
     }
 }

@@ -908,6 +908,32 @@ internal sealed class RespireConnection : IAsyncDisposable
             commandName);
     }
 
+    /// <summary>Appends two one-shot preludes and a command atomically.</summary>
+    internal ValueTask<RespValue> SendValidatedPrefixedAsync<TFirstPrefix, TSecondPrefix, TCommand>(
+        in TFirstPrefix firstPrefix,
+        in TSecondPrefix secondPrefix,
+        in TCommand command,
+        CancellationToken cancellationToken = default,
+        string commandName = "(command)")
+        where TFirstPrefix : struct, IRespCommand
+        where TSecondPrefix : struct, IRespCommand
+        where TCommand : struct, IRespCommand
+    {
+        if (_inflight.Capacity < 3)
+        {
+            throw new InvalidOperationException(
+                $"A doubly prefixed command needs 3 in-flight slots, but this connection allows {_inflight.Capacity}.");
+        }
+
+        return SendMultiReplyCoreAsync(
+            new PrefixedCommand<TFirstPrefix, PrefixedCommand<TSecondPrefix, TCommand>>(
+                firstPrefix, new PrefixedCommand<TSecondPrefix, TCommand>(secondPrefix, command)),
+            repliesBeforeFinal: 2,
+            firstQueueReply: 0,
+            cancellationToken,
+            commandName);
+    }
+
     private ValueTask<RespValue> SendMultiReplyCoreAsync<TCommand>(
         in TCommand command,
         int repliesBeforeFinal,
