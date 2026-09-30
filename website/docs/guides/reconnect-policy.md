@@ -81,9 +81,12 @@ can connect concurrently; the policy is not an endpoint-wide rate limiter. Succe
 the episode. Exhaustion throws `RespireReconnectLimitException` with the last connection
 failure as its inner exception. It does not disable the pool: a later rent starts fresh.
 An unlimited policy can keep one rent pending until it connects or is cancelled.
-This includes repeated authentication, permission, or protocol handshake failures: the
-policy does not classify those failures as permanent. Use a finite limit or caller
-cancellation when a misconfigured endpoint must fail within a bounded acquisition episode.
+Connection failures, connection/handshake timeouts, and server errors classified by
+`RespireServerException.IsTransient` can retry. Permanent server handshake rejections
+(including `WRONGPASS`, `NOAUTH`, `NOPERM`, and ordinary `ERR`), TLS authentication failures,
+and explicit `RespireProtocolException`/`RespireConfigurationException` failures return immediately.
+A permanent failure encountered
+after a retry starts ends that episode without marking its attempt budget exhausted.
 
 Connect timeouts and handshake command deadlines remain per attempt. Use caller
 cancellation to bound the entire rent, including all delays and handshakes. Cancelling
@@ -118,6 +121,10 @@ dispose the client without blocking the acquisition disposal must drain. Events 
 the corresponding attempt; they are observations, not a mechanism for gating retries.
 After client disposal, pending dedicated lifecycle events are suppressed. Episode IDs are
 event metadata only and are not metric tags.
+Caller cancellation and pool retirement/disposal stop a rent without emitting a dedicated
+`Disconnected` failure. Scheduled-attempt measurements may still be delivered after pool
+shutdown. Queued lifecycle callbacks are skipped once the dispatcher observes that the
+pool is stopping; callbacks already in flight are not joined because they can dispose it.
 The ordered observer queue has no capacity limit. Slow or blocked callbacks can accumulate
 pending observations across concurrent renters; keep handlers short and hand off work to
 an application queue with an explicit capacity policy. A finite retry limit bounds each

@@ -1,5 +1,4 @@
 using System.Net.Sockets;
-using System.Security.Authentication;
 using Microsoft.Extensions.Logging;
 using Respire.Networking;
 
@@ -32,10 +31,7 @@ internal sealed partial class DedicatedConnectionPool
                         QueueRecovery(RespireConnectionState.Connected, null, attempt, episode);
                     return connection;
                 }
-                catch (Exception error) when (!cancellationToken.IsCancellationRequested &&
-                    error is SocketException or IOException or AuthenticationException or
-                        RespireConnectionException or RespireServerException or RespireProtocolException or RespireTimeoutException or
-                        OperationCanceledException or TimeoutException)
+                catch (Exception error) when (!cancellationToken.IsCancellationRequested && IsRetryableAcquisitionFailure(error))
                 {
                     failure = error;
                 }
@@ -54,12 +50,25 @@ internal sealed partial class DedicatedConnectionPool
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
         }
-        catch (Exception error) when (attempt != 0 && error is not RespireReconnectLimitException)
+        catch (Exception error) when (attempt != 0 && !cancellationToken.IsCancellationRequested
+            && error is not RespireReconnectLimitException)
         {
             QueueRecovery(RespireConnectionState.Disconnected, error, attempt, episode);
             throw;
         }
     }
+
+    private static bool IsRetryableAcquisitionFailure(Exception error) => error switch
+    {
+        // Handshake errors retain the server response as the connection exception's cause.
+        // Credentials, ACLs, invalid databases, and other permanent rejections fail promptly.
+        RespireConnectionException { InnerException: RespireServerException server } => server.IsTransient,
+        RespireServerException server => server.IsTransient,
+        RespireConnectionException { InnerException: { } cause } => IsRetryableAcquisitionFailure(cause),
+        SocketException or IOException or RespireConnectionException or RespireTimeoutException
+            or OperationCanceledException or TimeoutException => true,
+        _ => false,
+    };
 
     private void QueueRecovery(RespireConnectionState state, Exception? error, int attempt,
         long episode, TimeSpan? delay = null, bool exhausted = false)
@@ -90,6 +99,7 @@ internal sealed partial class DedicatedConnectionPool
         while (true)
         {
             RespireConnectionStateChange change;
+            bool publishState;
             lock (_gate)
             {
                 if (!_recoveryNotifications!.TryDequeue(out change))
@@ -97,6 +107,7 @@ internal sealed partial class DedicatedConnectionPool
                     _publishingRecovery = false;
                     return;
                 }
+                publishState = !_stopping;
             }
             try
             {
@@ -104,7 +115,10 @@ internal sealed partial class DedicatedConnectionPool
                     RespireTelemetry.RecordReconnectAttempt(host, port, change.ReconnectAttempt, delay, "dedicated");
                 if (change.ReconnectExhausted)
                     RespireTelemetry.RecordReconnectExhaustion(host, port, "dedicated");
-                stateChanged?.Invoke(change);
+                // Measurements describe already scheduled work and may finish after Stop.
+                // Skip queued lifecycle callbacks once stopping is observed; callbacks already
+                // in flight are deliberately not joined because they can dispose this pool.
+                if (publishState) stateChanged?.Invoke(change);
             }
             catch (Exception error)
             {

@@ -24,7 +24,7 @@ public class DedicatedReconnectTests
     [Test]
     public async Task FailedHandshakesBackOffAndConcurrentRentsHaveIndependentBudgets()
     {
-        await using var server = new FakeRespServer(9, "-ERR denied\r\n"u8.ToArray());
+        await using var server = new FakeRespServer(9, "-LOADING dataset\r\n"u8.ToArray());
         var changes = new ConcurrentQueue<RespireConnectionStateChange>();
         var exhausted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var exhaustedCount = 0;
@@ -50,6 +50,7 @@ public class DedicatedReconnectTests
         await Assert.That(changes.Select(change => change.ReconnectEpisodeId).Distinct().Count()).IsEqualTo(3);
         foreach (var episode in changes.GroupBy(change => change.ReconnectEpisodeId))
         {
+            await Assert.That(episode.Key > 0).IsTrue();
             var ordered = episode.ToArray();
             await Assert.That(ordered.Length).IsEqualTo(3);
             await Assert.That(ordered[0].ReconnectAttempt).IsEqualTo(1);
@@ -58,6 +59,42 @@ public class DedicatedReconnectTests
             await Assert.That(ordered[1].NextReconnectDelay).IsEqualTo(TimeSpan.FromMilliseconds(50));
             await Assert.That(ordered[2].ReconnectExhausted).IsTrue();
         }
+    }
+
+    [Test]
+    [Arguments("WRONGPASS")]
+    [Arguments("NOAUTH")]
+    [Arguments("NOPERM")]
+    [Arguments("ERR")]
+    public async Task PermanentHandshakeRejectionFailsWithoutRetrying(string code)
+    {
+        await using var server = new FakeRespServer(System.Text.Encoding.ASCII.GetBytes($"-{code} denied\r\n"));
+        var events = 0;
+        await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
+            new RespireConnectionOptions { Database = 1, ReconnectPolicy = Policy() with { MaxAttempts = null } }, null,
+            _ => Interlocked.Increment(ref events));
+        using var deadline = new CancellationTokenSource(Deadline);
+        var error = await Assert.That(async () => await pool.RentAsync(deadline.Token)).ThrowsExactly<RespireConnectionException>();
+        var serverError = await Assert.That(error!.InnerException).IsTypeOf<RespireServerException>();
+        await Assert.That(serverError!.Code).IsEqualTo(code);
+        await Assert.That(server.CommandsSeen).IsEqualTo(1);
+        await Assert.That(Volatile.Read(ref events)).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task PermanentRejectionAfterTransportFailureEndsEpisodeWithoutExhaustion()
+    {
+        await using var server = new FakeRespServer(2, "-WRONGPASS denied\r\n"u8.ToArray()) { CloseConnectionAfterCommand = 1 };
+        var terminal = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
+            new RespireConnectionOptions { Database = 1, ReconnectPolicy = Policy() with { MaxAttempts = null } }, null,
+            change => { if (change.State == RespireConnectionState.Disconnected) terminal.TrySetResult(change); });
+        using var deadline = new CancellationTokenSource(Deadline);
+        await Assert.That(async () => await pool.RentAsync(deadline.Token)).ThrowsExactly<RespireConnectionException>();
+        var stopped = await terminal.Task.WaitAsync(deadline.Token);
+        await Assert.That(stopped.ReconnectExhausted).IsFalse();
+        await Assert.That(stopped.ReconnectAttempt).IsEqualTo(1);
+        await Assert.That(server.CommandsSeen).IsEqualTo(2);
     }
 
     [Test]
@@ -111,7 +148,7 @@ public class DedicatedReconnectTests
     [Arguments(2)]
     public async Task BackoffCancelsForCallerRetirementAndDisposal(int stop)
     {
-        await using var server = new FakeRespServer("-ERR denied\r\n"u8.ToArray());
+        await using var server = new FakeRespServer("-LOADING dataset\r\n"u8.ToArray());
         var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
             new RespireConnectionOptions { Database = 1, ReconnectPolicy = Policy(milliseconds: 30_000) }, null,
