@@ -39,6 +39,15 @@
   [stream reading guide](../website/docs/commands/collections.md#reading-without-consumer-groups)
   for cancellation, ownership, ACL requirements, and trimming/reconnect limitations.
 
+### ACL administration
+
+- Server ACL APIs add owned user, selector, log, and dry-run results, binary-safe
+  arguments, and explicit per-node Cluster variants. Mutations require `AllowAdmin`;
+  ACL changes remain node-local and can partly succeed across nodes. External
+  `IServerCommands` implementations must implement or forward all 18 new methods.
+  See the [ACL administration guide](../website/docs/guides/acl-administration.md)
+  for Redis versions, missing-user and denial semantics, and result ownership.
+
 ### Distributed locks
 
 - Distributed locks use native conditional renewal/deletion on supported Redis and Valkey versions, with per-connection Lua fallback on older servers and preserved managed cancellation fencing.
