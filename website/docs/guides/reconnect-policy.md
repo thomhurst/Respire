@@ -81,6 +81,9 @@ can connect concurrently; the policy is not an endpoint-wide rate limiter. Succe
 the episode. Exhaustion throws `RespireReconnectLimitException` with the last connection
 failure as its inner exception. It does not disable the pool: a later rent starts fresh.
 An unlimited policy can keep one rent pending until it connects or is cancelled.
+This includes repeated authentication, permission, or protocol handshake failures: the
+policy does not classify those failures as permanent. Use a finite limit or caller
+cancellation when a misconfigured endpoint must fail within a bounded acquisition episode.
 
 Connect timeouts and handshake command deadlines remain per attempt. Use caller
 cancellation to bound the entire rent, including all delays and handshakes. Cancelling
@@ -99,8 +102,8 @@ rules and bypass this policy, including its attempt cap.
 | `ConnectionSlot` | Source slot within this endpoint's multiplexer generation, including null-policy recovery; null for endpoint-wide transitions |
 | `NextReconnectDelay` | Actual scheduled delay before this attempt; null when no attempt is scheduled |
 | `ReconnectExhausted` | This slot or dedicated rent reached its configured limit |
-| `ReconnectSource` | `Dedicated` for a dedicated rent; `Unspecified` for existing recovery paths |
-| `SourceState` | Dedicated acquisition state before endpoint health aggregation |
+| `ReconnectSource` | `Dedicated` for a dedicated rent, `Command` for a multiplexer event; `Unspecified` for other paths |
+| `SourceState` | Source connection state before endpoint health aggregation, when supplied |
 | `ReconnectEpisodeId` | Process-local identifier grouping one dedicated rent's retry events; null for other paths |
 
 Policy attempt events are delivered even if aggregate endpoint health has not changed.
@@ -115,6 +118,10 @@ dispose the client without blocking the acquisition disposal must drain. Events 
 the corresponding attempt; they are observations, not a mechanism for gating retries.
 After client disposal, pending dedicated lifecycle events are suppressed. Episode IDs are
 event metadata only and are not metric tags.
+The ordered observer queue has no capacity limit. Slow or blocked callbacks can accumulate
+pending observations across concurrent renters; keep handlers short and hand off work to
+an application queue with an explicit capacity policy. A finite retry limit bounds each
+rent's retries, not total concurrent rents or the observer queue.
 
 The `Respire` meter records `respire.connection.reconnect.attempt` (attempt number) and
 `respire.connection.reconnect.delay` (seconds), tagged with `server.address`, `server.port`,

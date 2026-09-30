@@ -7,6 +7,8 @@ public enum RespireReconnectSource
     Unspecified,
     /// <summary>A dedicated connection acquisition.</summary>
     Dedicated,
+    /// <summary>A multiplexed command connection.</summary>
+    Command,
 }
 
 /// <summary>The coarse health of a client's connections, surfaced via <see cref="RespireClient.ConnectionStateChanged"/>.</summary>
