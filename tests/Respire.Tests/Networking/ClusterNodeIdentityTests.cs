@@ -92,6 +92,55 @@ public class ClusterNodeIdentityTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task StaleDiscoveryPreservesRedirectEndpointMappings(bool advertisedAsPreferred, bool knownIdentity)
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
+        });
+        var router = client.Core.Cluster!;
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var apply = typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!;
+        var originalEndpoint = new RespireEndpoint("localhost");
+        var redirectedEndpoint = new RespireEndpoint("redirected");
+        List<ClusterTopologyRange> initial = knownIdentity
+            ? [new(0, 8191, originalEndpoint, "original-id", []), new(8192, 16383, redirectedEndpoint, "redirect-id", [])]
+            : [new(0, 16383, originalEndpoint, "original-id", [])];
+        apply.Invoke(router, [initial, 0L, 1L]);
+        // Discovery begins, then MOVED installs a new physical endpoint before its reply arrives.
+        var capturedVersion = (long)typeof(ClusterRouter).GetField("_topologyVersion", flags)!.GetValue(router)!;
+        var redirected = router.GetMultiplexer(redirectedEndpoint);
+        router.SetSlotOwner(0, redirected);
+        var staleId = knownIdentity ? "redirect-id" : "original-id";
+        List<ClusterTopologyRange> stale = advertisedAsPreferred
+            ? [new(0, 16383, redirectedEndpoint, staleId, [])]
+            : [new(0, 16383, originalEndpoint, staleId, [redirectedEndpoint])];
+        apply.Invoke(router, [stale, capturedVersion, 2L]);
+        var slots = (RespireConnectionMultiplexer?[])typeof(ClusterRouter).GetField("_slots", flags)!.GetValue(router)!;
+        await Assert.That(ReferenceEquals(slots[0], redirected)).IsTrue();
+        await Assert.That(ReferenceEquals(router.GetMultiplexer(redirectedEndpoint), redirected)).IsTrue();
+        // The stale node ID must not be assigned to the redirected transport either.
+        var identities = (ClusterNodeIdentityIndex)typeof(ClusterRouter).GetField("_identities", flags)!.GetValue(router)!;
+        var ids = (Dictionary<RespireConnectionMultiplexer, string>)typeof(ClusterNodeIdentityIndex)
+            .GetField("_nodeIds", flags)!.GetValue(identities)!;
+        if (knownIdentity)
+        {
+            await Assert.That(ids[redirected]).IsEqualTo("redirect-id");
+            var owners = (Dictionary<string, RespireConnectionMultiplexer>)typeof(ClusterNodeIdentityIndex)
+                .GetField("_nodesById", flags)!.GetValue(identities)!;
+            await Assert.That(ReferenceEquals(owners["redirect-id"], redirected)).IsTrue();
+        }
+        else
+        {
+            await Assert.That(ids.ContainsKey(redirected)).IsFalse();
+        }
+    }
+
+    [Test]
     [Arguments(false, false, false)]
     [Arguments(false, true, false)]
     [Arguments(true, false, false)]

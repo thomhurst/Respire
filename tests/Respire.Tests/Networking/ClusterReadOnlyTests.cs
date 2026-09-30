@@ -46,6 +46,7 @@ public class ClusterReadOnlyTests
     }
 
     [Test]
+    [NotInParallel] // Other wire tests must not consume this test's final-seed scheduling budget.
     public async Task ManyStalledSeedsLeaveUsableTimeForFinalSeed()
     {
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
@@ -123,6 +124,7 @@ public class ClusterReadOnlyTests
     }
 
     [Test]
+    [NotInParallel] // Other wire tests must not consume this test's final-seed scheduling budget.
     public async Task TwoStalledPrimariesStillLeaveTimeForSeedDiscovery()
     {
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);

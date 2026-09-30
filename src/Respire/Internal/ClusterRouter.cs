@@ -791,7 +791,15 @@ internal sealed class ClusterRouter : IAsyncDisposable
             {
                 return;
             }
-            var resolved = _identities.ApplySnapshot(ranges);
+            HashSet<RespireConnectionMultiplexer>? protectedNodes = null;
+            for (var slot = 0; slot < _slots.Length; slot++)
+            {
+                if (_slotVersions[slot] > expectedVersion && _slots[slot] is { } node)
+                {
+                    (protectedNodes ??= []).Add(node);
+                }
+            }
+            var resolved = _identities.ApplySnapshot(ranges, protectedNodes);
             var activeNodes = new HashSet<RespireConnectionMultiplexer>();
             var refreshedSlots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
             foreach (var (range, node) in resolved)

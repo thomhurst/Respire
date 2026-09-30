@@ -56,7 +56,7 @@ internal sealed class ClusterNodeIdentityIndex
     }
 
     internal List<(ClusterTopologyRange Range, RespireConnectionMultiplexer Node)> ApplySnapshot(
-        List<ClusterTopologyRange> ranges)
+        List<ClusterTopologyRange> ranges, HashSet<RespireConnectionMultiplexer>? protectedNodes = null)
     {
         AssertAccess();
         var advertisedById = CollectAdvertisedEndpoints(ranges);
@@ -82,7 +82,7 @@ internal sealed class ClusterNodeIdentityIndex
             {
                 var advertised = range.NodeId is { } knownId ? advertisedById[knownId]
                     : new HashSet<RespireEndpoint>(range.Aliases, EndpointComparer.Instance) { range.Preferred };
-                node = ResolveTopologyNode(range, advertised, preferredOwners, selectedEndpoints, selectedNodeIds);
+                node = ResolveTopologyNode(range, advertised, preferredOwners, selectedEndpoints, selectedNodeIds, protectedNodes);
                 if (range.NodeId is { } nodeId)
                 {
                     selectedById.Add(nodeId, node);
@@ -98,7 +98,7 @@ internal sealed class ClusterNodeIdentityIndex
             }
         }
 
-        PublishSnapshot(resolved, selectedById);
+        PublishSnapshot(resolved, selectedById, protectedNodes);
         return resolved;
     }
 
@@ -125,15 +125,33 @@ internal sealed class ClusterNodeIdentityIndex
     }
 
     private void PublishSnapshot(List<(ClusterTopologyRange Range, RespireConnectionMultiplexer Node)> resolved,
-        Dictionary<string, RespireConnectionMultiplexer> selectedById)
+        Dictionary<string, RespireConnectionMultiplexer> selectedById,
+        HashSet<RespireConnectionMultiplexer>? protectedNodes)
     {
         // Publish all preferred endpoints before metadata. An alias reassigned in this
         // snapshot replaces its old owner, but cannot override another current preferred endpoint.
-        var published = new HashSet<RespireEndpoint>(EndpointComparer.Instance);
+        HashSet<RespireEndpoint>? protectedEndpoints = null;
+        if (protectedNodes is not null)
+        {
+            foreach (var (endpoint, node) in _nodes)
+            {
+                if (protectedNodes.Contains(node))
+                {
+                    (protectedEndpoints ??= new(EndpointComparer.Instance)).Add(endpoint);
+                }
+            }
+        }
+        // MOVED routes established after discovery began own their endpoint mappings too.
+        var published = protectedEndpoints is null
+            ? new HashSet<RespireEndpoint>(EndpointComparer.Instance)
+            : new HashSet<RespireEndpoint>(protectedEndpoints, EndpointComparer.Instance);
         foreach (var (range, node) in resolved)
         {
-            _nodes[range.Preferred] = node;
-            published.Add(range.Preferred);
+            if (protectedEndpoints?.Contains(range.Preferred) != true)
+            {
+                _nodes[range.Preferred] = node;
+                published.Add(range.Preferred);
+            }
         }
 
         foreach (var (range, node) in resolved)
@@ -161,6 +179,11 @@ internal sealed class ClusterNodeIdentityIndex
 
         foreach (var (id, node) in selectedById)
         {
+            if (protectedNodes is not null && (protectedNodes.Contains(node)
+                || (_nodesById.TryGetValue(id, out var current) && protectedNodes.Contains(current))))
+            {
+                continue;
+            }
             _nodesById[id] = node;
             _nodeIds[node] = id;
         }
@@ -176,7 +199,8 @@ internal sealed class ClusterNodeIdentityIndex
         ClusterTopologyRange range, HashSet<RespireEndpoint> advertised,
         Dictionary<RespireEndpoint, string?> preferredOwners,
         Dictionary<RespireEndpoint, RespireConnectionMultiplexer> selectedEndpoints,
-        Dictionary<RespireConnectionMultiplexer, string> selectedNodeIds)
+        Dictionary<RespireConnectionMultiplexer, string> selectedNodeIds,
+        HashSet<RespireConnectionMultiplexer>? protectedNodes)
     {
         if (range.NodeId is { } id && _nodesById.TryGetValue(id, out var identified)
             && IsCurrentTransport(identified) && CanReuse(identified))
@@ -218,6 +242,12 @@ internal sealed class ClusterNodeIdentityIndex
         bool CanReuse(RespireConnectionMultiplexer node)
         {
             var endpoint = new RespireEndpoint(node.Host, node.Port);
+            // A newer route cannot be borrowed as metadata for an older node advertisement.
+            if (protectedNodes?.Contains(node) == true
+                && !EndpointComparer.Instance.Equals(endpoint, range.Preferred))
+            {
+                return false;
+            }
             if (!EndpointComparer.Instance.Equals(endpoint, range.Preferred)
                 && preferredOwners.TryGetValue(endpoint, out var preferredId)
                 && (range.NodeId is null || preferredId != range.NodeId))
