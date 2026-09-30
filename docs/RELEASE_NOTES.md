@@ -55,7 +55,8 @@
   models, plus key-slot, local key-count, and node/shard ID queries. Explicit all-node
   variants preserve endpoint-associated results without changing routing or claiming
   a reconciled global topology. Custom `IServerCommands` implementations must add all
-  20 methods. See the [Cluster inspection guide](../website/docs/guides/cluster-inspection.md)
+  20 methods. This is an intentional pre-release interface extension, consistent with
+  the [API design policy](API_DESIGN.md). See the [Cluster inspection guide](../website/docs/guides/cluster-inspection.md)
   for versions, prefix semantics, optional metrics, and ownership.
 
 ### Stream trimming

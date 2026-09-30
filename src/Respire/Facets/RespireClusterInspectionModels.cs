@@ -8,7 +8,8 @@ public sealed record RespireClusterSlotTransition(int Slot, string Direction, st
 
 /// <summary>One owned CLUSTER NODES row, as seen by the queried node.</summary>
 /// <remarks>Address preserves the full advertised address, bus port, hostname and future suffixes.
-/// Unknown flag values, link states and trailing tokens are preserved.</remarks>
+/// Unknown flag values, link states and trailing tokens are preserved.
+/// Arrays are caller-owned and mutable; record equality compares their references, not their contents.</remarks>
 public sealed record RespireClusterNode(
     string Id, string Address, string[] Flags, string? PrimaryId,
     long PingSentMilliseconds, long PongReceivedMilliseconds, long ConfigurationEpoch,
@@ -30,7 +31,8 @@ public sealed record RespireClusterShardNode(
     IReadOnlyDictionary<string, RespireResult> AdditionalFields);
 
 /// <summary>An owned shard description from one node's view, not a globally reconciled topology.</summary>
-/// <remarks>Unknown fields contain GC-owned results; disposal is optional.</remarks>
+/// <remarks>Unknown fields contain GC-owned results; disposal is optional.
+/// Arrays are caller-owned and mutable; record equality compares their references, not their contents.</remarks>
 public sealed record RespireClusterShard(
     RespireClusterSlotRange[] Slots, RespireClusterShardNode[] Nodes,
     IReadOnlyDictionary<string, RespireResult> AdditionalFields);

@@ -57,6 +57,10 @@ values are recursively copied into GC-owned storage; disposal is optional and
 invalidates their element views. Other models need no disposal. All results remain
 valid after the reply and client are disposed.
 
+Each call returns its own snapshot; inspection results are not shared cached topology.
+Array members are caller-owned and mutable. Record equality compares array references,
+not their elements; compare elements explicitly when comparing snapshots.
+
 ## Keys, slots, and statistics
 
 `ClusterKeySlotAsync` applies the client view's key prefix and preserves binary key

@@ -53,6 +53,23 @@ public class ServerClusterInspectionParserTests
     }
 
     [Test]
+    [Arguments("handshake")]
+    [Arguments("noaddr")]
+    public async Task NodesPreserveTransientPlaceholders(string flag)
+    {
+        var reply = Text($"transient - {flag} - 0 0 0 -\n");
+        var node = ClusterInspectionParser.Nodes(in reply).Single();
+        reply.Dispose();
+        await Assert.That(node.Address).IsEqualTo("-");
+        await Assert.That(node.Flags).IsEquivalentTo([flag]);
+        await Assert.That(node.PrimaryId).IsNull();
+        await Assert.That(node.LinkState).IsEqualTo("-");
+        await Assert.That(node.Slots).IsEmpty();
+        await Assert.That(node.Transitions).IsEmpty();
+        await Assert.That(node.AdditionalTokens).IsEmpty();
+    }
+
+    [Test]
     public async Task InfoRetainsUnknownFieldsAndOptionalCounters()
     {
         var info = ClusterInspectionParser.Info(Text("cluster_state:ok\r\ncluster_slots_assigned:16384\r\nfuture:value:with:colons\r\n"));
