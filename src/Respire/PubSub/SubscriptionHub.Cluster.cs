@@ -7,10 +7,13 @@ namespace Respire.Internal;
 
 internal sealed partial class SubscriptionHub
 {
+    // Recovery/control paths acquire _controlGate, then _reconnectStateGate, then _gate.
+    // Receive/topology callbacks hold only _gate and schedule work without acquiring the others.
     // Identity is the router's generation, not merely host:port. A replacement at the same
     // endpoint must not inherit the retired primary's subscription transport.
     private readonly Dictionary<RespireConnectionMultiplexer, PrimarySubscriptionConnection> _primaryConnections = [];
     private readonly ByteRouteDictionary<PrimarySubscriptionConnection> _shardedOwners = new();
+    private readonly HashSet<RespireEndpoint> _shardedRecoveryEndpoints = [];
     private TaskCompletionSource? _shardedRecovery;
     private bool _shardedRecoveryRequested;
     private bool _observingClusterTopology;
@@ -64,6 +67,14 @@ internal sealed partial class SubscriptionHub
                 await EnsureShardedRouteAsync(name, cancellationToken, instrument: true).ConfigureAwait(false);
             await CloseUnusedPrimariesAsync().ConfigureAwait(false);
         }
+        catch (RespireServerException)
+        {
+            // A completed server rejection leaves FIFO state known. Undo accepted routes
+            // without interrupting other subscriptions sharing their primary connection.
+            subscription.Buffer.Complete();
+            await ReleaseShardedRoutesAsync(RemoveRoutes(subscription)).ConfigureAwait(false);
+            throw;
+        }
         catch
         {
             subscription.Buffer.Complete();
@@ -91,49 +102,65 @@ internal sealed partial class SubscriptionHub
     {
         var slot = ClusterHash.GetSlot(name.Span);
         var commandConnection = await core.Cluster!.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
-        for (var redirect = 0; ; redirect++)
+        try
         {
-            var primary = await GetPrimaryConnectionAsync(commandConnection.Multiplexer!, cancellationToken).ConfigureAwait(false);
-            PrimarySubscriptionConnection? previous;
-            lock (_gate)
+            for (var redirect = 0; ; redirect++)
             {
-                _shardedOwners.TryGetValue(name, out previous);
-                if (ReferenceEquals(previous, primary) && primary.Confirmed.Contains(name)) return;
-                if (previous is not null && !ReferenceEquals(previous, primary))
-                {
-                    if (previous.Confirmed.Contains(name)) MarkShardedInterruptedLocked(name);
-                    _shardedOwners.Remove(name);
-                }
-            }
-            if (previous is not null && !ReferenceEquals(previous, primary))
-                await UnsubscribePrimaryAsync(previous, name, cancellationToken).ConfigureAwait(false);
-            lock (_gate)
-            {
-                _shardedOwners.Remove(name);
-                _shardedOwners.Add(name, primary);
-            }
-            try
-            {
-                await SendControlAsync(primary.Connection!, SubscribeVerb(SubscriptionKind.Sharded), "SSUBSCRIBE",
-                    name, cancellationToken, instrument).ConfigureAwait(false);
+                var primary = await GetPrimaryConnectionAsync(commandConnection.Multiplexer!, cancellationToken).ConfigureAwait(false);
+                PrimarySubscriptionConnection? previous;
                 lock (_gate)
                 {
-                    // SUNSUBSCRIBE may follow the acknowledgement in the same socket read.
-                    if (!primary.Confirmed.Contains(name))
-                        throw new RespireConnectionException("Sharded subscription was removed before activation completed.");
+                    _shardedOwners.TryGetValue(name, out previous);
+                    if (ReferenceEquals(previous, primary) && primary.Confirmed.Contains(name)) return;
+                    if (previous is not null && !ReferenceEquals(previous, primary))
+                    {
+                        if (previous.Confirmed.Contains(name)) MarkShardedInterruptedLocked(name);
+                        _shardedOwners.Remove(name);
+                    }
                 }
-                return;
+                if (previous is not null && !ReferenceEquals(previous, primary))
+                    await UnsubscribePrimaryAsync(previous, name, cancellationToken).ConfigureAwait(false);
+                lock (_gate)
+                {
+                    _shardedOwners.Remove(name);
+                    _shardedOwners.Add(name, primary);
+                }
+                try
+                {
+                    await SendControlAsync(primary.Connection!, SubscribeVerb(SubscriptionKind.Sharded), "SSUBSCRIBE",
+                        name, cancellationToken, instrument).ConfigureAwait(false);
+                    lock (_gate)
+                    {
+                        // SUNSUBSCRIBE may follow the acknowledgement in the same socket read.
+                        if (!primary.Confirmed.Contains(name))
+                            throw new RespireConnectionException("Sharded subscription was removed before activation completed.");
+                    }
+                    return;
+                }
+                catch (RespireServerException error) when (error.Code == RespireErrorCodes.Moved && redirect < ClusterRouter.RedirectLimit)
+                {
+                    commandConnection = await core.Cluster.GetRedirectConnectionAsync(error, primary.Connection!, cancellationToken, slot)
+                        .ConfigureAwait(false);
+                }
+                catch (RespireServerException)
+                {
+                    lock (_gate)
+                        if (_shardedOwners.TryGetValue(name, out var owner) && ReferenceEquals(owner, primary)
+                            && !primary.Confirmed.Contains(name)) _shardedOwners.Remove(name);
+                    throw;
+                }
+                catch
+                {
+                    await ClosePrimaryAsync(primary).ConfigureAwait(false);
+                    throw;
+                }
             }
-            catch (RespireServerException error) when (error.Code == RespireErrorCodes.Moved && redirect < ClusterRouter.RedirectLimit)
-            {
-                commandConnection = await core.Cluster.GetRedirectConnectionAsync(error, primary.Connection!, cancellationToken, slot)
-                    .ConfigureAwait(false);
-            }
-            catch
-            {
-                await ClosePrimaryAsync(primary).ConfigureAwait(false);
-                throw;
-            }
+        }
+        catch
+        {
+            if (!instrument)
+                lock (_gate) _shardedRecoveryEndpoints.Add(new(commandConnection.Host, commandConnection.Port));
+            throw;
         }
     }
 
@@ -164,8 +191,7 @@ internal sealed partial class SubscriptionHub
     {
         var elements = value.AsArray();
         if (elements.Length >= 3 && elements[0].AsSpan().SequenceEqual("smessage"u8))
-            DeliverCore(0, SubscriptionKind.Sharded, elements[1].AsSpan(), elements[1].AsSpan(),
-                isPattern: false, elements[2].AsSpan(), primary);
+            DeliverPrimary(primary, elements[1].AsSpan(), elements[2].AsSpan());
     }
 
     private bool FilterPrimaryConfirmation(PrimarySubscriptionConnection primary, in RespValue value, bool hasPendingResponse)
@@ -193,6 +219,25 @@ internal sealed partial class SubscriptionHub
         return true;
     }
 
+    // Keep generation validation on the sharded receive path. The existing regular Deliver
+    // method retains its epoch-only path and signature, avoiding generation branches on
+    // regular dispatch. Both paths enqueue under _gate and notify drops outside it.
+    private void DeliverPrimary(PrimarySubscriptionConnection primary, ReadOnlySpan<byte> channel, ReadOnlySpan<byte> payload)
+    {
+        List<(RespireSubscription Subscription, RespireSubscriptionGap Gap)>? drops = null;
+        lock (_gate)
+        {
+            if (_disposed || !Routes(SubscriptionKind.Sharded).TryGetValue(channel, out var name, out var targets)
+                || !_shardedOwners.TryGetValue(name, out var owner) || !ReferenceEquals(owner, primary)
+                || !primary.Confirmed.Contains(name)) return;
+            var message = new RespireMessage(name, null, payload.ToArray(), core.Options.Serializer);
+            foreach (var target in targets)
+                if (target.Buffer.Write(message) is { } gap) (drops ??= []).Add((target, gap));
+        }
+        if (drops is not null)
+            foreach (var (subscription, gap) in drops) subscription.NotifyDrop(gap);
+    }
+
     private void MarkShardedInterruptedLocked(RespireChannel name)
     {
         if (_disposed || !Routes(SubscriptionKind.Sharded).TryGetValue(name, out var subscriptions)) return;
@@ -206,7 +251,14 @@ internal sealed partial class SubscriptionHub
 
     private async Task WatchPrimaryAsync(PrimarySubscriptionConnection primary)
     {
-        await primary.Connection!.Closed.ConfigureAwait(false);
+        try { await primary.Connection!.Closed.ConfigureAwait(false); }
+        catch (Exception error)
+        {
+            // A faulted receive loop still requires recovery. Observe its failure even when
+            // a user logger throws, so the detached watcher cannot fault without a consumer.
+            try { core.Logger?.LogWarning(error, "Sharded subscription connection closed with a receive failure"); }
+            catch { }
+        }
         lock (_gate)
         {
             if (_disposed) return;
@@ -311,17 +363,21 @@ internal sealed partial class SubscriptionHub
     private void RequestShardedRecoveryLocked(PrimarySubscriptionConnection? primary = null)
     {
         if (_disposed || _shardedExhaustion is not null || !Routes(SubscriptionKind.Sharded).Names.Any()) return;
+        if (primary is not null)
+            _shardedRecoveryEndpoints.Add(new(primary.Owner.Host, primary.Owner.Port));
+        else
+            foreach (var owner in _shardedOwners.Values)
+                _shardedRecoveryEndpoints.Add(new(owner.Owner.Host, owner.Owner.Port));
         _shardedRecoveryRequested = true;
         if (_shardedRecovery is { Task.IsCompleted: false }) return;
         var drained = _shardedRecovery = new(TaskCreationOptions.RunContinuationsAsynchronously);
         // Reserve the task before starting work: synchronous event-handler disposal can join
         // recovery without waiting for the dispatcher that invoked that handler.
-        var endpoint = primary is null ? core.Options.PrimaryEndpoint : new RespireEndpoint(primary.Owner.Host, primary.Owner.Port);
-        ThreadPool.UnsafeQueueUserWorkItem(static state => _ = state.Hub.RecoverShardedAsync(state.Drained, state.Endpoint),
-            (Hub: this, Drained: drained, Endpoint: endpoint), preferLocal: false);
+        ThreadPool.UnsafeQueueUserWorkItem(static state => _ = state.Hub.RecoverShardedAsync(state.Drained),
+            (Hub: this, Drained: drained), preferLocal: false);
     }
 
-    private async Task RecoverShardedAsync(TaskCompletionSource drained, RespireEndpoint endpoint)
+    private async Task RecoverShardedAsync(TaskCompletionSource drained)
     {
         var cancellationToken = _lifetimeCancellation.Token;
         var policy = core.Options.ReconnectPolicy;
@@ -335,7 +391,10 @@ internal sealed partial class SubscriptionHub
                 if (attempt < int.MaxValue) attempt++;
                 var delay = policy?.GetDelay(attempt) ?? (attempt == 1 ? TimeSpan.Zero
                     : TimeSpan.FromMilliseconds(Math.Min(250 * Math.Pow(2, Math.Min(attempt - 2, 5)), 5000)));
-                QueueConfiguredState(endpoint, RespireConnectionState.Reconnecting, failure, attempt, delay, clusterSharded: true);
+                RespireEndpoint[] affected;
+                lock (_gate) affected = _shardedRecoveryEndpoints.ToArray();
+                foreach (var endpoint in affected)
+                    QueueConfiguredState(endpoint, RespireConnectionState.Reconnecting, failure, attempt, delay, clusterSharded: true);
                 await Task.Delay(delay, _recoveryClock, cancellationToken).ConfigureAwait(false);
                 await _controlGate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
@@ -355,13 +414,13 @@ internal sealed partial class SubscriptionHub
                             failure ??= error;
                             lock (_gate)
                                 if (_shardedOwners.TryGetValue(name, out var primary))
-                                    endpoint = new RespireEndpoint(primary.Owner.Host, primary.Owner.Port);
+                                    _shardedRecoveryEndpoints.Add(new(primary.Owner.Host, primary.Owner.Port));
                         }
                     }
                     await CloseUnusedPrimariesAsync().ConfigureAwait(false);
                     if (failure is not null && policy?.IsExhausted(attempt) == true)
                     {
-                        ExhaustShardedRecovery(endpoint, failure, attempt);
+                        ExhaustShardedRecovery(failure, attempt);
                         await CloseUnusedPrimariesAsync().ConfigureAwait(false);
                         return;
                     }
@@ -371,7 +430,9 @@ internal sealed partial class SubscriptionHub
                         {
                             if (failure is null && !_shardedRecoveryRequested)
                             {
-                                QueueConfiguredState(endpoint, RespireConnectionState.Connected, null, attempt, clusterSharded: true);
+                                foreach (var endpoint in _shardedRecoveryEndpoints)
+                                    QueueConfiguredState(endpoint, RespireConnectionState.Connected, null, attempt, clusterSharded: true);
+                                _shardedRecoveryEndpoints.Clear();
                                 drained.TrySetResult();
                                 return;
                             }
@@ -388,7 +449,7 @@ internal sealed partial class SubscriptionHub
         finally { lock (_gate) drained.TrySetResult(); }
     }
 
-    private void ExhaustShardedRecovery(RespireEndpoint endpoint, Exception failure, int attempt)
+    private void ExhaustShardedRecovery(Exception failure, int attempt)
     {
         lock (_reconnectStateGate)
         {
@@ -404,8 +465,10 @@ internal sealed partial class SubscriptionHub
                 }
                 Routes(SubscriptionKind.Sharded).Clear();
                 _shardedOwners.Clear();
+                foreach (var endpoint in _shardedRecoveryEndpoints)
+                    QueueConfiguredState(endpoint, RespireConnectionState.Disconnected, failure, attempt, exhausted: true, clusterSharded: true);
+                _shardedRecoveryEndpoints.Clear();
             }
-            QueueConfiguredState(endpoint, RespireConnectionState.Disconnected, failure, attempt, exhausted: true, clusterSharded: true);
         }
     }
 }

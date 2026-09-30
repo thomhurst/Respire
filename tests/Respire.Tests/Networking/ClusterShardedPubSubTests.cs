@@ -152,6 +152,100 @@ public class ClusterShardedPubSubTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ServerRejectionPreservesHealthyChannelsOnTheSamePrimary(bool partialActivation)
+    {
+        await using var cluster = new Cluster(2);
+        await using var client = cluster.CreateClient();
+        await using var subscription = await client.SubscribeShardedAsync("bar");
+        var identity = ControlIds(cluster.First).Single();
+        cluster.FirstOverride = (_, command) => command == "SSUBSCRIBE baz" ? "-NOPERM denied\r\n"u8.ToArray() : null;
+        await Assert.That(async () => await client.SubscribeShardedAsync(partialActivation ? ["b", "baz"] : ["baz"]))
+            .ThrowsExactly<RespireServerException>();
+        await using var reader = subscription.GetAsyncEnumerator();
+        await cluster.First.SendRawAsync(cluster.Message("bar", "healthy"), identity);
+        await Assert.That(await reader.MoveNextAsync().AsTask().WaitAsync(Deadline)).IsTrue();
+        await Assert.That(reader.Current.Text).IsEqualTo("healthy");
+        await Assert.That(cluster.First.ReceivedCommands.Count(command => command == "SSUBSCRIBE bar")).IsEqualTo(1);
+        await Assert.That(cluster.First.ReceivedCommands.Contains("SUNSUBSCRIBE b")).IsEqualTo(partialActivation);
+        await Assert.That(ControlIds(cluster.First).Distinct().Count()).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RecoveryTracksEveryAffectedPrimaryThroughTerminalOutcome(bool exhaust)
+    {
+        await using var cluster = new Cluster(2);
+        await using var client = cluster.CreateClient(new()
+        {
+            InitialDelay = TimeSpan.FromSeconds(1), MaxDelay = TimeSpan.FromSeconds(1),
+            JitterRatio = 0, MaxAttempts = 3,
+        });
+        var clock = new RecoveryClock();
+        await using var hub = new SubscriptionHub(client.Core, clock);
+        await using var subscription = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["bar", "foo", "{foo}:barrier"], new(), CancellationToken.None);
+        await using var reader = subscription.GetAsyncEnumerator();
+        var changes = new System.Collections.Concurrent.ConcurrentQueue<RespireConnectionStateChange>();
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.ReconnectSource == RespireReconnectSource.PubSub) changes.Enqueue(change);
+        };
+        cluster.FirstOverride = (_, command) => command == "SSUBSCRIBE bar" ? "-ERR denied\r\n"u8.ToArray() : null;
+        cluster.SecondOverride = (_, command) => command == "SSUBSCRIBE foo" ? "-ERR denied\r\n"u8.ToArray() : null;
+        await cluster.First.SendRawAsync(cluster.Confirmation("sunsubscribe", "bar"), ControlIds(cluster.First).Last());
+        var first = await clock.NextAsync();
+        await cluster.Second.SendRawAsync([.. cluster.Confirmation("sunsubscribe", "foo"),
+            .. cluster.Message("{foo}:barrier", "both removed")], ControlIds(cluster.Second).Last());
+        // The subsequent message proves the second migration frame was processed before retry.
+        await Assert.That(await reader.MoveNextAsync().AsTask().WaitAsync(Deadline)).IsTrue();
+        await Assert.That(reader.Current.Text).IsEqualTo("both removed");
+        first.Fire();
+        var second = await clock.NextAsync();
+        await WaitAsync(() => changes.Count(change => change.ReconnectAttempt == 2 && change.NextReconnectDelay is not null) == 2);
+        await Assert.That(changes.Any(change => change.State == RespireConnectionState.Connected)).IsFalse();
+        cluster.FirstOverride = null;
+        second.Fire();
+        var third = await clock.NextAsync();
+        await WaitAsync(() => changes.Count(change => change.ReconnectAttempt == 3 && change.NextReconnectDelay is not null) == 2);
+        await Assert.That(changes.Any(change => change.State == RespireConnectionState.Connected)).IsFalse();
+        if (!exhaust) cluster.SecondOverride = null;
+        third.Fire();
+        await WaitAsync(() => changes.Count(change => change.NextReconnectDelay is null) == 2);
+        var terminal = changes.Where(change => change.NextReconnectDelay is null).ToArray();
+        await Assert.That(terminal.Select(change => change.Endpoint.Port)).IsEquivalentTo([cluster.First.Port, cluster.Second.Port]);
+        await Assert.That(terminal.All(change => change.State == (exhaust
+            ? RespireConnectionState.Disconnected : RespireConnectionState.Connected))).IsTrue();
+        await Assert.That(terminal.All(change => change.ReconnectExhausted == exhaust)).IsTrue();
+        if (exhaust)
+            await Assert.That(await subscription.Completion.WaitAsync(Deadline)).IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
+
+    }
+
+    private sealed class RecoveryClock : TimeProvider
+    {
+        private readonly System.Threading.Channels.Channel<RecoveryTimer> _timers =
+            global::System.Threading.Channels.Channel.CreateUnbounded<RecoveryTimer>();
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new RecoveryTimer(callback, state);
+            _timers.Writer.TryWrite(timer);
+            return timer;
+        }
+        internal Task<RecoveryTimer> NextAsync() => _timers.Reader.ReadAsync().AsTask().WaitAsync(Deadline);
+    }
+
+    private sealed class RecoveryTimer(TimerCallback callback, object? state) : ITimer
+    {
+        private int _finished;
+        internal void Fire() { if (Interlocked.Exchange(ref _finished, 1) == 0) callback(state); }
+        public bool Change(TimeSpan dueTime, TimeSpan period) => Volatile.Read(ref _finished) == 0;
+        public void Dispose() => Interlocked.Exchange(ref _finished, 1);
+        public ValueTask DisposeAsync() { Dispose(); return default; }
+    }
+
+    [Test]
     public async Task ClientDisposalInterruptsStalledShardedActivation()
     {
         await using var cluster = new Cluster(2);

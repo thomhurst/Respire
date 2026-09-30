@@ -105,6 +105,12 @@ A reconnect gap marker precedes messages from the replacement subscription; Redi
 cannot replay messages lost while a channel changes owners.
 
 Sharded Cluster subscriptions share one recovery episode and configured attempt budget,
+with health retained for every affected primary until the episode completes. An attempt on
+another primary cannot clear an earlier primary's failure. Successful recovery clears all
+affected endpoints; exhaustion marks them disconnected. Topology-driven recovery reports
+subscription owners rather than an unrelated configured seed.
+
+The sharded recovery budget is
 separate from regular channel and pattern subscriptions. Exhausting that budget completes all
 sharded subscriptions with `ReconnectExhausted`; regular subscriptions remain usable. Recreate
 the client to create sharded subscriptions after exhaustion. Notifications across Cluster

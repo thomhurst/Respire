@@ -19,7 +19,8 @@ internal sealed class ClientCore : IAsyncDisposable
     private readonly Dictionary<RespireEndpoint, RespireConnectionState> _publishedEndpointStates = [];
     private SubscriptionHub? _hub;
     private HashSet<DedicatedConnectionPool>? _serverPools;
-    private Dictionary<bool, (RespireEndpoint Endpoint, RespireConnectionState State)>? _subscriptionStates;
+    private Dictionary<(bool Sharded, RespireEndpoint Endpoint), RespireConnectionState>? _subscriptionStates;
+    private RespireEndpoint? _regularSubscriptionEndpoint;
     private bool _publishingState;
     private IDisposable? _threadPoolMonitor;
 
@@ -96,13 +97,18 @@ internal sealed class ClientCore : IAsyncDisposable
         {
             if (Disposed) return;
             _subscriptionStates ??= [];
-            var hadPrevious = _subscriptionStates.TryGetValue(clusterSharded, out var previousState);
-            _subscriptionStates[clusterSharded] = (change.Endpoint, change.State);
-            if (hadPrevious && previousState.Endpoint != change.Endpoint)
+            if (clusterSharded && change.State == RespireConnectionState.Connected)
+                _subscriptionStates.Remove((true, change.Endpoint));
+            else
+                _subscriptionStates[(clusterSharded, change.Endpoint)] = change.State;
+            // Regular subscriptions move as one group; sharded primaries recover independently.
+            if (!clusterSharded && _regularSubscriptionEndpoint is { } previous && previous != change.Endpoint)
             {
+                _subscriptionStates.Remove((false, previous));
                 QueueEndpointStateLocked(new RespireConnectionStateChange(
-                    previousState.Endpoint, RespireConnectionState.Connected, null));
+                    previous, RespireConnectionState.Connected, null));
             }
+            if (!clusterSharded) _regularSubscriptionEndpoint = change.Endpoint;
 
             QueueEndpointStateLocked(change);
         }
@@ -260,9 +266,8 @@ internal sealed class ClientCore : IAsyncDisposable
     private bool HasSubscriptionState(RespireEndpoint endpoint, RespireConnectionState state)
     {
         if (_subscriptionStates is null) return false;
-        foreach (var subscription in _subscriptionStates.Values)
-            if (subscription.Endpoint == endpoint && subscription.State == state) return true;
-        return false;
+        return (_subscriptionStates.TryGetValue((false, endpoint), out var regular) && regular == state)
+            || (_subscriptionStates.TryGetValue((true, endpoint), out var sharded) && sharded == state);
     }
 
     private static bool IsEndpoint(RespireConnectionMultiplexer node, RespireEndpoint endpoint)
@@ -373,7 +378,7 @@ internal sealed class ClientCore : IAsyncDisposable
         lock (_stateGate)
         {
             if (_subscriptionStates is not null)
-                foreach (var subscription in _subscriptionStates.Values)
+                foreach (var subscription in _subscriptionStates.Keys)
                     QueueEndpointStateLocked(new RespireConnectionStateChange(
                         subscription.Endpoint, RespireConnectionState.Disconnected, null));
 

@@ -8,6 +8,28 @@ namespace Respire.Tests.Networking;
 public class ClientCoreTests
 {
     [Test]
+    public async Task ShardedPrimariesRetainIndependentHealthUntilEachRecovers()
+    {
+        await using var core = new ClientCore(new RespireOptions());
+        var first = new RespireEndpoint("first", 6379);
+        var second = new RespireEndpoint("second", 6379);
+        var changes = new List<RespireConnectionStateChange>();
+        core.ConnectionStateChanged += changes.Add;
+        core.NotifySubscriptionStateChanged(new(first, RespireConnectionState.Reconnecting, null), clusterSharded: true);
+        core.NotifySubscriptionStateChanged(new(second, RespireConnectionState.Reconnecting, null), clusterSharded: true);
+        await Assert.That(changes.Any(change => change.State == RespireConnectionState.Connected)).IsFalse();
+        core.NotifySubscriptionStateChanged(new(second, RespireConnectionState.Connected, null), clusterSharded: true);
+        await Assert.That(changes.Count(change => change.Endpoint == first)).IsEqualTo(1);
+        core.NotifySubscriptionStateChanged(new(first, RespireConnectionState.Disconnected, null), clusterSharded: true);
+        core.NotifySubscriptionStateChanged(new(second, RespireConnectionState.Reconnecting, null), clusterSharded: true);
+        await Assert.That(changes.Where(change => change.Endpoint == first).Select(change => change.State))
+            .IsEquivalentTo([RespireConnectionState.Reconnecting, RespireConnectionState.Disconnected]);
+        core.NotifySubscriptionStateChanged(new(first, RespireConnectionState.Connected, null), clusterSharded: true);
+        await Assert.That(changes.Last().Endpoint).IsEqualTo(first);
+        await Assert.That(changes.Last().State).IsEqualTo(RespireConnectionState.Connected);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task PubSubGroupsCannotOverwriteEachOthersFailure(bool failedSharded)

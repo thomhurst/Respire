@@ -668,26 +668,14 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         ReadOnlySpan<byte> channel,
         bool isPattern,
         ReadOnlySpan<byte> payload)
-        => DeliverCore(epoch, kind, routeName, channel, isPattern, payload, null);
-
-    private void DeliverCore(
-        long epoch,
-        SubscriptionKind kind,
-        ReadOnlySpan<byte> routeName,
-        ReadOnlySpan<byte> channel,
-        bool isPattern,
-        ReadOnlySpan<byte> payload,
-        PrimarySubscriptionConnection? primary)
     {
         List<(RespireSubscription Subscription, RespireSubscriptionGap Gap)>? drops = null;
         lock (_gate)
         {
             // Validate and enqueue under the same gate that advances epochs and publishes
             // reconnect markers. A route snapshot alone would leave a stale-writer window.
-            if (_disposed || (primary is null && epoch != _connectionEpoch)
+            if (_disposed || epoch != _connectionEpoch
                 || !Routes(kind).TryGetValue(routeName, out var cachedRouteName, out var targets)) return;
-            if (primary is not null && (!_shardedOwners.TryGetValue(cachedRouteName, out var owner)
-                || !ReferenceEquals(owner, primary) || !primary.Confirmed.Contains(cachedRouteName))) return;
             var channelName = isPattern ? RespireChannel.FromOwnedBytes(channel.ToArray()) : cachedRouteName;
             var message = new RespireMessage(channelName,
                 isPattern ? cachedRouteName : (RespireChannel?)null, payload.ToArray(), core.Options.Serializer);
