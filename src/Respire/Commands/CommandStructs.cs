@@ -582,10 +582,11 @@ internal static class DynamicCommandRouting
 }
 
 /// <summary>A pre-encoded catalog command followed by caller-supplied arguments.</summary>
-internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] args, int validatedKeyIndex = int.MinValue) : IRespCommand
+internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] args,
+    RawCommandKeyLayouts.KeyRouting routing = default) : IRespCommand
 {
-    private int RoutingKeyIndex => validatedKeyIndex == int.MinValue
-        ? DynamicCommandRouting.GetCatalogRoutingKeyIndex(command.Name, args) : validatedKeyIndex;
+    private int RoutingKeyIndex => routing.Known
+        ? routing.Index : DynamicCommandRouting.GetCatalogRoutingKeyIndex(command.Name, args);
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
         key = new(operation, args);

@@ -5,6 +5,12 @@ namespace Respire.Commands;
 /// <summary>Explicit key layouts shared by immediate and deferred raw execution.</summary>
 internal static class RawCommandKeyLayouts
 {
+    internal readonly record struct KeyRouting(bool Known, int Index)
+    {
+        internal const int NoKeyIndex = -1;
+        internal static KeyRouting NoKeys => new(true, NoKeyIndex);
+    }
+
     internal readonly record struct KeyLayout(int Start, int Count, int Stride = 1, int Extra = -1);
 
     private enum LayoutKind
@@ -96,16 +102,18 @@ internal static class RawCommandKeyLayouts
         return false;
     }
 
-    // int.MinValue preserves legacy routing for layouts that are not declared here.
-    internal static int ValidateClusterKeys(string operation, ReadOnlySpan<RespireValue> args)
+    internal static KeyRouting ValidateClusterKeys(string operation, ReadOnlySpan<RespireValue> args)
     {
-        if (!TryGetLayout(operation, args, out var layout)) return int.MinValue;
+        if (!TryGetLayout(operation, args, out var layout)) return default;
         int? slot = null;
         for (var index = 0; index < layout.Count; index++)
             ValidateKey(args[layout.Start + index * layout.Stride], operation, ref slot);
-        if (layout.Extra >= 0) ValidateKey(args[layout.Extra], operation, ref slot);
-        if (layout.Extra >= 0) return layout.Extra;
-        return layout.Count > 0 ? layout.Start : -1;
+        if (layout.Extra >= 0)
+        {
+            ValidateKey(args[layout.Extra], operation, ref slot);
+            return new(true, layout.Extra);
+        }
+        return layout.Count > 0 ? new(true, layout.Start) : KeyRouting.NoKeys;
     }
 
     private static void ValidateKey(RespireValue key, string operation, ref int? slot)

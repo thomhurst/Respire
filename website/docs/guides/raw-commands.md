@@ -58,6 +58,10 @@ Different slots throw `RespireServerException` with code `CROSSSLOT`, including 
 `NoRedirect` is set. The client does not split these raw requests across nodes. This changes
 previous first-key-only routing for these layouts; standalone execution still leaves argument
 validation to the server.
+Malformed arguments for a known Cluster layout (for example, a missing GET key or an invalid
+EVAL key count) throw `ArgumentException` locally. The same malformed standalone request reaches
+the server and can instead produce `RespireServerException`; argument-error types therefore differ
+between these modes. Null declared keys are rejected with `ArgumentNullException` before Cluster I/O.
 
 The shared layout table covers the [deferred raw allowlist](deferred-raw-commands.md), including
 all-key commands such as MGET/DEL, key/value pairs in MSET/MSETNX, source/destination pairs,

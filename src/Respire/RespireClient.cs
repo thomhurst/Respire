@@ -709,15 +709,15 @@ public sealed partial class RespireClient : IRespireClient
         return (storedProcedureName, new DynamicCommand(tokens, routingKeyIndex, firstArgumentIndex));
     }
 
-    private int ValidateClusterRawKeys(string operation, ReadOnlySpan<RespireValue> arguments)
-        => _core.Cluster is null ? int.MinValue : RawCommandKeyLayouts.ValidateClusterKeys(operation, arguments);
+    private RawCommandKeyLayouts.KeyRouting ValidateClusterRawKeys(string operation, ReadOnlySpan<RespireValue> arguments)
+        => _core.Cluster is null ? default : RawCommandKeyLayouts.ValidateClusterKeys(operation, arguments);
 
     private int GetRawRoutingKeyIndex(string operation, RespireValue[] tokens, int firstArgumentIndex)
     {
         var validated = ValidateClusterRawKeys(operation, tokens.AsSpan(firstArgumentIndex));
-        if (validated == int.MinValue)
+        if (!validated.Known)
             return DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, firstArgumentIndex);
-        return validated < 0 ? -1 : firstArgumentIndex + validated;
+        return validated.Index < 0 ? RawCommandKeyLayouts.KeyRouting.NoKeyIndex : firstArgumentIndex + validated.Index;
     }
 
     private static string? StoredProcedureName(string operation, ReadOnlySpan<RespireValue> arguments)
