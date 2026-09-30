@@ -90,8 +90,15 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     internal event Action<RespireConnectionMultiplexer, int, RespireConnectionStateChange>? SlotStateChanged;
     internal event Action<RespireConnectionStateChange>? DedicatedStateChanged;
     internal event Action<RespireConnectionMultiplexer>? NodeRetired;
+    internal event Action<long, RespireEndpoint[]>? TopologyChanged;
 
-    internal event Action? TopologyChanged;
+    internal async ValueTask<RespireEndpoint> GetSlotOwnerEndpointAsync(
+        int slot, CancellationToken cancellationToken)
+    {
+        if ((uint)slot >= ClusterHash.SlotCount) throw new ArgumentOutOfRangeException(nameof(slot));
+        var connection = await GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
+        return new RespireEndpoint(connection.Host, connection.Port);
+    }
 
     // Read the published generation without connecting or taking _nodesGate. Subscription
     // topology callbacks use this while holding their own route gate.
@@ -1315,6 +1322,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     {
         List<RespireConnectionMultiplexer>? retiredNodes;
         List<RetiredGeneration> retirements;
+        RespireEndpoint[] publishedEndpoints;
+        long publishedTopologyVersion;
         bool topologyChanged;
         lock (_nodesGate)
         {
@@ -1400,6 +1409,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
             retiredNodes = ReplaceSlotOwnersLocked(refreshedSlots, coveredSlots, expectedVersion, snapshotBatch,
                 out topologyChanged);
+            publishedTopologyVersion = topologyChanged ? ++_topologyVersion : _topologyVersion;
+            publishedEndpoints = _masters.Where(static node => !node.IsRetired)
+                .Select(static node => Endpoint(node)).Distinct().ToArray();
             // Resolve stable node identity before pruning the old reverse mapping.
             if (Volatile.Read(ref _seed) is { } previousSeed) SetSeedLocked(previousSeed);
             var retained = new HashSet<RespireConnectionMultiplexer>(_masters);
@@ -1426,7 +1438,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 NodeRetired?.Invoke(node);
             }
         }
-        if (topologyChanged) TopologyChanged?.Invoke();
+        if (topologyChanged) TopologyChanged?.Invoke(publishedTopologyVersion, publishedEndpoints);
     }
 
     // A replica that serves several slot ranges is listed once per range. Merge those entries by
@@ -1512,6 +1524,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     internal void SetSlotOwner(int slot, RespireConnectionMultiplexer node)
     {
         RespireConnectionMultiplexer? retiredNode = null;
+        long topologyVersion;
+        RespireEndpoint[]? topologyEndpoints;
         lock (_nodesGate)
         {
             if (_retiringNodes.ContainsKey(node) || node.IsRetired)
@@ -1529,18 +1543,24 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             {
                 retiredNode = previous;
             }
+            topologyVersion = _topologyVersion;
+            topologyEndpoints = HasCompleteTopology()
+                ? _masters.Where(static master => !master.IsRetired)
+                    .Select(static master => Endpoint(master)).Distinct().ToArray()
+                : null;
         }
 
         if (retiredNode is not null)
         {
             NodeRetired?.Invoke(retiredNode);
         }
-        TopologyChanged?.Invoke();
+        if (topologyEndpoints is not null) TopologyChanged?.Invoke(topologyVersion, topologyEndpoints);
     }
 
     private void ClearSlotOwner(int slot, RespireConnectionMultiplexer node)
     {
         RespireConnectionMultiplexer? retiredNode = null;
+        long topologyVersion;
         lock (_nodesGate)
         {
             if (!ReferenceEquals(Volatile.Read(ref _slots[slot]), node))
@@ -1549,6 +1569,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             }
 
             PublishSlotLocked(slot, null, ++_topologyVersion);
+            topologyVersion = _topologyVersion;
             Volatile.Write(ref _hasCompleteTopology, 0);
             if (RemoveSlot(node))
             {
@@ -1560,7 +1581,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         {
             NodeRetired?.Invoke(retiredNode);
         }
-        TopologyChanged?.Invoke();
+        TopologyChanged?.Invoke(topologyVersion, []);
     }
 
     // Every slot publication carries its discovery-order fence under _nodesGate.
@@ -1649,7 +1670,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             var node = refreshedSlots[slot];
             if (_slotVersions[slot] <= expectedVersion)
             {
-                topologyChanged |= !ReferenceEquals(_slots[slot], node);
+                topologyChanged |= !ReferenceEquals(Volatile.Read(ref _slots[slot]), node);
                 // Topology replies are ordered by discovery generation. Leave the point-route
                 // version unchanged so a later discovery can replace this snapshot.
                 PublishSlotLocked(slot, node, _slotVersions[slot]);

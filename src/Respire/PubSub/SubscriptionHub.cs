@@ -41,7 +41,6 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
             if (!name.IsNotification || core.Cluster is null) continue;
             if (name.NotificationDatabase is not null and not 0)
                 throw new ArgumentException("Redis Cluster notifications support only database 0.", nameof(names));
-            throw new NotSupportedException("Notification routing across Redis Cluster primaries is not supported yet.");
         }
 
         if (names.Length == 0)
@@ -91,6 +90,13 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            if (core.Cluster is not null && subscription.Names.Any(static name => name.IsNotification))
+            {
+                if (subscription.Names.Any(static name => !name.IsNotification))
+                    throw new ArgumentException("Cluster notification subscriptions cannot mix notification descriptors and ordinary channels.", nameof(subscription));
+                await ActivateClusterNotificationsAsync(subscription, cancellationToken).ConfigureAwait(false);
+                return;
+            }
             connection = await EnsureConnectionAsync(cancellationToken).ConfigureAwait(false);
 
             lock (_gate)
@@ -150,6 +156,13 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         await controlGate.WaitAsync().ConfigureAwait(false);
         try
         {
+            if (_notificationCoverage.TryGetValue(subscription, out var endpoints))
+            {
+                foreach (var endpoint in endpoints.ToArray())
+                    if (_notificationNodes.TryGetValue(endpoint, out var node))
+                        await ReleaseNotificationRoutesAsync(node, subscription).ConfigureAwait(false);
+                return;
+            }
             await ReleaseRoutesAsync(subscription).ConfigureAwait(false);
         }
         finally
@@ -760,6 +773,22 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
 
                     routes.Clear();
                 }
+                subscriptions.AddRange(_notificationCoverage.Keys);
+                _notificationCoverage.Clear();
+                foreach (var node in _notificationNodes.Values)
+                {
+                    node.Retired = true;
+                    node.Epoch++;
+                }
+            }
+
+            var notificationConnections = _notificationNodes.Values
+                .Select(static node => node.Connection).Where(static connection => connection is not null).ToArray();
+            _notificationNodes.Clear();
+            foreach (var connection in notificationConnections)
+            {
+                try { await connection!.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception error) { core.Logger?.LogDebug(error, "Closing a cluster notification connection failed"); }
             }
 
             foreach (var subscription in subscriptions)

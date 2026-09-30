@@ -17,6 +17,7 @@ internal sealed class ClientCore : IAsyncDisposable
     private readonly HashSet<(RespireConnectionMultiplexer Node, int Slot)> _reconnectingCommandSlots = [];
     private readonly HashSet<(RespireConnectionMultiplexer Node, int Slot)> _disconnectedCommandSlots = [];
     private readonly Dictionary<RespireEndpoint, RespireConnectionState> _publishedEndpointStates = [];
+    private readonly Dictionary<RespireEndpoint, RespireConnectionState> _clusterSubscriptionStates = [];
     private SubscriptionHub? _hub;
     private HashSet<DedicatedConnectionPool>? _serverPools;
     private Dictionary<(bool Sharded, RespireEndpoint Endpoint), RespireConnectionState>? _subscriptionStates;
@@ -76,6 +77,7 @@ internal sealed class ClientCore : IAsyncDisposable
             cluster.DedicatedStateChanged += NotifyRecoveryStateChanged;
             cluster.DiscoveryStateChanged += NotifyRecoveryStateChanged;
             cluster.NodeRetired += NotifyCommandNodeRetired;
+            cluster.TopologyChanged += NotifySubscriptionTopologyChanged;
         }
         else if (Sentinel is null)
         {
@@ -142,6 +144,13 @@ internal sealed class ClientCore : IAsyncDisposable
         PublishQueuedStates();
     }
 
+    private void NotifySubscriptionTopologyChanged(long version, RespireEndpoint[] endpoints)
+    {
+        SubscriptionHub? hub;
+        lock (_hubGate) hub = _hub;
+        hub?.NotifyTopologyChanged(version, endpoints);
+    }
+
     internal void NotifyRecoveryStateChanged(RespireConnectionStateChange change)
     {
         lock (_stateGate)
@@ -182,6 +191,24 @@ internal sealed class ClientCore : IAsyncDisposable
         }
 
         PublishQueuedStates();
+    }
+
+    internal void NotifyClusterSubscriptionStateChanged(RespireConnectionStateChange change)
+    {
+        lock (_stateGate)
+        {
+            if (Disposed) return;
+            if (change.State == RespireConnectionState.Connected)
+                _clusterSubscriptionStates.Remove(change.Endpoint);
+            else
+                _clusterSubscriptionStates[change.Endpoint] = change.State;
+            QueueEndpointStateLocked(change with
+            {
+                ReconnectSource = RespireReconnectSource.PubSub,
+                SourceState = change.State,
+            });
+        }
+        ThreadPool.UnsafeQueueUserWorkItem(static core => core.PublishQueuedStates(), this, preferLocal: false);
     }
 
     internal void NotifyCommandStateChanged(
@@ -377,14 +404,17 @@ internal sealed class ClientCore : IAsyncDisposable
             return RespireConnectionState.Disconnected;
         }
 
+        var hasClusterSubscriptionState = _clusterSubscriptionStates.TryGetValue(endpoint, out var clusterSubscriptionState);
         if (_disconnectedCommandSlots.Any(commandSlot => IsEndpoint(commandSlot.Node, endpoint))
-            || HasSubscriptionState(endpoint, RespireConnectionState.Disconnected))
+            || HasSubscriptionState(endpoint, RespireConnectionState.Disconnected)
+            || hasClusterSubscriptionState && clusterSubscriptionState == RespireConnectionState.Disconnected)
         {
             return RespireConnectionState.Disconnected;
         }
 
         return _reconnectingCommandSlots.Any(commandSlot => IsEndpoint(commandSlot.Node, endpoint))
                || HasSubscriptionState(endpoint, RespireConnectionState.Reconnecting)
+               || hasClusterSubscriptionState && clusterSubscriptionState == RespireConnectionState.Reconnecting
             ? RespireConnectionState.Reconnecting
             : RespireConnectionState.Connected;
     }
@@ -548,6 +578,7 @@ internal sealed class ClientCore : IAsyncDisposable
             cluster.DedicatedStateChanged -= NotifyRecoveryStateChanged;
             cluster.DiscoveryStateChanged -= NotifyRecoveryStateChanged;
             cluster.NodeRetired -= NotifyCommandNodeRetired;
+            cluster.TopologyChanged -= NotifySubscriptionTopologyChanged;
             await cluster.DisposeAsync().ConfigureAwait(false);
         }
         else
