@@ -176,7 +176,8 @@ if (restored.Length != 4096) throw new InvalidOperationException("Round trip fai
 ```
 
 Levels range from `-131072` through `22`; the default is `3`, and `0` also selects
-the dependency's default. Decoder settings do not depend on the encoder's level.
+the dependency's default of `3`. Negative levels favor speed over compression ratio;
+measure that tradeoff with your payloads. Decoder settings do not depend on the encoder's level.
 Small or incompressible values retain the shared uncompressed frame. Algorithm ID
 `4` contains exactly one ordinary Zstandard frame. Concatenated/skippable frames,
 trailing bytes, and external dictionaries are not supported.
