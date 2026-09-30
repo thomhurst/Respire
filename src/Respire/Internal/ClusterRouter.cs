@@ -28,8 +28,10 @@ internal sealed class ClusterRouter : IAsyncDisposable
     private RespireConnectionMultiplexer? _seed;
     private int _hasCompleteTopology;
     private long _topologyVersion;
-    private long _identitySnapshotVersion;
-    // Per-slot versions reject stale discovery even when a route changes away and back
+    private long _nextDiscoveryGeneration;
+    private long _publishedDiscoveryGeneration;
+    // Only direct route mutations advance per-slot versions. These reject stale discovery
+    // even when a route changes away and back
     // to the same transport (an owner-reference comparison cannot detect that ABA case).
     private readonly long[] _slotVersions = new long[ClusterHash.SlotCount];
     private int _disposed;
@@ -777,7 +779,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
         }
     }
 
-    private void ApplyTopology(List<ClusterTopologyRange> ranges, long expectedVersion)
+    private void ApplyTopology(List<ClusterTopologyRange> ranges, long expectedVersion, long discoveryGeneration)
     {
         List<RespireConnectionMultiplexer>? retiredNodes;
         lock (_nodesGate)
@@ -785,7 +787,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             // Slot fences protect MOVED updates independently. A completed discovery also
             // fences the identity index and seed against older in-flight discoveries.
-            if (_identitySnapshotVersion > expectedVersion)
+            if (discoveryGeneration <= _publishedDiscoveryGeneration)
             {
                 return;
             }
@@ -807,7 +809,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 SetSeedLocked(seed);
             }
             retiredNodes = ReplaceSlotOwnersLocked(refreshedSlots, activeNodes, expectedVersion);
-            _identitySnapshotVersion = _topologyVersion;
+            _publishedDiscoveryGeneration = discoveryGeneration;
         }
 
         if (retiredNodes is not null)
@@ -961,7 +963,8 @@ internal sealed class ClusterRouter : IAsyncDisposable
     {
         // Preserve only slots changed since this request began. An unrelated MOVED
         // must not discard useful discovery for a READONLY command's slot.
-        var publicationVersion = ++_topologyVersion;
+        // Discovery order has its own fence. Publishing an older request must not advance
+        // slot mutation versions past a newer request that is already in flight.
         activeNodes.Clear();
         for (var slot = 0; slot < refreshedSlots.Length; slot++)
         {
@@ -987,7 +990,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             var node = refreshedSlots[slot];
             if (_slotVersions[slot] <= expectedVersion)
             {
-                PublishSlotLocked(slot, node, publicationVersion);
+                PublishSlotLocked(slot, node, _slotVersions[slot]);
             }
             complete &= node is not null;
             if (node is not null)
@@ -1091,7 +1094,13 @@ internal sealed class ClusterRouter : IAsyncDisposable
         RespireConnectionMultiplexer seed,
         CancellationToken cancellationToken)
     {
-        var topologyVersion = Volatile.Read(ref _topologyVersion);
+        long topologyVersion;
+        long discoveryGeneration;
+        lock (_nodesGate)
+        {
+            topologyVersion = _topologyVersion;
+            discoveryGeneration = ++_nextDiscoveryGeneration;
+        }
         using var timeoutSource = CommandTimeoutCancellation.Create(
             cancellationToken,
             _options.CommandTimeout ?? _options.ConnectTimeout);
@@ -1178,7 +1187,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
                     return false;
                 }
 
-                ApplyTopology(topology, topologyVersion);
+                ApplyTopology(topology, topologyVersion, discoveryGeneration);
                 return true;
             }
             finally

@@ -240,6 +240,8 @@ internal sealed class ClusterNodeIdentityIndex
         => _nodes.TryGetValue(new RespireEndpoint(node.Host, node.Port), out var owner)
             && ReferenceEquals(owner, node);
 
+    // The factory runs under the router node gate. It must not publish health events or
+    // acquire the ClientCore health gate; observation starts only after construction.
     private RespireConnectionMultiplexer CreateNode(RespireEndpoint endpoint)
     {
         var node = _create(endpoint);

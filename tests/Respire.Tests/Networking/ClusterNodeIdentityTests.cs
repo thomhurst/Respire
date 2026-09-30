@@ -79,15 +79,75 @@ public class ClusterNodeIdentityTests
         var endpoint = new RespireEndpoint("localhost");
         List<ClusterTopologyRange> original = [new(0, 16383, endpoint, "old-id", [])];
         List<ClusterTopologyRange> replacement = [new(0, 16383, endpoint, "new-id", [])];
-        apply.Invoke(router, [original, 0L]);
+        apply.Invoke(router, [original, 0L, 1L]);
         var capturedVersion = (long)version.GetValue(router)!;
         // Two discoveries begin together. The replacement reply publishes before the old one.
-        apply.Invoke(router, [replacement, capturedVersion]);
+        apply.Invoke(router, [replacement, capturedVersion, 3L]);
         var current = router.GetMultiplexer(endpoint);
-        apply.Invoke(router, [original, capturedVersion]);
+        apply.Invoke(router, [original, capturedVersion, 2L]);
         var slots = (RespireConnectionMultiplexer?[])typeof(ClusterRouter).GetField("_slots", flags)!.GetValue(router)!;
         await Assert.That(ReferenceEquals(slots[0], current)).IsTrue();
         await Assert.That(ReferenceEquals(router.GetMultiplexer(endpoint), current)).IsTrue();
+        await Assert.That(ReferenceEquals(typeof(ClusterRouter).GetField("_seed", flags)!.GetValue(router), current)).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false, false, false)]
+    [Arguments(false, true, false)]
+    [Arguments(true, false, false)]
+    [Arguments(true, true, false)]
+    [Arguments(false, false, true)]
+    [Arguments(false, true, true)]
+    [Arguments(true, false, true)]
+    [Arguments(true, true, true)]
+    public async Task LaterDiscoveryWinsRegardlessOfCompletionOrder(
+        bool movedBetweenRequests, bool laterCompletesFirst, bool movedAfterLaterRequest)
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
+        });
+        var router = client.Core.Cluster!;
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var apply = typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!;
+        var version = typeof(ClusterRouter).GetField("_topologyVersion", flags)!;
+        typeof(ClusterRouter).GetMethod("SetSeed", flags)!.Invoke(router, [client.Core.Multiplexer]);
+        var endpoint = new RespireEndpoint("localhost");
+        List<ClusterTopologyRange> initial = [new(0, 16383, endpoint, "initial", [])];
+        List<ClusterTopologyRange> older = [new(0, 16383, endpoint, "older", [])];
+        List<ClusterTopologyRange> later = [new(0, 16383, endpoint, "later", [])];
+        apply.Invoke(router, [initial, 0L, 1L]);
+        var olderVersion = (long)version.GetValue(router)!;
+        if (movedBetweenRequests)
+        {
+            router.SetSlotOwner(0, router.GetMultiplexer(new RespireEndpoint("moved")));
+        }
+        var laterVersion = (long)version.GetValue(router)!;
+        var newestRoute = router.GetMultiplexer(new RespireEndpoint("newest-route"));
+        if (movedAfterLaterRequest)
+        {
+            router.SetSlotOwner(0, newestRoute);
+        }
+        if (laterCompletesFirst)
+        {
+            apply.Invoke(router, [later, laterVersion, 3L]);
+            apply.Invoke(router, [older, olderVersion, 2L]);
+        }
+        else
+        {
+            apply.Invoke(router, [older, olderVersion, 2L]);
+            apply.Invoke(router, [later, laterVersion, 3L]);
+        }
+        var current = router.GetMultiplexer(endpoint);
+        var slots = (RespireConnectionMultiplexer?[])typeof(ClusterRouter).GetField("_slots", flags)!.GetValue(router)!;
+        var identities = (ClusterNodeIdentityIndex)typeof(ClusterRouter).GetField("_identities", flags)!.GetValue(router)!;
+        var ids = (Dictionary<string, RespireConnectionMultiplexer>)typeof(ClusterNodeIdentityIndex)
+            .GetField("_nodesById", flags)!.GetValue(identities)!;
+        await Assert.That(ids.ContainsKey("later")).IsTrue();
+        await Assert.That(ReferenceEquals(ids["later"], current)).IsTrue();
+        // A MOVED before the later request can be superseded; one after it remains protected.
+        await Assert.That(ReferenceEquals(slots[0], movedAfterLaterRequest ? newestRoute : current)).IsTrue();
+        await Assert.That(ReferenceEquals(slots[1], current)).IsTrue();
         await Assert.That(ReferenceEquals(typeof(ClusterRouter).GetField("_seed", flags)!.GetValue(router), current)).IsTrue();
     }
 
