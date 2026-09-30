@@ -66,14 +66,22 @@ or conflicting topology, and discovery failures throw before fan-out starts, so 
 partial topology is never silently presented as complete. Membership can change
 after the snapshot; no atomic Cluster-wide observation is promised.
 
+For other members, discovery prefers an advertised hostname when present and otherwise
+uses the advertised IP address; it does not substitute the seed hostname. TLS certificate
+validation uses that endpoint host unless `TlsOptions.TargetHost` explicitly overrides it.
+Advertised addresses must therefore be reachable and match the deployment's certificate
+configuration. The reporting node retains the already reachable source address.
+
 Each call re-runs CLUSTER NODES and opens one temporary dedicated connection per
 discovered endpoint, with at most eight nodes active at once. This limit applies
 per call; avoid overlapping polls when controlling total connection demand. These pools
 are scoped to the call and closed on every outcome, including success. They do not
 retain historical replicas or add transports to the routing pool cache. Client
 disposal tracks and aborts active fan-out pools, including pending handshakes.
-Connection setup uses `ConnectTimeout`; commands use `CommandTimeout` and the
-configured response watchdog. Caller cancellation also covers nodes awaiting capacity.
+TCP/TLS setup uses `ConnectTimeout`; Redis handshake replies and commands use
+`CommandTimeout` and the configured response watchdog. Caller cancellation also covers
+nodes awaiting capacity. If response deadlines are disabled, supply a caller cancellation
+deadline to bound a stalled node's replies and the overall call.
 
 Execution preserves authentication/TLS. A failed node produces an endpoint-associated
 error while other nodes can succeed. Cancellation before or during discovery throws. After discovery,
@@ -81,7 +89,7 @@ cancellation is recorded in the affected node results; already completed success
 remain available. No command is replayed or redirected
 away from its target endpoint.
 
-Custom `IServerCommands` implementations and decorators must implement or forward
+Custom `IServerCommands` implementations, decorators, and mocks must implement or forward
 all six new methods. No deferred command facet is added.
 
 Redis contracts: [CHANNELS](https://redis.io/docs/latest/commands/pubsub-channels/),

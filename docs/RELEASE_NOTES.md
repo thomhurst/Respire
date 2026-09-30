@@ -14,7 +14,7 @@
   and sharded command forms with owned binary channel results. Explicit
   `OnAllNodesAsync` methods return endpoint-associated values or failures for all
   discovered Cluster members, including replicas. External `IServerCommands`
-  implementations must forward all six new methods. See the
+  implementations, decorators, and mocks must implement or forward all six new methods. See the
   [pub/sub introspection guide](../website/docs/guides/pub-sub-introspection.md).
 
 ### String comparisons

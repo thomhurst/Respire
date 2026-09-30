@@ -38,6 +38,7 @@ public sealed class RespireServerResult<T>
 
 internal sealed partial class ServerCommands
 {
+    private const int MaxFanOutConcurrency = 8;
     private static readonly Verb ClusterNodes = new(-1, "CLUSTER", "NODES");
 
     private async ValueTask<RespireServerResult<T>[]> FanOutAsync<TCommand, T>(
@@ -47,7 +48,7 @@ internal sealed partial class ServerCommands
         ObjectDisposedException.ThrowIf(client.Core.Disposed, client);
         cancellationToken.ThrowIfCancellationRequested();
         var endpoints = await DiscoverServerEndpointsAsync(cancellationToken).ConfigureAwait(false);
-        using var capacity = new SemaphoreSlim(8);
+        using var capacity = new SemaphoreSlim(MaxFanOutConcurrency);
         var tasks = new Task<RespireServerResult<T>>[endpoints.Length];
         for (var index = 0; index < endpoints.Length; index++)
             tasks[index] = ExecuteOnNodeAsync(endpoints[index], operation, command, convert, capacity, cancellationToken);
