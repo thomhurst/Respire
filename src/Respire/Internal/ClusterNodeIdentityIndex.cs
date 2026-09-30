@@ -51,6 +51,7 @@ internal sealed class ClusterNodeIdentityIndex
         {
             return identified;
         }
+        // TODO #390: stop falling back to this retained transport once retirement can drain it.
         return _nodes.TryGetValue(new RespireEndpoint(node.Host, node.Port), out var current) ? current : node;
     }
 
