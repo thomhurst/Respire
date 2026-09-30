@@ -97,13 +97,22 @@ internal sealed class FakeRespServer : IAsyncDisposable
     }
 
     public FakeRespServer(int maxConnections, params byte[][] replies)
+        : this(maxConnections, Task.CompletedTask, replies)
+    {
+    }
+
+    public FakeRespServer(int maxConnections, Task acceptGate, params byte[][] replies)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConnections);
         _replies = replies;
         _listener = new TcpListener(IPAddress.Loopback, 0);
         _listener.Start();
         Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
-        _acceptTask = Task.Run(() => RunAsync(maxConnections));
+        _acceptTask = Task.Run(async () =>
+        {
+            await acceptGate.WaitAsync(_cts.Token);
+            await RunAsync(maxConnections);
+        });
     }
 
     /// <summary>
@@ -132,13 +141,22 @@ internal sealed class FakeRespServer : IAsyncDisposable
         var connections = new List<Task>(maxConnections);
         try
         {
-            for (var i = 0; i < maxConnections; i++)
+            for (var i = 0; i < maxConnections;)
             {
-                var socket = await _listener.AcceptSocketAsync(_cts.Token);
+                Socket socket;
+                try { socket = await _listener.AcceptSocketAsync(_cts.Token); }
+                catch (SocketException error) when (!_cts.IsCancellationRequested
+                    && error.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted)
+                {
+                    // Windows can report a peer reset before returning the accepted socket.
+                    // This peer consumes no accepted-connection slot; keep serving replacements.
+                    _peerClosed.TrySetResult();
+                    continue;
+                }
                 socket.NoDelay = true;
                 lock (_receivedCommands) _clientSockets.Add(socket);
                 _clientSocket.TrySetResult(socket);
-                connections.Add(HandleConnectionAsync(socket, i));
+                connections.Add(HandleConnectionAsync(socket, i++));
             }
         }
         catch (OperationCanceledException) when (_cts.IsCancellationRequested)

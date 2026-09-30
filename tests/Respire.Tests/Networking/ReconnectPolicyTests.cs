@@ -91,9 +91,13 @@ public class ReconnectPolicyTests
     }
 
     [Test]
-    public async Task SuccessfulReplacementResetsAttemptCountAndEmitsTelemetry()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SuccessfulReplacementResetsAttemptCountAndEmitsTelemetry(bool closeBeforeAccept)
     {
-        await using var server = new FakeRespServer(3, FakeRespServer.PongReply);
+        var acceptGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!closeBeforeAccept) acceptGate.SetResult();
+        await using var server = new FakeRespServer(3, acceptGate.Task, FakeRespServer.PongReply);
         await using var client = await RespireClient.ConnectAsync(Options(server.Port,
             new() { InitialDelay = TimeSpan.FromMilliseconds(10), JitterRatio = 0, MaxAttempts = 1 }));
         var changes = new ConcurrentQueue<RespireConnectionStateChange>();
@@ -116,6 +120,9 @@ public class ReconnectPolicyTests
         for (var index = 0; index < 2; index++)
         {
             await client.Core.Multiplexer.GetConnection().DisposeAsync();
+            // On Windows, resetting a queued peer makes AcceptSocketAsync throw before
+            // returning a socket. The fixture must keep accepting replacement connections.
+            acceptGate.TrySetResult();
             await client.Core.Multiplexer.GetHealthyConnectionAsync(deadline.Token);
             await client.PingAsync(deadline.Token);
         }
@@ -123,6 +130,7 @@ public class ReconnectPolicyTests
         await Assert.That(changes.Where(change => change.State == RespireConnectionState.Reconnecting)
             .Select(change => change.ReconnectAttempt).ToArray()).IsEquivalentTo(new[] { 1, 1 }, CollectionOrdering.Matching);
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "PING", "PING" }, CollectionOrdering.Matching);
+        await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(2);
     }
 
     [Test]
