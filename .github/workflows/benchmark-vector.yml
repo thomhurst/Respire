@@ -1,0 +1,87 @@
+name: Vector encoding benchmarks
+
+on:
+  pull_request:
+    paths:
+      - 'src/Respire/Commands/VectorCommand.cs'
+      - 'src/Respire/Protocol/RespWriter.cs'
+      - 'src/Respire/RespireValue.cs'
+      - 'src/Respire/Networking/WriteBuffer.cs'
+      - 'benchmarks/Respire.Benchmarks/VectorEncodingBenchmarks.cs'
+      - 'benchmarks/Respire.Benchmarks/Respire.Benchmarks.csproj'
+      - '.github/scripts/vector_encoding_report.py'
+      - '.github/workflows/benchmark-vector.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  vector-comparison:
+    name: Compare vector encoding (informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: baseline
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+      - name: Validate and compare six focused cases on one runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Coverage and parameters must be identical in both pinned checkouts.
+          # This requires compatible VectorCommand, WriteBuffer, Cmd1N and RespParser
+          # internal APIs on the base revision; API changes need a compatible harness.
+          cp candidate/benchmarks/Respire.Benchmarks/VectorEncodingBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
+          for phase in validation baseline-a candidate baseline-b; do
+            source=baseline
+            job=Default
+            if [ "$phase" = candidate ] || [ "$phase" = validation ]; then source=candidate; fi
+            if [ "$phase" = validation ]; then job=Dry; fi
+            if ! (
+              cd "$source"
+              git rev-parse HEAD
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
+                --filter '*VectorEncodingBenchmarks*' --job "$job" --exporters fulljson markdown \
+                --artifacts "$GITHUB_WORKSPACE/results/$phase"
+            ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1; then
+              echo "::error::Vector encoding phase $phase failed. Inspect $phase.log for build compatibility or benchmark errors; baseline phases compile the candidate harness against pinned base APIs."
+              tail -n 60 "$GITHUB_WORKSPACE/$phase.log"
+              exit 1
+            fi
+            # Check Dry shape/sizes before spending time on Default measurement phases.
+            python3 candidate/.github/scripts/vector_encoding_report.py --root "$GITHUB_WORKSPACE" --phase "$phase"
+          done
+      - name: Publish comparison reports
+        shell: bash
+        run: |
+          echo 'Focused VADD encoding only; no network or server work. Compare methods within each phase and use A/B/A to observe runner drift.' >> "$GITHUB_STEP_SUMMARY"
+          for phase in baseline-a candidate baseline-b; do
+            echo "## $phase" >> "$GITHUB_STEP_SUMMARY"
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            grep '^VECTOR_ENCODING_SIZE ' "$GITHUB_WORKSPACE/$phase.log" | sort -u >> "$GITHUB_STEP_SUMMARY" || true
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            for report in "$GITHUB_WORKSPACE/results/$phase/results/"*-report-default.md; do
+              if [ ! -f "$report" ]; then
+                echo "::error::Missing Markdown report for $phase"
+                exit 1
+              fi
+              cat "$report" >> "$GITHUB_STEP_SUMMARY"
+            done
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: vector-encoding-comparison
+          path: |
+            results/
+            *.log
