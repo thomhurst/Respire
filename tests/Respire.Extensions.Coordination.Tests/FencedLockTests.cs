@@ -115,6 +115,25 @@ public class FencedLockTests(RedisTestContainer fixture)
     }
 
     [Test]
+    [Arguments(2, false)]
+    [Arguments(2, true)]
+    [Arguments(3, false)]
+    [Arguments(3, true)]
+    public async Task DirectScriptRejectsIdenticalKeysBeforeAnyMutation(int protocol, bool existing)
+    {
+        await using var client = await ConnectAsync(protocol);
+        var key = Keys().Key;
+        if (existing) await client.SetAsync(key, "17");
+        var error = await Assert.That(async () =>
+        {
+            using var result = await client.Scripts.ExecuteAsync(RespireCoordination.AcquireFencedLock,
+                [key, key], ["owner", 20000]);
+        }).Throws<RespireServerException>();
+        await Assert.That(error!.Message).Contains("lock and fencing counter keys must differ");
+        await Assert.That(await client.GetStringAsync(key)).IsEqualTo(existing ? "17" : null);
+    }
+
+    [Test]
     public async Task BinaryKeysAndPrefixUseTheSamePhysicalPairForEveryOperation()
     {
         await using var client = await ConnectAsync(3);

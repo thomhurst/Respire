@@ -74,6 +74,8 @@ public sealed class RespireCoordination
             if (!long.TryParse(response.AsString(), NumberStyles.None, CultureInfo.InvariantCulture, out var fence) || fence <= 0)
                 throw new RespireProtocolException("Fencing acquisition did not return a positive Int64 token.");
             cancellationToken.ThrowIfCancellationRequested();
+            // An already-expired lease is intentionally reported like contention: the caller
+            // acquired no usable lease even though this attempt consumed a fencing token.
             if (lease.IsReleased) return default;
             var result = new RespireFencedLockAttempt(new RespireFencedLock(lease, counterKey, fence));
             transferred = true;
