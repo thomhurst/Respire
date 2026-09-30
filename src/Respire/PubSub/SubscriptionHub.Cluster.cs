@@ -65,7 +65,7 @@ internal sealed partial class SubscriptionHub
                 }
             }
             foreach (var name in subscription.Names)
-                await EnsureShardedRouteAsync(name, cancellationToken, instrument: true).ConfigureAwait(false);
+                await EnsureShardedRouteAsync(name, cancellationToken, recovering: false).ConfigureAwait(false);
             await CloseUnusedPrimariesAsync().ConfigureAwait(false);
         }
         catch (RespireServerException)
@@ -99,7 +99,7 @@ internal sealed partial class SubscriptionHub
 
     // Caller owns _controlGate. Connections and acknowledgement state are published under
     // _gate so pushes, topology callbacks and disposal can safely race control commands.
-    private async ValueTask EnsureShardedRouteAsync(RespireChannel name, CancellationToken cancellationToken, bool instrument)
+    private async ValueTask EnsureShardedRouteAsync(RespireChannel name, CancellationToken cancellationToken, bool recovering)
     {
         var slot = ClusterHash.GetSlot(name.Span);
         var commandConnection = await core.Cluster!.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
@@ -129,7 +129,7 @@ internal sealed partial class SubscriptionHub
                 try
                 {
                     await SendControlAsync(primary.Connection!, SubscribeVerb(SubscriptionKind.Sharded), "SSUBSCRIBE",
-                        name, cancellationToken, instrument).ConfigureAwait(false);
+                        name, cancellationToken, instrument: !recovering).ConfigureAwait(false);
                     lock (_gate)
                     {
                         // SUNSUBSCRIBE may follow the acknowledgement in the same socket read.
@@ -152,6 +152,8 @@ internal sealed partial class SubscriptionHub
                 }
                 catch
                 {
+                    // SendControlAsync may have written before cancellation or an observer
+                    // failed. Only the completed server-error path above proves FIFO state.
                     await ClosePrimaryAsync(primary).ConfigureAwait(false);
                     throw;
                 }
@@ -159,7 +161,7 @@ internal sealed partial class SubscriptionHub
         }
         catch
         {
-            if (!instrument)
+            if (recovering)
                 lock (_gate) _shardedRecoveryEndpoints.Add(new(commandConnection.Host, commandConnection.Port));
             throw;
         }
@@ -261,7 +263,7 @@ internal sealed partial class SubscriptionHub
             // A faulted receive loop still requires recovery. Observe its failure even when
             // a user logger throws, so the detached watcher cannot fault without a consumer.
             try { core.Logger?.LogWarning(error, "Sharded subscription connection closed with a receive failure"); }
-            catch { }
+            catch { /* A user logger must not prevent recovery after a receive failure. */ }
         }
         lock (_gate)
         {
@@ -419,7 +421,7 @@ internal sealed partial class SubscriptionHub
                     failure = null;
                     foreach (var name in names)
                     {
-                        try { await EnsureShardedRouteAsync(name, cancellationToken, instrument: false).ConfigureAwait(false); }
+                        try { await EnsureShardedRouteAsync(name, cancellationToken, recovering: true).ConfigureAwait(false); }
                         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
                         {
                             failure ??= error;
@@ -459,6 +461,11 @@ internal sealed partial class SubscriptionHub
                     }
                 }
                 finally { _controlGate.Release(); }
+                // Successful passes can be superseded by topology callbacks even when
+                // every await completes synchronously. Yield after releasing the control
+                // gate before starting another immediate pass; retain the retry policy.
+                if (failure is null)
+                    await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
