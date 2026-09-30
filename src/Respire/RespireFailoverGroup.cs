@@ -29,7 +29,8 @@ public sealed record RespireFailoverGroupOptions
 
     internal void Validate()
     {
-        if (ProbeInterval <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(ProbeInterval));
+        if (ProbeInterval <= TimeSpan.Zero || ProbeInterval.TotalMilliseconds > uint.MaxValue - 1d)
+            throw new ArgumentOutOfRangeException(nameof(ProbeInterval));
         if (ProbeTimeout <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(ProbeTimeout));
         if (FailureThreshold < 1) throw new ArgumentOutOfRangeException(nameof(FailureThreshold));
         if (CircuitOpenDuration <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(CircuitOpenDuration));
@@ -122,6 +123,11 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                 if (candidate is null) throw new ArgumentException("Failover candidates cannot contain null entries.", nameof(candidates));
                 ArgumentNullException.ThrowIfNull(candidate.Options);
                 var snapshot = candidate.Options.ValidateAndSnapshot();
+                if (snapshot.ReconnectPolicy is { MaxAttempts: not null })
+                {
+                    throw new RespireConfigurationException(
+                        "Failover group candidates require an unlimited reconnect policy (MaxAttempts = null) so a candidate can recover after an outage.");
+                }
                 if (snapshot.Endpoints.Count != 1 || snapshot.UseCluster || !string.IsNullOrWhiteSpace(snapshot.SentinelPrimaryName))
                 {
                     throw new RespireConfigurationException(

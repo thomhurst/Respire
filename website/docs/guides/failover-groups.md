@@ -13,6 +13,10 @@ application commands or infer that a primary role is writable. Redis errors such
 approximately `FailureThreshold × (ProbeInterval + ProbeTimeout)` after an endpoint becomes
 unreachable. Choose these settings with that detection delay in mind.
 
+Candidates must use an unlimited reconnect policy (`MaxAttempts = null`, the default). A finite
+budget can permanently disable an owned client after a long outage, preventing later probes from
+recovering it. `ProbeInterval` must also fit the runtime timer limit of about 49.7 days.
+
 ```csharp
 await using var group = await RespireFailoverGroup.ConnectAsync(
 [

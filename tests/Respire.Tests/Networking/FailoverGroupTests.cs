@@ -106,6 +106,30 @@ public class FailoverGroupTests
     }
 
     [Test]
+    public async Task ConnectAsync_RejectsFiniteReconnectBudget()
+    {
+        var candidate = new RespireFailoverCandidate(new RespireOptions
+        {
+            Endpoints = ["127.0.0.1:1"],
+            ReconnectPolicy = new RespireReconnectPolicy { MaxAttempts = 3 },
+        });
+
+        var exception = await Assert.That(async () => await RespireFailoverGroup.ConnectAsync([candidate]))
+            .ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(exception!.Message).Contains("MaxAttempts = null");
+    }
+
+    [Test]
+    public async Task ConnectAsync_RejectsProbeIntervalBeyondTimerLimit()
+    {
+        var options = FastOptions() with { ProbeInterval = TimeSpan.FromDays(50) };
+
+        await Assert.That(async () => await RespireFailoverGroup.ConnectAsync(
+                [new RespireFailoverCandidate(new RespireOptions { Endpoints = ["127.0.0.1:1"] })], options))
+            .ThrowsExactly<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
     public async Task DisposeAsync_StopsProbesAndRejectsActiveClientAccess()
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);
