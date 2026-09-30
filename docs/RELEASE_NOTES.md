@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Optional Zstandard value codec
+
+- `Respire.Compression.Zstd` adds `ZstdValueCodec` with bounded, owned output through
+  the shared codec and serializer contracts. Version 1 frames use reserved algorithm
+  ID 4 for a single Zstandard frame. The optional managed dependency needs no native
+  zstd deployment; per-call contexts are disposed before return. See
+  [value codecs](../website/docs/guides/value-codecs.md#optional-zstandard-package).
+
 ### Optional LZ4 value codec
 
 - `Respire.Compression.Lz4` adds `Lz4ValueCodec` through the existing value-codec and

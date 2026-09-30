@@ -17,6 +17,7 @@ public class ValueCodecTests
     [Arguments("brotli")]
     [Arguments("deflate")]
     [Arguments("lz4")]
+    [Arguments("zstd")]
     public async Task FramingKeepsMixedValuesOwnedAndUsesCompressionOnlyWhenSmaller(string algorithm)
     {
         var codec = Create(algorithm);
@@ -65,6 +66,7 @@ public class ValueCodecTests
     [Arguments("brotli")]
     [Arguments("deflate")]
     [Arguments("lz4")]
+    [Arguments("zstd")]
     public async Task InvalidFramesFailWithoutLegacyFallback(string algorithm)
     {
         var codec = Create(algorithm);
@@ -102,6 +104,7 @@ public class ValueCodecTests
     [Arguments("brotli")]
     [Arguments("deflate")]
     [Arguments("lz4")]
+    [Arguments("zstd")]
     public async Task SizeLimitsAndThresholdAreExplicit(string algorithm)
     {
         var bounded = Create(algorithm, new() { MaximumDecodedLength = 64, MinimumLength = 64 });
@@ -220,6 +223,7 @@ public class ValueCodecTests
     [Arguments("brotli")]
     [Arguments("deflate")]
     [Arguments("lz4")]
+    [Arguments("zstd")]
     public async Task OneCodecSupportsConcurrentCalls(string algorithm)
     {
         var codec = Create(algorithm);
@@ -235,6 +239,7 @@ public class ValueCodecTests
     [Arguments("brotli")]
     [Arguments("deflate")]
     [Arguments("lz4")]
+    [Arguments("zstd")]
     public async Task DecoratorPreservesGenericAndRuntimeTypedCustomSerializerCalls(string algorithm)
     {
         var inner = new BinarySerializer();
@@ -261,6 +266,7 @@ public class ValueCodecTests
             "brotli" => new BrotliValueCodec(options),
             "deflate" => new DeflateValueCodec(options),
             "lz4" => new Lz4ValueCodec(options),
+            "zstd" => new ZstdValueCodec(options),
             _ => throw new ArgumentOutOfRangeException(nameof(algorithm)),
         };
 

@@ -154,6 +154,48 @@ before allocating output; a failed decode does not advance a destination writer.
 The dependency uses unsafe managed code internally. No throughput, latency, or
 zero-allocation claim is implied; measurements remain tracked in #527.
 
+## Optional Zstandard package
+
+Install `Respire.Compression.Zstd` to use `ZstdValueCodec` through the same
+`IRespireValueCodec` and serializer contracts. Its dependency stays out of core Respire.
+
+```csharp
+using Respire.Compression;
+using Respire.Serialization;
+
+var codec = new ZstdValueCodec(new RespireValueCodecOptions
+{
+    MinimumLength = 1024,
+    MaximumDecodedLength = 1024 * 1024
+}, level: 3);
+var serializer = new RespireValueCodecSerializer(RespireSerializer.Default, codec);
+var options = new RespireOptions { Serializer = serializer };
+byte[] frame = codec.Encode(new byte[4096]);
+byte[] restored = codec.Decode(frame);
+if (restored.Length != 4096) throw new InvalidOperationException("Round trip failed.");
+```
+
+Levels range from `-131072` through `22`; the default is `3`, and `0` also selects
+the dependency's default of `3`. Negative levels favor speed over compression ratio;
+measure that tradeoff with your payloads. Decoder settings do not depend on the encoder's level.
+Small or incompressible values retain the shared uncompressed frame. Algorithm ID
+`4` contains exactly one ordinary Zstandard frame. Concatenated/skippable frames,
+trailing bytes, and external dictionaries are not supported.
+
+The package uses [ZstdSharp.Port 0.8.8](https://www.nuget.org/packages/ZstdSharp.Port/0.8.8)
+under its [MIT license](https://github.com/oleg-st/ZstdSharp/blob/0.8.8/LICENSE).
+This is managed code with unsafe internals and unmanaged context memory; no native
+zstd binary is required. Each call owns and disposes its context before returning,
+so the codec is thread-safe and requires no disposal. This has a per-call cost.
+Higher levels can need more time and workspace. The decoded-length limit bounds
+the value, not all compressor workspace or concurrent process memory. Choose levels
+and limits for your workload; no performance claim is implied (#527).
+
+Decoding writes directly into bounded output, checks the complete single-frame
+input and exact decoded length, and does not advance a destination writer on failure.
+Underlying frame errors surface as `InvalidDataException`. Arrays remain owned by
+the caller, as with the built-in codecs.
+
 ## Frame and bounds
 
 Version 1 uses this byte layout; offsets and length exclude any Redis RESP framing:
@@ -162,7 +204,7 @@ Version 1 uses this byte layout; offsets and length exclude any Redis RESP frami
 | --- | --- | --- |
 | 0 | 4 | Magic bytes `52 56 43 00` (`RVC` followed by NUL) |
 | 4 | 1 | Frame version, currently `1` |
-| 5 | 1 | Algorithm: `0` uncompressed, `1` Brotli, `2` raw DEFLATE, `3` raw LZ4 block |
+| 5 | 1 | Algorithm: `0` uncompressed, `1` Brotli, `2` raw DEFLATE, `3` raw LZ4 block, `4` Zstandard frame |
 | 6 | 4 | Original length, unsigned little-endian |
 | 10 | 8 | First eight bytes of SHA-256 of the encoded payload |
 | 18 | remaining | Encoded payload |
@@ -184,7 +226,7 @@ budget or a Redis server limit. Set `MaximumDecodedLength` to the smallest appli
 value limit that fits your data, and account for concurrent reads when choosing it.
 
 The public `RespireValueCodec` base class shares these framing rules with optional/custom
-codecs. ID 3 belongs to the optional LZ4 package; ID 4 is reserved for Zstandard. IDs 16–255 are available
+codecs. IDs 3 and 4 belong to the optional LZ4 and Zstandard packages. IDs 16–255 are available
 for an application's custom codecs and must be coordinated between its readers and writers.
 The protected constructor rejects IDs 0–15; built-in implementations use an internal
 reserved-ID constructor, also available to explicitly trusted optional codec assemblies.
@@ -195,7 +237,7 @@ the original input; return false when compressed output does not fit. There is n
 fallback between algorithms.
 
 These are additive public types; existing client and facet interfaces gain no members.
-The optional Zstandard package and measured trade-offs remain separate deliverables in
+Measured trade-offs remain a separate deliverable in
 [#425](https://github.com/thomhurst/Respire/issues/425).
 
 Implementation references: [.NET BrotliEncoder](https://learn.microsoft.com/dotnet/api/system.io.compression.brotliencoder),

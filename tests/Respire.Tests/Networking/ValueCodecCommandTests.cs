@@ -15,6 +15,7 @@ public class ValueCodecCommandTests
     [Arguments("brotli")]
     [Arguments("deflate")]
     [Arguments("lz4")]
+    [Arguments("zstd")]
     public async Task TypedValuesUseCodecWhilePrimitiveAndRawPathsStayUnchanged(string algorithm)
     {
         var codec = ValueCodecTests.Create(algorithm);
@@ -60,6 +61,8 @@ public class ValueCodecCommandTests
     [Arguments("deflate", true)]
     [Arguments("lz4", false)]
     [Arguments("lz4", true)]
+    [Arguments("zstd", false)]
+    [Arguments("zstd", true)]
     public async Task DeferredValuesOwnTheirEncodedSnapshot(string algorithm, bool transaction)
     {
         var codec = ValueCodecTests.Create(algorithm);
