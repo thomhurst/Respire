@@ -1,5 +1,14 @@
 namespace Respire;
 
+/// <summary>The connection recovery path that supplied attempt metadata.</summary>
+public enum RespireReconnectSource
+{
+    /// <summary>No recovery source was specified.</summary>
+    Unspecified,
+    /// <summary>A dedicated connection acquisition.</summary>
+    Dedicated,
+}
+
 /// <summary>The coarse health of a client's connections, surfaced via <see cref="RespireClient.ConnectionStateChanged"/>.</summary>
 public enum RespireConnectionState
 {
@@ -22,12 +31,18 @@ public readonly record struct RespireConnectionStateChange(
     RespireConnectionState State,
     Exception? Error)
 {
+    /// <summary>The recovery path, when explicitly attributed.</summary>
+    public RespireReconnectSource ReconnectSource { get; init; }
+    /// <summary>The source's state before aggregation into endpoint health, when supplied.</summary>
+    public RespireConnectionState? SourceState { get; init; }
+    /// <summary>Process-local dedicated rent recovery identifier; null for other transitions.</summary>
+    public long? ReconnectEpisodeId { get; init; }
     /// <summary>One-based configured replacement attempt; zero for transitions without policy metadata.</summary>
     public int ReconnectAttempt { get; init; }
-    /// <summary>Zero-based source slot within this endpoint's multiplexer generation; null for endpoint-wide transitions.</summary>
+    /// <summary>Zero-based source slot within this endpoint's multiplexer generation; null for dedicated or endpoint-wide transitions.</summary>
     public int? ConnectionSlot { get; init; }
     /// <summary>Delay reserved before this Reconnecting attempt; null when no attempt is scheduled.</summary>
     public TimeSpan? NextReconnectDelay { get; init; }
-    /// <summary>Whether this connection slot has exhausted its configured attempt limit.</summary>
+    /// <summary>Whether this connection slot or dedicated rent exhausted its configured attempt limit.</summary>
     public bool ReconnectExhausted { get; init; }
 }

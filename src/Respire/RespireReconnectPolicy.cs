@@ -1,8 +1,9 @@
 namespace Respire;
 
-/// <summary>Backoff and attempt limits for replacing failed command connections.</summary>
+/// <summary>Backoff and attempt limits for replacing failed command and dedicated connections.</summary>
 /// <remarks>Attempts are counted per connection slot and reset after a successful replacement.
-/// Recovery remains demand-driven. This policy does not replay commands or retry initial connection setup.</remarks>
+/// Dedicated acquisitions use a separate budget per rent, after an immediate initial attempt.
+/// Recovery remains demand-driven. This policy does not replay commands or retry initial multiplexer setup.</remarks>
 public sealed record RespireReconnectPolicy
 {
     /// <summary>Delay before the first replacement attempt. Defaults to 250 milliseconds.</summary>
@@ -13,10 +14,11 @@ public sealed record RespireReconnectPolicy
     public TimeSpan MaxDelay { get; init; } = TimeSpan.FromSeconds(5);
     /// <summary>Symmetric random variation as a fraction of the exponential delay, from zero to one.</summary>
     public double JitterRatio { get; init; } = 0.2;
-    /// <summary>Maximum replacement attempts per failed slot; null permits unlimited attempts.</summary>
+    /// <summary>Maximum replacement attempts per failed command slot or dedicated rent; null permits unlimited attempts.</summary>
     /// <remarks>Defaults to null. A slot that exhausts this limit remains unavailable until the client
     /// is recreated; there is no automatic cooldown or reset. Successful replacement resets the count
-    /// before exhaustion. Leave null for long-lived clients that must keep trying after an outage.</remarks>
+    /// before exhaustion. Each dedicated rent starts a new budget, so exhaustion does not disable the pool.
+    /// Leave null for long-lived clients that must keep trying after an outage.</remarks>
     public int? MaxAttempts { get; init; }
 
     internal bool IsExhausted(int attempts) => MaxAttempts is { } maximum && attempts >= maximum;
