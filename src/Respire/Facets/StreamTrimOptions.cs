@@ -18,6 +18,9 @@ public readonly record struct StreamTrimOptions
     /// <summary>Limits trimming work; requires approximate trimming and Redis 6.2+. Zero disables the limit.</summary>
     public long? Limit { get; init; }
 
+    /// <summary>Redis 8.2+ consumer-group reference handling. Null omits the option for older servers.</summary>
+    public StreamReferencePolicy? ReferencePolicy { get; init; }
+
     internal int ValidateAndCountArguments(bool requireThreshold, string parameterName)
     {
         if (MaxLength.HasValue && MinId.HasValue)
@@ -43,14 +46,17 @@ public readonly record struct StreamTrimOptions
             if (!hasThreshold || !Approximate)
                 throw new ArgumentException("LIMIT requires a trimming threshold and approximate trimming.", parameterName);
         }
-        return hasThreshold ? 2 + (Approximate ? 1 : 0) + (Limit.HasValue ? 2 : 0) : 0;
+        if (ReferencePolicy is { } policy) _ = StreamCommands.ReferencePolicyToken(policy);
+        return (hasThreshold ? 2 + (Approximate ? 1 : 0) + (Limit.HasValue ? 2 : 0) : 0)
+            + (ReferencePolicy.HasValue ? 1 : 0);
     }
 
     // Called only after validation; shared by immediate and deferred XADD/XTRIM encoders.
     internal int CopyArgumentsTo(Span<RespireValue> arguments)
     {
-        if (!MaxLength.HasValue && !MinId.HasValue) return 0;
         var index = 0;
+        if (ReferencePolicy is { } policy) arguments[index++] = StreamCommands.ReferencePolicyToken(policy);
+        if (!MaxLength.HasValue && !MinId.HasValue) return index;
         arguments[index++] = MaxLength.HasValue ? "MAXLEN" : "MINID";
         if (Approximate) arguments[index++] = "~";
         arguments[index++] = MaxLength is { } length ? (RespireValue)length : MinId!.Value.Value;

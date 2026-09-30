@@ -340,7 +340,60 @@ They validate at enqueue time and copy or serialize supplied keys and values the
 calls borrow binary keys and field values until their returned operation completes. Stream IDs
 are immutable strings. Prefixing and Cluster slot routing apply to the stream key only.
 Custom `IStreamCommands` and `IBatchStreamCommands` implementations must add `TrimAsync` and
-`Trim`, respectively; `StreamAddOptions` equality includes `MinId` and `Limit`.
+`Trim`, respectively; `StreamAddOptions` equality includes `MinId`, `Limit`, and `ReferencePolicy`.
+
+### Reference-aware removal (Redis 8.2+)
+
+`StreamReferencePolicy` controls pending-entry references for `XDELEX`, `XACKDEL`, and
+trimming through `StreamAddOptions.ReferencePolicy` or `StreamTrimOptions.ReferencePolicy`.
+Leaving either option null omits the token, preserving compatibility with older servers.
+Explicitly setting any policy, including `KeepReferences`, requires Redis 8.2+.
+
+| Policy | Wire token | Effect |
+|---|---|---|
+| `KeepReferences` | `KEEPREF` | Deletes stream entries but retains other pending references. |
+| `DeleteReferences` | `DELREF` | Deletes entries and removes their pending references from all groups. |
+| `Acknowledged` | `ACKED` | Deletes only when every group has read and acknowledged the entry. |
+
+Use the policy overload of `Streams.RemoveAsync` for `XDELEX`.
+`AcknowledgeAndRemoveAsync` runs `XACKDEL`, acknowledging entries in the named group and
+applying the policy atomically. The existing `RemoveAsync(key, ids)` still uses `XDEL`.
+
+```csharp
+RespireStreamDeletionResult[] outcomes = await redis.Streams.AcknowledgeAndRemoveAsync(
+    "events", "processors", StreamReferencePolicy.Acknowledged, "1700000000000-0");
+
+await redis.Streams.RemoveAsync("events", StreamReferencePolicy.DeleteReferences,
+    "1700000000000-0", "1700000000001-0");
+
+await redis.Streams.TrimAsync("events", new StreamTrimOptions
+{
+    MaxLength = 1000, ReferencePolicy = StreamReferencePolicy.Acknowledged,
+});
+```
+
+Each returned array preserves the requested ID order, including duplicates. `Deleted` (1),
+`NotFound` (-1), and `Retained` (2) preserve the server's distinct outcomes. For XACKDEL,
+`NotFound` also means the ID was not pending in the specified group, or that group was absent;
+it does not prove the stream entry is absent. A pending reference to an already-deleted entry
+can still return `Deleted` when XACKDEL clears it. `Retained` means the ACKED condition was
+not met, including unread entries; XACKDEL has still acknowledged that group's pending entry.
+
+KEEPREF can leave pending references to deleted data. DELREF cleans dangling references too:
+XDELEX can return `NotFound` while removing those references. XACKDEL first requires a pending
+entry in the named group. ACKED is not a hard retention bound: unread or unacknowledged entries
+can keep a stream above its trimming threshold. With no consumer groups, the tested Redis 8.2
+server permits ACKED deletion and trimming. See the [XDELEX](https://redis.io/docs/latest/commands/xdelex/),
+[XACKDEL](https://redis.io/docs/latest/commands/xackdel/), and
+[XTRIM](https://redis.io/docs/latest/commands/xtrim/) contracts.
+
+Both new operations require at least one numeric ID. Invalid policies, sentinel IDs, and
+malformed numeric IDs fail before I/O or enqueue. Only the stream key is prefixed and routed;
+group names remain unchanged. Batches and transactions expose `Remove(key, policy, ids)` and
+`AcknowledgeAndRemove` with the same owned outcomes and argument snapshots. Unsupported
+commands/options surface server errors without emulation or replay through older write commands.
+External `IStreamCommands` and `IBatchStreamCommands` implementations, decorators, and mocks
+must implement the new overloads and `AcknowledgeAndRemoveAsync`/`AcknowledgeAndRemove` members.
 
 ### Reading without consumer groups
 

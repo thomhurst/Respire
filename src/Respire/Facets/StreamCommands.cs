@@ -260,6 +260,9 @@ public readonly record struct StreamAddOptions
     /// <summary>Limits approximate trimming work. Requires a threshold and Redis 6.2+; zero disables the limit.</summary>
     public long? Limit { get; init; }
 
+    /// <summary>Redis 8.2+ reference handling when trimming. Null preserves the legacy wire format.</summary>
+    public StreamReferencePolicy? ReferencePolicy { get; init; }
+
     /// <summary>Gets whether trimming may be approximate. Defaults to true.</summary>
     /// <remarks>Unlike XADD, <see cref="StreamTrimOptions.Approximate"/> defaults to false for XTRIM.</remarks>
     public bool ApproximateTrim
@@ -278,6 +281,7 @@ public readonly record struct StreamAddOptions
     internal StreamTrimOptions ToTrimOptions() => new()
     {
         MaxLength = MaxLength, MinId = MinId, Approximate = ApproximateTrim, Limit = Limit,
+        ReferencePolicy = ReferencePolicy,
     };
 
     /// <inheritdoc/>
@@ -286,12 +290,13 @@ public readonly record struct StreamAddOptions
            && MaxLength == other.MaxLength
            && MinId == other.MinId
            && Limit == other.Limit
+           && ReferencePolicy == other.ReferencePolicy
            && ApproximateTrim == other.ApproximateTrim
            && CreateStream == other.CreateStream;
 
     /// <inheritdoc/>
     public override int GetHashCode()
-        => HashCode.Combine(Id, MaxLength, MinId, Limit, ApproximateTrim, CreateStream);
+        => HashCode.Combine(Id, MaxLength, MinId, Limit, ReferencePolicy, ApproximateTrim, CreateStream);
 }
 
 /// <summary>

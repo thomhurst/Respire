@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Stream reference policies
+
+- Redis 8.2+ stream removal adds XDELEX and XACKDEL through `RemoveAsync(key, policy, ids)`
+  and `AcknowledgeAndRemoveAsync`, with batch/transaction mirrors and typed per-ID outcomes.
+  `StreamAddOptions` and `StreamTrimOptions` accept nullable `ReferencePolicy` for KEEPREF,
+  DELREF, and ACKED. Null preserves the legacy wire format. Custom stream-facet implementations
+  must implement the new members. See [reference-aware removal](../website/docs/commands/collections.md#reference-aware-removal-redis-82)
+  for pending-reference semantics and server compatibility.
+
 ### Stream trimming
 
 - `StreamAddOptions` adds `MinId` and `Limit`. `Streams.TrimAsync` and deferred `Streams.Trim`
