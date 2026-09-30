@@ -110,3 +110,7 @@ After an owner successfully retries a failed fence, late corrections proceed eve
 retirement task retains its original failure. Errors before drain and identity collection complete
 still propagate; an empty fence set alone is not proof of completed retirement. Unexpected
 generation cleanup failures are logged at Warning level and remain observable to retirement/disposal callers.
+These unexpected cleanup failures are terminal for that generation's retirement task; they do not
+enter the retry loop for unacknowledged fences. The generation remains owned until explicit client
+disposal aborts its transports and observes the original failure. Retrying an already faulted,
+memoized transport cleanup task cannot restart cleanup or prove a successful drain.

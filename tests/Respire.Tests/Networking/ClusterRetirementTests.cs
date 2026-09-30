@@ -82,7 +82,7 @@ public class ClusterRetirementTests
             if (fireAndForget) await client.ExecuteFireAndForgetAsync($"FUNCTION FLUSH", timeout.Token);
             else
             {
-                using var reply = await client.ExecuteAsync($"FUNCTION FLUSH", timeout.Token);
+                using var reply = await client.ExecuteAsync($"FUNCTION FLUSH", cancellationToken: timeout.Token);
                 await Assert.That(reply.AsString()).IsEqualTo("OK");
             }
         }
