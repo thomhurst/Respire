@@ -41,10 +41,12 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
     private IBatchFunctionCommands? _functions;
     private IBatchStreamCommands? _streams;
 
-    internal RespireTransactionBase(RespireClient client, RespireConnection? watchConnection)
+    internal RespireTransactionBase(RespireClient client, RespireConnection? watchConnection,
+        int? watchSlot = null)
     {
         _client = client;
         _watchConnection = watchConnection;
+        ApplyClusterSlot(watchSlot);
     }
 
     /// <summary>The number of commands queued for the transaction.</summary>
@@ -396,13 +398,18 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
 
                 var redirect = ResponseReader.ServerError(in reply, "MULTI/EXEC");
                 // EXEC result arrays can contain partial success and are returned above.
-                // Cluster WATCH transactions are rejected when they are created.
                 if (!ClusterRouter.CanRecover(redirect, slot))
                 {
                     return reply;
                 }
 
                 reply.Dispose();
+                if (_watchConnection is not null)
+                {
+                    // Replaying on another connection would lose WATCH and could commit stale reads.
+                    cluster.RecordWatchedTransactionRejection(redirect, connection, slot);
+                    throw new RespireTransactionRetryException(redirect);
+                }
                 if (ClusterRouter.IsRedirect(redirect)
                     && !ClusterRouter.TryParseRedirect(redirect, connection.Host, out _, out _))
                 {
@@ -442,6 +449,9 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         await ReleaseAsync(returnWatchConnection: false).ConfigureAwait(false);
     }
 
+    // Only watched transactions carry pool ownership; ordinary transactions retain their existing size.
+    private protected virtual DedicatedConnectionPool? WatchPool => null;
+
     private ValueTask ReleaseAsync(bool returnWatchConnection)
     {
         _buffer.Release();
@@ -452,13 +462,13 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
 
         if (returnWatchConnection)
         {
-            _client.Core.DedicatedPool.Return(_watchConnection);
+            WatchPool!.Return(_watchConnection);
             return ValueTask.CompletedTask;
         }
 
         // Disposing without EXEC leaves WATCH state behind. A failed send has uncertain server
         // state and may still have unread replies, so neither path is safe to reuse.
-        return _client.Core.DedicatedPool.DiscardAsync(_watchConnection);
+        return WatchPool!.DiscardAsync(_watchConnection);
     }
 
     private RespirePending<T> Add<TCommand, T>(
@@ -514,7 +524,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         }
     }
 
-    private static void ValidateClusterSlot(int slot, ref int? candidate)
+    internal static void ValidateClusterSlot(int slot, ref int? candidate)
     {
         if (candidate is { } current && current != slot)
         {
@@ -617,13 +627,18 @@ public sealed class RespireTransaction : RespireTransactionBase
 /// <summary>
 /// A MULTI/EXEC transaction using WATCH for optimistic concurrency. A false commit result means
 /// a watched key changed and Redis discarded the transaction; queued pendings report aborted.
+/// Cluster rejections require a fresh attempt and surface as <see cref="RespireTransactionRetryException"/>.
 /// </summary>
 public sealed class RespireWatchedTransaction : RespireTransactionBase
 {
-    internal RespireWatchedTransaction(RespireClient client, RespireConnection? watchConnection)
-        : base(client, watchConnection)
+    internal RespireWatchedTransaction(RespireClient client, RespireConnection? watchConnection,
+        DedicatedConnectionPool? watchPool = null, int? watchSlot = null)
+        : base(client, watchConnection, watchSlot)
     {
+        WatchPool = watchPool;
     }
+
+    private protected override DedicatedConnectionPool? WatchPool { get; }
 
     /// <summary>
     /// Executes the transaction; returns false when a watched key changed before EXEC.

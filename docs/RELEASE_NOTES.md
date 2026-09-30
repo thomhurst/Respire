@@ -31,6 +31,14 @@
   [durability acknowledgements](../website/docs/guides/durability-acknowledgements.md)
   for server versions, AOF configuration, partial failures, and timeout semantics.
 
+### Cluster watched transactions
+
+- `CreateTransactionAsync(watchKeys)` supports Redis Cluster when all watched and queued
+  keys share one effective hash slot. A dedicated node connection preserves WATCH through EXEC.
+  MOVED, ASK, and READONLY rejections throw `RespireTransactionRetryException`; start a new
+  WATCH attempt and re-read inputs before retrying. No watched transaction is automatically
+  replayed on another connection. See the [Cluster WATCH guide](../website/docs/guides/batches-and-transactions.md#cluster-watch-transactions).
+
 ### Sorted sets
 
 - Multi-key `PopManyAsync` adds ZMPOP and optional blocking BZMPOP; multi-key

@@ -323,6 +323,23 @@ internal sealed class ClusterRouter : IAsyncDisposable
     internal bool HasReliableCorrectionOrdering(RespireConnection connection)
         => connection.Multiplexer?.HasReliableCorrectionOrdering == true;
 
+    // Learn routing for a new attempt without sending any part of the rejected watched transaction.
+    internal void RecordWatchedTransactionRejection(
+        RespireServerException error, RespireConnection source, int? watchedSlot)
+    {
+        if (error.Code == RespireErrorCodes.Moved
+            && TryParseRedirect(error, source.Host, out var slot, out var endpoint))
+        {
+            SetSlotOwner(slot, GetOrCreateNode(endpoint, redirect: true));
+        }
+        else if (error.Code == RespireErrorCodes.ReadOnly && watchedSlot is { } value)
+        {
+            var owner = Volatile.Read(ref _slots[value]);
+            if (owner is not null && IsSameEndpoint(owner, source)) ClearSlotOwner(value, owner);
+        }
+        // ASK is temporary: leave the permanent route unchanged and let a fresh attempt retry later.
+    }
+
     internal static bool IsRedirect(RespireServerException error)
         => error.Code is RespireErrorCodes.Moved or RespireErrorCodes.Ask;
 
