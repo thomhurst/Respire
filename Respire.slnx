@@ -20,6 +20,7 @@
     <Project Path="src/Respire.Extensions.Caching/Respire.Extensions.Caching.csproj" />
     <Project Path="src/Respire.Extensions.DependencyInjection/Respire.Extensions.DependencyInjection.csproj" />
     <Project Path="src/Respire.Testing.Containers/Respire.Testing.Containers.csproj" />
+    <Project Path="src/Respire.Extensions.Coordination/Respire.Extensions.Coordination.csproj" />
     <Project Path="src/Respire/Respire.csproj" />
     <Project Path="src/Respire.Testing/Respire.Testing.csproj" />
   </Folder>
@@ -29,6 +30,7 @@
     <Project Path="tests/Respire.Extensions.Caching.Tests/Respire.Extensions.Caching.Tests.csproj" />
     <Project Path="tests/Respire.IntegrationTests/Respire.IntegrationTests.csproj" />
     <Project Path="tests/Respire.Pipeline.Tests/Respire.Pipeline.Tests.csproj" />
+    <Project Path="tests/Respire.Extensions.Coordination.Tests/Respire.Extensions.Coordination.Tests.csproj" />
     <Project Path="tests/Respire.Tests/Respire.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">

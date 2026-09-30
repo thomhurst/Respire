@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Respire.Extensions.Coordination</PackageId>
+    <Title>Respire.Extensions.Coordination</Title>
+    <Description>Redis coordination primitives with explicit lease and fencing semantics.</Description>
+    <PackageTags>$(PackageTags);coordination;distributed-lock;fencing</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Respire\Respire.csproj" />
+    <InternalsVisibleTo Include="Respire.Extensions.Coordination.Tests" />
+  </ItemGroup>
+</Project>

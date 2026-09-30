@@ -24,6 +24,7 @@ const sidebars = {
         'guides/testing-containers',
         'guides/testing-sample',
         'guides/distributed-locks',
+        'guides/coordination',
         'guides/blocking-queues',
         'guides/vector-sets',
         'guides/reconnect-policy',
