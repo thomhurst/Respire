@@ -300,15 +300,20 @@ public class ClusterRetirementTests
     }
 
     [Test]
-    [Arguments(false, false)]
-    [Arguments(false, true)]
-    [Arguments(true, false)]
-    [Arguments(true, true)]
-    public async Task RetiredPoolSelectionRetriesBeforeRentAndKeepsItsOwner(bool asking, bool reuseIdle)
+    [Arguments(false, false, false)]
+    [Arguments(false, false, true)]
+    [Arguments(false, true, false)]
+    [Arguments(false, true, true)]
+    [Arguments(true, false, false)]
+    [Arguments(true, false, true)]
+    [Arguments(true, true, false)]
+    [Arguments(true, true, true)]
+    public async Task RetiredPoolSelectionRetriesBeforeRentAndKeepsItsOwner(bool asking, bool reuseIdle, bool configuredPolicy)
     {
         await using var oldServer = new FakeRespServer(3, FakeRespServer.PongReply);
         await using var newServer = new FakeRespServer(2, FakeRespServer.PongReply);
-        await using var client = CreateClient();
+        await using var client = CreateClient(reconnectPolicy: configuredPolicy
+            ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 } : null);
         using var timeout = new CancellationTokenSource(Limit);
         var router = client.Core.Cluster!;
         var oldEndpoint = new RespireEndpoint("127.0.0.1", oldServer.Port);
@@ -1168,13 +1173,14 @@ public class ClusterRetirementTests
     }
 
     private static RespireClient CreateClient(ILoggerFactory? loggerFactory = null, int maxInflightCommands = 16384,
-        bool allowAdmin = false) => RespireClient.Create(new RespireOptions
+        bool allowAdmin = false, RespireReconnectPolicy? reconnectPolicy = null) => RespireClient.Create(new RespireOptions
     {
         Protocol = RespProtocol.Resp2,
         UseCluster = true, Connections = 1, Endpoints = { new RespireEndpoint("seed.invalid") },
         LoggerFactory = loggerFactory,
         MaxInflightCommands = maxInflightCommands,
         AllowAdmin = allowAdmin,
+        ReconnectPolicy = reconnectPolicy,
     });
 
     private sealed class FailingPoolDisconnectLogger(bool failRetirementLog = false, bool failNodeDisconnect = false) : ILoggerFactory, ILogger

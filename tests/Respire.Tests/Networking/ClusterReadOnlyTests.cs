@@ -15,7 +15,9 @@ public class ClusterReadOnlyTests
 
     [Test]
     [NotInParallel] // Preserve the final-seed scheduling budget while other wire tests run.
-    public async Task UnavailableLastSeedLeavesReservedTimeForLastUsableSeed()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task UnavailableLastSeedLeavesReservedTimeForLastUsableSeed(bool configuredPolicy)
     {
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
         await using var replica = new FakeRespServer(ReadOnlyReply);
@@ -30,6 +32,7 @@ public class ClusterReadOnlyTests
         {
             Protocol = RespProtocol.Resp2,
             UseCluster = true, Connections = 1, ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = null,
+            ReconnectPolicy = configuredPolicy ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 } : null,
             Endpoints = [new("127.0.0.1", initialSeed.Port), new("127.0.0.1", healthySeed.Port),
                 new("127.0.0.1", unavailablePort)],
         });
@@ -50,7 +53,9 @@ public class ClusterReadOnlyTests
 
     [Test]
     [NotInParallel] // Other wire tests must not consume this test's final-seed scheduling budget.
-    public async Task ManyStalledSeedsLeaveUsableTimeForFinalSeed()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ManyStalledSeedsLeaveUsableTimeForFinalSeed(bool configuredPolicy)
     {
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
         await using var replica = new FakeRespServer(ReadOnlyReply);
@@ -65,6 +70,7 @@ public class ClusterReadOnlyTests
             {
                 Protocol = RespProtocol.Resp2,
                 UseCluster = true,
+                ReconnectPolicy = configuredPolicy ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 } : null,
                 Connections = 1,
                 ConnectTimeout = TimeSpan.FromSeconds(2),
                 CommandTimeout = null,

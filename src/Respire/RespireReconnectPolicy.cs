@@ -1,14 +1,16 @@
 namespace Respire;
 
-/// <summary>Backoff and attempt limits for command, dedicated, and pub/sub recovery and Sentinel fallback.</summary>
+/// <summary>Backoff and attempt limits for command, dedicated, and pub/sub recovery, Cluster discovery, and Sentinel fallback.</summary>
 /// <remarks>Command attempts are counted per connection slot and reset after a successful replacement.
 /// Dedicated acquisitions use a separate budget per rent, after an immediate initial attempt.
 /// Command recovery remains demand-driven. Sentinel resolution applies one shared budget to candidates
 /// after its first attempt. Pub/sub recovery runs automatically and resets only after all
-/// live routes are resubscribed. This policy does not replay commands or retry initial multiplexer setup.</remarks>
+/// live routes are resubscribed. Cluster discovery shares one fallback budget across nested
+/// node, topology, and seed selection after a failure. A new discovery round starts fresh.
+/// This policy does not replay commands or retry initial multiplexer setup.</remarks>
 public sealed record RespireReconnectPolicy
 {
-    /// <summary>Delay before the first connection replacement or Sentinel fallback attempt. Defaults to 250 milliseconds.</summary>
+    /// <summary>Delay before the first connection replacement or discovery fallback attempt. Defaults to 250 milliseconds.</summary>
     public TimeSpan InitialDelay { get; init; } = TimeSpan.FromMilliseconds(250);
     /// <summary>Exponential delay multiplier. Must be finite and at least one.</summary>
     public double BackoffMultiplier { get; init; } = 2;
@@ -18,10 +20,12 @@ public sealed record RespireReconnectPolicy
     public TimeSpan MaxDelay { get; init; } = TimeSpan.FromSeconds(5);
     /// <summary>Symmetric random variation as a fraction of the exponential delay, from zero to one.</summary>
     public double JitterRatio { get; init; } = 0.2;
-    /// <summary>Maximum replacement attempts per command slot, dedicated rent, pub/sub episode, or Sentinel resolution; null applies no policy limit.</summary>
+    /// <summary>Maximum replacement attempts per command slot, dedicated rent, pub/sub episode, Cluster discovery round, or Sentinel resolution; null applies no policy limit.</summary>
     /// <remarks>Defaults to null. A slot that exhausts this limit remains unavailable until the client
     /// is recreated; there is no automatic cooldown or reset. Successful replacement resets the count
     /// before exhaustion. Each dedicated rent starts a new budget, so exhaustion does not disable the pool.
+    /// Cluster discovery counts fallbacks after a failed candidate or a rejected route. Successful
+    /// required node connections do not consume fallback attempts. New rounds start fresh.
     /// Pub/sub exhaustion ends live subscriptions and prevents new subscriptions on that client.
     /// Leave null for long-lived clients that must keep trying after an outage.
     /// Sentinel resolution counts fallback candidates after the first; a new explicit resolution starts fresh.

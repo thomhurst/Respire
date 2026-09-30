@@ -538,9 +538,17 @@ concatenates). Client-side caching is configured through `RespireOptions.ClientS
   primary ROLE rejection. Each explicit resolution starts fresh; per-candidate deadlines and
   the final underlying error are preserved. Metrics identify the candidate endpoint and
   `respire.reconnect.scope=sentinel-discovery`. Initial resolution has no returned client for
-  lifecycle subscriptions; ongoing failover remains #396. Dedicated pools, pub/sub, and Cluster discovery retain their
-  existing behavior pending the remaining [#401](https://github.com/thomhurst/Respire/issues/401)
-  children. See the [recovery guide](../website/docs/guides/reconnect-policy.md).
+  lifecycle subscriptions; ongoing failover remains #396. Dedicated rents use independent
+  per-rent budgets; pub/sub shares a budget until all live routes are resubscribed. Cluster
+  discovery shares one budget across cached-owner, known-master, topology, seed, tracked,
+  and dedicated selection. The first candidate is immediate; fallback after failure consumes
+  an attempt. MOVED/ASK/READONLY replacement starts at attempt one and preserves the original
+  rejection if recovery fails. New rounds start fresh, without replaying ambiguous commands.
+  READONLY retains its shared deadline and seed time reservation. Cluster lifecycle metadata
+  uses `ClusterDiscovery` without changing physical-slot health; metrics identify the endpoint
+  and `respire.reconnect.scope=cluster-discovery`. Periodic refresh remains #397. Parent
+  [#401](https://github.com/thomhurst/Respire/issues/401) requires a joint child audit before closure.
+  See the [recovery guide](../website/docs/guides/reconnect-policy.md).
 - **Timeouts**: `CommandTimeout` is the client default; each call accepts a `CancellationToken`
   for tighter control. `RespireTimeoutException` names the operation and explains that a sent
   command may still execute. `Diagnostics` captures command stage, connection identity,
