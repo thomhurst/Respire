@@ -220,6 +220,61 @@ baseline controls. The invalidation cycle includes cooperative polling until the
 observes eviction; its CPU totals include that work. Process totals also include warmup and
 background work; no universal performance win is implied.
 
+## Observe invalidations
+
+Use `SubscribeInvalidations` to wake a local coordinator when a physical key may need to be
+read again. Subscribe **before** the first read so an invalidation cannot fall between that
+read and registration:
+
+<!-- doc-test-ignore: Coordination loop fragment; redis, cancellationToken, and ProcessCurrentState are application-owned. -->
+```csharp
+var wakeUps = System.Threading.Channels.Channel.CreateBounded<bool>(1);
+using var observation = redis.ClientSideCache!.SubscribeInvalidations(
+    "jobs:ready", _ => wakeUps.Writer.TryWrite(true), cancellationToken);
+
+while (!cancellationToken.IsCancellationRequested)
+{
+    var state = await redis.GetStringAsync("jobs:ready", cancellationToken);
+    ProcessCurrentState(state);
+    await wakeUps.Reader.ReadAsync(cancellationToken);
+}
+```
+
+The owned `RespireClientCacheInvalidation.Key` identifies the physical wire key. Binary keys,
+including empty keys, retain byte identity after registration even if the caller changes the
+original buffer. Prefix views share the same cache: a view with `WithKeyPrefix("tenant:")`
+must subscribe to `tenant:jobs:ready`, not `jobs:ready`.
+
+Registration does not issue a command, warm an entry, or register server tracking. OPTIN
+requires an eligible cached read; read again after each wake-up to rearm tracking. BCAST
+requires a key inside the configured physical prefixes; uncovered subscriptions throw
+`ArgumentException`. The subscription remains registered across reconnects, but cannot
+recover events lost during a disconnect. No server notification is promised for untracked keys.
+
+`Reasons` combines `ServerInvalidation`, `LocalMutation`, `ExplicitClear`, and `ContinuityLost`
+flags. Local mutations can invalidate before dispatch and after completion, including when
+the value did not change. Redis-wide invalidations, `Clear()`, unknown mutations, and continuity
+loss wake every subscription. TTL expiry and capacity eviction do not produce notifications.
+Cache eviction and stale-read rejection happen before notifications are scheduled.
+
+Each subscription serializes callbacks on the ThreadPool without flowing the registration's
+`ExecutionContext`. Callbacks never run inline on the socket parser or invalidating thread.
+A slow observer has at most one pending wake-up: its reason flags are combined, preserving
+continuity loss. Intermediate events, event counts, and cross-subscription ordering are not
+preserved. Keep callbacks short, as in the bounded channel example. A throwing callback cannot
+interrupt eviction or other observers; `LastObserverException` retains its latest exception
+and later callbacks continue. Use synchronous callbacks; `async void` exceptions cannot be
+captured by this API.
+
+Dispose the returned subscription or cancel its token to discard pending delivery. Client
+disposal also stops every subscription. Disposal does not wait for a callback already selected
+for execution, so that callback may finish afterward and may safely dispose itself or its client.
+
+These signals mean **recheck current state**, not “a write occurred.” They are unsuitable as a
+durable event log, distributed lock, or correctness guarantee for cross-process coordination.
+For correctness-critical coordination, combine authoritative Redis commands with cancellation
+and periodic reconciliation; an undetected partition can delay notifications indefinitely.
+
 ## Bounds
 
 Tune entry count, approximate owned bytes, and local TTL together:

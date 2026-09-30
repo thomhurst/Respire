@@ -16,6 +16,15 @@ independent lists proceed separately. Hashes outside broadcast prefix coverage b
 With field reuse enabled, hit/miss counters count each field lookup, including duplicates; compare
 these separately from default exact-query statistics.
 
+### Client-cache invalidation observers
+
+- `ClientSideCache.SubscribeInvalidations` observes an owned physical key with serialized,
+  asynchronous callbacks and one coalesced pending notification per subscription. Server,
+  local mutation, explicit clear, and tracking-continuity reasons are preserved. Slow or
+  throwing callbacks do not block eviction or socket parsing. Cancellation and disposal stop
+  observation; subscriptions do not register Redis tracking or provide durable delivery.
+  See [invalidation observation](../website/docs/fundamentals/client-side-caching.md#observe-invalidations).
+
 ### Typed key notifications
 
 Added binary-safe keyspace, keyevent, and Redis 8.8 subkey channel factories and allocation-free notification parsing. Explicit physical-key prefixes, database scopes, unknown events, and malformed-frame handling are documented. Notification descriptors are server-owned and cannot be published. Cluster delivery remains #298; subscriptions never change server configuration.
