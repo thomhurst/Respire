@@ -32,6 +32,7 @@ const sidebars = {
         'guides/cluster-inspection',
         'guides/command-logs',
         'guides/hot-keys',
+        'guides/value-codecs',
         'guides/batches-and-transactions',
         'guides/durability-acknowledgements',
         'guides/raw-commands',
