@@ -260,9 +260,16 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    public async Task SetTypedContains_RoundTrip()
+    [Arguments(false, 2)]
+    [Arguments(false, 3)]
+    [Arguments(true, 2)]
+    [Arguments(true, 3)]
+    public async Task SetTypedContains_RoundTrip(bool useFake, int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         var payload = new TypedPayload(9, "nine");
 
         await client.Sets.AddAsync("typed:set", 7);

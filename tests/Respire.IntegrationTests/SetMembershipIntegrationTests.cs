@@ -7,11 +7,16 @@ namespace Respire.IntegrationTests;
 public class SetMembershipIntegrationTests(RedisTestContainer fixture)
 {
     [Test]
-    [Arguments(2)]
-    [Arguments(3)]
-    public async Task ContainsMany_PreservesBinaryMembersOrderAndMissingValues(int protocol)
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    public async Task ContainsMany_PreservesBinaryMembersOrderAndMissingValues(int protocol, bool useFake)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         byte[] binary = [0xff, 0x00, 0x42];
         await client.Sets.AddAsync("members", binary, "text");
         (await client.Sets.ContainsManyAsync("members", binary, "missing", binary, "text"))
@@ -20,11 +25,16 @@ public class SetMembershipIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [Arguments(2)]
-    [Arguments(3)]
-    public async Task Move_TransfersBinaryMemberAndHandlesMissingOrExistingDestination(int protocol)
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    public async Task Move_TransfersBinaryMemberAndHandlesMissingOrExistingDestination(int protocol, bool useFake)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         byte[] binary = [0xff, 0x00, 0x42];
         await client.Sets.AddAsync("source", binary, "shared");
         await client.Sets.AddAsync("destination", "shared");
@@ -37,11 +47,16 @@ public class SetMembershipIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [Arguments(2)]
-    [Arguments(3)]
-    public async Task IntersectCount_RespectsLimitAndMissingKeys(int protocol)
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    public async Task IntersectCount_RespectsLimitAndMissingKeys(int protocol, bool useFake)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         await client.Sets.AddAsync("first", "a", "b", "c");
         await client.Sets.AddAsync("second", "b", "c", "d");
         (await client.Sets.IntersectCountAsync("first", "second")).Should().Be(2);
@@ -53,11 +68,16 @@ public class SetMembershipIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [Arguments(2)]
-    [Arguments(3)]
-    public async Task WrongTypeErrors_ArePreserved(int protocol)
+    [Arguments(2, false)]
+    [Arguments(3, false)]
+    [Arguments(2, true)]
+    [Arguments(3, true)]
+    public async Task WrongTypeErrors_ArePreserved(int protocol, bool useFake)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         await client.SetAsync("wrong", "string");
         await client.Sets.AddAsync("set", "member");
         Func<Task>[] commands =
@@ -75,13 +95,18 @@ public class SetMembershipIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [Arguments(2, false)]
-    [Arguments(2, true)]
-    [Arguments(3, false)]
-    [Arguments(3, true)]
-    public async Task DeferredCommands_ReturnOrderedResults(int protocol, bool transactional)
+    [Arguments(2, false, false)]
+    [Arguments(2, false, true)]
+    [Arguments(3, false, false)]
+    [Arguments(3, false, true)]
+    [Arguments(2, true, false)]
+    [Arguments(3, true, false)]
+    public async Task DeferredCommands_ReturnOrderedResults(int protocol, bool useFake, bool transactional)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         await client.Sets.AddAsync("first", "a", "b", "c");
         await client.Sets.AddAsync("second", "b", "c");
         using var batch = transactional ? null : client.CreateBatch();
