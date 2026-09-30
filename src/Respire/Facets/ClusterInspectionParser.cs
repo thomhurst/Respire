@@ -5,23 +5,26 @@ namespace Respire;
 
 internal static class ClusterInspectionParser
 {
-    internal static string Text(in RespValue value)
+    private static string FieldContext(string? field)
+        => field is null ? "Cluster inspection value" : $"Cluster inspection field '{field}'";
+
+    internal static string Text(in RespValue value, string? field = null)
     {
         if (value.Type is not (RespDataType.SimpleString or RespDataType.BulkString or RespDataType.VerbatimString))
-            throw new RespireProtocolException("Cluster inspection text must be a string.");
+            throw new RespireProtocolException($"{FieldContext(field)} must be a string.");
         return value.AsString();
     }
 
-    private static long Integer(in RespValue value)
+    private static long Integer(in RespValue value, string? field = null)
     {
-        if (value.Type != RespDataType.Integer) throw new RespireProtocolException("Cluster inspection number must be an integer.");
+        if (value.Type != RespDataType.Integer) throw new RespireProtocolException($"{FieldContext(field)} must be an integer.");
         return value.AsInteger();
     }
 
-    internal static long NonnegativeInteger(in RespValue value)
+    internal static long NonnegativeInteger(in RespValue value, string? field = null)
     {
-        var number = Integer(in value);
-        if (number < 0) throw new RespireProtocolException("Cluster inspection count must not be negative.");
+        var number = Integer(in value, field);
+        if (number < 0) throw new RespireProtocolException($"{FieldContext(field)} must not be negative.");
         return number;
     }
 
@@ -53,15 +56,15 @@ internal static class ClusterInspectionParser
         => fields.Remove(name, out var value) ? value : throw new RespireProtocolException($"Cluster inspection is missing field '{name}'.");
 
     private static string? OptionalText(Dictionary<string, RespValue> fields, string name)
-        => fields.Remove(name, out var value) && !value.IsNull ? Text(in value) : null;
+        => fields.Remove(name, out var value) && !value.IsNull ? Text(in value, name) : null;
 
     private static long? OptionalCount(Dictionary<string, RespValue> fields, string name)
-        => fields.Remove(name, out var value) ? NonnegativeInteger(in value) : null;
+        => fields.Remove(name, out var value) ? NonnegativeInteger(in value, name) : null;
 
     private static int? OptionalPort(Dictionary<string, RespValue> fields, string name)
     {
         var value = OptionalCount(fields, name);
-        if (value > 65535) throw new RespireProtocolException("Cluster port must be between 0 and 65535.");
+        if (value > 65535) throw new RespireProtocolException($"Cluster port field '{name}' must be between 0 and 65535.");
         return (int?)value;
     }
 
@@ -104,10 +107,10 @@ internal static class ClusterInspectionParser
     private static RespireClusterShardNode ShardNode(in RespValue value)
     {
         var fields = Fields(in value);
-        var id = Text(Take(fields, "id"));
-        var role = Text(Take(fields, "role"));
-        var health = Text(Take(fields, "health"));
-        var offset = Integer(Take(fields, "replication-offset"));
+        var id = Text(Take(fields, "id"), "id");
+        var role = Text(Take(fields, "role"), "role");
+        var health = Text(Take(fields, "health"), "health");
+        var offset = Integer(Take(fields, "replication-offset"), "replication-offset");
         var endpoint = OptionalText(fields, "endpoint");
         var ip = OptionalText(fields, "ip");
         var hostname = OptionalText(fields, "hostname");
@@ -123,12 +126,12 @@ internal static class ClusterInspectionParser
         for (var index = 0; index < items.Length; index++)
         {
             var fields = Fields(in items[index]);
-            var direction = Text(Take(fields, "direction"));
-            var node = Text(Take(fields, "node"));
-            var created = NonnegativeInteger(Take(fields, "create-time"));
-            var events = Text(Take(fields, "events"));
-            var allocated = NonnegativeInteger(Take(fields, "send-buffer-allocated"));
-            var used = NonnegativeInteger(Take(fields, "send-buffer-used"));
+            var direction = Text(Take(fields, "direction"), "direction");
+            var node = Text(Take(fields, "node"), "node");
+            var created = NonnegativeInteger(Take(fields, "create-time"), "create-time");
+            var events = Text(Take(fields, "events"), "events");
+            var allocated = NonnegativeInteger(Take(fields, "send-buffer-allocated"), "send-buffer-allocated");
+            var used = NonnegativeInteger(Take(fields, "send-buffer-used"), "send-buffer-used");
             result[index] = new(direction, node, created, events, allocated, used, OwnRemaining(fields));
         }
         return result;
@@ -144,7 +147,7 @@ internal static class ClusterInspectionParser
             if (row.Length != 2) throw new RespireProtocolException("Cluster slot statistics must contain a slot and a field map.");
             var slot = Slot(in row[0]);
             var fields = Fields(in row[1]);
-            var keys = NonnegativeInteger(Take(fields, "key-count"));
+            var keys = NonnegativeInteger(Take(fields, "key-count"), "key-count");
             var memory = OptionalCount(fields, "memory-bytes");
             var cpu = OptionalCount(fields, "cpu-usec");
             var inbound = OptionalCount(fields, "network-bytes-in");
@@ -172,11 +175,11 @@ internal static class ClusterInspectionParser
     }
 
     private static long? InfoCount(Dictionary<string, string> fields, string name)
-        => fields.TryGetValue(name, out var value) ? TextCount(value) : null;
+        => fields.TryGetValue(name, out var value) ? TextCount(value, name) : null;
 
-    private static long TextCount(string value)
+    private static long TextCount(string value, string? field = null)
         => long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var count) && count >= 0
-            ? count : throw new RespireProtocolException("Cluster inspection number must be a nonnegative integer.");
+            ? count : throw new RespireProtocolException($"{FieldContext(field)} must be a nonnegative integer.");
 
     internal static RespireClusterNode[] Nodes(in RespValue value)
     {
@@ -191,7 +194,7 @@ internal static class ClusterInspectionParser
             List<string> additional = [];
             foreach (var token in fields.AsSpan(8)) ParseSlotToken(token, slots, transitions, additional);
             result[index] = new(fields[0], fields[1], fields[2].Split(','), fields[3] == "-" ? null : fields[3],
-                TextCount(fields[4]), TextCount(fields[5]), TextCount(fields[6]), fields[7],
+                TextCount(fields[4], "ping-sent"), TextCount(fields[5], "pong-recv"), TextCount(fields[6], "config-epoch"), fields[7],
                 slots.ToArray(), transitions.ToArray(), additional.ToArray());
         }
         return result;

@@ -108,7 +108,8 @@ public class ServerClusterInspectionParserTests
         using var nullPeer = RespValue.Array(RespValue.Array([.. fields, Text("node"), RespValue.Null]));
         using var numericPeer = RespValue.Array(RespValue.Array([.. fields, Text("node"), RespValue.Integer(1)]));
         await Assert.That(() => ClusterInspectionParser.Links(in missing)).ThrowsExactly<RespireProtocolException>();
-        await Assert.That(() => ClusterInspectionParser.Links(in nullPeer)).ThrowsExactly<RespireProtocolException>();
+        var nullError = await Assert.That(() => ClusterInspectionParser.Links(in nullPeer)).ThrowsExactly<RespireProtocolException>();
+        await Assert.That(nullError!.Message).Contains("'node'");
         await Assert.That(() => ClusterInspectionParser.Links(in numericPeer)).ThrowsExactly<RespireProtocolException>();
     }
 
@@ -120,6 +121,9 @@ public class ServerClusterInspectionParserTests
         await Assert.That(() => ClusterInspectionParser.Shards(RespValue.Array(RespValue.Array(Text("slots"), RespValue.Array(RespValue.Integer(4), RespValue.Integer(2)), Text("nodes"), RespValue.Array()))))
             .ThrowsExactly<RespireProtocolException>();
         await Assert.That(() => ClusterInspectionParser.Info(Text("cluster_state:ok\ncluster_state:fail"))).ThrowsExactly<RespireProtocolException>();
+        var counterError = await Assert.That(() => ClusterInspectionParser.Info(Text("cluster_state:ok\ncluster_slots_ok:invalid")))
+            .ThrowsExactly<RespireProtocolException>();
+        await Assert.That(counterError!.Message).Contains("'cluster_slots_ok'");
         await Assert.That(() => ClusterInspectionParser.Nodes(Text("id address flags - 0 0 0 connected 16384"))).ThrowsExactly<RespireProtocolException>();
         await Assert.That(() => ClusterInspectionParser.Nodes(Text("incomplete"))).ThrowsExactly<RespireProtocolException>();
         await Assert.That(() => ClusterInspectionParser.Slot(RespValue.Integer(-1))).ThrowsExactly<RespireProtocolException>();
