@@ -529,7 +529,8 @@ public class LockCommandTests
             await Assert.That(mutex.IsReleased).IsTrue();
 
             disposal = keepAlive.DisposeAsync().AsTask();
-            await Assert.That(disposal.IsCompleted).IsFalse();
+            var observation = Task.Delay(TimeSpan.FromMilliseconds(100));
+            await Assert.That(await Task.WhenAny(disposal, observation)).IsSameReferenceAs(observation);
             var fenceIndex = server.ReceivedCommands.ToList().IndexOf("CLIENT KILL ID 41");
             await Assert.That(fenceIndex).IsGreaterThanOrEqualTo(0);
             var controlConnection = server.ReceivedConnectionIds[fenceIndex];
