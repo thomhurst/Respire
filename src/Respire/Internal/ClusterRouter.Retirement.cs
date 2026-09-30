@@ -49,6 +49,7 @@ internal sealed partial class ClusterRouter
                 _logger?.LogDebug(error, "Cluster generation retirement needs correction cleanup at {Host}:{Port}", node.Host, node.Port);
             }
 
+            var retryDelay = TimeSpan.FromSeconds(1);
             while (node.HasPendingCorrectionFences && !_stopRetirement.IsCancellationRequested)
             {
                 try
@@ -57,10 +58,13 @@ internal sealed partial class ClusterRouter
                     attempt.CancelAfter(_options.ConnectTimeout);
                     await node.FenceRetiredConnectionsAsync(attempt.Token).ConfigureAwait(false);
                 }
-                catch (Exception) when (!_stopRetirement.IsCancellationRequested)
+                catch (Exception error) when (!_stopRetirement.IsCancellationRequested)
                 {
                     // An unacknowledged kill never releases generation ownership.
-                    await Task.Delay(TimeSpan.FromSeconds(1), _stopRetirement.Token).ConfigureAwait(false);
+                    _logger?.LogDebug(error, "Cluster fence retry failed at {Host}:{Port}; retrying in {DelaySeconds}s",
+                        node.Host, node.Port, retryDelay.TotalSeconds);
+                    await Task.Delay(retryDelay, _stopRetirement.Token).ConfigureAwait(false);
+                    retryDelay = TimeSpan.FromSeconds(Math.Min(30, retryDelay.TotalSeconds * 2));
                 }
             }
         }
@@ -71,6 +75,7 @@ internal sealed partial class ClusterRouter
         catch (Exception error)
         {
             // Unexpected cleanup failure is not permission to forget an owed fence.
+            _logger?.LogWarning(error, "Cluster generation retirement failed at {Host}:{Port}", node.Host, node.Port);
             retirement.Completion.TrySetException(error);
             return;
         }
@@ -90,6 +95,7 @@ internal sealed partial class ClusterRouter
         }
         catch (Exception error)
         {
+            _logger?.LogWarning(error, "Cluster generation cleanup failed at {Host}:{Port}", node.Host, node.Port);
             retirement.Completion.TrySetException(error);
         }
     }

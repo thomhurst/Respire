@@ -3243,9 +3243,12 @@ public sealed partial class RespireClient : IRespireClient
                 // Retirement rejected new acceptance. Wait for the old FIFO and every owed
                 // kill barrier before sending the idempotent correction on its original peer.
                 try { await multiplexer.RetireAsync().ConfigureAwait(false); }
-                catch (Exception) when (multiplexer.HasPendingCorrectionFences)
+                catch (Exception) when (multiplexer.RetirementDrained)
                 {
-                    await multiplexer.FenceRetiredConnectionsAsync().ConfigureAwait(false);
+                    // A successful owner retry clears the fence IDs, but the original
+                    // retirement task remains faulted. Earlier drain failures still propagate.
+                    if (multiplexer.HasPendingCorrectionFences)
+                        await multiplexer.FenceRetiredConnectionsAsync().ConfigureAwait(false);
                 }
                 await using var lease = core.Cluster.GetCorrectionLease(connectionIdentity.Connection);
                 var control = await lease.Pool.RentAsync(CancellationToken.None, armHandshakeDeadline: false).ConfigureAwait(false);

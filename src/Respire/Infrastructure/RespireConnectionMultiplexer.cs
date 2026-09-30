@@ -32,6 +32,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private uint _next;
     private int _disposed;
     private int _retired;
+    private bool _retirementDrained;
     // Cold lifecycle transitions share this gate; normal selection reads only volatile state.
     // A reconnect reserves ownership before starting so shutdown also awaits unpublished work.
     private readonly object _lifecycleGate = new();
@@ -53,6 +54,8 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     internal bool IsRetired => Volatile.Read(ref _retired) != 0;
     private bool IsOperational => !IsRetired && Volatile.Read(ref _disposed) == 0;
     internal bool HasPendingCorrectionFences => !_retiredServerClientIds.IsEmpty;
+    // Published only after accepted work drained and every failed-socket identity was collected.
+    internal bool RetirementDrained => Volatile.Read(ref _retirementDrained);
     internal bool IsInitialized => _connected;
     internal bool HasReliableCorrectionOrdering => _correctionOrderingReady;
     internal bool IsReliableCorrectionOrderingUnavailable =>
@@ -979,6 +982,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 .ConfigureAwait(false);
             await WaitForCorrectionIdentityAsync().ConfigureAwait(false);
             foreach (var connection in _connections) RetireConnection(connection);
+            Volatile.Write(ref _retirementDrained, true);
             if (Volatile.Read(ref _disposed) == 0)
                 await FenceRetiredConnectionsAsync(_abortCancellation.Token).ConfigureAwait(false);
             else if (HasPendingCorrectionFences)

@@ -62,7 +62,8 @@ Detached multiplexers drain accepted frames and replies. Their dedicated pools r
 and wait for borrowed operations to return. There is no implicit timeout that aborts accepted
 application commands. Failed tracked sockets retain their server-local client IDs and captured
 network peers until CLIENT KILL is acknowledged. Each control attempt is bounded by ConnectTimeout;
-the Cluster owner retries failed fences and retains the generation until success or explicit client
+the Cluster owner retries failed fences with exponential delays from one to 30 seconds, logs
+failed attempts at Debug level, and retains the generation until success or explicit client
 disposal. Client disposal aborts active and detached transports, borrowed connections, and control
 attempts before waiting for cleanup.
 
@@ -75,3 +76,7 @@ corrections can create a temporary client-owned pool for the original captured p
 after routing ownership has been released. They never resolve a new server through the old hostname.
 Idempotent script corrections arriving after retirement wait for drain and fence completion before
 executing through that original peer. TLS authentication keeps the original configured name.
+After an owner successfully retries a failed fence, late corrections proceed even though the shared
+retirement task retains its original failure. Errors before drain and identity collection complete
+still propagate; an empty fence set alone is not proof of completed retirement. Unexpected
+generation cleanup failures are logged at Warning level and remain observable to retirement/disposal callers.

@@ -235,7 +235,7 @@ public class ClusterRetirementTests
         var firstSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var retrySeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var kills = 0;
-        await using var server = new FakeRespServer(3, ":42\r\n"u8.ToArray(), "-ERR try again\r\n"u8.ToArray())
+        await using var server = new FakeRespServer(4, ":42\r\n"u8.ToArray(), "-ERR try again\r\n"u8.ToArray())
         {
             SuppressReply = command =>
             {
@@ -265,6 +265,14 @@ public class ClusterRetirementTests
         await router.WaitForRetirementAsync().WaitAsync(Limit);
         await Assert.That(RetainedNodes(router)).IsEqualTo(2);
         await Assert.That(old.HasPendingCorrectionFences).IsFalse();
+        // The shared retirement task still contains its first failure after the router's
+        // successful fence retry. A later correction must use the now-safe original peer.
+        await Assert.That(old.RetireAsync().IsFaulted).IsTrue();
+        await client.ExecuteOnAllConnectionsAsync(RespireScript.Create("return 1"), ["key"], [],
+            new(endpoint, 42, Connection: connection)).AsTask().WaitAsync(Limit);
+        await Assert.That(server.ReceivedCommands).Contains("EVAL return 1 1 key");
+        await Assert.That(kills).IsEqualTo(2);
+        await Assert.That(Count(router, "_ownedPools")).IsEqualTo(0);
     }
 
     // Model DNS resolution changes without mutating machine-wide DNS. Every installed
