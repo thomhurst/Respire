@@ -358,6 +358,7 @@ public interface IStreamCommands
     /// Creates a consumer in an existing group; returns false when the consumer already exists.
     /// Redis 6.2+: XGROUP CREATECONSUMER.
     /// </summary>
+    /// <remarks>Immediate-only administration; not exposed by batches or transactions.</remarks>
     ValueTask<bool> CreateConsumerAsync(
         RespireKey key,
         string group,
@@ -370,6 +371,7 @@ public interface IStreamCommands
     /// This advanced restoration operation does not add entries or move consumer groups.
     /// Redis validates ids and their consistency with the existing stream.
     /// </summary>
+    /// <remarks>Immediate-only administration; not exposed by batches or transactions.</remarks>
     ValueTask SetLastIdAsync(
         RespireKey key,
         RespireStreamId lastId,
