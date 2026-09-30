@@ -2692,7 +2692,7 @@ public sealed partial class RespireClient : IRespireClient
                     ? new RespireTimeoutException(operation, timeout, cancelled,
                         connection?.CaptureDedicatedTimeoutDiagnostics()
                         ?? RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting,
-                            core.Sentinel is null ? core.Endpoint : null))
+                            core.Sentinel is null ? (RespireEndpoint?)core.Endpoint : null))
                     : null;
                 if (connection is null)
                     RespireTelemetry.RecordUnroutedFailure(operation, core.Options.Database,
