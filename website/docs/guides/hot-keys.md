@@ -104,6 +104,14 @@ handle for a lifecycle tied to one server. A single slot filter sent to all memb
 can fail on nodes that do not own those slots. Operations are neither atomic nor
 automatically replicated; partial successes remain and no rollback is attempted.
 
+For a bounded diagnostic run, set `DurationSeconds` before starting. Retain the
+per-node start results, then inspect the original endpoints after a partial failure,
+including endpoints whose replies were lost. Connect directly to each endpoint and
+acquire a pinned handle if membership has since changed. Coordinate with other
+administrators before stopping an active session or resetting retained data: HOTKEYS
+has no session-owner token, so even a node that accepted your START may now contain
+another administrator's session. Automatic rollback cannot establish that ownership.
+
 Pre-cancelled operations send no command. Discovery cancellation throws; later fan-out
 cancellation is reported per affected node. Cancelling a dispatched mutation cannot
 undo it. A lost reply can leave the outcome uncertain; inspect before retrying.

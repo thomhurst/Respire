@@ -15,7 +15,8 @@ public partial interface IServerCommands
     ValueTask<RespireServerResult<bool>[]> StartHotKeysOnAllNodesAsync(RespireHotKeysOptions options, CancellationToken cancellationToken = default);
     /// <summary>Returns each currently discovered node's owned snapshots; null means no session on that node.</summary>
     /// <remarks>Does not require AllowAdmin; server ACLs still apply. Discovery can change between calls.
-    /// Compare endpoints; results are not a global ranking.</remarks>
+    /// Compare endpoints; results are not a global ranking. Snapshot arrays preserve the server's outer array
+    /// without assuming that future servers always return exactly one element.</remarks>
     ValueTask<RespireServerResult<RespireHotKeysSnapshot[]?>[]> GetHotKeysOnAllNodesAsync(CancellationToken cancellationToken = default);
     /// <summary>Stops tracking on every currently discovered node. Requires AllowAdmin; false means no active session.</summary>
     ValueTask<RespireServerResult<bool>[]> StopHotKeysOnAllNodesAsync(CancellationToken cancellationToken = default);
@@ -96,7 +97,8 @@ public sealed class RespireHotKeysTracker
     }
 
     /// <summary>Returns owned snapshot maps in server order, or null when no session exists. Does not stop tracking.</summary>
-    /// <remarks>Does not require AllowAdmin; server ACLs still apply.</remarks>
+    /// <remarks>Does not require AllowAdmin; server ACLs still apply. The array preserves the server's outer
+    /// reply without assuming that future servers always return exactly one snapshot.</remarks>
     public async ValueTask<RespireHotKeysSnapshot[]?> GetAsync(CancellationToken cancellationToken = default)
     {
         using var reply = await SendAsync("HOTKEYS GET", new Cmd(HotKeysCommands.Get), cancellationToken).ConfigureAwait(false);

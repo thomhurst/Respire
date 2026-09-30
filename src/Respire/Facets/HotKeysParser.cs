@@ -105,6 +105,8 @@ internal static class HotKeysParser
 
     private static ReadOnlySpan<RespValue> RankedPairs(in RespValue value)
     {
+        // Redis 8.6 emits flat ranking arrays in both RESP2 and RESP3; real-server tests
+        // cover both protocols. Only the surrounding snapshot changes to a RESP3 map.
         var pairs = Array(in value);
         if (pairs.Length % 2 != 0) throw new RespireProtocolException("HOTKEYS ranking has an incomplete key/measurement pair.");
         return pairs;
