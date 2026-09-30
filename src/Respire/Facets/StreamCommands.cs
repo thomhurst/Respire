@@ -261,6 +261,7 @@ public readonly record struct StreamAddOptions
     public long? Limit { get; init; }
 
     /// <summary>Gets whether trimming may be approximate. Defaults to true.</summary>
+    /// <remarks>Unlike XADD, <see cref="StreamTrimOptions.Approximate"/> defaults to false for XTRIM.</remarks>
     public bool ApproximateTrim
     {
         get => _approximateTrim ?? true;

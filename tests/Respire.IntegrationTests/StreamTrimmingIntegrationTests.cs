@@ -37,10 +37,11 @@ public class StreamTrimmingIntegrationTests(RedisTestContainer fixture)
                 var add = new StreamAddOptions { Id = "301-0", MaxLength = minId ? null : 200,
                     MinId = minId ? new RespireStreamId("101-0") : (RespireStreamId?)null, ApproximateTrim = approximate,
                     Limit = approximate ? 1000 : null };
-                long removed;
+                long removed, countBeforeTrim;
                 if (surface == 0)
                 {
                     (await view.Streams.AddAsync(key, add, ("value", 301))).Should().Be((RespireStreamId)"301-0");
+                    countBeforeTrim = await view.Streams.CountAsync(key);
                     removed = await view.Streams.TrimAsync(key, trim);
                 }
                 else
@@ -49,19 +50,21 @@ public class StreamTrimmingIntegrationTests(RedisTestContainer fixture)
                     await using var transaction = surface == 2 ? view.CreateTransaction() : null;
                     IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
                     var added = queue.Streams.Add(key, add, ("value", 301));
+                    var count = queue.Streams.Count(key);
                     var trimmed = queue.Streams.Trim(key, trim);
                     if (transaction is not null) await transaction.CommitAsync();
                     else await batch!.ExecuteAsync();
                     added.Result.Should().Be((RespireStreamId)"301-0");
                     removed = trimmed.Result;
+                    countBeforeTrim = count.Result;
                 }
                 var entries = await view.Streams.RangeAsync(key);
+                removed.Should().Be(countBeforeTrim - entries.Length);
                 if (approximate)
                 {
                     entries.Length.Should().BeInRange(minId ? 151 : 150, 301);
                     // XADD has already removed at least one complete node.
                     entries.Length.Should().BeLessThan(301);
-                    removed.Should().BeGreaterThanOrEqualTo(0);
                 }
                 else
                 {

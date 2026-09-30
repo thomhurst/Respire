@@ -12,6 +12,7 @@ public readonly record struct StreamTrimOptions
     public RespireStreamId? MinId { get; init; }
 
     /// <summary>Allows whole-node trimming that can retain extra entries. Defaults to false.</summary>
+    /// <remarks>Unlike XTRIM, <see cref="StreamAddOptions.ApproximateTrim"/> defaults to true for XADD.</remarks>
     public bool Approximate { get; init; }
 
     /// <summary>Limits trimming work; requires approximate trimming and Redis 6.2+. Zero disables the limit.</summary>

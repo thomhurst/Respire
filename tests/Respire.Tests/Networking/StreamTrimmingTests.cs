@@ -79,6 +79,7 @@ public class StreamTrimmingTests
             new() { MaxLength = 1, Approximate = true, Limit = -1 },
             new() { MinId = "$" }, new() { MinId = "-" }, new() { MinId = "+" },
             new() { MinId = "1-*" }, new() { MinId = "18446744073709551616-0" },
+            new() { MinId = "-1" }, new() { MinId = "1-" },
         ];
         foreach (var trim in invalid)
         {
@@ -108,5 +109,7 @@ public class StreamTrimmingTests
         await Assert.That(original == original with { MinId = "2-0" }).IsFalse();
         await Assert.That(original == original with { Limit = 11 }).IsFalse();
         await Assert.That(original == original with { ApproximateTrim = true, CreateStream = true }).IsTrue();
+        await Assert.That(default(StreamAddOptions).ApproximateTrim).IsTrue();
+        await Assert.That(default(StreamTrimOptions).Approximate).IsFalse();
     }
 }
