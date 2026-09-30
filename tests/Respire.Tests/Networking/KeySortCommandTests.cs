@@ -11,6 +11,13 @@ namespace Respire.Tests.Networking;
 public class KeySortCommandTests
 {
     [Test]
+    [Arguments("{}", false)]
+    [Arguments("{a", false)]
+    [Arguments("a}{b}", true)]
+    [Arguments("{a}}", true)]
+    [Arguments("{a?}", false)]
+    [Arguments("{a[}", false)]
+    [Arguments("{a\\}", false)]
     [Arguments("tenant:{sort}:weight:*", true)]
     [Arguments("tenant->{sort}:weight:*->rank", true)]
     [Arguments("tenant:{sort}:weight:*->", true)]
@@ -202,6 +209,9 @@ public class KeySortCommandTests
         }
         await Assert.That(async () => await view.Keys.SortStoreAsync("{a}:key", "{b}:key")).Throws<RespireServerException>();
         await Assert.That(async () => await view.Keys.SortAsync("{a}:key", options)).Throws<RespireServerException>();
+        var readOnlyError = await Assert.That(async () => await view.Keys.SortAsync("{a}:key", options with { ReadOnly = true }))
+            .Throws<RespireServerException>();
+        await Assert.That(readOnlyError!.CommandName).IsEqualTo("SORT_RO");
         await Assert.That(async () => await view.Keys.SortAsync("{a}:key", new RespireSortOptions { By = "weight:*" })).Throws<NotSupportedException>();
         await Assert.That(async () => await view.Keys.MoveAsync("key", 1)).Throws<NotSupportedException>();
         await Assert.That(async () => await client.Keys.RandomAsync()).Throws<NotSupportedException>();

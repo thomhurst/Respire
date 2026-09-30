@@ -650,6 +650,8 @@ public class ClusterReadOnlyTests
         try
         {
             socket.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+            // .NET enables SO_REUSEADDR inside Unix Bind; clear it after binding too.
+            socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, false);
             port = ((IPEndPoint)socket.LocalEndPoint!).Port;
             return socket;
         }

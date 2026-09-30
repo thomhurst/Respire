@@ -98,7 +98,7 @@ internal sealed partial class KeyCommands
         if (options?.By is { } by)
         {
             arguments[index++] = "BY";
-            arguments[index++] = SortPattern(client, source, by, isGet: false);
+            arguments[index++] = SortPattern(client, source, by, operation, isGet: false);
         }
         if (options?.Limit is { } slice)
         {
@@ -111,7 +111,7 @@ internal sealed partial class KeyCommands
             foreach (var pattern in options.Get.Span)
             {
                 arguments[index++] = "GET";
-                arguments[index++] = SortPattern(client, source, pattern, isGet: true);
+                arguments[index++] = SortPattern(client, source, pattern, operation, isGet: true);
             }
         }
         arguments[index++] = options?.Descending == true ? "DESC" : "ASC";
@@ -119,14 +119,14 @@ internal sealed partial class KeyCommands
         if (destination is { } target)
         {
             var resolved = client.Key(in target);
-            ValidateSortSlot(client, source, resolved);
+            ValidateSortSlot(client, source, resolved, operation);
             arguments[index++] = "STORE";
             arguments[index++] = resolved;
         }
         return (operation, new CmdN(options?.ReadOnly == true ? Verbs.SortRo : Verbs.Sort, arguments));
     }
 
-    private static RespireValue SortPattern(RespireClient client, RespireValue source, RespireKey pattern, bool isGet)
+    private static RespireValue SortPattern(RespireClient client, RespireValue source, RespireKey pattern, string operation, bool isGet)
     {
         var bytes = new byte[pattern.WireLength];
         pattern.AsValue().WriteWirePayload(bytes);
@@ -136,7 +136,7 @@ internal sealed partial class KeyCommands
         var prefix = client.KeyPrefixBytes;
         if (prefix.Contains((byte)'*') || prefix.IndexOf("->"u8) >= 0 || prefix.Contains((byte)0))
             throw new NotSupportedException("SORT external patterns cannot be used with a key prefix containing *, ->, or NUL.");
-        byte[] resolved = [.. prefix, .. bytes];
+        byte[] resolved = prefix.IsEmpty ? bytes : [.. prefix, .. bytes];
         if (client.Core.Cluster is not null)
         {
             // Redis interprets -> as a field separator only after the first wildcard.
@@ -144,14 +144,14 @@ internal sealed partial class KeyCommands
             if (resolved.Contains((byte)0) || !ClusterHash.TryGetFixedPatternSlot(resolved, out var slot))
                 throw new NotSupportedException("Cluster SORT external patterns require a fixed nonempty hash tag before the wildcard (Redis 7.4+).");
             if (source.AsKey().ClusterSlot != slot)
-                throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", "SORT");
+                throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", operation);
         }
         return resolved;
     }
 
-    private static void ValidateSortSlot(RespireClient client, RespireValue source, RespireValue other)
+    private static void ValidateSortSlot(RespireClient client, RespireValue source, RespireValue other, string operation)
     {
         if (client.Core.Cluster is not null && source.AsKey().ClusterSlot != other.AsKey().ClusterSlot)
-            throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", "SORT");
+            throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", operation);
     }
 }

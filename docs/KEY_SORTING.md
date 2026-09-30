@@ -88,3 +88,8 @@ References: Redis [SORT](https://redis.io/docs/latest/commands/sort/),
 [SORT_RO](https://redis.io/docs/latest/commands/sort_ro/),
 [RANDOMKEY](https://redis.io/docs/latest/commands/randomkey/), and
 [MOVE](https://redis.io/docs/latest/commands/move/).
+
+Slot mismatches detected before sending use `RespireServerException` with code `CROSSSLOT`,
+matching the other multi-key facets. Such failures are local validation, not Redis replies;
+`CommandName` identifies `SORT` or `SORT_RO`. Unsupported server versions still surface the
+server's error rather than triggering an implicit command downgrade.
