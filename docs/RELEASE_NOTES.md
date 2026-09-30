@@ -58,7 +58,7 @@
 ### In-memory testing foundation
 
 - `Respire.Testing` provides a disposable pipe-backed RESP server for real client tests
-  without sockets or Docker. It supports a documented strings/keys/hashes/lists/sets subset, atomic commands,
+  without sockets or Docker. It supports a documented strings/keys/hashes/lists/sets/sorted-sets subset, atomic commands,
   binary data, and a controllable expiry clock. Unsupported features fail explicitly.
   The internal stream seam keeps the ordinary TCP path direct. See the
   [testing guide](../website/docs/guides/in-memory-testing.md) for supported commands and limits.

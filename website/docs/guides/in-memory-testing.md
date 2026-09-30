@@ -1,6 +1,6 @@
 ---
 title: In-memory testing
-description: Exercise real Respire client code against a deterministic strings, keys, hashes, lists, and sets server without Docker.
+description: Exercise real Respire client code against a deterministic strings, keys, hashes, lists, sets, and sorted sets server without Docker.
 ---
 
 # In-memory testing
@@ -46,7 +46,8 @@ make future connections throw a historical error.
 ## Supported subset
 
 This is a test double with explicit limits, not a Redis implementation or a compatibility
-oracle. Unsupported commands and options return server errors containing the command name.
+oracle. Unsupported commands return server errors containing the command name.
+Unsupported options also fail explicitly instead of silently changing behavior.
 An error consumes exactly one response slot, so later valid commands still work.
 
 | Area | Supported commands and options |
@@ -56,6 +57,7 @@ An error consumes exactly one response slot, so later valid commands still work.
 | Hashes | `HSET`, `HSETNX`, `HMSET`, `HGET`, `HMGET`, `HGETALL`, `HDEL`, `HEXISTS`, `HLEN`, `HKEYS`, `HVALS`, `HSTRLEN`, `HINCRBY` |
 | Lists | `LPUSH`, `RPUSH`, `LPUSHX`, `RPUSHX`, `LPOP`/`RPOP` with optional count, `LLEN`, `LRANGE`, `LINDEX`, `LSET`, `LTRIM`, `LREM`, `LINSERT BEFORE/AFTER`, `LPOS RANK/COUNT/MAXLEN` |
 | Sets | `SADD`, `SREM`, `SMEMBERS`, `SCARD`, `SISMEMBER`, `SMISMEMBER`, `SMOVE`, `SINTER`, `SUNION`, `SDIFF`, their `STORE` forms, and `SINTERCARD` with `LIMIT` |
+| Sorted sets | `ZADD` with `NX`, `XX`, `GT`, `LT`, `CH`, `INCR`; `ZINCRBY`, `ZREM`, `ZCARD`, `ZSCORE`, `ZMSCORE`, `ZRANK`, `ZREVRANK`, `ZCOUNT`, `ZLEXCOUNT`; `ZRANGE` with `BYSCORE`/`BYLEX`, `REV`, `LIMIT`, `WITHSCORES`; legacy `ZREVRANGE`, `ZRANGEBYSCORE`, `ZREVRANGEBYSCORE`, `ZRANGEBYLEX`, `ZREVRANGEBYLEX`; `ZPOPMIN`, `ZPOPMAX`; `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`, `ZREMRANGEBYLEX`; `ZINTERCARD` with `LIMIT` |
 | Keys | `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `PERSIST` |
 | Expiry | `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT` with `NX`, `XX`, `GT`, `LT`; `TTL`, `PTTL`, `EXPIRETIME`, `PEXPIRETIME` |
 | Connection | `HELLO 2/3` without authentication, `PING`, `ECHO`, `SELECT 0`, `CLIENT ID`, `CLIENT GETNAME`, `CLIENT SETNAME` |
@@ -69,7 +71,7 @@ Hash fields and values preserve binary bytes. `HSET` counts newly added fields, 
 duplicate fields within one command only once; `HMGET` preserves requested field order and
 nulls. `HGETALL` emits a RESP2 array or RESP3 map. Hash enumeration order is unspecified.
 `HINCRBY` uses checked signed 64-bit arithmetic. Hash mutations retain key-level TTL; removing
-the last field deletes the key and its TTL. String operations reject hashes, lists, and sets with `WRONGTYPE`,
+the last field deletes the key and its TTL. String operations reject hashes, lists, sets, and sorted sets with `WRONGTYPE`,
 except `MGET` returns null for non-string keys and ordinary `SET`/`MSET` may replace their type.
 Failed operations preserve existing fields and TTL. Hash-field expiry, `HINCRBYFLOAT`,
 `HRANDFIELD`, and `HSCAN` are explicitly unsupported.
@@ -141,8 +143,46 @@ Blocking pops, multi-key pops, and moves (`BLPOP`, `BRPOP`, `LMPOP`, `BLMPOP`, `
 `BLMOVE`, `RPOPLPUSH`, and `BRPOPLPUSH`) remain explicitly unsupported. Use the nonblocking
 typed overloads without `waitFor`; a populated list does not make a blocking command supported.
 
+Sorted sets preserve binary members and order equal scores by unsigned member bytes. Rank
+ranges have inclusive endpoints and support negative indexes; score and lex ranges support
+exclusive and infinite bounds. Lex ranges require equal scores for meaningful Redis parity.
+`REV` reverses both score order and tie order; score/lex bounds then appear maximum first.
+`LIMIT` applies to score/lex ranges; a negative offset yields no entries, and a negative count
+means all remaining entries. `WITHSCORES` cannot combine with `BYLEX`. Repeated `LIMIT`
+uses its final values. `ZINTERCARD` validates every input type before taking an empty-input
+shortcut, accepts both set and sorted-set inputs, and treats zero `LIMIT` as unlimited.
+
+Scores accept decimal/exponent and hexadecimal floating-point input, including subnormal
+values and explicit infinities. NaN, malformed numbers, and numeric overflow or underflow
+to zero are rejected before mutation. Adding finite scores can produce infinity;
+an increment producing NaN fails without changing the member. `ZADD CH` counts successful
+additions and score changes, including successive changes to a repeated member. Mutations
+retain expiry; removing the final member deletes the key and its expiry. Missing scores/ranks
+are null, and missing ranges/pops are empty arrays. RESP3 scored ranges and counted pops
+contain nested member/score pairs; a pop with no count remains flat on both protocols.
+
+```csharp
+using Respire.Testing;
+
+await using var server = new RespireFakeServer();
+await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+await client.SortedSets.AddAsync("scores", ("Ada", 10), ("Grace", 20));
+using var batch = client.CreateBatch();
+var count = batch.SortedSets.Count("scores");
+var members = batch.SortedSets.Range("scores", descending: true);
+await batch.ExecuteAsync();
+if (count.Result != 2 || members.Result[0] != "Grace")
+    throw new InvalidOperationException("Sorted-set batch results did not match.");
+```
+
+Sorted-set random sampling (`ZRANDMEMBER`), scanning (`ZSCAN`), blocking/multi-key pops
+(`BZPOPMIN`, `BZPOPMAX`, `ZMPOP`, `BZMPOP`), aggregate result/store commands
+(`ZUNION`, `ZINTER`, `ZDIFF` and their `STORE` forms), `ZRANGESTORE`, and the newer
+`ZRANK`/`ZREVRANK WITHSCORE` option are explicitly unsupported. Sorting is performed
+on demand for bounded test data; it does not model Redis's indexing or performance.
+
 Only database zero and standalone operation are supported. Authentication, TLS, Cluster,
-Sentinel, scripts/functions, client-side tracking, sorted sets, pub/sub, transactions,
+Sentinel, scripts/functions, client-side tracking, pub/sub, transactions,
 persistence and administrative diagnostics are not simulated. Unsupported handshake features
 fail initialization. Do not enable these modes and infer production behavior from the fake.
 Individual RESP requests are limited to 16 MiB; larger requests close their connection
@@ -180,6 +220,9 @@ Hash behavior follows [HSET](https://redis.io/docs/latest/commands/hset/),
 [SINTERCARD](https://redis.io/docs/latest/commands/sintercard/).
 List option and reply behavior follows [Redis LPOS](https://redis.io/docs/latest/commands/lpos/)
 and the [Redis list command implementation](https://github.com/redis/redis/blob/7.2/src/t_list.c).
+Sorted-set behavior follows [ZADD](https://redis.io/docs/latest/commands/zadd/),
+[ZRANGE](https://redis.io/docs/latest/commands/zrange/), and the
+[Redis sorted-set implementation](https://github.com/redis/redis/blob/7.2/src/t_zset.c).
 Run real-server integration tests for version compatibility, unsupported commands, and
 operational behavior. Remaining collections and pub/sub/transactions remain tracked in
 [#540](https://github.com/thomhurst/Respire/issues/540) and

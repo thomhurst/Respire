@@ -593,7 +593,7 @@ public sealed class CartService([FromKeyedServices("cache")] IRespireClient redi
 - All facets and the client are interfaces (`IRespireClient`, `IHashCommands`, …);
   implementations sealed. Mocking works with any framework.
 - `Respire.Testing` connects the real client to an in-memory RESP server for a documented
-  strings/keys/hashes/lists/sets subset and controllable expiry. Scoped fault rules inject latency, gated waits,
+  strings/keys/hashes/lists/sets/sorted-sets subset and controllable expiry. Scoped fault rules inject latency, gated waits,
   disconnects, LOADING, READONLY, and MOVED through the real transport. Before/after execution
   boundaries and observed counts make ambiguous mutation acceptance testable. Reset releases
   waits without clearing data; shutdown aborts connections before releasing rules. The fake
