@@ -41,6 +41,15 @@ public readonly partial struct RespireChannel : IEquatable<RespireChannel>
     /// <remarks>Kind is not part of equality or hashing; literal and pattern values with the same bytes compare equal.</remarks>
     public SubscriptionKind Kind { get; }
 
+    /// <summary>Whether this is a server-owned notification descriptor that cannot be published.</summary>
+    public bool IsNotification => RoutingScope != RespireChannelRoutingScope.Global;
+    /// <summary>The explicit routing scope; arbitrary reserved-looking bytes remain ordinary channels.</summary>
+    public RespireChannelRoutingScope RoutingScope { get; }
+    /// <summary>The physical key's slot for KeyOwner descriptors; null otherwise.</summary>
+    public int? RoutingSlot { get; }
+    /// <summary>The notification database, or null for all databases/ordinary channels.</summary>
+    public int? NotificationDatabase { get; }
+
     /// <summary>The Redis Cluster slot computed from the raw bytes, including hash tags.</summary>
     public int ClusterSlot => ClusterHash.GetSlot(_bytes.AsSpan());
 

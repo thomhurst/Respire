@@ -13,6 +13,8 @@ This is Redis's server-assisted cache—not a second application caching abstrac
 the keys Respire reads, pushes only invalidations when those keys change, and Respire evicts them.
 The next caller refreshes lazily; Redis never pushes replacement values.
 
+Application [keyspace notifications](../guides/keyspace-notifications.md) are a separate Pub/Sub feature. They do not configure or replace this `CLIENT TRACKING` cache.
+
 ## Enable it
 
 Enable caching once on the client:

@@ -17,15 +17,6 @@ public enum RespireChannelRoutingScope
 
 public readonly partial struct RespireChannel
 {
-    /// <summary>Whether this is a server-owned notification descriptor that cannot be published.</summary>
-    public bool IsNotification => RoutingScope != RespireChannelRoutingScope.Global;
-    /// <summary>The explicit routing scope; arbitrary reserved-looking bytes remain ordinary channels.</summary>
-    public RespireChannelRoutingScope RoutingScope { get; }
-    /// <summary>The physical key's slot for KeyOwner descriptors; null otherwise.</summary>
-    public int? RoutingSlot { get; }
-    /// <summary>The notification database, or null for all databases/ordinary channels.</summary>
-    public int? NotificationDatabase { get; }
-
     /// <summary>All events for one physical key in an explicit database.</summary>
     public static RespireChannel KeySpaceSingleKey(RespireKey key, int database)
         => KeyNotification("keyspace", key, database);
