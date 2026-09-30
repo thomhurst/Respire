@@ -61,36 +61,7 @@ public sealed partial class RespireClient : IRespireClient
     public static async ValueTask<RespireClient> ConnectAsync(RespireOptions options, CancellationToken cancellationToken = default)
     {
         options = (options ?? throw new ArgumentNullException(nameof(options))).ValidateAndSnapshot();
-        if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
-            return await ConnectPrimaryAsync(options, cancellationToken).ConfigureAwait(false);
-        return await SentinelResolver.ResolveAndConnectPrimaryAsync(
-            options,
-            ConnectSentinelPrimaryAsync,
-            cancellationToken).ConfigureAwait(false);
-    }
-
-    private static async ValueTask<RespireClient> ConnectSentinelPrimaryAsync(
-        RespireOptions options, CancellationToken cancellationToken)
-    {
-        var client = await ConnectPrimaryAsync(options, cancellationToken).ConfigureAwait(false);
-        try
-        {
-            // Validate on a data connection owned by the candidate before exposing it.
-            using var reply = await client.SendAsync("ROLE", new Cmd(Verbs.Role), cancellationToken).ConfigureAwait(false);
-            if (reply.Type != RespDataType.Array)
-                throw new RespireProtocolException("Sentinel primary ROLE must return an array.");
-            var role = reply.AsArray();
-            if (role.Length < 3 || role[0].Type is not (RespDataType.BulkString or RespDataType.SimpleString)
-                || role[0].AsString() != "master" || role[1].Type != RespDataType.Integer
-                || role[2].Type != RespDataType.Array)
-                throw new RespireConnectionException("Sentinel candidate did not confirm a valid primary ROLE.");
-            return client;
-        }
-        catch
-        {
-            await client.DisposeAsync().ConfigureAwait(false);
-            throw;
-        }
+        return await ConnectPrimaryAsync(options, cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask<RespireClient> ConnectPrimaryAsync(
@@ -199,13 +170,6 @@ public sealed partial class RespireClient : IRespireClient
     {
         ArgumentNullException.ThrowIfNull(options);
         options = options.ValidateAndSnapshot();
-        if (!string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
-        {
-            throw new RespireConfigurationException(
-                "Redis Sentinel discovery requires RespireClient.ConnectAsync because it must query Sentinel " +
-                "before Redis connections are created. Lazy Sentinel failover is not supported yet.");
-        }
-
         return new RespireClient(new ClientCore(options), keyPrefix: null, ownsCore: true);
     }
 
@@ -214,7 +178,7 @@ public sealed partial class RespireClient : IRespireClient
 
     /// <inheritdoc/>
     public bool IsConnected
-        => !_core.Disposed && (_core.Cluster?.IsConnected ?? _core.Multiplexer.IsConnected);
+        => !_core.Disposed && (_core.Sentinel?.IsConnected ?? _core.Cluster?.IsConnected ?? _core.Multiplexer.IsConnected);
 
     /// <summary>Captures owned Cluster retirement diagnostics, or null for a non-Cluster client.</summary>
     /// <remarks>Performs no network I/O. Prefix views share the underlying router's state.
@@ -1121,7 +1085,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         ObjectDisposedException.ThrowIf(_core.Disposed, this);
         var cluster = _core.Cluster;
-        var pool = cluster is null ? _core.DedicatedPool
+        var pool = cluster is null ? await _core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false)
             : await cluster.GetDedicatedPoolAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
         // The owning pool must follow the lease through commit/disposal, even if topology changes.
         RespireConnection connection;
@@ -1662,7 +1626,7 @@ public sealed partial class RespireClient : IRespireClient
                 operation, cluster, command, cancellationToken, onRedirect).ConfigureAwait(false);
         }
 
-        await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         var connection = core.Multiplexer.GetConnection();
         var response = await SendTrackedOnConnectionAsync(
             operation, connection, command, cancellationToken, sendAsking: false).ConfigureAwait(false);
@@ -1852,7 +1816,7 @@ public sealed partial class RespireClient : IRespireClient
             if (cache.ReuseHashFields && operation == "HMGET" && query.Query.ArgumentCount >= 2
                 && cache.CanTrack(query.PrimaryKey))
                 return CachedHashGetManyAsync(cache, query, cancellationToken);
-            if (cache.TryGet(in query, out var cached))
+            if ((core.Sentinel is null || core.Sentinel.IsConnected) && cache.TryGet(in query, out var cached))
             {
                 return new ValueTask<RespValue>(cached);
             }
@@ -1871,7 +1835,7 @@ public sealed partial class RespireClient : IRespireClient
                 cancellationToken,
                 noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect));
         }
-        else if (!core.Multiplexer.IsInitialized)
+        else if (core.Sentinel is not null || !core.Multiplexer.IsInitialized)
         {
             response = SendAfterConnectAsync(operation, command, cancellationToken);
         }
@@ -2036,7 +2000,7 @@ public sealed partial class RespireClient : IRespireClient
                     .ConfigureAwait(false);
             }
 
-            await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
 
             var connection = core.Multiplexer.GetConnection();
             return await SendOnConnectionAsync(
@@ -2260,7 +2224,7 @@ public sealed partial class RespireClient : IRespireClient
                 operation, cluster, command, cancellationToken, storedProcedureName);
         }
 
-        if (!core.Multiplexer.IsInitialized)
+        if (core.Sentinel is not null || !core.Multiplexer.IsInitialized)
         {
             return SendFireAndForgetAfterConnectAsync(
                 operation, command, cancellationToken, storedProcedureName);
@@ -2294,7 +2258,7 @@ public sealed partial class RespireClient : IRespireClient
                 return;
             }
 
-            await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
             var connection = core.Multiplexer.GetConnection();
             if (RespireCommand.MayCloseWithoutReply(operation))
             {
@@ -2668,13 +2632,15 @@ public sealed partial class RespireClient : IRespireClient
                 core.Options.Database,
                 storedProcedureName: storedProcedureName);
             RespireConnection? connection = null;
+            DedicatedConnectionPool? pool = null;
             var returned = false;
             try
             {
-                connection = await core.DedicatedPool.RentAsync(cancellationToken).ConfigureAwait(false);
+                pool = await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
+                connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
                 var response = await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken)
                     .ConfigureAwait(false);
-                core.DedicatedPool.Return(connection);
+                pool.Return(connection);
                 returned = true;
                 if (response.IsError)
                 {
@@ -2699,7 +2665,7 @@ public sealed partial class RespireClient : IRespireClient
                 if (connection is not null && !returned)
                 {
                     // The connection may still be mid-block server-side; don't return it to the pool.
-                    await core.DedicatedPool.DiscardAsync(connection).ConfigureAwait(false);
+                    await pool!.DiscardAsync(connection).ConfigureAwait(false);
                 }
 
                 if (timeoutError is not null) throw timeoutError;
@@ -2833,7 +2799,7 @@ public sealed partial class RespireClient : IRespireClient
             return await cluster.GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
         }
 
-        await _core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        await _core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         return _core.Multiplexer.GetConnection();
     }
 
@@ -2852,6 +2818,7 @@ public sealed partial class RespireClient : IRespireClient
             return true;
         }
 
+        await _core.EnsureConnectedAsync(CancellationToken.None).ConfigureAwait(false);
         var multiplexer = _core.Multiplexer;
         if (multiplexer.IsReliableCorrectionOrderingUnavailable)
         {
@@ -2886,6 +2853,8 @@ public sealed partial class RespireClient : IRespireClient
             // Deferred until the key selects a node in StartTrackedScriptExecutionAsync.
             return;
         }
+
+        await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
 
         if (core.Multiplexer.HasReliableCorrectionOrdering)
         {
@@ -2997,7 +2966,7 @@ public sealed partial class RespireClient : IRespireClient
         RespireConnection? connection = null;
         try
         {
-            await core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
             connection = core.Multiplexer.GetConnection();
             var result = await ExecuteScriptOnConnectionCoreAsync(connection, script, tail, cancellationToken)
                 .ConfigureAwait(false);
@@ -3045,6 +3014,9 @@ public sealed partial class RespireClient : IRespireClient
             }
             else
             {
+                await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                if (core.Sentinel is not null)
+                    await core.Multiplexer.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
                 if (!core.Multiplexer.HasReliableCorrectionOrdering)
                 {
                     throw new InvalidOperationException(
@@ -3702,6 +3674,7 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         if (!RespireTelemetry.IsEnabled
             && core.Cluster is null
+            && core.Sentinel is null
             && core.Multiplexer.IsInitialized
             && (core.ClientCache is null
                 || !ClientSideCacheCoordinator.CanCacheOperation(operation)))
@@ -3801,6 +3774,7 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         if (!RespireTelemetry.IsEnabled
             && core.Cluster is null
+            && core.Sentinel is null
             && core.Multiplexer.IsInitialized
             && (core.ClientCache is null
                 || !ClientSideCacheCoordinator.CanCacheOperation(operation)))

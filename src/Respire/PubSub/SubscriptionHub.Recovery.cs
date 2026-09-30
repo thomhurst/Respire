@@ -19,14 +19,14 @@ internal sealed partial class SubscriptionHub
     private RespireConnection? GetConnectionForCaller(bool watch)
     {
         if (!watch || core.Options.ReconnectPolicy is null)
-            return _connection is { IsConnected: true } existing ? existing : null;
+            return _connection is { IsAcceptingCommands: true } existing ? existing : null;
         lock (_reconnectStateGate)
         {
             if (_recoveryExhaustion is { } exhausted) throw exhausted;
             if (_configuredRecoveryPhase == ConfiguredRecoveryPhase.Recovering)
                 throw new RespireConnectionException("Pub/sub recovery is in progress. Subscribe again after recovery completes.");
             if (_configuredConnection is not { } connection) return null;
-            if (!ReferenceEquals(_connection, connection) || !connection.IsConnected)
+            if (!ReferenceEquals(_connection, connection) || !connection.IsAcceptingCommands)
                 throw new RespireConnectionException("Pub/sub connection closed. Automatic recovery must complete before subscribing.");
             // Return the same connection whose recovery ownership was checked. If it closes
             // immediately afterward, the caller fails on that socket; only its watcher may

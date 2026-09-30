@@ -24,10 +24,13 @@ internal sealed class ClientCore : IAsyncDisposable
     private bool _publishingState;
     private IDisposable? _threadPoolMonitor;
 
-    public readonly RespireConnectionMultiplexer Multiplexer;
+    private readonly RespireConnectionMultiplexer _multiplexer;
+    public RespireConnectionMultiplexer Multiplexer => Sentinel?.Current?.Multiplexer ?? _multiplexer;
     public readonly RespireOptions Options;
     public readonly ILogger? Logger;
-    public readonly DedicatedConnectionPool DedicatedPool;
+    private readonly DedicatedConnectionPool _dedicatedPool;
+    public DedicatedConnectionPool DedicatedPool => Sentinel?.Current?.Pool ?? _dedicatedPool;
+    internal readonly SentinelRouter? Sentinel;
     public readonly ClusterRouter? Cluster;
     public readonly ClientSideCacheCoordinator? ClientCache;
     public volatile bool Disposed;
@@ -44,13 +47,14 @@ internal sealed class ClientCore : IAsyncDisposable
         var connectionOptions = options.ToConnectionOptions(
             pushHandler,
             enableClientTracking: ClientCache is not null);
-        Multiplexer = RespireConnectionMultiplexer.Create(
+        _multiplexer = RespireConnectionMultiplexer.Create(
             endpoint.Host, endpoint.Port, options.Connections, connectionOptions, Logger);
-        DedicatedPool = new DedicatedConnectionPool(
+        _dedicatedPool = new DedicatedConnectionPool(
             endpoint.Host, endpoint.Port, options.ToConnectionOptions(), Logger, NotifyRecoveryStateChanged);
         Cluster = options.UseCluster
             ? new ClusterRouter(options, Multiplexer, connectionOptions)
             : null;
+        Sentinel = string.IsNullOrWhiteSpace(options.SentinelPrimaryName) ? null : new SentinelRouter(this);
         if (Cluster is { } cluster)
         {
             cluster.SlotStateChanged += NotifyCommandStateChanged;
@@ -58,7 +62,7 @@ internal sealed class ClientCore : IAsyncDisposable
             cluster.DiscoveryStateChanged += NotifyRecoveryStateChanged;
             cluster.NodeRetired += NotifyCommandNodeRetired;
         }
-        else
+        else if (Sentinel is null)
         {
             Multiplexer.SlotStateChanged += NotifyCommandStateChanged;
         }
@@ -67,9 +71,19 @@ internal sealed class ClientCore : IAsyncDisposable
     }
 
     public ValueTask EnsureConnectedAsync(CancellationToken cancellationToken)
-        => Cluster is { } cluster
+        => Sentinel is not null
+            ? EnsureSentinelConnectedAsync(cancellationToken)
+            : Cluster is { } cluster
             ? cluster.EnsureConnectedAsync(cancellationToken, discovery: null)
             : Multiplexer.EnsureConnectedAsync(cancellationToken);
+
+    private async ValueTask EnsureSentinelConnectedAsync(CancellationToken cancellationToken)
+        => await Sentinel!.GetGenerationAsync(cancellationToken).ConfigureAwait(false);
+
+    internal async ValueTask<DedicatedConnectionPool> GetDedicatedPoolAsync(CancellationToken cancellationToken)
+        => Sentinel is { } sentinel
+            ? (await sentinel.GetGenerationAsync(cancellationToken).ConfigureAwait(false)).Pool
+            : _dedicatedPool;
 
     public event Action<RespireConnectionStateChange>? ConnectionStateChanged;
 
@@ -363,7 +377,7 @@ internal sealed class ClientCore : IAsyncDisposable
         ClientCache?.StopInvalidationObservers();
         ClientCache?.StopSharedReads();
         ClientCache?.Clear();
-        var commandEndpoints = Cluster?.GetActiveEndpoints() ?? [Options.PrimaryEndpoint];
+        var commandEndpoints = Cluster?.GetActiveEndpoints() ?? [new RespireEndpoint(Multiplexer.Host, Multiplexer.Port)];
         lock (_stateGate)
         {
             _subscriptionState = RespireConnectionState.Disconnected;
@@ -397,7 +411,8 @@ internal sealed class ClientCore : IAsyncDisposable
             await hub.DisposeAsync().ConfigureAwait(false);
         }
 
-        await DedicatedPool.DisposeAsync().ConfigureAwait(false);
+        if (Sentinel is { } sentinel) await sentinel.DisposeAsync().ConfigureAwait(false);
+        await _dedicatedPool.DisposeAsync().ConfigureAwait(false);
         if (Cluster is { } cluster)
         {
             cluster.SlotStateChanged -= NotifyCommandStateChanged;
@@ -411,6 +426,6 @@ internal sealed class ClientCore : IAsyncDisposable
             Multiplexer.SlotStateChanged -= NotifyCommandStateChanged;
         }
 
-        await Multiplexer.DisposeAsync().ConfigureAwait(false);
+        await _multiplexer.DisposeAsync().ConfigureAwait(false);
     }
 }

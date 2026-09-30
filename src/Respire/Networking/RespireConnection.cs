@@ -92,6 +92,7 @@ internal sealed class RespireConnection : IAsyncDisposable
     private long _receiveDeadlineTimestamp;
     private int _responseTimeoutSuppressions;
     private Exception? _abortReason;
+    private readonly IConnectionGeneration? _generation;
 
     // Set by the multiplexer before publication; endpoint aliases may later change owners.
     internal Respire.Infrastructure.RespireConnectionMultiplexer? Multiplexer { get; set; }
@@ -99,7 +100,7 @@ internal sealed class RespireConnection : IAsyncDisposable
     public string Host { get; }
     public int Port { get; }
     public bool IsConnected => !Volatile.Read(ref _dead);
-    internal bool IsAcceptingCommands => IsConnected && !Volatile.Read(ref _retired);
+    internal bool IsAcceptingCommands => IsConnected && !Volatile.Read(ref _retired) && _generation?.IsRetired != true;
     internal bool DrainedSuccessfully => Volatile.Read(ref _drainedSuccessfully);
     internal string? NetworkPeerAddress => _networkPeerAddress;
     internal int? NetworkPeerPort => _networkPeerPort;
@@ -138,6 +139,7 @@ internal sealed class RespireConnection : IAsyncDisposable
         Host = host;
         Port = port;
         _logger = logger;
+        _generation = options.Generation;
         _pushHandler = options.PushHandler;
         _subscriptionConfirmationHandler = options.SubscriptionConfirmationHandler;
         _receiveBufferSize = options.ReceiveBufferSize;
@@ -260,6 +262,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         try
         {
             await connection.HandshakeAsync(options, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
+            if (options.Generation is { } generation)
+                await generation.ValidateAsync(connection, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -300,6 +304,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             await connection.HandshakeAsync(options, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
+            if (options.Generation is { } generation)
+                await generation.ValidateAsync(connection, cancellationToken).ConfigureAwait(false);
             return connection;
         }
         catch
@@ -1821,6 +1827,7 @@ internal sealed class RespireConnection : IAsyncDisposable
             Abort(closeError);
             try
             {
+                _generation?.ConnectionFailed(this);
                 PendingCommandsFailing?.Invoke();
             }
             catch (Exception ex)
@@ -1922,6 +1929,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         }
 
         MarkReplyReceived();
+
+        _generation?.ObserveResponse(this, source.CommandName, in value);
 
         if (ReferenceEquals(source, InflightRing.DiscardSentinel))
         {
@@ -2316,7 +2325,7 @@ internal sealed class RespireConnection : IAsyncDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void ThrowIfRetired()
     {
-        if (Volatile.Read(ref _retired))
+        if (Volatile.Read(ref _retired) || _generation?.IsRetired == true)
             throw new RespireConnectionRetiredException(Host, Port);
     }
 
@@ -2425,6 +2434,8 @@ internal delegate void RespirePushHandler(in RespValue value);
 internal sealed record RespireConnectionOptions
 {
     public static readonly RespireConnectionOptions Default = new();
+
+    internal IConnectionGeneration? Generation { get; init; }
 
     internal Func<string, int, CancellationToken, ValueTask<Stream>>? TestingStreamFactory { get; init; }
 
