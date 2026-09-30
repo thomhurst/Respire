@@ -267,8 +267,11 @@ and later callbacks continue. Use synchronous callbacks; `async void` exceptions
 captured by this API.
 
 Dispatch cost scales with the number of subscriptions: a global flush can schedule one worker
-per subscription. Registration and disposal publish new subscriber arrays; invalidation uses
-those immutable snapshots and queues callbacks outside the registration gate. A global flush
+per subscription. Registration and disposal copy the observer dictionary and the affected key's
+subscriber array, then publish an immutable snapshot. Per-key invalidation and global flushes read
+that snapshot without taking the registration gate or allocating a lookup snapshot. Registering
+or removing an observer costs O(observed keys + subscribers for that key); use long-lived
+subscriptions rather than registering on every request. A global flush
 still does work proportional to the subscriber count on its caller, which can hold other cache gates.
 There is no additional global subscription limit. Bound the number of live subscriptions in
 your application; the one-pending limit applies separately to each subscription. Only the most

@@ -4,7 +4,6 @@ internal sealed partial class ClientSideCacheCoordinator
 {
     private readonly Lock _observerGate = new();
     private Dictionary<RespireKey, RespireClientCacheInvalidationSubscription[]>? _invalidationObservers;
-    private RespireClientCacheInvalidationSubscription[] _observerSnapshot = [];
     private bool _observersStopped;
 
     public IRespireClientCacheInvalidationSubscription SubscribeInvalidations(
@@ -19,10 +18,13 @@ internal sealed partial class ClientSideCacheCoordinator
         lock (_observerGate)
         {
             ObjectDisposedException.ThrowIf(_observersStopped, this);
-            var observers = _invalidationObservers ??= new();
+            // Published dictionaries and their arrays are immutable. Only registration
+            // and removal copy them; invalidation never takes the registration gate.
+            Dictionary<RespireKey, RespireClientCacheInvalidationSubscription[]> observers =
+                _invalidationObservers is { } current ? new(current) : new();
             observers.TryGetValue(key, out var subscribers);
             observers[key] = subscribers is null ? [subscription] : [.. subscribers, subscription];
-            Volatile.Write(ref _observerSnapshot, [.. _observerSnapshot, subscription]);
+            Volatile.Write(ref _invalidationObservers, observers);
         }
         subscription.RegisterCancellation(cancellationToken);
         return subscription;
@@ -32,44 +34,55 @@ internal sealed partial class ClientSideCacheCoordinator
     {
         lock (_observerGate)
         {
-            if (_invalidationObservers is not { } observers
-                || !observers.TryGetValue(subscription.Key, out var subscribers)
-                || Array.IndexOf(subscribers, subscription) < 0) return;
+            if (_invalidationObservers is not { } current
+                || !current.TryGetValue(subscription.Key, out var subscribers)) return;
+            var index = Array.IndexOf(subscribers, subscription);
+            if (index < 0) return;
+            if (current.Count == 1 && subscribers.Length == 1)
+            {
+                Volatile.Write(ref _invalidationObservers, null);
+                return;
+            }
+            var observers = new Dictionary<RespireKey, RespireClientCacheInvalidationSubscription[]>(current);
             if (subscribers.Length == 1) observers.Remove(subscription.Key);
-            else observers[subscription.Key] = subscribers.Where(item => item != subscription).ToArray();
-            Volatile.Write(ref _observerSnapshot, _observerSnapshot.Where(item => item != subscription).ToArray());
-            if (_observerSnapshot.Length == 0) _invalidationObservers = null;
+            else
+            {
+                var remaining = new RespireClientCacheInvalidationSubscription[subscribers.Length - 1];
+                subscribers.AsSpan(0, index).CopyTo(remaining);
+                subscribers.AsSpan(index + 1).CopyTo(remaining.AsSpan(index));
+                observers[subscription.Key] = remaining;
+            }
+            Volatile.Write(ref _invalidationObservers, observers);
         }
     }
 
     private void PublishInvalidation(in RespireKey key, RespireClientCacheInvalidationReason reason)
     {
         // No locks, key copies, queue items, or delegates when no observer is registered.
-        if (Volatile.Read(ref _observerSnapshot).Length == 0) return;
-        RespireClientCacheInvalidationSubscription[]? subscribers;
-        lock (_observerGate)
-        {
-            if (_invalidationObservers is not { } observers || !observers.TryGetValue(key, out subscribers)) return;
-        }
-        // Registration publishes immutable arrays. Enqueueing never holds the owner gate.
+        var observers = Volatile.Read(ref _invalidationObservers);
+        if (observers is null || !observers.TryGetValue(key, out var subscribers)) return;
         foreach (var subscription in subscribers) subscription.Enqueue(reason);
     }
 
     private void PublishInvalidationForAll(RespireClientCacheInvalidationReason reason)
     {
-        foreach (var subscription in Volatile.Read(ref _observerSnapshot)) subscription.Enqueue(reason);
+        var observers = Volatile.Read(ref _invalidationObservers);
+        if (observers is null) return;
+        foreach (var entry in observers)
+            foreach (var subscription in entry.Value) subscription.Enqueue(reason);
     }
 
     internal void StopInvalidationObservers()
     {
-        RespireClientCacheInvalidationSubscription[] subscriptions;
+        Dictionary<RespireKey, RespireClientCacheInvalidationSubscription[]>? observers;
         lock (_observerGate)
         {
             _observersStopped = true;
-            subscriptions = _observerSnapshot;
-            _invalidationObservers = null;
-            Volatile.Write(ref _observerSnapshot, []);
+            observers = _invalidationObservers;
+            Volatile.Write(ref _invalidationObservers, null);
         }
-        foreach (var subscription in subscriptions) subscription.Dispose();
+        if (observers is null) return;
+        foreach (var entry in observers)
+            foreach (var subscription in entry.Value) subscription.Dispose();
     }
 }

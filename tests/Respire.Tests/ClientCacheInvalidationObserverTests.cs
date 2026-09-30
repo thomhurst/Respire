@@ -132,6 +132,41 @@ public class ClientCacheInvalidationObserverTests
     }
 
     [Test]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task RemovingOneObserverPreservesItsPeersAndOtherKeys(int removed)
+    {
+        var cache = new ClientSideCacheCoordinator(new());
+        var channels = Enumerable.Range(0, 3).Select(_ => Channel.CreateUnbounded<RespireClientCacheInvalidation>()).ToArray();
+        var subscriptions = channels.Select(channel => cache.SubscribeInvalidations("key", change => channel.Writer.TryWrite(change))).ToArray();
+        var other = Channel.CreateUnbounded<RespireClientCacheInvalidation>();
+        using var otherSubscription = cache.SubscribeInvalidations("other", change => other.Writer.TryWrite(change));
+        try
+        {
+            subscriptions[removed].Dispose();
+            var replacement = Channel.CreateUnbounded<RespireClientCacheInvalidation>();
+            using var added = cache.SubscribeInvalidations("key", change => replacement.Writer.TryWrite(change));
+            RespireKey key = "key";
+            cache.Invalidate(in key);
+            for (var index = 0; index < channels.Length; index++)
+            {
+                if (index == removed) continue;
+                var change = await channels[index].Reader.ReadAsync().AsTask().WaitAsync(Limit);
+                await Assert.That(change.Reasons).IsEqualTo(RespireClientCacheInvalidationReason.LocalMutation);
+            }
+            await replacement.Reader.ReadAsync().AsTask().WaitAsync(Limit);
+            cache.Clear();
+            var cleared = await other.Reader.ReadAsync().AsTask().WaitAsync(Limit);
+            await Assert.That(cleared.Reasons).IsEqualTo(RespireClientCacheInvalidationReason.ExplicitClear);
+            await Assert.That(channels[removed].Reader.TryRead(out _)).IsFalse();
+        }
+        finally { cache.StopInvalidationObservers(); }
+        await Assert.That(subscriptions.All(subscription => subscription.IsDisposed)).IsTrue();
+        await Assert.That(otherSubscription.IsDisposed).IsTrue();
+    }
+
+    [Test]
     public async Task SlowObserverKeepsOnePendingWakeUpWithoutDelayingEvictionOrOtherObservers()
     {
         var cache = new ClientSideCacheCoordinator(new());
@@ -314,9 +349,13 @@ public class ClientCacheInvalidationObserverTests
         var disabled = AllocationMeasurement.WithoutConcurrentGc(() => Measure(cache, allocate: false));
         using (cache.SubscribeInvalidations("key", _ => { })) { }
         var removed = AllocationMeasurement.WithoutConcurrentGc(() => Measure(cache, allocate: false));
+        using var unrelated = cache.SubscribeInvalidations("unrelated", _ => { });
+        _ = Measure(cache, allocate: false);
+        var unmatched = AllocationMeasurement.WithoutConcurrentGc(() => Measure(cache, allocate: false));
         var control = AllocationMeasurement.WithoutConcurrentGc(() => Measure(cache, allocate: true));
         await Assert.That(disabled).IsEqualTo(0L);
         await Assert.That(removed).IsEqualTo(0L);
+        await Assert.That(unmatched).IsEqualTo(0L);
         await Assert.That(control).IsGreaterThanOrEqualTo(37_000L);
     }
 
