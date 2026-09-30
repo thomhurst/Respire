@@ -10,6 +10,16 @@
   are unchanged. Custom stream-facet implementations must add the new trim member. See
   [stream trimming](../website/docs/commands/collections.md#trimming) for validation and input lifetimes.
 
+### Client administration
+
+- `Server.GetClientConnectionAsync` identifies and pins one physical connection for typed
+  CLIENT inspection and controls, with explicit endpoint scope for PAUSE/UNPAUSE/UNBLOCK.
+  `ClientsOnAllNodesAsync` returns endpoint-associated client lists or failures. Mutations
+  require `AllowAdmin`; handles never reconnect or replay settings onto a different socket.
+  Custom `IServerCommands` implementations, decorators, and mocks must add both methods.
+  See [client administration](../website/docs/guides/client-administration.md) for versions,
+  ownership, cancellation, and multiplexed-connection semantics.
+
 ### Distributed locks
 
 - Distributed locks use native conditional renewal/deletion on supported Redis and Valkey versions, with per-connection Lua fallback on older servers and preserved managed cancellation fencing.
