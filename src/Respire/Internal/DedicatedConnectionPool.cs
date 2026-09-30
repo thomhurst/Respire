@@ -16,6 +16,8 @@ internal sealed class DedicatedConnectionPool(
 {
     private const int MaxIdle = 4;
 
+    // Cluster diagnostics acquire the router's _nodesGate before this gate. Never call
+    // back into the router or invoke user callbacks while holding this gate.
     private readonly object _gate = new();
     private readonly Stack<Entry> _idle = new(MaxIdle);
     // Keep closing entries registered until socket and receive/flush cleanup actually completes.
