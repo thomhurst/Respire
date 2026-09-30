@@ -1,5 +1,6 @@
 using System.Text;
 using Respire.Internal;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Enums;
 using TUnit.Assertions.Extensions;
@@ -11,6 +12,43 @@ public class ClusterWatchedTransactionTests
 {
     private static readonly byte[] Queued = "+QUEUED\r\n"u8.ToArray();
     private static readonly byte[] Committed = "*1\r\n+OK\r\n"u8.ToArray();
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task WatchInvalidatesCachedValuesAndFencesEarlierReads(bool cluster)
+    {
+        byte[] hello = "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
+        await using var owner = new FakeRespServer(2, hello, FakeRespServer.OkReply,
+            FakeRespServer.OkReply, "$3\r\nold\r\n"u8.ToArray(),
+            FakeRespServer.OkReply, "$5\r\nfresh\r\n"u8.ToArray());
+        await using var seed = new FakeRespServer(hello, FakeRespServer.OkReply, Topology(owner.Port));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            UseCluster = cluster, Connections = 1, ClientSideCache = new(),
+            Endpoints = [new("127.0.0.1", cluster ? seed.Port : owner.Port)],
+        });
+        var view = client.WithKeyPrefix("tenant:");
+        await Assert.That(await view.GetStringAsync("{a}:watched")).IsEqualTo("old");
+        await Assert.That(await view.GetStringAsync("{a}:watched")).IsEqualTo("old");
+        var cache = client.Core.ClientCache!;
+        var other = cache.BeginRead("tenant:{a}:other");
+        using var untouched = RespValue.BulkString("untouched"u8.ToArray());
+        cache.CompleteRead(other, untouched, allowInsert: true);
+        var earlierRead = cache.BeginRead("tenant:{a}:watched");
+
+        // No tracking invalidation is sent: a pre-WATCH write's push can still be delayed.
+        await using var transaction = await view.CreateTransactionAsync(["{a}:watched"]);
+        await Assert.That(cache.Count).IsEqualTo(1);
+        using var lateReply = RespValue.BulkString("old"u8.ToArray());
+        cache.CompleteRead(earlierRead, lateReply, allowInsert: true);
+        await Assert.That(cache.Count).IsEqualTo(1);
+        await Assert.That(await view.GetStringAsync("{a}:watched")).IsEqualTo("fresh");
+        await Assert.That(await view.GetStringAsync("{a}:other")).IsEqualTo("untouched");
+        await Assert.That(owner.ReceivedCommands.Count(command => command == "GET tenant:{a}:watched"))
+            .IsEqualTo(2);
+        await Assert.That(owner.ReceivedCommands).Contains("WATCH tenant:{a}:watched");
+    }
 
     [Test]
     public async Task CrossSlotWatchFailsBeforeDiscovery()

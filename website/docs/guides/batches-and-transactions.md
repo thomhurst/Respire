@@ -224,6 +224,10 @@ Dispose that attempt, create a new watched transaction, re-read state, and retry
 policy. For complex compare-and-set behavior, a Lua script often reduces round trips and makes
 atomic intent clearer.
 
+When client-side caching is enabled, a successful WATCH invalidates the watched keys locally
+and prevents earlier reads from restoring cached values. Reads started after transaction creation
+therefore fetch fresh state even if tracking invalidations from earlier writes are still in transit.
+
 ## Cluster WATCH transactions
 
 Use matching hash tags for every watched and queued key, such as `{account:42}:balance`

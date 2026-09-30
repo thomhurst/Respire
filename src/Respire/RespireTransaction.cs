@@ -631,14 +631,27 @@ public sealed class RespireTransaction : RespireTransactionBase
 /// </summary>
 public sealed class RespireWatchedTransaction : RespireTransactionBase
 {
-    internal RespireWatchedTransaction(RespireClient client, RespireConnection? watchConnection,
-        DedicatedConnectionPool? watchPool = null, int? watchSlot = null)
-        : base(client, watchConnection, watchSlot)
+    internal RespireWatchedTransaction(RespireClient client)
+        : base(client, watchConnection: null)
+    {
+    }
+
+    internal RespireWatchedTransaction(RespireClient client, RespireConnection watchConnection,
+        DedicatedConnectionPool watchPool, int? watchSlot)
+        : base(client, ValidateLease(watchConnection, watchPool), watchSlot)
     {
         WatchPool = watchPool;
     }
 
     private protected override DedicatedConnectionPool? WatchPool { get; }
+
+    private static RespireConnection ValidateLease(RespireConnection connection, DedicatedConnectionPool pool)
+    {
+        // Validate before the base constructor allocates its transaction buffer.
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(pool);
+        return connection;
+    }
 
     /// <summary>
     /// Executes the transaction; returns false when a watched key changed before EXEC.

@@ -1044,7 +1044,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         if (watchKeys.Length == 0)
         {
-            return new ValueTask<RespireWatchedTransaction>(new RespireWatchedTransaction(this, watchConnection: null));
+            return new ValueTask<RespireWatchedTransaction>(new RespireWatchedTransaction(this));
         }
 
         // Resolve and own keys before the first await so routing and WATCH use the same bytes.
@@ -1072,10 +1072,17 @@ public sealed partial class RespireClient : IRespireClient
         {
             var command = new CmdN(Verbs.Watch, watchKeys);
             using var reply = await SendOnConnectionAsync("WATCH", connection, command, cancellationToken).ConfigureAwait(false);
+            if (_core.ClientCache is { } cache)
+            {
+                // Tracking pushes use other sockets and may lag writes processed before WATCH.
+                // Also fence reads already in flight so they cannot restore a pre-WATCH value.
+                foreach (var key in watchKeys) cache.Invalidate(key.AsKey());
+            }
             return new RespireWatchedTransaction(this, connection, pool, slot);
         }
         catch (Exception error)
         {
+            // Cancellation and I/O failures can leave WATCH state or unread replies on the lease.
             await pool.DiscardAsync(connection).ConfigureAwait(false);
             if (cluster is not null && error is RespireServerException rejection
                 && ClusterRouter.CanRecover(rejection, slot))

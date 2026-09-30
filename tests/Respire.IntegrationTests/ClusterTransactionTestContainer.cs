@@ -4,7 +4,10 @@ using TUnit.Core.Interfaces;
 
 namespace Respire.IntegrationTests;
 
-/// <summary>A real single-primary Redis Cluster for same-slot transaction semantics.</summary>
+/// <summary>
+/// A real single-primary Redis Cluster for same-slot transaction semantics.
+/// Multi-node MOVED/ASK interleavings are covered by the fake-server wire tests.
+/// </summary>
 public sealed class ClusterTransactionTestContainer : IAsyncInitializer, IAsyncDisposable
 {
     private IContainer? _container;
