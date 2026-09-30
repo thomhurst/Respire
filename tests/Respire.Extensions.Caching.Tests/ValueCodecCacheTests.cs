@@ -222,6 +222,42 @@ public class ValueCodecCacheTests(RedisTestContainer fixture)
         await Assert.That(await client.ExistsAsync("encoding-cancelled")).IsFalse();
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CustomDecoderFailurePreservesCommittedPrefix(bool synchronous)
+    {
+        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        var expected = new InvalidDataException("custom decode failure");
+        await using var cache = new RespireDistributedCache((IRespireClient)client, new()
+        {
+            ValueCodec = new PartialFailureCodec(expected),
+        });
+        await cache.SetAsync("partial-decode", [1, 2, 3], new());
+        var destination = new ArrayBufferWriter<byte>();
+        destination.Write(new byte[] { 99 });
+        var error = await Assert.That(async () =>
+        {
+            if (synchronous) await Task.Run(() => cache.TryGet("partial-decode", destination));
+            else await cache.TryGetAsync("partial-decode", destination);
+        }).Throws<InvalidDataException>();
+        await Assert.That(error).IsSameReferenceAs(expected);
+        await Assert.That(destination.WrittenSpan.SequenceEqual(new byte[] { 99 })).IsTrue();
+        await Assert.That(destination.GetSpan(1)[0]).IsEqualTo((byte)42);
+        await client.PingAsync(); // The failed decoder must still release the Redis result.
+    }
+
+    private sealed class PartialFailureCodec(Exception failure) : IRespireValueCodec
+    {
+        public byte[] Encode(ReadOnlySpan<byte> payload) => payload.ToArray();
+        public byte[] Decode(ReadOnlySpan<byte> payload) => throw new InvalidOperationException("Buffer reads must use the destination overload.");
+        public void Decode(ReadOnlySpan<byte> payload, IBufferWriter<byte> destination)
+        {
+            destination.GetSpan(1)[0] = 42;
+            // A custom codec controls Advance; this one leaves partial output uncommitted.
+            throw failure;
+        }
+    }
     private sealed class CancellingCodec(CancellationTokenSource cancellation) : IRespireValueCodec
     {
         public byte[] Encode(ReadOnlySpan<byte> payload)

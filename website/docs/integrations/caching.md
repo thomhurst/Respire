@@ -110,6 +110,8 @@ decoded array. Writes retain an owned encoded array through the asynchronous sen
 input is combined before encoding. Compression is synchronous CPU work, not streaming or
 allocation-free. Cancellation is checked before encoding and again before sending; it cannot
 interrupt a codec call already executing. Existing accepted-send cancellation semantics still apply.
+For Brotli, start with the default quality `4`; measure CPU time and stored size before increasing
+quality, especially for large values. The cache does not schedule codec work onto another thread.
 
 The threshold determines whether compression is attempted, not whether a frame is written. Small,
 empty, or incompressible values still carry an uncompressed frame; those can coexist with compressed
