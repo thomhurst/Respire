@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Respire.Infrastructure;
 
 namespace Respire.Internal;
@@ -15,11 +16,13 @@ internal sealed class ClusterNodeIdentityIndex
     // TODO #390: drain superseded transports and remove obsolete identities before releasing ownership.
     private readonly HashSet<RespireConnectionMultiplexer> _allNodes = [];
     private readonly Func<RespireEndpoint, RespireConnectionMultiplexer> _create;
+    private readonly object? _gate;
 
     internal ClusterNodeIdentityIndex(RespireEndpoint endpoint, RespireConnectionMultiplexer primary,
-        Func<RespireEndpoint, RespireConnectionMultiplexer> create)
+        Func<RespireEndpoint, RespireConnectionMultiplexer> create, object? gate = null)
     {
         _create = create;
+        _gate = gate;
         _nodes.Add(endpoint, primary);
         _allNodes.Add(primary);
     }
@@ -29,6 +32,7 @@ internal sealed class ClusterNodeIdentityIndex
 
     internal RespireConnectionMultiplexer GetOrCreate(RespireEndpoint endpoint)
     {
+        AssertAccess();
         if (_nodes.TryGetValue(endpoint, out var existing))
         {
             return existing;
@@ -40,6 +44,7 @@ internal sealed class ClusterNodeIdentityIndex
 
     internal RespireConnectionMultiplexer GetCurrent(RespireConnectionMultiplexer node)
     {
+        AssertAccess();
         if (_nodeIds.TryGetValue(node, out var id)
             && _nodesById.TryGetValue(id, out var identified) && IsCurrentTransport(identified))
         {
@@ -51,23 +56,8 @@ internal sealed class ClusterNodeIdentityIndex
     internal List<(ClusterTopologyRange Range, RespireConnectionMultiplexer Node)> ApplySnapshot(
         List<ClusterTopologyRange> ranges)
     {
-        var advertisedById = new Dictionary<string, HashSet<RespireEndpoint>>(StringComparer.Ordinal);
-        foreach (var range in ranges)
-        {
-            if (range.NodeId is not { } id)
-            {
-                continue;
-            }
-
-            if (!advertisedById.TryGetValue(id, out var endpoints))
-            {
-                advertisedById.Add(id, endpoints = new HashSet<RespireEndpoint>(EndpointComparer.Instance));
-            }
-
-            endpoints.Add(range.Preferred);
-            endpoints.UnionWith(range.Aliases);
-        }
-
+        AssertAccess();
+        var advertisedById = CollectAdvertisedEndpoints(ranges);
         var selectedById = new Dictionary<string, RespireConnectionMultiplexer>(StringComparer.Ordinal);
         var selectedNodeIds = new Dictionary<RespireConnectionMultiplexer, string>();
         var selectedEndpoints = new Dictionary<RespireEndpoint, RespireConnectionMultiplexer>(EndpointComparer.Instance);
@@ -99,6 +89,35 @@ internal sealed class ClusterNodeIdentityIndex
             }
         }
 
+        PublishSnapshot(resolved, selectedById);
+        return resolved;
+    }
+
+    private static Dictionary<string, HashSet<RespireEndpoint>> CollectAdvertisedEndpoints(
+        List<ClusterTopologyRange> ranges)
+    {
+        var advertisedById = new Dictionary<string, HashSet<RespireEndpoint>>(StringComparer.Ordinal);
+        foreach (var range in ranges)
+        {
+            if (range.NodeId is not { } id)
+            {
+                continue;
+            }
+
+            if (!advertisedById.TryGetValue(id, out var endpoints))
+            {
+                advertisedById.Add(id, endpoints = new HashSet<RespireEndpoint>(EndpointComparer.Instance));
+            }
+
+            endpoints.Add(range.Preferred);
+            endpoints.UnionWith(range.Aliases);
+        }
+        return advertisedById;
+    }
+
+    private void PublishSnapshot(List<(ClusterTopologyRange Range, RespireConnectionMultiplexer Node)> resolved,
+        Dictionary<string, RespireConnectionMultiplexer> selectedById)
+    {
         // Publish all preferred endpoints before metadata. An alias reassigned in this
         // snapshot replaces its old owner, but cannot override another current preferred endpoint.
         var published = new HashSet<RespireEndpoint>(EndpointComparer.Instance);
@@ -136,9 +155,11 @@ internal sealed class ClusterNodeIdentityIndex
             _nodesById[id] = node;
             _nodeIds[node] = id;
         }
-
-        return resolved;
     }
+
+    [Conditional("DEBUG")]
+    private void AssertAccess()
+        => Debug.Assert(_gate is null || Monitor.IsEntered(_gate), "Cluster identity access requires the router node gate.");
 
     // Reuse a transport only while its immutable address remains
     // advertised for this node; a stable node ID alone does not make an old host reachable.
@@ -148,7 +169,7 @@ internal sealed class ClusterNodeIdentityIndex
         Dictionary<RespireConnectionMultiplexer, string> selectedNodeIds)
     {
         if (range.NodeId is { } id && _nodesById.TryGetValue(id, out var identified)
-            && IsCurrentTransport(identified) && IsAdvertised(identified))
+            && IsCurrentTransport(identified) && CanReuse(identified))
         {
             return identified;
         }
@@ -171,21 +192,27 @@ internal sealed class ClusterNodeIdentityIndex
         RespireConnectionMultiplexer? ResolveEndpoint(RespireEndpoint endpoint)
         {
             if (selectedEndpoints.TryGetValue(endpoint, out var selected)
-                && HasCompatibleId(selected) && IsAdvertised(selected))
+                && HasCompatibleId(selected) && CanReuse(selected))
             {
                 return selected;
             }
 
             if (_nodes.TryGetValue(endpoint, out var existing) && IsCurrentTransport(existing)
-                && HasCompatibleId(existing) && IsAdvertised(existing))
+                && HasCompatibleId(existing) && CanReuse(existing))
             {
                 return existing;
             }
             return null;
         }
 
-        bool IsAdvertised(RespireConnectionMultiplexer node)
-            => advertised.Contains(new RespireEndpoint(node.Host, node.Port));
+        bool CanReuse(RespireConnectionMultiplexer node)
+        {
+            var endpoint = new RespireEndpoint(node.Host, node.Port);
+            // An alias that never connected may have failed TLS or DNS. Only reuse an
+            // established alias; otherwise try the server's preferred authentication name.
+            return advertised.Contains(endpoint)
+                && (node.IsInitialized || EndpointComparer.Instance.Equals(endpoint, range.Preferred));
+        }
 
         bool HasCompatibleId(RespireConnectionMultiplexer node)
             => range.NodeId is null

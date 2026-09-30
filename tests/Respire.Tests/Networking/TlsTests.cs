@@ -99,6 +99,8 @@ public class TlsTests
             // Discovery is scripted in plaintext; discovered command transports use real TLS.
             await using var primary = RespireConnectionMultiplexer.Create("127.0.0.1", seed.Port);
             await using var router = new ClusterRouter(options, primary);
+            // An earlier failed/unconnected IP redirect must not displace the preferred TLS name.
+            _ = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", port));
             await router.EnsureConnectedAsync(deadline.Token);
             var connection = await router.GetConnectionAsync(0, deadline.Token);
             using var moved = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), deadline.Token);

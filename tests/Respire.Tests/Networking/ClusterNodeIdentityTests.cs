@@ -10,6 +10,33 @@ namespace Respire.Tests.Networking;
 public class ClusterNodeIdentityTests
 {
     [Test]
+    public async Task TrackedCorrectionsRetainTransportAfterEndpointReassignment()
+    {
+        await using var target = new FakeRespServer(4,
+            ":42\r\n"u8.ToArray(), ":0\r\n"u8.ToArray(),
+            "$5\r\nvalue\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+        await using var seed = new FakeRespServer(
+            Topology("localhost", target.Port, "old-id"), Topology("localhost", target.Port, "new-id"));
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+        var script = RespireScript.Create("return redis.call('GET', KEYS[1])");
+        var execution = await client.StartTrackedScriptExecutionAsync(script, ["key"], [], CancellationToken.None);
+        using var result = await execution.Response;
+        var original = execution.Connection;
+        var router = client.Core.Cluster!;
+        await router.GetMasterConnectionsAsync(CancellationToken.None);
+        var replacement = await router.GetConnectionAsync(ClusterHash.GetSlot("key"), CancellationToken.None);
+        await Assert.That(ReferenceEquals(original, replacement)).IsFalse();
+
+        await client.ExecuteOnAllConnectionsAsync(script, ["key"], [], execution.ConnectionIdentity);
+
+        var correctionIndex = target.ReceivedCommands.ToList().FindLastIndex(command => command.StartsWith("EVAL "));
+        await Assert.That(target.ReceivedConnectionIds[correctionIndex]).IsEqualTo(0);
+        await client.FenceCorrectionConnectionAsync(execution.ConnectionIdentity);
+        await Assert.That(original.IsConnected).IsFalse();
+        await Assert.That(replacement.IsConnected).IsTrue();
+    }
+
+    [Test]
     [Arguments(true)]
     [Arguments(false)]
     public async Task AnnouncedAliasesShareMultiplexerAndDedicatedPool(bool includeNodeId)

@@ -9,6 +9,21 @@ namespace Respire.Tests.Networking;
 public class ClusterNodeIdentityIndexTests
 {
     [Test]
+    public async Task UnconnectedAliasDoesNotOverridePreferredTransport()
+    {
+        var aliasEndpoint = new RespireEndpoint("127.0.0.1");
+        var preferredEndpoint = new RespireEndpoint("redis.example");
+        await using var alias = RespireConnectionMultiplexer.Create(aliasEndpoint.Host, aliasEndpoint.Port);
+        await using var preferred = RespireConnectionMultiplexer.Create(preferredEndpoint.Host, preferredEndpoint.Port);
+        var index = new ClusterNodeIdentityIndex(aliasEndpoint, alias, _ => preferred);
+
+        var resolved = index.ApplySnapshot([new(0, 3, preferredEndpoint, "node", [aliasEndpoint])]);
+
+        await Assert.That(ReferenceEquals(resolved[0].Node, preferred)).IsTrue();
+        await Assert.That(ReferenceEquals(index.GetOrCreate(aliasEndpoint), preferred)).IsTrue();
+    }
+
+    [Test]
     public async Task WithdrawnAliasNoLongerSubstitutesRetiredTransportHost()
     {
         var oldEndpoint = new RespireEndpoint("old.example");

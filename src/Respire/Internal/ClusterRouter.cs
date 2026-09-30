@@ -18,6 +18,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
     private readonly ClusterNodeIdentityIndex _identities;
     private readonly Dictionary<RespireConnectionMultiplexer, Action<int, RespireConnectionStateChange>> _nodeStateHandlers = [];
     private readonly Dictionary<RespireConnectionMultiplexer, DedicatedConnectionPool> _dedicatedPools = [];
+    private readonly Dictionary<RespireConnection, DedicatedConnectionPool> _correctionPools = [];
     private readonly object _nodesGate = new();
     private readonly RespireConnectionMultiplexer?[] _slots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
     private RespireConnectionMultiplexer[] _masters = [];
@@ -48,7 +49,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             ? [new RespireEndpoint("localhost")]
             : options.Endpoints.ToArray();
         _primary = primary;
-        _identities = new ClusterNodeIdentityIndex(options.PrimaryEndpoint, primary, CreateNode);
+        _identities = new ClusterNodeIdentityIndex(options.PrimaryEndpoint, primary, CreateNode, _nodesGate);
         ObserveNode(primary);
     }
 
@@ -315,8 +316,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
         => GetOrCreateNode(endpoint);
 
     internal bool HasReliableCorrectionOrdering(RespireConnection connection)
-        => GetOrCreateNode(new RespireEndpoint(connection.Host, connection.Port), observe: false)
-            .HasReliableCorrectionOrdering;
+        => connection.Multiplexer?.HasReliableCorrectionOrdering == true;
 
     internal static bool IsRedirect(RespireServerException error)
         => error.Code is RespireErrorCodes.Moved or RespireErrorCodes.Ask;
@@ -1012,7 +1012,8 @@ internal sealed class ClusterRouter : IAsyncDisposable
         CancellationToken cancellationToken,
         bool observe = true)
     {
-        var node = GetOrCreateNode(new RespireEndpoint(connection.Host, connection.Port), observe);
+        var node = connection.Multiplexer
+            ?? GetOrCreateNode(new RespireEndpoint(connection.Host, connection.Port), observe);
         try
         {
             await node.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
@@ -1023,6 +1024,31 @@ internal sealed class ClusterRouter : IAsyncDisposable
         }
 
         return node.GetConnection();
+    }
+
+    internal DedicatedConnectionPool GetCorrectionPool(RespireConnection original)
+    {
+        lock (_nodesGate)
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            if (_correctionPools.TryGetValue(original, out var existing))
+            {
+                return existing;
+            }
+            // CLIENT IDs are server-local. Keep the original peer address even after a DNS
+            // cutover, while retaining its TLS authentication name and connection options.
+            var options = original.Multiplexer?.Options ?? _options.ToConnectionOptions();
+            if (options.UseTls)
+            {
+                options = options with { TlsOptions = RespireConnection.CreateTlsOptions(options.TlsOptions, original.Host) };
+            }
+            var pool = new DedicatedConnectionPool(
+                original.NetworkPeerAddress ?? original.Host,
+                original.NetworkPeerPort ?? original.Port,
+                options, _options.CreateLogger($"Respire.Cluster.Correction.{original.Host}:{original.Port}"));
+            _correctionPools.Add(original, pool);
+            return pool;
+        }
     }
 
     private DedicatedConnectionPool GetOrCreateDedicatedPool(RespireEndpoint endpoint)
@@ -1166,7 +1192,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
         {
             nodes = _identities.All.ToArray();
             stateHandlers = _nodeStateHandlers.ToArray();
-            dedicatedPools = _dedicatedPools.Values.ToArray();
+            dedicatedPools = [.. _dedicatedPools.Values, .. _correctionPools.Values];
         }
 
         foreach (var pool in dedicatedPools)
