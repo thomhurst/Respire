@@ -67,6 +67,7 @@ public sealed class RespireTimeoutDiagnostics
     /// <summary>Queued thread-pool work items at capture time.</summary>
     public long? PendingWorkItems { get; private init; }
     /// <summary>A heuristic: work is queued and busy workers have reached the configured minimum.</summary>
+    /// <remarks>Returns false when any required observation is unavailable.</remarks>
     public bool PossibleThreadPoolStarvation => PendingWorkItems > 0 && BusyWorkerThreads >= MinWorkerThreads;
     /// <summary>Suggested checks based on the observed stage and counters.</summary>
     /// <remarks>Connection-specific observations take priority over the thread-pool heuristic.

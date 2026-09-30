@@ -12,12 +12,97 @@ namespace Respire.Tests.Networking;
 public class TimeoutDiagnosticsTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DedicatedTlsAcquisitionPreservesDeadlineAndCallerCancellation(bool cancelCaller)
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", port)], Connections = 1, UseTls = true,
+            ConnectTimeout = TimeSpan.FromSeconds(10), CommandTimeout = null,
+        });
+        using var caller = new CancellationTokenSource();
+        var timeout = TimeSpan.FromSeconds(1);
+        using var deadline = Respire.Internal.CommandTimeoutCancellation.Create(caller.Token, timeout);
+        var pending = client.SendBlockingAsync("EVAL", new RawCommand(FakeRespServer.PingFrame), deadline.Token,
+            cancellationTimeout: timeout, callerCancellationToken: caller.Token).AsTask();
+        using var accepted = await listener.AcceptSocketAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        if (cancelCaller)
+        {
+            caller.Cancel();
+            await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+        }
+        else
+        {
+            var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+                .ThrowsExactly<RespireTimeoutException>();
+            await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
+            await Assert.That(error.Diagnostics.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", port));
+            await Assert.That(error.Diagnostics.ConnectionId).IsNull();
+            await Assert.That(error.Message).Contains("had not been enqueued");
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task GuardedRemovalHandshakePreservesDeadlineAndLeaseSafety(bool cancelCaller)
+    {
+        var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var selects = 0;
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            SuppressReply = command =>
+            {
+                if (command != "SELECT 1" || Interlocked.Increment(ref selects) != 2) return false;
+                handshake.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)], Database = 1, Connections = 1,
+            ConnectTimeout = TimeSpan.FromSeconds(10), CommandTimeout = null,
+        });
+        // Use the guarded removal's fallback deadline without arming a competing SELECT deadline.
+        client.RemovalLeaseTtl = TimeSpan.FromSeconds(1);
+        using var caller = new CancellationTokenSource();
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        var pending = client.UnlinkGuardedAsync("private-key", caller.Token).AsTask();
+        await handshake.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (cancelCaller)
+        {
+            caller.Cancel();
+            await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+        }
+        else
+        {
+            var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+                .ThrowsExactly<RespireTimeoutException>();
+            await Assert.That(error!.CommandName).IsEqualTo("UNLINK");
+            await Assert.That(error.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
+            await Assert.That(error.Diagnostics.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", server.Port));
+        }
+        if (cancelCaller)
+            await Assert.That(server.ReceivedCommands).Contains(command => command.StartsWith("UNLINK "));
+        else
+            await Assert.That(System.Diagnostics.Stopwatch.GetElapsedTime(started)).IsGreaterThanOrEqualTo(client.RemovalLeaseTtl);
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("EVAL "))).IsFalse();
+    }
+
+    [Test]
     [Arguments(RespireCommandStage.Connecting, false, 0L, "Connection initialization")]
     [Arguments(RespireCommandStage.AwaitingReply, true, 0L, "Connection initialization")]
     [Arguments(RespireCommandStage.Buffered, false, 0L, "Writes are queued")]
     [Arguments(RespireCommandStage.Writing, false, 0L, "Writes are queued")]
     [Arguments(RespireCommandStage.AwaitingReply, false, 1L, "Writes are queued")]
     [Arguments(RespireCommandStage.WaitingForCapacity, false, 0L, "The in-flight queue is full")]
+    [Arguments(RespireCommandStage.WaitingForCapacity, false, 1L, "Writes are queued")]
     [Arguments(RespireCommandStage.AwaitingReply, false, 0L, "Possible thread-pool starvation")]
     public async Task ConnectionHintsTakePriorityOverThreadPoolHeuristic(
         RespireCommandStage stage, bool reconnecting, long pendingBytes, string expectedHint)

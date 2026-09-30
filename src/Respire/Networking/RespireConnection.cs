@@ -209,13 +209,23 @@ internal sealed class RespireConnection : IAsyncDisposable
             using var timeoutCts = CommandTimeoutCancellation.Create(
                 cancellationToken,
                 options.ConnectTimeout);
-            await socket.ConnectAsync(host, port, timeoutCts.Token).ConfigureAwait(false);
-
-            if (options.UseTls)
+            try
             {
-                tlsStream = new SslStream(new NetworkStream(socket, ownsSocket: false));
-                var tlsOptions = CreateTlsOptions(options.TlsOptions, host);
-                await tlsStream.AuthenticateAsClientAsync(tlsOptions, timeoutCts.Token).ConfigureAwait(false);
+                await socket.ConnectAsync(host, port, timeoutCts.Token).ConfigureAwait(false);
+
+                if (options.UseTls)
+                {
+                    tlsStream = new SslStream(new NetworkStream(socket, ownsSocket: false));
+                    var tlsOptions = CreateTlsOptions(options.TlsOptions, host);
+                    await tlsStream.AuthenticateAsClientAsync(tlsOptions, timeoutCts.Token).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException error) when (cancellationToken.IsCancellationRequested
+                && error.CancellationToken == timeoutCts.Token)
+            {
+                // Preserve the initiating token across our private connect-timeout link.
+                // An independent connect timeout or unrelated cancellation keeps its own token.
+                throw new OperationCanceledException(error.Message, error, cancellationToken);
             }
         }
         catch

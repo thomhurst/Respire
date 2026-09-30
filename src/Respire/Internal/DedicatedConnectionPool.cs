@@ -70,8 +70,18 @@ internal sealed class DedicatedConnectionPool(
         {
             using var connectCancellation = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken, _lifetimeCancellation.Token);
-            var connection = await RespireConnection.ConnectAsync(
-                host, port, options, logger, connectCancellation.Token, armHandshakeDeadline).ConfigureAwait(false);
+            RespireConnection connection;
+            try
+            {
+                connection = await RespireConnection.ConnectAsync(
+                    host, port, options, logger, connectCancellation.Token, armHandshakeDeadline).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException error) when (cancellationToken.IsCancellationRequested
+                && error.CancellationToken == connectCancellation.Token)
+            {
+                // Unwrap only our own lifetime link, preserving independent retirement cancellation.
+                throw new OperationCanceledException(error.Message, error, cancellationToken);
+            }
             var entry = new Entry(connection);
             lock (_gate)
             {
