@@ -148,7 +148,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         }
     }
 
-    private void Invalidate(Generation generation)
+    private void Invalidate(Generation generation, Exception? error = null)
     {
         lock (_gate)
         {
@@ -164,7 +164,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             var evictions = core.ClientCache?.FlushForContinuityLossWithoutMetrics();
             if (evictions is { } count)
                 QueueNotificationLocked(() => ClientSideCacheCoordinator.PublishContinuityFlushMetrics(count));
-            QueueNotificationLocked(() => core.NotifySentinelDisconnected(generation.Multiplexer));
+            QueueNotificationLocked(() => core.NotifySentinelDisconnected(generation.Multiplexer, error));
             generation.Retirement = Task.Run(() => DrainAsync(generation));
         }
     }
@@ -352,7 +352,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         public void ConnectionClosed(RespireConnection connection, bool unexpected)
         {
             lock (_connectionsGate) _connections.Remove(connection);
-            if (unexpected) _owner.Invalidate(this);
+            if (unexpected) _owner.Invalidate(this, connection.CloseError);
         }
 
         internal Task StopConnections()

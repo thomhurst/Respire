@@ -262,6 +262,12 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         {
             if (_ops.Count == 0)
             {
+                if (core.Sentinel is not null)
+                {
+                    telemetry = RespireTelemetry.StartBatchOperation(
+                        "MULTI", _ops, static op => op.Operation, core.Options.Database,
+                        out telemetryOperation, sentinelStarted);
+                }
                 return true;
             }
 
@@ -386,12 +392,20 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                 if (connection is null && operationError is not null)
                     RespireTelemetry.RecordUnroutedBatchFailure("MULTI", _ops, static op => op.Operation,
                         core.Options.Database, sentinelStarted, operationError);
-                telemetry.Complete(
-                    core,
-                    telemetryOperation,
-                    error: operationError,
-                    connection: connection,
-                    batchSize: _ops.Count == 1 ? null : _ops.Count);
+                if (core.Sentinel is not null && _ops.Count == 0)
+                {
+                    telemetry.Complete(telemetryOperation, host: null, port: 6379,
+                        database: core.Options.Database, error: operationError, batchSize: 0);
+                }
+                else
+                {
+                    telemetry.Complete(
+                        core,
+                        telemetryOperation,
+                        error: operationError,
+                        connection: connection,
+                        batchSize: _ops.Count == 1 ? null : _ops.Count);
+                }
             }
         }
 

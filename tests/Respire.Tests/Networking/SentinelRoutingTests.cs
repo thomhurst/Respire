@@ -15,6 +15,43 @@ public class SentinelRoutingTests
     private static readonly byte[] PrimaryRole = "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray();
 
     [Test]
+    public async Task SameEndpointSentinelPublicationPreservesPubSubHealth()
+    {
+        await using var client = RespireClient.Create(Options(26379));
+        var core = client.Core;
+        var node = core.Multiplexer;
+        var endpoint = new RespireEndpoint(node.Host, node.Port);
+        var changes = new List<RespireConnectionStateChange>();
+        client.ConnectionStateChanged += changes.Add;
+        var pubSubError = new RespireConnectionException("subscription reconnect pending");
+        core.NotifySubscriptionStateChanged(new(endpoint, RespireConnectionState.Disconnected, pubSubError));
+        changes.Clear();
+
+        core.NotifySentinelPrimaryChanged(node, node);
+        await Assert.That(changes.Select(change => change.State))
+            .IsEquivalentTo([RespireConnectionState.Disconnected]);
+
+        core.NotifySubscriptionStateChanged(new(endpoint, RespireConnectionState.Connected, null));
+        await Assert.That(changes.Select(change => change.State))
+            .IsEquivalentTo([RespireConnectionState.Disconnected, RespireConnectionState.Connected]);
+    }
+
+    [Test]
+    public async Task SentinelDisconnectNotificationPreservesTransportError()
+    {
+        await using var client = RespireClient.Create(Options(26379));
+        var node = client.Core.Multiplexer;
+        var error = new RespireConnectionException("remote EOF");
+        RespireConnectionStateChange? observed = null;
+        client.ConnectionStateChanged += change => observed = change;
+
+        client.Core.NotifySentinelDisconnected(node, error);
+
+        await Assert.That(observed?.State).IsEqualTo(RespireConnectionState.Disconnected);
+        await Assert.That(observed?.Error).IsSameReferenceAs(error);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task LazySentinelEndpointIsUnavailableUntilValidatedPrimary(bool failValidation)
@@ -1188,6 +1225,7 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    [NotInParallel]
     [Arguments("batch")]
     [Arguments("durability")]
     [Arguments("transaction")]

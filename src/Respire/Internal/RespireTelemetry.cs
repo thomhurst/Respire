@@ -251,6 +251,21 @@ internal static class RespireTelemetry
         => StartBatchOperation(prefix, operations, operationName, endpoint.Host, endpoint.Port, database, out operation);
 
     public static OperationScope StartBatchOperation<T>(
+        string prefix, IReadOnlyList<T> operations, Func<T, string> operationName,
+        int database, out string operation, long started = 0)
+    {
+        if (!IsEnabled)
+        {
+            operation = prefix;
+            return default;
+        }
+
+        operation = BatchOperationName(prefix, operations, operationName);
+        return StartOperation(operation, host: null, DefaultRedisPort, database,
+            batchSize: operations.Count == 1 ? null : operations.Count, started: started);
+    }
+
+    public static OperationScope StartBatchOperation<T>(
         string prefix,
         IReadOnlyList<T> operations,
         Func<T, string> operationName,

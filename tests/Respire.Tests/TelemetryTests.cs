@@ -367,6 +367,35 @@ public class TelemetryTests
     }
 
     [Test]
+    [NotInParallel]
+    public async Task EmptySentinelBatchAndTransaction_EmitEndpointlessTelemetry()
+    {
+        using var capture = new TelemetryCapture();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            SentinelPrimaryName = "mymaster",
+            Endpoints = { new RespireEndpoint("empty-sentinel.example") },
+        });
+
+        await client.CreateBatch().ExecuteAsync();
+        await using (var transaction = client.CreateTransaction())
+            await transaction.CommitAsync();
+
+        foreach (var operation in new[] { "PIPELINE", "MULTI" })
+        {
+            var activity = capture.Activities.Single(item => Tag(item, "db.operation.name") as string == operation);
+            await Assert.That(Tag(activity, "db.operation.batch.size")).IsEqualTo(0);
+            await Assert.That(Tag(activity, "server.address")).IsNull();
+            var measurement = capture.Measurements.Single(item =>
+                item.InstrumentName == RespireTelemetry.OperationDuration.Name
+                && item.Tags.GetValueOrDefault("db.operation.name") as string == operation);
+            await Assert.That(measurement.Tags["db.operation.batch.size"]).IsEqualTo(0);
+            await Assert.That(measurement.Tags.GetValueOrDefault("server.address")).IsNull();
+        }
+    }
+
+    [Test]
     public async Task ScriptFallback_EmitsOneSuccessfulLogicalOperation()
     {
         await using var server = new FakeRespServer(

@@ -225,7 +225,17 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             out telemetryOperation) : default;
         if (_ops.Count == 0)
         {
-            telemetry.Complete(core, telemetryOperation, batchSize: 0);
+            if (core.Sentinel is not null)
+            {
+                telemetry = RespireTelemetry.StartBatchOperation(
+                    "PIPELINE", _ops, static op => op.Operation, core.Options.Database,
+                    out telemetryOperation, sentinelStarted);
+            }
+            if (core.Sentinel is null)
+                telemetry.Complete(core, telemetryOperation, batchSize: 0);
+            else
+                telemetry.Complete(telemetryOperation, host: null, port: 6379,
+                    database: core.Options.Database, batchSize: 0);
             return new RespireBatchResult(0, null);
         }
 
