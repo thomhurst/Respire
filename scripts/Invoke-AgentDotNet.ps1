@@ -29,6 +29,7 @@ param(
     [string]$DotNetPath = 'dotnet',
 
     [Parameter(Mandatory, ValueFromRemainingArguments)]
+    [AllowEmptyString()]
     [string[]]$DotNetArguments
 )
 
@@ -570,15 +571,18 @@ function Add-SingleNodeArgument([string[]]$Arguments) {
     }
 
     $verb = $Arguments[0]
-    $supportsMaxCpuCount = $verb -in @('build', 'test', 'pack', 'publish', 'msbuild')
-    $alreadyConfigured = $Arguments |
-        Where-Object { $_ -match '^(?:-m|--maxcpucount)(?::|$)' } |
+    if ($verb -notin @('build', 'test', 'pack', 'publish', 'msbuild')) {
+        return $Arguments
+    }
+    $separatorIndex = [Array]::IndexOf($Arguments, '--')
+    $buildArguments = if ($separatorIndex -lt 0) { $Arguments } else { $Arguments[0..($separatorIndex - 1)] }
+    $alreadyConfigured = $buildArguments |
+        Where-Object { $_ -match '^(?:[-/]m(?:axcpucount)?|--maxcpucount)(?::|$)' } |
         Select-Object -First 1
-    if (-not $supportsMaxCpuCount -or $alreadyConfigured) {
+    if ($alreadyConfigured) {
         return $Arguments
     }
 
-    $separatorIndex = [Array]::IndexOf($Arguments, '--')
     if ($separatorIndex -lt 0) {
         return @($Arguments) + '-m:1'
     }
@@ -588,7 +592,7 @@ function Add-SingleNodeArgument([string[]]$Arguments) {
         @($Arguments[$separatorIndex..($Arguments.Count - 1)])
 }
 
-$effectiveArguments = Add-SingleNodeArgument $DotNetArguments
+$effectiveArguments = @(Add-SingleNodeArgument $DotNetArguments)
 $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
 $startInfo.UseShellExecute = $false
 $startInfo.Environment['BuildInParallel'] = 'false'
@@ -596,6 +600,11 @@ $startInfo.Environment['DOTNET_CLI_TELEMETRY_OPTOUT'] = '1'
 $startInfo.Environment['DOTNET_CLI_USE_MSBUILD_SERVER'] = '0'
 $startInfo.Environment['MSBUILDDISABLENODEREUSE'] = '1'
 $startInfo.Environment['UseSharedCompilation'] = 'false'
+# -File reparses colon switches. Pass only a random payload path through the
+# environment so the invocation retains the platform's native argv size limit.
+$invocationPath = [IO.Path]::Combine(
+    [IO.Path]::GetTempPath(), "agent-dotnet-invocation-$([guid]::NewGuid()).json")
+$startInfo.Environment['RESPIRE_AGENT_DOTNET_INVOCATION'] = $invocationPath
 $pwshPath = (Get-Process -Id $PID).Path
 $wrapperPath = [System.IO.Path]::Combine(
     [System.IO.Path]::GetTempPath(),
@@ -617,23 +626,7 @@ finally {
     $startGate.Dispose()
 }
 
-$startInfo = [Diagnostics.ProcessStartInfo]::new()
-$startInfo.UseShellExecute = $false
-$startInfo.FileName = $args[1]
-foreach ($argument in $args[2..($args.Count - 1)]) {
-    $startInfo.ArgumentList.Add($argument)
-}
 
-$child = [Diagnostics.Process]::Start($startInfo)
-try {
-    $child.WaitForExit()
-    $exitCode = $child.ExitCode
-}
-finally {
-    $child.Dispose()
-}
-
-exit $exitCode
 '@
     $startInfo.FileName = $pwshPath
     $startInfo.ArgumentList.Add('-NoProfile')
@@ -641,10 +634,6 @@ exit $exitCode
     $startInfo.ArgumentList.Add('-File')
     $startInfo.ArgumentList.Add($wrapperPath)
     $startInfo.ArgumentList.Add('{WINDOWS_START_GATE}')
-    $startInfo.ArgumentList.Add($DotNetPath)
-    foreach ($argument in $effectiveArguments) {
-        $startInfo.ArgumentList.Add($argument)
-    }
 }
 else {
     # PowerShell is already a guard prerequisite, so libc calls provide portable
@@ -674,11 +663,38 @@ if ([AgentDotNetUnixChildNative]::setpriority(0, 0, 10) -ne 0) {
     [Console]::Error.WriteLine("Agent dotnet guard could not lower Unix priority (errno $errorCode).")
 }
 
+
+'@
+    $startInfo.FileName = $pwshPath
+    $startInfo.ArgumentList.Add('-NoProfile')
+    $startInfo.ArgumentList.Add('-NonInteractive')
+    $startInfo.ArgumentList.Add('-File')
+    $startInfo.ArgumentList.Add($wrapperPath)
+}
+
+# Each prefix establishes OS containment; this shared tail decodes data and launches the workload.
+$wrapperScript += @'
+$ErrorActionPreference = 'Stop'
 $startInfo = [Diagnostics.ProcessStartInfo]::new()
 $startInfo.UseShellExecute = $false
-$startInfo.FileName = $args[0]
-foreach ($argument in $args[1..($args.Count - 1)]) {
-    $startInfo.ArgumentList.Add($argument)
+$invocationPath = $env:RESPIRE_AGENT_DOTNET_INVOCATION
+$startInfo.Environment.Remove('RESPIRE_AGENT_DOTNET_INVOCATION') | Out-Null
+try {
+    # JsonDocument.GetString preserves date-like strings without PowerShell type inference.
+    $invocation = [Text.Json.JsonDocument]::Parse([IO.File]::ReadAllText($invocationPath))
+    try {
+        $startInfo.FileName = $invocation.RootElement.GetProperty('Executable').GetString()
+        foreach ($argument in $invocation.RootElement.GetProperty('Arguments').EnumerateArray()) {
+            $startInfo.ArgumentList.Add($argument.GetString())
+        }
+    }
+    finally {
+        $invocation.Dispose()
+    }
+}
+finally {
+    # The workload never needs the payload. The parent also cleans up launch failures.
+    [IO.File]::Delete($invocationPath)
 }
 
 $child = [Diagnostics.Process]::Start($startInfo)
@@ -692,16 +708,6 @@ finally {
 
 exit $exitCode
 '@
-    $startInfo.FileName = $pwshPath
-    $startInfo.ArgumentList.Add('-NoProfile')
-    $startInfo.ArgumentList.Add('-NonInteractive')
-    $startInfo.ArgumentList.Add('-File')
-    $startInfo.ArgumentList.Add($wrapperPath)
-    $startInfo.ArgumentList.Add($DotNetPath)
-    foreach ($argument in $effectiveArguments) {
-        $startInfo.ArgumentList.Add($argument)
-    }
-}
 
 $process = [System.Diagnostics.Process]::new()
 $process.StartInfo = $startInfo
@@ -716,6 +722,26 @@ $windowsStartGate = $null
 $unixProcessGroupId = 0
 
 try {
+    $invocationBytes = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -Compress -Depth 3 -InputObject @{
+        Executable = $DotNetPath
+        Arguments = $effectiveArguments
+    }))
+    $payloadOptions = [IO.FileStreamOptions]::new()
+    $payloadOptions.Mode = [IO.FileMode]::CreateNew
+    $payloadOptions.Access = [IO.FileAccess]::Write
+    $payloadOptions.Share = [IO.FileShare]::None
+    if (-not $IsWindows) {
+        $payloadOptions.UnixCreateMode = [IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::UserWrite
+    }
+    # Windows inherits the current user's temporary-directory ACL. Unix creates mode 0600.
+    $payload = [IO.FileStream]::new($invocationPath, $payloadOptions)
+    try {
+        $payload.Write($invocationBytes, 0, $invocationBytes.Length)
+    }
+    finally {
+        $payload.Dispose()
+    }
+
     # -File works on supported PowerShell versions; -CommandWithArgs was
     # experimental before PowerShell 7.5.
     [System.IO.File]::WriteAllText(
@@ -824,6 +850,9 @@ finally {
 
     if (Test-Path -LiteralPath $wrapperPath) {
         Remove-Item -LiteralPath $wrapperPath -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $invocationPath) {
+        Remove-Item -LiteralPath $invocationPath -Force -ErrorAction SilentlyContinue
     }
 }
 

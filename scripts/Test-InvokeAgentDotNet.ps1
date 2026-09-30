@@ -6,7 +6,6 @@ $captureScript = Join-Path $testRoot 'Capture-Invocation.ps1'
 $timeoutScript = Join-Path $testRoot 'Spawn-Child.ps1'
 $orphanParentScript = Join-Path $testRoot 'Spawn-OrphanParent.ps1'
 $orphanIntermediateScript = Join-Path $testRoot 'Spawn-OrphanIntermediate.ps1'
-$orphanGrandchildScript = Join-Path $testRoot 'OrphanGrandchild.ps1'
 $capturePath = Join-Path $testRoot 'capture.json'
 $childPidPath = Join-Path $testRoot 'child.pid'
 $normalExitChildPidPath = Join-Path $testRoot 'normal-exit-child.pid'
@@ -143,6 +142,12 @@ $startProcessParameters = @{
 if ($IsWindows) {
     $startProcessParameters.WindowStyle = 'Hidden'
 }
+else {
+    # The fixture needs a sleeping descendant, not another PowerShell runtime.
+    # Keep the macOS process tree within the existing 512 MB test budget.
+    $startProcessParameters.FilePath = '/bin/sleep'
+    $startProcessParameters.ArgumentList = @('60')
+}
 
 $child = Start-Process @startProcessParameters
 [pscustomobject]@{
@@ -186,35 +191,16 @@ Start-Sleep -Milliseconds $ParentDelayMilliseconds
         @'
 param([string]$PidPath)
 
+$child = Start-Process -FilePath '/bin/sleep' -ArgumentList @('60') -PassThru
 [pscustomobject]@{
-    ProcessId = $PID
-    StartTimeUtcTicks = (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks
+    ProcessId = $child.Id
+    StartTimeUtcTicks = $child.StartTime.ToUniversalTime().Ticks
 } | ConvertTo-Json | Set-Content -LiteralPath $PidPath
-Start-Sleep -Seconds 60
-'@ | Set-Content -LiteralPath $orphanGrandchildScript
-
-        @'
-param(
-    [string]$GrandchildScript,
-    [string]$PidPath
-)
-
-$child = Start-Process `
-    -FilePath (Get-Process -Id $PID).Path `
-    -ArgumentList @('-NoProfile', '-File', $GrandchildScript, $PidPath) `
-    -PassThru
-
-$deadline = [DateTimeOffset]::UtcNow.AddSeconds(10)
-while ((-not (Test-Path -LiteralPath $PidPath)) -and
-    [DateTimeOffset]::UtcNow -lt $deadline) {
-    Start-Sleep -Milliseconds 50
-}
 '@ | Set-Content -LiteralPath $orphanIntermediateScript
 
         @'
 param(
     [string]$IntermediateScript,
-    [string]$GrandchildScript,
     [string]$PidPath
 )
 
@@ -224,7 +210,6 @@ $intermediate = Start-Process `
         '-NoProfile',
         '-File',
         $IntermediateScript,
-        $GrandchildScript,
         $PidPath) `
     -PassThru
 $intermediate.WaitForExit()
@@ -240,7 +225,6 @@ Start-Sleep -Seconds 60
                 '-File',
                 $orphanParentScript,
                 $orphanIntermediateScript,
-                $orphanGrandchildScript,
                 $orphanPidPath)
 
         if ($guardExitCode -ne 124) {
@@ -292,3 +276,7 @@ finally {
         Remove-Item -LiteralPath $testRoot -Recurse -Force
     }
 }
+
+# Every failed assertion throws before reaching this line. Only expected child
+# timeout/memory exit codes must not leak into the Actions pwsh exit check.
+exit 0
