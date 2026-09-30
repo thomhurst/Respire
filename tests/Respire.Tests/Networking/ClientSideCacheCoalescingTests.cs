@@ -62,9 +62,10 @@ public class ClientSideCacheCoalescingTests
         await using var server = CreateServer();
         await using var root = await ConnectAsync(server);
         var client = root.WithKeyPrefix("tenant:");
-        Task<RespireResult>? raw = rawFirst ? client.ExecuteAsync("MGET", "a", "b", "a").AsTask() : null;
+        // Raw execution takes physical wire arguments; prefix views transform typed keys only.
+        Task<RespireResult>? raw = rawFirst ? client.ExecuteAsync("MGET", "tenant:a", "tenant:b", "tenant:a").AsTask() : null;
         var typed = client.Strings.GetManyAsync("a", "b", "a").AsTask();
-        raw ??= client.ExecuteAsync("MGET", "a", "b", "a").AsTask();
+        raw ??= client.ExecuteAsync("MGET", "tenant:a", "tenant:b", "tenant:a").AsTask();
         await BarrierAsync(server, root, 1);
         await server.SendRawAsync("+OK\r\n*3\r\n$1\r\nx\r\n$-1\r\n$1\r\nx\r\n+PONG\r\n"u8.ToArray());
         using var result = await raw.WaitAsync(Timeout);
@@ -73,7 +74,7 @@ public class ClientSideCacheCoalescingTests
         await Assert.That(result[1].IsNull).IsTrue();
         await Assert.That(await client.Strings.GetManyAsync("a", "b", "a").AsTask().WaitAsync(Timeout))
             .IsEquivalentTo(new string?[] { "x", null, "x" });
-        using var cached = await client.ExecuteAsync("MGET", "a", "b", "a").AsTask().WaitAsync(Timeout);
+        using var cached = await client.ExecuteAsync("MGET", "tenant:a", "tenant:b", "tenant:a").AsTask().WaitAsync(Timeout);
         await Assert.That(cached[2].AsString()).IsEqualTo("x");
         await Assert.That(cached[1].IsNull).IsTrue();
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("MGET "))).IsEqualTo(1);
@@ -98,6 +99,44 @@ public class ClientSideCacheCoalescingTests
         await Assert.That(right[1].AsString()).IsEqualTo("b");
         using var cached = await client.ExecuteAsync("HGETALL", "hash");
         await Assert.That(cached[1].AsString()).IsEqualTo("b");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task BroadcastCoalescingSharesMissesButCachesOnlyTrackedPrefixes(bool covered)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "HELLO 3" ? Hello : FakeRespServer.OkReply,
+            SuppressReply = command => command.StartsWith("GET "),
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
+            ClientSideCache = new()
+            {
+                CoalesceConcurrentMisses = true, TrackingMode = RespireClientTrackingMode.Broadcast,
+                BroadcastPrefixes = ["covered:"],
+            },
+        });
+        var key = covered ? "covered:key" : "outside:key";
+        var first = client.GetStringAsync(key).AsTask();
+        var second = client.GetStringAsync(key).AsTask();
+        await WaitUntilAsync(() => server.ReceivedCommands.Contains("GET " + key));
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("GET "))).IsEqualTo(1);
+        await server.SendRawAsync("$1\r\nx\r\n"u8.ToArray());
+        await Assert.That(await first.WaitAsync(Timeout)).IsEqualTo("x");
+        await Assert.That(await second.WaitAsync(Timeout)).IsEqualTo("x");
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(covered ? 1 : 0);
+        var next = client.GetStringAsync(key).AsTask();
+        if (!covered)
+        {
+            await WaitUntilAsync(() => server.ReceivedCommands.Count(command => command.StartsWith("GET ")) == 2);
+            await server.SendRawAsync("$1\r\nx\r\n"u8.ToArray());
+        }
+        await Assert.That(await next.WaitAsync(Timeout)).IsEqualTo("x");
+        await Assert.That(server.ReceivedCommands.Any(command => command == "CLIENT CACHING YES")).IsFalse();
     }
 
     [Test]

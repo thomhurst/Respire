@@ -48,6 +48,7 @@ public sealed record RespireClientSideCacheOptions
             throw new RespireConfigurationException("ClientSideCache.BroadcastPrefixes requires Broadcast tracking.");
         return this with { BroadcastPrefixes = BroadcastPrefixSet.Create(BroadcastPrefixes) };
     }
+
     /// <summary>
     /// Shares concurrent equivalent cache misses within this client. Each caller can cancel
     /// independently; the shared request is canceled when its last caller leaves. Defaults to false.
