@@ -1331,6 +1331,62 @@ public class ClientSideCacheTests
         await Assert.That(cache.Count).IsEqualTo(0);
     }
 
+    [Test]
+    [Arguments("SET", false)]
+    [Arguments("SET", true)]
+    [Arguments("DELEX", false)]
+    [Arguments("DELEX", true)]
+    [Arguments("DELIFEQ", false)]
+    [Arguments("DELIFEQ", true)]
+    public async Task ComparisonMutation_FencesOnlyTargetBeforeAndAfterReply(string command, bool applied)
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(HelloReply, FakeRespServer.OkReply)
+        {
+            SuppressReply = value =>
+            {
+                if (!value.StartsWith(command + " ", StringComparison.Ordinal)) return false;
+                received.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await ConnectAsync(server);
+        var view = client.WithKeyPrefix("tenant:");
+        var cache = client.Core.ClientCache!;
+        InsertCachedValue(cache, "tenant:key", "old");
+        InsertCachedValue(cache, "tenant:other", "untouched");
+        var condition = RespireValueCondition.EqualTo("old");
+        var pending = command switch
+        {
+            "SET" => view.Strings.SetConditionalAsync("key", (RespireValue)"new", condition).AsTask(),
+            "DELEX" => view.Strings.DeleteConditionalAsync("key", condition).AsTask(),
+            _ => view.Strings.DeleteIfEqualAsync("key", "old").AsTask(),
+        };
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(cache.Count).IsEqualTo(1);
+        InsertCachedValue(cache, "tenant:key", "racing");
+        byte[] reply = command == "SET"
+            ? (applied ? FakeRespServer.OkReply : "$-1\r\n"u8.ToArray())
+            : (applied ? ":1\r\n"u8.ToArray() : ":0\r\n"u8.ToArray());
+        await server.SendRawAsync(reply);
+        await Assert.That(await pending).IsEqualTo(applied);
+        await Assert.That(cache.Count).IsEqualTo(1);
+        await Assert.That(await view.GetStringAsync("other")).IsEqualTo("untouched");
+    }
+
+    [Test]
+    public async Task Digest_PreservesCachedReads()
+    {
+        await using var server = new FakeRespServer(HelloReply, FakeRespServer.OkReply, FakeRespServer.OkReply, "$16\r\n0123456789abcdef\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+        InsertCachedValue(client.Core.ClientCache!, "tenant:key", "old");
+        var view = client.WithKeyPrefix("tenant:");
+        await Assert.That(await view.Strings.DigestAsync("key")).IsEqualTo("0123456789abcdef");
+        await Assert.That(await view.Strings.DigestAsync("key")).IsEqualTo("0123456789abcdef");
+        await Assert.That(await view.GetStringAsync("key")).IsEqualTo("old");
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(["HELLO 3", "CLIENT TRACKING ON OPTIN", "CLIENT CACHING YES", "DIGEST tenant:key"]);
+    }
+
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server)
         => RespireClient.ConnectAsync(new RespireOptions
         {
