@@ -131,6 +131,7 @@ public class DedicatedPoolRetirementTests
         await using var pool = CreatePool(server);
         var first = await pool.RentAsync(CancellationToken.None);
         pool.Return(first);
+        await pool.DiscardAsync(first); // Repeated cleanup after Return must leave the idle lease reusable.
         var second = await pool.RentAsync(CancellationToken.None);
         await Assert.That(second).IsSameReferenceAs(first);
         using var reply = await second.SendAsync(new RawCommand(FakeRespServer.PingFrame));

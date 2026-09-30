@@ -606,7 +606,10 @@ Those borrowed operations keep their connections until they finish. `DisposeAsyn
 an existing retirement by aborting borrowed operations, including indefinitely blocking reads.
 Both methods return the same completion task, which includes receive/flush cleanup and pending
 acquisitions, not merely removal from the rented set. Ordinary returned connections remain
-reusable until retirement begins; closing connections never reenter the idle pool.
+reusable until retirement begins; closing connections never reenter the idle pool. Retirement has no implicit timeout: a caller
+can bound its own wait without cancelling accepted work, or explicitly dispose the pool to abort
+borrowed sockets. Receive callbacks must remain nonblocking; disposal cannot forcibly terminate
+a callback executing application code.
 
 This is a lifecycle primitive for Cluster generation retirement. Router integration must retain
 retiring pools until completion, protect owed correction barriers before retiring control pools,

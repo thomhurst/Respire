@@ -63,7 +63,7 @@ internal sealed class DedicatedConnectionPool(
                     break;
                 }
             }
-            await CloseAsync(stale).ConfigureAwait(false);
+            _ = CloseAsync(stale);
         }
 
         try
@@ -118,8 +118,8 @@ internal sealed class DedicatedConnectionPool(
         {
             if (!_connections.TryGetValue(connection, out entry!)) return ValueTask.CompletedTask;
             if (entry.State == State.Closing) return new ValueTask(entry.Closed!.Task);
-            // Discard accepts borrowed leases, never an entry already returned to the idle stack.
-            if (entry.State != State.Rented) throw new InvalidOperationException("Connection is not rented.");
+            // Cleanup may run again after a lease has already been returned.
+            if (entry.State != State.Rented) return ValueTask.CompletedTask;
             BeginCloseLocked(entry);
         }
         _ = CloseAsync(entry);
@@ -203,12 +203,14 @@ internal sealed class DedicatedConnectionPool(
         }
         lock (_gate)
         {
-            _closeError ??= failure;
+            if (_stopping) _closeError ??= failure;
             _connections.Remove(entry.Connection);
             if (failure is null) entry.Closed!.TrySetResult();
             else entry.Closed!.TrySetException(failure);
             CompleteIfDrainedLocked();
         }
+        if (failure is not null)
+            logger?.LogWarning(failure, "Failed to close a dedicated connection to {Host}:{Port}", host, port);
     }
 
     private void CompleteIfDrainedLocked()
