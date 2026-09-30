@@ -136,6 +136,10 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         RespireKey key, RespireExpiry expiry, ExpireWhen when = ExpireWhen.Always)
         => Keys.Expire(key, expiry, when);
 
+    /// <inheritdoc cref="IRespireCommandQueue.Execute"/>
+    public RespirePending<RespireResult> Execute(RespireCommand command, params RespireValue[] args)
+        => DeferredRawCommands.Enqueue(this, command, args);
+
     RespireClient IPendingSink.Client => _client;
 
     bool IPendingSink.DefersSerialization => false;

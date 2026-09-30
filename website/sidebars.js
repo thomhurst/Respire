@@ -26,6 +26,7 @@ const sidebars = {
         'guides/pub-sub',
         'guides/batches-and-transactions',
         'guides/raw-commands',
+        'guides/deferred-raw-commands',
       ],
     },
     {

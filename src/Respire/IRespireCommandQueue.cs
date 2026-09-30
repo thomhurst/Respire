@@ -14,6 +14,15 @@ namespace Respire;
 /// </remarks>
 public interface IRespireCommandQueue
 {
+    /// <summary>Queues a raw command with a supported key layout, prefixing and snapshotting its arguments.</summary>
+    /// <remarks>
+    /// Only known nonblocking command forms are supported; unknown/module layouts and commands
+    /// requiring connection affinity are rejected before enqueueing. All keys in one command must
+    /// share a Cluster slot. The result owns GC-managed storage; disposal is optional but invalidates
+    /// it and its nested views. No inline arguments, flags, or per-command cancellation are accepted.
+    /// </remarks>
+    RespirePending<RespireResult> Execute(RespireCommand command, params RespireValue[] args);
+
     /// <summary>String (plain value) commands.</summary>
     IBatchStringCommands Strings { get; }
 

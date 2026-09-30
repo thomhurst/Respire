@@ -13,6 +13,14 @@
   See [string comparisons](../website/docs/commands/strings-and-keys.md#compare-values-before-writing-or-deleting)
   for server versions, raw comparison operands, buffer ownership, and GET result semantics.
 
+### Deferred raw commands
+
+- Batches, transactions, and watched transactions expose `Execute`, returning an owned
+  `RespirePending<RespireResult>`. Known key layouts receive prefixing and Cluster validation;
+  unsupported layouts fail before enqueueing. Custom `IRespireCommandQueue` implementations
+  must implement the new member. See the [deferred raw guide](../website/docs/guides/deferred-raw-commands.md).
+
+
 ### Sorted sets
 
 - Multi-key `PopManyAsync` adds ZMPOP and optional blocking BZMPOP; multi-key
