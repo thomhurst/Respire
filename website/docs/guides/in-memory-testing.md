@@ -1,6 +1,6 @@
 ---
 title: In-memory testing
-description: Exercise real Respire client code against a deterministic strings, keys, hashes, lists, sets, and sorted sets server without Docker.
+description: Exercise real Respire client code against a deterministic strings, keys, hashes, lists, sets, sorted sets, and pub/sub server without Docker.
 ---
 
 # In-memory testing
@@ -58,6 +58,7 @@ An error consumes exactly one response slot, so later valid commands still work.
 | Lists | `LPUSH`, `RPUSH`, `LPUSHX`, `RPUSHX`, `LPOP`/`RPOP` with optional count, `LLEN`, `LRANGE`, `LINDEX`, `LSET`, `LTRIM`, `LREM`, `LINSERT BEFORE/AFTER`, `LPOS RANK/COUNT/MAXLEN` |
 | Sets | `SADD`, `SREM`, `SMEMBERS`, `SCARD`, `SISMEMBER`, `SMISMEMBER`, `SMOVE`, `SINTER`, `SUNION`, `SDIFF`, their `STORE` forms, and `SINTERCARD` with `LIMIT` |
 | Sorted sets | `ZADD` with `NX`, `XX`, `GT`, `LT`, `CH`, `INCR`; `ZINCRBY`, `ZREM`, `ZCARD`, `ZSCORE`, `ZMSCORE`, `ZRANK`, `ZREVRANK`, `ZCOUNT`, `ZLEXCOUNT`; `ZRANGE` with `BYSCORE`/`BYLEX`, `REV`, `LIMIT`, `WITHSCORES`; legacy `ZREVRANGE`, `ZRANGEBYSCORE`, `ZREVRANGEBYSCORE`, `ZRANGEBYLEX`, `ZREVRANGEBYLEX`; `ZPOPMIN`, `ZPOPMAX`; `ZREMRANGEBYRANK`, `ZREMRANGEBYSCORE`, `ZREMRANGEBYLEX`; `ZINTERCARD` with `LIMIT` |
+| Pub/sub | `SUBSCRIBE`, `UNSUBSCRIBE`, `PUBLISH`, with binary channel names and payloads |
 | Keys | `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `PERSIST` |
 | Expiry | `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT` with `NX`, `XX`, `GT`, `LT`; `TTL`, `PTTL`, `EXPIRETIME`, `PEXPIRETIME` |
 | Connection | `HELLO 2/3` without authentication, `PING`, `ECHO`, `SELECT 0`, `CLIENT ID`, `CLIENT GETNAME`, `CLIENT SETNAME` |
@@ -181,8 +182,43 @@ Sorted-set random sampling (`ZRANDMEMBER`), scanning (`ZSCAN`), blocking/multi-k
 `ZRANK`/`ZREVRANK WITHSCORE` option are explicitly unsupported. Sorting is performed
 on demand for bounded test data; it does not model Redis's indexing or performance.
 
+Pub/sub subscriptions belong to their connection. A duplicate `SUBSCRIBE` acknowledges each
+argument but counts each distinct channel once. `UNSUBSCRIBE` acknowledges missing channels;
+without arguments it removes every subscription, or acknowledges a null channel if none exist.
+`PUBLISH` counts subscribed connections, not the number of client-side subscription readers.
+Messages and confirmations use RESP2 arrays or RESP3 pushes. In RESP2 subscribed mode, this
+subset permits only `SUBSCRIBE`, `UNSUBSCRIBE`, and `PING`; RESP3 permits ordinary commands
+while subscribed. Pattern and sharded commands (`PSUBSCRIBE`, `PUNSUBSCRIBE`, `SSUBSCRIBE`,
+`SUNSUBSCRIBE`, `SPUBLISH`), `PUBSUB` diagnostics, `QUIT`, and `RESET` are unsupported.
+
+```csharp
+using Respire.Testing;
+
+await using var server = new RespireFakeServer();
+await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+await using var subscription = await client.SubscribeAsync("events");
+if (await client.PublishAsync("events", "ready") != 1)
+    throw new InvalidOperationException("The subscription should be active.");
+await using var messages = subscription.GetAsyncEnumerator();
+if (!await messages.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))
+    || messages.Current.Text != "ready")
+    throw new InvalidOperationException("The publication did not round-trip.");
+```
+
+Each connection has one ordered output writer. Acknowledgements precede later publications,
+including when an after-execution fault holds the acknowledgement. Publications never wait
+for a subscriber to read. The fake disconnects a slow subscriber when its pending encoded
+push bytes would exceed 16 MiB, including a push currently waiting for the pipe to flush.
+This is a fixed test-fixture bound, not Redis's configurable output-buffer policy. Receiver
+counts do not guarantee delivery: a connection can close after being counted. Closing a
+connection removes its routes; client/server disposal also cancels and joins pending output.
+The real client can reconnect and resubscribe, emitting its normal gap marker. Publications
+during a gap are lost; the fake does not retain or replay them. Caller cancellation alone
+does not undo an accepted subscription; release held replies or dispose the client to let
+its normal cleanup finish.
+
 Only database zero and standalone operation are supported. Authentication, TLS, Cluster,
-Sentinel, scripts/functions, client-side tracking, pub/sub, transactions,
+Sentinel, scripts/functions, client-side tracking, transactions,
 persistence and administrative diagnostics are not simulated. Unsupported handshake features
 fail initialization. Do not enable these modes and infer production behavior from the fake.
 Individual RESP requests are limited to 16 MiB; larger requests close their connection
@@ -223,8 +259,11 @@ and the [Redis list command implementation](https://github.com/redis/redis/blob/
 Sorted-set behavior follows [ZADD](https://redis.io/docs/latest/commands/zadd/),
 [ZRANGE](https://redis.io/docs/latest/commands/zrange/), and the
 [Redis sorted-set implementation](https://github.com/redis/redis/blob/7.2/src/t_zset.c).
+Pub/sub framing and delivery follow [Redis Pub/Sub](https://redis.io/docs/latest/develop/pubsub/),
+[SUBSCRIBE](https://redis.io/docs/latest/commands/subscribe/), and
+[UNSUBSCRIBE](https://redis.io/docs/latest/commands/unsubscribe/).
 Run real-server integration tests for version compatibility, unsupported commands, and
-operational behavior. Remaining collections and pub/sub/transactions remain tracked in
+operational behavior. Remaining collections and transactions remain tracked in
 [#540](https://github.com/thomhurst/Respire/issues/540) and
 [#541](https://github.com/thomhurst/Respire/issues/541).
 
@@ -279,6 +318,10 @@ server-side pause or undo an accepted mutation. Release the gate or dispose its 
 the reply can drain; a later command on the same connection then verifies FIFO alignment.
 A disconnect after execution deliberately leaves acceptance ambiguous to the client.
 Tests must inspect independent server state, not retry the mutation blindly.
+For `PUBLISH`, an after-execution disconnect may deliver to subscribers while losing the
+publisher's reply. Holding a command's reply also holds later pushes on that connection;
+already queued pushes retain their earlier position. Faults match commands, not individual
+outgoing message frames.
 
 These actions exercise the real response parser, error propagation, command cancellation,
 FIFO draining, and connection replacement. With `ReconnectPolicy`, a subsequent standalone

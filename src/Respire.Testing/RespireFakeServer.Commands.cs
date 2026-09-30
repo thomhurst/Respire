@@ -9,7 +9,10 @@ public sealed partial class RespireFakeServer
     private static readonly Dictionary<string, Command> Commands = new(StringComparer.Ordinal)
     {
         ["HELLO"] = new(1, int.MaxValue, static (_, connection, args) => Hello(connection, args)),
-        ["PING"] = new(1, 2, static (_, _, args) => args.Length == 1 ? FakeReply.Simple("PONG") : FakeReply.Bulk(args[1])),
+        ["PING"] = new(1, 2, static (_, connection, args) => Ping(connection, args)),
+        ["SUBSCRIBE"] = new(2, int.MaxValue, static (server, connection, args) => server.Subscribe(connection, args)),
+        ["UNSUBSCRIBE"] = new(1, int.MaxValue, static (server, connection, args) => server.Unsubscribe(connection, args)),
+        ["PUBLISH"] = new(3, 3, static (server, _, args) => server.Publish(args)),
         ["ECHO"] = new(2, 2, static (_, _, args) => FakeReply.Bulk(args[1])),
         ["SELECT"] = new(2, 2, static (_, _, args) => Token(args[1]) == "0" ? FakeReply.Ok : Syntax("SELECT")),
         ["CLIENT"] = new(2, int.MaxValue, static (_, connection, args) => Client(connection, args)),

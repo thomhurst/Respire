@@ -77,7 +77,7 @@ public sealed partial class RespireFakeServer
         connection.Lifetime.Token.ThrowIfCancellationRequested();
     }
 
-    private async Task<byte[]?> ExecuteWithFaultAsync(Connection connection, byte[][] arguments)
+    private async Task<Outbound?> ExecuteWithFaultAsync(Connection connection, byte[][] arguments)
     {
         var scope = MatchFault(arguments);
         var fault = scope?.Fault;
@@ -85,7 +85,15 @@ public sealed partial class RespireFakeServer
         {
             scope!.ObserveMatch();
             if (fault.Kind == RespireFakeFault.ActionKind.Disconnect) return null;
-            if (fault.Kind == RespireFakeFault.ActionKind.Error) return FakeReply.Error(fault.Error!).Encode(connection.Resp3);
+            if (fault.Kind == RespireFakeFault.ActionKind.Error)
+            {
+                lock (_gate)
+                {
+                    var rejection = QueueOutputLocked(connection, FakeReply.Error(fault.Error!).Encode(connection.Resp3), push: false);
+                    rejection?.Ready.TrySetResult();
+                    return rejection;
+                }
+            }
             await ApplyWaitAsync(connection, scope).ConfigureAwait(false);
         }
         connection.Lifetime.Token.ThrowIfCancellationRequested();
@@ -97,6 +105,7 @@ public sealed partial class RespireFakeServer
             if (fault.Kind == RespireFakeFault.ActionKind.Disconnect) return null;
             await ApplyWaitAsync(connection, scope).ConfigureAwait(false);
         }
+        reply.Ready.TrySetResult();
         return reply;
     }
 }

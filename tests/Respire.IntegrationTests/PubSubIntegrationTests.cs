@@ -27,21 +27,18 @@ public class PubSubIntegrationTests
     }
 
     [Test]
-    [Arguments(RespProtocol.Resp2, SubscriptionKind.Channel)]
-    [Arguments(RespProtocol.Resp3, SubscriptionKind.Channel)]
-    [Arguments(RespProtocol.Resp2, SubscriptionKind.Pattern)]
-    [Arguments(RespProtocol.Resp3, SubscriptionKind.Pattern)]
-    [Arguments(RespProtocol.Resp2, SubscriptionKind.Sharded)]
-    [Arguments(RespProtocol.Resp3, SubscriptionKind.Sharded)]
-    public async Task BinaryChannels_RoundTrip(RespProtocol protocol, SubscriptionKind kind)
+    [Arguments(RespProtocol.Resp2, SubscriptionKind.Channel, false)]
+    [Arguments(RespProtocol.Resp3, SubscriptionKind.Channel, false)]
+    [Arguments(RespProtocol.Resp2, SubscriptionKind.Pattern, false)]
+    [Arguments(RespProtocol.Resp3, SubscriptionKind.Pattern, false)]
+    [Arguments(RespProtocol.Resp2, SubscriptionKind.Sharded, false)]
+    [Arguments(RespProtocol.Resp3, SubscriptionKind.Sharded, false)]
+    [Arguments(RespProtocol.Resp2, SubscriptionKind.Channel, true)]
+    [Arguments(RespProtocol.Resp3, SubscriptionKind.Channel, true)]
+    public async Task BinaryChannels_RoundTrip(RespProtocol protocol, SubscriptionKind kind, bool useFake)
     {
-        await using var client = await RespireClient.ConnectAsync(new RespireOptions
-        {
-            Endpoints = { new RespireEndpoint(_fixture.Host, _fixture.Port) },
-            Database = _fixture.Database,
-            Protocol = protocol,
-            Connections = 1,
-        });
+        await using var server = useFake ? new RespireFakeServer() : null;
+        await using var client = await RespireClient.ConnectAsync(Options(server, protocol));
         byte[] prefix = [.. System.Text.Encoding.UTF8.GetBytes(IsolatedChannel("binary:")), 0xff, 0, (byte)':'];
         RespireChannel channel = (byte[])[.. prefix, (byte)'x'];
         RespireChannel target = kind switch
@@ -110,50 +107,71 @@ public class PubSubIntegrationTests
     }
 
     [Test]
-    public async Task SubscribeAsync_MultipleChannels_AllLiveOnReturn()
+    [Arguments(RespProtocol.Resp2, false)]
+    [Arguments(RespProtocol.Resp3, false)]
+    [Arguments(RespProtocol.Resp2, true)]
+    [Arguments(RespProtocol.Resp3, true)]
+    public async Task SubscribeAsync_MultipleChannels_AllLiveOnReturn(RespProtocol protocol, bool useFake)
     {
+        await using var server = useFake ? new RespireFakeServer() : null;
+        var options = Options(server, protocol);
+        await using var client = await RespireClient.ConnectAsync(options);
         var first = IsolatedChannel("it:multi1");
         var second = IsolatedChannel("it:multi2");
-        await using var subscription = await _client.SubscribeAsync([first, second]);
+        await using var subscription = await client.SubscribeAsync([first, second]);
         var messages = ReadAsync(subscription, 2);
 
-        (await _client.PublishAsync(first, "one")).Should().Be(1);
-        (await _client.PublishAsync(second, "two")).Should().Be(1);
+        (await client.PublishAsync(first, "one")).Should().Be(1);
+        (await client.PublishAsync(second, "two")).Should().Be(1);
 
         var received = await messages.WaitAsync(TimeSpan.FromSeconds(5));
         received.Select(message => message.Text).Should().BeEquivalentTo(["one", "two"]);
     }
 
     [Test]
-    public async Task SubscribeAsync_Cancelled_LeavesNothingSubscribed()
+    [Arguments(RespProtocol.Resp2, false)]
+    [Arguments(RespProtocol.Resp3, false)]
+    [Arguments(RespProtocol.Resp2, true)]
+    [Arguments(RespProtocol.Resp3, true)]
+    public async Task SubscribeAsync_Cancelled_LeavesNothingSubscribed(RespProtocol protocol, bool useFake)
     {
+        await using var server = useFake ? new RespireFakeServer() : null;
+        var options = Options(server, protocol);
+        await using var client = await RespireClient.ConnectAsync(options);
         var live = IsolatedChannel("it:await:live");
         var cancelled = IsolatedChannel("it:await:cancelled");
 
         // A live subscription first, so the pub/sub connection is already up and cancellation
         // races the SUBSCRIBE itself rather than the connect.
-        await using var subscription = await _client.SubscribeAsync(live);
+        await using var subscription = await client.SubscribeAsync(live);
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
 
-        var subscribe = async () => await _client.SubscribeAsync(cancelled, cts.Token);
+        var subscribe = async () => await client.SubscribeAsync(cancelled, cts.Token);
 
         await subscribe.Should().ThrowAsync<OperationCanceledException>();
 
         // The cancelled subscription left no server-side registration behind, and the connection
         // it shared is still healthy.
-        (await _client.PublishAsync(cancelled, "orphaned")).Should().Be(0);
-        (await _client.PublishAsync(live, "still-delivered")).Should().Be(1);
+        (await client.PublishAsync(cancelled, "orphaned")).Should().Be(0);
+        (await client.PublishAsync(live, "still-delivered")).Should().Be(1);
     }
 
     [Test]
-    public async Task Unsubscribe_StopsDelivery()
+    [Arguments(RespProtocol.Resp2, false)]
+    [Arguments(RespProtocol.Resp3, false)]
+    [Arguments(RespProtocol.Resp2, true)]
+    [Arguments(RespProtocol.Resp3, true)]
+    public async Task Unsubscribe_StopsDelivery(RespProtocol protocol, bool useFake)
     {
+        await using var server = useFake ? new RespireFakeServer() : null;
+        var options = Options(server, protocol);
+        await using var client = await RespireClient.ConnectAsync(options);
         var channel = IsolatedChannel("it:bye");
-        var subscription = await _client.SubscribeAsync(channel);
+        var subscription = await client.SubscribeAsync(channel);
         await using var reader = subscription.GetAsyncEnumerator();
 
-        (await _client.PublishAsync(channel, "warm-up")).Should().Be(1);
+        (await client.PublishAsync(channel, "warm-up")).Should().Be(1);
         (await reader.MoveNextAsync()).Should().BeTrue();
         var pendingRead = reader.MoveNextAsync();
         await subscription.DisposeAsync();
@@ -161,7 +179,7 @@ public class PubSubIntegrationTests
         // Disposal ends an already-active enumeration before returning.
         (await pendingRead.AsTask().WaitAsync(TimeSpan.FromSeconds(5))).Should().BeFalse();
 
-        var receivers = await _client.PublishAsync(channel, "should-not-arrive");
+        var receivers = await client.PublishAsync(channel, "should-not-arrive");
 
         receivers.Should().Be(0);
     }
@@ -186,18 +204,25 @@ public class PubSubIntegrationTests
     }
 
     [Test]
-    public async Task MultipleSubscribers_AllReceive()
+    [Arguments(RespProtocol.Resp2, false)]
+    [Arguments(RespProtocol.Resp3, false)]
+    [Arguments(RespProtocol.Resp2, true)]
+    [Arguments(RespProtocol.Resp3, true)]
+    public async Task MultipleSubscribers_AllReceive(RespProtocol protocol, bool useFake)
     {
+        await using var server = useFake ? new RespireFakeServer() : null;
+        var options = Options(server, protocol);
+        await using var client = await RespireClient.ConnectAsync(options);
         var channel = IsolatedChannel("it:fanout");
         // Each client routes its subscriptions over one dedicated pub/sub connection, so two
         // clients are needed for the server to count two receivers.
-        await using var secondClient = await RespireClient.ConnectAsync(_fixture.ConnectionString);
-        await using var subscription1 = await _client.SubscribeAsync(channel);
+        await using var secondClient = await RespireClient.ConnectAsync(options);
+        await using var subscription1 = await client.SubscribeAsync(channel);
         await using var subscription2 = await secondClient.SubscribeAsync(channel);
         var firstMessage1 = ReadFirstAsync(subscription1);
         var firstMessage2 = ReadFirstAsync(subscription2);
 
-        var receivers = await _client.PublishAsync(channel, "to-everyone");
+        var receivers = await client.PublishAsync(channel, "to-everyone");
 
         receivers.Should().Be(2);
         (await firstMessage1.WaitAsync(TimeSpan.FromSeconds(5))).Text.Should().Be("to-everyone");
@@ -265,6 +290,13 @@ public class PubSubIntegrationTests
             reconnecting.Error.Should().NotBeNull();
         }
     }
+
+    private RespireOptions Options(RespireFakeServer? server, RespProtocol protocol)
+        => (server?.CreateOptions() ?? RespireOptions.Parse(_fixture.ConnectionString)) with
+        {
+            Protocol = protocol,
+            Connections = 1,
+        };
 
     /// <summary>Starts consuming the subscription and completes with the first message received.</summary>
     private static Task<RespireMessage> ReadFirstAsync(RespireSubscription subscription)
