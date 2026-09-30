@@ -38,8 +38,9 @@ value can therefore grow compared with storage without a codec. Encoding and dec
 allocate owned buffers and consume CPU. Comparative measurements are tracked in
 [#527](https://github.com/thomhurst/Respire/issues/527); no throughput improvement is promised.
 
-The serializer decorator buffers the complete serialized value, then copies the owned
-frame into its destination. DEFLATE compression buffers stream output and copies it
+The serializer decorator buffers the complete serialized value, then asks the codec
+to write into its destination. Built-in codecs construct the final frame directly in
+that writer, avoiding an intermediate frame array and its copy. DEFLATE compression buffers stream output and copies it
 into an owned array; decoding copies compressed input into a stream-backed array.
 These allocations are part of the current opt-in cost. The decoded-length limit does
 not bound serializer buffering, compression workspace, or total peak memory.
@@ -76,7 +77,15 @@ byte[]? stored = await redis.Strings.GetBytesAsync("binary");
 byte[]? decoded = stored is null ? null : codec.Decode(stored);
 ```
 
-`IRespireValueCodec.Encode` and `Decode` return caller-owned arrays. Calling a codec
+The one-argument `IRespireValueCodec.Encode` and `Decode` return caller-owned arrays.
+Their `IBufferWriter<byte>` overloads append to caller-supplied storage. Built-in
+codecs write frames or decoded bytes directly into that storage and advance it only
+after success. A failed decompression may have changed uncommitted writer memory;
+it does not advance the destination. Existing custom implementations can implement
+only the array members: default destination overloads copy those results. Implement
+the destination overloads to avoid those fallback allocations.
+
+Calling a codec
 explicitly does not configure the client to decode other raw reads. For a collection
 that only accepts raw writes, explicitly serialize through the decorated serializer
 before enqueueing its value; the existing typed reader then uses the same decorator.
@@ -119,7 +128,8 @@ Version 1 uses this byte layout; offsets and length exclude any Redis RESP frami
 The checksum detects accidental changes and truncation before invoking a decompressor;
 it does not authenticate data. SHA-256 uses the platform implementation without adding
 a hashing dependency; truncation limits frame overhead to eight checksum bytes. This
-choice does not claim a throughput advantage over noncryptographic checksums.
+choice does not claim a throughput advantage over noncryptographic checksums. Hashing
+the payload consumes CPU on each encode and decode; #527 must include that cost.
 A compressed payload must be smaller than the declared
 original, while an uncompressed payload must have exactly that length. Output length is
 checked against `MaximumDecodedLength` before allocation and must match the decompressor's
@@ -134,6 +144,8 @@ value limit that fits your data, and account for concurrent reads when choosing 
 The public `RespireValueCodec` base class shares these framing rules with optional/custom
 codecs. IDs 3 and 4 are reserved for LZ4 and Zstandard packages; IDs 16–255 are available
 for an application's custom codecs and must be coordinated between its readers and writers.
+The protected constructor rejects IDs 0–15; built-in implementations use an internal
+reserved-ID constructor, also available to explicitly trusted optional codec assemblies.
 A custom codec implements compression and bounded decompression, while the base manages
 thresholds, ownership, framing, and checksums. There is no decoder registry or automatic
 fallback between algorithms.

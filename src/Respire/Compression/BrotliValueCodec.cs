@@ -9,7 +9,7 @@ public sealed class BrotliValueCodec : RespireValueCodec
     private readonly int _quality;
 
     /// <summary>Creates a thread-safe codec. Quality ranges from 0 through 11; the default is 4.</summary>
-    public BrotliValueCodec(RespireValueCodecOptions? options = null, int quality = 4) : base(1, options)
+    public BrotliValueCodec(RespireValueCodecOptions? options = null, int quality = 4) : base(1, options, allowReservedAlgorithm: true)
     {
         if (quality is < 0 or > 11) throw new ArgumentOutOfRangeException(nameof(quality));
         _quality = quality;

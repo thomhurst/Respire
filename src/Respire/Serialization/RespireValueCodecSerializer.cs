@@ -29,7 +29,7 @@ public sealed class RespireValueCodecSerializer : IRespireSerializer
         ArgumentNullException.ThrowIfNull(destination);
         var buffer = new ArrayBufferWriter<byte>();
         _serializer.Serialize(buffer, value);
-        destination.Write(_codec.Encode(buffer.WrittenSpan));
+        _codec.Encode(buffer.WrittenSpan, destination);
     }
 
     /// <inheritdoc/>
@@ -46,7 +46,7 @@ public sealed class RespireValueCodecSerializer : IRespireSerializer
         ArgumentNullException.ThrowIfNull(type);
         var buffer = new ArrayBufferWriter<byte>();
         _serializer.Serialize(buffer, type, value);
-        destination.Write(_codec.Encode(buffer.WrittenSpan));
+        _codec.Encode(buffer.WrittenSpan, destination);
     }
 
     /// <inheritdoc/>

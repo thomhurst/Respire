@@ -28,6 +28,14 @@ public class ValueCodecTests
             var frame = codec.Encode(input);
             var restored = codec.Decode(frame);
             await Assert.That(restored).IsEquivalentTo(input);
+            var encodedDestination = new ArrayBufferWriter<byte>();
+            encodedDestination.Write(new byte[] { 42 });
+            codec.Encode(input, encodedDestination);
+            await Assert.That(encodedDestination.WrittenMemory.ToArray()).IsEquivalentTo(new byte[] { 42 }.Concat(frame));
+            var decodedDestination = new ArrayBufferWriter<byte>();
+            decodedDestination.Write(new byte[] { 42 });
+            codec.Decode(frame, decodedDestination);
+            await Assert.That(decodedDestination.WrittenMemory.ToArray()).IsEquivalentTo(new byte[] { 42 }.Concat(input));
             await Assert.That(frame.Length).IsLessThanOrEqualTo(input.Length + RespireValueCodec.HeaderLength);
             await Assert.That(frame[5]).IsEqualTo(ReferenceEquals(input, large) ? codec.AlgorithmId : (byte)0);
             if (input.Length != 0)
@@ -77,7 +85,14 @@ public class ValueCodecTests
         RefreshChecksum(corrupt); // Exercise the decompressor's validation after a structurally valid frame.
         invalid.Add(corrupt);
         foreach (var frame in invalid)
+        {
             await Assert.That(() => codec.Decode(frame)).Throws<InvalidDataException>();
+            var destination = new ArrayBufferWriter<byte>();
+            destination.Write(new byte[] { 42 });
+            await Assert.That(() => codec.Decode(frame, destination)).Throws<InvalidDataException>();
+            await Assert.That(destination.WrittenCount).IsEqualTo(1);
+            await Assert.That(destination.WrittenMemory.ToArray()).IsEquivalentTo(new byte[] { 42 });
+        }
         await Assert.That(() => Create(!deflate).Decode(original)).Throws<InvalidDataException>();
     }
 
@@ -102,6 +117,10 @@ public class ValueCodecTests
     [Test]
     public async Task InvalidConfigurationIsRejectedAtConstruction()
     {
+        for (byte algorithm = 0; algorithm < 16; algorithm++)
+            await Assert.That(() => new CustomCodec(algorithm)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(new CustomCodec(16).AlgorithmId).IsEqualTo((byte)16);
+        await Assert.That(new CustomCodec(255).AlgorithmId).IsEqualTo((byte)255);
         await Assert.That(() => new BrotliValueCodec(quality: -1)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => new BrotliValueCodec(quality: 12)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => new DeflateValueCodec(level: (CompressionLevel)99)).Throws<ArgumentOutOfRangeException>();
@@ -110,6 +129,37 @@ public class ValueCodecTests
             await Assert.That(() => new BrotliValueCodec(options)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => new RespireValueCodecSerializer(null!, new BrotliValueCodec())).Throws<ArgumentNullException>();
         await Assert.That(() => new RespireValueCodecSerializer(RespireSerializer.Default, null!)).Throws<ArgumentNullException>();
+    }
+
+    [Test]
+    public async Task ExistingCustomCodecsKeepDestinationFallbacks()
+    {
+        IRespireValueCodec codec = new ArrayOnlyCodec();
+        var encoded = new ArrayBufferWriter<byte>();
+        encoded.Write(new byte[] { 42 });
+        codec.Encode("abc"u8, encoded);
+        await Assert.That(encoded.WrittenMemory.ToArray()).IsEquivalentTo(new byte[] { 42, 97, 98, 99 });
+        var decoded = new ArrayBufferWriter<byte>();
+        decoded.Write(new byte[] { 43 });
+        codec.Decode("abc"u8, decoded);
+        await Assert.That(decoded.WrittenMemory.ToArray()).IsEquivalentTo(new byte[] { 43, 97, 98, 99 });
+        await Assert.That(() => codec.Encode(Array.Empty<byte>(), null!)).Throws<ArgumentNullException>();
+        await Assert.That(() => codec.Decode(Array.Empty<byte>(), null!)).Throws<ArgumentNullException>();
+    }
+
+    [Test]
+    public async Task SerializerWritesThroughTheCodecDestinationOverload()
+    {
+        var codec = new DestinationCodec();
+        var serializer = new RespireValueCodecSerializer(new BinarySerializer(), codec);
+        var value = new BinaryValue([255, 0, 128]);
+        var generic = new ArrayBufferWriter<byte>();
+        serializer.Serialize(generic, value);
+        await Assert.That(generic.WrittenMemory.ToArray()).IsEquivalentTo(value.Bytes);
+        var runtime = new ArrayBufferWriter<byte>();
+        serializer.Serialize(runtime, typeof(BinaryValue), value);
+        await Assert.That(runtime.WrittenMemory.ToArray()).IsEquivalentTo(value.Bytes);
+        await Assert.That(codec.Writes).IsEqualTo(2);
     }
 
     [Test]
@@ -167,6 +217,30 @@ public class ValueCodecTests
         => SHA256.HashData(frame.AsSpan(RespireValueCodec.HeaderLength)).AsSpan(0, 8).CopyTo(frame.AsSpan(10));
 
     private sealed record BinaryValue(byte[] Bytes);
+
+    private sealed class CustomCodec(byte algorithm) : RespireValueCodec(algorithm)
+    {
+        protected override byte[] Compress(ReadOnlySpan<byte> payload) => payload.ToArray();
+        protected override void Decompress(ReadOnlySpan<byte> payload, Span<byte> destination) => payload.CopyTo(destination);
+    }
+
+    private sealed class ArrayOnlyCodec : IRespireValueCodec
+    {
+        public byte[] Encode(ReadOnlySpan<byte> payload) => payload.ToArray();
+        public byte[] Decode(ReadOnlySpan<byte> payload) => payload.ToArray();
+    }
+
+    private sealed class DestinationCodec : IRespireValueCodec
+    {
+        internal int Writes;
+        public byte[] Encode(ReadOnlySpan<byte> payload) => throw new InvalidOperationException("The serializer must use the destination overload.");
+        public byte[] Decode(ReadOnlySpan<byte> payload) => payload.ToArray();
+        public void Encode(ReadOnlySpan<byte> payload, IBufferWriter<byte> destination)
+        {
+            Writes++;
+            destination.Write(payload);
+        }
+    }
     private sealed class BinarySerializer : IRespireSerializer
     {
         internal int GenericWrites, GenericReads, RuntimeWrites, RuntimeReads;

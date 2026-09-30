@@ -9,7 +9,7 @@ public sealed class DeflateValueCodec : RespireValueCodec
 
     /// <summary>Creates a thread-safe codec using the specified compression level. The default is Fastest.</summary>
     public DeflateValueCodec(RespireValueCodecOptions? options = null, CompressionLevel level = CompressionLevel.Fastest)
-        : base(2, options)
+        : base(2, options, allowReservedAlgorithm: true)
     {
         if (!Enum.IsDefined(level)) throw new ArgumentOutOfRangeException(nameof(level));
         _level = level;
