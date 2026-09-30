@@ -13,6 +13,37 @@ public class FakeSortedSetParityTests(RedisTestContainer fixture)
     [Arguments(false, 3)]
     [Arguments(true, 2)]
     [Arguments(true, 3)]
+    public async Task LegacyLexAndIntersectionErrorsMatchRedis(bool useFake, int protocol)
+    {
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        await using var client = await Connect(fake, protocol);
+        await client.SortedSets.AddAsync("key", ("a", 1));
+        foreach (var key in new[] { "key", "missing" })
+        {
+            foreach (var command in new[] { "ZRANGEBYLEX", "ZREVRANGEBYLEX" })
+            {
+                Func<Task> scoredLex = async () =>
+                {
+                    using var ignored = await client.ExecuteAsync(command, key, "-", "+", "WITHSCORES");
+                };
+                (await scoredLex.Should().ThrowAsync<RespireServerException>()).Which.Message
+                    .Should().Be("ERR syntax error, WITHSCORES not supported in combination with BYLEX");
+            }
+            Func<Task> missingArguments = async () =>
+            {
+                using var ignored = await client.ExecuteAsync("ZINTERCARD", 2, key);
+            };
+            (await missingArguments.Should().ThrowAsync<RespireServerException>()).Which.Message
+                .Should().Be("ERR syntax error");
+        }
+        (await client.SortedSets.ScoreAsync("key", "a")).Should().Be(1);
+    }
+
+    [Test]
+    [Arguments(false, 2)]
+    [Arguments(false, 3)]
+    [Arguments(true, 2)]
+    [Arguments(true, 3)]
     public async Task AddOptionsValidateAtomicallyAndPreserveExpiry(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
