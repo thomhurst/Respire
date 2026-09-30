@@ -571,13 +571,15 @@ function Add-SingleNodeArgument([string[]]$Arguments) {
     }
 
     $verb = $Arguments[0]
-    $supportsMaxCpuCount = $verb -in @('build', 'test', 'pack', 'publish', 'msbuild')
+    if ($verb -notin @('build', 'test', 'pack', 'publish', 'msbuild')) {
+        return $Arguments
+    }
     $separatorIndex = [Array]::IndexOf($Arguments, '--')
     $buildArguments = if ($separatorIndex -lt 0) { $Arguments } else { $Arguments[0..($separatorIndex - 1)] }
     $alreadyConfigured = $buildArguments |
         Where-Object { $_ -match '^(?:[-/]m(?:axcpucount)?|--maxcpucount)(?::|$)' } |
         Select-Object -First 1
-    if (-not $supportsMaxCpuCount -or $alreadyConfigured) {
+    if ($alreadyConfigured) {
         return $Arguments
     }
 
@@ -625,25 +627,7 @@ finally {
     $startGate.Dispose()
 }
 
-$startInfo = [Diagnostics.ProcessStartInfo]::new()
-$startInfo.UseShellExecute = $false
-$invocation = $env:RESPIRE_AGENT_DOTNET_INVOCATION | ConvertFrom-Json
-$startInfo.Environment.Remove('RESPIRE_AGENT_DOTNET_INVOCATION') | Out-Null
-$startInfo.FileName = $invocation.Executable
-foreach ($argument in $invocation.Arguments) {
-    $startInfo.ArgumentList.Add($argument)
-}
 
-$child = [Diagnostics.Process]::Start($startInfo)
-try {
-    $child.WaitForExit()
-    $exitCode = $child.ExitCode
-}
-finally {
-    $child.Dispose()
-}
-
-exit $exitCode
 '@
     $startInfo.FileName = $pwshPath
     $startInfo.ArgumentList.Add('-NoProfile')
@@ -680,6 +664,17 @@ if ([AgentDotNetUnixChildNative]::setpriority(0, 0, 10) -ne 0) {
     [Console]::Error.WriteLine("Agent dotnet guard could not lower Unix priority (errno $errorCode).")
 }
 
+
+'@
+    $startInfo.FileName = $pwshPath
+    $startInfo.ArgumentList.Add('-NoProfile')
+    $startInfo.ArgumentList.Add('-NonInteractive')
+    $startInfo.ArgumentList.Add('-File')
+    $startInfo.ArgumentList.Add($wrapperPath)
+}
+
+# Both containment wrappers start the workload through the same native argument path.
+$wrapperScript += @'
 $startInfo = [Diagnostics.ProcessStartInfo]::new()
 $startInfo.UseShellExecute = $false
 $invocation = $env:RESPIRE_AGENT_DOTNET_INVOCATION | ConvertFrom-Json
@@ -700,12 +695,6 @@ finally {
 
 exit $exitCode
 '@
-    $startInfo.FileName = $pwshPath
-    $startInfo.ArgumentList.Add('-NoProfile')
-    $startInfo.ArgumentList.Add('-NonInteractive')
-    $startInfo.ArgumentList.Add('-File')
-    $startInfo.ArgumentList.Add($wrapperPath)
-}
 
 $process = [System.Diagnostics.Process]::new()
 $process.StartInfo = $startInfo

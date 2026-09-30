@@ -53,6 +53,9 @@ return 0;
     Assert-Arguments @('test', '--', '-m:4') @('test', '-m:1', '--', '-m:4') -SingleNode
     Assert-Arguments @('run', '--', '-m:4') @('run', '--', '-m:4') -SingleNode
     Assert-Arguments @('version') @('version') -SingleNode
+    Assert-Arguments @('--', '-m:4') @('--', '-m:4') -SingleNode
+    $longArgument = 'x' * 8192
+    Assert-Arguments @('build', $longArgument) @('build', $longArgument, '-m:1') -SingleNode
 
     # Exercise real MSBuild with the injected switch, not only the probe.
     & $guardScript -SingleNode -TimeoutSeconds 60 -DotNetArguments @('pack', $project, '--no-restore', '--nologo')
