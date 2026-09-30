@@ -80,8 +80,16 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         }
         catch (Exception startupError)
         {
+            // Capture before disposal. Creation may have failed before Docker assigned an ID;
+            // diagnostic lookup must never hide the original startup or cleanup exception.
+            string? containerId = null;
+            try { containerId = fixture.ContainerId; }
+            catch (Exception) { }
             try { await fixture.DisposeAsync().ConfigureAwait(false); }
-            catch (Exception cleanupError) { throw new AggregateException("Fixture startup and cleanup both failed.", startupError, cleanupError); }
+            catch (Exception cleanupError)
+            {
+                throw new AggregateException($"Fixture startup and cleanup both failed (container: {containerId ?? "unavailable"}).", startupError, cleanupError);
+            }
             if (startupError is OperationCanceledException && !cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
                 throw new TimeoutException($"Fixture {options.Server}/{options.Topology} did not become ready within {options.StartupTimeout}; step: {fixture._startupStep}; last reply: {fixture._lastReadinessResponse}", startupError);
             throw;
