@@ -415,6 +415,11 @@ public class MultiItemCancellationOverloadTests
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
+        public ValueTask<RespireClusterScanPage> ScanClusterPageAsync(
+            RespireClusterScanCursor cursor, string? match = null, RespireKeyType? type = null,
+            int countHint = 250, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
         public IAsyncEnumerable<string> ScanAsync(
             string? match = null,
             RespireKeyType? type = null,

@@ -131,9 +131,21 @@ public partial interface IKeyCommands
     /// <summary>Touches keys (updates access time); returns how many existed. Redis: TOUCH.</summary>
     ValueTask<long> TouchAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken);
 
+    /// <summary>Reads one resumable page across Redis Cluster primaries.</summary>
+    /// <remarks>Start with RespireClusterScanCursor.Start. Preserve match, type and the client's
+    /// key prefix when resuming. Requires SCAN, CLUSTER SLOTS, CLUSTER NODES and INFO permissions.
+    /// A failed call leaves its input cursor usable. Retry that cursor after transient failures.
+    /// Duplicate keys and empty incomplete pages are permitted, especially during resharding.</remarks>
+    ValueTask<RespireClusterScanPage> ScanClusterPageAsync(
+        RespireClusterScanCursor cursor,
+        string? match = null,
+        RespireKeyType? type = null,
+        int countHint = 250,
+        CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Iterates keys incrementally without blocking the server; the cursor is handled
-    /// internally. In cluster mode, every known master is scanned with its own cursor.
+    /// internally. In cluster mode, slot progress is validated as ownership changes.
     /// Redis: SCAN.
     /// </summary>
     IAsyncEnumerable<string> ScanAsync(
@@ -303,27 +315,26 @@ internal sealed partial class KeyCommands(RespireClient client) : IKeyCommands
         var prefix = client.KeyPrefix;
         var effectiveMatch = prefix is null ? match : EscapeGlob(prefix) + (match ?? "*");
 
-        if (client.Core.Cluster is { } cluster)
+        if (client.Core.Cluster is not null)
         {
-            var masters = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
-            foreach (var master in masters)
+            var checkpoint = RespireClusterScanCursor.Start;
+            do
             {
-                await foreach (var key in ScanNodeAsync(master, cancellationToken).ConfigureAwait(false))
-                {
-                    yield return key;
-                }
+                var page = await ScanClusterPageAsync(checkpoint, match, type, countHint, cancellationToken).ConfigureAwait(false);
+                foreach (var key in page.Keys) yield return key;
+                checkpoint = page.Cursor;
             }
+            while (!checkpoint.IsComplete);
 
             yield break;
         }
 
-        await foreach (var key in ScanNodeAsync(connection: null, cancellationToken).ConfigureAwait(false))
+        await foreach (var key in ScanStandaloneAsync(cancellationToken).ConfigureAwait(false))
         {
             yield return key;
         }
 
-        async IAsyncEnumerable<string> ScanNodeAsync(
-            Respire.Networking.RespireConnection? connection,
+        async IAsyncEnumerable<string> ScanStandaloneAsync(
             [EnumeratorCancellation] CancellationToken token)
         {
             var cursor = "0";
@@ -337,14 +348,13 @@ internal sealed partial class KeyCommands(RespireClient client) : IKeyCommands
                     _ => [cursor, "MATCH", effectiveMatch, "COUNT", countHint, "TYPE", typeToken],
                 };
                 var command = new CmdN(Verbs.Scan, args);
-                var reply = connection is null
-                    ? await client.SendAsync("SCAN", command, token).ConfigureAwait(false)
-                    : await client.SendToClusterTargetAsync("SCAN", connection, command, token).ConfigureAwait(false);
-
-                var elements = reply.AsArray();
-                cursor = elements[0].AsString();
-                var page = ResponseReader.StringArray(in elements[1]);
-                reply.Dispose();
+                string[] page;
+                using (var reply = await client.SendAsync("SCAN", command, token).ConfigureAwait(false))
+                {
+                    var elements = reply.AsArray();
+                    cursor = elements[0].AsString();
+                    page = ResponseReader.StringArray(in elements[1]);
+                }
 
                 foreach (var key in page)
                 {

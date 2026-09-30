@@ -251,6 +251,11 @@ await cluster.SetAsync("{account:42}:balance", 100);
 
 A single seed can also be enabled with `redis://redis-1?cluster=true`.
 
+Cluster `Keys.ScanAsync` validates slot progress during resharding. For durable checkpoints,
+use `Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start)` and serialize the returned
+cursor after processing each page. See [resumable Cluster scans](website/docs/commands/strings-and-keys.md#resumable-cluster-scans)
+for permissions, topology validation, duplicate handling, and resume semantics.
+
 ### Zero-copy reads and custom commands
 
 Normal reads favor convenient .NET values. For large payloads, opt into a disposable lease:

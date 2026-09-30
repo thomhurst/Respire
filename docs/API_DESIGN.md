@@ -244,6 +244,17 @@ await foreach (var field in redis.Hashes.ScanAsync("user:1", match: "profile:*",
 
 Hashes yield field/value pairs, sets yield members, and sorted sets yield members with scores.
 
+Cluster key scans also expose `Keys.ScanClusterPageAsync(RespireClusterScanCursor, ...)`.
+Its immutable next cursor round-trips through `ToString`/`Parse`, binds match/type/key prefix,
+and records completed slots plus the active node's cursor, identity, epoch, and run ID.
+The async enumerable delegates to this page engine. Primary-local metadata prevents an
+in-progress migration from being marked complete; changed owners invalidate only affected
+slot completion. Reusing a server cursor after a restart or epoch change is forbidden.
+The engine requires SCAN, CLUSTER SLOTS, CLUSTER NODES and INFO and validates a full node pass
+before committing completion. Empty pages and duplicates are valid; failed calls preserve
+the input checkpoint, and missing topology is an explicit failure, never a partial scan.
+
+
 ## 5. Batching (explicit pipeline)
 
 Auto-pipelining already happens under concurrency; `CreateBatch` exists for the

@@ -1684,6 +1684,11 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ValueTask<long> TouchAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
             => inner.TouchAsync(keys, cancellationToken);
 
+        public ValueTask<RespireClusterScanPage> ScanClusterPageAsync(
+            RespireClusterScanCursor cursor, string? match = null, RespireKeyType? type = null,
+            int countHint = 250, CancellationToken cancellationToken = default)
+            => inner.ScanClusterPageAsync(cursor, match, type, countHint, cancellationToken);
+
         public IAsyncEnumerable<string> ScanAsync(
             string? match = null,
             RespireKeyType? type = null,
