@@ -67,6 +67,11 @@ Notification descriptors cannot be published or converted to a different subscri
 Construct `new RespireChannel(descriptor.Bytes)` to deliberately use equivalent bytes as an
 ordinary application channel. Reserved-looking names alone never change routing semantics.
 Channel equality remains byte-based; it does not compare kind or notification metadata.
+Delivered message `Channel` and `Pattern` values contain wire names, without the subscription
+descriptor's routing/database metadata. This remains consistent when ordinary names and
+notification descriptors share a route, regardless of registration order. Read the emitting
+database from the parsed notification's `Database` property; retain the original descriptor
+when its routing intent is needed.
 
 ## Redis 8.8 subkeys
 
@@ -91,7 +96,8 @@ await foreach (var message in subscription)
 `GetSubKeys()` offers `Count`, `FirstOrDefault`, `CopyTo`, and an explicitly allocating
 `ToArray`. Empty field names count as subkeys. Delimiter bytes, NUL, and invalid UTF-8 survive
 parsing. Decimal length prefixes are validated before exposing slices; truncated, overflowing,
-or inconsistent frames return false. Gap markers also return false.
+or inconsistent frames return false. Gap markers and empty event names also return false.
+Unknown nonempty event names remain available losslessly through `RawType`.
 
 Redis does not emit item-channel notifications for keys containing newline, so
 `SubKeySpaceItem` rejects such keys. Other layouts support them. Event names containing `|`

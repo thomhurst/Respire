@@ -118,6 +118,10 @@ public readonly partial struct RespireChannel : IEquatable<RespireChannel>
 
     internal static RespireChannel FromOwnedBytes(byte[] bytes) => new(bytes, default(ChannelMetadata));
 
+    // Incoming wire names carry bytes and subscription kind, not the caller's routing intent.
+    internal RespireChannel WithoutNotificationMetadata()
+        => IsNotification ? new(_bytes, new ChannelMetadata((byte)Kind)) : this;
+
     internal ReadOnlySpan<byte> Span => _bytes;
 
     internal RespireChannel WithKind(SubscriptionKind kind)

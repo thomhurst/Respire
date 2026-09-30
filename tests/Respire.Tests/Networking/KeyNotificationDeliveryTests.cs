@@ -110,6 +110,57 @@ public class KeyNotificationDeliveryTests
         await Assert.That(found && gap).IsTrue();
     }
 
+    [Test]
+    [Arguments(false, false, false)]
+    [Arguments(false, false, true)]
+    [Arguments(false, true, false)]
+    [Arguments(false, true, true)]
+    [Arguments(true, false, false)]
+    [Arguments(true, false, true)]
+    [Arguments(true, true, false)]
+    [Arguments(true, true, true)]
+    public async Task SharedWireRoutesDoNotExposeRegistrationOrderMetadata(bool resp3, bool pattern, bool descriptorFirst)
+    {
+        var descriptor = pattern ? RespireChannel.KeySpacePrefix("tenant:", 0)
+            : RespireChannel.KeySpaceSingleKey("tenant:key", 0);
+        var ordinary = new RespireChannel(descriptor.Bytes);
+        if (pattern) ordinary = RespireChannel.Pattern(ordinary);
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        server.ReplyOverride = (_, command) => command == "HELLO 3"
+            ? "%1\r\n+proto\r\n:3\r\n"u8.ToArray()
+            : Confirmation(descriptor, resp3, command.StartsWith("UNSUBSCRIBE ") || command.StartsWith("PUNSUBSCRIBE "));
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Protocol = resp3 ? RespProtocol.Resp3 : RespProtocol.Resp2,
+            Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        await using var first = await client.SubscribeAsync(descriptorFirst ? descriptor : ordinary);
+        await using var second = await client.SubscribeAsync(descriptorFirst ? ordinary : descriptor);
+        await server.SendRawAsync(Data(descriptor, resp3, "set"));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        foreach (var subscription in new[] { first, second })
+        {
+            await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
+            await Assert.That(await reader.MoveNextAsync()).IsTrue();
+            var message = reader.Current;
+            await Assert.That(message.Channel.IsNotification).IsFalse();
+            await Assert.That(message.Channel.NotificationDatabase).IsNull();
+            await Assert.That(message.Channel.RoutingSlot).IsNull();
+            await Assert.That(message.Channel.ToString()).IsEqualTo("__keyspace@0__:tenant:key");
+            if (pattern)
+            {
+                await Assert.That(message.Pattern!.Value.IsNotification).IsFalse();
+                await Assert.That(message.Pattern.Value.Kind).IsEqualTo(SubscriptionKind.Pattern);
+                await Assert.That(message.Pattern.Value).IsEqualTo(ordinary);
+            }
+            await Assert.That(message.TryParseKeyNotification(out var notification)).IsTrue();
+            await Assert.That(notification.Database).IsEqualTo(0);
+            await Assert.That(notification.Type).IsEqualTo(RespireKeyNotificationType.Set);
+        }
+        await Assert.That(descriptor.IsNotification).IsTrue();
+        await Assert.That(descriptor.NotificationDatabase).IsEqualTo(0);
+    }
+
     private static byte[] Confirmation(RespireChannel descriptor, bool push, bool unsubscribe)
     {
         var verb = descriptor.Kind == SubscriptionKind.Pattern ? "psubscribe" : "subscribe";

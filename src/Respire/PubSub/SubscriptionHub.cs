@@ -105,7 +105,9 @@ internal sealed partial class SubscriptionHub(ClientCore core) : IAsyncDisposabl
                     if (!routes.TryGetValue(name, out var list))
                     {
                         list = [];
-                        routes.Add(name, list);
+                        // Equal byte routes may mix ordinary names and descriptors. Cache a
+                        // wire name so registration order cannot leak one caller's metadata.
+                        routes.Add(name.WithoutNotificationMetadata(), list);
                     }
 
                     list.Add(subscription);
