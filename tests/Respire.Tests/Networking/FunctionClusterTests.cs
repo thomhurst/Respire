@@ -70,8 +70,8 @@ public class FunctionClusterTests
         var source = "#!lua name=sample\nreturn 1";
         var function = RespireFunctionLibrary.Create(source).Function("function");
         await Assert.That(await client.Functions.ExecuteIntegerAsync(function, ["{foo}:key"])).IsEqualTo(42);
-        await Assert.That(first.ReceivedCommands).IsEquivalentTo(["FUNCTION LIST WITHCODE", $"FUNCTION LOAD {source}"]);
-        await Assert.That(second.ReceivedCommands).IsEquivalentTo(["FCALL function 1 {foo}:key", "FUNCTION LIST WITHCODE", $"FUNCTION LOAD {source}", "FCALL function 1 {foo}:key"]);
+        await Assert.That(first.ReceivedCommands).IsEquivalentTo(["FUNCTION LIST LIBRARYNAME sample WITHCODE", $"FUNCTION LOAD {source}"]);
+        await Assert.That(second.ReceivedCommands).IsEquivalentTo(["FCALL function 1 {foo}:key", "FUNCTION LIST LIBRARYNAME sample WITHCODE", $"FUNCTION LOAD {source}", "FCALL function 1 {foo}:key"]);
     }
 
     [Test]

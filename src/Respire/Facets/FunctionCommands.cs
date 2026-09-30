@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Networking;
@@ -75,19 +76,25 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
 
     private async ValueTask<RespireResult> ExecuteCoreAsync(RespireFunction function, BatchScriptCommand command, CancellationToken cancellationToken)
     {
+        var reload = function.Library?.ReloadState(client.Core);
+        var generation = reload is null ? 0 : Volatile.Read(ref reload.Generation);
         try
         {
             var reply = await client.SendAsync(function.Operation, command, cancellationToken).ConfigureAwait(false);
             return client.CreateResult(in reply);
         }
-        catch (RespireServerException error) when (function.Library is not null && error.Message == "ERR Function not found")
+        catch (RespireServerException error) when (function.Library is not null && IsFunctionNotFound(error))
         {
             var library = function.Library;
-            var gate = library.ReloadGate(client.Core);
+            var gate = reload!.Gate;
             await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                await EnsureLibraryAsync(library, cancellationToken).ConfigureAwait(false);
+                if (Volatile.Read(ref reload.Generation) == generation)
+                {
+                    await EnsureLibraryAsync(library, cancellationToken).ConfigureAwait(false);
+                    Interlocked.Increment(ref reload.Generation);
+                }
             }
             finally { gate.Release(); }
             // Redis reserves this reply for a missing function. A second failure escapes;
@@ -95,6 +102,22 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
             var reply = await client.SendAsync(function.Operation, command, cancellationToken).ConfigureAwait(false);
             return client.CreateResult(in reply);
         }
+    }
+
+    // Do not broaden this to a substring match: user function errors can contain these words
+    // after performing writes, and retrying such a function can repeat its side effects.
+    private static bool IsFunctionNotFound(RespireServerException error)
+        => error.Message == "ERR Function not found";
+
+    internal static string EscapeLibraryPattern(string name)
+    {
+        var pattern = new StringBuilder(name.Length);
+        foreach (var character in name)
+        {
+            if (character is '\\' or '*' or '?' or '[' or ']') pattern.Append('\\');
+            pattern.Append(character);
+        }
+        return pattern.ToString();
     }
 
     internal static BatchScriptCommand CallCommand(RespireClient client, RespireFunction function,
@@ -203,7 +226,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
     {
         // Inspect before loading: concurrent first use accepts identical source, but never silently
         // overwrites a different library unless replacement was explicitly requested.
-        var libraries = await SendAndConvertAsync(connection, "FUNCTION LIST", ListCommand(null, true),
+        var libraries = await SendAndConvertAsync(connection, "FUNCTION LIST", ListCommand(EscapeLibraryPattern(library.Name), true),
             static (FunctionCommands _, in RespValue value) => FunctionResponseReader.Libraries(in value), cancellationToken).ConfigureAwait(false);
         var existing = libraries.FirstOrDefault(item => item.Name == library.Name);
         if (existing?.Code == library.Source) return;

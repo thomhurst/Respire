@@ -177,7 +177,7 @@ public class FunctionCommandTests
         await using var server = new FakeRespServer("-ERR Function not found\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var library = RespireFunctionLibrary.Create("#!lua name=sample\nreturn 1");
-        var gate = library.ReloadGate(client.Core);
+        var gate = library.ReloadState(client.Core).Gate;
         await gate.WaitAsync();
         try
         {
@@ -216,6 +216,52 @@ public class FunctionCommandTests
             return RespValue.PooledAggregate(RespDataType.Map, rented, values.Length);
         }
         static RespValue Text(string value) => RespValue.BulkString(Encoding.UTF8.GetBytes(value));
+    }
+
+    [Test]
+    public async Task ConcurrentMissingCallsShareOneFilteredReload()
+    {
+        var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        await using var server = new FakeRespServer("*0\r\n"u8.ToArray(), "$6\r\nsample\r\n"u8.ToArray(), ":42\r\n"u8.ToArray())
+        {
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("FCALL ", StringComparison.Ordinal)) return false;
+                var number = Interlocked.Increment(ref calls);
+                if (number == 2) arrived.TrySetResult();
+                return number <= 2;
+            }
+        };
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var function = RespireFunctionLibrary.Create("#!lua name=sample\nreturn 1").Function("function");
+        var first = client.Functions.ExecuteIntegerAsync(function).AsTask();
+        var second = client.Functions.ExecuteIntegerAsync(function).AsTask();
+        await arrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await server.SendRawAsync("-ERR Function not found\r\n-ERR Function not found\r\n"u8.ToArray());
+        await Assert.That(await Task.WhenAll(first, second)).IsEquivalentTo(new long[] { 42, 42 });
+        await Assert.That(server.ReceivedCommands.Count(command => command == "FUNCTION LIST LIBRARYNAME sample WITHCODE")).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("FUNCTION LOAD ", StringComparison.Ordinal))).IsEqualTo(1);
+        await Assert.That(calls).IsEqualTo(4);
+    }
+
+    [Test]
+    [Arguments("ERR Function not found in user data")]
+    [Arguments("ERR function not found")]
+    [Arguments("ERR user callback: Function not found")]
+    public async Task SimilarApplicationErrorsMustNotTriggerReplay(string message)
+    {
+        await using var server = new FakeRespServer(Encoding.UTF8.GetBytes($"-{message}\r\n"));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var function = RespireFunctionLibrary.Create("#!lua name=sample\nreturn 1").Function("function");
+        await Assert.That(async () => await client.Functions.ExecuteIntegerAsync(function)).Throws<RespireServerException>();
+        await Assert.That(server.CommandsSeen).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task LibraryFilterEscapesGlobMetacharacters()
+    {
+        await Assert.That(FunctionCommands.EscapeLibraryPattern(@"a[b]*?\c")).IsEqualTo(@"a\[b\]\*\?\\c");
     }
 
 }

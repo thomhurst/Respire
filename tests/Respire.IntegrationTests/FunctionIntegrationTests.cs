@@ -107,13 +107,18 @@ public class FunctionIntegrationTests
             results.Distinct().Should().HaveCount(12);
         }
         (await client.GetAsync<long>("counter")).Should().Be(24);
-        var replacement = Source + "\nredis.register_function('extra', function() return 99 end)";
+        var replacement = Source + "\nredis.register_function('extra', function() return 99 end)" +
+            "\nredis.register_function('user_error', function(keys,args) redis.call('INCR',keys[1]); return redis.error_reply('ERR Function not found in user data') end)";
         var conflicting = RespireFunctionLibrary.Create(replacement).Function("extra");
         Func<Task> refused = async () => { await client.Functions.ExecuteIntegerAsync(conflicting); };
         await refused.Should().ThrowAsync<RespireServerException>();
         (await client.Functions.ListAsync("sample", true)).Single().Code.Should().Be(Source);
         var allowed = RespireFunctionLibrary.Create(replacement, replace: true).Function("extra");
         (await client.Functions.ExecuteIntegerAsync(allowed)).Should().Be(99);
+        var userError = RespireFunctionLibrary.Create(replacement).Function("user_error");
+        Func<Task> applicationFailure = async () => { await client.Functions.ExecuteIntegerAsync(userError, ["error-counter"]); };
+        await applicationFailure.Should().ThrowAsync<RespireServerException>();
+        (await client.GetAsync<long>("error-counter")).Should().Be(1);
         var missing = RespireFunctionLibrary.Create(replacement).Function("undefined");
         Func<Task> absent = async () => { await client.Functions.ExecuteIntegerAsync(missing); };
         (await absent.Should().ThrowAsync<RespireServerException>()).Which.Message.Should().Be("ERR Function not found");

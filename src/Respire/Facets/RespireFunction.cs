@@ -32,7 +32,7 @@ public sealed class RespireFunction
 /// not on every call. Deferred calls never reload; load the library before execution.</remarks>
 public sealed class RespireFunctionLibrary
 {
-    private readonly ConditionalWeakTable<ClientCore, SemaphoreSlim> _reloadGates = new();
+    private readonly ConditionalWeakTable<ClientCore, FunctionReloadState> _reloadStates = new();
     private RespireFunctionLibrary(string source, string name, bool replace)
         => (Source, Name, Replace) = (source, name, replace);
 
@@ -59,7 +59,13 @@ public sealed class RespireFunctionLibrary
 
     /// <summary>References a function in this library, enabling one reload/retry for immediate execution.</summary>
     public RespireFunction Function(string name, bool readOnly = false) => new(name, readOnly, this);
-    internal SemaphoreSlim ReloadGate(ClientCore core) => _reloadGates.GetValue(core, static _ => new(1, 1));
+    internal FunctionReloadState ReloadState(ClientCore core) => _reloadStates.GetValue(core, static _ => new());
+
+    internal sealed class FunctionReloadState
+    {
+        internal readonly SemaphoreSlim Gate = new(1, 1);
+        internal long Generation;
+    }
 }
 
 /// <summary>How FUNCTION FLUSH releases memory.</summary>

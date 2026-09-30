@@ -83,7 +83,10 @@ as proof that invocation did not execute. A second missing-function reply is ret
 the caller. This also handles a flush or restart that removed the library.
 
 Reloads for one reusable library and logical client are serialized, including prefixed
-views. The loader inspects current source using `FUNCTION LIST WITHCODE`, accepts identical
+views. Concurrent first-use calls share a reload; this does not permanently mark the
+library as loaded, so a later missing-function call can reload after a flush. The loader
+inspects only the named library using an escaped `FUNCTION LIST LIBRARYNAME` pattern with
+`WITHCODE`, accepts identical
 source, and loads missing libraries. A different source with the same library name produces
 a server collision error by default. `Create(source, replace: true)` explicitly permits
 replacement during loading. Existing registered functions are used as-is; this option does
@@ -107,7 +110,11 @@ load libraries in addition to calling functions.
 Immediate LOAD, DELETE, FLUSH, and RESTORE visit all discovered Cluster primaries. Reload
 also visits discovered primaries and accepts matching libraries already present on some
 nodes. All sends are observed before reporting a failure. These operations are not atomic;
-cancellation or failure can leave some nodes changed. LIST, DUMP, and STATS inspect one
+cancellation or failure can leave some nodes changed. Inconsistent successful replies are
+also detected only after the mutations have run. All tasks complete before an exception
+is surfaced, but the thrown exception does not aggregate per-node outcomes. The primary
+set is a best-effort topology snapshot and is not rechecked after sending; concurrent
+failover can leave a newly promoted primary unloaded. LIST, DUMP, and STATS inspect one
 routing node only, not a merged cluster view. Connect directly to each primary to inspect
 or back up divergent state. Function libraries are server-wide, not isolated by key prefix
 or selected database. Replication follows Redis's normal library behavior.
