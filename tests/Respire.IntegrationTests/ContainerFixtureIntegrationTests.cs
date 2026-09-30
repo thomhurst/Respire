@@ -45,6 +45,11 @@ public class ContainerFixtureIntegrationTests
             {
                 Endpoints = [endpoint], Protocol = RespProtocol.Resp2, AllowAdmin = true,
             });
+            using var primary = await sentinel.ExecuteAsync(RespireCommands.Sentinel.SENTINEL_GET_MASTER_ADDR_BY_NAME,
+                RespireContainerFixture.SentinelServiceName);
+            primary.Count.Should().Be(2);
+            primary[0].AsString().Should().Be("127.0.0.1");
+            primary[1].AsString().Should().Be(fixture.DataEndpoints[0].Port.ToString(System.Globalization.CultureInfo.InvariantCulture));
             using var replicas = await sentinel.ExecuteAsync(RespireCommands.Sentinel.SENTINEL_REPLICAS,
                 RespireContainerFixture.SentinelServiceName);
             replicas.Count.Should().Be(1);

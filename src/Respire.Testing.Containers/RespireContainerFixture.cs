@@ -42,7 +42,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         var builder = new ContainerBuilder(image)
             .WithCreateParameterModifier(parameters => (parameters.HostConfig ??= new()).Init = true)
             .WithEntrypoint("/bin/sh", "-c")
-            .WithCommand("mkdir -p /tmp/respire-fixture; exec tail -f /dev/null")
+            .WithCommand("exec tail -f /dev/null")
             .WithLabel("respire.testing.fixture", "true");
         foreach (var port in ports)
             builder = options.Topology == RespireContainerTopology.Standalone
@@ -120,6 +120,9 @@ public sealed class RespireContainerFixture : IAsyncDisposable
 
     private async Task InitializeAsync(CancellationToken cancellationToken)
     {
+        // Container startup does not await entrypoint shell commands. Keep directory
+        // creation ordered before configuration copies and report mkdir failures directly.
+        await ExecuteAsync(["mkdir", "-p", "/tmp/respire-fixture"], cancellationToken).ConfigureAwait(false);
         var dataCount = _options.Topology switch
         {
             RespireContainerTopology.Standalone => 1,
@@ -177,6 +180,11 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         foreach (var port in _ports.Skip(2))
         {
             await WaitForAsync(port, ["SENTINEL", "CKQUORUM", SentinelServiceName], text => text.StartsWith("OK", StringComparison.Ordinal), cancellationToken).ConfigureAwait(false);
+            await WaitForAsync(port, ["SENTINEL", "GET-MASTER-ADDR-BY-NAME", SentinelServiceName], text =>
+            {
+                var fields = text.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+                return fields.Length == 2 && fields[0] == "127.0.0.1" && fields[1] == Number(_ports[0]);
+            }, cancellationToken).ConfigureAwait(false);
             await WaitForAsync(port, ["SENTINEL", "REPLICAS", SentinelServiceName], ReplicaIsReady, cancellationToken).ConfigureAwait(false);
         }
     }
