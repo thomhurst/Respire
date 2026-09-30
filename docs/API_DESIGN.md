@@ -514,7 +514,12 @@ concatenates). Client-side caching is configured through `RespireOptions.ClientS
   retried on the next use. Optional `RespireOptions.ReconnectPolicy` adds per-slot exponential
   backoff, bounded jitter, and persistent attempt limits; null preserves immediate replacement.
   Successful replacement resets the count. `ConnectionStateChanged` and reconnect histograms
-  report scheduled attempts and delay. Dedicated pools, pub/sub, and discovery retain their
+  report scheduled attempts and delay. Sentinel resolution also applies the policy to candidates
+  after the first, sharing one fallback budget across configured seeds, learned peers, and
+  primary ROLE rejection. Each explicit resolution starts fresh; per-candidate deadlines and
+  the final underlying error are preserved. Metrics identify the candidate endpoint and
+  `respire.reconnect.scope=sentinel-discovery`. Initial resolution has no returned client for
+  lifecycle subscriptions; ongoing failover remains #396. Dedicated pools, pub/sub, and Cluster discovery retain their
   existing behavior pending the remaining [#401](https://github.com/thomhurst/Respire/issues/401)
   children. See the [recovery guide](../website/docs/guides/reconnect-policy.md).
 - **Timeouts**: `CommandTimeout` is the client default; each call accepts a `CancellationToken`

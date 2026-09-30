@@ -125,6 +125,11 @@ currently discovers the primary at startup; it does not automatically discover a
 primary later. Ordinary reconnection targets the deployment already selected. Cluster routing
 is distinct from either standalone fallback or Sentinel discovery.
 
+An optional [`ReconnectPolicy`](../guides/reconnect-policy.md#sentinel-discovery-fallback)
+bounds and delays Sentinel fallback candidates after the first. Configured seeds, learned
+peers, and failed primary ROLE validation share that resolution budget; it does not
+enable ongoing Sentinel failover.
+
 Programmatic `RespireOptions.Endpoints` follows the same rule: standalone mode requires one
 endpoint. Lists that previously left extra standalone endpoints unused now fail validation.
 Cluster and Sentinel cannot both be selected in one comma-delimited string.

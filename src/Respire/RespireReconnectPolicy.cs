@@ -1,12 +1,13 @@
 namespace Respire;
 
-/// <summary>Backoff and attempt limits for replacing failed command and dedicated connections.</summary>
-/// <remarks>Attempts are counted per connection slot and reset after a successful replacement.
+/// <summary>Backoff and attempt limits for failed command and dedicated connections and Sentinel fallback.</summary>
+/// <remarks>Command attempts are counted per connection slot and reset after a successful replacement.
 /// Dedicated acquisitions use a separate budget per rent, after an immediate initial attempt.
-/// Recovery remains demand-driven. This policy does not replay commands or retry initial multiplexer setup.</remarks>
+/// Command recovery remains demand-driven. Sentinel resolution applies one shared budget to candidates
+/// after its first attempt. This policy does not replay commands or retry initial multiplexer setup.</remarks>
 public sealed record RespireReconnectPolicy
 {
-    /// <summary>Delay before the first replacement attempt. Defaults to 250 milliseconds.</summary>
+    /// <summary>Delay before the first connection replacement or Sentinel fallback attempt. Defaults to 250 milliseconds.</summary>
     public TimeSpan InitialDelay { get; init; } = TimeSpan.FromMilliseconds(250);
     /// <summary>Exponential delay multiplier. Must be finite and at least one.</summary>
     public double BackoffMultiplier { get; init; } = 2;
@@ -14,11 +15,12 @@ public sealed record RespireReconnectPolicy
     public TimeSpan MaxDelay { get; init; } = TimeSpan.FromSeconds(5);
     /// <summary>Symmetric random variation as a fraction of the exponential delay, from zero to one.</summary>
     public double JitterRatio { get; init; } = 0.2;
-    /// <summary>Maximum replacement attempts per failed command slot or dedicated rent; null permits unlimited attempts.</summary>
+    /// <summary>Maximum replacement attempts per failed command slot, dedicated rent, or Sentinel resolution; null applies no policy limit.</summary>
     /// <remarks>Defaults to null. A slot that exhausts this limit remains unavailable until the client
     /// is recreated; there is no automatic cooldown or reset. Successful replacement resets the count
     /// before exhaustion. Each dedicated rent starts a new budget, so exhaustion does not disable the pool.
-    /// Leave null for long-lived clients that must keep trying after an outage.</remarks>
+    /// Leave null for long-lived clients that must keep trying after an outage.
+    /// Sentinel resolution counts fallback candidates after the first; a new explicit resolution starts fresh.</remarks>
     public int? MaxAttempts { get; init; }
 
     internal bool IsExhausted(int attempts) => MaxAttempts is { } maximum && attempts >= maximum;
