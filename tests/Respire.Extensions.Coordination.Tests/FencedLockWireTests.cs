@@ -149,6 +149,47 @@ public class FencedLockWireTests
     }
 
     [Test]
+    public async Task AcquireWaitClampsExpiryBeyondSemaphoreTimeoutLimit()
+    {
+        var attempts = 0;
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+                "GET lease" => "$-1\r\n"u8.ToArray(),
+                // 30 days: beyond SemaphoreSlim's Int32.MaxValue millisecond timeout limit.
+                "PTTL lease" => ":2592000000\r\n"u8.ToArray(),
+                var value when value.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                    => Interlocked.Increment(ref attempts) == 1 ? "_\r\n"u8.ToArray() : "$1\r\n1\r\n"u8.ToArray(),
+                var value when value.StartsWith("DELEX lease IFEQ ", StringComparison.Ordinal)
+                    => ":1\r\n"u8.ToArray(),
+                _ => FakeRespServer.OkReply,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp3,
+            Endpoints = [new("127.0.0.1", server.Port)],
+            Connections = 1,
+            ClientSideCache = new(),
+        });
+        var pending = new RespireCoordination(client).AcquireFencedLockAsync(
+            "lease", "counter", TimeSpan.FromDays(30)).AsTask();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!server.ReceivedCommands.Contains("PTTL lease")) await Task.Delay(5, timeout.Token);
+        await Task.Delay(50, timeout.Token);
+        await Assert.That(pending.IsFaulted).IsFalse();
+
+        var commandConnection = server.ReceivedConnectionIds[
+            server.ReceivedCommands.ToList().IndexOf("GET lease")];
+        await server.SendRawAsync(">2\r\n+invalidate\r\n*1\r\n$5\r\nlease\r\n"u8.ToArray(), commandConnection);
+
+        await using var lease = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(Volatile.Read(ref attempts)).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task AcquireWaitCancellationStopsWaitingWithoutRetrying()
     {
         var attempts = 0;

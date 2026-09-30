@@ -39,6 +39,8 @@ public interface IRespireClientCacheInvalidationSubscription : IDisposable
     Exception? LastObserverException { get; }
 
     /// <summary>Is canceled when the observer or its owning cache stops the subscription.</summary>
+    /// <remarks>Cancellation is signaled after cleanup. Exceptions from callbacks registered on this
+    /// token are retained in <see cref="LastObserverException"/> instead of escaping disposal.</remarks>
     CancellationToken Stopped => CancellationToken.None;
 }
 
@@ -131,7 +133,6 @@ internal sealed class RespireClientCacheInvalidationSubscription : IRespireClien
     private void DisposeCore(bool removeFromOwner)
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        _stopped.Cancel();
         if (removeFromOwner) _owner.RemoveInvalidationObserver(this);
         CancellationTokenRegistration registration;
         lock (_gate)
@@ -141,5 +142,8 @@ internal sealed class RespireClientCacheInvalidationSubscription : IRespireClien
             _pending = RespireClientCacheInvalidationReason.None;
         }
         registration.Unregister();
+        // Signal last so a throwing Stopped callback cannot skip cleanup or abort owner shutdown.
+        try { _stopped.Cancel(); }
+        catch (Exception error) { Volatile.Write(ref _lastObserverException, error); }
     }
 }
