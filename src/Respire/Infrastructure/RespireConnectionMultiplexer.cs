@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.Logging;
 using Respire.Commands;
+using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
 
@@ -30,6 +31,16 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private readonly Queue<StateNotification> _stateNotifications = [];
     private uint _next;
     private int _disposed;
+    private int _retired;
+    // Cold lifecycle transitions share this gate; normal selection reads only volatile state.
+    // A reconnect reserves ownership before starting so shutdown also awaits unpublished work.
+    private readonly object _lifecycleGate = new();
+    private readonly CancellationTokenSource _stopConnecting = new();
+    private readonly CancellationTokenSource _abortCancellation = new();
+    private int _activeReconnects;
+    private TaskCompletionSource? _reconnectsDrained;
+    private TaskCompletionSource? _retirementCompletion;
+    private TaskCompletionSource? _disposeCompletion;
     private int _trackServerClientIds;
     private string? _correctionOrderingFailure;
     private volatile bool _correctionOrderingReady;
@@ -39,6 +50,9 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     public string Host { get; }
     public int Port { get; }
     public int ConnectionCount => _connections.Length;
+    internal bool IsRetired => Volatile.Read(ref _retired) != 0;
+    private bool IsOperational => !IsRetired && Volatile.Read(ref _disposed) == 0;
+    internal bool HasPendingCorrectionFences => !_retiredServerClientIds.IsEmpty;
     internal bool IsInitialized => _connected;
     internal bool HasReliableCorrectionOrdering => _correctionOrderingReady;
     internal bool IsReliableCorrectionOrderingUnavailable =>
@@ -83,14 +97,14 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     {
         get
         {
-            if (Volatile.Read(ref _disposed) != 0 || !_connected)
+            if (Volatile.Read(ref _disposed) != 0 || IsRetired || !_connected)
             {
                 return false;
             }
 
             foreach (var connection in _connections)
             {
-                if (connection is { IsConnected: true })
+                if (connection is { IsAcceptingCommands: true })
                 {
                     return true;
                 }
@@ -145,15 +159,31 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     /// <summary>Opens all connections on first call; later calls return immediately.</summary>
     public async ValueTask EnsureConnectedAsync(CancellationToken cancellationToken = default)
     {
+        ThrowIfUnavailable();
         if (_connected)
         {
             return;
         }
 
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopConnecting.Token);
+        try
+        {
+            await InitializeConnectionsAsync(lifetime.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
+            error, cancellationToken, lifetime.Token))
+        {
+            // Retirement cancellation keeps its own identity; caller/deadline cancellation crosses our link.
+            throw new OperationCanceledException(error.Message, error, cancellationToken);
+        }
+    }
+
+    private async ValueTask InitializeConnectionsAsync(CancellationToken cancellationToken)
+    {
         await _connectGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            ThrowIfUnavailable();
             if (_connected)
             {
                 return;
@@ -168,14 +198,18 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             try
             {
                 var connections = await Task.WhenAll(connectTasks).ConfigureAwait(false);
-                for (var i = 0; i < connections.Length; i++)
+                lock (_lifecycleGate)
                 {
-                    connections[i].Multiplexer = this;
-                    Volatile.Write(ref _connections[i], connections[i]);
-                    ObserveConnectionFailure(i, connections[i]);
+                    ThrowIfUnavailable();
+                    for (var i = 0; i < connections.Length; i++)
+                    {
+                        connections[i].Multiplexer = this;
+                        Volatile.Write(ref _connections[i], connections[i]);
+                    }
+                    _connected = true;
                 }
-
-                _connected = true;
+                for (var i = 0; i < connections.Length; i++)
+                    ObserveConnectionFailure(i, connections[i]);
             }
             catch
             {
@@ -210,7 +244,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     private RespireConnection GetConnection(uint startIndex)
     {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        ThrowIfUnavailable();
         if (!_connected)
         {
             throw new RespireConnectionException(
@@ -225,7 +259,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 ? (int)(offset & (uint)_connectionMask)
                 : (int)(offset % (uint)count);
             var connection = Volatile.Read(ref _connections[slot]);
-            if (connection is { IsConnected: true })
+            if (connection is { IsAcceptingCommands: true })
             {
                 return connection;
             }
@@ -233,13 +267,14 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             ScheduleReconnect(slot);
         }
 
+        ThrowIfUnavailable();
         throw new RespireConnectionException($"No healthy connections to {Host}:{Port}.");
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private RespireConnection GetSingleConnection()
     {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        ThrowIfUnavailable();
         if (!_connected)
         {
             throw new RespireConnectionException(
@@ -247,12 +282,13 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
 
         var connection = Volatile.Read(ref _connections[0]);
-        if (connection is { IsConnected: true })
+        if (connection is { IsAcceptingCommands: true })
         {
             return connection;
         }
 
         ScheduleReconnect(0);
+        ThrowIfUnavailable();
         throw new RespireConnectionException($"No healthy connections to {Host}:{Port}.");
     }
 
@@ -272,6 +308,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     /// </summary>
     internal async ValueTask EnsureReliableCorrectionOrderingAsync(CancellationToken cancellationToken = default)
     {
+        ThrowIfUnavailable();
         if (_correctionOrderingReady)
         {
             return;
@@ -282,6 +319,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         await _correctionIdentityGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            ThrowIfUnavailable();
             if (_correctionOrderingReady)
             {
                 return;
@@ -294,7 +332,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
             while (true)
             {
-                ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+                ThrowIfUnavailable();
                 var ready = true;
                 for (var slot = 0; slot < _connections.Length; slot++)
                 {
@@ -418,7 +456,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         CancellationToken cancellationToken = default)
         where TCommand : struct, IRespCommand
     {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        ThrowIfUnavailable();
         if (!_connected)
         {
             // Never connected: nothing can be buffered anywhere, so there is nothing to order
@@ -539,9 +577,11 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     internal async ValueTask FenceRetiredConnectionsAsync(CancellationToken cancellationToken = default)
     {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         await _retiredFenceGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             // Catch slots that died after the broadcast started but before their reply task
             // faulted. A caller joining this safety barrier must not return merely because the
             // asynchronous drain has not published the dead ID yet.
@@ -559,6 +599,11 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             {
                 foreach (var clientId in _retiredServerClientIds.Keys)
                 {
+                    if (IsRetired)
+                    {
+                        await FenceUsingControlConnectionAsync(cancellationToken).ConfigureAwait(false);
+                        return;
+                    }
                     var connection = await GetHealthyConnectionAsync(cancellationToken).ConfigureAwait(false);
                     try
                     {
@@ -585,9 +630,31 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 }
             }
         }
+        catch (RespireConnectionRetiredException) when (IsRetired)
+        {
+            await FenceUsingControlConnectionAsync(cancellationToken).ConfigureAwait(false);
+        }
         finally
         {
             _retiredFenceGate.Release();
+        }
+    }
+
+    // Called under the fence gate. These idempotent safety commands are the only sends
+    // permitted after retirement; the control connection is never published or reconnected.
+    private async Task FenceUsingControlConnectionAsync(CancellationToken cancellationToken)
+    {
+        if (_retiredServerClientIds.IsEmpty) return;
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _abortCancellation.Token);
+        await using var connection = await RespireConnection.ConnectAsync(Host, Port,
+            _options with { EnableClientTracking = false, PushHandler = null, SubscriptionConfirmationHandler = null },
+            _logger, lifetime.Token).ConfigureAwait(false);
+        foreach (var clientId in _retiredServerClientIds.Keys)
+        {
+            using var reply = await connection.SendAsync(new ClientKillIdCommand(clientId), lifetime.Token,
+                armCommandDeadline: false).ConfigureAwait(false);
+            if (reply.IsError) throw new RespireServerException(reply.GetErrorMessage(), "CLIENT KILL");
+            _retiredServerClientIds.TryRemove(clientId, out _);
         }
     }
 
@@ -621,6 +688,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             }
             catch (RespireConnectionException)
             {
+                ThrowIfUnavailable();
                 await Task.Delay(25, cancellationToken).ConfigureAwait(false);
             }
         }
@@ -628,10 +696,11 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     private void RetireConnection(RespireConnection? connection)
     {
-        var clientId = connection?.ServerClientId ?? 0;
-        if (clientId > 0 && Volatile.Read(ref _trackServerClientIds) != 0)
+        // An identity already obtained remains an obligation even if interrupted bootstrap
+        // clears the flag that requests identities on future replacement connections.
+        if (connection is { ServerClientId: > 0, DrainedSuccessfully: false })
         {
-            _retiredServerClientIds.TryAdd(clientId, 0);
+            _retiredServerClientIds.TryAdd(connection.ServerClientId, 0);
         }
     }
 
@@ -659,95 +728,83 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private void ScheduleReconnect(int slot)
     {
         var connection = Volatile.Read(ref _connections[slot]);
+        // An individually draining connection must finish before replacement can dispose it.
+        if (connection is { IsConnected: true, IsAcceptingCommands: false }) return;
         var error = connection?.CloseError;
         RetireConnection(connection);
-        if (Interlocked.CompareExchange(ref _reconnecting[slot], 1, 0) != 0)
+        bool publish;
+        lock (_lifecycleGate)
         {
-            return;
+            if (!IsOperational
+                || Interlocked.CompareExchange(ref _reconnecting[slot], 1, 0) != 0)
+                return;
+            _activeReconnects++;
+            publish = QueueLifecycleNotificationUnderLock(new StateNotification(slot, RespireConnectionState.Reconnecting, error));
         }
-
-        NotifyStateChanged(slot, RespireConnectionState.Reconnecting, error);
         _ = ReconnectAsync(slot);
+        // A handler can synchronously retire/dispose and wait for this reserved work.
+        if (publish) DrainStateNotifications();
     }
 
     private async Task ReconnectAsync(int slot)
     {
         RespireConnection? replacement = null;
         var reconnectGuardReleased = false;
+        var publish = false;
         try
         {
-            replacement = await RespireConnection.ConnectAsync(Host, Port, _options, _logger).ConfigureAwait(false);
+            replacement = await RespireConnection.ConnectAsync(Host, Port, _options, _logger, _stopConnecting.Token)
+                .ConfigureAwait(false);
             if (Volatile.Read(ref _trackServerClientIds) != 0)
-            {
-                await replacement.EnsureServerClientIdAsync().ConfigureAwait(false);
-            }
+                await replacement.EnsureServerClientIdAsync(_stopConnecting.Token).ConfigureAwait(false);
 
-            if (Volatile.Read(ref _disposed) != 0)
+            RespireConnection? old;
+            RespireConnection publishedReplacement;
+            lock (_lifecycleGate)
             {
-                await replacement.DisposeAsync().ConfigureAwait(false);
+                ThrowIfUnavailable();
+                replacement.Multiplexer = this;
+                old = Interlocked.Exchange(ref _connections[slot], replacement);
+                publishedReplacement = replacement;
                 replacement = null;
-                return;
             }
-
-            replacement.Multiplexer = this;
-            var old = Interlocked.Exchange(ref _connections[slot], replacement);
-            var publishedReplacement = replacement;
-            replacement = null;
             ObserveConnectionFailure(slot, publishedReplacement);
             RetireConnection(old);
             _logger?.LogInformation("Replaced dead connection {Slot} to {Host}:{Port}", slot, Host, Port);
-            if (old is not null)
+            if (old is not null) await old.DisposeAsync().ConfigureAwait(false);
+            lock (_lifecycleGate)
             {
-                await old.DisposeAsync().ConfigureAwait(false);
-            }
-
-            // Disposal may have swept the array between the pre-check above and the exchange,
-            // missing the just-published replacement. DisposeAsync sets _disposed before it
-            // sweeps, so if the flag is still clear here the sweep is guaranteed to see the
-            // replacement; otherwise take it back out and dispose it ourselves (double
-            // dispose is idempotent).
-            if (Volatile.Read(ref _disposed) != 0)
-            {
-                Interlocked.Exchange(ref _connections[slot], old);
-                await publishedReplacement.DisposeAsync().ConfigureAwait(false);
-            }
-            else
-            {
-                NotifyStateChanged(slot, RespireConnectionState.Connected);
+                publish = IsOperational
+                    && QueueLifecycleNotificationUnderLock(new StateNotification(slot, RespireConnectionState.Connected, null));
             }
         }
         catch (Exception ex)
         {
-            try
+            if (replacement is not null)
             {
-                if (replacement is not null)
+                try { await replacement.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception disposeException)
                 {
-                    await replacement.DisposeAsync().ConfigureAwait(false);
+                    _logger?.LogWarning(disposeException, "Failed to dispose rejected replacement connection to {Host}:{Port}", Host, Port);
                 }
             }
-            catch (Exception disposeException)
+            if (IsOperational)
             {
-                _logger?.LogWarning(disposeException, "Failed to dispose rejected replacement connection to {Host}:{Port}", Host, Port);
-            }
-
-            _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; will retry on next use", Host, Port);
-            if (Volatile.Read(ref _disposed) == 0)
-            {
-                var publish = EnqueueReconnectFailure(slot, ex);
+                _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; will retry on next use", Host, Port);
+                publish = EnqueueReconnectFailure(slot, ex);
                 reconnectGuardReleased = true;
-                if (publish)
-                {
-                    DrainStateNotifications();
-                }
             }
         }
         finally
         {
-            if (!reconnectGuardReleased)
+            if (!reconnectGuardReleased) Volatile.Write(ref _reconnecting[slot], 0);
+            lock (_lifecycleGate)
             {
-                Volatile.Write(ref _reconnecting[slot], 0);
+                if (--_activeReconnects == 0) _reconnectsDrained?.TrySetResult();
             }
         }
+        // Completion handlers must not wait for the reconnect that is invoking them.
+        if (publish) DrainStateNotifications();
     }
 
     private void ObserveConnectionFailure(int slot, RespireConnection connection)
@@ -764,7 +821,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     private void HandleConnectionFailure(int slot, RespireConnection connection)
     {
-        if (Volatile.Read(ref _disposed) == 0
+        if (IsOperational
             && ReferenceEquals(connection, Volatile.Read(ref _connections[slot])))
         {
             ScheduleReconnect(slot);
@@ -779,6 +836,11 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         RespireConnectionState state,
         Exception? error = null)
         => EnqueueStateNotification(new StateNotification(slot, state, error));
+
+    private bool QueueLifecycleNotificationUnderLock(StateNotification notification)
+    {
+        lock (_stateNotificationGate) return EnqueueStateNotificationUnderLock(notification);
+    }
 
     private void EnqueueStateNotification(StateNotification notification)
     {
@@ -871,32 +933,144 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         RespireConnectionState State,
         Exception? Error);
 
-    public async ValueTask DisposeAsync()
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void ThrowIfUnavailable()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (IsRetired) throw new RespireConnectionRetiredException(Host, Port);
+    }
+
+    /// <summary>Stops selection and reconnects, drains accepted work, and fences failed sockets.</summary>
+    /// <remarks>A failed fence leaves its IDs retained and faults retirement. Owners must retain
+    /// this generation and retry FenceRetiredConnectionsAsync before dropping correction ownership.</remarks>
+    internal Task RetireAsync()
+    {
+        TaskCompletionSource completion;
+        bool publish;
+        lock (_lifecycleGate)
         {
-            return;
+            if (_retirementCompletion is not null) return _retirementCompletion.Task;
+            completion = _retirementCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            Volatile.Write(ref _retired, 1);
+            publish = QueueLifecycleNotificationUnderLock(new StateNotification(null, RespireConnectionState.Disconnected, null));
         }
+        _stopConnecting.Cancel();
+        foreach (var connection in _connections) _ = connection?.RetireAsync();
+        _ = RetireCoreAsync(completion);
+        if (publish) DrainStateNotifications();
+        return completion.Task;
+    }
 
-        NotifyStateChanged(RespireConnectionState.Disconnected);
-
-        // Wait out any in-flight EnsureConnectedAsync so connections it publishes are swept
-        // here instead of leaked, and so the gate is never disposed while held.
-        await _connectGate.WaitAsync().ConfigureAwait(false);
+    /// <summary>Retires gracefully unless the owner explicitly cancels, then completes abortive cleanup.</summary>
+    /// <remarks>Cancellation does not prove correction ordering. Pending fence IDs remain observable.</remarks>
+    internal async Task RetireAsync(CancellationToken abortOnCancellation)
+    {
+        var retirement = RetireAsync();
         try
         {
-            foreach (var connection in _connections)
+            await retirement.WaitAsync(abortOnCancellation).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (abortOnCancellation.IsCancellationRequested)
+        {
+            await DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private async Task WaitForCorrectionIdentityAsync()
+    {
+        // A dequeued CLIENT ID can still be awaiting its continuation. No new bootstrap can
+        // enter after retirement; wait for the existing owner to publish before collecting IDs.
+        await _correctionIdentityGate.WaitAsync().ConfigureAwait(false);
+        _correctionIdentityGate.Release();
+    }
+
+    private async Task WaitForPublicationAsync()
+    {
+        await _connectGate.WaitAsync().ConfigureAwait(false);
+        _connectGate.Release();
+        Task reconnects;
+        lock (_lifecycleGate)
+        {
+            reconnects = _activeReconnects == 0 ? Task.CompletedTask
+                : (_reconnectsDrained ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
+        }
+        await reconnects.ConfigureAwait(false);
+    }
+
+    private async Task RetireCoreAsync(TaskCompletionSource completion)
+    {
+        try
+        {
+            await WaitForPublicationAsync().ConfigureAwait(false);
+            await Task.WhenAll(_connections.OfType<RespireConnection>().Select(connection => connection.RetireAsync()))
+                .ConfigureAwait(false);
+            await WaitForCorrectionIdentityAsync().ConfigureAwait(false);
+            foreach (var connection in _connections) RetireConnection(connection);
+            if (Volatile.Read(ref _disposed) == 0)
+                await FenceRetiredConnectionsAsync(_abortCancellation.Token).ConfigureAwait(false);
+            else if (HasPendingCorrectionFences)
+                throw new OperationCanceledException(
+                    "Disposal prevented retirement from fencing failed Redis connections.", _abortCancellation.Token);
+            completion.TrySetResult();
+        }
+        catch (Exception ex)
+        {
+            completion.TrySetException(ex);
+        }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        TaskCompletionSource completion;
+        bool publish;
+        lock (_lifecycleGate)
+        {
+            if (_disposeCompletion is not null) return new ValueTask(_disposeCompletion.Task);
+            completion = _disposeCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            Volatile.Write(ref _disposed, 1);
+            Volatile.Write(ref _retired, 1);
+            publish = QueueLifecycleNotificationUnderLock(new StateNotification(null, RespireConnectionState.Disconnected, null));
+        }
+        _stopConnecting.Cancel();
+        _abortCancellation.Cancel();
+        foreach (var connection in _connections)
+            if (connection is not null) _ = connection.DisposeAsync();
+        _ = DisposeCoreAsync(completion);
+        if (publish) DrainStateNotifications();
+        return new ValueTask(completion.Task);
+    }
+
+    private async Task DisposeCoreAsync(TaskCompletionSource completion)
+    {
+        try
+        {
+            await WaitForPublicationAsync().ConfigureAwait(false);
+            await Task.WhenAll(_connections.OfType<RespireConnection>().Select(connection => connection.DisposeAsync().AsTask()))
+                .ConfigureAwait(false);
+            await WaitForCorrectionIdentityAsync().ConfigureAwait(false);
+            if (_retirementCompletion is { } retirement)
             {
-                if (connection is not null)
+                // Disposal escalates a drain and cancels control fencing. A failed fence is
+                // still visible to the retirement caller, but cannot prevent explicit disposal.
+                try { await retirement.Task.ConfigureAwait(false); }
+                catch (Exception error)
                 {
-                    await connection.DisposeAsync().ConfigureAwait(false);
+                    _logger?.LogDebug(error, "Retirement did not finish cleanly before disposal of {Host}:{Port}", Host, Port);
                 }
             }
+            // A caller may have started an explicit fence retry independently of retirement.
+            // Its linked token observes the abort; await its control-connection cleanup too.
+            await _retiredFenceGate.WaitAsync().ConfigureAwait(false);
+            _retiredFenceGate.Release();
+            // Late entrants and retirement actions outside _lifecycleGate may still read or
+            // cancel these sources. They have no timers/wait handles; cancellation has removed
+            // registrations, so leave the cancelled managed sources for GC rather than race disposal.
+            completion.TrySetResult();
         }
-        finally
+        catch (Exception ex)
         {
-            _connectGate.Release();
-            _connectGate.Dispose();
+            completion.TrySetException(ex);
         }
     }
 }

@@ -1,0 +1,125 @@
+name: Transport acceptance benchmarks
+
+on:
+  pull_request:
+    paths:
+      - 'src/Respire/Networking/**'
+      - 'src/Respire/Infrastructure/RespireConnectionMultiplexer.cs'
+      - 'benchmarks/Respire.Benchmarks/TransportAcceptanceBenchmarks.cs'
+      - '.github/workflows/benchmark-transport.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  transport-comparison:
+    name: Compare transport acceptance (informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      redis:
+        image: redis:8.0@sha256:ae471bdc20de180beed36e347d170ec0bdf8faa327959ea1f24692f22b05b955
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+    steps:
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: baseline
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+      - name: Compare pinned baseline, candidate, baseline on one runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The shared fixture must compile against both pinned APIs. A mismatch fails this
+          # step; the always() upload below retains its phase log without masking that failure.
+          cp candidate/benchmarks/Respire.Benchmarks/TransportAcceptanceBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
+          for phase in validation baseline-a candidate baseline-b; do
+            source=baseline
+            job=Medium
+            filter='*TransportAcceptanceBenchmarks*'
+            if [ "$phase" = candidate ] || [ "$phase" = validation ]; then source=candidate; fi
+            if [ "$phase" = validation ]; then job=Dry; fi
+            (
+              cd "$source"
+              git rev-parse HEAD
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
+                --filter "$filter" --job "$job" --exporters json markdown \
+                --artifacts "$GITHUB_WORKSPACE/results/$phase"
+            ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
+          done
+      - name: Require completed measurements
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          for phase in ("validation", "baseline-a", "candidate", "baseline-b"):
+              reports = list(Path("results", phase, "results").glob("*-report*.json"))
+              assert reports, f"Missing benchmark results: {phase}"
+              for report in reports:
+                  benchmarks = json.loads(report.read_text())["Benchmarks"]
+                  assert len(benchmarks) == 4, f"Expected both operations with 1 and 2 connections: {report}"
+                  for benchmark in benchmarks:
+                      statistics = benchmark.get("Statistics")
+                      assert statistics and statistics["Mean"] > 0, f"Failed benchmark: {report}"
+      - name: Summarize candidate deltas against both controls
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          phases = {}
+          for phase in ("baseline-a", "candidate", "baseline-b"):
+              reports = list(Path("results", phase, "results").glob("*-report-full-compressed.json"))
+              assert len(reports) == 1, f"Expected one complete report: {phase}"
+              cases = json.loads(reports[0].read_text())["Benchmarks"]
+              phases[phase] = {(case["Method"], case["Parameters"]): case for case in cases}
+          assert phases["baseline-a"].keys() == phases["candidate"].keys() == phases["baseline-b"].keys()
+          lines = ["## Candidate versus both baseline controls", "",
+                   "Positive time deltas mean slower. Control drift shows runner variation; these are informational measurements.", "",
+                   "| Case | A ns | Candidate ns | B ns | Candidate/A | Candidate/B | B/A drift | Allocated B (A/candidate/B) |",
+                   "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
+          for key in sorted(phases["candidate"]):
+              cases = [phases[phase][key] for phase in ("baseline-a", "candidate", "baseline-b")]
+              a, candidate, b = [case["Statistics"]["Mean"] for case in cases]
+              allocations = "/".join(str(case["Memory"]["BytesAllocatedPerOperation"]) for case in cases)
+              lines.append(f"| {key[0]} ({key[1]}) | {a:.3f} | {candidate:.3f} | {b:.3f} | "
+                           f"{100 * (candidate / a - 1):+.2f}% | {100 * (candidate / b - 1):+.2f}% | "
+                           f"{100 * (b / a - 1):+.2f}% | {allocations} |")
+          summary = "\n".join(lines) + "\n"
+          Path("results/comparison.md").write_text(summary)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(summary)
+      - name: Publish comparison reports
+        if: always()
+        shell: bash
+        run: |
+          for phase in baseline-a candidate baseline-b; do
+            echo "## $phase" >> "$GITHUB_STEP_SUMMARY"
+            for report in "$GITHUB_WORKSPACE/results/$phase/results/"*-report-default.md; do
+              if [ -f "$report" ]; then cat "$report" >> "$GITHUB_STEP_SUMMARY"; fi
+            done
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: transport-acceptance-comparison
+          path: |
+            results/
+            *.log
