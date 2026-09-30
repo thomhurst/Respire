@@ -988,17 +988,18 @@ internal sealed class RespireConnection : IAsyncDisposable
     /// Sends a command whose response is read from the wire but discarded. Completes once the
     /// command has been written to the socket.
     /// </summary>
-    public ValueTask SendFireAndForgetAsync<TCommand>(in TCommand command, CancellationToken cancellationToken = default)
+    public ValueTask SendFireAndForgetAsync<TCommand>(in TCommand command, CancellationToken cancellationToken = default,
+        string? commandName = null)
         where TCommand : struct, IRespCommand
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (TryEnqueueForWrite(in command, out var startedBatch, out var writeTask))
+        if (TryEnqueueForWrite(in command, commandName, out var startedBatch, out var writeTask))
         {
             ScheduleFlush(startedBatch);
             return WaitForWriteAsync(writeTask, cancellationToken);
         }
 
-        return SendFireAndForgetSlowAsync(command, cancellationToken);
+        return SendFireAndForgetSlowAsync(command, cancellationToken, commandName);
     }
 
     private static ValueTask WaitForWriteAsync(Task writeTask, CancellationToken cancellationToken)
@@ -1055,6 +1056,7 @@ internal sealed class RespireConnection : IAsyncDisposable
 
     private bool TryEnqueueForWrite<TCommand>(
         in TCommand command,
+        string? commandName,
         out bool startedBatch,
         out Task writeTask)
         where TCommand : struct, IRespCommand
@@ -1064,7 +1066,8 @@ internal sealed class RespireConnection : IAsyncDisposable
             InflightRing.DiscardSentinel,
             out startedBatch,
             out var trackedWrite,
-            trackWrite: true);
+            trackWrite: true,
+            discardedOperation: _generation is null ? null : commandName);
         writeTask = trackedWrite ?? Task.CompletedTask;
         return enqueued;
     }
@@ -1077,7 +1080,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         bool trackWrite,
         int discardRepliesBefore = 0,
         bool retainRepliesBefore = false,
-        bool armCommandDeadline = true)
+        bool armCommandDeadline = true,
+        string? discardedOperation = null)
         where TCommand : struct, IRespCommand
     {
         startedBatch = false;
@@ -1102,7 +1106,8 @@ internal sealed class RespireConnection : IAsyncDisposable
                 trackWrite,
                 discardRepliesBefore,
                 retainRepliesBefore,
-                armCommandDeadline);
+                armCommandDeadline,
+                discardedOperation);
         }
 
         var scratch = _serializeScratch ??= new WriteBuffer(ScratchInitialSize);
@@ -1144,7 +1149,8 @@ internal sealed class RespireConnection : IAsyncDisposable
                     _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel, writeStart);
                 }
 
-                _inflight.TryEnqueue(source, _enqueuedBytes);
+                if (discardedOperation is not null) _inflight.TryEnqueueDiscard(discardedOperation, _enqueuedBytes);
+                else _inflight.TryEnqueue(source, _enqueuedBytes);
                 if (trackWrite)
                 {
                     writeTask = _activeBuffer.WriteCompletion;
@@ -1179,7 +1185,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         bool trackWrite,
         int discardRepliesBefore,
         bool retainRepliesBefore,
-        bool armCommandDeadline)
+        bool armCommandDeadline,
+        string? discardedOperation)
         where TCommand : struct, IRespCommand
     {
         startedBatch = false;
@@ -1227,7 +1234,8 @@ internal sealed class RespireConnection : IAsyncDisposable
                 _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel, writeStart);
             }
 
-            _inflight.TryEnqueue(source, _enqueuedBytes);
+            if (discardedOperation is not null) _inflight.TryEnqueueDiscard(discardedOperation, _enqueuedBytes);
+            else _inflight.TryEnqueue(source, _enqueuedBytes);
             if (trackWrite)
             {
                 writeTask = _activeBuffer.WriteCompletion;
@@ -1399,7 +1407,8 @@ internal sealed class RespireConnection : IAsyncDisposable
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
 #endif
-    private async ValueTask SendFireAndForgetSlowAsync<TCommand>(TCommand command, CancellationToken cancellationToken)
+    private async ValueTask SendFireAndForgetSlowAsync<TCommand>(TCommand command, CancellationToken cancellationToken,
+        string? commandName)
         where TCommand : struct, IRespCommand
     {
         bool startedBatch;
@@ -1408,7 +1417,7 @@ internal sealed class RespireConnection : IAsyncDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             var capacityAvailable = _capacitySignal.WaitAsync(cancellationToken);
-            if (TryEnqueueForWrite(in command, out startedBatch, out writeTask))
+            if (TryEnqueueForWrite(in command, commandName, out startedBatch, out writeTask))
             {
                 break;
             }
@@ -1923,7 +1932,12 @@ internal sealed class RespireConnection : IAsyncDisposable
             return;
         }
 
-        if (!_inflight.TryDequeue(out var source))
+        string? discardedOperation = null;
+        PendingResponse source;
+        var dequeued = _generation is null
+            ? _inflight.TryDequeue(out source)
+            : _inflight.TryDequeue(out source, out discardedOperation);
+        if (!dequeued)
         {
             value.Dispose();
             throw new RespireProtocolException($"Unsolicited response from {Host}:{Port} with no command in flight.");
@@ -1931,7 +1945,7 @@ internal sealed class RespireConnection : IAsyncDisposable
 
         MarkReplyReceived();
 
-        _generation?.ObserveResponse(this, source.CommandName, in value);
+        _generation?.ObserveResponse(this, discardedOperation ?? source.CommandName, in value);
 
         if (ReferenceEquals(source, InflightRing.DiscardSentinel))
         {

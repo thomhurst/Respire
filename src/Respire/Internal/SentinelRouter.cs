@@ -8,6 +8,11 @@ namespace Respire.Internal;
 
 // Discovery publishes an entire validated generation. Old generations remain owned until
 // their accepted commands, borrowed leases, and correction fences finish or disposal aborts them.
+// Lifecycle: discovery owns an unpublished candidate; publication makes it Current;
+// Invalidate retires admission and starts draining; RemoveOwnedLocked ends ownership and
+// balances the retired-generation gauge. Failed candidates skip publication and drain counting.
+// Router disposal can end any phase. A replacement may be current while older generations drain,
+// so these transitions belong to each generation rather than one router-wide state enum.
 internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
 {
     private static long _retiredGenerationCount;

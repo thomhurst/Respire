@@ -844,6 +844,68 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    [Arguments("ROLE")]
+    [Arguments("EXEC")]
+    [Arguments("EVAL")]
+    [Arguments("EVALSHA")]
+    [Arguments("EVAL_RO")]
+    [Arguments("EVALSHA_RO")]
+    [Arguments("FCALL")]
+    [Arguments("FCALL_RO")]
+    [Arguments("HGETALL")]
+    public async Task DiscardedRepliesKeepTheirOperationWithoutWaitingForTheReply(string operation)
+    {
+        await using var primary = Primary();
+        await using var promoted = Primary();
+        var port = primary.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with { MaxInflightCommands = 2 });
+        var generation = client.Core.Sentinel!.Current!;
+        primary.SuppressReply = command => command == operation || command == "PING";
+        Volatile.Write(ref port, promoted.Port);
+
+        // Completion must remain write-only. Hold both replies until a following PING
+        // is accepted, then use that reply as a FIFO barrier after generation observation.
+        await client.ExecuteFireAndForgetAsync((RespireCommand)operation, []).AsTask().WaitAsync(Limit);
+        var barrier = client.PingAsync().AsTask();
+        await WaitForCommandAsync(primary, "PING");
+        var reply = operation is "ROLE" or "HGETALL"
+            ? "*1\r\n$5\r\nslave\r\n"
+            : "*1\r\n*1\r\n-READONLY replica\r\n";
+        await primary.SendRawAsync(Encoding.ASCII.GetBytes(reply + "+PONG\r\n"));
+        await barrier.WaitAsync(Limit);
+        await Assert.That(generation.IsRetired).IsEqualTo(operation != "HGETALL");
+        await client.SetAsync("next", "value").AsTask().WaitAsync(Limit);
+        if (operation == "HGETALL")
+            await Assert.That(promoted.CommandsSeen).IsEqualTo(0);
+        else
+            await Assert.That(promoted.ReceivedCommands).IsEquivalentTo(["ROLE", "SET next value"]);
+    }
+
+    [Test]
+    public async Task DiscardedOperationMetadataDoesNotLeakAcrossRingWraparound()
+    {
+        var ring = new Respire.Networking.InflightRing(2);
+        for (var iteration = 0; iteration < 8; iteration++)
+        {
+            await Assert.That(ring.TryEnqueueDiscard("ROLE", 10)).IsTrue();
+            await Assert.That(ring.TryEnqueueDiscard("EVAL", 20)).IsTrue();
+            await Assert.That(ring.TryEnqueueDiscard("FCALL", 30)).IsFalse();
+            await Assert.That(ring.TryDequeue(out var role, out var operation)).IsTrue();
+            await Assert.That(ReferenceEquals(role, Respire.Networking.InflightRing.DiscardSentinel)).IsTrue();
+            await Assert.That(operation).IsEqualTo("ROLE");
+            await Assert.That(ring.TryEnqueue(Respire.Networking.InflightRing.DiscardSentinel, 30)).IsTrue();
+            await Assert.That(ring.TryDequeue(out _, out operation)).IsTrue();
+            await Assert.That(operation).IsEqualTo("EVAL");
+            await Assert.That(ring.TryDequeue(out _, out operation)).IsTrue();
+            await Assert.That(operation).IsNull();
+            await Assert.That(ring.CompletedWriteEnd).IsEqualTo(30L);
+            await Assert.That(ring.TryDequeue(out _, out operation)).IsFalse();
+            await Assert.That(operation).IsNull();
+        }
+    }
+
+    [Test]
     [Arguments("%1\r\n+k\r\n-READONLY replica\r\n", true)]
     [Arguments("~1\r\n-READONLY replica\r\n", true)]
     [Arguments("*2\r\n:1\r\n%1\r\n+k\r\n~1\r\n-READONLY replica\r\n", true)]
@@ -950,6 +1012,72 @@ public class SentinelRoutingTests
             using var result = await client.ExecuteAsync((RespireCommand)"HGET", ["key", "field"]);
             return result.AsString();
         }
+    }
+
+    [Test]
+    [Arguments(false, false, false)]
+    [Arguments(false, false, true)]
+    [Arguments(false, true, false)]
+    [Arguments(false, true, true)]
+    [Arguments(true, false, false)]
+    [Arguments(true, false, true)]
+    [Arguments(true, true, false)]
+    [Arguments(true, true, true)]
+    public async Task RetirementDuringHashFieldLookupRefetchesEveryField(bool raw, bool partial, bool coalesce)
+    {
+        static byte[]? Reply(string command, string value) => command switch
+        {
+            "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+            "HGET tenant:key first" or "HGET tenant:key second" => Encoding.ASCII.GetBytes($"$3\r\n{value}\r\n"),
+            "HMGET tenant:key first second" => Encoding.ASCII.GetBytes($"*2\r\n$3\r\n{value}\r\n$3\r\n{value}\r\n"),
+            // The partial path would fetch only this field without the generation fence.
+            "HMGET tenant:key second" => Encoding.ASCII.GetBytes($"*1\r\n$3\r\n{value}\r\n"),
+            _ => null,
+        };
+        await using var primary = Primary((_, command) => Reply(command, "old"));
+        await using var promoted = Primary((_, command) => Reply(command, "new"));
+        var port = primary.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
+        {
+            Protocol = RespProtocol.Resp3,
+            ClientSideCache = new() { ReuseHashFields = true, CoalesceConcurrentMisses = coalesce },
+        });
+        await using var view = client.WithKeyPrefix("tenant:");
+        await view.Hashes.GetStringAsync("key", "first");
+        if (!partial) await view.Hashes.GetStringAsync("key", "second");
+        var generation = client.Core.Sentinel!.Current!;
+        var connection = generation.Multiplexer.GetConnection();
+        var intercept = new AsyncLocal<bool>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, meter) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.client_cache.hits")
+                meter.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
+        {
+            if (!intercept.Value) return;
+            intercept.Value = false;
+            Volatile.Write(ref port, promoted.Port);
+            using var error = Respire.Protocol.RespValue.Error("READONLY replica");
+            generation.ObserveResponse(connection, "SET", in error);
+        });
+        listener.Start();
+        intercept.Value = true;
+        string?[] values;
+        if (raw)
+        {
+            using var response = await view.ExecuteAsync((RespireCommand)"HMGET", ["tenant:key", "first", "second"])
+                .AsTask().WaitAsync(Limit);
+            values = [response[0].AsString(), response[1].AsString()];
+        }
+        else values = await view.Hashes.GetManyAsync("key", "first", "second").AsTask().WaitAsync(Limit);
+        await Assert.That(values).IsEquivalentTo(new string?[] { "new", "new" });
+        await Assert.That(generation.IsRetired).IsTrue();
+        await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("HMGET "))).IsFalse();
+        await Assert.That(promoted.ReceivedCommands.Where(command => command.StartsWith("HMGET ")))
+            .IsEquivalentTo(["HMGET tenant:key first second"]);
     }
 
     [Test]

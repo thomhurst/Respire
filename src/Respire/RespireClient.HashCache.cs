@@ -18,6 +18,7 @@ public sealed partial class RespireClient
         int[]? missingIndexes = null;
         var missingCount = 0;
         var key = request.PrimaryKey;
+        var generation = _core.Sentinel?.Current;
         for (var index = 0; index < fieldCount; index++)
         {
             var field = request.Query.GetArgument(index + 1);
@@ -32,6 +33,21 @@ public sealed partial class RespireClient
                 // Snapshot before the first await: raw callers may own mutable binary fields.
                 (missingFields ??= new RespireValue[fieldCount])[missingCount] = field.Snapshot();
                 (missingIndexes ??= new int[fieldCount])[missingCount++] = index;
+            }
+        }
+        // A lookup callback can retire the Sentinel generation between fields. Discard
+        // every cached value and rebuild the full physical-key request before dispatch.
+        if (!IsCacheGenerationCurrent(generation))
+        {
+            missingFields ??= new RespireValue[fieldCount];
+            missingIndexes ??= new int[fieldCount];
+            missingCount = fieldCount;
+            for (var index = 0; index < fieldCount; index++)
+            {
+                result[index].Dispose();
+                result[index] = default;
+                missingFields[index] = request.Query.GetArgument(index + 1).Snapshot();
+                missingIndexes[index] = index;
             }
         }
         if (missingFields is null) return ValueTask.FromResult(RespValue.Array(result));

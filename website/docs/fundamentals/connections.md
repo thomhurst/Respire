@@ -294,12 +294,18 @@ even when Sentinel returns the same endpoint after a brief disconnect. This deli
 revalidates the primary role before accepting new work; there is no reconnect grace period.
 EXEC and script array replies are scanned for nested READONLY errors in time proportional to
 their elements. Ordinary collection reads do not perform this additional scan.
+Fire-and-forget replies retain their operation identity for the same checks, while the call
+still completes after writing rather than waiting for a reply. This metadata uses a bounded
+array allocated on the connection's first fire-and-forget command; ordinary connections do
+not allocate that array.
 New commands cannot enter a retired generation. Already accepted commands and blocking
 operations drain on their original sockets; ambiguous writes and existing WATCH state are
 never replayed. Start a new watched transaction after a failover. Client disposal aborts
 outstanding work and joins owned connection cleanup.
 
-Client-side cached reads lose continuity on retirement. Subscriptions reconnect to the new
+Client-side cached reads lose continuity on retirement. Cached MGET and opted-in partial HMGET
+reads discard all cached elements if the generation retires during lookup, then refetch the
+complete request from the validated primary. Subscriptions reconnect to the new
 primary and report their normal delivery gap; Redis cannot replay missed publications.
 Explicit server connections remain pinned to the endpoint selected by the application.
 Correction operations retain their original physical peer rather than following a new

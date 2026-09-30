@@ -2325,7 +2325,7 @@ public sealed partial class RespireClient : IRespireClient
         => RespireTelemetry.IsEnabled
             ? SendFireAndForgetOnConnectionInstrumentedAsync(
                 operation, connection, command, cancellationToken, storedProcedureName)
-            : connection.SendFireAndForgetAsync(in command, cancellationToken);
+            : connection.SendFireAndForgetAsync(in command, cancellationToken, operation);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
@@ -2347,7 +2347,7 @@ public sealed partial class RespireClient : IRespireClient
             storedProcedureName: storedProcedureName);
         try
         {
-            await connection.SendFireAndForgetAsync(in command, cancellationToken).ConfigureAwait(false);
+            await connection.SendFireAndForgetAsync(in command, cancellationToken, operation).ConfigureAwait(false);
             telemetry.Complete(
                 operation,
                 connection.Host,
