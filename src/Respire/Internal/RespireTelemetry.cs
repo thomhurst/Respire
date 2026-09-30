@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Globalization;
+using Microsoft.Extensions.Logging;
 using Respire.Networking;
 
 namespace Respire.Internal;
@@ -64,6 +65,31 @@ internal static class RespireTelemetry
         RespireReconnectSource.Dedicated => "dedicated",
         _ => "unspecified",
     };
+
+    internal static void RecordDiscoveryReconnect(RespireEndpoint endpoint, string scope, int attempt,
+        TimeSpan? delay, ILogger? logger)
+    {
+        try
+        {
+            var address = new KeyValuePair<string, object?>("server.address", endpoint.Host);
+            var port = new KeyValuePair<string, object?>("server.port", endpoint.Port);
+            var scopeTag = new KeyValuePair<string, object?>("respire.reconnect.scope", scope);
+            if (delay is { } scheduled)
+            {
+                ReconnectAttempts.Record(attempt, address, port, scopeTag);
+                ReconnectDelays.Record(scheduled.TotalSeconds, address, port, scopeTag);
+            }
+            else
+            {
+                ReconnectExhaustions.Add(1, address, port, scopeTag);
+            }
+        }
+        catch (Exception error)
+        {
+            // Meter listeners are user code and must not change discovery or its budget.
+            logger?.LogWarning(error, "Reconnect telemetry listener threw for {Scope}", scope);
+        }
+    }
 
     public static readonly Histogram<double> OperationDuration = Meter.CreateHistogram<double>(
         "db.client.operation.duration",

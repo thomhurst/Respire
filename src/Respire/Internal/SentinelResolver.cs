@@ -44,9 +44,8 @@ internal static class SentinelResolver
             // one replacement budget, including candidates rejected by primary ROLE validation.
             if (index > 0 && options.ReconnectPolicy is { } policy)
             {
-                var delay = policy.GetDelay(++fallbackAttempts,
-                    policy.JitterRatio == 0 ? 0.5 : Random.Shared.NextDouble());
-                RecordPolicyAttempt(endpoint, fallbackAttempts, delay, logger);
+                var delay = policy.GetDelay(++fallbackAttempts);
+                RespireTelemetry.RecordDiscoveryReconnect(endpoint, "sentinel-discovery", fallbackAttempts, delay, logger);
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
             using var discoveryTimeoutSource = CommandTimeoutCancellation.Create(
@@ -101,7 +100,7 @@ internal static class SentinelResolver
                     endpoint.Port);
                 if (fallbackAttempts > 0 && options.ReconnectPolicy?.IsExhausted(fallbackAttempts) == true)
                 {
-                    RecordPolicyExhaustion(endpoint, logger);
+                    RespireTelemetry.RecordDiscoveryReconnect(endpoint, "sentinel-discovery", fallbackAttempts, null, logger);
                     break;
                 }
             }
@@ -118,38 +117,6 @@ internal static class SentinelResolver
         void AddPeer(RespireEndpoint endpoint)
         {
             if (discoveryState.TryAdd(endpoint)) sentinelEndpoints.Add(endpoint);
-        }
-    }
-
-    private static void RecordPolicyAttempt(RespireEndpoint endpoint, int attempt, TimeSpan delay, ILogger? logger)
-    {
-        try
-        {
-            var address = new KeyValuePair<string, object?>("server.address", endpoint.Host);
-            var port = new KeyValuePair<string, object?>("server.port", endpoint.Port);
-            var scope = new KeyValuePair<string, object?>("respire.reconnect.scope", "sentinel-discovery");
-            RespireTelemetry.ReconnectAttempts.Record(attempt, address, port, scope);
-            RespireTelemetry.ReconnectDelays.Record(delay.TotalSeconds, address, port, scope);
-        }
-        catch (Exception error)
-        {
-            // Meter listeners are user code and must not change discovery or its budget.
-            logger?.LogWarning(error, "Sentinel reconnect telemetry listener threw");
-        }
-    }
-
-    private static void RecordPolicyExhaustion(RespireEndpoint endpoint, ILogger? logger)
-    {
-        try
-        {
-            RespireTelemetry.ReconnectExhaustions.Add(1,
-                new KeyValuePair<string, object?>("server.address", endpoint.Host),
-                new KeyValuePair<string, object?>("server.port", endpoint.Port),
-                new KeyValuePair<string, object?>("respire.reconnect.scope", "sentinel-discovery"));
-        }
-        catch (Exception error)
-        {
-            logger?.LogWarning(error, "Sentinel reconnect telemetry listener threw");
         }
     }
 

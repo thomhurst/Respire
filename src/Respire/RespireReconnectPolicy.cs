@@ -35,6 +35,9 @@ public sealed record RespireReconnectPolicy
             throw new RespireConfigurationException("ReconnectPolicy requires 0 <= InitialDelay <= MaxDelay <= one day, a finite BackoffMultiplier >= 1, JitterRatio in [0, 1], and a positive or null MaxAttempts.");
     }
 
+    internal TimeSpan GetDelay(int attempt)
+        => GetDelay(attempt, JitterRatio == 0 ? 0.5 : Random.Shared.NextDouble());
+
     internal TimeSpan GetDelay(int attempt, double randomUnit)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(attempt);
