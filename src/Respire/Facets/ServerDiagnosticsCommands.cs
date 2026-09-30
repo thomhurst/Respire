@@ -112,7 +112,8 @@ internal sealed partial class ServerCommands
         var arguments = new RespireValue[commands.Length];
         for (var index = 0; index < commands.Length; index++)
         {
-            ArgumentNullException.ThrowIfNull(commands[index], nameof(commands));
+            if (commands[index] is null)
+                throw new ArgumentNullException(nameof(commands), $"Command at index {index} must not be null.");
             arguments[index] = commands[index];
         }
         return new("LATENCY HISTOGRAM", new(new Verb(-1, "LATENCY", "HISTOGRAM"), arguments),

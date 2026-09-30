@@ -47,7 +47,10 @@ public class ServerDiagnosticsCommandTests
         await Assert.That(async () => await client.Server.PurgeMemoryOnAllNodesAsync()).ThrowsExactly<NotSupportedException>();
         await Assert.That(async () => await client.Server.LatencyHistoryAsync(" ")).ThrowsExactly<ArgumentException>();
         await Assert.That(async () => await client.Server.LatencyHistoryOnAllNodesAsync(null!)).ThrowsExactly<ArgumentNullException>();
-        await Assert.That(async () => await client.Server.LatencyHistogramsAsync([null!])).ThrowsExactly<ArgumentNullException>();
+        var nullCommand = await Assert.That(async () => await client.Server.LatencyHistogramsAsync(["get", null!]))
+            .ThrowsExactly<ArgumentNullException>();
+        await Assert.That(nullCommand!.ParamName).IsEqualTo("commands");
+        await Assert.That(nullCommand.Message).Contains("index 1");
         await Assert.That(async () => await client.Server.LatencyHistogramsOnAllNodesAsync([null!])).ThrowsExactly<ArgumentNullException>();
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
