@@ -60,7 +60,8 @@ Warnings are limited to one per client every 30 seconds. Inspect synchronous blo
 and long-running work; prefer asynchronous I/O. Respire never changes thread-pool limits.
 Clients can have different thresholds and logger providers, so warnings are delivered
 per client. Multiple clients sharing a logging sink can therefore report the same stall.
-Logging is best effort; a slow logger can delay further sampling.
+Logging is best effort and runs serially on the sampler thread. Logger providers must
+return promptly; a blocking provider delays sampling and other clients' warnings.
 
 `RespireTimeoutDiagnostics.ThreadPoolProbe` retains the latest immutable sample, including
 `CapturedAt` and `IsPending`. A pending delay is a lower bound until that probe executes.
@@ -84,6 +85,8 @@ Disabling monitoring removes that client's subscription and warnings. Other clie
 keep the shared probe running, so its process-wide sample can still appear in timeout
 diagnostics. Disposing the final subscribed client stops sampling and clears the current
 sample. Metrics have no value before the first sample or after the final subscription ends.
+Diagnostics captured after the final subscription ends have no probe sample; previously
+captured timeout diagnostics retain their immutable sample.
 If a probe is still queued when monitoring restarts, its original queue timestamp is
 retained. Its delay includes the interval with no subscribers because that work item
 has still not executed; restarting monitoring does not reset an existing scheduling stall.
