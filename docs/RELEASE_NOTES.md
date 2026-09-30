@@ -8,7 +8,7 @@
   with owned binary identifiers (Redis 8.6+). `Streams.NegativeAcknowledgeAsync` and
   deferred `NegativeAcknowledge` expose XNACK modes, retry counts, and FORCE (Redis 8.8+).
   XNACK returns the server's aggregate count; it does not report per-ID outcomes.
-  External stream-facet implementations must add both overloads. See the
+  External stream-facet implementations must add four immediate and two deferred overloads. See the
   [stream guide](../website/docs/commands/collections.md#idempotent-production-redis-86)
   for deduplication limits, PEL effects, version requirements, and cancellation.
 

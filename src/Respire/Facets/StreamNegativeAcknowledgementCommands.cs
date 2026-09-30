@@ -29,9 +29,17 @@ public partial interface IStreamCommands
     ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode,
         params ReadOnlySpan<RespireStreamId> ids);
 
+    /// <summary>Releases pending entries with cancellation. Redis 8.8+: XNACK.</summary>
+    ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode,
+        ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken);
+
+    /// <summary>Releases pending entries with advanced counter/force options. Redis 8.8+: XNACK.</summary>
+    ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode,
+        StreamNackOptions options, params ReadOnlySpan<RespireStreamId> ids);
+
     /// <summary>Releases pending entries with advanced counter/force options. Cancellation cannot undo a dispatched write. Redis 8.8+: XNACK.</summary>
     ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode,
-        StreamNackOptions options, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken = default);
+        StreamNackOptions options, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken);
 }
 
 internal sealed partial class StreamCommands
@@ -40,10 +48,18 @@ internal sealed partial class StreamCommands
 
     public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode,
         params ReadOnlySpan<RespireStreamId> ids)
-        => NegativeAcknowledgeAsync(key, group, mode, default, ids);
+        => NegativeAcknowledgeAsync(key, group, mode, default, ids, CancellationToken.None);
 
     public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode,
-        StreamNackOptions options, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken = default)
+        ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken)
+        => NegativeAcknowledgeAsync(key, group, mode, default, ids, cancellationToken);
+
+    public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode,
+        StreamNackOptions options, params ReadOnlySpan<RespireStreamId> ids)
+        => NegativeAcknowledgeAsync(key, group, mode, options, ids, CancellationToken.None);
+
+    public ValueTask<long> NegativeAcknowledgeAsync(RespireKey key, RespireValue group, StreamNackMode mode,
+        StreamNackOptions options, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         return client.ConvertResponseAsync("XNACK", BuildNackCommand(client, key, group, mode, options, ids),

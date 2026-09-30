@@ -106,7 +106,7 @@ public class StreamIdempotencyTests
             await Assert.That(() => batch.Streams.NegativeAcknowledge("s", "g", StreamNackMode.Fail, ids)).Throws<ArgumentException>();
         }
         await Assert.That(async () => await client.Streams.NegativeAcknowledgeAsync("s", "g", (StreamNackMode)99, "1-0")).Throws<ArgumentOutOfRangeException>();
-        await Assert.That(() => transaction.Streams.NegativeAcknowledge("s", "g", StreamNackMode.Fail, new() { RetryCount = -1 }, "1-0")).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(() => transaction.Streams.NegativeAcknowledge("s", "g", StreamNackMode.Fail, new StreamNackOptions { RetryCount = -1 }, "1-0")).Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Streams.NegativeAcknowledgeAsync("s", default, StreamNackMode.Fail, "1-0")).Throws<ArgumentNullException>();
         await Assert.That(batch.Count + transaction.Count).IsEqualTo(0);
         await Assert.That(server.CommandsSeen).IsEqualTo(0);
@@ -114,6 +114,10 @@ public class StreamIdempotencyTests
         var equal = new StreamAddOptions { Idempotency = StreamIdempotency.Manual("p"u8.ToArray(), "i") };
         await Assert.That(manual).IsEqualTo(equal);
         await Assert.That(manual.GetHashCode()).IsEqualTo(equal.GetHashCode());
+        var binary = StreamIdempotency.Manual(new byte[] { 0, 255 }, new byte[] { 254, 0 });
+        var binaryCopy = StreamIdempotency.Manual(new byte[] { 0, 255 }, new byte[] { 254, 0 });
+        await Assert.That(binary).IsEqualTo(binaryCopy);
+        await Assert.That(binary.GetHashCode()).IsEqualTo(binaryCopy.GetHashCode());
         await Assert.That(manual == default).IsFalse();
         await Assert.That(manual == new StreamAddOptions { Idempotency = StreamIdempotency.Automatic("p") }).IsFalse();
     }
@@ -137,8 +141,10 @@ public class StreamIdempotencyTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var options = new StreamAddOptions { Idempotency = StreamIdempotency.Automatic("p") };
         using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
+        await Assert.That(async () => await client.Streams.AddAsync("s", [("f", "v")], cancellation.Token)).Throws<OperationCanceledException>();
         await Assert.That(async () => await client.Streams.AddAsync("s", options, [("f", "v")], cancellation.Token)).Throws<OperationCanceledException>();
         await Assert.That(async () => await client.Streams.NegativeAcknowledgeAsync("s", "g", StreamNackMode.Fail, default, ["1-0"], cancellation.Token)).Throws<OperationCanceledException>();
+        await Assert.That(async () => await client.Streams.NegativeAcknowledgeAsync("s", "g", StreamNackMode.Fail, ["1-0"], cancellation.Token)).Throws<OperationCanceledException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(0);
         await Assert.That(async () => await client.Streams.AddAsync("s", options, ("f", "v"))).Throws<RespireServerException>();
         await Assert.That(async () => await client.Streams.NegativeAcknowledgeAsync("s", "g", StreamNackMode.Fail, "1-0")).Throws<RespireServerException>();

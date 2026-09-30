@@ -578,7 +578,10 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespireStreamId> AddRequiredAsync(Cmd1N command, CancellationToken cancellationToken)
-        => new(await client.StringAsync("XADD", command, cancellationToken).ConfigureAwait(false));
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return new(await client.StringAsync("XADD", command, cancellationToken).ConfigureAwait(false));
+    }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespireStreamId?> AddOptionalAsync(Cmd1N command, CancellationToken cancellationToken)

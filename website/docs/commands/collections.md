@@ -352,13 +352,16 @@ still skipped. New forced entries start with zero deliveries, except Fatal mode.
 `RetryCount` overrides any mode with a nonnegative count; these advanced controls
 are usually unnecessary for ordinary consumers.
 
-Both overloads have `Streams.NegativeAcknowledge` batch/transaction counterparts.
+Both ordinary and options forms have `Streams.NegativeAcknowledge` batch/transaction counterparts.
+Immediate methods offer variadic IDs and separate cancellation overloads taking an
+ID span (for example, `["1-0"]`) followed by the token. Use an explicit
+`new StreamNackOptions { ... }` in variadic calls to avoid target-typed `new()` ambiguity.
 IDs must be numeric. Group names accept raw binary arguments and are copied; only
 the stream key is prefixed and routed. Deferred calls snapshot inputs when enqueued.
 Pre-cancelled calls send nothing; later cancellation cannot undo a write. Unsupported
 servers and missing groups surface server errors without fallback or write replay.
-External `IStreamCommands` and `IBatchStreamCommands` implementations must add the
-two respective overloads.
+External `IStreamCommands` implementations must add four overloads;
+`IBatchStreamCommands` implementations must add two.
 
 ### Trimming
 
