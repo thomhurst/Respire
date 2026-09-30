@@ -43,6 +43,11 @@ MSETEX, stream reads, MIGRATE, and JSON.MGET. Unknown layouts retain server vali
 descriptor provenance alone does not declare a key layout. See
 [raw Cluster validation](../website/docs/guides/raw-commands.md#cluster-key-validation).
 
+Typed [server diagnostics](../website/docs/guides/server-diagnostics.md) cover LATENCY
+DOCTOR/HISTORY/HISTOGRAM, MEMORY DOCTOR/PURGE, and SLOWLOG LEN, with explicit per-node
+variants and owned results. Their Redis and Valkey version requirements are documented
+separately from catalog provenance.
+
 ## Regeneration
 
 Clone the tagged Redis and Valkey repositories, then run:

@@ -22,6 +22,15 @@
   [metadata and persistence guide](../website/docs/guides/server-metadata-and-persistence.md)
   for server versions, ownership, blocking behavior, and cancellation limitations.
 
+### Server diagnostics
+
+- Server diagnostics add latency and memory doctor reports, typed latency histories and
+  cumulative histograms, slow-log lengths, and admin-gated allocator purging. Each has
+  an explicit per-node counterpart with endpoint-associated results and errors.
+  Custom `IServerCommands` implementations, decorators, and mocks must add all twelve
+  methods. See [server diagnostics](../website/docs/guides/server-diagnostics.md) for
+  versions, units, ownership, collection costs, and partial-success semantics.
+
 ### Stream reference policies
 
 - Redis 8.2+ stream removal adds XDELEX and XACKDEL through `RemoveAsync(key, policy, ids)`
