@@ -24,6 +24,8 @@ def validate(root, phase):
         allocated = (case.get("Memory") or {}).get("BytesAllocatedPerOperation")
         if allocated is None or not math.isfinite(allocated) or allocated < 0:
             raise ValueError(f"Missing allocation measurement: {phase}/{key}")
+        if phase in ("validation", "candidate") and case["Method"] == "DirectFp32" and allocated != 0:
+            raise ValueError(f"Direct FP32 must not allocate with preallocated output: {phase}/{key}")
     if seen != expected:
         raise ValueError(f"Incomplete matrix: {phase}")
     sizes = [json.loads(line.removeprefix("VECTOR_ENCODING_SIZE "))

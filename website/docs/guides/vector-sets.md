@@ -128,15 +128,15 @@ The generated raw catalog remains available, including specialized options not e
 by this facet, such as `VEMB RAW`.
 
 Protocol reference: [Redis 8.6 vector-set implementation](https://github.com/redis/redis/blob/8.6.0/modules/vector-sets/vset.c).
+
 ## Encoding measurements
 
 [CI run 36700806149](https://github.com/thomhurst/Respire/actions/runs/36700806149)
 measured candidate `a98b4750a968ccd5371f0a4d9583a17642b17dfb` between two runs of
 baseline `09926d2c50e73986d09f8438fec24a1e854fc87b` on one GitHub-hosted runner.
-These numbers come from the earlier benchmark-harness revision named above, before
+These point-in-time measurements from September 30, 2026 use the earlier harness revision named above, before
 report-gate and documentation fixes. Timed methods and production encoding are unchanged
-in those follow-ups. The candidate adds benchmark coverage without changing production encoding. The same
-benchmark source was copied into the baseline checkout. This compares encoding
+in those follow-ups. The same benchmark source was copied into the baseline checkout. This compares encoding
 alternatives; differences between revisions are runner variation, not a shipped speedup.
 
 Environment: BenchmarkDotNet 0.15.8, Ubuntu 24.04.5, Intel Xeon 6973P-C 2.60 GHz
@@ -179,7 +179,6 @@ copy remains unavoidable here. No zero-copy networking claim follows from 0 B/op
 The run's `vector-encoding-comparison` artifact retains full BDN JSON, Markdown, and
 logs for every phase, including encoded-size evidence and exact revisions. Reproduce
 with `benchmarks/Respire.Benchmarks/VectorEncodingBenchmarks.cs` through the focused
-`.github/workflows/benchmark-vector.yml` workflow. Agents use CI for measurements and
-reserve the shared performance lock before local builds or diagnostic runs. Evidence
-is tracked in [#534](https://github.com/thomhurst/Respire/issues/534) under
+`.github/workflows/benchmark-vector.yml` workflow. Evidence is tracked in
+[#534](https://github.com/thomhurst/Respire/issues/534) under
 [#414](https://github.com/thomhurst/Respire/issues/414).

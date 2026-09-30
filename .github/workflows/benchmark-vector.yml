@@ -5,6 +5,7 @@ on:
     paths:
       - 'src/Respire/Commands/VectorCommand.cs'
       - 'src/Respire/Protocol/RespWriter.cs'
+      - 'src/Respire/RespireValue.cs'
       - 'src/Respire/Networking/WriteBuffer.cs'
       - 'benchmarks/Respire.Benchmarks/VectorEncodingBenchmarks.cs'
       - 'benchmarks/Respire.Benchmarks/Respire.Benchmarks.csproj'
@@ -46,13 +47,17 @@ jobs:
             job=Default
             if [ "$phase" = candidate ] || [ "$phase" = validation ]; then source=candidate; fi
             if [ "$phase" = validation ]; then job=Dry; fi
-            (
+            if ! (
               cd "$source"
               git rev-parse HEAD
               dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
                 --filter '*VectorEncodingBenchmarks*' --job "$job" --exporters fulljson markdown \
                 --artifacts "$GITHUB_WORKSPACE/results/$phase"
-            ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
+            ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1; then
+              echo "::error::Vector encoding phase $phase failed. Inspect $phase.log for build compatibility or benchmark errors; baseline phases compile the candidate harness against pinned base APIs."
+              tail -n 60 "$GITHUB_WORKSPACE/$phase.log"
+              exit 1
+            fi
             # Check Dry shape/sizes before spending time on Default measurement phases.
             python3 candidate/.github/scripts/vector_encoding_report.py --root "$GITHUB_WORKSPACE" --phase "$phase"
           done
