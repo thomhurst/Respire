@@ -112,6 +112,8 @@ public class CredentialProviderIntegrationTests
                 var current = await ConnectionsAsync(administrators);
                 return data.Calls > reconnectCalls && current.Count == active.Count && !current.ContainsKey(pooled.Key);
             });
+            using (var recoveryDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+                await client.Core.Multiplexer.GetHealthyConnectionAsync(recoveryDeadline.Token);
             (await client.GetStringAsync("{a}:credential")).Should().Be("before");
 
             // Fresh discovery and data sockets must fetch the rotated credentials too.
