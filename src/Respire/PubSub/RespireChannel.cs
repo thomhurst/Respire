@@ -10,10 +10,28 @@ namespace Respire;
 public readonly partial struct RespireChannel : IEquatable<RespireChannel>
 {
     private readonly byte[]? _bytes;
-    // Copy metadata as one scalar: every delivered message carries a channel and optional pattern.
-    // Low to high: kind (8 bits), scope (8), slot + 1 (16), database + 1 (32).
-    // Zero encodes null for slot/database, preserving default-channel semantics and a 16-byte size.
-    private readonly ulong _metadata;
+    private readonly ChannelMetadata _metadata;
+
+    // A single scalar keeps RespireChannel at 16 bytes on 64-bit runtimes. Keep packing
+    // and null encodings together so additional metadata cannot overlap existing fields.
+    private readonly struct ChannelMetadata(ulong bits)
+    {
+        private const int ScopeShift = 8;
+        private const int SlotShift = 16;
+        private const int DatabaseShift = 32;
+        private readonly ulong _bits = bits;
+
+        internal ChannelMetadata(SubscriptionKind kind, RespireChannelRoutingScope scope, int? database, int? slot)
+            : this((byte)kind | ((ulong)(byte)scope << ScopeShift)
+                | ((ulong)(slot is { } value ? checked((ushort)(value + 1)) : (ushort)0) << SlotShift)
+                | ((ulong)(database is { } number ? (uint)number + 1 : 0) << DatabaseShift)) { }
+
+        internal SubscriptionKind Kind => (SubscriptionKind)(byte)_bits;
+        internal RespireChannelRoutingScope Scope => (RespireChannelRoutingScope)(byte)(_bits >> ScopeShift);
+        internal int? Slot => (ushort)(_bits >> SlotShift) is 0 ? null : (ushort)(_bits >> SlotShift) - 1;
+        internal int? Database => (uint)(_bits >> DatabaseShift) is 0 ? null : (int)((uint)(_bits >> DatabaseShift) - 1);
+        internal ChannelMetadata WithKind(SubscriptionKind kind) => new((_bits & ~0xffUL) | (byte)kind);
+    }
 
     /// <summary>Creates a literal channel from valid UTF-16 text, encoded as UTF-8.</summary>
     /// <exception cref="ArgumentException">The text contains an unpaired surrogate.</exception>
@@ -31,10 +49,7 @@ public readonly partial struct RespireChannel : IEquatable<RespireChannel>
         int? notificationDatabase = null, int? routingSlot = null)
     {
         _bytes = bytes;
-        var databasePlusOne = notificationDatabase is { } database ? (uint)database + 1 : 0;
-        var slotPlusOne = routingSlot is { } slot ? checked((ushort)(slot + 1)) : (ushort)0;
-        _metadata = (byte)kind | ((ulong)(byte)routingScope << 8)
-            | ((ulong)slotPlusOne << 16) | ((ulong)databasePlusOne << 32);
+        _metadata = new(kind, routingScope, notificationDatabase, routingSlot);
     }
 
     /// <summary>The exact owned channel bytes; accessing them does not allocate.</summary>
@@ -43,30 +58,16 @@ public readonly partial struct RespireChannel : IEquatable<RespireChannel>
 
     /// <summary>The explicit subscription command family. Reserved names do not change this value.</summary>
     /// <remarks>Kind is not part of equality or hashing; literal and pattern values with the same bytes compare equal.</remarks>
-    public SubscriptionKind Kind => (SubscriptionKind)(byte)_metadata;
+    public SubscriptionKind Kind => _metadata.Kind;
 
     /// <summary>Whether this is a server-owned notification descriptor that cannot be published.</summary>
     public bool IsNotification => RoutingScope != RespireChannelRoutingScope.Global;
     /// <summary>The explicit routing scope; arbitrary reserved-looking bytes remain ordinary channels.</summary>
-    public RespireChannelRoutingScope RoutingScope => (RespireChannelRoutingScope)(byte)(_metadata >> 8);
+    public RespireChannelRoutingScope RoutingScope => _metadata.Scope;
     /// <summary>The physical key's slot for KeyOwner descriptors; null otherwise.</summary>
-    public int? RoutingSlot
-    {
-        get
-        {
-            var slot = (ushort)(_metadata >> 16);
-            return slot == 0 ? null : slot - 1;
-        }
-    }
+    public int? RoutingSlot => _metadata.Slot;
     /// <summary>The notification database, or null for all databases/ordinary channels.</summary>
-    public int? NotificationDatabase
-    {
-        get
-        {
-            var database = (uint)(_metadata >> 32);
-            return database == 0 ? null : (int)(database - 1);
-        }
-    }
+    public int? NotificationDatabase => _metadata.Database;
 
     /// <summary>The Redis Cluster slot computed from the raw bytes, including hash tags.</summary>
     public int ClusterSlot => ClusterHash.GetSlot(_bytes.AsSpan());
@@ -115,7 +116,7 @@ public readonly partial struct RespireChannel : IEquatable<RespireChannel>
     /// <summary>Decodes UTF-8 for display, replacing invalid bytes. Never use display text as identity.</summary>
     public override string ToString() => Utf8String.GetString(Bytes);
 
-    internal static RespireChannel FromOwnedBytes(byte[] bytes) => new(bytes, SubscriptionKind.Channel);
+    internal static RespireChannel FromOwnedBytes(byte[] bytes) => new(bytes, default(ChannelMetadata));
 
     internal ReadOnlySpan<byte> Span => _bytes;
 
@@ -123,8 +124,8 @@ public readonly partial struct RespireChannel : IEquatable<RespireChannel>
     {
         if (IsNotification && kind != Kind)
             throw new ArgumentException("Notification descriptors retain their subscription kind; construct an ordinary channel to override it.", nameof(kind));
-        return new(_bytes, (_metadata & ~0xffUL) | (byte)kind);
+        return new(_bytes, _metadata.WithKind(kind));
     }
-    private RespireChannel(byte[]? bytes, ulong metadata) => (_bytes, _metadata) = (bytes, metadata);
+    private RespireChannel(byte[]? bytes, ChannelMetadata metadata) => (_bytes, _metadata) = (bytes, metadata);
     internal RespireValue AsValue() => new(Bytes);
 }

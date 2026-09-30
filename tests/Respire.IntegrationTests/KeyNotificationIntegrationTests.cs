@@ -32,7 +32,7 @@ public class KeyNotificationIntegrationTests(KeyNotificationRedisContainer fixtu
     {
         var options = fixture.Options(protocol);
         await using var client = await RespireClient.ConnectAsync(options);
-        byte[] prefix = [.. Encoding.UTF8.GetBytes($"tenant:{Guid.NewGuid():N}:"), (byte)'*', (byte)'?', 255, 0];
+        byte[] prefix = [.. Encoding.UTF8.GetBytes($"tenant:{Guid.NewGuid():N}:"), (byte)'*', (byte)'?', (byte)'[', (byte)']', (byte)'^', (byte)'-', 255, 0];
         byte[] key = [.. prefix, (byte)'x'];
         RespireChannel[] channels =
         [
@@ -246,10 +246,11 @@ public class KeyNotificationLegacyIntegrationTests(KeyNotificationLegacyRedisCon
     public async Task OlderServerAcknowledgesSubKeyChannelsWithoutEmittingSubKeyEvents(int protocol)
     {
         await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
-        var key = $"legacy:{Guid.NewGuid():N}";
+        var prefix = $"legacy:[^-]\\*?:{Guid.NewGuid():N}:";
+        var key = prefix + "key";
         var descriptor = RespireChannel.SubKeySpaceSingleKey(key, 0);
         await using var subkeys = await client.SubscribeAsync(descriptor);
-        await using var keys = await client.SubscribeAsync(RespireChannel.KeySpaceSingleKey(key, 0));
+        await using var keys = await client.SubscribeAsync(RespireChannel.KeySpacePrefix(prefix, 0));
         using (var reply = await client.ExecuteAsync("HSET", key, "field", "value")) { }
         // The subsequent ordinary publish is an ordered barrier on the same Pub/Sub
         // connection. No timeout-based absence assertion or retry is needed.

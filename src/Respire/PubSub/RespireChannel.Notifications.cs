@@ -64,8 +64,7 @@ public readonly partial struct RespireChannel
     /// <summary>Redis 8.8 subkeys for a raw event and physical key. Event names cannot contain '|'.</summary>
     public static RespireChannel SubKeySpaceEvent(ReadOnlySpan<byte> type, RespireKey key, int? database = null)
     {
-        ValidateEvent(type);
-        if (type.Contains((byte)'|')) throw new ArgumentException("The event name cannot contain '|'.", nameof(type));
+        ValidateEvent(type, rejectPipe: true);
         var keyBytes = key.ToBytes();
         // Pipes in the key are unambiguous: only the first pipe separates event from key.
         var tail = Join(type, (byte)'|', keyBytes);
@@ -83,10 +82,12 @@ public readonly partial struct RespireChannel
         ValidateEvent(type);
         return CreateNotification(family, database is null ? EscapePattern(type) : type, database, pattern: database is null);
     }
-    private static void ValidateEvent(ReadOnlySpan<byte> type)
+    private static void ValidateEvent(ReadOnlySpan<byte> type, bool rejectPipe = false)
     {
         if (type.IsEmpty || type.Contains((byte)0))
             throw new ArgumentException("A Redis event name must be nonempty and cannot contain NUL.", nameof(type));
+        if (rejectPipe && type.Contains((byte)'|'))
+            throw new ArgumentException("The event name cannot contain '|'.", nameof(type));
     }
     private static RespireChannel CreateNotification(string family, ReadOnlySpan<byte> tail, int? database, bool pattern, int? slot = null)
     {
