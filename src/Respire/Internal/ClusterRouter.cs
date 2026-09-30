@@ -912,6 +912,16 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             in Asking, in caching, in command, cancellationToken, commandName);
     }
 
+    internal static ValueTask<Stream?> SendAskingBulkStreamAsync<TCommand>(
+        RespireConnection connection,
+        in TCommand command,
+        CancellationToken cancellationToken,
+        string? commandName = null,
+        Action<Exception?>? onFrameCompleted = null)
+        where TCommand : struct, Respire.Protocol.IRespCommand
+         => connection.SendPrefixedBulkStreamAsync(
+             in Asking, in command, cancellationToken, commandName, onFrameCompleted);
+
     internal static ValueTask<Respire.Protocol.RespValue> SendAskingUncheckedAsync<TCommand>(
         RespireConnection connection,
         in TCommand command,

@@ -86,6 +86,28 @@ if (!lease.IsNull)
 
 The memory remains valid only until `Dispose`. The `Lease` name makes that ownership obligation visible.
 
+## Streaming large reads
+
+`GetStreamAsync` exposes a Redis bulk value as a readable stream without creating a value-sized
+managed array:
+
+```csharp
+await using Stream? value = await redis.Strings.GetStreamAsync("archive:latest");
+if (value is not null)
+{
+    await value.CopyToAsync(destination, cancellationToken);
+}
+```
+
+Respire uses a bounded 64 KiB pipe between the socket reader and your stream. If you read slowly,
+the socket reader pauses when that pipe fills. The connection uses one ordered response reader, so
+later command replies on that connection wait until the streamed value is consumed or disposed.
+Dispose the stream when you stop early; Respire drains the remaining bulk frame before reading the
+next reply. Use another client connection for long-running reads that must not delay ordinary
+commands. Streaming reads bypass the client-side value cache. The cancellation token passed to
+`GetStreamAsync` applies while waiting for the reply header; pass a token to stream read/copy calls
+to cancel payload consumption.
+
 ## Expiry without sentinels
 
 Redis represents missing keys and persistent keys with negative TTL values. Respire returns `RespireTtl` instead:

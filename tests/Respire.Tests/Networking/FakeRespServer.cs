@@ -129,7 +129,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
     public async Task SendRawAsync(byte[] frame)
     {
         var socket = await _clientSocket.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await socket.SendAsync(frame, SocketFlags.None);
+        await SendAllAsync(socket, frame);
     }
 
     /// <summary>Injects a reply on a specific accepted connection, identified by ReceivedConnectionIds.</summary>
@@ -137,7 +137,17 @@ internal sealed class FakeRespServer : IAsyncDisposable
     {
         Socket socket;
         lock (_receivedCommands) socket = _clientSockets[connectionId];
-        await socket.SendAsync(frame, SocketFlags.None);
+        await SendAllAsync(socket, frame);
+    }
+
+    private static async Task SendAllAsync(Socket socket, ReadOnlyMemory<byte> frame)
+    {
+        while (!frame.IsEmpty)
+        {
+            var sent = await socket.SendAsync(frame, SocketFlags.None);
+            if (sent == 0) throw new IOException("Socket closed during raw frame send.");
+            frame = frame[sent..];
+        }
     }
 
     private async Task RunAsync(int maxConnections)

@@ -2585,6 +2585,157 @@ public sealed partial class RespireClient : IRespireClient
             ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation)
             : connection.SendCheckedAsync(in command, cancellationToken, operation);
 
+    /// <summary>Sends a streaming GET through the current standalone or Cluster route.</summary>
+    internal ValueTask<Stream?> SendBulkStreamAsync<TCommand>(
+        string operation,
+        TCommand command,
+        CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var core = _core;
+        ObjectDisposedException.ThrowIf(core.Disposed, this);
+        if (core.Cluster is { } cluster)
+        {
+            return SendClusterBulkStreamAsync(operation, cluster, command, cancellationToken);
+        }
+
+        if (!core.Multiplexer.IsInitialized)
+        {
+            return SendBulkStreamAfterConnectAsync(operation, command, cancellationToken);
+        }
+
+        return SendBulkStreamOnConnectionAsync(
+            operation, core.Multiplexer.GetConnection(), command, cancellationToken);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<Stream?> SendBulkStreamAfterConnectAsync<TCommand>(
+        string operation,
+        TCommand command,
+        CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        await _core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        return await SendBulkStreamOnConnectionAsync(
+            operation, _core.Multiplexer.GetConnection(), command, cancellationToken).ConfigureAwait(false);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<Stream?> SendClusterBulkStreamAsync<TCommand>(
+        string operation,
+        ClusterRouter cluster,
+        TCommand command,
+        CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
+        var connection = await cluster.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
+        var sendAsking = false;
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await SendBulkStreamOnConnectionAsync(
+                    operation, connection, command, cancellationToken, sendAsking).ConfigureAwait(false);
+            }
+            catch (RespireConnectionRetiredException)
+                when (cluster.CanRetryRetirement(attempt, cancellationToken))
+            {
+                _core.ClientCache?.FlushForContinuityLoss();
+                connection = await cluster.GetReplacementConnectionAsync(
+                    sendAsking ? connection : null, slot, null, cancellationToken).ConfigureAwait(false);
+            }
+            catch (RespireServerException error)
+                when (attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
+            {
+                _core.ClientCache?.FlushForContinuityLoss();
+                connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot)
+                    .ConfigureAwait(false);
+                sendAsking = error.Code == RespireErrorCodes.Ask;
+            }
+        }
+    }
+
+    private ValueTask<Stream?> SendBulkStreamOnConnectionAsync<TCommand>(
+        string operation,
+        RespireConnection connection,
+        TCommand command,
+        CancellationToken cancellationToken,
+        bool sendAsking = false)
+        where TCommand : struct, IRespCommand
+    {
+        if (RespireTelemetry.IsEnabled)
+        {
+            return SendBulkStreamOnConnectionInstrumentedAsync(
+                operation, connection, command, cancellationToken, sendAsking);
+        }
+
+        if (sendAsking)
+        {
+            return ClusterRouter.SendAskingBulkStreamAsync(
+                connection, in command, cancellationToken, operation);
+        }
+
+        return connection.SendBulkStreamAsync(in command, cancellationToken, operation);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<Stream?> SendBulkStreamOnConnectionInstrumentedAsync<TCommand>(
+        string operation,
+        RespireConnection connection,
+        TCommand command,
+        CancellationToken cancellationToken,
+        bool sendAsking)
+        where TCommand : struct, IRespCommand
+    {
+        var core = _core;
+        var previousActivity = Activity.Current;
+        var telemetry = RespireTelemetry.StartOperation(
+            operation, connection.Host, connection.Port, core.Options.Database);
+        var telemetryCompleted = 0;
+        void CompleteTelemetry(Exception? error)
+        {
+            if (Interlocked.Exchange(ref telemetryCompleted, 1) == 0)
+            {
+                telemetry.Complete(operation, connection.Host, connection.Port, core.Options.Database,
+                    error: error, connection: connection);
+            }
+        }
+
+        try
+        {
+            var stream = sendAsking
+                ? await ClusterRouter.SendAskingBulkStreamAsync(
+                    connection, in command, cancellationToken, operation, CompleteTelemetry).ConfigureAwait(false)
+                : await connection.SendBulkStreamAsync(
+                    in command, cancellationToken, operation, CompleteTelemetry).ConfigureAwait(false);
+            if (stream is null)
+            {
+                CompleteTelemetry(null);
+            }
+
+            return stream;
+        }
+        catch (Exception ex)
+        {
+            CompleteTelemetry(ex);
+            throw;
+        }
+        finally
+        {
+            if (!ReferenceEquals(Activity.Current, previousActivity))
+            {
+                Activity.Current = previousActivity;
+            }
+        }
+    }
+
     // Endpoint-pinned fan-outs can retry a rejected target without replaying accepted peers.
     // Do not use this for WATCH or connection-scoped CLIENT operations, whose socket is part of their contract.
     internal async ValueTask<RespValue> SendToClusterTargetAsync<TCommand>(

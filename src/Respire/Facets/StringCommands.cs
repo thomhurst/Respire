@@ -52,6 +52,13 @@ public partial interface IStringCommands
     ValueTask<byte[]?> GetBytesAsync(RespireKey key, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Gets a key's value as a readable stream, or null when missing. The stream holds this
+    /// connection's receive path until consumed or disposed, so later replies may wait behind it.
+    /// This path bypasses the client-side value cache. Redis: GET.
+    /// </summary>
+    ValueTask<Stream?> GetStreamAsync(RespireKey key, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Gets a key's value as a zero-copy lease over pooled memory — dispose it. Redis: GET.
     /// </summary>
     ValueTask<RespireLease> GetLeaseAsync(RespireKey key, CancellationToken cancellationToken = default);
@@ -238,6 +245,10 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
             client.ResolveKey(key),
             cancellationToken,
             static (RespireClient _, in Protocol.RespValue value) => ResponseReader.BytesOrNull(in value));
+
+    public ValueTask<Stream?> GetStreamAsync(RespireKey key, CancellationToken cancellationToken = default)
+        => client.SendBulkStreamAsync(
+            "GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken);
 
     public ValueTask<RespireLease> GetLeaseAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.LeaseAsync("GET", new Cmd1(Verbs.Get, client.Key(in key)), cancellationToken);
