@@ -136,6 +136,7 @@ public sealed partial class RespireBatch
                 if (connection is not null)
                 {
                     if (reusable) pool!.Return(connection);
+                    // Deliberately discard every failed execution, even a fully read server error.
                     else await pool!.DiscardAsync(connection).ConfigureAwait(false);
                 }
             }

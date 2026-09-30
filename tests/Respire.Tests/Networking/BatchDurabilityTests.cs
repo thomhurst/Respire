@@ -1,6 +1,7 @@
 using System.Text;
 using Respire.Internal;
 using TUnit.Assertions;
+using TUnit.Assertions.Enums;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 
@@ -116,6 +117,30 @@ public class BatchDurabilityTests
         var error = await Assert.That(async () => await Execute(batch, aof, 1, TimeSpan.Zero)).Throws<RespireServerException>();
         await Assert.That(error!.CommandName).IsEqualTo(aof ? "WAITAOF" : "WAIT");
         await Assert.That(write.Result).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task EmptyBatchRejectionAllowsAddingAndExecutingCommands(bool aof)
+    {
+        byte[] acknowledgement = aof ? "*2\r\n:1\r\n:1\r\n"u8.ToArray() : ":1\r\n"u8.ToArray();
+        await using var server = new FakeRespServer(FakeRespServer.OkReply, acknowledgement);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        using var batch = client.CreateBatch();
+        await Assert.That(async () => await Execute(batch, aof, 1, TimeSpan.Zero))
+            .Throws<InvalidOperationException>();
+        await Assert.That(batch.IsSent).IsFalse();
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+        var write = batch.Set("key", "value");
+        await Execute(batch, aof, 1, TimeSpan.Zero);
+        await Assert.That(write.Result).IsTrue();
+        await Assert.That(batch.IsSent).IsTrue();
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(
+            ["SET key value", aof ? "WAITAOF 1 1 0" : "WAIT 1 0"], CollectionOrdering.Matching);
     }
 
     [Test]

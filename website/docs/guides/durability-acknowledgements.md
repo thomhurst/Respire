@@ -54,7 +54,8 @@ This is a single-shot, non-atomic pipeline. It supports the same typed command f
 and key prefixes as a normal batch. It acknowledges the writes queued in this batch,
 not earlier calls made through the client. Queue helper code can still use
 `IRespireCommandQueue`; execution remains on the concrete `RespireBatch`. No new client
-or queue interface members are required. Empty batches are rejected before sending.
+or queue interface members are required. Empty batches are rejected before sending and remain
+unsent: add commands to the same batch and execute it again.
 
 If any queued command fails, all command pendings finish and the earliest failure in
 queue order is rethrown. The acknowledgement is not sent. Other commands may already
