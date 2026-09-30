@@ -2184,7 +2184,9 @@ internal sealed class RespireConnection : IAsyncDisposable
                 var progress = _capacitySignal.WaitAsync(CancellationToken.None);
                 lock (_writeGate)
                 {
-                    if (_dead) break;
+                    // An exited producer cannot supply another reply; abort cleanup also covers
+                    // an unexpected exit before _dead is published, without spinning on its task.
+                    if (_dead || _receiveTask.IsCompleted) break;
                     if (_inflight.Count == 0 && _activeBuffer.Count == 0 && !Volatile.Read(ref _sending))
                     {
                         Volatile.Write(ref _drainedSuccessfully, true);
