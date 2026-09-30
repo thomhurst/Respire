@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.IO.Pipelines;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -1802,15 +1803,17 @@ internal sealed class RespireConnection : IAsyncDisposable
                                     $"Response exceeds the {MaxResponseSize} byte limit.");
                             }
 
-                            if (!_inflight.TryDequeue(out var dequeued)
-                                || !ReferenceEquals(dequeued, streamSource))
-                            {
-                                throw new RespireProtocolException("Streaming response order changed unexpectedly.");
-                            }
-
+                            // Publish the active stream before dequeuing it so retirement drain
+                            // never observes an empty ring while the payload is still being read.
                             Volatile.Write(ref _activeBulkStreamSource, streamSource);
                             try
                             {
+                                if (!_inflight.TryDequeue(out var dequeued)
+                                    || !ReferenceEquals(dequeued, streamSource))
+                                {
+                                    throw new RespireProtocolException("Streaming response order changed unexpectedly.");
+                                }
+
                                 if (bulkLength == -1)
                                 {
                                     start = headerEnd;
@@ -1831,6 +1834,8 @@ internal sealed class RespireConnection : IAsyncDisposable
                             finally
                             {
                                 Interlocked.CompareExchange(ref _activeBulkStreamSource, null, streamSource);
+                                // Wake a retirement drain that saw the frame still active.
+                                _capacitySignal.Signal();
                             }
 
                             responseBytes = 0;
@@ -2028,7 +2033,7 @@ internal sealed class RespireConnection : IAsyncDisposable
                     buffer.AsMemory(start + copied, count).CopyTo(destination);
                     payload.Advance(count);
                     copied += count;
-                    if ((await payload.FlushAsync().ConfigureAwait(false)).IsCompleted)
+                    if (!await FlushBulkStreamAsync(payload).ConfigureAwait(false))
                     {
                         payload = null;
                     }
@@ -2071,7 +2076,7 @@ internal sealed class RespireConnection : IAsyncDisposable
                 ResetReceiveDeadline();
                 remaining -= received;
                 if (payload is not null
-                    && (await payload.FlushAsync().ConfigureAwait(false)).IsCompleted)
+                    && !await FlushBulkStreamAsync(payload).ConfigureAwait(false))
                 {
                     payload = null;
                 }
@@ -2121,6 +2126,44 @@ internal sealed class RespireConnection : IAsyncDisposable
         {
             source.CompletePayload(failure);
             source.ReleaseRef();
+        }
+    }
+
+    /// <summary>
+    /// Flushes streamed payload bytes to the caller. Returns false once the reader is gone
+    /// (disposed stream) or the flush was cancelled by connection abort, so the remaining
+    /// frame is discarded. Waiting on caller backpressure suspends the receive watchdog:
+    /// no socket read is outstanding, so the wait says nothing about server liveness.
+    /// </summary>
+    private ValueTask<bool> FlushBulkStreamAsync(RespBulkPayloadPipe payload)
+    {
+        var flush = payload.FlushAsync();
+        if (flush.IsCompletedSuccessfully)
+        {
+            var result = flush.Result;
+            return new(!result.IsCompleted && !result.IsCanceled);
+        }
+
+        return AwaitBulkStreamBackpressureAsync(flush);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<bool> AwaitBulkStreamBackpressureAsync(ValueTask<FlushResult> flush)
+    {
+        Interlocked.Increment(ref _responseTimeoutSuppressions);
+        try
+        {
+            var result = await flush.ConfigureAwait(false);
+            return !result.IsCompleted && !result.IsCanceled;
+        }
+        finally
+        {
+            // Restart the deadline before re-enabling the watchdog so it never judges the
+            // resumed read against a timestamp taken before the consumer stalled.
+            RestartResponseDeadline();
+            Interlocked.Decrement(ref _responseTimeoutSuppressions);
         }
     }
 
@@ -2518,6 +2561,12 @@ internal sealed class RespireConnection : IAsyncDisposable
     private void ResetReceiveDeadline()
     {
         Volatile.Write(ref _lastReadTimestamp, Stopwatch.GetTimestamp());
+        RestartResponseDeadline();
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void RestartResponseDeadline()
+    {
         if (_responseTimeout is null)
         {
             return;
@@ -2657,7 +2706,8 @@ internal sealed class RespireConnection : IAsyncDisposable
                     // An exited producer cannot supply another reply; abort cleanup also covers
                     // an unexpected exit before _dead is published, without spinning on its task.
                     if (_dead || _receiveTask.IsCompleted) break;
-                    if (_inflight.Count == 0 && _activeBuffer.Count == 0 && !Volatile.Read(ref _sending))
+                    if (_inflight.Count == 0 && _activeBuffer.Count == 0 && !Volatile.Read(ref _sending)
+                        && Volatile.Read(ref _activeBulkStreamSource) is null)
                     {
                         Volatile.Write(ref _drainedSuccessfully, true);
                         break;

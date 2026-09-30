@@ -2633,31 +2633,48 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
-        var connection = await cluster.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
-        var sendAsking = false;
-        for (var attempt = 0; ; attempt++)
+        ClusterRouter.DiscoveryRound? discovery = null;
+        var discoveryPending = false;
+        try
         {
-            try
+            var connection = await cluster.GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
+            var sendAsking = false;
+            for (var attempt = 0; ; attempt++)
             {
-                return await SendBulkStreamOnConnectionAsync(
-                    operation, connection, command, cancellationToken, sendAsking).ConfigureAwait(false);
-            }
-            catch (RespireConnectionRetiredException)
-                when (cluster.CanRetryRetirement(attempt, cancellationToken))
-            {
-                _core.ClientCache?.FlushForContinuityLoss();
-                connection = await cluster.GetReplacementConnectionAsync(
-                    sendAsking ? connection : null, slot, null, cancellationToken).ConfigureAwait(false);
-            }
-            catch (RespireServerException error)
-                when (attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
-            {
-                _core.ClientCache?.FlushForContinuityLoss();
-                connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot)
-                    .ConfigureAwait(false);
-                sendAsking = error.Code == RespireErrorCodes.Ask;
+                try
+                {
+                    return await SendBulkStreamOnConnectionAsync(
+                        operation, connection, command, cancellationToken, sendAsking).ConfigureAwait(false);
+                }
+                catch (RespireConnectionRetiredException retirement)
+                    when (cluster.CanRetryRetirement(attempt, cancellationToken))
+                {
+                    cluster.RecordRejection(ref discovery, connection, retirement);
+                    _core.ClientCache?.FlushForContinuityLoss();
+                    discoveryPending = true;
+                    connection = await cluster.GetReplacementConnectionAsync(
+                        sendAsking ? connection : null, slot, null, cancellationToken, discovery).ConfigureAwait(false);
+                    discoveryPending = false;
+                }
+                catch (RespireServerException error)
+                    when (attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
+                {
+                    _core.ClientCache?.FlushForContinuityLoss();
+                    cluster.RecordRejection(ref discovery, connection, error);
+                    discoveryPending = true;
+                    connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery)
+                        .ConfigureAwait(false);
+                    discoveryPending = false;
+                    sendAsking = error.Code == RespireErrorCodes.Ask;
+                }
             }
         }
+        catch (Exception error)
+        {
+            discovery?.RecordCommandFailure(error, discoveryPending, slot);
+            throw;
+        }
+        finally { discovery?.Finish(); }
     }
 
     private ValueTask<Stream?> SendBulkStreamOnConnectionAsync<TCommand>(

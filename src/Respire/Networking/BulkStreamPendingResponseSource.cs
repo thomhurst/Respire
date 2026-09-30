@@ -13,6 +13,9 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
     private readonly string? _commandName;
     private readonly bool _hasPrefixReply;
     private readonly Action<Exception?>? _onFrameCompleted;
+    // Threading: the receive loop owns _replyIndex and _isMissing and publishes _prefixError,
+    // _prefixReceived and _payload; deferred completion and Abort can observe them from other
+    // threads, so those three (and the abort/completion errors) always use Volatile/Interlocked.
     private RespBulkPayloadPipe? _payload;
     private Exception? _prefixError;
     private Exception? _completionError;
@@ -81,7 +84,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 
     internal void CompleteMissing()
     {
-        if (_prefixError is { } prefixError)
+        if (Volatile.Read(ref _prefixError) is { } prefixError)
         {
             TrySetException(prefixError);
             _onFrameCompleted?.Invoke(Volatile.Read(ref _completionError) ?? prefixError);
@@ -95,7 +98,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 
     internal void CompleteDiscardedPayload()
     {
-        if (_prefixError is { } prefixError)
+        if (Volatile.Read(ref _prefixError) is { } prefixError)
         {
             TrySetException(prefixError);
         }
@@ -113,14 +116,14 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 
             if (result.IsError)
             {
-                _prefixError = ResponseReader.ServerError(in result, _commandName);
+                Volatile.Write(ref _prefixError, ResponseReader.ServerError(in result, _commandName));
             }
 
             result.Dispose();
             return true;
         }
 
-        if (_prefixError is { } prefixError)
+        if (Volatile.Read(ref _prefixError) is { } prefixError)
         {
             result.Dispose();
             TrySetException(prefixError);
@@ -132,7 +135,7 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 
     protected override void SetResultCore(in RespValue result)
     {
-        if (_payload is { } payload)
+        if (Volatile.Read(ref _payload) is { } payload)
         {
             _core.SetResult(payload.ReadStream);
             return;
@@ -169,8 +172,9 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 
     internal void CompletePayload(Exception? exception)
     {
-        _payload?.Complete(exception);
-        _onFrameCompleted?.Invoke(exception ?? Volatile.Read(ref _completionError) ?? _prefixError);
+        Volatile.Read(ref _payload)?.Complete(exception);
+        _onFrameCompleted?.Invoke(
+            exception ?? Volatile.Read(ref _completionError) ?? Volatile.Read(ref _prefixError));
     }
 
     protected override Exception PrepareException(Exception exception)

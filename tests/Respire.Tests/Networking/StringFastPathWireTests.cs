@@ -305,6 +305,64 @@ public class StringFastPathWireTests
         await connection.Closed.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(connection.IsConnected).IsFalse();
         await Assert.That(stream).IsNotNull();
+        await Assert.That(async () => await stream!.CopyToAsync(Stream.Null))
+            .Throws<RespireConnectionException>();
+    }
+
+    [Test]
+    public async Task GetStream_SlowConsumerDoesNotTripResponseWatchdog()
+    {
+        const int payloadLength = 256 * 1024;
+        await using var server = new FakeRespServer("$-1\r\n"u8.ToArray())
+        {
+            SuppressReply = static command => command == "GET key"
+        };
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1", server.Port,
+            new RespireConnectionOptions { ResponseTimeout = TimeSpan.FromMilliseconds(100) });
+        var command = new Cmd1(Verbs.Get, "key");
+        var pending = connection.SendBulkStreamAsync(in command, commandName: "GET");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen == 0) await Task.Delay(10, timeout.Token);
+        await server.SendRawAsync(Encoding.ASCII.GetBytes($"${payloadLength}\r\n"));
+        await server.SendRawAsync(new byte[payloadLength]);
+        await server.SendRawAsync("\r\n"u8.ToArray());
+        await using var stream = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
+        // The receive loop now waits on the full 64 KiB pipe, not on the server.
+        await Task.Delay(500);
+        await Assert.That(connection.IsConnected).IsTrue();
+
+        var copy = new MemoryStream();
+        await stream!.CopyToAsync(copy).WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(copy.Length).IsEqualTo(payloadLength);
+        await Assert.That(connection.IsConnected).IsTrue();
+    }
+
+    [Test]
+    public async Task GetStream_RetirementWaitsForActivePayload()
+    {
+        await using var server = new FakeRespServer("$-1\r\n"u8.ToArray())
+        {
+            SuppressReply = static command => command == "GET key"
+        };
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        var command = new Cmd1(Verbs.Get, "key");
+        var pending = connection.SendBulkStreamAsync(in command, commandName: "GET");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen == 0) await Task.Delay(10, timeout.Token);
+        await server.SendRawAsync("$10\r\nhello"u8.ToArray());
+        await using var stream = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
+        var retirement = connection.RetireAsync();
+        await Task.Delay(100);
+        await Assert.That(retirement.IsCompleted).IsFalse();
+
+        await server.SendRawAsync("world\r\n"u8.ToArray());
+        using var reader = new StreamReader(stream!);
+        await Assert.That(await reader.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(5)))
+            .IsEqualTo("helloworld");
+        await retirement.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     [Test]
