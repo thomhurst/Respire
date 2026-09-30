@@ -261,6 +261,48 @@ public class StreamReadTests
         await Assert.That(server.CommandsSeen).IsEqualTo(1);
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ClusterEnumerationFollowsMovedAndAskWithoutLosingCursor(bool ask)
+    {
+        const string key = "tenant:{read}:events";
+        var result = Reply(false, (key, ["6-0"]));
+        await using var target = new FakeRespServer(2, ask ? [FakeRespServer.OkReply, result] : [result]);
+        var slot = new RespireKey(key).ClusterSlot;
+        var redirect = Encoding.ASCII.GetBytes($"-{(ask ? "ASK" : "MOVED")} {slot} 127.0.0.1:{target.Port}\r\n");
+        await using var seed = new FakeRespServer(2, redirect);
+        seed.SuppressReply = command =>
+        {
+            if (command != "CLUSTER SLOTS") return false;
+            _ = seed.SendRawAsync("*0\r\n"u8.ToArray());
+            return true;
+        };
+        await using var client = Create(seed.Port, cluster: true);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var reader = client.WithKeyPrefix("tenant:").Streams
+            .ReadAllAsync("{read}:events", "5-0", cancellationToken: timeout.Token).GetAsyncEnumerator();
+        await Assert.That(await reader.MoveNextAsync()).IsTrue();
+        await Assert.That(reader.Current.Id).IsEqualTo((RespireStreamId)"6-0");
+        const string read = "XREAD COUNT 64 BLOCK 1000 STREAMS tenant:{read}:events 5-0";
+        await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS", read], CollectionOrdering.Matching);
+        await Assert.That(target.ReceivedCommands).IsEquivalentTo(ask ? new[] { "ASKING", read } : [read], CollectionOrdering.Matching);
+    }
+
+    [Test]
+    public async Task ClusterDownRetriesFromTheSameDeliveredCursor()
+    {
+        await using var server = new FakeRespServer("-CLUSTERDOWN temporarily unavailable\r\n"u8.ToArray(),
+            Reply(false, ("events", ["6-0"])));
+        await using var client = Create(server.Port);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var reader = client.Streams.ReadAllAsync("events", "5-0", cancellationToken: timeout.Token).GetAsyncEnumerator();
+        await Assert.That(await reader.MoveNextAsync()).IsTrue();
+        await Assert.That(reader.Current.Id).IsEqualTo((RespireStreamId)"6-0");
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(
+            Enumerable.Repeat("XREAD COUNT 64 BLOCK 1000 STREAMS events 5-0", 2), CollectionOrdering.Matching);
+    }
+
     private static RespireClient Create(int port, bool cluster = false)
         => RespireClient.Create(new RespireOptions { Connections = 1, UseCluster = cluster, Endpoints = [new("127.0.0.1", port)] });
 

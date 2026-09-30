@@ -372,9 +372,11 @@ Batches and transactions expose only the nonblocking `Streams.Read` forms.
 
 `ReadAllAsync` keeps an independent last-delivered id for each stream. It drains each owned
 batch before reading again, using one-second blocking polls. Transient connection/server
-failures retry indefinitely until cancellation/disposal, with delays from 100 ms to 3.2 seconds;
-authentication, ACL, configuration,
-and other non-transient errors terminate enumeration. Cancellation interrupts reads and retry
+failures retry indefinitely until cancellation/disposal, with delays from 100 ms to 3.2 seconds.
+Configure the client logger to observe retry failures and their delay. Normal Cluster routing
+follows MOVED/ASK within its bounded redirect limit; exhausting that limit terminates the
+enumeration. Authentication, ACL, configuration, and other non-transient errors also terminate
+enumeration. Cancellation interrupts reads and retry
 delays; disposing an enumerator between entries releases its buffered batch. Blocking polls
 are exempt from `CommandTimeout`; the caller's cancellation token bounds an active wait.
 

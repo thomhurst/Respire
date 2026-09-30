@@ -1,4 +1,5 @@
 using System.Net.Sockets;
+using Microsoft.Extensions.Logging;
 using System.Runtime.CompilerServices;
 using System.Security.Authentication;
 using Respire.Commands;
@@ -190,7 +191,10 @@ internal sealed partial class StreamCommands
             }
             catch (Exception error) when (!cancellationToken.IsCancellationRequested && !client.Core.Disposed && CanRetryStreamRead(error))
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(100 * (1 << Math.Min(failures++, 5))), cancellationToken).ConfigureAwait(false);
+                var delayMilliseconds = 100 * (1 << Math.Min(failures, 5));
+                failures = Math.Min(failures + 1, 6);
+                client.Core.Logger?.LogWarning(error, "Stream read failed; retrying after {DelayMilliseconds} ms.", delayMilliseconds);
+                await Task.Delay(TimeSpan.FromMilliseconds(delayMilliseconds), cancellationToken).ConfigureAwait(false);
                 continue;
             }
             foreach (var result in results)
