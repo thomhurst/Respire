@@ -247,6 +247,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         _completed = true;
         var core = _client.Core;
         var telemetryOperation = "MULTI";
+        var sentinelStarted = core.Sentinel is null ? 0 : RespireTelemetry.CaptureStartTimestamp();
         var telemetry = core.Sentinel is null ? RespireTelemetry.StartBatchOperation(
             "MULTI",
             _ops,
@@ -379,6 +380,9 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
             }
             finally
             {
+                if (connection is null && operationError is not null)
+                    RespireTelemetry.RecordUnroutedBatchFailure("MULTI", _ops, static op => op.Operation,
+                        core.Options.Database, sentinelStarted, operationError);
                 telemetry.Complete(
                     core,
                     telemetryOperation,

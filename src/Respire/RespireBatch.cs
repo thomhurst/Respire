@@ -215,6 +215,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         _sent = true;
         var core = _client.Core;
         var telemetryOperation = "PIPELINE";
+        var sentinelStarted = core.Sentinel is null ? 0 : RespireTelemetry.CaptureStartTimestamp();
         var telemetry = core.Sentinel is null ? RespireTelemetry.StartBatchOperation(
             "PIPELINE",
             _ops,
@@ -293,6 +294,9 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                 op.Fail(ex);
             }
 
+            if (connection is null)
+                RespireTelemetry.RecordUnroutedBatchFailure("PIPELINE", _ops, static op => op.Operation,
+                    core.Options.Database, sentinelStarted, ex);
             telemetry.Complete(
                 core,
                 telemetryOperation,

@@ -149,6 +149,33 @@ internal static class RespireTelemetry
 
     public static bool IsEnabled => Source.HasListeners() || OperationDuration.Enabled;
 
+    internal static long CaptureStartTimestamp() => IsEnabled ? Stopwatch.GetTimestamp() : 0;
+
+    internal static void RecordUnroutedBatchFailure<T>(string prefix, IReadOnlyList<T> operations,
+        Func<T, string> operationName, int database, long started, Exception error)
+    {
+        if (started == 0) return;
+        var operation = BatchOperationName(prefix, operations, operationName);
+        int? batchSize = operations.Count == 1 ? null : operations.Count;
+        Activity? activity = null;
+        if (Source.HasListeners())
+        {
+            var tags = new ActivityTagsCollection
+            {
+                { "db.system.name", DatabaseSystem },
+                { "db.namespace", database.ToString(CultureInfo.InvariantCulture) },
+                { "db.operation.name", operation },
+            };
+            if (batchSize is { } size) tags.Add("db.operation.batch.size", size);
+            // No data connection was acquired. Do not misidentify the Sentinel seed or a
+            // historical generation as the executing server. Include time spent discovering.
+            activity = Source.StartActivity(operation, ActivityKind.Client, default(ActivityContext),
+                tags: tags, startTime: DateTimeOffset.UtcNow - Stopwatch.GetElapsedTime(started));
+        }
+        new OperationScope(activity, OperationDuration.Enabled ? started : 0).Complete(
+            operation, host: null, DefaultRedisPort, database, error: error, batchSize: batchSize);
+    }
+
     public static void RecordSubscriptionMessageDropped(
         SubscriptionKind kind,
         SubscriptionOverflow overflow)
@@ -291,7 +318,7 @@ internal static class RespireTelemetry
 
         public void Complete(
             string operation,
-            string host,
+            string? host,
             int port,
             int database,
             string? storedProcedureName = null,
@@ -345,11 +372,11 @@ internal static class RespireTelemetry
                 { "db.system.name", DatabaseSystem },
                 { "db.namespace", database.ToString(CultureInfo.InvariantCulture) },
                 { "db.operation.name", operation },
-                { "server.address", host },
             };
-            if (port != DefaultRedisPort)
+            if (host is not null)
             {
-                tags.Add("server.port", port);
+                tags.Add("server.address", host);
+                if (port != DefaultRedisPort) tags.Add("server.port", port);
             }
 
             if (storedProcedureName is not null)

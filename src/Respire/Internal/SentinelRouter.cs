@@ -74,6 +74,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             await _discoveryGate.WaitAsync(linked.Token).ConfigureAwait(false);
             acquired = true;
             lock (_gate) ObjectDisposedException.ThrowIf(_disposed, this);
+            // Another discovery owner may have published while this caller awaited the gate.
             if (Current is { IsRetired: false } existing && existing.Multiplexer.IsConnected) return existing;
             if (Current is { } previous) Invalidate(previous);
             var replacement = await SentinelResolver.ResolveAndConnectPrimaryAsync(

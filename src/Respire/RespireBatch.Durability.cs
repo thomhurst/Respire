@@ -96,6 +96,7 @@ public sealed partial class RespireBatch
 
         _sent = true;
         var telemetryOperation = operation;
+        var sentinelStarted = core.Sentinel is null ? 0 : RespireTelemetry.CaptureStartTimestamp();
         var telemetry = core.Sentinel is null ? RespireTelemetry.StartBatchOperation(
             operation, _ops, static op => op.Operation,
             core.Endpoint, core.Options.Database, out telemetryOperation) : default;
@@ -159,6 +160,9 @@ public sealed partial class RespireBatch
             }
             finally
             {
+                if (connection is null && operationError is not null)
+                    RespireTelemetry.RecordUnroutedBatchFailure(operation, _ops, static op => op.Operation,
+                        core.Options.Database, sentinelStarted, operationError);
                 telemetry.Complete(core, telemetryOperation, error: operationError, connection: connection,
                     batchSize: _ops.Count == 1 ? null : _ops.Count);
             }

@@ -138,6 +138,12 @@ requires a separate explicit contract.
 
 ## Sentinel primary changes
 
+Sentinel batch, durability-batch, and transaction acquisition failures still emit an error
+activity and `db.client.operation.duration`, including time spent discovering or connecting.
+Those failure records omit `server.address` and `server.port` because no data connection was
+acquired. Successful acquisition retains the selected primary's endpoint on the operation;
+the Sentinel seed is never substituted as the executing Redis server.
+
 `ConnectionStateChanged` reports the retired endpoint and validated replacement for reactive
 Sentinel handoffs. Prefix views share these events. The `respire.sentinel.failover` counter
 records primary endpoint changes with `server.address` and `server.port` tags. Initial

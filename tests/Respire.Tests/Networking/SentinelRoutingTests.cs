@@ -830,6 +830,76 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    [NotInParallel]
+    [Arguments("batch", true)]
+    [Arguments("durability", true)]
+    [Arguments("transaction", true)]
+    [Arguments("batch", false)]
+    [Arguments("durability", false)]
+    [Arguments("transaction", false)]
+    public async Task FailedBatchDiscoveryRetainsTelemetryWithoutInventingAPrimary(string kind, bool trace)
+    {
+        var queried = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var sentinel = new FakeRespServer("*0\r\n"u8.ToArray())
+        {
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")) return false;
+                queried.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = RespireClient.Create(Options(sentinel.Port));
+        var activities = new List<Activity>();
+        using var activityListener = new ActivityListener
+        {
+            ShouldListenTo = source => trace && source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity => { if (activity.OperationName == "SET") activities.Add(activity); },
+        };
+        ActivitySource.AddActivityListener(activityListener);
+        var measurements = new List<(double Duration, Dictionary<string, object?> Tags)>();
+        using var meterListener = new MeterListener();
+        meterListener.InstrumentPublished = (instrument, listener) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+                listener.EnableMeasurementEvents(instrument);
+        };
+        meterListener.SetMeasurementEventCallback<double>((_, duration, tags, _) =>
+        {
+            var captured = tags.ToArray().ToDictionary(pair => pair.Key, pair => pair.Value);
+            if (Equals(captured["db.operation.name"], "SET")) measurements.Add((duration, captured));
+        });
+        meterListener.Start();
+        using var batch = client.CreateBatch();
+        await using var transaction = client.CreateTransaction();
+        _ = batch.Set("key", "value");
+        _ = transaction.Set("key", "value");
+        Task execution = kind switch
+        {
+            "transaction" => transaction.CommitAsync().AsTask(),
+            "durability" => batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1)).AsTask(),
+            _ => batch.ExecuteAsync().AsTask(),
+        };
+        await queried.Task.WaitAsync(Limit);
+        var releaseTime = DateTime.UtcNow;
+        await sentinel.SendRawAsync("$-1\r\n"u8.ToArray());
+        await Assert.That(async () => await execution.WaitAsync(Limit)).Throws<RespireConnectionException>();
+        await Assert.That(measurements.Count).IsEqualTo(1);
+        await Assert.That(measurements[0].Duration).IsGreaterThan(0);
+        await Assert.That(measurements[0].Tags.ContainsKey("error.type")).IsTrue();
+        await Assert.That(measurements[0].Tags.ContainsKey("server.address")).IsFalse();
+        await Assert.That(measurements[0].Tags.ContainsKey("server.port")).IsFalse();
+        await Assert.That(activities.Count).IsEqualTo(trace ? 1 : 0);
+        if (trace)
+        {
+            await Assert.That(activities[0].Status).IsEqualTo(ActivityStatusCode.Error);
+            await Assert.That(activities[0].StartTimeUtc <= releaseTime).IsTrue();
+            await Assert.That(activities[0].GetTagItem("server.address")).IsNull();
+        }
+    }
+
+    [Test]
     [Arguments("batch")]
     [Arguments("durability")]
     [Arguments("transaction")]
