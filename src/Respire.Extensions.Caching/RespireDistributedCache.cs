@@ -264,6 +264,8 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
 
     /// <inheritdoc/>
     public ValueTask SetAsync(string key, ReadOnlySequence<byte> value, DistributedCacheEntryOptions options, CancellationToken token = default)
+        // Coalesce segments for the span-based codec; configured encoding then creates its own
+        // frame array, which remains owned through the send. The two buffers are intentional.
         => SetCoreAsync(key, value.IsSingleSegment ? value.First : value.ToArray(), options, token);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
