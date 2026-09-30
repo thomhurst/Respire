@@ -41,6 +41,7 @@ internal sealed partial class ClusterRouter
                 var options = (original.Multiplexer?.Options ?? _options.ToConnectionOptions()) with
                 {
                     EnableClientTracking = false, PushHandler = null, SubscriptionConfirmationHandler = null,
+                    MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
                 };
                 if (options.UseTls)
                     options = options with { TlsOptions = RespireConnection.CreateTlsOptions(options.TlsOptions, original.Host) };

@@ -135,3 +135,22 @@ unavailable peers can retain generations indefinitely; age is diagnostic, never 
 to abandon an owed fence. The existing one-to-30-second fence retry backoff and explicit
 client-disposal behavior are unchanged. Any future policy that abandons ordering guarantees
 requires a separate explicit contract.
+
+## Maintenance notifications
+
+With maintenance handling enabled, each valid notification produces a `redis.maintenance`
+consumer activity and an event named after its wire kind (`MOVING`, `MIGRATING`, `MIGRATED`,
+`FAILING_OVER`, `FAILED_OVER`, `SMIGRATING`, or `SMIGRATED`). Activities include the receiving
+endpoint/database, `respire.maintenance.kind`, `respire.maintenance.sequence_id`, and any
+announced seconds/target endpoint. They retain the receive timestamp and have no application
+command parent. Information logs identify the kind, sequence, and receiving endpoint.
+
+The `respire.maintenance.notifications` counter counts notifications delivered to diagnostics,
+with endpoint and kind tags. Sequence IDs are deliberately absent from metric tags.
+Diagnostics run serially on a thread-pool worker for each physical connection. Listener
+exceptions are isolated; a slow listener cannot block RESP parsing or timeout handling.
+Each queue retains at most 256 pending events, dropping the oldest on overflow and reporting
+those drops through `respire.maintenance.notifications.dropped` when delivery resumes.
+These diagnostics are best effort, may finish after connection disposal, and are not an
+acknowledged event stream. Keep listeners short. Malformed notifications and historical
+completion replays during negotiation do not produce maintenance diagnostics.

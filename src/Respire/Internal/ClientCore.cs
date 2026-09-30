@@ -43,7 +43,7 @@ internal sealed class ClientCore : IAsyncDisposable
         RespirePushHandler? pushHandler = ClientCache is null ? null : ClientCache.HandlePush;
         var connectionOptions = options.ToConnectionOptions(
             pushHandler,
-            enableClientTracking: ClientCache is not null);
+            enableClientTracking: ClientCache is not null, enableMaintenanceNotifications: true);
         Multiplexer = RespireConnectionMultiplexer.Create(
             endpoint.Host, endpoint.Port, options.Connections, connectionOptions, Logger);
         DedicatedPool = new DedicatedConnectionPool(

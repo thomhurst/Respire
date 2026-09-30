@@ -37,7 +37,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private int _disposed;
 
     internal ClusterRouter(RespireOptions options, RespireConnectionMultiplexer primary)
-        : this(options, primary, options.ToConnectionOptions())
+        : this(options, primary, options.ToConnectionOptions(enableMaintenanceNotifications: true))
     {
     }
 

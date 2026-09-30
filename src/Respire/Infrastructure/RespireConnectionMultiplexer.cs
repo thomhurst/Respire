@@ -637,6 +637,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                     // could fire first and escape classification as a CLIENT KILL timeout.
                     ConnectTimeout = Timeout.InfiniteTimeSpan,
                     EnableClientTracking = false, PushHandler = null, SubscriptionConfirmationHandler = null,
+                    MaintenanceNotifications = RespireMaintenanceNotificationMode.Disabled,
                     TlsOptions = _options.UseTls ? RespireConnection.CreateTlsOptions(_options.TlsOptions, Host) : _options.TlsOptions,
                 };
                 try

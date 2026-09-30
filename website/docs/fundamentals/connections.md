@@ -50,6 +50,60 @@ select an explicit protocol when a consumer requires one fixed shape.
 Automatic negotiation can also make authentication errors surface at connection time,
 before the first application command.
 
+## Maintenance notifications
+
+Maintenance handling is opt-in through structured options:
+
+```csharp
+var options = new RespireOptions
+{
+    Endpoints = { new RespireEndpoint("cache.internal", 6379) },
+    MaintenanceNotifications = RespireMaintenanceNotificationMode.Auto,
+    MaintenanceRelaxedTimeout = TimeSpan.FromSeconds(30),
+    MaintenanceWindowTimeout = TimeSpan.FromSeconds(60),
+};
+```
+
+`Disabled` is the default and sends no extra handshake command. `Auto` sends
+`CLIENT MAINT_NOTIFICATIONS ON` after RESP3 setup; an unknown command/subcommand disables
+maintenance handling for that connection. RESP2 connections also leave it disabled.
+`Enabled` requires RESP3 and a successful acknowledgement. Authentication/ACL errors,
+malformed replies, timeouts, and transport failures always fail setup. Ordinary servers
+that accept the request but never send a maintenance push retain their normal timeouts.
+
+Valid `MIGRATING`, `FAILING_OVER`, and `SMIGRATING` pushes relax the receiving command
+connection's timeouts until the matching completion or `MaintenanceWindowTimeout`.
+`MOVING` relaxes that connection until its grace period or the configured maximum window,
+whichever is shorter. Pending and new commands, including producers waiting for ring
+capacity, use the greater of the configured timeout and `MaintenanceRelaxedTimeout`.
+Timeouts remain measured from the command's original start; a push does not restart them.
+An already-expired caller cannot be revived. Completion/expiry restores normal deadlines,
+so an old pending command can time out immediately afterward. Caller cancellation remains
+active. Null command or receive timeouts remain unlimited. Watchdog restoration is observed
+within its polling interval (at most one second); command restoration uses the normal sweep.
+Both maintenance duration options must be between one millisecond and one day.
+
+Overlapping operations have independent sequence/family windows. Duplicate starts do not
+extend retained windows; unmatched completions cannot close another operation. Up to 256
+recent identities are retained per physical connection, including completed/expired ones.
+Under pressure, finished identities are evicted first. More than 256 concurrent operations
+share a conservative overflow window that expires automatically. Completion replays received
+during handshake negotiation are suppressed. Reconnect starts with fresh per-connection state.
+
+This release implements notifications, diagnostics, and timeout relaxation. It does not yet
+perform proactive `MOVING` handoff ([#634](https://github.com/thomhurst/Respire/issues/634))
+or update Cluster ownership from `SMIGRATED` ([#635](https://github.com/thomhurst/Respire/issues/635)).
+The server can still close a connection after its grace period. Blocking, pub/sub, Sentinel
+discovery, and correction-control connections do not negotiate maintenance notifications.
+Their existing wait/recovery behavior stays unchanged. Connection establishment, topology
+recovery budgets, and explicit operation-level cancellation deadlines also retain their limits.
+
+Server support and deployment restrictions are described in the
+[Redis smart client handoff documentation](https://redis.io/docs/latest/develop/clients/sch/).
+This mechanism targets supporting Redis Cloud/Software deployments; enabling the option does
+not add server support. See [maintenance diagnostics](../integrations/observability.md#maintenance-notifications)
+for activity, metric, and logging delivery.
+
 ## Connection-time failover
 
 Use `ConnectAnyAsync` when an application can connect to one of several independent Redis deployments and should try them in priority order at startup:
