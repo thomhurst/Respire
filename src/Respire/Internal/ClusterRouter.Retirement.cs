@@ -88,7 +88,8 @@ internal sealed partial class ClusterRouter
         {
             // Explicit disposal cancels retries and disposes owned nodes. Retirement can
             // race between its disposed check and entering the fence, so either shutdown
-            // signal is expected here. Live-router failures and pool failures still propagate.
+            // signal from owned retirement/fence work is expected here. Pool drains are
+            // awaited outside this filter; live-router and other failures still propagate.
         }
         catch (Exception error)
         {

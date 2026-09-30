@@ -845,6 +845,7 @@ public class ClusterRetirementTests
         finally
         {
             nodeRetirement.TrySetException(failure);
+            _ = nodeRetirement.Task.Exception; // Observe even when an earlier assertion failed.
         }
     }
 
