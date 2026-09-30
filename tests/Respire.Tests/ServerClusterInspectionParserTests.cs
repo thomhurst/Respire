@@ -131,5 +131,16 @@ public class ServerClusterInspectionParserTests
         await Assert.That(() => ClusterInspectionParser.SlotStats(RespValue.Array(RespValue.Array(RespValue.Integer(1))))).ThrowsExactly<RespireProtocolException>();
     }
 
+    [Test]
+    [Arguments("0-16384")]
+    [Arguments("8192-0")]
+    [Arguments("[16384->-peer]")]
+    [Arguments("[16384-<-peer]")]
+    public async Task NodeSlotRangesAndTransitionsRejectInvalidBounds(string slot)
+    {
+        await Assert.That(() => ClusterInspectionParser.Nodes(Text($"id address flags - 0 0 0 connected {slot}")))
+            .ThrowsExactly<RespireProtocolException>();
+    }
+
     private static RespValue Text(string value) => RespValue.BulkString(value);
 }

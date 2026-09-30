@@ -297,6 +297,7 @@ do
     string checkpoint = page.Cursor.ToString();
     // The same string can be parsed by another process connected to this cluster.
     cursor = RespireClusterScanCursor.Parse(checkpoint);
+    if (page.WaitingOnMigration) await Task.Delay(250);
 }
 while (!cursor.IsComplete);
 ```
@@ -322,6 +323,12 @@ A completed node pass is validated again before its stable slots are marked comp
 Moved slots become pending on the new owner, including an owner scanned earlier; unaffected
 completed slots stay complete. A changed process or configuration epoch restarts the active
 node pass. Migrating/importing slots cannot complete until their transition settles.
+Continuous epoch changes can prevent an active pass from finishing; unaffected slots already
+validated remain complete. Use cancellation or an application deadline to bound a scan.
+When only moving slots remain, a page sets `WaitingOnMigration`, contains no keys, and issues
+no INFO or SCAN. Page callers should delay before retrying. `ScanAsync` waits 50 ms, doubling
+to a maximum of 250 ms between consecutive waiting pages; stable work resets this delay.
+The wait observes the enumeration's cancellation token.
 Redis scans whole node dictionaries, so rescanning affected slots still traverses the new
 owner's dictionary, while filtering already completed slots from the result.
 

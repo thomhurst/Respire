@@ -12,14 +12,18 @@ public sealed class RespireClusterScanCursor
 {
     private const int MaximumEncodedLength = 6 * 1024 * 1024;
     internal ClusterScanState? State { get; }
-    internal RespireClusterScanCursor(ClusterScanState? state) => State = state;
+    internal RespireClusterScanCursor(ClusterScanState? state)
+    {
+        State = state;
+        CompletedSlotCount = state?.Completed.Count(static done => done) ?? 0;
+    }
 
     /// <summary>The checkpoint before the first page.</summary>
     public static RespireClusterScanCursor Start { get; } = new(null);
     /// <summary>Whether every slot has completed a validated scan.</summary>
-    public bool IsComplete => State is { } state && state.Completed.All(static done => done);
+    public bool IsComplete => CompletedSlotCount == ClusterHash.SlotCount;
     /// <summary>The number of slots whose scan has completed, from zero to 16384.</summary>
-    public int CompletedSlotCount => State?.Completed.Count(static done => done) ?? 0;
+    public int CompletedSlotCount { get; }
 
     /// <summary>Serializes this checkpoint as an opaque, versioned Base64 string.</summary>
     public override string ToString()
@@ -153,7 +157,13 @@ public sealed class RespireClusterScanCursor
 /// <summary>A caller-owned page of keys and its next immutable Cluster scan checkpoint.</summary>
 /// <remarks>An empty page does not imply completion. Inspect Cursor.IsComplete. COUNT is a server
 /// work hint, not a page-size limit. Keys uses the same string and key-prefix semantics as ScanAsync.</remarks>
-public sealed record RespireClusterScanPage(RespireClusterScanCursor Cursor, string[] Keys);
+public sealed record RespireClusterScanPage(RespireClusterScanCursor Cursor, string[] Keys)
+{
+    /// <summary>Whether every remaining slot is migrating or importing, so no scan pass can complete.</summary>
+    /// <remarks>The page contains no keys. Delay before requesting the next page; cancellation or
+    /// an application deadline can bound a transition that never settles.</remarks>
+    public bool WaitingOnMigration { get; init; }
+}
 
 internal sealed class ClusterScanState(string? match, string? type, string? prefix)
 {

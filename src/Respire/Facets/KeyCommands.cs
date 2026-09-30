@@ -155,7 +155,7 @@ public partial interface IKeyCommands
         CancellationToken cancellationToken = default);
 }
 
-internal sealed partial class KeyCommands(RespireClient client) : IKeyCommands
+internal sealed partial class KeyCommands(RespireClient client, TimeProvider? scanTimeProvider = null) : IKeyCommands
 {
     public ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys)
         => client.IntegerKeysAsync("DEL", Verbs.Del, keys, CancellationToken.None);
@@ -318,11 +318,19 @@ internal sealed partial class KeyCommands(RespireClient client) : IKeyCommands
         if (client.Core.Cluster is not null)
         {
             var checkpoint = RespireClusterScanCursor.Start;
+            var migrationDelayMs = 50;
             do
             {
                 var page = await ScanClusterPageAsync(checkpoint, match, type, countHint, cancellationToken).ConfigureAwait(false);
                 foreach (var key in page.Keys) yield return key;
                 checkpoint = page.Cursor;
+                if (page.WaitingOnMigration)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(migrationDelayMs), scanTimeProvider ?? TimeProvider.System,
+                        cancellationToken).ConfigureAwait(false);
+                    migrationDelayMs = Math.Min(migrationDelayMs * 2, 250);
+                }
+                else migrationDelayMs = 50;
             }
             while (!checkpoint.IsComplete);
 

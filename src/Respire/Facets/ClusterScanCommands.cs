@@ -47,6 +47,11 @@ internal sealed partial class KeyCommands
         var topology = await ReadScanTopologyAsync(cancellationToken).ConfigureAwait(false);
         ReconcileScan(state, topology);
         var node = SelectScanNode(state, topology);
+        if (node is null)
+        {
+            state.ResetPass();
+            return new(new RespireClusterScanCursor(state), []) { WaitingOnMigration = true };
+        }
         var runId = await ReadScanRunIdAsync(node.Connection, cancellationToken).ConfigureAwait(false);
         if (state.ActiveNode != node.Metadata.Id || state.RunId != runId || state.Epoch != node.Metadata.ConfigurationEpoch)
         {
@@ -168,15 +173,13 @@ internal sealed partial class KeyCommands
             || node.Metadata.ConfigurationEpoch != state.Epoch)) state.ResetPass();
     }
 
-    private static ScanNode SelectScanNode(ClusterScanState state, ScanTopology topology)
+    private static ScanNode? SelectScanNode(ClusterScanState state, ScanTopology topology)
     {
-        if (state.ActiveNode is { } active) return topology.Nodes[active];
-        // Prefer stable work while another slot is migrating. A caller may see an empty,
-        // incomplete page when only transitioning slots remain; cancellation remains available.
+        // Once all remaining slots are moving, no pass can certify progress. Return a
+        // waiting page without issuing INFO/SCAN until stable work becomes available.
         for (var slot = 0; slot < ClusterHash.SlotCount; slot++)
-            if (!state.Completed[slot] && !topology.Moving[slot]) return topology.Nodes[state.Owners[slot]];
-        for (var slot = 0; slot < ClusterHash.SlotCount; slot++)
-            if (!state.Completed[slot]) return topology.Nodes[state.Owners[slot]];
-        throw new InvalidOperationException("A completed Cluster scan has no next node.");
+            if (!state.Completed[slot] && !topology.Moving[slot])
+                return topology.Nodes[state.ActiveNode ?? state.Owners[slot]];
+        return null;
     }
 }

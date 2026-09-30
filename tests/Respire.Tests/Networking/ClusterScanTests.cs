@@ -1,5 +1,6 @@
 using System.Text;
 using System.Reflection;
+using System.Threading.Channels;
 using Respire.Commands;
 using Respire.Internal;
 using TUnit.Assertions;
@@ -98,14 +99,63 @@ public class ClusterScanTests
         var page = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
         page = await client.Keys.ScanClusterPageAsync(page.Cursor);
         await Assert.That(page.Cursor.CompletedSlotCount).IsEqualTo(16383);
+        var scansBeforeWait = cluster.First.Server.ReceivedCommands.Count(command => command.StartsWith("SCAN "));
         page = await client.Keys.ScanClusterPageAsync(page.Cursor);
         await Assert.That(page.Cursor.IsComplete).IsFalse();
+        await Assert.That(page.WaitingOnMigration).IsTrue();
+        await Assert.That(page.Keys).IsEmpty();
+        await Assert.That(cluster.First.Server.ReceivedCommands.Count(command => command.StartsWith("SCAN ")))
+            .IsEqualTo(scansBeforeWait);
         cluster.First.Transitions = cluster.Second.Transitions = "";
         cluster.First.Scan = _ => Page("0", KeyInSlot(0));
         page = await client.Keys.ScanClusterPageAsync(page.Cursor);
         await Assert.That(page.Cursor.IsComplete).IsTrue();
         await Assert.That(page.Keys).IsEquivalentTo([KeyInSlot(0)]);
         await Assert.That(cluster.Second.Server.ReceivedCommands.Count(command => command.StartsWith("SCAN "))).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task EnumerableBacksOffUntilMigrationSettlesOrCallerCancels(bool cancel)
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Transitions = "[0->-second]";
+        cluster.Second.Transitions = "[0-<-first]";
+        await using var client = await cluster.ConnectAsync();
+        var clock = new ScanClock();
+        var keys = new KeyCommands(client, clock);
+        using var cancellation = new CancellationTokenSource();
+        await using var enumerator = keys.ScanAsync(cancellationToken: cancellation.Token).GetAsyncEnumerator();
+        var next = enumerator.MoveNextAsync().AsTask();
+        foreach (var milliseconds in new[] { 50, 100, 200, 250, 250 })
+        {
+            var timer = await clock.Timers.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(timer.Delay).IsEqualTo(TimeSpan.FromMilliseconds(milliseconds));
+            await Assert.That(next.IsCompleted).IsFalse();
+            // The manually controlled timer cannot fire by wall clock. No scan work runs while held.
+            await Assert.That(cluster.First.Server.ReceivedCommands.Count(command => command.StartsWith("SCAN "))).IsEqualTo(1);
+            await Assert.That(cluster.Second.Server.ReceivedCommands.Count(command => command.StartsWith("SCAN "))).IsEqualTo(1);
+            if (milliseconds == 250 && clock.Created == 5)
+            {
+                if (cancel)
+                {
+                    var commands = cluster.CommandCount;
+                    cancellation.Cancel();
+                    await Assert.That(async () => await next.WaitAsync(TimeSpan.FromSeconds(10)))
+                        .Throws<OperationCanceledException>();
+                    await Assert.That(cluster.CommandCount).IsEqualTo(commands);
+                    return;
+                }
+                cluster.First.Transitions = cluster.Second.Transitions = "";
+                cluster.First.Scan = _ => Page("0", KeyInSlot(0));
+            }
+            timer.Fire();
+        }
+        await Assert.That(await next.WaitAsync(TimeSpan.FromSeconds(10))).IsTrue();
+        await Assert.That(enumerator.Current).IsEqualTo(KeyInSlot(0));
+        await Assert.That(await enumerator.MoveNextAsync()).IsFalse();
+        await Assert.That(clock.Created).IsEqualTo(5);
     }
 
     [Test]
@@ -280,6 +330,29 @@ public class ClusterScanTests
     private static byte[] Page(string cursor, params string[] keys)
         => Encoding.UTF8.GetBytes($"*2\r\n${cursor.Length}\r\n{cursor}\r\n*{keys.Length}\r\n" +
             string.Concat(keys.Select(key => $"${Encoding.UTF8.GetByteCount(key)}\r\n{key}\r\n")));
+
+    private sealed class ScanClock : TimeProvider
+    {
+        internal Channel<ScanTimer> Timers { get; } = Channel.CreateUnbounded<ScanTimer>();
+        internal int Created;
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new ScanTimer(callback, state, dueTime);
+            Interlocked.Increment(ref Created);
+            Timers.Writer.TryWrite(timer);
+            return timer;
+        }
+    }
+
+    private sealed class ScanTimer(TimerCallback callback, object? state, TimeSpan delay) : ITimer
+    {
+        private bool _disposed;
+        internal TimeSpan Delay => delay;
+        internal void Fire() { if (!_disposed) callback(state); }
+        public bool Change(TimeSpan dueTime, TimeSpan period) => throw new NotSupportedException();
+        public void Dispose() => _disposed = true;
+        public ValueTask DisposeAsync() { Dispose(); return default; }
+    }
 
     private sealed class ScanCluster : IAsyncDisposable
     {
