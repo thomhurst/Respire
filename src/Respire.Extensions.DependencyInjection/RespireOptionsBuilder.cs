@@ -66,7 +66,7 @@ public sealed class RespireOptionsBuilder
     public bool AllowAdmin { get; set; }
 
     /// <inheritdoc cref="RespireOptions.Protocol"/>
-    public RespProtocol Protocol { get; set; } = RespProtocol.Resp2;
+    public RespProtocol Protocol { get; set; } = RespProtocol.Auto;
 
     /// <inheritdoc cref="RespireOptions.ConnectTimeout"/>
     public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(10);
