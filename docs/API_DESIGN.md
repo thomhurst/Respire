@@ -676,8 +676,6 @@ public sealed class CartService([FromKeyedServices("cache")] IRespireClient redi
 
 ### Single-member and multi-member pops
 
-This breaking rename is recorded in the [unreleased release notes](RELEASE_NOTES.md#unreleased).
-
 Sets and sorted sets use `PopAsync` for one member and `PopManyAsync(key, count, ...)`
 for an array. Batch and transaction facets use `Pop` and `PopMany`. Sorted-set typed
 operations follow the same naming. Lists retain `LeftPopManyAsync`/`RightPopManyAsync`
