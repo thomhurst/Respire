@@ -1466,7 +1466,9 @@ public sealed partial class RespireClient : IRespireClient
         RespireKey resolvedKey, ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
         ResponseConverter<RespireClient, TResult> converter, bool transferResponse = false)
     {
-        if (cache.CoalesceConcurrentMisses && cache.TryPeek(in resolvedKey, out var cached))
+        var generation = _core.Sentinel?.Current;
+        if (cache.CoalesceConcurrentMisses && cache.TryPeek(in resolvedKey, out var cached)
+            && IsCacheGenerationCurrent(generation))
             return converter(this, in cached);
         var token = cache.BeginRead(in resolvedKey);
         var command = new Cmd1(Verbs.Get, token.State.Key.AsValue());
@@ -1556,6 +1558,7 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken, TState state, ResponseConverter<TState, TResult> converter,
         bool transferResponse = false)
     {
+        var generation = _core.Sentinel?.Current;
         if (cache.CoalesceConcurrentMisses && cache.TryPeek(in missingKeys[0], out var firstCached))
         {
             var cachedValues = new RespValue[missingCount];
@@ -1569,7 +1572,7 @@ public sealed partial class RespireClient : IRespireClient
                     break;
                 }
             }
-            if (allCached)
+            if (allCached && IsCacheGenerationCurrent(generation))
             {
                 var cached = RespValue.Array(cachedValues);
                 return converter(state, in cached);
@@ -1910,7 +1913,9 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
-        if (cache.CoalesceConcurrentMisses && cache.TryPeek(in request, out var cached)) return cached;
+        var generation = _core.Sentinel?.Current;
+        if (cache.CoalesceConcurrentMisses && cache.TryPeek(in request, out var cached)
+            && IsCacheGenerationCurrent(generation)) return cached;
         var snapshot = SnapshotCommand.Create(in command);
         var token = cache.BeginRead(operation, in request);
         var completed = false;

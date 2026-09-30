@@ -502,6 +502,51 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    public async Task PromotionStopsJoiningOldSharedReadsWithoutAbortingAcceptedWork()
+    {
+        static byte[]? Reply(string command) => command switch
+        {
+            "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+            "GET key" => "$3\r\nnew\r\n"u8.ToArray(),
+            _ => null,
+        };
+        var accepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var primary = Primary((_, command) => Reply(command));
+        primary.SuppressReply = command =>
+        {
+            if (command != "GET key") return false;
+            accepted.TrySetResult();
+            return true;
+        };
+        await using var promoted = Primary((_, command) => Reply(command));
+        var port = primary.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
+        {
+            Protocol = RespProtocol.Resp3,
+            ClientSideCache = new() { CoalesceConcurrentMisses = true },
+        });
+        var generation = client.Core.Sentinel!.Current!;
+        var connection = generation.Multiplexer.GetConnection();
+        var leader = client.GetStringAsync("key").AsTask();
+        await accepted.Task.WaitAsync(Limit);
+        var follower = client.GetStringAsync("key").AsTask();
+        await Assert.That(client.Core.ClientCache!.ActiveSharedReadCount).IsEqualTo(1);
+        Volatile.Write(ref port, promoted.Port);
+        using (var error = Respire.Protocol.RespValue.Error("READONLY replica"))
+            generation.ObserveResponse(connection, "SET", in error);
+        await Assert.That(await client.GetStringAsync("key").AsTask().WaitAsync(Limit)).IsEqualTo("new");
+        await Assert.That(leader.IsCompleted).IsFalse();
+        await Assert.That(follower.IsCompleted).IsFalse();
+        await primary.SendRawAsync("$3\r\nold\r\n"u8.ToArray());
+        await Assert.That(await leader.WaitAsync(Limit)).IsEqualTo("old");
+        await Assert.That(await follower.WaitAsync(Limit)).IsEqualTo("old");
+        await Assert.That(await client.GetStringAsync("key").AsTask().WaitAsync(Limit)).IsEqualTo("new");
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+        await Assert.That(promoted.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task SubscriptionMovesToTheValidatedPrimaryAndReportsTheDeliveryGap()
     {
         var rejectWrites = false;
@@ -802,10 +847,13 @@ public class SentinelRoutingTests
     }
 
     [Test]
-    [Arguments("GET")]
-    [Arguments("MGET")]
-    [Arguments("HGET")]
-    public async Task RetirementDuringCacheLookupRejectsTheOldValue(string operation)
+    [Arguments("GET", false)]
+    [Arguments("MGET", false)]
+    [Arguments("HGET", false)]
+    [Arguments("GET", true)]
+    [Arguments("MGET", true)]
+    [Arguments("HGET", true)]
+    public async Task RetirementDuringCacheLookupRejectsTheOldValue(string operation, bool coalesce)
     {
         static byte[]? Reply(string command, string value) => command switch
         {
@@ -820,7 +868,7 @@ public class SentinelRoutingTests
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
         {
-            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = coalesce },
         });
         await Assert.That(await ReadAsync()).IsEqualTo("old");
         var generation = client.Core.Sentinel!.Current!;
