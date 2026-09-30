@@ -410,7 +410,15 @@ internal sealed class RespireConnection : IAsyncDisposable
             cancellationToken, armCommandDeadline: armCommandDeadline).ConfigureAwait(false);
         if (hello.IsError)
         {
-            if (!IsUnsupportedHello(in hello)) throw CreateHandshakeException(in hello, "HELLO");
+            var message = hello.GetErrorMessage();
+            var kind = ClassifyHelloError(message.AsSpan());
+            if (kind != HelloErrorKind.Unsupported)
+            {
+                var hint = kind == HelloErrorKind.Other && message.StartsWith("ERR ", StringComparison.OrdinalIgnoreCase)
+                    ? " If this endpoint does not support HELLO, explicitly set protocol=2."
+                    : null;
+                throw CreateHandshakeException(in hello, "HELLO", hint);
+            }
             _logger?.LogInformation("HELLO 3 is unsupported by {Host}:{Port}; using RESP2 on this connection", Host, Port);
             return RespProtocol.Resp2;
         }
@@ -570,17 +578,31 @@ internal sealed class RespireConnection : IAsyncDisposable
             $"(server_name={server ?? "<missing>"}, valkey_version={version ?? "<missing>"}, server_mode={mode ?? "<missing>"}).");
     }
 
-    private RespireConnectionException CreateHandshakeException(in RespValue reply, string step)
-        => new($"{step} failed for {Host}:{Port}: {reply.GetErrorMessage()}", ResponseReader.ServerError(in reply, step));
+    private RespireConnectionException CreateHandshakeException(in RespValue reply, string step, string? hint = null)
+        => new($"{step} failed for {Host}:{Port}: {reply.GetErrorMessage()}{hint}", ResponseReader.ServerError(in reply, step));
 
-    private static bool IsUnsupportedHello(in RespValue reply)
+    private enum HelloErrorKind { Unsupported, Authentication, Other }
+
+    private static HelloErrorKind ClassifyHelloError(ReadOnlySpan<char> message)
     {
-        var message = reply.GetErrorMessage().AsSpan();
-        return message.Equals("NOPROTO", StringComparison.OrdinalIgnoreCase)
+        if (message.Equals("NOPROTO", StringComparison.OrdinalIgnoreCase)
             || message.StartsWith("NOPROTO ", StringComparison.OrdinalIgnoreCase)
             || message.StartsWith("ERR unknown command \"HELLO\"", StringComparison.OrdinalIgnoreCase)
             || message.StartsWith("ERR unknown command 'HELLO'", StringComparison.OrdinalIgnoreCase)
-            || message.StartsWith("ERR unknown command `HELLO`", StringComparison.OrdinalIgnoreCase);
+            || message.StartsWith("ERR unknown command `HELLO`", StringComparison.OrdinalIgnoreCase))
+            return HelloErrorKind.Unsupported;
+
+        // ERR has no structured subcode. Suppress compatibility advice conservatively
+        // for credential/ACL wording; these failures must never suggest a downgrade.
+        if (message.StartsWith("WRONGPASS", StringComparison.OrdinalIgnoreCase)
+            || message.StartsWith("NOPERM", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("auth", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("password", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("credential", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("permission", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("ACL", StringComparison.OrdinalIgnoreCase))
+            return HelloErrorKind.Authentication;
+        return HelloErrorKind.Other;
     }
 
     private void ValidateHelloProtocol(in RespValue reply)

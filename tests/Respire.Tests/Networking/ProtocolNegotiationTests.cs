@@ -75,6 +75,39 @@ public class ProtocolNegotiationTests
     }
 
     [Test]
+    [Arguments("ERR proxy does not implement this operation", RespProtocol.Auto, false, true)]
+    [Arguments("ERR unknown command HELLO", RespProtocol.Auto, false, true)]
+    [Arguments("ERR authentication failed", RespProtocol.Auto, false, false)]
+    [Arguments("ERR invalid password", RespProtocol.Auto, false, false)]
+    [Arguments("ERR ACL denied", RespProtocol.Auto, false, false)]
+    [Arguments("WRONGPASS invalid username-password pair", RespProtocol.Auto, false, false)]
+    [Arguments("NOAUTH Authentication required", RespProtocol.Auto, false, false)]
+    [Arguments("NOPERM denied", RespProtocol.Auto, false, false)]
+    [Arguments("ERR proxy does not implement this operation", RespProtocol.Resp3, false, false)]
+    [Arguments("ERR proxy does not implement this operation", RespProtocol.Auto, true, false)]
+    public async Task CompatibilityHintIsLimitedToUnclassifiedAutomaticHelloErrors(
+        string error, RespProtocol protocol, bool tracking, bool expectHint)
+    {
+        await using var server = new FakeRespServer(Encoding.ASCII.GetBytes("-" + error + "\r\n"));
+        RespireConnectionException? failure = null;
+        try
+        {
+            await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+                new RespireConnectionOptions { Protocol = protocol, EnableClientTracking = tracking });
+        }
+        catch (RespireConnectionException exception) { failure = exception; }
+        await Assert.That(failure).IsNotNull();
+        await Assert.That(failure!.Message).Contains($"HELLO failed for 127.0.0.1:{server.Port}: {error}");
+        await Assert.That(failure.Message.Contains("protocol=2", StringComparison.Ordinal)).IsEqualTo(expectHint);
+        await Assert.That(failure.InnerException).IsTypeOf<RespireServerException>();
+        await Assert.That(failure.InnerException!.Message).Contains(error);
+        await Assert.That(server.ReceivedCommands[0]).IsEqualTo("HELLO 3");
+        if (!tracking)
+            await Assert.That(server.ReceivedCommands).IsEquivalentTo(["HELLO 3"], CollectionOrdering.Matching);
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("AUTH "))).IsFalse();
+    }
+
+    [Test]
     public async Task ExplicitResp2DoesNotSendHello()
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);

@@ -26,9 +26,13 @@ No application command is replayed during negotiation.
 
 Automatic negotiation adds one serialized HELLO round trip before the remaining setup
 commands on each new physical connection. It adds no round trip to ordinary commands.
+Large pools and reconnect storms pay this setup cost for every socket, including endpoints
+that repeatedly fall back to RESP2. Protocol negotiation is not cached across connections.
 Information logs identify unsupported-HELLO fallback to RESP2 on each physical connection;
 Debug logs identify successful RESP3 negotiation. Neither includes credentials. Different unknown-command wording is not treated as proof
-that HELLO is unsupported; configure RESP2 explicitly for such a proxy.
+that HELLO is unsupported; configure RESP2 explicitly for such a proxy. An unclassified
+`ERR` during automatic HELLO includes that compatibility hint unless its wording indicates
+an authentication or ACL failure. The connection still fails and preserves the original error.
 
 Choose `Protocol = RespProtocol.Resp2` or `protocol=2` to skip HELLO and keep the earlier
 RESP2 behavior. Choose `RespProtocol.Resp3` or `protocol=3` to require RESP3 and reject
