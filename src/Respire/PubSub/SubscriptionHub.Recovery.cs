@@ -1,0 +1,149 @@
+using Microsoft.Extensions.Logging;
+using Respire.Networking;
+
+namespace Respire.Internal;
+
+internal sealed partial class SubscriptionHub
+{
+    private readonly CancellationTokenSource _lifetimeCancellation = new();
+    private RespireConnection? _configuredConnection;
+    private TaskCompletionSource? _configuredRecoveryDrained;
+    private RespireReconnectLimitException? _recoveryExhaustion;
+    private bool _configuredRecoveryActive;
+
+    private void ThrowIfConfiguredRecoveryRequired()
+    {
+        if (core.Options.ReconnectPolicy is null) return;
+        lock (_reconnectStateGate)
+        {
+            if (_recoveryExhaustion is { } exhausted) throw exhausted;
+            if (_configuredRecoveryActive || _configuredConnection is { } connection
+                && (!ReferenceEquals(_connection, connection) || !connection.IsConnected))
+                throw new RespireConnectionException("Pub/sub recovery is in progress. Subscribe again after recovery completes.");
+        }
+    }
+
+    private void StartConfiguredRecovery(RespireConnection connection, RespireReconnectPolicy policy)
+    {
+        TaskCompletionSource drained;
+        lock (_reconnectStateGate)
+        {
+            if (_disposed || _configuredRecoveryActive || _recoveryExhaustion is not null
+                || !ReferenceEquals(_configuredConnection, connection)) return;
+            _configuredConnection = null;
+            _configuredRecoveryActive = true;
+            _configuredRecoveryDrained = drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+        // Reserve ownership before starting any work. Observers are dispatched separately
+        // so synchronous disposal can await this reservation without waiting on itself.
+        _ = RecoverConfiguredAsync(connection, policy, drained);
+    }
+
+    private async Task RecoverConfiguredAsync(RespireConnection failed, RespireReconnectPolicy policy,
+        TaskCompletionSource drained)
+    {
+        var endpoint = new RespireEndpoint(failed.Host, failed.Port);
+        var failure = failed.CloseError;
+        var attempt = 0;
+        RespireConnection? restored = null;
+        var cancellationToken = _lifetimeCancellation.Token;
+        try
+        {
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (attempt < int.MaxValue) attempt++;
+                var delay = policy.GetDelay(attempt, Random.Shared.NextDouble());
+                QueueConfiguredState(endpoint, RespireConnectionState.Reconnecting, failure, attempt, delay);
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+
+                RespireConnection? replacement = null;
+                await _controlGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    // A replacement gets no watcher until every current route has been
+                    // acknowledged. Failed resubscription consumes this same episode's budget.
+                    replacement = await EnsureConnectionAsync(cancellationToken, watch: false).ConfigureAwait(false);
+                    endpoint = new RespireEndpoint(replacement.Host, replacement.Port);
+                    (SubscriptionKind Kind, RespireChannel Name)[] routes;
+                    lock (_gate)
+                    {
+                        var snapshot = new List<(SubscriptionKind, RespireChannel)>();
+                        for (var i = 0; i < _routes.Length; i++)
+                            foreach (var name in _routes[i].Names) snapshot.Add(((SubscriptionKind)i, name));
+                        routes = [.. snapshot];
+                    }
+                    foreach (var (kind, name) in routes)
+                        await SendControlAsync(replacement, SubscribeVerb(kind), SubscribeOperation(kind), name,
+                            cancellationToken, instrument: false).ConfigureAwait(false);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!replacement.IsConnected)
+                        throw replacement.CloseError ?? new RespireConnectionException("Pub/sub replacement closed during resubscription.");
+                    restored = replacement;
+                    return;
+                }
+                catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+                {
+                    failure = error;
+                    if (replacement is not null && DetachConnection(replacement) is { } cleanup)
+                        await cleanup.ConfigureAwait(false);
+                    if (policy.IsExhausted(attempt))
+                    {
+                        ExhaustConfiguredRecovery(endpoint, failure, attempt);
+                        return;
+                    }
+                    core.Logger?.LogWarning(error, "Pub/sub recovery attempt {Attempt} failed", attempt);
+                }
+                finally
+                {
+                    _controlGate.Release();
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (ObjectDisposedException) when (_disposed) { }
+        finally
+        {
+            lock (_reconnectStateGate)
+            {
+                _configuredConnection = restored;
+                _configuredRecoveryActive = false;
+                if (restored is not null)
+                    QueueConfiguredState(endpoint, RespireConnectionState.Connected, null, attempt);
+                drained.TrySetResult();
+            }
+            if (restored is not null) _ = WatchConnectionAsync(restored);
+        }
+    }
+
+    private void ExhaustConfiguredRecovery(RespireEndpoint endpoint, Exception failure, int attempt)
+    {
+        lock (_reconnectStateGate)
+            _recoveryExhaustion = new RespireReconnectLimitException(
+                $"Pub/sub recovery exhausted {attempt} replacement attempts. Recreate the client to subscribe again.");
+        HashSet<RespireSubscription> subscriptions = [];
+        lock (_gate)
+        {
+            foreach (var routes in _routes)
+            {
+                foreach (var list in routes.Values) subscriptions.UnionWith(list);
+                routes.Clear();
+            }
+            _interrupted.Clear();
+        }
+        foreach (var subscription in subscriptions) subscription.CompleteFromReconnectExhaustion();
+        QueueConfiguredState(endpoint, RespireConnectionState.Disconnected, failure, attempt, exhausted: true);
+    }
+
+    private void QueueConfiguredState(RespireEndpoint endpoint, RespireConnectionState state,
+        Exception? error, int attempt, TimeSpan? delay = null, bool exhausted = false)
+    {
+        lock (_reconnectStateGate)
+        {
+            if (_disposed) return;
+            if (QueueReconnectStateLocked(new RespireConnectionStateChange(endpoint, state, error)
+                { ReconnectAttempt = attempt, NextReconnectDelay = delay, ReconnectExhausted = exhausted }))
+                ThreadPool.UnsafeQueueUserWorkItem(static hub => hub.PublishReconnectStates(), this, preferLocal: false);
+        }
+    }
+}

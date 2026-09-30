@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Configurable pub/sub recovery
+
+- `RespireOptions.ReconnectPolicy` now controls pub/sub replacement and resubscription
+  attempts. One episode owns all replacement handshakes and route acknowledgements;
+  successful resubscription resets its budget. Exhaustion completes live subscriptions
+  with `RespireSubscriptionEndReason.ReconnectExhausted` and rejects later subscriptions
+  until the client is recreated. Null preserves existing scheduling. See
+  [connection recovery](../website/docs/guides/reconnect-policy.md#pubsub-reconnection-and-resubscription).
+
 ### Optional Zstandard value codec
 
 - `Respire.Compression.Zstd` adds `ZstdValueCodec` with bounded, owned output through

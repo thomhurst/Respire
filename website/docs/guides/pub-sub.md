@@ -39,7 +39,8 @@ Messages are buffered from the moment the subscription is acknowledged. The conf
 A subscription is a single-consumer stream: only one enumerator may be active at a time. Dispose
 it before starting another. `Kind` and immutable `Targets` describe what the subscription covers,
 while `IsDisposed` reports whether it has ended. Await `Completion` to distinguish explicit
-disposal from disposal of the owning client.
+disposal, disposal of the owning client, and `ReconnectExhausted` when a configured
+reconnect attempt limit ends the subscription.
 
 ## Publish
 
@@ -101,6 +102,14 @@ channel name from the incoming frame. Accessing `.Bytes` does not allocate. Text
 explicit and can allocate; do not mutate the exposed read-only storage through unsafe APIs.
 
 ## Reconnection and pressure
+
+`RespireOptions.ReconnectPolicy` can bound and delay automatic reconnection and
+resubscription. Its budget resets only after all live routes are acknowledged. Exhaustion
+ends live subscriptions; recreate the client to subscribe again. New subscriptions during
+configured recovery fail rather than bypassing its delay. Null preserves the existing
+immediate attempt followed by 250 ms exponential waits capped at five seconds. See
+[connection recovery](reconnect-policy.md#pubsub-reconnection-and-resubscription) for
+attempt semantics, cancellation, lifecycle events, and telemetry.
 
 Subscriptions resubscribe after reconnection. The subscription buffer is bounded; configure
 `SubscriptionOverflow` in `RespireOptions` to drop either the oldest buffered message or the

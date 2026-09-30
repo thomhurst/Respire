@@ -9,6 +9,8 @@ public enum RespireReconnectSource
     Dedicated,
     /// <summary>A multiplexed command connection.</summary>
     Command,
+    /// <summary>A subscription connection and its route recovery.</summary>
+    PubSub,
 }
 
 /// <summary>The coarse health of a client's connections, surfaced via <see cref="RespireClient.ConnectionStateChanged"/>.</summary>
@@ -45,6 +47,6 @@ public readonly record struct RespireConnectionStateChange(
     public int? ConnectionSlot { get; init; }
     /// <summary>Delay reserved before this Reconnecting attempt; null when no attempt is scheduled.</summary>
     public TimeSpan? NextReconnectDelay { get; init; }
-    /// <summary>Whether this connection slot or dedicated rent exhausted its configured attempt limit.</summary>
+    /// <summary>Whether this connection slot, dedicated rent, or pub/sub episode exhausted its configured attempt limit.</summary>
     public bool ReconnectExhausted { get; init; }
 }
