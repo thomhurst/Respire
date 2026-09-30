@@ -47,6 +47,9 @@ public interface IRespireCommandQueue
     /// <summary>Redis Functions, without automatic reload or replay.</summary>
     IBatchFunctionCommands Functions => throw new NotSupportedException("This queue does not support Redis Functions.");
 
+    /// <summary>Non-blocking stream append, range, count, acknowledge, remove, and trim commands.</summary>
+    IBatchStreamCommands Streams { get; }
+
     /// <inheritdoc cref="IBatchStringCommands.GetString"/>
     RespirePending<string?> GetString(RespireKey key);
 

@@ -458,7 +458,7 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
 {
     private static readonly TimeSpan BlockInterval = TimeSpan.FromSeconds(5);
     private static readonly Verb XDel = new("XDEL");
-    private static readonly Verb XTrim = new("XTRIM");
+    internal static readonly Verb XTrim = new("XTRIM");
     private static readonly Verb XGroupDestroy = new("XGROUP DESTROY");
     private static readonly Verb XGroupDelConsumer = new("XGROUP DELCONSUMER");
     private static readonly Verb XGroupSetId = new("XGROUP SETID");
@@ -470,13 +470,13 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
     private static readonly Verb XInfoConsumers = new("XINFO CONSUMERS");
 
     public ValueTask<RespireStreamId> AddAsync(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
-        => AddRequiredAsync(BuildAddCommand(key, default, fields), CancellationToken.None);
+        => AddRequiredAsync(BuildAddCommand(client, key, default, fields), CancellationToken.None);
 
     public ValueTask<RespireStreamId> AddAsync(
         RespireKey key,
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         CancellationToken cancellationToken)
-        => AddRequiredAsync(BuildAddCommand(key, default, fields), cancellationToken);
+        => AddRequiredAsync(BuildAddCommand(client, key, default, fields), cancellationToken);
 
     public ValueTask<RespireStreamId?> AddAsync(
         RespireKey key,
@@ -489,10 +489,10 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
         StreamAddOptions options,
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         CancellationToken cancellationToken)
-        => AddOptionalAsync(BuildAddCommand(key, options, fields), cancellationToken);
+        => AddOptionalAsync(BuildAddCommand(client, key, options, fields), cancellationToken);
 
-    private Cmd1N BuildAddCommand(
-        RespireKey key,
+    internal static Cmd1N BuildAddCommand(
+        RespireClient client, RespireKey key,
         StreamAddOptions options,
         ReadOnlySpan<(string Field, RespireValue Value)> fields)
     {
@@ -549,8 +549,7 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
         RespireKey key, RespireStreamId? start = null, RespireStreamId? end = null, int? count = null,
         bool descending = false, CancellationToken cancellationToken = default)
     {
-        var from = (descending ? end ?? RespireStreamId.Max : start ?? RespireStreamId.Min).Value;
-        var to = (descending ? start ?? RespireStreamId.Min : end ?? RespireStreamId.Max).Value;
+        var (from, to) = RangeBounds(start, end, descending);
         var operation = descending ? "XREVRANGE" : "XRANGE";
         var verb = descending ? Verbs.XRevRange : Verbs.XRange;
         return count is { } take
@@ -564,11 +563,18 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
                     ParseEntries(in value, client: null, resolvedKey: default, group: null));
     }
 
+    internal static (string From, string To) RangeBounds(RespireStreamId? start, RespireStreamId? end, bool descending)
+        => ((descending ? end ?? RespireStreamId.Max : start ?? RespireStreamId.Min).Value,
+            (descending ? start ?? RespireStreamId.Min : end ?? RespireStreamId.Max).Value);
+
     public ValueTask<long> RemoveAsync(RespireKey key, params ReadOnlySpan<RespireStreamId> ids)
         => RemoveAsync(key, ids, CancellationToken.None);
 
     public ValueTask<long> RemoveAsync(
         RespireKey key, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken)
+        => client.IntegerAsync("XDEL", BuildRemoveCommand(client, key, ids), cancellationToken);
+
+    internal static Cmd1N BuildRemoveCommand(RespireClient client, RespireKey key, ReadOnlySpan<RespireStreamId> ids)
     {
         RequireIds(ids);
         var args = new RespireValue[ids.Length];
@@ -577,7 +583,7 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
             args[i] = ids[i].Value;
         }
 
-        return client.IntegerAsync("XDEL", new Cmd1N(XDel, client.Key(in key), args), cancellationToken);
+        return new Cmd1N(XDel, client.Key(in key), args);
     }
 
     public ValueTask<long> TrimByMaxLengthAsync(
@@ -670,6 +676,10 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
 
     public ValueTask<long> AcknowledgeAsync(
         RespireKey key, string group, ReadOnlySpan<RespireStreamId> ids, CancellationToken cancellationToken)
+        => client.IntegerAsync("XACK", BuildAcknowledgeCommand(client, key, group, ids), cancellationToken);
+
+    internal static Cmd2N BuildAcknowledgeCommand(
+        RespireClient client, RespireKey key, string group, ReadOnlySpan<RespireStreamId> ids)
     {
         var args = new RespireValue[ids.Length];
         for (var i = 0; i < ids.Length; i++)
@@ -677,8 +687,7 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
             args[i] = ids[i].Value;
         }
 
-        return client.IntegerAsync(
-            "XACK", new Cmd2N(Verbs.XAck, client.Key(in key), group, args), cancellationToken);
+        return new Cmd2N(Verbs.XAck, client.Key(in key), group, args);
     }
 
     public ValueTask<RespireStreamPendingSummary> PendingSummaryAsync(
@@ -924,7 +933,7 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
     }
 
     /// <summary>Entries are [id, [field, value, …]]; trimmed entries can carry a null field list.</summary>
-    private static RespireStreamEntry[] ParseEntries(
+    internal static RespireStreamEntry[] ParseEntries(
         in RespValue entriesValue, RespireClient? client, RespireValue resolvedKey, string? group)
     {
         var elements = entriesValue.AsArray();

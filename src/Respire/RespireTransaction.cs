@@ -40,6 +40,8 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
     private IBatchScriptCommands? _scripts;
     private IBatchFunctionCommands? _functions;
 
+    private IBatchStreamCommands? _streams;
+
     internal RespireTransactionBase(RespireClient client, RespireConnection? watchConnection)
     {
         _client = client;
@@ -84,6 +86,9 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
 
     /// <summary>Redis Functions, without automatic reload or replay.</summary>
     public IBatchFunctionCommands Functions => _functions ??= new BatchFunctionCommands(this);
+
+    /// <summary>Non-blocking stream append, range, count, acknowledge, remove, and trim commands.</summary>
+    public IBatchStreamCommands Streams => _streams ??= new BatchStreamCommands(this);
 
     // Root shortcuts, mirroring the client's.
 

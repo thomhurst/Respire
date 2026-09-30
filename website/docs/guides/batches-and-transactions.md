@@ -56,7 +56,7 @@ foreach (var failure in result.Failures)
 
 ## The same facets as the client
 
-Batches and transactions expose the client's facets — `Strings`, `Keys`, `Hashes`, `Lists`, `Sets`, `SortedSets`, `Bitmaps`, `HyperLogLog`, `Geo`, `Scripts`, and `Functions`. Except for `Scripts`, commands have matching names minus the `Async` suffix and the same parameter shapes. The missing suffix signals that each call only queues work. Deferred scripts use `Evaluate` rather than mirroring the client's `ExecuteAsync` variants. The return type is `RespirePending<T>` instead of `ValueTask<T>`, and there is no `CancellationToken` because `ExecuteAsync` / `CommitAsync` owns cancellation.
+Batches and transactions expose the client's facets — `Strings`, `Keys`, `Hashes`, `Lists`, `Sets`, `SortedSets`, `Bitmaps`, `HyperLogLog`, `Geo`, `Scripts`, `Functions`, and the non-blocking `Streams` subset. Except for `Scripts`, commands have matching names minus the `Async` suffix and the same parameter shapes. The missing suffix signals that each call only queues work. Deferred scripts use `Evaluate` rather than mirroring the client's `ExecuteAsync` variants. The return type is `RespirePending<T>` instead of `ValueTask<T>`, and there is no `CancellationToken` because `ExecuteAsync` / `CommitAsync` owns cancellation.
 
 ```csharp
 using var batch = redis.CreateBatch();
@@ -122,7 +122,37 @@ await transaction.CommitAsync();
 Execution remains specific to the concrete type: batches call `ExecuteAsync`; transactions call
 `CommitAsync`.
 
-Blocking variants (a `waitFor` argument, i.e. `BLPOP` / `BLMOVE`) and streaming operations (`Keys.ScanAsync`, `Strings.GetLeaseAsync`) have no deferred form — a queue cannot block, and a lease borrows reply memory that is released once the batch completes. `Streams`, `Server`, and `Locks` remain client-only.
+Blocking variants (a `waitFor` argument, i.e. `BLPOP` / `BLMOVE`) and streaming operations (`Keys.ScanAsync`, `Strings.GetLeaseAsync`) have no deferred form — a queue cannot block, and a lease borrows reply memory that is released once the batch completes. `Server` and `Locks` remain client-only. Streams expose the non-blocking subset below; blocking reads, consumer loops, and group administration remain immediate operations.
+
+## Deferred Streams
+
+Both queues expose `Streams.Add`, `Count`, `Range`, `Remove`, `TrimByMaxLength`, and
+`Acknowledge`, corresponding to XADD, XLEN, XRANGE/XREVRANGE, XDEL, XTRIM MAXLEN, and
+XACK. Parameters mirror the immediate methods without cancellation tokens. `Add`
+accepts `StreamAddOptions`; that overload returns a nullable id when NOMKSTREAM skips
+an absent stream. `Range` supports inclusive bounds, count, and descending order.
+
+```csharp
+await using var transaction = redis.CreateTransaction();
+transaction.Set("{order:42}:state", "ready");
+RespirePending<RespireStreamId> appended = transaction.Streams.Add(
+    "{order:42}:events", ("type", "ready"));
+await transaction.CommitAsync();
+Console.WriteLine(appended.Result);
+```
+
+MULTI/EXEC applies the state write and event append atomically. Redis execution-time
+errors do not roll back other transaction commands. Pending results cannot supply
+arguments to later queued operations: use explicit entry ids when subsequent work
+needs the id before execution. Inputs are serialized at enqueue time; later changes
+to supplied binary keys, values, or arrays do not change queued commands. Range
+results own their field bytes and remain readable after queue disposal.
+
+Stream keys receive the client prefix exactly once. Cluster batches route each
+command by its stream key; Cluster transactions require every queued key to share
+one hash slot, including commands on other facets. Group setup and reading remain
+immediate operations; `Acknowledge` only acknowledges existing pending entries.
+`IRespireCommandQueue` implementers must add the new `Streams` property.
 
 ## Deferred script result ownership
 

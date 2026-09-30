@@ -267,6 +267,11 @@ A batch carries the same facets as the client (`Strings`, `Keys`, `Hashes`, `Lis
 suffix and the same parameter shapes. The return type is deferred, and cancellation belongs to
 `ExecuteAsync`. Blocking
 (`waitFor`) and streaming (`ScanAsync`, `GetLeaseAsync`) members have no deferred form.
+The `Streams` facet supports `Add`, `Count`, `Range`, `Remove`, `TrimByMaxLength`, and
+`Acknowledge` in both queues, with owned range results and enqueue-time argument snapshots.
+Blocking reads, consumer loops, and group administration remain client-only. See the
+[deferred Streams guide](../website/docs/guides/batches-and-transactions.md#deferred-streams).
+Custom `IRespireCommandQueue` implementations must provide the added `Streams` property.
 
 `Keys.RenameAsync`, `Lists.TrimAsync`, `HyperLogLog.MergeAsync`, and `Strings.SetManyAsync`
 return `ValueTask<bool>`, matching the `RespirePending<bool>` result of their batch and transaction

@@ -52,6 +52,17 @@ public class DeferredFacetParityTests
         await Assert.That(expected.Except(actual).ToArray()).IsEmpty();
     }
 
+    [Test]
+    public async Task SupportedStreamOverloadsHaveMatchingDeferredShape()
+    {
+        string[] supported = ["AddAsync", "CountAsync", "RangeAsync", "RemoveAsync", "TrimByMaxLengthAsync", "AcknowledgeAsync"];
+        var expected = typeof(IStreamCommands).GetMethods().Where(method => supported.Contains(method.Name))
+            .Select(method => Signature(method, immediate: true));
+        var actual = typeof(IBatchStreamCommands).GetMethods().Select(method => Signature(method, immediate: false));
+        await Assert.That(expected.Except(actual).ToArray()).IsEmpty();
+        await Assert.That(actual.Except(expected).ToArray()).IsEmpty();
+    }
+
     private static string Signature(MethodInfo method, bool immediate)
     {
         // Compare generic parameters by position; this shape audit does not compare their constraints.
