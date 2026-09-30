@@ -10,16 +10,19 @@ namespace Respire.Tests.Networking;
 public class DeferredStreamCommandTests
 {
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task CommandsSnapshotArgumentsAndOwnRangeReplies(bool transactional)
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task CommandsSnapshotArgumentsAndOwnRangeReplies(bool transactional, bool prefixed)
     {
         byte[] range = [.. "*1\r\n*2\r\n$3\r\n1-0\r\n*2\r\n$5\r\nvalue\r\n$2\r\n"u8, 0xff, 0, .. "\r\n"u8];
         byte[][] replies = ["$3\r\n1-0\r\n"u8.ToArray(), "$-1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(),
             range, range, ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":0\r\n"u8.ToArray(), ":1\r\n"u8.ToArray()];
         await using var server = new FakeRespServer(WrapReplies(replies, transactional));
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
-        var view = client.WithKeyPrefix("tenant:");
+        var prefix = prefixed ? "tenant:" : "";
+        var view = prefixed ? client.WithKeyPrefix(prefix) : client;
         using var batch = transactional ? null : view.CreateBatch();
         await using var transaction = transactional ? view.CreateTransaction() : null;
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
@@ -55,14 +58,15 @@ public class DeferredStreamCommandTests
         await Assert.That(entries.Result[0]["value"]!).IsEquivalentTo(new byte[] { 0xff, 0 }, CollectionOrdering.Matching);
         await Assert.That(reverse.Result[0].Id.ToString()).IsEqualTo("1-0");
         var commands = server.ReceivedArguments.Where(args => Encoding.UTF8.GetString(args[0]) is not "MULTI" and not "EXEC").ToArray();
+        await Assert.That(Encoding.UTF8.GetString(commands[0][1])).IsEqualTo(prefix + "events");
         await Assert.That(commands[0][3]).IsEquivalentTo(new byte[] { (byte)'v', (byte)'a', (byte)'l', (byte)'u', (byte)'e' });
         await Assert.That(commands[0][4]).IsEquivalentTo(new byte[] { 0xff, 0 }, CollectionOrdering.Matching);
         await Assert.That(server.ReceivedCommands.Skip(transactional ? 3 : 2).Take(7)).IsEquivalentTo(new[]
         {
-            "XLEN tenant:events", "XRANGE tenant:events - +", "XREVRANGE tenant:events 9-0 1-0 COUNT 2",
-            "XDEL tenant:events 1-0", "XTRIM tenant:events MAXLEN 1", "XTRIM tenant:events MAXLEN ~ 10", "XACK tenant:events workers 1-0",
+            $"XLEN {prefix}events", $"XRANGE {prefix}events - +", $"XREVRANGE {prefix}events 9-0 1-0 COUNT 2",
+            $"XDEL {prefix}events 1-0", $"XTRIM {prefix}events MAXLEN 1", $"XTRIM {prefix}events MAXLEN ~ 10", $"XACK {prefix}events workers 1-0",
         }, CollectionOrdering.Matching);
-        await Assert.That(Encoding.UTF8.GetString(commands[1][1])).IsEqualTo("tenant:missing");
+        await Assert.That(Encoding.UTF8.GetString(commands[1][1])).IsEqualTo(prefix + "missing");
         await Assert.That(commands[1].Skip(2).Take(5).Select(Encoding.UTF8.GetString))
             .IsEquivalentTo(new[] { "NOMKSTREAM", "MAXLEN", "~", "10", "*" }, CollectionOrdering.Matching);
         if (transactional)
@@ -85,9 +89,10 @@ public class DeferredStreamCommandTests
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
         var failed = queue.Streams.Add("wrong", ("value", "value"));
         var successful = queue.Streams.Count("events");
-        if (transaction is not null) await Assert.That(async () => await transaction.CommitAsync()).Throws<RespireServerException>();
+        if (transaction is not null) await transaction.CommitAsync();
         else await Assert.That(async () => await batch!.ExecuteAsync()).Throws<RespireServerException>();
         await Assert.That(failed.Error).IsTypeOf<RespireServerException>();
+        await Assert.That(() => failed.Result).Throws<RespireServerException>();
         await Assert.That(successful.Result).IsEqualTo(7);
     }
 

@@ -75,13 +75,15 @@ public class DeferredStreamIntegrationTests(RedisTestContainer fixture)
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
         var failed = queue.Streams.Count(key);
         var value = queue.GetString(key);
-        Func<Task> execute = async () =>
+        if (transaction is not null) await transaction.CommitAsync();
+        else
         {
-            if (transaction is not null) await transaction.CommitAsync();
-            else await batch!.ExecuteAsync();
-        };
-        await execute.Should().ThrowAsync<RespireServerException>();
+            Func<Task> execute = async () => await batch!.ExecuteAsync();
+            await execute.Should().ThrowAsync<RespireServerException>();
+        }
         failed.Error.Should().BeOfType<RespireServerException>();
+        Action readFailed = () => _ = failed.Result;
+        readFailed.Should().Throw<RespireServerException>();
         value.Result.Should().Be("wrong type");
         await client.Keys.DeleteAsync(key);
     }

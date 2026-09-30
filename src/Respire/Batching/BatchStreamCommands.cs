@@ -29,16 +29,16 @@ public interface IBatchStreamCommands
 internal sealed class BatchStreamCommands(IPendingSink sink) : IBatchStreamCommands
 {
     public RespirePending<RespireStreamId> Add(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
-        => sink.Add<Cmd1N, RespireStreamId>("XADD", StreamCommands.BuildAddCommand(sink.Client, key, default, fields),
+        => sink.Add<Cmd1N, RespireStreamId>("XADD", StreamCommands.BuildAddCommand(sink.Client, SnapshotKey(key), default, fields, snapshotValues: sink is RespireBatch),
             static (_, value) => new RespireStreamId(ResponseReader.String(in value)));
 
     public RespirePending<RespireStreamId?> Add(RespireKey key, StreamAddOptions options,
         params ReadOnlySpan<(string Field, RespireValue Value)> fields)
-        => sink.Add<Cmd1N, RespireStreamId?>("XADD", StreamCommands.BuildAddCommand(sink.Client, key, options, fields),
+        => sink.Add<Cmd1N, RespireStreamId?>("XADD", StreamCommands.BuildAddCommand(sink.Client, SnapshotKey(key), options, fields, snapshotValues: sink is RespireBatch),
             static (_, value) => value.IsNull ? default(RespireStreamId?) : new RespireStreamId(ResponseReader.String(in value)));
 
     public RespirePending<long> Count(RespireKey key)
-        => sink.Add<Cmd1, long>("XLEN", new Cmd1(Verbs.XLen, sink.Client.Key(in key)),
+        => sink.Add<Cmd1, long>("XLEN", new Cmd1(Verbs.XLen, sink.Client.Key(SnapshotKey(key))),
             static (_, value) => ResponseReader.Integer(in value));
 
     public RespirePending<RespireStreamEntry[]> Range(RespireKey key, RespireStreamId? start = null,
@@ -48,27 +48,30 @@ internal sealed class BatchStreamCommands(IPendingSink sink) : IBatchStreamComma
         var operation = descending ? "XREVRANGE" : "XRANGE";
         var verb = descending ? Verbs.XRevRange : Verbs.XRange;
         return count is { } take
-            ? sink.Add<Cmd5, RespireStreamEntry[]>(operation, new Cmd5(verb, sink.Client.Key(in key), from, to, "COUNT", take),
+            ? sink.Add<Cmd5, RespireStreamEntry[]>(operation, new Cmd5(verb, sink.Client.Key(SnapshotKey(key)), from, to, "COUNT", take),
                 static (_, value) => StreamCommands.ParseEntries(in value, client: null, resolvedKey: default, group: null))
-            : sink.Add<Cmd3, RespireStreamEntry[]>(operation, new Cmd3(verb, sink.Client.Key(in key), from, to),
+            : sink.Add<Cmd3, RespireStreamEntry[]>(operation, new Cmd3(verb, sink.Client.Key(SnapshotKey(key)), from, to),
                 static (_, value) => StreamCommands.ParseEntries(in value, client: null, resolvedKey: default, group: null));
     }
 
     public RespirePending<long> Remove(RespireKey key, params ReadOnlySpan<RespireStreamId> ids)
-        => sink.Add<Cmd1N, long>("XDEL", StreamCommands.BuildRemoveCommand(sink.Client, key, ids),
+        => sink.Add<Cmd1N, long>("XDEL", StreamCommands.BuildRemoveCommand(sink.Client, SnapshotKey(key), ids),
             static (_, value) => ResponseReader.Integer(in value));
 
     public RespirePending<long> TrimByMaxLength(RespireKey key, long maxLength, bool approximate = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(maxLength);
         return approximate
-            ? sink.Add<Cmd4, long>("XTRIM", new Cmd4(StreamCommands.XTrim, sink.Client.Key(in key), "MAXLEN", "~", maxLength),
+            ? sink.Add<Cmd4, long>("XTRIM", new Cmd4(StreamCommands.XTrim, sink.Client.Key(SnapshotKey(key)), "MAXLEN", "~", maxLength),
                 static (_, value) => ResponseReader.Integer(in value))
-            : sink.Add<Cmd3, long>("XTRIM", new Cmd3(StreamCommands.XTrim, sink.Client.Key(in key), "MAXLEN", maxLength),
+            : sink.Add<Cmd3, long>("XTRIM", new Cmd3(StreamCommands.XTrim, sink.Client.Key(SnapshotKey(key)), "MAXLEN", maxLength),
                 static (_, value) => ResponseReader.Integer(in value));
     }
 
     public RespirePending<long> Acknowledge(RespireKey key, string group, params ReadOnlySpan<RespireStreamId> ids)
-        => sink.Add<Cmd2N, long>("XACK", StreamCommands.BuildAcknowledgeCommand(sink.Client, key, group, ids),
+        => sink.Add<Cmd2N, long>("XACK", StreamCommands.BuildAcknowledgeCommand(sink.Client, SnapshotKey(key), group, ids),
             static (_, value) => ResponseReader.Integer(in value));
+
+    // Transactions serialize during Add; batches retain the command until ExecuteAsync.
+    private RespireKey SnapshotKey(RespireKey key) => sink is RespireBatch ? key.Snapshot() : key;
 }

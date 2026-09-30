@@ -494,7 +494,8 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
     internal static Cmd1N BuildAddCommand(
         RespireClient client, RespireKey key,
         StreamAddOptions options,
-        ReadOnlySpan<(string Field, RespireValue Value)> fields)
+        ReadOnlySpan<(string Field, RespireValue Value)> fields,
+        bool snapshotValues = false)
     {
         if (options.MaxLength is { } maxLength)
         {
@@ -525,7 +526,7 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
         for (var i = 0; i < fields.Length; i++)
         {
             args[offset + i * 2] = fields[i].Field;
-            args[offset + i * 2 + 1] = fields[i].Value;
+            args[offset + i * 2 + 1] = snapshotValues ? fields[i].Value.Snapshot() : fields[i].Value;
         }
 
         return new Cmd1N(Verbs.XAdd, client.Key(in key), args);
