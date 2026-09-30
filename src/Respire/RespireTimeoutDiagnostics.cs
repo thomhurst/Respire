@@ -29,7 +29,8 @@ public sealed class RespireTimeoutDiagnostics
     private RespireTimeoutDiagnostics() { }
 
     /// <summary>The last observed command stage.</summary>
-    public RespireCommandStage Stage { get; private init; }
+    public RespireCommandStage Stage { get; private set; }
+    private long? WrittenBytes { get; init; }
     /// <summary>The physical connection endpoint, when known.</summary>
     public RespireEndpoint? Endpoint { get; private init; }
     /// <summary>A process-local physical connection identity, distinct from Redis CLIENT ID.</summary>
@@ -38,7 +39,8 @@ public sealed class RespireTimeoutDiagnostics
     public long? ServerClientId { get; private init; }
     /// <summary>Outstanding reply slots, including abandoned waits and transaction intermediates.</summary>
     public int? InflightCount { get; private init; }
-    /// <summary>Serialized command bytes whose final replies have not yet been dequeued.</summary>
+    /// <summary>Serialized command bytes whose final replies have not yet been dequeued.
+    /// Multi-command frames, including transactions, retain their full byte count until the final reply.</summary>
     public long? InflightBytes { get; private init; }
     /// <summary>Serialized bytes not yet accepted by the socket or TLS stream.</summary>
     public long? PendingWriteBytes { get; private init; }
@@ -84,14 +86,14 @@ public sealed class RespireTimeoutDiagnostics
         long? connectionId = null, long? serverClientId = null, int? inflightCount = null,
         long? inflightBytes = null, long? pendingWriteBytes = null,
         TimeSpan? timeSinceLastRead = null, TimeSpan? timeSinceLastWrite = null,
-        bool? isConnected = null, bool? isReconnecting = null)
+        bool? isConnected = null, bool? isReconnecting = null, long? writtenBytes = null)
     {
         ThreadPool.GetAvailableThreads(out var availableWorkers, out var availableIo);
         ThreadPool.GetMaxThreads(out var maxWorkers, out var maxIo);
         ThreadPool.GetMinThreads(out var minWorkers, out var minIo);
         return new RespireTimeoutDiagnostics
         {
-            Stage = stage, Endpoint = endpoint, ConnectionId = connectionId, ServerClientId = serverClientId,
+            Stage = stage, WrittenBytes = writtenBytes, Endpoint = endpoint, ConnectionId = connectionId, ServerClientId = serverClientId,
             InflightCount = inflightCount, InflightBytes = inflightBytes, PendingWriteBytes = pendingWriteBytes,
             TimeSinceLastRead = timeSinceLastRead, TimeSinceLastWrite = timeSinceLastWrite,
             IsConnected = isConnected, IsReconnecting = isReconnecting,
@@ -99,6 +101,23 @@ public sealed class RespireTimeoutDiagnostics
             BusyIoThreads = Math.Max(0, maxIo - availableIo), MinIoThreads = minIo,
             PendingWorkItems = ThreadPool.PendingWorkItemCount
         };
+    }
+
+    // Reuse connection and thread-pool observations across one deadline sweep. Only the
+    // command stage differs; cloning does not sample counters or inspect the thread pool.
+    internal RespireTimeoutDiagnostics ForCommand(long writeStart, long writeEnd)
+    {
+        if (WrittenBytes is not { } sent || writeEnd <= 0)
+            return this;
+
+        var stage = sent >= writeEnd ? RespireCommandStage.AwaitingReply
+            : sent > writeStart ? RespireCommandStage.Writing : RespireCommandStage.Buffered;
+        if (Stage == stage)
+            return this;
+
+        var snapshot = (RespireTimeoutDiagnostics)MemberwiseClone();
+        snapshot.Stage = stage;
+        return snapshot;
     }
 
     internal string Describe()

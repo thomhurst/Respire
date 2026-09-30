@@ -1094,11 +1094,12 @@ internal sealed class RespireConnection : IAsyncDisposable
         var read = Volatile.Read(ref _lastReadTimestamp);
         var write = Volatile.Read(ref _lastWriteTimestamp);
         var serverId = ServerClientId;
+        // Counters advance independently; clamp differences that cross concurrent observations.
         return RespireTimeoutDiagnostics.Capture(stage, new RespireEndpoint(Host, Port), _diagnosticId,
             serverId == 0 ? null : serverId, Math.Max(0, _inflight.Count),
             Math.Max(0, enqueued - _inflight.CompletedWriteEnd), Math.Max(0, enqueued - sent),
             read == 0 ? null : Stopwatch.GetElapsedTime(read), write == 0 ? null : Stopwatch.GetElapsedTime(write),
-            IsConnected, Multiplexer?.IsReconnecting ?? false);
+            IsConnected, Multiplexer?.GetReconnectState(this), writtenBytes: sent);
     }
 
     /// <summary>

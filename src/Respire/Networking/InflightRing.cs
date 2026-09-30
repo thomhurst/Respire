@@ -90,6 +90,7 @@ internal sealed class InflightRing
         var head = Volatile.Read(ref _head);
         var tail = Volatile.Read(ref _tail);
         long next = -1;
+        RespireTimeoutDiagnostics? diagnostics = null;
         for (var position = head; position < tail; position++)
         {
             var source = Volatile.Read(ref _slots[position & _mask]);
@@ -125,7 +126,7 @@ internal sealed class InflightRing
                 continue;
             }
 
-            source.TrySetTimedOut(state, timeout, connection);
+            source.TrySetTimedOut(state, timeout, ref diagnostics, connection);
         }
 
         return next;

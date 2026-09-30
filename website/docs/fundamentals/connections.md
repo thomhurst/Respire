@@ -258,7 +258,9 @@ catch (RespireTimeoutException error)
 `WaitingForCapacity` means this attempt was not enqueued. `Buffered`, `Writing`, and
 `AwaitingReply` distinguish buffered data, a partial write, and a completed write whose reply
 has not completed. A successful socket write does not prove server execution. Transactions
-report their complete MULTI/EXEC frame; intermediate replies still count as outstanding slots.
+report their complete MULTI/EXEC frame: its full byte count remains outstanding until EXEC
+replies, while intermediate replies reduce the outstanding slot count. Other multi-command
+frames use the same accounting.
 Snapshots also accompany batch failures and dedicated connection operations. Relabeled
 internal timeout exceptions preserve the original snapshot.
 
@@ -268,6 +270,8 @@ multi-step setup. `ConnectionId` is local to the process; `ServerClientId` is po
 when Redis CLIENT ID was already obtained. Snapshot capture performs no network I/O and
 includes no keys, values, or credentials. The snapshot and thread-pool inspection are created
 only on failure; successful commands update numeric counters without diagnostic allocations.
+Commands expired by one deadline sweep share its connection and thread-pool observations;
+each command retains its own stage.
 
 Hints suggest checks; they do not identify a root cause. In particular, queued work with busy
 workers at or above the configured minimum is only a possible starvation signal. Inspect

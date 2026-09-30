@@ -1,5 +1,6 @@
 using Respire.Commands;
 using Respire.Networking;
+using Respire.Infrastructure;
 using System.Net;
 using System.Net.Sockets;
 using TUnit.Assertions;
@@ -31,7 +32,7 @@ public class TimeoutDiagnosticsTests
         await Assert.That(diagnostics.PendingWriteBytes).IsEqualTo(0);
         await Assert.That(diagnostics.TimeSinceLastRead).IsNotNull();
         await Assert.That(diagnostics.TimeSinceLastWrite).IsNotNull();
-        await Assert.That(diagnostics.IsConnected).IsEqualTo(true);
+        await Assert.That(diagnostics.IsConnected).IsTrue();
         await Assert.That(error.Message.Contains("secret-key", StringComparison.Ordinal)).IsFalse();
         await Assert.That(error.Message.Contains("Stage=AwaitingReply", StringComparison.Ordinal)).IsTrue();
         await Assert.That(diagnostics.BusyWorkerThreads).IsGreaterThanOrEqualTo(0);
@@ -67,11 +68,17 @@ public class TimeoutDiagnosticsTests
             SuppressReply = command => command == "EXEC"
         };
         await using var client = await ConnectAsync(server.Port);
-        await using var transaction = watched
+        await using RespireTransactionBase transaction = watched
             ? await client.CreateTransactionAsync(["key"])
             : client.CreateTransaction();
         var pending = transaction.GetString("key");
-        var error = await Assert.That(async () => await transaction.CommitAsync())
+        var error = await Assert.That(async () =>
+        {
+            if (transaction is RespireWatchedTransaction watchedTransaction)
+                await watchedTransaction.CommitAsync();
+            else
+                await ((RespireTransaction)transaction).CommitAsync();
+        })
             .ThrowsExactly<RespireTimeoutException>();
         await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.AwaitingReply);
         await Assert.That(error.Diagnostics.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", server.Port));
@@ -147,6 +154,71 @@ public class TimeoutDiagnosticsTests
         var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         await Assert.That(allocated).IsEqualTo(0);
         await Assert.That(ring.CompletedWriteEnd).IsEqualTo(1010);
+    }
+
+    [Test]
+    public async Task DeadlineSweep_SharesObservationsAcrossExpiredCommands()
+    {
+        var pool = new PendingResponsePool(2);
+        var ring = new InflightRing(2);
+        var first = pool.Rent(commandName: "GET");
+        var second = pool.Rent(commandName: "PING");
+        first.Deadline = second.Deadline = 1;
+        ring.TryEnqueue(first);
+        ring.TryEnqueue(second);
+
+        await Assert.That(ring.SweepExpired(2, TimeSpan.FromMilliseconds(1))).IsEqualTo(-1);
+        var firstError = await Assert.That(async () => await first.Task).ThrowsExactly<RespireTimeoutException>();
+        var secondError = await Assert.That(async () => await second.Task).ThrowsExactly<RespireTimeoutException>();
+        await Assert.That(firstError!.Diagnostics).IsSameReferenceAs(secondError!.Diagnostics);
+        await Assert.That(firstError.CommandName).IsEqualTo("GET");
+        await Assert.That(secondError.CommandName).IsEqualTo("PING");
+        while (ring.TryDequeue(out var source))
+            source.ReleaseRef();
+    }
+
+    [Test]
+    public async Task SharedSnapshot_PreservesCountersAndClassifiesEachCommand()
+    {
+        var shared = RespireTimeoutDiagnostics.Capture(inflightCount: 3, inflightBytes: 30,
+            pendingWriteBytes: 15, writtenBytes: 15);
+        var replied = shared.ForCommand(0, 10);
+        var writing = shared.ForCommand(10, 20);
+        var buffered = shared.ForCommand(20, 30);
+        await Assert.That(replied.Stage).IsEqualTo(RespireCommandStage.AwaitingReply);
+        await Assert.That(writing.Stage).IsEqualTo(RespireCommandStage.Writing);
+        await Assert.That(buffered.Stage).IsEqualTo(RespireCommandStage.Buffered);
+        await Assert.That(shared.Stage).IsEqualTo(RespireCommandStage.Unknown);
+        foreach (var snapshot in new[] { replied, writing, buffered })
+        {
+            await Assert.That(snapshot.InflightCount).IsEqualTo(3);
+            await Assert.That(snapshot.InflightBytes).IsEqualTo(30);
+            await Assert.That(snapshot.PendingWriteBytes).IsEqualTo(15);
+            await Assert.That(snapshot.PendingWorkItems).IsEqualTo(shared.PendingWorkItems);
+            await Assert.That(snapshot.BusyWorkerThreads).IsEqualTo(shared.BusyWorkerThreads);
+        }
+    }
+
+    [Test]
+    public async Task PhysicalSnapshot_DoesNotReportAnotherSlotsReconnect()
+    {
+        await using var server = new FakeRespServer(3, FakeRespServer.PongReply);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync(
+            "127.0.0.1", server.Port, connectionCount: 2);
+        var healthy = multiplexer.GetConnection();
+        var failed = multiplexer.GetConnection();
+        var observed = new TaskCompletionSource<RespireTimeoutDiagnostics>(TaskCreationOptions.RunContinuationsAsynchronously);
+        multiplexer.StateChanged += change =>
+        {
+            if (change.State == RespireConnectionState.Reconnecting)
+                observed.TrySetResult(healthy.CaptureTimeoutDiagnostics());
+        };
+        await failed.DisposeAsync();
+        multiplexer.GetConnection();
+        multiplexer.GetConnection();
+        var snapshot = await observed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(snapshot.IsConnected).IsTrue();
+        await Assert.That(snapshot.IsReconnecting).IsFalse();
     }
 
     private static ValueTask<RespireClient> ConnectAsync(int port)

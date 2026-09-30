@@ -83,15 +83,17 @@ internal abstract class PendingResponse
     /// sweep read this source from its ring slot; the CAS fails if the source completed or
     /// was recycled since, so a stale peek can never time out a different command.
     /// </summary>
-    internal bool TrySetTimedOut(long observedState, TimeSpan timeout, RespireConnection? connection = null)
+    internal bool TrySetTimedOut(long observedState, TimeSpan timeout,
+        ref RespireTimeoutDiagnostics? diagnostics, RespireConnection? connection = null)
     {
         if (Interlocked.CompareExchange(ref _state, observedState | 1, observedState) != observedState)
         {
             return false;
         }
 
+        diagnostics ??= connection?.CaptureTimeoutDiagnostics() ?? RespireTimeoutDiagnostics.Capture();
         DispatchException(new RespireTimeoutException(CommandName ?? "(command)", timeout, null,
-            connection?.CaptureTimeoutDiagnostics(WriteStart, WriteEnd) ?? RespireTimeoutDiagnostics.Capture()));
+            diagnostics.ForCommand(WriteStart, WriteEnd)));
         return true;
     }
 

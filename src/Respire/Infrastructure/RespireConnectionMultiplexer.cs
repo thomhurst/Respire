@@ -66,6 +66,15 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
+    internal bool? GetReconnectState(RespireConnection connection)
+    {
+        var slot = FindSlot(connection);
+        if (slot < 0) return null;
+        var reconnecting = Volatile.Read(ref _reconnecting[slot]) != 0;
+        // The slot may have been replaced while its reconnect flag was sampled.
+        return ReferenceEquals(connection, Volatile.Read(ref _connections[slot])) ? reconnecting : null;
+    }
+
     internal RespireTimeoutDiagnostics CaptureConnectionWait()
         => RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting,
             new RespireEndpoint(Host, Port), isConnected: IsConnected, isReconnecting: IsReconnecting);
