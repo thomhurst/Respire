@@ -10,7 +10,8 @@ internal sealed partial class ClusterRouter
     private readonly object _discoveryNotificationsGate = new();
     private Queue<RespireConnectionStateChange>? _discoveryNotifications;
     private bool _publishingDiscovery;
-    // Deliberately process-wide within ReconnectSource.ClusterDiscovery, not a per-client sequence.
+    // Process-wide within ClusterDiscovery so events from different clients cannot share an
+    // episode ID when an observer aggregates them without retaining the client instance.
     private static long _nextDiscoveryEpisode;
     internal TimeProvider DiscoveryClock { get; set; } = TimeProvider.System;
 
@@ -61,18 +62,28 @@ internal sealed partial class ClusterRouter
     // Finish is non-throwing and idempotent; an outstanding transition publishes the deferred finish.
     internal sealed class DiscoveryRound(ClusterRouter owner, RespireReconnectPolicy policy)
     {
-        private const int Active = 1;
-        private const int FinishRequested = 2;
-        private const int Finished = 4;
-        private int _state;
+        private readonly object _lifecycleGate = new();
+        private bool _active;
+        private bool _finishRequested;
+        private bool _finished;
         private void Enter()
         {
-            if (Interlocked.CompareExchange(ref _state, Active, 0) != 0)
-                throw new DiscoveryRoundUsageException();
+            lock (_lifecycleGate)
+            {
+                if (_active || _finishRequested || _finished)
+                    throw new DiscoveryRoundUsageException();
+                _active = true;
+            }
         }
         private void Exit()
         {
-            if ((Interlocked.And(ref _state, ~Active) & FinishRequested) != 0) CompleteFinish();
+            lock (_lifecycleGate)
+            {
+                _active = false;
+                if (!_finishRequested || _finished) return;
+                _finished = true;
+            }
+            CompleteFinish();
         }
 
         private Exception? _failure;
@@ -190,19 +201,25 @@ internal sealed partial class ClusterRouter
 
         internal void Finish()
         {
-            // Request ownership without throwing from a finally/Dispose path. Either this
-            // caller or the active transition's Exit completes the round, never both.
-            // Repeated requests can add FinishRequested to Finished. That terminal combination
-            // cannot match either the idle state in Enter or the pending state in CompleteFinish.
-            if (Interlocked.Or(ref _state, FinishRequested) == 0) CompleteFinish();
+            // A finish request during an asynchronous transition is handed to Exit.
+            // Mark completion under the gate, then publish outside it exactly once.
+            lock (_lifecycleGate)
+            {
+                _finishRequested = true;
+                if (_active || _finished) return;
+                _finished = true;
+            }
+            CompleteFinish();
         }
 
         private void CompleteFinish()
         {
-            if (Interlocked.CompareExchange(ref _state, Finished, FinishRequested) != FinishRequested) return;
             // No scheduled fallback means no discovery episode was started; physical
             // connection health still reports the initial candidate's failure.
             if (_attempts == 0 || Exhaustion is not null || Volatile.Read(ref owner._disposed) != 0) return;
+            // Pending failure is retry bookkeeping, not the operation's outcome: another
+            // caller may have connected the shared seed before we acquired its gate.
+            // Owning scopes and command recovery record terminal errors when selection fails.
             Publish(TerminalError is null ? RespireConnectionState.Connected : RespireConnectionState.Disconnected, TerminalError);
         }
 
