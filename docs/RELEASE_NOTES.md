@@ -100,6 +100,15 @@
   [observability](../website/docs/integrations/observability.md#thread-pool-scheduling)
   for sampling, lifecycle, units, and interpretation.
 
+### Container testing fixtures
+
+- `Respire.Testing.Containers` provides framework-independent, disposable Redis and Valkey
+  deployments: standalone, three-primary Cluster, and primary/replica plus Sentinel quorum.
+  Startup waits for topology readiness and cleans partial failures. Cluster and Sentinel
+  require local Docker and preserve discovery ports across NAT. See the
+  [testing guide](../website/docs/guides/testing-containers.md) for lifecycle, image selection,
+  examples, and topology limitations.
+
 ### Stream production and negative acknowledgements
 
 - `StreamAddOptions.Idempotency` adds mutually exclusive IDMP/IDMPAUTO production
