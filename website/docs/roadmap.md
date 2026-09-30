@@ -32,7 +32,7 @@ Respire is pre-release. Its RESP3-preferred client with bounded RESP2 fallback, 
 
 | Capability | Current behavior |
 | --- | --- |
-| Redis Cluster gaps | Cluster routing and same-slot `WATCH` transactions are supported; sharded pub/sub and typed notification fan-out remain unavailable in cluster mode |
+| Redis Cluster gaps | Cluster routing, same-slot `WATCH` transactions, and sharded pub/sub are supported; typed notification fan-out remains unavailable in cluster mode |
 | Automatic Sentinel failover | Sentinel primary discovery is supported by `ConnectAsync`; lazy discovery and automatic re-discovery during failover are not supported |
 
 If one of these is a hard requirement today, use a mature client such as StackExchange.Redis.

@@ -19,8 +19,7 @@ internal sealed class ClientCore : IAsyncDisposable
     private readonly Dictionary<RespireEndpoint, RespireConnectionState> _publishedEndpointStates = [];
     private SubscriptionHub? _hub;
     private HashSet<DedicatedConnectionPool>? _serverPools;
-    private RespireEndpoint? _subscriptionEndpoint;
-    private RespireConnectionState _subscriptionState = RespireConnectionState.Connected;
+    private Dictionary<bool, (RespireEndpoint Endpoint, RespireConnectionState State)>? _subscriptionStates;
     private bool _publishingState;
     private IDisposable? _threadPoolMonitor;
 
@@ -91,18 +90,18 @@ internal sealed class ClientCore : IAsyncDisposable
         => NotifySubscriptionStateChanged(new RespireConnectionStateChange(
             Options.PrimaryEndpoint, state, error));
 
-    internal void NotifySubscriptionStateChanged(RespireConnectionStateChange change)
+    internal void NotifySubscriptionStateChanged(RespireConnectionStateChange change, bool clusterSharded = false)
     {
         lock (_stateGate)
         {
             if (Disposed) return;
-            var previousEndpoint = _subscriptionEndpoint;
-            _subscriptionEndpoint = change.Endpoint;
-            _subscriptionState = change.State;
-            if (previousEndpoint is { } previous && previous != change.Endpoint)
+            _subscriptionStates ??= [];
+            var hadPrevious = _subscriptionStates.TryGetValue(clusterSharded, out var previousState);
+            _subscriptionStates[clusterSharded] = (change.Endpoint, change.State);
+            if (hadPrevious && previousState.Endpoint != change.Endpoint)
             {
                 QueueEndpointStateLocked(new RespireConnectionStateChange(
-                    previous, RespireConnectionState.Connected, null));
+                    previousState.Endpoint, RespireConnectionState.Connected, null));
             }
 
             QueueEndpointStateLocked(change);
@@ -246,17 +245,24 @@ internal sealed class ClientCore : IAsyncDisposable
             return RespireConnectionState.Disconnected;
         }
 
-        var isSubscriptionEndpoint = endpoint == _subscriptionEndpoint;
         if (_disconnectedCommandSlots.Any(commandSlot => IsEndpoint(commandSlot.Node, endpoint))
-            || isSubscriptionEndpoint && _subscriptionState == RespireConnectionState.Disconnected)
+            || HasSubscriptionState(endpoint, RespireConnectionState.Disconnected))
         {
             return RespireConnectionState.Disconnected;
         }
 
         return _reconnectingCommandSlots.Any(commandSlot => IsEndpoint(commandSlot.Node, endpoint))
-               || isSubscriptionEndpoint && _subscriptionState == RespireConnectionState.Reconnecting
+               || HasSubscriptionState(endpoint, RespireConnectionState.Reconnecting)
             ? RespireConnectionState.Reconnecting
             : RespireConnectionState.Connected;
+    }
+
+    private bool HasSubscriptionState(RespireEndpoint endpoint, RespireConnectionState state)
+    {
+        if (_subscriptionStates is null) return false;
+        foreach (var subscription in _subscriptionStates.Values)
+            if (subscription.Endpoint == endpoint && subscription.State == state) return true;
+        return false;
     }
 
     private static bool IsEndpoint(RespireConnectionMultiplexer node, RespireEndpoint endpoint)
@@ -366,12 +372,10 @@ internal sealed class ClientCore : IAsyncDisposable
         var commandEndpoints = Cluster?.GetActiveEndpoints() ?? [Options.PrimaryEndpoint];
         lock (_stateGate)
         {
-            _subscriptionState = RespireConnectionState.Disconnected;
-            if (_subscriptionEndpoint is { } subscriptionEndpoint)
-            {
-                QueueEndpointStateLocked(new RespireConnectionStateChange(
-                    subscriptionEndpoint, RespireConnectionState.Disconnected, null));
-            }
+            if (_subscriptionStates is not null)
+                foreach (var subscription in _subscriptionStates.Values)
+                    QueueEndpointStateLocked(new RespireConnectionStateChange(
+                        subscription.Endpoint, RespireConnectionState.Disconnected, null));
 
             foreach (var endpoint in commandEndpoints)
             {

@@ -231,8 +231,9 @@ Enable cluster routing and provide one or more seed nodes. Respire loads `CLUSTE
 all keys in one slot, so use Redis hash tags for related keys. Watched transactions use a dedicated
 connection to that slot owner; a redirect requires a new WATCH attempt and fresh reads. See the
 [Cluster WATCH guide](website/docs/guides/batches-and-transactions.md#cluster-watch-transactions).
-Sharded pub/sub is unavailable
-in cluster mode; `SSUBSCRIBE` subscriptions require a non-cluster client.
+Sharded pub/sub (Redis 7+) routes each channel to its slot's primary using one dedicated
+subscription connection per primary. Subscriptions follow slot moves automatically; delivery-gap
+markers report handoffs, because Redis pub/sub cannot replay messages lost during migration.
 
 ```csharp
 await using var cluster = await RespireClient.ConnectAsync(new RespireOptions

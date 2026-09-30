@@ -8,6 +8,24 @@ namespace Respire.Tests.Networking;
 public class ClientCoreTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task PubSubGroupsCannotOverwriteEachOthersFailure(bool failedSharded)
+    {
+        await using var core = new ClientCore(new RespireOptions());
+        var endpoint = core.Options.PrimaryEndpoint;
+        var changes = new List<RespireConnectionStateChange>();
+        core.ConnectionStateChanged += changes.Add;
+        core.NotifySubscriptionStateChanged(new(endpoint, RespireConnectionState.Disconnected, null), failedSharded);
+        core.NotifySubscriptionStateChanged(new(endpoint, RespireConnectionState.Reconnecting, null), !failedSharded);
+        core.NotifySubscriptionStateChanged(new(endpoint, RespireConnectionState.Connected, null), !failedSharded);
+        await Assert.That(changes.Select(change => change.State)).IsEquivalentTo([RespireConnectionState.Disconnected]);
+        core.NotifySubscriptionStateChanged(new(endpoint, RespireConnectionState.Connected, null), failedSharded);
+        await Assert.That(changes.Select(change => change.State))
+            .IsEquivalentTo([RespireConnectionState.Disconnected, RespireConnectionState.Connected]);
+    }
+
+    [Test]
     public async Task StateChange_IncludesSourceEndpointAndError()
     {
         await using var core = new ClientCore(new RespireOptions { Protocol = RespProtocol.Resp2, UseCluster = true });

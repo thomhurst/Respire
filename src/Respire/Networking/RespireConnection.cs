@@ -55,6 +55,7 @@ internal sealed class RespireConnection : IAsyncDisposable
     private readonly int? _networkPeerPort;
     private readonly ILogger? _logger;
     private readonly RespirePushHandler? _pushHandler;
+    private readonly RespirePushFilter? _subscriptionPushFilter;
     private readonly RespirePushHandler? _subscriptionConfirmationHandler;
     private readonly Task _receiveTask;
     private readonly Task _flushTask;
@@ -139,6 +140,7 @@ internal sealed class RespireConnection : IAsyncDisposable
         Port = port;
         _logger = logger;
         _pushHandler = options.PushHandler;
+        _subscriptionPushFilter = options.SubscriptionPushFilter;
         _subscriptionConfirmationHandler = options.SubscriptionConfirmationHandler;
         _receiveBufferSize = options.ReceiveBufferSize;
         _inflight = new InflightRing(options.MaxInflightCommands);
@@ -2048,6 +2050,13 @@ internal sealed class RespireConnection : IAsyncDisposable
                 || kind.SequenceEqual("ssubscribe"u8)
                 || kind.SequenceEqual("sunsubscribe"u8))
             {
+                // Redis can remove a sharded subscription unsolicited when its slot moves.
+                // Such a frame must not consume another control command's FIFO entry.
+                if (_subscriptionPushFilter?.Invoke(in value, _inflight.Count != 0) == true)
+                {
+                    value.Dispose();
+                    return true;
+                }
                 // Observe without disposing: this frame still belongs to normal FIFO completion.
                 _subscriptionConfirmationHandler?.Invoke(in value);
                 return false;
@@ -2421,6 +2430,8 @@ internal sealed class RespireConnection : IAsyncDisposable
 /// </summary>
 internal delegate void RespirePushHandler(in RespValue value);
 
+internal delegate bool RespirePushFilter(in RespValue value, bool hasPendingResponse);
+
 /// <summary>Tuning options for a single RESP connection.</summary>
 internal sealed record RespireConnectionOptions
 {
@@ -2438,6 +2449,9 @@ internal sealed record RespireConnectionOptions
 
     /// <summary>Observes subscription acknowledgements before FIFO completion; must not dispose the frame.</summary>
     public RespirePushHandler? SubscriptionConfirmationHandler { get; init; }
+
+    /// <summary>Returns true for unsolicited subscription frames; must not dispose the frame.</summary>
+    internal RespirePushFilter? SubscriptionPushFilter { get; init; }
 
     /// <summary>Enables CLIENT TRACKING before this connection is published.</summary>
     public bool EnableClientTracking { get; init; }

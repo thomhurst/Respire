@@ -6,7 +6,7 @@ using Respire.Protocol;
 namespace Respire.Internal;
 
 /// <summary>
-/// Owns a client's single dedicated pub/sub connection (created on first subscription) and
+/// Owns a client's dedicated pub/sub connections (created on first subscription) and
 /// routes incoming messages to subscription buffers. If the connection dies, reconnects with
 /// backoff and resubscribes everything that is still subscribed. Ordered markers report delivery gaps.
 /// </summary>
@@ -17,7 +17,7 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
 
     private readonly object _gate = new();
     private readonly object _reconnectStateGate = new();
-    private readonly Queue<RespireConnectionStateChange> _pendingReconnectStates = [];
+    private readonly Queue<(RespireConnectionStateChange Change, bool ClusterSharded)> _pendingReconnectStates = [];
     private readonly ByteRouteDictionary<List<RespireSubscription>>[] _routes =
         [new(), new(), new()];
     private readonly SemaphoreSlim _controlGate = new(1, 1);
@@ -39,13 +39,6 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
             if (name.NotificationDatabase is not null and not 0)
                 throw new ArgumentException("Redis Cluster notifications support only database 0.", nameof(names));
             throw new NotSupportedException("Notification routing across Redis Cluster primaries is not supported yet.");
-        }
-
-        if (kind == SubscriptionKind.Sharded && core.Cluster is not null)
-        {
-            throw new NotSupportedException(
-                "Sharded pub/sub across Redis Cluster nodes is not supported yet. " +
-                "Regular SUBSCRIBE and PSUBSCRIBE remain cluster-wide.");
         }
 
         if (names.Length == 0)
@@ -76,7 +69,10 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         CancellationToken cancellationToken)
     {
         var subscription = CreateSubscription(kind, names, options);
-        await ActivateAsync(subscription, cancellationToken).ConfigureAwait(false);
+        if (IsClusterSharded(kind))
+            await ActivateShardedAsync(subscription, cancellationToken).ConfigureAwait(false);
+        else
+            await ActivateAsync(subscription, cancellationToken).ConfigureAwait(false);
         return subscription;
     }
 
@@ -162,6 +158,11 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
     private async ValueTask ReleaseRoutesAsync(RespireSubscription subscription)
     {
         var releasedRoutes = RemoveRoutes(subscription);
+        if (IsClusterSharded(subscription.Kind))
+        {
+            await ReleaseShardedRoutesAsync(releasedRoutes).ConfigureAwait(false);
+            return;
+        }
         var connection = _connection;
         if (_disposed || connection is not { IsConnected: true })
         {
@@ -250,9 +251,10 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         if (_disposed) return;
         var now = DateTimeOffset.UtcNow;
         HashSet<RespireSubscription> affected = [];
-        foreach (var routes in _routes)
+        for (var i = 0; i < _routes.Length; i++)
         {
-            foreach (var subscriptions in routes.Values) affected.UnionWith(subscriptions);
+            if (IsClusterSharded((SubscriptionKind)i)) continue;
+            foreach (var subscriptions in _routes[i].Values) affected.UnionWith(subscriptions);
         }
         foreach (var subscription in affected)
         {
@@ -281,6 +283,7 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
 
     private void InterruptPublishedConnection(List<Task> interruptedDisposals)
     {
+        InterruptPrimaryConnections(interruptedDisposals);
         var connection = Volatile.Read(ref _connection);
         if (connection is not null && DetachConnection(connection) is { } disposal)
         {
@@ -481,6 +484,7 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
                         var snapshot = new List<(SubscriptionKind Kind, RespireChannel Name)>();
                         for (var i = 0; i < _routes.Length; i++)
                         {
+                            if (IsClusterSharded((SubscriptionKind)i)) continue;
                             foreach (var name in _routes[i].Names)
                             {
                                 snapshot.Add(((SubscriptionKind)i, name));
@@ -540,13 +544,13 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         }
     }
 
-    private bool QueueReconnectStateLocked(RespireConnectionStateChange change)
+    private bool QueueReconnectStateLocked(RespireConnectionStateChange change, bool clusterSharded = false)
     {
-        _pendingReconnectStates.Enqueue(change with
+        _pendingReconnectStates.Enqueue((change with
         {
             ReconnectSource = RespireReconnectSource.PubSub,
             SourceState = change.State,
-        });
+        }, clusterSharded));
         if (_publishingReconnectState)
         {
             return false;
@@ -560,16 +564,17 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
     {
         while (true)
         {
-            RespireConnectionStateChange change;
+            (RespireConnectionStateChange Change, bool ClusterSharded) observation;
             lock (_reconnectStateGate)
             {
-                if (!_pendingReconnectStates.TryDequeue(out change))
+                if (!_pendingReconnectStates.TryDequeue(out observation))
                 {
                     _publishingReconnectState = false;
                     return;
                 }
             }
 
+            var change = observation.Change;
             try
             {
                 if (change.NextReconnectDelay is { } delay)
@@ -584,13 +589,13 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
             }
             // Measurements describe scheduled work and survive disposal. Lifecycle events
             // still queued when disposal wins must not restore the client's subscription state.
-            if (!_disposed && !core.Disposed) core.NotifySubscriptionStateChanged(change);
+            if (!_disposed && !core.Disposed) core.NotifySubscriptionStateChanged(change, observation.ClusterSharded);
         }
     }
 
     // Observe acknowledgements before FIFO completion: a message can follow the acknowledgement
     // in the same socket read, before the asynchronous resubscribe continuation runs.
-    private void OnSubscriptionConfirmation(long epoch, in RespValue value)
+    private void OnSubscriptionConfirmation(long epoch, in RespValue value, PrimarySubscriptionConnection? primary = null)
     {
         var elements = value.AsArray();
         if (elements.Length < 3) return;
@@ -603,8 +608,13 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         List<(RespireSubscription Subscription, RespireSubscriptionGap Gap)>? gaps = null;
         lock (_gate)
         {
-            if (_disposed || epoch != _connectionEpoch
+            if (_disposed || (primary is null && epoch != _connectionEpoch)
                 || !Routes(kind).TryGetValue(elements[1].AsSpan(), out var name, out var subscriptions)) return;
+            if (primary is not null)
+            {
+                if (!_shardedOwners.TryGetValue(name, out var owner) || !ReferenceEquals(owner, primary)) return;
+                primary.Confirmed.Add(name);
+            }
             foreach (var subscription in subscriptions)
             {
                 if (_interrupted.TryGetValue(subscription, out var targets) && targets.Remove(name, out var started))
@@ -658,14 +668,26 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         ReadOnlySpan<byte> channel,
         bool isPattern,
         ReadOnlySpan<byte> payload)
+        => DeliverCore(epoch, kind, routeName, channel, isPattern, payload, null);
+
+    private void DeliverCore(
+        long epoch,
+        SubscriptionKind kind,
+        ReadOnlySpan<byte> routeName,
+        ReadOnlySpan<byte> channel,
+        bool isPattern,
+        ReadOnlySpan<byte> payload,
+        PrimarySubscriptionConnection? primary)
     {
         List<(RespireSubscription Subscription, RespireSubscriptionGap Gap)>? drops = null;
         lock (_gate)
         {
             // Validate and enqueue under the same gate that advances epochs and publishes
             // reconnect markers. A route snapshot alone would leave a stale-writer window.
-            if (_disposed || epoch != _connectionEpoch
+            if (_disposed || (primary is null && epoch != _connectionEpoch)
                 || !Routes(kind).TryGetValue(routeName, out var cachedRouteName, out var targets)) return;
+            if (primary is not null && (!_shardedOwners.TryGetValue(cachedRouteName, out var owner)
+                || !ReferenceEquals(owner, primary) || !primary.Confirmed.Contains(cachedRouteName))) return;
             var channelName = isPattern ? RespireChannel.FromOwnedBytes(channel.ToArray()) : cachedRouteName;
             var message = new RespireMessage(channelName,
                 isPattern ? cachedRouteName : (RespireChannel?)null, payload.ToArray(), core.Options.Serializer);
@@ -694,6 +716,8 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
             // Leave queued observations for the independent dispatcher to measure and drain.
         }
 
+        lock (_gate)
+            if (_observingClusterTopology) core.Cluster!.TopologyChanged -= RequestShardedRecovery;
         _lifetimeCancellation.Cancel();
 
         // Interrupt stalled control commands while waiting for their serialization gate. A
@@ -753,6 +777,9 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         Task? recovery;
         lock (_reconnectStateGate) recovery = _configuredRecoveryDrained?.Task;
         if (recovery is not null) await recovery.ConfigureAwait(false);
+        Task? shardedRecovery;
+        lock (_gate) shardedRecovery = _shardedRecovery?.Task;
+        if (shardedRecovery is not null) await shardedRecovery.ConfigureAwait(false);
         _lifetimeCancellation.Dispose();
     }
 
