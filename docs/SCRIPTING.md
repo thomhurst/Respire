@@ -46,3 +46,101 @@ Batches and transactions retain their existing conservative client-cache invalid
 Redis references: [EVAL_RO](https://redis.io/docs/latest/commands/eval_ro/), [EVALSHA_RO](https://redis.io/docs/latest/commands/evalsha_ro/), [SCRIPT EXISTS](https://redis.io/docs/latest/commands/script-exists/), [SCRIPT FLUSH](https://redis.io/docs/latest/commands/script-flush/).
 
 External implementations of `IScriptCommands` or `IBatchScriptCommands` remain source-compatible: the new cache members have default implementations that throw `NotSupportedException`. Decorators should forward these members to their underlying implementation to expose cache management. Unsupported Redis versions return their original server error, preserving the command name and error code; Respire does not silently substitute a writable command for a read-only request.
+
+## Redis Functions
+
+Redis 7+ [FCALL](https://redis.io/docs/latest/commands/fcall/) invokes named functions.
+Use `RespireFunction.Create(name, readOnly: true)` for `FCALL_RO`; Redis rejects functions
+that permit writes. `IsReadOnly` records this contract without selecting replica routing.
+
+```csharp
+await using var client = await RespireClient.ConnectAsync("redis://localhost:6379");
+var library = RespireFunctionLibrary.Create("""
+    #!lua name=example
+    redis.register_function{function_name='read_value', callback=function(keys,args)
+        return redis.call('GET', keys[1])
+    end, flags={'no-writes'}}
+    """);
+var read = library.Function("read_value", readOnly: true);
+await client.SetAsync("key", "value");
+var value = await client.Functions.ExecuteStringAsync(read, keys: ["key"]);
+```
+
+Function keys receive the view prefix; arguments and library/function names do not.
+All resolved keys must share one Cluster slot, even for read-only functions. Keyless calls
+use the router's default node. `ExecuteAsync` returns a leased `RespireResult` to dispose;
+`ExecuteAsync<T>`, `ExecuteStringAsync`, and `ExecuteIntegerAsync` convert and dispose
+replies automatically. `ExecuteSpanAsync` consumes span collections before returning its
+pending operation. Binary key/argument memory remains borrowed until completion.
+
+### Loading and reloads
+
+A library holds source and an explicit replacement policy. Reusable libraries require an
+unquoted, unescaped `name=library_name` header token; quoted headers are rejected locally
+rather than approximating Redis escape rules. Direct `LoadAsync(source)` leaves full header
+validation to Redis. Immediate execution tries the
+function first. Only Redis's exact `ERR Function not found` reply permits one reload and
+one retry; timeouts, connection failures, and other execution errors escape unchanged.
+Application functions must not manufacture that reserved reply, because it is interpreted
+as proof that invocation did not execute. A second missing-function reply is returned to
+the caller. This also handles a flush or restart that removed the library.
+
+Reloads for one reusable library and logical client are serialized, including prefixed
+views. Concurrent first-use calls share a reload; this does not permanently mark the
+library as loaded, so a later missing-function call can reload after a flush. The loader
+inspects only the named library using an escaped `FUNCTION LIST LIBRARYNAME` pattern with
+`WITHCODE`, accepts identical
+source, and loads missing libraries. A different source with the same library name produces
+a server collision error by default. If another client loads between inspection and LOAD,
+the exact library-already-exists error triggers one more source inspection; only identical
+source is accepted, without another LOAD. `Create(source, replace: true)` explicitly permits
+replacement during loading. Existing registered functions are used as-is; this option does
+not enforce source equality on every invocation. Use `LoadAsync` to deploy a replacement
+before calling a function that already exists. Concurrent external deployment or flush can
+still cause the bounded retry to fail. Automatic reload needs permission to inspect and
+load libraries in addition to calling functions. Applications deploying different sources
+under one name with replacement enabled can repeatedly replace each other; use a coordinated
+deployment or versioned library/function names.
+
+### Administration and scope
+
+- `LoadAsync(source, replace)` or `LoadAsync(library)` returns the library name.
+- `ListAsync(libraryPattern, withCode)` returns owned library/function metadata, descriptions,
+  flags, and optionally source. Patterns follow Redis glob syntax.
+- `DeleteAsync(name)` removes a library. `FlushAsync(Default/Sync/Async)` clears libraries.
+- `DumpAsync()` returns owned binary library data. `RestoreAsync(payload, policy)` supports
+  `Append` (default, collisions fail), `Flush`, and `Replace`. Keep input bytes unchanged
+  until completion; Redis validates the serialized format and collision policy.
+- `StatsAsync()` returns the running function, if any, with owned binary command arguments
+  and per-engine library/function counts. Statistics describe one server at one moment.
+
+Immediate LOAD, DELETE, FLUSH, and RESTORE visit all discovered Cluster primaries. Reload
+also visits discovered primaries and accepts matching libraries already present on some
+nodes. All sends are observed before reporting a failure. These operations are not atomic;
+cancellation or failure can leave some nodes changed. Inconsistent successful replies are
+also detected only after the mutations have run. All tasks complete before an exception
+is surfaced, but the thrown exception does not aggregate per-node outcomes. The primary
+set is a best-effort topology snapshot and is not rechecked after sending; concurrent
+failover can leave a newly promoted primary unloaded. LIST, DUMP, and STATS inspect one
+routing node only, not a merged cluster view. Connect directly to each primary to inspect
+or back up divergent state. Function libraries are server-wide, not isolated by key prefix
+or selected database. Replication follows Redis's normal library behavior.
+
+Batch and transaction `Functions` mirror these methods without `Async` or cancellation
+parameters. Load libraries before execution. Deferred calls never reload or replay after
+an error; later successful commands can still have taken effect. Administration affects
+only the execution node; keyless batch administration may run on a different node from a
+keyed invocation. Deferred `RespireResult` values use owned managed memory; unread results
+retain no pooled reply buffers, and disposal invalidates nested views. Other replies are
+owned arrays/records. Deferred execution retains its existing conservative cache invalidation.
+Immediate `FCALL_RO` and library administration preserve cached key data; writable `FCALL`
+uses conservative mutation invalidation because function effects cannot be inferred.
+
+Existing `IRespireClient` and `IRespireCommandQueue` implementations get default `Functions`
+properties that throw `NotSupportedException`. Decorators must forward the facet to expose
+it. Redis version/ACL errors remain server errors.
+
+Redis references: [FUNCTION LOAD](https://redis.io/docs/latest/commands/function-load/),
+[FUNCTION LIST](https://redis.io/docs/latest/commands/function-list/),
+[FUNCTION RESTORE](https://redis.io/docs/latest/commands/function-restore/),
+[FUNCTION STATS](https://redis.io/docs/latest/commands/function-stats/).

@@ -41,6 +41,7 @@ public sealed partial class RespireClient : IRespireClient
         HyperLogLog = new HyperLogLogCommands(this);
         Geo = new GeoCommands(this);
         Scripts = new ScriptCommands(this);
+        Functions = new FunctionCommands(this);
         Server = new ServerCommands(this);
     }
 
@@ -220,6 +221,9 @@ public sealed partial class RespireClient : IRespireClient
     public IGeoCommands Geo { get; }
     /// <inheritdoc/>
     public IScriptCommands Scripts { get; }
+
+    /// <summary>Redis Functions (Redis 7+).</summary>
+    public IFunctionCommands Functions { get; }
     /// <inheritdoc/>
     public IServerCommands Server { get; }
 
