@@ -1939,9 +1939,23 @@ public sealed partial class RespireClient : IRespireClient
             {
                 foreach (var connection in connections)
                 {
-                    var reply = await SendOnConnectionAsync(
-                            operation, connection, command, cancellationToken)
-                        .ConfigureAwait(false);
+                    var target = connection;
+                    RespValue reply;
+                    for (var attempt = 0; ; attempt++)
+                    {
+                        try
+                        {
+                            reply = await SendOnConnectionAsync(operation, target, command, cancellationToken)
+                                .ConfigureAwait(false);
+                            break;
+                        }
+                        catch (RespireConnectionRetiredException) when (cluster.CanRetryRetirement(attempt, cancellationToken))
+                        {
+                            // Keep this snapshot endpoint; earlier targets have already accepted the mutation.
+                            target = await cluster.GetReplacementConnectionAsync(connection, null, null, cancellationToken)
+                                .ConfigureAwait(false);
+                        }
+                    }
                     if (!hasRetainedReply)
                     {
                         retainedReply = reply;
@@ -2200,13 +2214,23 @@ public sealed partial class RespireClient : IRespireClient
                 cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
-                    await SendFireAndForgetOnConnectionAsync(
-                            operation,
-                            connection,
-                            command,
-                            cancellationToken,
-                            storedProcedureName)
-                        .ConfigureAwait(false);
+                    var target = connection;
+                    for (var attempt = 0; ; attempt++)
+                    {
+                        try
+                        {
+                            await SendFireAndForgetOnConnectionAsync(
+                                    operation, target, command, cancellationToken, storedProcedureName)
+                                .ConfigureAwait(false);
+                            break;
+                        }
+                        catch (RespireConnectionRetiredException) when (cluster.CanRetryRetirement(attempt, cancellationToken))
+                        {
+                            // Retry only this rejected target, never a previously accepted send.
+                            target = await cluster.GetReplacementConnectionAsync(connection, null, null, cancellationToken)
+                                .ConfigureAwait(false);
+                        }
+                    }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {

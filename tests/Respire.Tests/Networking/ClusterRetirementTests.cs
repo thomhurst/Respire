@@ -17,6 +17,89 @@ public class ClusterRetirementTests
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(5);
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ClusterWideRetirementRetriesOnlyTheRejectedTarget(bool fireAndForget)
+    {
+        var topologyRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstAccepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondFull = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondAccepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pingCount = 0;
+        await using var first = new FakeRespServer
+        {
+            SuppressReply = command =>
+            {
+                if (command == "CLUSTER SLOTS") topologyRequested.TrySetResult();
+                else if (command == "FUNCTION FLUSH") firstAccepted.TrySetResult();
+                return true;
+            },
+        };
+        await using var second = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            SuppressReply = command =>
+            {
+                if (command != "PING") { secondAccepted.TrySetResult(); return false; }
+                if (Interlocked.Increment(ref pingCount) == 4) secondFull.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = CreateClient(maxInflightCommands: 4, allowAdmin: true);
+        using var timeout = new CancellationTokenSource(Limit);
+        var router = client.Core.Cluster!;
+        PublishTargets("old", 1);
+        var old = await router.GetConnectionAsync(9000, timeout.Token);
+        var accepted = Enumerable.Range(0, 4)
+            .Select(_ => old.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token).AsTask()).ToArray();
+        await secondFull.Task.WaitAsync(timeout.Token);
+
+        var pending = SendAsync();
+        await topologyRequested.Task.WaitAsync(timeout.Token);
+        var topology = System.Text.Encoding.ASCII.GetBytes(
+            $"*2\r\n*3\r\n:0\r\n:8191\r\n*3\r\n$9\r\n127.0.0.1\r\n:{first.Port}\r\n$5\r\nfirst\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*3\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n$3\r\nold\r\n");
+        await first.SendRawAsync(topology);
+        await firstAccepted.Task.WaitAsync(timeout.Token);
+        PublishTargets("new", 2);
+        await first.SendRawAsync(FakeRespServer.OkReply);
+        await pending.WaitAsync(timeout.Token);
+        await secondAccepted.Task.WaitAsync(timeout.Token);
+
+        await Assert.That(first.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS", "FUNCTION FLUSH"]);
+        await Assert.That(second.ReceivedCommands).IsEquivalentTo(["PING", "PING", "PING", "PING", "FUNCTION FLUSH"]);
+        await Assert.That(second.ReceivedConnectionIds).IsEquivalentTo([0, 0, 0, 0, 1]);
+        await Assert.That(accepted.All(task => !task.IsCompleted)).IsTrue();
+        await second.SendRawAsync("+PONG\r\n+PONG\r\n+PONG\r\n+PONG\r\n"u8.ToArray(), 0);
+        foreach (var task in accepted)
+        {
+            using var reply = await task.WaitAsync(timeout.Token);
+            await Assert.That(reply.AsString()).IsEqualTo("PONG");
+        }
+        await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
+
+        async Task SendAsync()
+        {
+            if (fireAndForget) await client.ExecuteFireAndForgetAsync($"FUNCTION FLUSH", timeout.Token);
+            else
+            {
+                using var reply = await client.ExecuteAsync($"FUNCTION FLUSH", timeout.Token);
+                await Assert.That(reply.AsString()).IsEqualTo("OK");
+            }
+        }
+
+        void PublishTargets(string secondId, long generation)
+        {
+            var version = (long)typeof(ClusterRouter).GetField("_topologyVersion", Private)!.GetValue(router)!;
+            List<ClusterTopologyRange> ranges =
+            [
+                new(0, 8191, new("127.0.0.1", first.Port), "first", []),
+                new(8192, 16383, new("127.0.0.1", second.Port), secondId, []),
+            ];
+            typeof(ClusterRouter).GetMethod("ApplyTopology", Private)!.Invoke(router, [ranges, version, generation]);
+        }
+    }
+
+    [Test]
     [Arguments("ordinary")]
     [Arguments("no-redirect")]
     [Arguments("tracked")]

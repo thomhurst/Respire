@@ -252,10 +252,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     internal bool CanRetryRetirement(int attempt, CancellationToken cancellationToken)
         => attempt < MaxRedirects && !cancellationToken.IsCancellationRequested && Volatile.Read(ref _disposed) == 0;
 
-    // An ASK target is temporary: preserve its endpoint without changing the slot owner.
+    // ASK and captured cluster-wide targets preserve their endpoint without changing the slot owner.
     // Callers may retry only commands rejected before acceptance, never ambiguous I/O failures.
     internal async ValueTask<RespireConnection> GetReplacementConnectionAsync(
-        RespireConnection? askingSource, int? slot, bool? requireIdentity, CancellationToken cancellationToken)
+        RespireConnection? endpointSource, int? slot, bool? requireIdentity, CancellationToken cancellationToken)
     {
         for (var attempt = 0; ; attempt++)
         {
@@ -263,17 +263,17 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             try
             {
                 RespireConnection connection;
-                if (askingSource is null)
+                if (endpointSource is null)
                     connection = await GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
                 else
                 {
-                    node = GetOrCreateNode(new(askingSource.Host, askingSource.Port), observe: false, redirect: true);
+                    node = GetOrCreateNode(new(endpointSource.Host, endpointSource.Port), observe: false, redirect: true);
                     await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
                     connection = slot is { } value ? node.GetConnection(value) : node.GetConnection();
                 }
                 node = connection.Multiplexer;
                 return requireIdentity is { } required
-                    ? await EnableCorrectionOrderingAsync(connection, required, cancellationToken, observe: askingSource is null)
+                    ? await EnableCorrectionOrderingAsync(connection, required, cancellationToken, observe: endpointSource is null)
                         .ConfigureAwait(false)
                     : connection;
             }
