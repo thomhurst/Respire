@@ -368,7 +368,7 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
         for (var i = 0; i < operations.Count; i++)
         {
             _ = await operations[i].CompleteClusterSendAsync(
-                    _client, sends[i], cancellationToken)
+                    _client, connection, sends[i], cancellationToken)
                 .ConfigureAwait(false);
         }
     }
@@ -438,6 +438,7 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
 
         public abstract Task<Exception?> CompleteClusterSendAsync(
             RespireClient client,
+            RespireConnection connection,
             ValueTask<RespValue> send,
             CancellationToken cancellationToken);
 
@@ -465,6 +466,7 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
 
         public override async Task<Exception?> CompleteClusterSendAsync(
             RespireClient client,
+            RespireConnection connection,
             ValueTask<RespValue> send,
             CancellationToken cancellationToken)
         {
@@ -475,9 +477,19 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
                 {
                     value = await send.ConfigureAwait(false);
                 }
-                catch (RespireServerException error) when (ClusterRouter.IsRedirect(error))
+                catch (RespireServerException error) when (
+                    ClusterRouter.CanRecover(error, command.TryGetClusterSlot(out var slot) ? slot : null))
                 {
-                    value = await client.SendAsync(Operation, command, cancellationToken).ConfigureAwait(false);
+                    if (error.Code == RespireErrorCodes.ReadOnly)
+                    {
+                        value = await client.ResumeReadOnlyClusterSendAsync(
+                                Operation, command, connection, error, slot, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        value = await client.SendAsync(Operation, command, cancellationToken).ConfigureAwait(false);
+                    }
                 }
 
                 return Complete(client, value);

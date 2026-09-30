@@ -42,6 +42,26 @@ Each candidate keeps its full `RespireOptions`, including TLS, authentication, t
 
 This is connection-time fallback only. After a client is returned, commands run against that selected deployment and use Respire's normal reconnect behavior. `ConnectAnyAsync` is not a health-checked circuit breaker and does not continuously route commands between independent deployments.
 
+## Cluster primary changes
+
+In Cluster mode, a keyed command that receives `READONLY` invalidates its cached slot owner.
+Respire refreshes `CLUSTER SLOTS` through other discovered primaries or configured seeds and
+retries against a different owner. The replacement is cached for later commands. One refresh
+round is bounded by `ConnectTimeout`, and commands share the existing five-retry redirect
+budget. If discovery fails or still identifies the same node, the original `READONLY` error is
+returned, including for keyed fire-and-forget commands. Cached-owner probes and discovered
+primaries share at most half of the round deadline, leaving time for configured seeds.
+Earlier configured seeds then share half of the remaining time; the final configured seed
+can use the entire remainder. Exhausted phases skip remaining candidates in that phase.
+This preserves a usable final-seed allowance even with many stalled earlier endpoints.
+Caller cancellation still cancels recovery.
+
+This applies to immediate, raw/catalog, fire-and-forget, batch, blocking/dedicated, and tracked
+script commands. Transactions retry only when a queue error aborted the whole transaction;
+errors inside an executed result array are never replayed because other commands may have
+succeeded. Cluster WATCH transactions remain unsupported. `NoRedirect`, commands without a
+known slot, standalone clients, and other server error codes retain their existing behavior.
+
 ## Full configuration
 
 ```csharp

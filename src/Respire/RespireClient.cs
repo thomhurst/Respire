@@ -1410,13 +1410,13 @@ public sealed partial class RespireClient : IRespireClient
 
             var error = ResponseReader.ServerError(in response, operation);
             response.Dispose();
-            if (attempt >= ClusterRouter.RedirectLimit || !ClusterRouter.IsRedirect(error))
+            if (attempt >= ClusterRouter.RedirectLimit || !ClusterRouter.CanRecover(error, slot))
             {
                 throw error;
             }
 
             _core.ClientCache?.FlushForContinuityLoss();
-            connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken)
+            connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot)
                 .ConfigureAwait(false);
             sendAsking = error.Code == RespireErrorCodes.Ask;
             onRedirect?.Invoke(!sendAsking);
@@ -1694,19 +1694,40 @@ public sealed partial class RespireClient : IRespireClient
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
+    internal async ValueTask<RespValue> ResumeReadOnlyClusterSendAsync<TCommand>(
+        string operation, TCommand command, RespireConnection source,
+        RespireServerException error, int slot, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var cluster = _core.Cluster!;
+        _core.ClientCache?.FlushForContinuityLoss();
+        var replacement = await cluster.GetRedirectConnectionAsync(error, source, cancellationToken, slot)
+            .ConfigureAwait(false);
+        // The pipelined send already consumed one attempt from the shared retry budget.
+        return await SendClusterAsync(operation, cluster, command, cancellationToken,
+                initialConnection: replacement, firstAttempt: 1)
+            .ConfigureAwait(false);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<RespValue> SendClusterAsync<TCommand>(
         string operation,
         ClusterRouter cluster,
         TCommand command,
         CancellationToken cancellationToken,
         string? storedProcedureName = null,
-        bool noRedirect = false)
+        bool noRedirect = false,
+        RespireConnection? initialConnection = null,
+        int firstAttempt = 0)
         where TCommand : struct, IRespCommand
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
-        var connection = await cluster.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
+        var connection = initialConnection
+            ?? await cluster.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
         var sendAsking = false;
-        for (var attempt = 0; ; attempt++)
+        for (var attempt = firstAttempt; ; attempt++)
         {
             try
             {
@@ -1715,10 +1736,10 @@ public sealed partial class RespireClient : IRespireClient
                     .ConfigureAwait(false);
             }
             catch (RespireServerException error)
-                when (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.IsRedirect(error))
+                when (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
             {
                 _core.ClientCache?.FlushForContinuityLoss();
-                connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken)
+                connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot)
                     .ConfigureAwait(false);
                 sendAsking = error.Code == RespireErrorCodes.Ask;
             }
@@ -1970,9 +1991,10 @@ public sealed partial class RespireClient : IRespireClient
                     operation, cluster, command, cancellationToken, storedProcedureName)
                 .ConfigureAwait(false);
         }
-        catch (RespireServerException error) when (!ClusterRouter.IsRedirect(error))
+        catch (RespireServerException error) when (!ClusterRouter.CanRecover(
+            error, command.TryGetClusterSlot(out var failedSlot) ? failedSlot : null))
         {
-            // Discard ordinary server errors, but surface redirects that could not be followed.
+            // Discard ordinary errors, but surface exhausted redirect or READONLY recovery.
         }
     }
 
@@ -2213,11 +2235,11 @@ public sealed partial class RespireClient : IRespireClient
                 {
                     var error = ResponseReader.ServerError(in response, operation);
                     response.Dispose();
-                    if (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.IsRedirect(error))
+                    if (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
                     {
                         core.ClientCache?.FlushForContinuityLoss();
                         var redirectedPool = await cluster.GetRedirectDedicatedPoolAsync(
-                                error, connection, cancellationToken)
+                                error, connection, cancellationToken, slot)
                             .ConfigureAwait(false);
                         pool.Return(connection);
                         returned = true;
@@ -2560,12 +2582,13 @@ public sealed partial class RespireClient : IRespireClient
         RespireServerException error,
         RespireConnection source,
         bool requireIdentity,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int? commandSlot)
     {
         if (_core.Options.CommandTimeout is not { } timeout)
         {
             return await cluster.GetTrackedRedirectConnectionAsync(
-                    error, source, requireIdentity, cancellationToken)
+                    error, source, requireIdentity, cancellationToken, commandSlot)
                 .ConfigureAwait(false);
         }
 
@@ -2573,7 +2596,7 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             return await cluster.GetTrackedRedirectConnectionAsync(
-                    error, source, requireIdentity, timeoutSource.Token)
+                    error, source, requireIdentity, timeoutSource.Token, commandSlot)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -2640,6 +2663,8 @@ public sealed partial class RespireClient : IRespireClient
         bool requiresIdentity,
         CancellationToken cancellationToken)
     {
+        var command = new Cmd2N(verb, body, tail[0], tail[1..]);
+        var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
         var connection = initialConnection;
         var sendAsking = execution.ConnectionIdentity.RequiresAsking;
         for (var attempt = 0; ; attempt++)
@@ -2647,16 +2672,16 @@ public sealed partial class RespireClient : IRespireClient
             try
             {
                 var reply = await SendOnConnectionAsync(
-                        operation, connection, new Cmd2N(verb, body, tail[0], tail[1..]),
+                        operation, connection, command,
                         cancellationToken, storedProcedureName, sendAsking)
                     .ConfigureAwait(false);
                 return new RespireResult(in reply, _core.Options.Serializer);
             }
             catch (RespireServerException error)
-                when (attempt < ClusterRouter.RedirectLimit && ClusterRouter.IsRedirect(error))
+                when (attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
             {
                 connection = await GetTrackedRedirectConnectionAsync(
-                        cluster, error, connection, requiresIdentity, cancellationToken)
+                        cluster, error, connection, requiresIdentity, cancellationToken, slot)
                     .ConfigureAwait(false);
                 sendAsking = error.Code == RespireErrorCodes.Ask;
                 execution.Connection = connection;
