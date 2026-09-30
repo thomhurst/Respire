@@ -614,4 +614,8 @@ a callback executing application code.
 This is a lifecycle primitive for Cluster generation retirement. Router integration must retain
 retiring pools until completion, protect owed correction barriers before retiring control pools,
 and avoid handing a retired pool to a new generation. That integration is tracked by #466;
-this primitive alone does not remove departed nodes from Cluster routing.
+this primitive alone does not remove departed nodes from Cluster routing. Owners must observe
+the returned completion, including cleanup failures. A handshake cancelled by retirement reports
+`OperationCanceledException`; a later or rejected rental reports `ObjectDisposedException`.
+Router retry decisions must also inspect its own generation state and the caller's cancellation
+rather than treating every cancellation as retirement.
