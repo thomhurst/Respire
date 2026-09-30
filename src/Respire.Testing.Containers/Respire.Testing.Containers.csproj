@@ -8,6 +8,7 @@
     <IsAotCompatible>false</IsAotCompatible>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Respire.IntegrationTests" />
     <ProjectReference Include="../Respire/Respire.csproj" />
     <PackageReference Include="Testcontainers" />
   </ItemGroup>

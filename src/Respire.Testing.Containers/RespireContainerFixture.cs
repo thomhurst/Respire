@@ -17,6 +17,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
     private const string DefaultRedisImage = "redis:7.2-alpine";
     private const string DefaultValkeyImage = "valkey/valkey:8.1-alpine";
     private const int ClusterPrimaryCount = 3;
+    private const int MaximumStartupAttempts = 3;
     // Cluster bus traffic stays inside the shared container; these ports are never published.
     private const int ClusterBusPortStart = 16379;
     private const int SentinelQuorum = 2;
@@ -33,12 +34,17 @@ public sealed class RespireContainerFixture : IAsyncDisposable
     private string _startupStep = "container startup";
     private string? _lastReadinessResponse;
 
-    private RespireContainerFixture(RespireContainerOptions options, int[] ports)
+    private RespireContainerFixture(RespireContainerOptions options, int[] ports, IContainer container)
     {
         _options = options;
         _ports = ports;
         _server = options.Server == RespireContainerServer.Redis ? "redis-server" : "valkey-server";
         _cli = options.Server == RespireContainerServer.Redis ? "redis-cli" : "valkey-cli";
+        _container = container;
+    }
+
+    internal static IContainer BuildContainer(RespireContainerOptions options, int[] ports)
+    {
         var image = options.Image ?? (options.Server == RespireContainerServer.Redis ? DefaultRedisImage : DefaultValkeyImage);
         var builder = new ContainerBuilder(image)
             .WithCreateParameterModifier(parameters =>
@@ -56,7 +62,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
             builder = options.Topology == RespireContainerTopology.Standalone
                 ? builder.WithPortBinding(port, assignRandomHostPort: true)
                 : builder.WithPortBinding(port, port);
-        _container = builder.Build();
+        return builder.Build();
     }
 
     /// <summary>The owned container ID, for diagnostics.</summary>
@@ -67,10 +73,16 @@ public sealed class RespireContainerFixture : IAsyncDisposable
     public IReadOnlyList<RespireEndpoint> SentinelEndpoints { get; private set; } = Array.Empty<RespireEndpoint>();
 
     /// <summary>Starts a deployment and waits for its complete topology. Failure cleans up the owned container.</summary>
-    public static async Task<RespireContainerFixture> StartAsync(
+    public static Task<RespireContainerFixture> StartAsync(
         RespireContainerOptions? options = null, CancellationToken cancellationToken = default)
+        => StartAsync(options ?? new(), cancellationToken, createContainer: null);
+
+    // The instance-local factory lets tests inject a collision between port selection and
+    // Docker startup without changing global state or the public fixture API.
+    internal static async Task<RespireContainerFixture> StartAsync(
+        RespireContainerOptions options, CancellationToken cancellationToken,
+        Func<int[], CancellationToken, Task<IContainer>>? createContainer)
     {
-        options ??= new();
         if (!Enum.IsDefined(options.Server)) throw new ArgumentOutOfRangeException(nameof(options), "Unknown server family.");
         if (!Enum.IsDefined(options.Topology)) throw new ArgumentOutOfRangeException(nameof(options), "Unknown topology.");
         if (options.Image is not null) ArgumentException.ThrowIfNullOrWhiteSpace(options.Image);
@@ -79,38 +91,71 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         cancellationToken.ThrowIfCancellationRequested();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(options.StartupTimeout);
-        var ports = options.Topology switch
+        var excludedPorts = new HashSet<int>();
+        var collisions = new List<Exception>();
+        for (var attempt = 1; ; attempt++)
         {
-            RespireContainerTopology.Standalone => [6379],
-            RespireContainerTopology.Cluster => ChooseLocalPorts(ClusterPrimaryCount),
-            _ => ChooseLocalPorts(5),
-        };
-        var fixture = new RespireContainerFixture(options, ports);
-        try
-        {
-            await fixture._container.StartAsync(deadline.Token).ConfigureAwait(false);
-            if (!IsLocalHost(fixture._container.Hostname))
-                throw new NotSupportedException("Container fixtures require a local Docker engine because published ports bind only to loopback.");
-            await fixture.InitializeAsync(deadline.Token).ConfigureAwait(false);
-            return fixture;
-        }
-        catch (Exception startupError)
-        {
-            startupError.Data["RespireFixture.StartupStep"] = fixture._startupStep;
-            startupError.Data["RespireFixture.LastReadinessResponse"] = fixture._lastReadinessResponse;
-            // Capture before disposal. Creation may have failed before Docker assigned an ID;
-            // diagnostic lookup must never hide the original startup or cleanup exception.
-            string? containerId = null;
-            try { containerId = fixture.ContainerId; }
-            catch (Exception) { }
-            try { await fixture.DisposeAsync().ConfigureAwait(false); }
-            catch (Exception cleanupError)
+            RespireContainerFixture? fixture = null;
+            int[] ports = [];
+            var startingContainer = false;
+            try
             {
-                throw new AggregateException($"Fixture startup and cleanup both failed (container: {containerId ?? "unavailable"}).", startupError, cleanupError);
+                deadline.Token.ThrowIfCancellationRequested();
+                ports = options.Topology switch
+                {
+                    RespireContainerTopology.Standalone => [6379],
+                    RespireContainerTopology.Cluster => ChooseLocalPorts(ClusterPrimaryCount, excludedPorts),
+                    _ => ChooseLocalPorts(5, excludedPorts),
+                };
+                var container = createContainer is null ? BuildContainer(options, ports)
+                    : await createContainer(ports, deadline.Token).ConfigureAwait(false);
+                fixture = new RespireContainerFixture(options, ports, container);
+                deadline.Token.ThrowIfCancellationRequested();
+                startingContainer = true;
+                await container.StartAsync(deadline.Token).ConfigureAwait(false);
+                startingContainer = false;
+                if (!IsLocalHost(container.Hostname))
+                    throw new NotSupportedException("Container fixtures require a local Docker engine because published ports bind only to loopback.");
+                await fixture.InitializeAsync(deadline.Token).ConfigureAwait(false);
+                deadline.Token.ThrowIfCancellationRequested();
+                return fixture;
             }
-            if (startupError is OperationCanceledException && !cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
-                throw new TimeoutException($"Fixture {options.Server}/{options.Topology} did not become ready within {options.StartupTimeout}; step: {fixture._startupStep}; last reply: {fixture._lastReadinessResponse}", startupError);
-            throw;
+            catch (Exception startupError)
+            {
+                startupError.Data["RespireFixture.StartupStep"] = fixture?._startupStep ?? "port selection/container creation";
+                startupError.Data["RespireFixture.LastReadinessResponse"] = fixture?._lastReadinessResponse;
+                startupError.Data["RespireFixture.StartupAttempt"] = attempt;
+                startupError.Data["RespireFixture.SelectedPorts"] = ports.ToArray();
+                if (collisions.Count != 0) startupError.Data["RespireFixture.PreviousPortCollisions"] = collisions.ToArray();
+                // Inspect before removal, without allowing diagnostics to hide the failure.
+                string? containerId = null;
+                try { containerId = fixture?.ContainerId; }
+                catch (Exception) { }
+                startupError.Data["RespireFixture.ContainerId"] = containerId;
+                if (fixture is not null)
+                {
+                    try { await fixture.DisposeAsync().ConfigureAwait(false); }
+                    catch (Exception cleanupError)
+                    {
+                        throw new AggregateException($"Fixture startup and cleanup both failed (container: {containerId ?? "unavailable"}).",
+                            collisions.Append(startupError).Append(cleanupError));
+                    }
+                }
+                // Cleanup is always awaited. No fresh container starts after cancellation,
+                // even when the deadline expires while removing a failed attempt.
+                if (cancellationToken.IsCancellationRequested)
+                    throw new OperationCanceledException("Fixture startup was cancelled.", startupError, cancellationToken);
+                if (deadline.IsCancellationRequested)
+                    throw new TimeoutException($"Fixture {options.Server}/{options.Topology} did not become ready within {options.StartupTimeout}; step: {fixture?._startupStep}; last reply: {fixture?._lastReadinessResponse}", startupError);
+                if (startingContainer && options.Topology != RespireContainerTopology.Standalone
+                    && attempt < MaximumStartupAttempts && ContainerPortCollision.IsMatch(startupError, ports))
+                {
+                    collisions.Add(startupError);
+                    excludedPorts.UnionWith(ports);
+                    continue;
+                }
+                throw;
+            }
         }
     }
 
@@ -262,7 +307,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         => host.Equals("localhost", StringComparison.OrdinalIgnoreCase) || IPAddress.TryParse(host, out var address) && IPAddress.IsLoopback(address);
     private static string Number(int value) => value.ToString(CultureInfo.InvariantCulture);
 
-    private static int[] ChooseLocalPorts(int count)
+    private static int[] ChooseLocalPorts(int count, HashSet<int> excludedPorts)
     {
         // Cluster/Sentinel advertise ports in replies. Preserve those ports across local NAT.
         // Keep reservations together to avoid duplicate ephemeral choices within this fixture.
@@ -277,7 +322,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
                 listeners.Add(listener);
                 var port = ((IPEndPoint)listener.LocalEndpoint).Port;
                 // Retain excluded reservations too, so the next choice cannot repeat them.
-                if (port < ClusterBusPortStart || port >= ClusterBusPortStart + ClusterPrimaryCount)
+                if (!excludedPorts.Contains(port) && (port < ClusterBusPortStart || port >= ClusterBusPortStart + ClusterPrimaryCount))
                     ports.Add(port);
             }
             return ports.ToArray();

@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Docker.DotNet;
+using DotNet.Testcontainers.Containers;
 using DotNet.Testcontainers.Configurations;
 using FluentAssertions;
 using Respire.Testing.Containers;
@@ -152,6 +153,60 @@ public class ContainerFixtureIntegrationTests
         await using var fixture = await RespireContainerFixture.StartAsync();
         await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions());
         (await client.SetAsync("after-failure", "ok")).Should().BeTrue();
+    }
+
+    [Test]
+    [Arguments(RespireContainerServer.Redis, RespireContainerTopology.Cluster)]
+    [Arguments(RespireContainerServer.Redis, RespireContainerTopology.Sentinel)]
+    [Arguments(RespireContainerServer.Valkey, RespireContainerTopology.Cluster)]
+    [Arguments(RespireContainerServer.Valkey, RespireContainerTopology.Sentinel)]
+    public async Task PortCollisionRemovesFailedContainerAndPreservesCompetingOwner(
+        RespireContainerServer server, RespireContainerTopology topology)
+    {
+        var options = new RespireContainerOptions { Server = server, Topology = topology };
+        IContainer? blocker = null;
+        var createdIds = new List<string>();
+        var selectedPorts = new List<int[]>();
+        try
+        {
+            await using var fixture = await RespireContainerFixture.StartAsync(options, default, async (ports, token) =>
+            {
+                if (selectedPorts.Count == 0)
+                {
+                    // Occupy an already selected port through the same Docker engine.
+                    // This creates a real collision on Linux and Docker Desktop alike.
+                    blocker = RespireContainerFixture.BuildContainer(options, [ports[0]]);
+                    await blocker.StartAsync(token);
+                }
+                else
+                {
+                    createdIds.Should().HaveCount(selectedPorts.Count);
+                    foreach (var id in createdIds) await AssertContainerRemovedAsync(id);
+                    ports.Should().NotIntersectWith(selectedPorts.SelectMany(previous => previous));
+                }
+                selectedPorts.Add(ports.ToArray());
+                var container = RespireContainerFixture.BuildContainer(options, ports);
+                container.Created += (_, _) => createdIds.Add(container.Id);
+                return container;
+            });
+            selectedPorts.Count.Should().BeInRange(2, 3);
+            createdIds.Should().HaveCount(selectedPorts.Count);
+            foreach (var id in createdIds.SkipLast(1)) await AssertContainerRemovedAsync(id);
+            await using (var client = await RespireClient.ConnectAsync(fixture.CreateOptions()))
+            {
+                (await client.SetAsync("{retry}:key", "ready")).Should().BeTrue();
+                (await client.GetStringAsync("{retry}:key")).Should().Be("ready");
+            }
+            await fixture.DisposeAsync();
+            await AssertContainerRemovedAsync(createdIds[^1]);
+            using var docker = TestcontainersSettings.OS.DockerEndpointAuthConfig
+                .GetDockerClientBuilder(Guid.NewGuid()).WithTimeout(TimeSpan.FromSeconds(5)).Build();
+            (await docker.Containers.InspectContainerAsync(blocker!.Id)).State.Running.Should().BeTrue();
+        }
+        finally
+        {
+            if (blocker is not null) await blocker.DisposeAsync();
+        }
     }
 
     private static async Task AssertContainerRemovedAsync(string containerId)
