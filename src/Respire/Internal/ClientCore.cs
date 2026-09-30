@@ -125,6 +125,13 @@ internal sealed class ClientCore : IAsyncDisposable
         int slot,
         RespireConnectionStateChange change)
     {
+        if (Cluster is { } router && !router.IsNodeObserved(node))
+        {
+            return;
+        }
+
+        // Flush outside the health/router gates because metrics listeners can run user code.
+        // Membership is checked again under both gates before changing health state.
         if (change.State != RespireConnectionState.Connected)
         {
             ClientCache?.FlushForContinuityLoss();
@@ -165,6 +172,11 @@ internal sealed class ClientCore : IAsyncDisposable
 
     internal void NotifyCommandNodeRetired(RespireConnectionMultiplexer node)
     {
+        if (Cluster?.IsNodeObserved(node) == true)
+        {
+            return;
+        }
+
         ClientCache?.FlushForContinuityLoss();
 
         lock (_stateGate)

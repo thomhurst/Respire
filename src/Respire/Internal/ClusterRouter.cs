@@ -18,7 +18,8 @@ internal sealed class ClusterRouter : IAsyncDisposable
     private readonly ClusterNodeIdentityIndex _identities;
     private readonly Dictionary<RespireConnectionMultiplexer, Action<int, RespireConnectionStateChange>> _nodeStateHandlers = [];
     private readonly Dictionary<RespireConnectionMultiplexer, DedicatedConnectionPool> _dedicatedPools = [];
-    private readonly Dictionary<RespireConnection, DedicatedConnectionPool> _correctionPools = [];
+    // TODO #390: drain correction pools for departed transport/peer identities along with dedicated pools.
+    private readonly Dictionary<CorrectionPoolIdentity, DedicatedConnectionPool> _correctionPools = [];
     private readonly object _nodesGate = new();
     private readonly RespireConnectionMultiplexer?[] _slots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
     private RespireConnectionMultiplexer[] _masters = [];
@@ -1028,10 +1029,12 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
     internal DedicatedConnectionPool GetCorrectionPool(RespireConnection original)
     {
+        var identity = new CorrectionPoolIdentity(original.Multiplexer,
+            original.NetworkPeerAddress ?? original.Host, original.NetworkPeerPort ?? original.Port, original.Host);
         lock (_nodesGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            if (_correctionPools.TryGetValue(original, out var existing))
+            if (_correctionPools.TryGetValue(identity, out var existing))
             {
                 return existing;
             }
@@ -1043,13 +1046,16 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 options = options with { TlsOptions = RespireConnection.CreateTlsOptions(options.TlsOptions, original.Host) };
             }
             var pool = new DedicatedConnectionPool(
-                original.NetworkPeerAddress ?? original.Host,
-                original.NetworkPeerPort ?? original.Port,
+                identity.PeerAddress,
+                identity.PeerPort,
                 options, _options.CreateLogger($"Respire.Cluster.Correction.{original.Host}:{original.Port}"));
-            _correctionPools.Add(original, pool);
+            _correctionPools.Add(identity, pool);
             return pool;
         }
     }
+
+    private readonly record struct CorrectionPoolIdentity(
+        RespireConnectionMultiplexer? Multiplexer, string PeerAddress, int PeerPort, string TlsHost);
 
     private DedicatedConnectionPool GetOrCreateDedicatedPool(RespireEndpoint endpoint)
     {
@@ -1148,7 +1154,8 @@ internal sealed class ClusterRouter : IAsyncDisposable
                             if (!string.IsNullOrEmpty(alias) && alias != "?")
                             {
                                 // CLUSTER SLOTS metadata supplies host names only; all aliases
-                                // share the node's advertised client port.
+                                // share the node's advertised client port. No NAT port mapping
+                                // can be inferred here; reuse requires an established alias transport.
                                 aliases.Add(new RespireEndpoint(alias, (int)port));
                             }
                         }

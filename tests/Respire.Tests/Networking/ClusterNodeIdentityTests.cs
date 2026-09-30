@@ -1,6 +1,8 @@
 using System.Text;
 using Respire.Infrastructure;
 using Respire.Internal;
+using Respire.Networking;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -9,6 +11,75 @@ namespace Respire.Tests.Networking;
 
 public class ClusterNodeIdentityTests
 {
+    [Test]
+    [Arguments(RespireConnectionState.Reconnecting)]
+    [Arguments(RespireConnectionState.Disconnected)]
+    public async Task StaleHealthCallbacksPreserveRepopulatedCache(RespireConnectionState state)
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true, ClientSideCache = new(),
+        });
+        var core = client.Core;
+        var router = core.Cluster!;
+        var original = core.Multiplexer;
+        var replacement = router.GetMultiplexer(new RespireEndpoint("replacement"));
+        router.SetSlotOwner(0, original);
+        router.SetSlotOwner(0, replacement);
+        var cache = core.ClientCache!;
+        RespireKey key = "cached";
+        var token = cache.BeginRead(in key);
+        var value = RespValue.BulkString("value"u8.ToArray());
+        cache.CompleteRead(in token, in value, allowInsert: true);
+        var flushes = cache.GetStatistics().ContinuityFlushes;
+
+        core.NotifyCommandStateChanged(original, 0, state);
+        core.NotifyCommandNodeRetired(replacement);
+
+        await Assert.That(cache.Count).IsEqualTo(1);
+        await Assert.That(cache.GetStatistics().ContinuityFlushes).IsEqualTo(flushes);
+        // A genuine active-transport failure must still invalidate tracked data.
+        core.NotifyCommandStateChanged(replacement, 0, state);
+        await Assert.That(cache.Count).IsEqualTo(0);
+        await Assert.That(cache.GetStatistics().ContinuityFlushes).IsEqualTo(flushes + 1);
+    }
+
+    [Test]
+    public async Task CorrectionPoolsShareTransportAndPeerAcrossConnections()
+    {
+        await using var server = new FakeRespServer(3, FakeRespServer.OkReply);
+        var options = Options(server.Port);
+        await using var primary = await RespireConnectionMultiplexer.CreateAsync(
+            "127.0.0.1", server.Port, connectionCount: 2, options: options.ToConnectionOptions());
+        await using var replacement = await RespireConnectionMultiplexer.CreateAsync(
+            "127.0.0.1", server.Port, options: options.ToConnectionOptions());
+        await using var router = new ClusterRouter(options, primary);
+        var first = primary.GetConnection(0);
+        var second = primary.GetConnection(1);
+        await Assert.That(ReferenceEquals(first, second)).IsFalse();
+
+        var pool = router.GetCorrectionPool(first);
+        await Assert.That(ReferenceEquals(pool, router.GetCorrectionPool(second))).IsTrue();
+        await Assert.That(ReferenceEquals(pool, router.GetCorrectionPool(replacement.GetConnection()))).IsFalse();
+    }
+
+    [Test]
+    public async Task CorrectionPoolsKeepDifferentNetworkPeersSeparate()
+    {
+        await using var oldPeer = new FakeRespServer();
+        await using var newPeer = new FakeRespServer();
+        var options = Options(oldPeer.Port);
+        await using var primary = RespireConnectionMultiplexer.Create("redis.example", options: options.ToConnectionOptions());
+        await using var router = new ClusterRouter(options, primary);
+        await using var first = await RespireConnection.ConnectAsync("127.0.0.1", oldPeer.Port);
+        await using var second = await RespireConnection.ConnectAsync("127.0.0.1", newPeer.Port);
+        // Model successive physical connections resolving the same transport to different peers.
+        first.Multiplexer = primary;
+        second.Multiplexer = primary;
+
+        await Assert.That(ReferenceEquals(router.GetCorrectionPool(first), router.GetCorrectionPool(second))).IsFalse();
+    }
+
     [Test]
     public async Task TrackedCorrectionsRetainTransportAfterEndpointReassignment()
     {
