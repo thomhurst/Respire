@@ -88,6 +88,65 @@ public class SemaphoreTests(RedisTestContainer fixture)
         await Assert.That(() => new RespireSemaphore(client, "invalid", 0)).Throws<ArgumentOutOfRangeException>();
     }
 
+    [Test]
+    public async Task KeyTtlTracksLatestPermitAndPersistsForOwnerReleasedPermits()
+    {
+        await using var client = await ConnectAsync(3);
+        var key = (RespireKey)$"{{{Guid.NewGuid():N}}}:semaphore-ttl";
+        var semaphore = new RespireSemaphore(client, key, capacity: 3);
+        await using var shortPermit = await semaphore.TryAcquireAsync(TimeSpan.FromSeconds(10));
+        await using var longPermit = await semaphore.TryAcquireAsync(TimeSpan.FromSeconds(60));
+        var ttl = await PttlAsync(client, key);
+        await Assert.That(ttl).IsGreaterThan(30_000).And.IsLessThanOrEqualTo(60_000);
+
+        await using var persistent = await semaphore.TryAcquireAsync();
+        await Assert.That(await PttlAsync(client, key)).IsEqualTo(-1);
+        await Assert.That(await persistent.Permit.ReleaseAsync()).IsTrue();
+        ttl = await PttlAsync(client, key);
+        await Assert.That(ttl).IsGreaterThan(30_000).And.IsLessThanOrEqualTo(60_000);
+
+        await Assert.That(await longPermit.Permit.ReleaseAsync()).IsTrue();
+        await Assert.That(await PttlAsync(client, key)).IsLessThanOrEqualTo(10_000);
+        await Assert.That(await shortPermit.Permit.ReleaseAsync()).IsTrue();
+        await Assert.That(await PttlAsync(client, key)).IsEqualTo(-2);
+    }
+
+    [Test]
+    public async Task CanceledVerificationKeepsPermit()
+    {
+        await using var client = await ConnectAsync(3);
+        var key = (RespireKey)$"{{{Guid.NewGuid():N}}}:semaphore-verify";
+        var semaphore = new RespireSemaphore(client, key, capacity: 1);
+        await using var permit = await semaphore.TryAcquireAsync(TimeSpan.FromSeconds(20));
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        await Assert.That(async () => await permit.Permit.VerifyStillHeldAsync(canceled.Token))
+            .Throws<OperationCanceledException>();
+        await Assert.That(permit.Permit.IsReleased).IsFalse();
+        await Assert.That(await permit.Permit.VerifyStillHeldAsync()).IsTrue();
+        await using (var blocked = await semaphore.TryAcquireAsync())
+            await Assert.That(blocked.Acquired).IsFalse();
+    }
+
+    [Test]
+    public async Task MaximumExpiryDoesNotOverflowLocalEstimate()
+    {
+        await using var client = await ConnectAsync(3);
+        var key = (RespireKey)$"{{{Guid.NewGuid():N}}}:semaphore-max-expiry";
+        var semaphore = new RespireSemaphore(client, key, capacity: 1);
+        await using var permit = await semaphore.TryAcquireAsync(TimeSpan.MaxValue);
+        await Assert.That(permit.Acquired).IsTrue();
+        await Assert.That(permit.Permit.RemainingEstimate!.Value).IsGreaterThan(TimeSpan.FromDays(365 * 100));
+        await Assert.That(await permit.Permit.ResetExpiryAsync(TimeSpan.MaxValue)).IsTrue();
+        await Assert.That(await permit.Permit.ReleaseAsync()).IsTrue();
+    }
+
+    private static async Task<long> PttlAsync(RespireClient client, RespireKey key)
+    {
+        using var ttl = await client.ExecuteAsync(RespireCommands.Key.PTTL, (RespireValue)key);
+        return ttl.AsInteger();
+    }
+
     private ValueTask<RespireClient> ConnectAsync(int protocol) => RespireClient.ConnectAsync(new RespireOptions
     {
         Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,

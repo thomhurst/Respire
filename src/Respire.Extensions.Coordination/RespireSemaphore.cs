@@ -36,9 +36,7 @@ public sealed class RespireSemaphore
         TimeSpan? expiry = null, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var milliseconds = expiry?.Ticks / TimeSpan.TicksPerMillisecond ?? 0;
-        if (expiry.HasValue && milliseconds <= 0)
-            throw new ArgumentOutOfRangeException(nameof(expiry), "Permit expiry must be at least one millisecond.");
+        var milliseconds = ToMilliseconds(expiry, nameof(expiry));
         return TryAcquireCoreAsync(milliseconds, cancellationToken);
     }
 
@@ -62,7 +60,7 @@ public sealed class RespireSemaphore
         if (!acquired) return default;
 
         var completed = Stopwatch.GetTimestamp();
-        TimeSpan? expiry = milliseconds == 0 ? null : TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond);
+        var expiry = FromMilliseconds(milliseconds);
         var remaining = expiry - Stopwatch.GetElapsedTime(started, completed);
         if (remaining.HasValue && remaining.Value <= TimeSpan.Zero)
         {
@@ -92,20 +90,28 @@ public sealed class RespireSemaphore
         catch (Exception) { }
     }
 
-    internal static readonly RespireScript AcquireScript = RespireScript.Create("""
+    // Shared by every script: reads Redis server time, prunes expired permits, and defines
+    // the key-TTL refresh. The capacity marker is the only member scored -inf and persistent
+    // permits score +inf, so each lookup touches one end of the sorted set in O(log N).
+    private const string ScriptPrelude = """
         local t = redis.call('TIME')
         local now = t[1] * 1000 + math.floor(t[2] / 1000)
         redis.call('ZREMRANGEBYSCORE', KEYS[1], 1, now)
-
-        local requestedCapacity = 'C:' .. ARGV[1]
-        local members = redis.call('ZRANGE', KEYS[1], 0, -1)
-        local storedCapacity = nil
-        for _, member in ipairs(members) do
-            if string.sub(member, 1, 2) == 'C:' then
-                storedCapacity = member
-                break
+        local function refreshTtl()
+            local top = redis.call('ZREVRANGE', KEYS[1], 0, 0, 'WITHSCORES')
+            local latest = tonumber(top[2])
+            if latest == math.huge then
+                redis.call('PERSIST', KEYS[1])
+            elseif latest and latest > 0 then
+                redis.call('PEXPIREAT', KEYS[1], math.ceil(latest))
             end
         end
+
+        """;
+
+    internal static readonly RespireScript AcquireScript = RespireScript.Create(ScriptPrelude + """
+        local requestedCapacity = 'C:' .. ARGV[1]
+        local storedCapacity = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', '-inf', 'LIMIT', 0, 1)[1]
         if storedCapacity and storedCapacity ~= requestedCapacity then
             if redis.call('ZCARD', KEYS[1]) > 1 then
                 return redis.error_reply('ERR semaphore capacity cannot change while permits are active')
@@ -121,25 +127,11 @@ public sealed class RespireSemaphore
         local score = expiry == 0 and math.huge or now + expiry
         local added = redis.call('ZADD', KEYS[1], 'NX', score, 'P:' .. ARGV[2])
         if added == 0 then return 0 end
-
-        local entries = redis.call('ZRANGE', KEYS[1], 0, -1, 'WITHSCORES')
-        local latest = 0
-        for i = 1, #entries, 2 do
-            local current = tonumber(entries[i + 1])
-            if current == math.huge then
-                redis.call('PERSIST', KEYS[1])
-                return 1
-            end
-            if current > latest then latest = current end
-        end
-        if latest > 0 then redis.call('PEXPIREAT', KEYS[1], math.ceil(latest)) end
+        refreshTtl()
         return 1
         """);
 
-    internal static readonly RespireScript RenewScript = RespireScript.Create("""
-        local t = redis.call('TIME')
-        local now = t[1] * 1000 + math.floor(t[2] / 1000)
-        redis.call('ZREMRANGEBYSCORE', KEYS[1], 1, now)
+    internal static readonly RespireScript RenewScript = RespireScript.Create(ScriptPrelude + """
         local member = 'P:' .. ARGV[1]
         if not redis.call('ZSCORE', KEYS[1], member) then
             if redis.call('ZCARD', KEYS[1]) <= 1 then redis.call('DEL', KEYS[1]) end
@@ -148,53 +140,36 @@ public sealed class RespireSemaphore
         local expiry = tonumber(ARGV[2])
         local score = expiry == 0 and math.huge or now + expiry
         redis.call('ZADD', KEYS[1], 'XX', score, member)
-
-        local entries = redis.call('ZRANGE', KEYS[1], 0, -1, 'WITHSCORES')
-        local latest = 0
-        for i = 1, #entries, 2 do
-            local current = tonumber(entries[i + 1])
-            if current == math.huge then
-                redis.call('PERSIST', KEYS[1])
-                return 1
-            end
-            if current > latest then latest = current end
-        end
-        if latest > 0 then redis.call('PEXPIREAT', KEYS[1], math.ceil(latest)) end
+        refreshTtl()
         return 1
         """);
 
-    internal static readonly RespireScript ReleaseScript = RespireScript.Create("""
-        local t = redis.call('TIME')
-        local now = t[1] * 1000 + math.floor(t[2] / 1000)
-        redis.call('ZREMRANGEBYSCORE', KEYS[1], 1, now)
+    internal static readonly RespireScript ReleaseScript = RespireScript.Create(ScriptPrelude + """
         local removed = redis.call('ZREM', KEYS[1], 'P:' .. ARGV[1])
         if redis.call('ZCARD', KEYS[1]) <= 1 then
             redis.call('DEL', KEYS[1])
-            return removed
+        else
+            refreshTtl()
         end
-
-        local entries = redis.call('ZRANGE', KEYS[1], 0, -1, 'WITHSCORES')
-        local latest = 0
-        for i = 1, #entries, 2 do
-            local current = tonumber(entries[i + 1])
-            if current == math.huge then
-                redis.call('PERSIST', KEYS[1])
-                return removed
-            end
-            if current > latest then latest = current end
-        end
-        if latest > 0 then redis.call('PEXPIREAT', KEYS[1], math.ceil(latest)) end
         return removed
         """);
 
-    internal static readonly RespireScript VerifyScript = RespireScript.Create("""
-        local t = redis.call('TIME')
-        local now = t[1] * 1000 + math.floor(t[2] / 1000)
-        redis.call('ZREMRANGEBYSCORE', KEYS[1], 1, now)
+    internal static readonly RespireScript VerifyScript = RespireScript.Create(ScriptPrelude + """
         local held = redis.call('ZSCORE', KEYS[1], 'P:' .. ARGV[1])
         if not held and redis.call('ZCARD', KEYS[1]) <= 1 then redis.call('DEL', KEYS[1]) end
         return held and 1 or 0
         """);
+
+    internal static long ToMilliseconds(TimeSpan? expiry, string parameterName)
+    {
+        var milliseconds = expiry?.Ticks / TimeSpan.TicksPerMillisecond ?? 0;
+        if (expiry.HasValue && milliseconds <= 0)
+            throw new ArgumentOutOfRangeException(parameterName, "Permit expiry must be at least one millisecond.");
+        return milliseconds;
+    }
+
+    internal static TimeSpan? FromMilliseconds(long milliseconds)
+        => milliseconds == 0 ? null : TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond);
 }
 
 /// <summary>The result of an immediate distributed semaphore acquisition.</summary>
@@ -270,23 +245,19 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     public bool IsReleased => Volatile.Read(ref _released) != 0 || RemainingEstimate == TimeSpan.Zero;
 
     /// <summary>Checks whether this owner still holds an active permit on Redis.</summary>
+    /// <remarks>
+    /// Returns false once the permit is known to be released, lost, or locally expired. The check does
+    /// not give up ownership: when it fails or is canceled, the exception propagates and the permit
+    /// stays held, so callers can retry.
+    /// </remarks>
     public async ValueTask<bool> VerifyStillHeldAsync(CancellationToken cancellationToken = default)
     {
         if (IsReleased) return false;
-        try
-        {
-            using var response = await _client.Scripts.ExecuteAsync(
-                RespireSemaphore.VerifyScript, [Key], [_owner.Bytes], cancellationToken).ConfigureAwait(false);
-            var held = response.AsInteger() == 1;
-            if (!held) Interlocked.Exchange(ref _released, 1);
-            return held;
-        }
-        catch
-        {
-            Interlocked.Exchange(ref _released, 1);
-            await ReleaseBestEffortAsync().ConfigureAwait(false);
-            throw;
-        }
+        using var response = await _client.Scripts.ExecuteAsync(
+            RespireSemaphore.VerifyScript, [Key], [_owner.Bytes], cancellationToken).ConfigureAwait(false);
+        var held = response.AsInteger() == 1;
+        if (!held) Interlocked.Exchange(ref _released, 1);
+        return held;
     }
 
     /// <summary>Renews this permit or changes it between expiring and owner-released modes.</summary>
@@ -294,9 +265,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
     /// <param name="cancellationToken">Cancels waiting and the Redis command.</param>
     public async ValueTask<bool> ResetExpiryAsync(TimeSpan? expiry, CancellationToken cancellationToken = default)
     {
-        var milliseconds = expiry?.Ticks / TimeSpan.TicksPerMillisecond ?? 0;
-        if (expiry.HasValue && milliseconds <= 0)
-            throw new ArgumentOutOfRangeException(nameof(expiry), "Permit expiry must be at least one millisecond.");
+        var milliseconds = RespireSemaphore.ToMilliseconds(expiry, nameof(expiry));
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -307,7 +276,7 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
                 using var response = await _client.Scripts.ExecuteAsync(
                     RespireSemaphore.RenewScript, [Key], [_owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
                 var completed = Stopwatch.GetTimestamp();
-                TimeSpan? requestedExpiry = milliseconds == 0 ? null : TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond);
+                var requestedExpiry = RespireSemaphore.FromMilliseconds(milliseconds);
                 var remaining = requestedExpiry - Stopwatch.GetElapsedTime(started, completed);
                 if (response.AsInteger() == 1 && (!remaining.HasValue || remaining.Value > TimeSpan.Zero))
                 {
@@ -333,7 +302,11 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         }
     }
 
-    /// <summary>Releases this permit only; repeated calls return false.</summary>
+    /// <summary>Releases this permit only.</summary>
+    /// <returns>
+    /// True when this call removed the permit from Redis. False on repeated calls, when the permit
+    /// already expired, or when a failed renewal or a verification that found it gone marked it lost.
+    /// </returns>
     public async ValueTask<bool> ReleaseAsync(CancellationToken cancellationToken = default)
     {
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -375,6 +348,11 @@ public sealed class RespireSemaphorePermit : IAsyncDisposable
         catch (Exception) { }
     }
 
+    // Saturates below long.MaxValue, which means "no expiry", so a centuries-long expiry cannot
+    // overflow after Redis has already accepted the permit.
     private static long AddTimestampDuration(long timestamp, TimeSpan duration)
-        => checked(timestamp + (long)((decimal)duration.Ticks * Stopwatch.Frequency / TimeSpan.TicksPerSecond));
+    {
+        var result = timestamp + (decimal)duration.Ticks * Stopwatch.Frequency / TimeSpan.TicksPerSecond;
+        return result >= long.MaxValue ? long.MaxValue - 1 : (long)result;
+    }
 }

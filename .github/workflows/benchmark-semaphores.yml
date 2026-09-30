@@ -46,6 +46,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # The baseline build compiles the candidate's semaphore sources, so they may only use
+          # internals (such as RespireLock.NewToken) that already exist on the base branch.
           cp candidate/benchmarks/Respire.Benchmarks/SemaphoreBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
           cp candidate/src/Respire.Extensions.Coordination/RespireSemaphore.cs baseline/src/Respire.Extensions.Coordination/
           for phase in validation baseline-a candidate baseline-b; do
