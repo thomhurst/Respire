@@ -46,6 +46,7 @@ public sealed partial class RespireFakeServer
         if (index < 0) index += list.Count;
         if (index < 0 || index >= list.Count)
             return replace ? FakeReply.Error("ERR index out of range") : FakeReply.Null;
+        // The bounds check keeps every cast within the managed list's int range.
         if (!replace) return FakeReply.Bulk(list[(int)index]);
         list[(int)index] = args[3];
         return FakeReply.Ok;
@@ -61,6 +62,7 @@ public sealed partial class RespireFakeServer
         if (stop < 0) stop += list.Count;
         start = Math.Max(0, start);
         stop = Math.Min(list.Count - 1, stop);
+        // A nonempty range lies inside the int-sized list; empty ranges never cast start.
         var count = stop < start ? 0 : (int)(stop - start + 1);
         if (!trim)
         {

@@ -53,6 +53,8 @@
   binary data, and a controllable expiry clock. Unsupported features fail explicitly.
   The internal stream seam keeps the ordinary TCP path direct. See the
   [testing guide](../website/docs/guides/in-memory-testing.md) for supported commands and limits.
+- Fake-server shutdown cancels pending reads and backpressured replies, then joins each
+  connection loop before that loop completes its pipes, preserving unexpected failures.
 
 ### Hot-key tracking
 
