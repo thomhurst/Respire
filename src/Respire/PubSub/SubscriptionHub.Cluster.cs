@@ -12,6 +12,7 @@ internal sealed partial class SubscriptionHub
     // Identity is the router's generation, not merely host:port. A replacement at the same
     // endpoint must not inherit the retired primary's subscription transport.
     private readonly Dictionary<RespireConnectionMultiplexer, PrimarySubscriptionConnection> _primaryConnections = [];
+    private readonly HashSet<PrimarySubscriptionConnection> _askConnections = [];
     private readonly ByteRouteDictionary<PrimarySubscriptionConnection> _shardedOwners = new();
     private readonly HashSet<RespireEndpoint> _shardedRecoveryEndpoints = [];
     private TaskCompletionSource? _shardedRecovery;
@@ -19,9 +20,10 @@ internal sealed partial class SubscriptionHub
     private bool _observingClusterTopology;
     private RespireReconnectLimitException? _shardedExhaustion;
 
-    private sealed class PrimarySubscriptionConnection(RespireConnectionMultiplexer owner)
+    private sealed class PrimarySubscriptionConnection(RespireConnectionMultiplexer owner, bool isAskConnection = false)
     {
         internal readonly RespireConnectionMultiplexer Owner = owner;
+        internal readonly bool IsAskConnection = isAskConnection;
         internal RespireConnection? Connection;
         internal readonly HashSet<RespireChannel> Confirmed = [];
         internal RespireChannel? ExpectedUnsubscribe;
@@ -117,7 +119,9 @@ internal sealed partial class SubscriptionHub
         {
             for (var redirect = 0; ; redirect++)
             {
-                var primary = await GetPrimaryConnectionAsync(commandConnection.Multiplexer!, cancellationToken).ConfigureAwait(false);
+                var primary = ask
+                    ? await CreatePrimaryConnectionAsync(commandConnection.Multiplexer!, isAskConnection: true, cancellationToken).ConfigureAwait(false)
+                    : await GetPrimaryConnectionAsync(commandConnection.Multiplexer!, cancellationToken).ConfigureAwait(false);
                 PrimarySubscriptionConnection? previous;
                 lock (_gate)
                 {
@@ -153,10 +157,14 @@ internal sealed partial class SubscriptionHub
                 {
                     commandConnection = await core.Cluster.GetRedirectConnectionAsync(error, primary.Connection!, cancellationToken, slot)
                         .ConfigureAwait(false);
+                    if (primary.IsAskConnection)
+                        await ClosePrimaryAsync(primary).ConfigureAwait(false);
                     ask = error.Code == RespireErrorCodes.Ask;
                 }
                 catch (RespireServerException)
                 {
+                    if (primary.IsAskConnection)
+                        await ClosePrimaryAsync(primary).ConfigureAwait(false);
                     lock (_gate)
                         if (_shardedOwners.TryGetValue(name, out var owner) && ReferenceEquals(owner, primary)
                             && !primary.Confirmed.Contains(name)) _shardedOwners.Remove(name);
@@ -189,7 +197,13 @@ internal sealed partial class SubscriptionHub
             if (previous?.Connection is { IsConnected: true }) return previous;
         }
         if (previous is not null) await ClosePrimaryAsync(previous).ConfigureAwait(false);
-        var primary = new PrimarySubscriptionConnection(owner);
+        return await CreatePrimaryConnectionAsync(owner, isAskConnection: false, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<PrimarySubscriptionConnection> CreatePrimaryConnectionAsync(
+        RespireConnectionMultiplexer owner, bool isAskConnection, CancellationToken cancellationToken)
+    {
+        var primary = new PrimarySubscriptionConnection(owner, isAskConnection);
         var options = core.Options.ToConnectionOptions((in RespValue value) => OnPrimaryPush(primary, in value)) with
         {
             SubscriptionConfirmationHandler = (in RespValue value) => OnSubscriptionConfirmation(0, in value, primary),
@@ -197,7 +211,11 @@ internal sealed partial class SubscriptionHub
         };
         primary.Connection = await RespireConnection.ConnectAsync(owner.Host, owner.Port, options, core.Logger, cancellationToken)
             .ConfigureAwait(false);
-        lock (_gate) _primaryConnections.Add(owner, primary);
+        lock (_gate)
+        {
+            if (isAskConnection) _askConnections.Add(primary);
+            else _primaryConnections.Add(owner, primary);
+        }
         _ = WatchPrimaryAsync(primary);
         return primary;
     }
@@ -345,7 +363,7 @@ internal sealed partial class SubscriptionHub
         lock (_gate)
         {
             var used = _shardedOwners.Values.ToHashSet();
-            unused = _primaryConnections.Values.Where(primary => !used.Contains(primary)).ToArray();
+            unused = _primaryConnections.Values.Concat(_askConnections).Where(primary => !used.Contains(primary)).ToArray();
         }
         foreach (var primary in unused) await ClosePrimaryAsync(primary).ConfigureAwait(false);
     }
@@ -356,6 +374,7 @@ internal sealed partial class SubscriptionHub
         {
             if (_primaryConnections.TryGetValue(primary.Owner, out var current) && ReferenceEquals(current, primary))
                 _primaryConnections.Remove(primary.Owner);
+            _askConnections.Remove(primary);
             foreach (var name in primary.Confirmed)
                 if (_shardedOwners.TryGetValue(name, out var owner) && ReferenceEquals(owner, primary))
                     MarkShardedInterruptedLocked(name);
@@ -370,8 +389,9 @@ internal sealed partial class SubscriptionHub
         PrimarySubscriptionConnection[] primaries;
         lock (_gate)
         {
-            primaries = _primaryConnections.Values.ToArray();
+            primaries = _primaryConnections.Values.Concat(_askConnections).ToArray();
             _primaryConnections.Clear();
+            _askConnections.Clear();
             _shardedOwners.Clear();
             foreach (var primary in primaries) primary.Confirmed.Clear();
         }

@@ -99,6 +99,28 @@ public class ClusterShardedPubSubTests
     }
 
     [Test]
+    public async Task Resp2AskUsesSeparateConnectionWhenTargetAlreadyHasSubscriptions()
+    {
+        await using var cluster = new Cluster(2);
+        cluster.SecondOverride = (_, command) => command == "SSUBSCRIBE foo"
+            ? Encoding.ASCII.GetBytes($"-ASK {ClusterHash.GetSlot("foo")} 127.0.0.1:{cluster.First.Port}\r\n") : null;
+        await using var client = cluster.CreateClient();
+        await using var active = await client.SubscribeShardedAsync("bar");
+        await using var redirected = await client.SubscribeShardedAsync("foo");
+
+        var commands = cluster.First.ReceivedCommands;
+        var activeSubscribe = commands.ToList().IndexOf("SSUBSCRIBE bar");
+        var asking = commands.ToList().IndexOf("ASKING");
+        var redirectedSubscribe = commands.ToList().IndexOf("SSUBSCRIBE foo");
+        var ids = cluster.First.ReceivedConnectionIds;
+        await Assert.That(activeSubscribe).IsGreaterThanOrEqualTo(0);
+        await Assert.That(asking).IsGreaterThanOrEqualTo(0);
+        await Assert.That(redirectedSubscribe).IsGreaterThan(asking);
+        await Assert.That(ids[activeSubscribe]).IsNotEqualTo(ids[asking]);
+        await Assert.That(ids[asking]).IsEqualTo(ids[redirectedSubscribe]);
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task TopologyMoveResubscribesAndPublishesGapBeforeSameReadMessage(int protocol)
