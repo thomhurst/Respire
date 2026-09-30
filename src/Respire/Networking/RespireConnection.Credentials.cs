@@ -181,9 +181,28 @@ internal sealed partial class RespireConnection
                     AbortExpired();
                     return false;
                 }
-                var delay = retry ? options.CredentialRefreshRetryDelay : remaining - options.CredentialRefreshBeforeExpiry;
-                if (delay <= TimeSpan.Zero) return true;
-                await Task.Delay(Min(delay, remaining, TimeSpan.FromDays(1)), clock, _stop.Token).ConfigureAwait(false);
+                if (retry)
+                {
+                    var retryDelay = options.CredentialRefreshRetryDelay;
+                    while (retryDelay > TimeSpan.Zero)
+                    {
+                        remaining = expiry - clock.GetUtcNow();
+                        if (remaining <= TimeSpan.Zero)
+                        {
+                            AbortExpired();
+                            return false;
+                        }
+                        var delay = Min(retryDelay, remaining, TimeSpan.FromDays(1));
+                        await Task.Delay(delay, clock, _stop.Token).ConfigureAwait(false);
+                        if (!connection.IsAcceptingCommands) return false;
+                        retryDelay -= delay;
+                    }
+                    return true;
+                }
+
+                var refreshDelay = remaining - options.CredentialRefreshBeforeExpiry;
+                if (refreshDelay <= TimeSpan.Zero) return true;
+                await Task.Delay(Min(refreshDelay, remaining, TimeSpan.FromDays(1)), clock, _stop.Token).ConfigureAwait(false);
                 if (!connection.IsAcceptingCommands) return false;
                 remaining = expiry - clock.GetUtcNow();
                 if (remaining <= TimeSpan.Zero)
@@ -191,7 +210,7 @@ internal sealed partial class RespireConnection
                     AbortExpired();
                     return false;
                 }
-                if (retry || remaining <= options.CredentialRefreshBeforeExpiry) return true;
+                if (remaining <= options.CredentialRefreshBeforeExpiry) return true;
             }
             return false;
         }

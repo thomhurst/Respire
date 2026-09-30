@@ -897,6 +897,36 @@ public class CredentialProviderTests
     }
 
     [Test]
+    public async Task RetryDelayLongerThanOneDayIsPreserved()
+    {
+        var clock = new Clock();
+        var provider = new Provider
+        {
+            Current = new("user", "first", clock.GetUtcNow().AddDays(10)),
+        };
+        await using var server = Server();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            Options(server, provider, clock) with
+            {
+                CredentialRefreshBeforeExpiry = TimeSpan.FromDays(5),
+                CredentialRefreshRetryDelay = TimeSpan.FromDays(3),
+            });
+
+        provider.Failure = new InvalidOperationException("provider unavailable");
+        for (var day = 0; day < 5; day++)
+        {
+            await UntilAsync(() => clock.HasDelay(TimeSpan.FromDays(1)));
+            clock.Advance(TimeSpan.FromDays(1));
+        }
+        await UntilAsync(() => provider.Calls == 2 && clock.HasDelay(TimeSpan.FromDays(1)));
+
+        clock.Advance(TimeSpan.FromDays(1));
+        await UntilAsync(() => clock.HasDelay(TimeSpan.FromDays(1)));
+        await Assert.That(provider.Calls).IsEqualTo(2);
+        await Assert.That(connection.IsConnected).IsTrue();
+    }
+
+    [Test]
     [Arguments(RespProtocol.Resp2)]
     [Arguments(RespProtocol.Auto)]
     public async Task SubscriptionsRequireStrictResp3ForRenewableCredentials(RespProtocol protocol)
