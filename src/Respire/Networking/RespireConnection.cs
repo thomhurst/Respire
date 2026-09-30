@@ -157,7 +157,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         int port,
         RespireConnectionOptions? options = null,
         ILogger? logger = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool armHandshakeDeadline = true)
     {
         options ??= RespireConnectionOptions.Default;
         if (options.ResponseTimeout is { } invalidTimeout && invalidTimeout < MinWatchdogDelay)
@@ -217,7 +218,7 @@ internal sealed class RespireConnection : IAsyncDisposable
         var connection = new RespireConnection(socket, tlsStream, host, port, options, logger);
         try
         {
-            await connection.HandshakeAsync(options, cancellationToken).ConfigureAwait(false);
+            await connection.HandshakeAsync(options, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
         }
         catch
         {
@@ -326,36 +327,37 @@ internal sealed class RespireConnection : IAsyncDisposable
     /// Runs HELLO/AUTH/CLIENT SETNAME through the normal send path before the connection is
     /// handed out, so every later command runs on an authenticated, protocol-negotiated stream.
     /// </summary>
-    private async Task HandshakeAsync(RespireConnectionOptions options, CancellationToken cancellationToken)
+    private async Task HandshakeAsync(RespireConnectionOptions options, CancellationToken cancellationToken,
+        bool armCommandDeadline)
     {
         List<(string Step, ValueTask<RespValue> Reply)>? pending = null;
         if (options.UseResp3)
         {
             (pending ??= new(3)).Add(("HELLO", SendAsync(
-                new Commands.HelloCommand(options.Username, options.Password), cancellationToken)));
+                new Commands.HelloCommand(options.Username, options.Password), cancellationToken, armCommandDeadline: armCommandDeadline)));
         }
         else if (options.Password is not null)
         {
             (pending ??= new(3)).Add(("AUTH", SendAsync(
-                new Commands.AuthCommand(options.Username, options.Password), cancellationToken)));
+                new Commands.AuthCommand(options.Username, options.Password), cancellationToken, armCommandDeadline: armCommandDeadline)));
         }
 
         if (options.ClientName is not null)
         {
             (pending ??= new(3)).Add(("CLIENT SETNAME", SendAsync(
-                new Commands.ClientSetNameCommand(options.ClientName), cancellationToken)));
+                new Commands.ClientSetNameCommand(options.ClientName), cancellationToken, armCommandDeadline: armCommandDeadline)));
         }
 
         if (options.Database != 0)
         {
             (pending ??= new(3)).Add(("SELECT", SendAsync(
-                new Commands.SelectCommand(options.Database), cancellationToken)));
+                new Commands.SelectCommand(options.Database), cancellationToken, armCommandDeadline: armCommandDeadline)));
         }
 
         if (options.EnableClientTracking)
         {
             (pending ??= new(4)).Add(("CLIENT TRACKING", SendAsync(
-                new Commands.ClientTrackingCommand(), cancellationToken)));
+                new Commands.ClientTrackingCommand(), cancellationToken, armCommandDeadline: armCommandDeadline)));
         }
 
         if (pending is null)

@@ -13,6 +13,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
 {
     private RespireClient? _client;
     private RespireDistributedCache? _cache;
+    // TUnit creates a test instance per case; retain its pause only for failure cleanup.
     private Task? _serverPause;
 
     private RespireClient Client => _client!;
@@ -1227,7 +1228,9 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         };
         var originalClientId = (await timeoutClient.AcquireConnectionAsync(CancellationToken.None)).ServerClientId;
 
-        var stallObserved = await StartServerPauseAsync(500);
+        // A cold fencing connection must complete SELECT while the ordinary 200ms
+        // command deadline expires inside this pause; the kill barrier must still complete.
+        var stallObserved = await StartServerPauseAsync(1500);
 
         RespireTimeoutException? failure = null;
         try

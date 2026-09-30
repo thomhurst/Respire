@@ -2869,7 +2869,9 @@ public sealed partial class RespireClient : IRespireClient
         var pool = core.Cluster is { } cluster
             ? cluster.GetDedicatedPool(identity.Endpoint)
             : core.DedicatedPool;
-        var control = await pool.RentAsync(CancellationToken.None).ConfigureAwait(false);
+        // A cold control connection may need SELECT/AUTH while the server is paused.
+        // The fence cannot abandon those commands before it reaches CLIENT KILL.
+        var control = await pool.RentAsync(CancellationToken.None, armHandshakeDeadline: false).ConfigureAwait(false);
         try
         {
             // The kill is an ordering barrier; once owed it must not be abandonable, so no

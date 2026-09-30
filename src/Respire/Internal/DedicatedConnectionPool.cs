@@ -19,11 +19,13 @@ internal sealed class DedicatedConnectionPool(
 
     private readonly LockFreeStack<RespireConnection> _idle = new(MaxIdle);
     private readonly ConcurrentDictionary<RespireConnection, byte> _rented = new();
-    private volatile bool _disposed;
+    private readonly CancellationTokenSource _lifetimeCancellation = new();
+    private int _disposed;
 
-    public async ValueTask<RespireConnection> RentAsync(CancellationToken cancellationToken)
+    public async ValueTask<RespireConnection> RentAsync(
+        CancellationToken cancellationToken, bool armHandshakeDeadline = true)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 
         while (_idle.TryPop(out var pooled))
         {
@@ -35,7 +37,12 @@ internal sealed class DedicatedConnectionPool(
             await pooled.DisposeAsync().ConfigureAwait(false);
         }
 
-        var connection = await RespireConnection.ConnectAsync(host, port, options, logger, cancellationToken).ConfigureAwait(false);
+        // Connecting sockets are not in _rented yet. Disposal must also cancel their
+        // handshakes, including a correction fence with no ordinary command deadline.
+        using var connectCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, _lifetimeCancellation.Token);
+        var connection = await RespireConnection.ConnectAsync(
+            host, port, options, logger, connectCancellation.Token, armHandshakeDeadline).ConfigureAwait(false);
         return Track(connection);
     }
 
@@ -45,7 +52,7 @@ internal sealed class DedicatedConnectionPool(
 
         // Disposal may have swept _rented between the entry check and this registration; if the
         // flag is set now, this connection is ours to clean up.
-        if (_disposed && _rented.TryRemove(connection, out _))
+        if (Volatile.Read(ref _disposed) != 0 && _rented.TryRemove(connection, out _))
         {
             _ = connection.DisposeAsync().AsTask();
             throw new ObjectDisposedException(nameof(DedicatedConnectionPool));
@@ -58,14 +65,14 @@ internal sealed class DedicatedConnectionPool(
     public void Return(RespireConnection connection)
     {
         _rented.TryRemove(connection, out _);
-        if (_disposed || !connection.IsConnected || !_idle.TryPush(connection))
+        if (Volatile.Read(ref _disposed) != 0 || !connection.IsConnected || !_idle.TryPush(connection))
         {
             _ = connection.DisposeAsync().AsTask();
             return;
         }
 
         // Disposal may have drained the idle stack just before the push above landed.
-        if (_disposed)
+        if (Volatile.Read(ref _disposed) != 0)
         {
             DrainIdle();
         }
@@ -88,7 +95,10 @@ internal sealed class DedicatedConnectionPool(
 
     public async ValueTask DisposeAsync()
     {
-        _disposed = true;
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+        _lifetimeCancellation.Cancel();
+        _lifetimeCancellation.Dispose();
         while (_idle.TryPop(out var connection))
         {
             await connection.DisposeAsync().ConfigureAwait(false);
