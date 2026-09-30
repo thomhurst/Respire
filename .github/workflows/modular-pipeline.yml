@@ -51,12 +51,3 @@ jobs:
           PULL_REQUEST_BRANCH: ${{ github.event.pull_request.head.ref }}
           PUBLISH_PACKAGES: ${{ inputs.publish-packages }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload unit test diagnostics
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: pipeline-unit-test-diagnostics
-          path: artifacts/unit-tests/
-          if-no-files-found: ignore
-          retention-days: 7

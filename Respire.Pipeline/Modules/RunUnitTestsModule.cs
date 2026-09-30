@@ -29,8 +29,6 @@ public class RunUnitTestsModule : Module<CommandResult[]>
         };
 
         var results = new List<CommandResult>();
-        var resultsDirectory = Path.GetFullPath("../artifacts/unit-tests");
-        Directory.CreateDirectory(resultsDirectory);
         
         foreach (var project in testProjects)
         {
@@ -38,12 +36,7 @@ public class RunUnitTestsModule : Module<CommandResult[]>
             {
                 Project = project,
                 Configuration = "Release",
-                NoBuild = true,
-                ResultsDirectory = resultsDirectory,
-                // HangDump measures time without test activity, not total suite duration.
-                // Capture the stalled test sequence and stacks before the module's
-                // outer timeout terminates the process without useful diagnostics.
-                Arguments = ["--hangdump", "--hangdump-timeout", "2m", "--hangdump-type", "Mini", "--report-trx"]
+                NoBuild = true
             }, cancellationToken: cancellationToken);
             
             results.Add(result);
