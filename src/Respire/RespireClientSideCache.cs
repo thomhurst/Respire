@@ -338,7 +338,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         return BeginRead(in key);
     }
 
-    private bool CanTrack(in RespireKey key)
+    internal bool CanTrack(in RespireKey key)
         => _broadcastPrefixes.Contains(in key);
 
     private bool CanTrackAll(RespireKey[] keys)

@@ -68,7 +68,7 @@ which it can prove the full dependency set:
 
 Typed APIs, catalog `ExecuteAsync`, interpolated commands, and `GetLeaseAsync` use the same policy.
 Typed `GET` and `MGET` retain optimized per-key storage: one entry serves every typed GET
-shape and typed MGET fetches only misses. Raw GET/MGET retain their exact-query cache identities.
+shape and typed MGET fetches only misses. Raw GET/MGET retain exact-query identities by default; coalescing uses the typed per-key entries.
 With `ReuseHashFields = true`, immediate HMGET (typed, catalog, string, or interpolated) uses HGET identities for individual
 fields and sends only misses in one HMGET. Cached nulls, field order, and duplicates are
 preserved; raw arguments support binary fields. The entire returned array is validated before
@@ -79,7 +79,11 @@ can contain values read at different times; they are not atomic server snapshots
 The option defaults to false because per-field entries and independently owned responses cost
 more allocations and CPU than an exact-query entry for small responses. The default HMGET path
 and other replies are stored by exact command invocation, including command name and ordered
-wire-equivalent arguments.
+wire-equivalent arguments. With both options enabled, an identical physical hash key and ordered
+missing-field list share one HMGET producer. Each waiter merges the owned reply into its own
+cached values and output indexes. Different missing lists proceed independently. The existing
+coordinator detaches canceled waiters and ends joining on invalidation or continuity loss.
+Hashes outside broadcast coverage use exact-query handling without per-field lookup overhead.
 
 Commands marked with nondeterministic output (`DUMP`, relative TTL, the core cursor scans), random
 commands, probabilistic structures, blocking reads, scripts/functions, time series, Search,

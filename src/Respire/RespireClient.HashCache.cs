@@ -45,6 +45,24 @@ public sealed partial class RespireClient
         RespireKey key, RespireValue[] fields, int[] missingIndexes, RespValue[] result,
         ClientSideCacheCoordinator cache, CancellationToken cancellationToken)
     {
+        // Share only the missing wire fields. Each waiter keeps its own cached values,
+        // result ordering, and ownership, even when different full requests join this producer.
+        using var response = await (cache.CoalesceConcurrentMisses
+            ? cache.CoalesceReadAsync(new ClientCacheCommandKey("HMGET", key.AsValue(), fields),
+                (Client: this, Key: key, Fields: fields, Cache: cache),
+                static (state, token) => state.Client.FetchHashFieldsAsync(state.Key, state.Fields, state.Cache, token),
+                cancellationToken)
+            : FetchHashFieldsAsync(key, fields, cache, cancellationToken)).ConfigureAwait(false);
+        for (var index = 0; index < fields.Length; index++)
+            result[missingIndexes[index]] = response.AsArray()[index].ToOwned();
+        return RespValue.Array(result);
+    }
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<RespValue> FetchHashFieldsAsync(
+        RespireKey key, RespireValue[] fields, ClientSideCacheCoordinator cache,
+        CancellationToken cancellationToken)
+    {
         // Each field uses the existing HGET identity and hash-key dependency. A single hash
         // invalidation therefore removes every projection, regardless of the requested list.
         var tokens = new ClientSideCacheCoordinator.QueryReadToken[fields.Length];
@@ -65,23 +83,30 @@ public sealed partial class RespireClient
                 allowInsert = cacheable;
             };
         }
-        using var response = await SendTrackedAsync("HMGET", new Cmd1N(Verbs.HMGet, key.AsValue(), fields),
+        var response = await SendTrackedAsync("HMGET", new Cmd1N(Verbs.HMGet, key.AsValue(), fields),
             cancellationToken, onRedirect).ConfigureAwait(false);
-        if (response.Type != RespDataType.Array || response.AsArray().Length != fields.Length)
-            throw new RespireProtocolException($"HMGET must return an array with {fields.Length} field values.");
-        // Validate the entire reply before publishing any field from an untrusted frame.
-        for (var index = 0; index < fields.Length; index++)
+        try
         {
-            var value = response.AsArray()[index];
-            if (!value.IsNull && value.Type != RespDataType.BulkString)
-                throw new RespireProtocolException("HMGET field values must be bulk strings or null.");
+            if (response.Type != RespDataType.Array || response.AsArray().Length != fields.Length)
+                throw new RespireProtocolException($"HMGET must return an array with {fields.Length} field values.");
+            // Validate the entire reply before publishing any field from an untrusted frame.
+            for (var index = 0; index < fields.Length; index++)
+            {
+                var value = response.AsArray()[index];
+                if (!value.IsNull && value.Type != RespDataType.BulkString)
+                    throw new RespireProtocolException("HMGET field values must be bulk strings or null.");
+            }
+            for (var index = 0; index < fields.Length; index++)
+            {
+                var value = response.AsArray()[index];
+                cache.CompleteRead(in tokens[index], in value, allowInsert);
+            }
+            return response;
         }
-        for (var index = 0; index < fields.Length; index++)
+        catch
         {
-            var value = response.AsArray()[index];
-            cache.CompleteRead(in tokens[index], in value, allowInsert);
-            result[missingIndexes[index]] = value.ToOwned();
+            response.Dispose();
+            throw;
         }
-        return RespValue.Array(result);
     }
 }

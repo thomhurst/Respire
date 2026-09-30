@@ -95,13 +95,20 @@ and reconnect reject stale insertion. A malformed array or invalid field respons
 the whole reply before any field is cached. Cluster MOVED recovery re-establishes tracked
 reads; ASK replies are returned without caching the untracked migration target.
 
+With both `ReuseHashFields` and `CoalesceConcurrentMisses` enabled, concurrent requests with the
+same physical hash key and identical ordered missing fields share one HMGET producer. Full field
+lists may differ when their cached fields differ. Each caller keeps its own cached values, output
+order, and independently owned result. Different missing lists run independently; they are not
+split into per-field requests. Cancellation, invalidation, and continuity changes follow the
+shared-read rules above. Hashes outside broadcast prefix coverage bypass per-field reuse.
+
 Hit/miss statistics count field lookups, including repeated fields. As with cached MGET,
 a result may combine values cached at different times; use an uncached transaction when
 an atomic server snapshot is required. Batched/transactional commands retain their existing
 execution behavior. Disabling client-side caching leaves the ordinary HMGET wire path unchanged.
 
 Typed `Strings.GetManyAsync` retains its existing per-key partial-hit path and checks all
-Cluster slots even on all-hit requests. Raw MGET continues to use its exact-query cache;
+Cluster slots even on all-hit requests. Raw MGET uses exact-query caching by default and the typed per-key path when coalescing is enabled;
 it does not split overlapping lists into individual GET requests.
 
 Field reuse trades additional entries, lookup work, and owned-result allocations for fewer
