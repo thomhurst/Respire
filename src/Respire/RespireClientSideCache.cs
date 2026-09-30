@@ -424,7 +424,9 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             "PUBSUB SHARDNUMSUB" or "ROLE" or "SLOWLOG GET" or "SLOWLOG LEN" or "LATENCY LATEST" or "CONFIG GET" or
             "LATENCY DOCTOR" or "LATENCY HISTORY" or "LATENCY HISTOGRAM" or "MEMORY DOCTOR" or "MEMORY PURGE" or
             "ACL WHOAMI" or "ACL LIST" or "ACL GETUSER" or "ACL CAT" or "ACL LOG" or "ACL DRYRUN" or
-            "COMMAND INFO" or "COMMAND DOCS" or "COMMAND GETKEYS" or "MODULE LIST";
+            "COMMAND INFO" or "COMMAND DOCS" or "COMMAND GETKEYS" or "MODULE LIST" or
+            "CLUSTER INFO" or "CLUSTER NODES" or "CLUSTER SHARDS" or "CLUSTER LINKS" or "CLUSTER MYID" or
+            "CLUSTER MYSHARDID" or "CLUSTER KEYSLOT" or "CLUSTER COUNTKEYSINSLOT" or "CLUSTER SLOT-STATS";
 
     private static bool DisruptsClientCacheTracking<TCommand>(string operation, in TCommand command)
         where TCommand : struct, IRespCommand
