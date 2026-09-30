@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <OutputType>Exe</OutputType>
@@ -21,6 +21,7 @@
         <ProjectReference Include="..\..\src\Respire.Compression.Lz4\Respire.Compression.Lz4.csproj" />
         <ProjectReference Include="..\..\src\Respire.Compression.Zstd\Respire.Compression.Zstd.csproj" />
         <ProjectReference Include="..\..\src\Respire.Testing\Respire.Testing.csproj" />
+        <ProjectReference Include="../../src/Respire.Testing.Containers/Respire.Testing.Containers.csproj" />
     </ItemGroup>
 
 </Project>

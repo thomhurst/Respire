@@ -592,6 +592,10 @@ public sealed class CartService([FromKeyedServices("cache")] IRespireClient redi
   sessions and injected faults remain separate roadmap items. See the
   [in-memory testing guide](../website/docs/guides/in-memory-testing.md).
   Compatibility integration tests keep using real Redis via Testcontainers.
+- `Respire.Testing.Containers` provides framework-independent Redis/Valkey fixtures for
+  standalone, three-primary Cluster, and Sentinel deployments. Cluster/Sentinel fixtures
+  require local Docker. See the [container testing guide](../website/docs/guides/testing-containers.md).
+- A shared fake/container consumer sample remains tracked by #532.
 
 ## 18. Delivery status and roadmap
 

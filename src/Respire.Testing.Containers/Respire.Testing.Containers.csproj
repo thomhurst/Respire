@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Respire.Testing.Containers</PackageId>
+    <Title>Respire.Testing.Containers</Title>
+    <Description>Framework-independent Redis and Valkey Testcontainers fixtures for Respire integration tests.</Description>
+    <PackageTags>$(PackageTags);testing;testcontainers;docker</PackageTags>
+    <!-- Docker orchestration depends on Testcontainers' runtime reflection. -->
+    <IsAotCompatible>false</IsAotCompatible>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Respire/Respire.csproj" />
+    <PackageReference Include="Testcontainers" />
+  </ItemGroup>
+</Project>

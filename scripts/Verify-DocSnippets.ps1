@@ -41,6 +41,7 @@ $requiredPackages = @(
     'Respire.Extensions.Caching'
     'Respire.Extensions.Caching.Hybrid'
     'Respire.Extensions.DependencyInjection'
+    'Respire.Testing.Containers'
 )
 
 foreach ($packageId in $requiredPackages)
