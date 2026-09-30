@@ -83,9 +83,12 @@ internal sealed partial class ClusterRouter
                 }
             }
         }
-        catch (OperationCanceledException) when (_stopRetirement.IsCancellationRequested)
+        catch (Exception error) when (_stopRetirement.IsCancellationRequested
+            && error is (OperationCanceledException or ObjectDisposedException))
         {
-            // Explicit disposal cancels retries and has already started abortive cleanup.
+            // Explicit disposal cancels retries and disposes owned nodes. Retirement can
+            // race between its disposed check and entering the fence, so either shutdown
+            // signal is expected here. Live-router failures and pool failures still propagate.
         }
         catch (Exception error)
         {
