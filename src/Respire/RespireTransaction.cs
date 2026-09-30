@@ -407,8 +407,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                 if (_watchConnection is not null)
                 {
                     // Replaying on another connection would lose WATCH and could commit stale reads.
-                    cluster.RecordWatchedTransactionRejection(redirect, connection, slot);
-                    throw new RespireTransactionRetryException(redirect);
+                    throw cluster.CreateWatchedTransactionRetryException(redirect, connection, slot);
                 }
                 if (ClusterRouter.IsRedirect(redirect)
                     && !ClusterRouter.TryParseRedirect(redirect, connection.Host, out _, out _))
@@ -460,6 +459,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
             return ValueTask.CompletedTask;
         }
 
+        System.Diagnostics.Debug.Assert(WatchPool is not null, "A watched connection must retain its owning pool.");
         if (returnWatchConnection)
         {
             WatchPool!.Return(_watchConnection);

@@ -1080,8 +1080,7 @@ public sealed partial class RespireClient : IRespireClient
             if (cluster is not null && error is RespireServerException rejection
                 && ClusterRouter.CanRecover(rejection, slot))
             {
-                cluster.RecordWatchedTransactionRejection(rejection, connection, slot);
-                throw new RespireTransactionRetryException(rejection);
+                throw cluster.CreateWatchedTransactionRetryException(rejection, connection, slot);
             }
             throw;
         }

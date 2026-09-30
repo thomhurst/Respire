@@ -324,7 +324,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
         => connection.Multiplexer?.HasReliableCorrectionOrdering == true;
 
     // Learn routing for a new attempt without sending any part of the rejected watched transaction.
-    internal void RecordWatchedTransactionRejection(
+    internal RespireTransactionRetryException CreateWatchedTransactionRetryException(
         RespireServerException error, RespireConnection source, int? watchedSlot)
     {
         if (error.Code == RespireErrorCodes.Moved
@@ -338,6 +338,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             if (owner is not null && IsSameEndpoint(owner, source)) ClearSlotOwner(value, owner);
         }
         // ASK is temporary: leave the permanent route unchanged and let a fresh attempt retry later.
+        return new RespireTransactionRetryException(error);
     }
 
     internal static bool IsRedirect(RespireServerException error)
