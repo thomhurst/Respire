@@ -12,7 +12,8 @@ public class CrossSurfaceTypeConsistencyTests
     [Arguments(typeof(IListCommands), "TrimAsync", typeof(IBatchListCommands), "Trim")]
     [Arguments(typeof(IHyperLogLogCommands), "MergeAsync", typeof(IBatchHyperLogLogCommands), "Merge")]
     [Arguments(typeof(IStringCommands), "SetManyAsync", typeof(IBatchStringCommands), "SetMany")]
-    public async Task UnconditionalWrites_MatchDeferredBooleanConfirmations(
+    [Arguments(typeof(IStringCommands), "SetManyIfNotExistsAsync", typeof(IBatchStringCommands), "SetManyIfNotExists")]
+    public async Task Writes_MatchDeferredBooleanResults(
         Type immediate, string immediateName, Type deferred, string deferredName)
     {
         var methods = immediate.GetMethods().Where(method => method.Name == immediateName).ToArray();

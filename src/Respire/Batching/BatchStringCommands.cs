@@ -109,6 +109,10 @@ public interface IBatchStringCommands
     /// <summary>Sets many keys atomically; the pending is true once the server replies OK. Redis: MSET.</summary>
     RespirePending<bool> SetMany(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
 
+    /// <summary>Atomically sets every pair only when all keys are absent; the pending is false without any writes if a key exists. Redis: MSETNX.</summary>
+    /// <remarks>Requires at least one pair. Cluster keys must share a slot after prefixing. Binary buffers must remain unchanged until execution completes.</remarks>
+    RespirePending<bool> SetManyIfNotExists(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
+
     /// <summary>Atomically sets many keys with a shared expiry. Redis: MSETEX.</summary>
     RespirePending<bool> SetManyExpire(
         RespireExpiry expiry,
@@ -298,6 +302,12 @@ internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringComma
             pairs,
             static (c, v) => ResponseReader.Ok(in v));
     }
+
+    public RespirePending<bool> SetManyIfNotExists(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+        => sink.Add<CmdN, bool>(
+            "MSETNX", new CmdN(RespireCommands.String.MSETNX.Verb, StringCommands.SetManyIfNotExistsArgs(sink.Client, pairs)),
+            pairs,
+            static (c, v) => ResponseReader.Flag(in v));
 
     public RespirePending<bool> SetManyExpire(
         RespireExpiry expiry,

@@ -37,6 +37,12 @@
 
 ### Breaking API changes
 
+- `IStringCommands` adds both `SetManyIfNotExistsAsync` overloads, and
+  `IBatchStringCommands` adds `SetManyIfNotExists` for atomic MSETNX. External
+  implementations, decorators, and mocks must implement or forward these members.
+  Existing `SetManyAsync`/`SetMany` overloads retain their bindings and unconditional
+  behavior. See the [bulk string guide](../website/docs/commands/strings-and-keys.md#bulk-operations).
+
 - `IKeyCommands` and `IBatchKeyCommands` add absolute expiration and OBJECT metadata
   members. External implementations, decorators, and mocks must implement or forward
   `ExpiryTimeAsync`/`ExpiryTime` (both overloads), `EncodingAsync`/`Encoding`,
