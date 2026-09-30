@@ -230,7 +230,9 @@ public class FakeTransactionTests
     {
         await using var server = new RespireFakeServer();
         await using var session = await TestRespSession.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
-        foreach (var arguments in new[] { new[] { "HELLO", "3" }, new[] { "SUBSCRIBE", "channel" }, new[] { "EVAL", "return 1", "0" } })
+        foreach (var arguments in new[] { new[] { "HELLO", "3" }, new[] { "SUBSCRIBE", "channel" }, new[] { "UNSUBSCRIBE", "channel" },
+            new[] { "PSUBSCRIBE", "*" }, new[] { "PUNSUBSCRIBE" }, new[] { "SSUBSCRIBE", "channel" },
+            new[] { "SUNSUBSCRIBE" }, new[] { "SPUBLISH", "channel", "payload" }, new[] { "EVAL", "return 1", "0" } })
         {
             using (var multi = await session.CommandAsync("MULTI")) { }
             using (var rejected = await session.CommandAsync(arguments)) await Assert.That(rejected.IsError).IsTrue();
@@ -239,6 +241,54 @@ public class FakeTransactionTests
             using var alive = await session.CommandAsync("PING");
             await Assert.That(alive.AsString()).IsEqualTo("PONG");
         }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task HeldExecKeepsSelfPublicationsBehindReplyAndCleansUpOnShutdown(bool shutdown)
+    {
+        await using var server = new RespireFakeServer();
+        var options = server.CreateOptions() with { Protocol = RespProtocol.Resp3 };
+        await using var session = await TestRespSession.ConnectAsync(options);
+        await using var observer = await TestRespSession.ConnectAsync(options);
+        await using var publisher = await RespireClient.ConnectAsync(options);
+        using (var subscribed = await session.CommandAsync("SUBSCRIBE", "channel")) { }
+        using (var subscribed = await observer.CommandAsync("SUBSCRIBE", "channel")) { }
+        using (var watched = await session.CommandAsync("WATCH", "key")) { }
+        using (var multi = await session.CommandAsync("MULTI")) { }
+        using (var queued = await session.CommandAsync("PUBLISH", "channel", "inside")) { }
+        using (var queued = await session.CommandAsync("PING")) { }
+        var gate = new RespireFakeGate();
+        using var fault = server.InjectFault("EXEC", RespireFakeFault.Pause(gate, afterExecution: true));
+        var executed = session.CommandAsync("EXEC");
+        await fault.Matched.WaitAsync(Limit);
+        // The command executed and its independent receiver gets the publication immediately.
+        using (var message = await observer.ReadAsync())
+            await Assert.That(message.AsArray()[2].AsString()).IsEqualTo("inside");
+        await Assert.That(await publisher.PublishAsync("channel", "outside")).IsEqualTo(2);
+        await Assert.That(executed.IsCompleted).IsFalse();
+        await Assert.That(WatcherCount(server)).IsEqualTo(0);
+        if (shutdown)
+        {
+            await server.DisposeAsync().AsTask().WaitAsync(Limit);
+            await Assert.That(async () => { using var reply = await executed; }).Throws<EndOfStreamException>();
+            return;
+        }
+        gate.Release();
+        using (var reply = await executed.WaitAsync(Limit))
+        {
+            await Assert.That(reply.Type).IsEqualTo(Respire.Protocol.RespDataType.Array);
+            await Assert.That(reply.AsArray()[0].AsInteger()).IsEqualTo(2);
+            await Assert.That(reply.AsArray()[1].AsString()).IsEqualTo("PONG");
+        }
+        foreach (var expected in new[] { "inside", "outside" })
+        {
+            using var message = await session.ReadAsync();
+            await Assert.That(message.AsArray()[2].AsString()).IsEqualTo(expected);
+        }
+        using var alive = await session.CommandAsync("PING");
+        await Assert.That(alive.AsString()).IsEqualTo("PONG");
     }
 
     private sealed class AdvancingClock : TimeProvider

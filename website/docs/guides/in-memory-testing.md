@@ -189,7 +189,11 @@ without arguments it removes every subscription, or acknowledges a null channel 
 `PUBLISH` counts subscribed connections, not the number of client-side subscription readers.
 Messages and confirmations use RESP2 arrays or RESP3 pushes. In RESP2 subscribed mode, this
 subset permits only `SUBSCRIBE`, `UNSUBSCRIBE`, and `PING`; RESP3 permits ordinary commands
-while subscribed. Pattern and sharded commands (`PSUBSCRIBE`, `PUNSUBSCRIBE`, `SSUBSCRIBE`,
+while subscribed. A RESP3 connection publishing to its own subscribed channel receives the
+complete command reply before the message, including the complete `EXEC` array for queued
+publications. This follows Redis 7.2+ ordering; older Redis versions can interleave pushes
+inside transaction replies. Deferred messages count toward the same 16 MiB output limit.
+Pattern and sharded commands (`PSUBSCRIBE`, `PUNSUBSCRIBE`, `SSUBSCRIBE`,
 `SUNSUBSCRIBE`, `SPUBLISH`), `PUBSUB` diagnostics, `QUIT`, and `RESET` are unsupported.
 
 ```csharp

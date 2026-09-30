@@ -164,6 +164,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         lock (_gate)
         {
             if (_disposed || connection.Closed) return null;
+            connection.ExecutingReply = true;
             try
             {
                 scope?.ObserveExecution();
@@ -178,6 +179,11 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
             {
                 connection.Failed = true;
                 throw;
+            }
+            finally
+            {
+                connection.ExecutingReply = false;
+                FlushDeferredPushesLocked(connection);
             }
         }
     }
@@ -357,6 +363,8 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
             AllowSynchronousContinuations = false,
         });
         internal int PendingPushBytes;
+        internal bool ExecutingReply;
+        internal List<Outbound>? DeferredPushes;
         internal List<byte[][]>? Transaction { get; set; }
         internal long QueuedBytes { get; set; }
         internal bool TransactionError { get; set; }

@@ -26,12 +26,31 @@ public sealed partial class RespireFakeServer
         // Reserve before publication: the writer can release this frame without _gate.
         // Producers still serialize the capacity check and reservation under _gate.
         if (push) Interlocked.Add(ref connection.PendingPushBytes, bytes.Length);
+        // Redis 7.2+ defers pushes caused by the current command until its complete
+        // reply, including EXEC's array. Reserve capacity now, even while deferred.
+        if (push && connection.ExecutingReply)
+        {
+            (connection.DeferredPushes ??= []).Add(output);
+            return output;
+        }
         if (!connection.Output.Writer.TryWrite(output))
         {
             if (push) Interlocked.Add(ref connection.PendingPushBytes, -bytes.Length);
             return null;
         }
         return output;
+    }
+
+    private static void FlushDeferredPushesLocked(Connection connection)
+    {
+        if (connection.DeferredPushes is not { } pending) return;
+        foreach (var output in pending)
+        {
+            if (connection.Failed || connection.Closed || connection.Lifetime.IsCancellationRequested
+                || !connection.Output.Writer.TryWrite(output))
+                ReleaseOutput(connection, output);
+        }
+        connection.DeferredPushes = null;
     }
 
     private async Task SendRepliesAsync(Connection connection)

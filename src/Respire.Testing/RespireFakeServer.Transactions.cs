@@ -75,7 +75,7 @@ public sealed partial class RespireFakeServer
     private FakeReply Watch(Connection connection, byte[][] args)
     {
         if (connection.Transaction is not null) return FakeReply.Error("ERR WATCH inside MULTI is not allowed");
-        // An invalidated watch stays invalid until UNWATCH, DISCARD, or EXEC clears it.
+        // An invalidated watch keeps its registrations until UNWATCH, DISCARD, or EXEC clears them.
         if (connection.WatchChanged) return FakeReply.Ok;
         for (var index = 1; index < args.Length; index++)
         {
