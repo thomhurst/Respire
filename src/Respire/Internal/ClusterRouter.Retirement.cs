@@ -75,8 +75,12 @@ internal sealed partial class ClusterRouter
         catch (Exception error)
         {
             // Unexpected cleanup failure is not permission to forget an owed fence.
-            _logger?.LogWarning(error, "Cluster generation retirement failed at {Host}:{Port}", node.Host, node.Port);
-            retirement.Completion.TrySetException(error);
+            // Join the pool started above even when the node path failed first.
+            Exception failure = error;
+            try { await poolDrain.ConfigureAwait(false); }
+            catch (Exception poolError) { failure = new AggregateException(error, poolError); }
+            _logger?.LogWarning(failure, "Cluster generation retirement failed at {Host}:{Port}", node.Host, node.Port);
+            retirement.Completion.TrySetException(failure);
             return;
         }
 

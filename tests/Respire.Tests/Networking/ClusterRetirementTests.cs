@@ -149,6 +149,52 @@ public class ClusterRetirementTests
     }
 
     [Test]
+    public async Task UnexpectedRetirementFailureStillObservesLatePoolFailure()
+    {
+        var killSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(3, ":42\r\n"u8.ToArray())
+        {
+            SuppressReply = command =>
+            {
+                if (command != "CLIENT KILL ID 42") return false;
+                killSeen.TrySetResult();
+                return true;
+            },
+        };
+        using var logger = new FailingPoolDisconnectLogger(failRetirementLog: true);
+        await using var client = CreateClient(logger);
+        var router = client.Core.Cluster!;
+        var endpoint = new RespireEndpoint("127.0.0.1", server.Port);
+        Publish(router, endpoint, "old", 1);
+        var node = router.GetMultiplexer(endpoint);
+        await node.EnsureConnectedAsync();
+        var original = node.GetConnection();
+        await original.EnsureServerClientIdAsync();
+        var pool = router.GetDedicatedPool(endpoint);
+        var borrowed = await pool.RentAsync(default);
+        using (var ready = await borrowed.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
+            await Assert.That(ready.AsInteger()).IsEqualTo(42);
+        await original.DisposeAsync();
+        Publish(router, endpoint, "new", 2);
+        var retirement = router.WaitForRetirementAsync();
+        await killSeen.Task.WaitAsync(Limit);
+        await server.SendRawAsync("-ERR unavailable\r\n"u8.ToArray(), 2);
+        await logger.RetirementFailureSeen.Task.WaitAsync(Limit);
+        pool.Return(borrowed);
+        try
+        {
+            var error = await Assert.That(async () => await retirement.WaitAsync(Limit)).ThrowsExactly<AggregateException>();
+            await Assert.That(error!.InnerExceptions).Contains(logger.RetirementFailure);
+            await Assert.That(error.InnerExceptions).Contains(logger.Failure);
+        }
+        finally
+        {
+            // Explicit disposal completes all owned cleanup, then reports the same stored failure.
+            await Assert.That(async () => await client.DisposeAsync().AsTask().WaitAsync(Limit)).Throws<Exception>();
+        }
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task FenceDeadlineIsDistinctFromCallerCancellation(bool cancelCaller)
@@ -357,16 +403,25 @@ public class ClusterRetirementTests
         LoggerFactory = loggerFactory,
     });
 
-    private sealed class FailingPoolDisconnectLogger : ILoggerFactory, ILogger
+    private sealed class FailingPoolDisconnectLogger(bool failRetirementLog = false) : ILoggerFactory, ILogger
     {
         internal readonly InvalidOperationException Failure = new("Test dedicated disconnect failure.");
-        public ILogger CreateLogger(string categoryName) => categoryName.Contains(".Blocking.", StringComparison.Ordinal) ? this : NullLogger.Instance;
+        internal readonly InvalidOperationException RetirementFailure = new("Test retirement failure.");
+        internal readonly TaskCompletionSource RetirementFailureSeen = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public ILogger CreateLogger(string categoryName) => categoryName.Contains(".Blocking.", StringComparison.Ordinal)
+            || (failRetirementLog && categoryName == "Respire.Cluster") ? this : NullLogger.Instance;
         public void AddProvider(ILoggerProvider provider) { }
         public void Dispose() { }
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
         public bool IsEnabled(LogLevel logLevel) => true;
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
+            if (failRetirementLog && logLevel == LogLevel.Debug
+                && formatter(state, exception).StartsWith("Cluster generation retirement needs", StringComparison.Ordinal))
+            {
+                RetirementFailureSeen.TrySetResult();
+                throw RetirementFailure;
+            }
             if (logLevel == LogLevel.Debug && formatter(state, exception).StartsWith("Disconnected from", StringComparison.Ordinal))
                 throw Failure;
         }

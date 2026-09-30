@@ -69,6 +69,13 @@ attempts before waiting for cleanup.
 An expired control-attempt deadline surfaces as `RespireTimeoutException` for `CLIENT KILL`;
 caller cancellation and explicit disposal retain their cancellation behavior. A failed pool
 drain faults generation retirement and retains ownership for disposal instead of reporting success.
+A permanently unreachable peer therefore keeps its generation alive until explicit client disposal.
+
+The router's `_nodesGate` protects lookup and ownership changes. Snapshot the owned objects under
+that gate, then release it before renting, draining, disposing, awaiting, or invoking lifecycle
+callbacks. Node and pool lifecycle locks must be released before callbacks acquire `_nodesGate`.
+Observer installation and peer revalidation occur together under the router gate; they do not
+take a node or pool lifecycle lock.
 
 Correction pools share live multiplexer/peer/TLS identities, including replacement sockets on the
 same peer. A changed peer gets a separate pool; obsolete entries detach from lookup. A correction
