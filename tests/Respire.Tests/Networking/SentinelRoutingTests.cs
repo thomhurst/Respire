@@ -359,6 +359,9 @@ public class SentinelRoutingTests
         await promoted.SendRawAsync("*3\r\n$7\r\nmessage\r\n$6\r\nevents\r\n$5\r\nvalue\r\n"u8.ToArray(), connectionId);
         await using var reader = subscription.GetAsyncEnumerator();
         await Assert.That(await reader.MoveNextAsync().AsTask().WaitAsync(Limit)).IsTrue();
+        await Assert.That(reader.Current.Kind).IsEqualTo(RespireMessageKind.Gap);
+        await Assert.That(await reader.MoveNextAsync().AsTask().WaitAsync(Limit)).IsTrue();
+        await Assert.That(reader.Current.Kind).IsEqualTo(RespireMessageKind.Message);
         await Assert.That(Encoding.UTF8.GetString(reader.Current.Payload.Span)).IsEqualTo("value");
         await Assert.That(promoted.ReceivedCommands.Where((_, position) => promoted.ReceivedConnectionIds[position] == connectionId).First())
             .IsEqualTo("ROLE");
