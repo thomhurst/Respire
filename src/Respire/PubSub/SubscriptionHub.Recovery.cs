@@ -65,33 +65,21 @@ internal sealed partial class SubscriptionHub
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (attempt < int.MaxValue) attempt++;
-                var delay = policy.GetDelay(attempt, Random.Shared.NextDouble());
+                var delay = policy.GetDelay(attempt);
                 QueueConfiguredState(endpoint, RespireConnectionState.Reconnecting, failure, attempt, delay);
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
 
-                RespireConnection? replacement = null;
                 await _controlGate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    // A replacement gets no watcher until every current route has been
-                    // acknowledged. Failed resubscription consumes this same episode's budget.
-                    replacement = await EnsureConnectionAsync(cancellationToken, watch: false).ConfigureAwait(false);
-                    endpoint = new RespireEndpoint(replacement.Host, replacement.Port);
-                    await ResubscribeRoutesAsync(replacement, cancellationToken).ConfigureAwait(false);
-                    restored = replacement;
-                    return;
-                }
-                catch (Exception error) when (!cancellationToken.IsCancellationRequested)
-                {
-                    failure = error;
-                    if (replacement is not null && DetachConnection(replacement) is { } cleanup)
+                    var result = await TryRestoreOnceAsync(endpoint, cancellationToken).ConfigureAwait(false);
+                    endpoint = result.Endpoint;
+                    if (result.Connection is { } replacement)
                     {
-                        try { await cleanup.ConfigureAwait(false); }
-                        catch (Exception cleanupError)
-                        {
-                            core.Logger?.LogWarning(cleanupError, "Failed to clean up a pub/sub replacement");
-                        }
+                        restored = replacement;
+                        return;
                     }
+                    failure = result.Error!;
                     // Disposal can win while cleanup is awaited. It owns terminal subscription
                     // completion in that case, even if this was the last configured attempt.
                     cancellationToken.ThrowIfCancellationRequested();
@@ -100,7 +88,7 @@ internal sealed partial class SubscriptionHub
                         ExhaustConfiguredRecovery(endpoint, failure, attempt);
                         return;
                     }
-                    core.Logger?.LogWarning(error, "Pub/sub recovery attempt {Attempt} failed", attempt);
+                    core.Logger?.LogWarning(failure, "Pub/sub recovery attempt {Attempt} failed", attempt);
                 }
                 finally
                 {
@@ -124,6 +112,33 @@ internal sealed partial class SubscriptionHub
             // Closed is a completion task: if the socket dies before this call, the watcher
             // observes that completed task immediately and starts the next ordered episode.
             if (restored is not null) _ = WatchConnectionAsync(restored);
+        }
+    }
+
+    private async ValueTask<(RespireConnection? Connection, RespireEndpoint Endpoint, Exception? Error)> TryRestoreOnceAsync(
+        RespireEndpoint endpoint, CancellationToken cancellationToken)
+    {
+        // The caller holds _controlGate through cleanup and the retry/exhaustion decision.
+        RespireConnection? replacement = null;
+        try
+        {
+            // No watcher is installed until every current route is acknowledged.
+            replacement = await EnsureConnectionAsync(cancellationToken, watch: false).ConfigureAwait(false);
+            endpoint = new RespireEndpoint(replacement.Host, replacement.Port);
+            await ResubscribeRoutesAsync(replacement, cancellationToken).ConfigureAwait(false);
+            return (replacement, endpoint, null);
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            if (replacement is not null && DetachConnection(replacement) is { } cleanup)
+            {
+                try { await cleanup.ConfigureAwait(false); }
+                catch (Exception cleanupError)
+                {
+                    core.Logger?.LogWarning(cleanupError, "Failed to clean up a pub/sub replacement");
+                }
+            }
+            return (null, endpoint, error);
         }
     }
 
