@@ -15,6 +15,121 @@ public class SentinelRoutingTests
     private static readonly byte[] PrimaryRole = "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray();
 
     [Test]
+    [NotInParallel]
+    public async Task EndpointSnapshotsNeverMixPublishedGenerations()
+    {
+        await using var client = RespireClient.Create(Options(26379));
+        var router = client.Core.Sentinel!;
+        await using var first = new Respire.Internal.SentinelRouter.Generation(router, client.Core,
+            Options(26379) with { Endpoints = [new("first.invalid", 6379)] });
+        await using var second = new Respire.Internal.SentinelRouter.Generation(router, client.Core,
+            Options(26379) with { Endpoints = [new("second.invalid", 6380)] });
+        var current = typeof(Respire.Internal.SentinelRouter).GetField("_current",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        // Isolate the atomic publication boundary without connecting to synthetic endpoints.
+        current.SetValue(router, first);
+        var stop = 0;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var publisher = Task.Factory.StartNew(() =>
+        {
+            started.TrySetResult();
+            while (Volatile.Read(ref stop) == 0)
+            {
+                current.SetValue(router, second);
+                current.SetValue(router, first);
+            }
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        RespireEndpoint? mixed = null;
+        try
+        {
+            await started.Task.WaitAsync(Limit);
+            for (var index = 0; index < 1_000_000; index++)
+            {
+                var endpoint = client.Endpoint;
+                if (endpoint != first.Endpoint && endpoint != second.Endpoint)
+                {
+                    mixed = endpoint;
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            Volatile.Write(ref stop, 1);
+            await publisher.WaitAsync(Limit);
+            current.SetValue(router, null);
+        }
+        await Assert.That(mixed).IsNull();
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task RapidFailoversDoNotWaitForBlockedObserversAndDrainNotificationsInOrder()
+    {
+        const int handoffs = 12;
+        static byte[]? Reply(int _, string command) => command.StartsWith("SET retire", StringComparison.Ordinal)
+            ? "-READONLY replica\r\n"u8.ToArray() : null;
+        await using var first = Primary(Reply);
+        await using var second = Primary(Reply);
+        var port = first.Port;
+        await using var sentinel = new FakeRespServer(handoffs + 1, "*0\r\n"u8.ToArray())
+        {
+            ReplyOverride = (_, command) => command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")
+                ? AddressReply(Volatile.Read(ref port)) : "*0\r\n"u8.ToArray(),
+        };
+        await using var client = RespireClient.Create(Options(sentinel.Port));
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var endpoints = new ConcurrentQueue<int>();
+        var measurements = 0L;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, meter) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.sentinel.failover")
+                meter.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
+        {
+            foreach (var tag in tags)
+                if (tag.Key == "server.port" && (Equals(tag.Value, first.Port) || Equals(tag.Value, second.Port)))
+                    Interlocked.Add(ref measurements, value);
+        });
+        listener.Start();
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.State != RespireConnectionState.Connected) return;
+            endpoints.Enqueue(change.Endpoint.Port);
+            if (endpoints.Count == 1)
+            {
+                entered.TrySetResult();
+                release.Task.GetAwaiter().GetResult();
+            }
+            if (endpoints.Count == handoffs + 1) drained.TrySetResult();
+        };
+        try
+        {
+            await client.SetAsync("initial", "value").AsTask().WaitAsync(Limit);
+            await entered.Task.WaitAsync(Limit);
+            for (var index = 1; index <= handoffs; index++)
+            {
+                Volatile.Write(ref port, index % 2 == 0 ? first.Port : second.Port);
+                await Assert.That(async () => await client.SetAsync("retire", "value").AsTask().WaitAsync(Limit))
+                    .Throws<RespireServerException>();
+                await client.SetAsync("current", "value").AsTask().WaitAsync(Limit);
+                await Assert.That(client.Endpoint.Port).IsEqualTo(port);
+            }
+            await Assert.That(endpoints.Count).IsEqualTo(1);
+            await Assert.That(Interlocked.Read(ref measurements)).IsEqualTo(0L);
+        }
+        finally { release.TrySetResult(); }
+        await drained.Task.WaitAsync(Limit);
+        await Assert.That(endpoints.SequenceEqual(
+            Enumerable.Range(0, handoffs + 1).Select(index => index % 2 == 0 ? first.Port : second.Port))).IsTrue();
+        await Assert.That(Interlocked.Read(ref measurements)).IsEqualTo((long)handoffs);
+    }
+
+    [Test]
     public async Task RoleDemotionRetiresTheGenerationBeforeTheNextWrite()
     {
         var replica = false;

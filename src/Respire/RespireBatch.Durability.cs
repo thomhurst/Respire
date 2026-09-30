@@ -98,7 +98,7 @@ public sealed partial class RespireBatch
         var telemetryOperation = operation;
         var telemetry = core.Sentinel is null ? RespireTelemetry.StartBatchOperation(
             operation, _ops, static op => op.Operation,
-            core.Multiplexer.Host, core.Multiplexer.Port, core.Options.Database, out telemetryOperation) : default;
+            core.Endpoint, core.Options.Database, out telemetryOperation) : default;
         DedicatedConnectionPool? pool = null;
         RespireConnection? connection = null;
         Exception? operationError = null;

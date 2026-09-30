@@ -303,7 +303,9 @@ Client-side cached reads lose continuity on retirement. Subscriptions reconnect 
 primary and report their normal delivery gap; Redis cannot replay missed publications.
 Explicit server connections remain pinned to the endpoint selected by the application.
 Correction operations retain their original physical peer rather than following a new
-primary. `ConnectionStateChanged` reports endpoint changes, and the `Respire` meter records
+primary. `Endpoint` reads host and port from one generation snapshot; a later handoff can make
+that snapshot historical, but cannot combine fields from different primaries.
+`ConnectionStateChanged` reports endpoint changes, and the `Respire` meter records
 `respire.sentinel.failover` for validated primary endpoint changes, tagged with `server.address`
 and `server.port`. State observers may dispose the client synchronously. Disposal suppresses
 queued notifications but does not wait for an observer already running; that callback may

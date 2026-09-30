@@ -26,6 +26,14 @@ internal sealed class ClientCore : IAsyncDisposable
 
     private readonly RespireConnectionMultiplexer _multiplexer;
     public RespireConnectionMultiplexer Multiplexer => Sentinel?.Current?.Multiplexer ?? _multiplexer;
+    internal RespireEndpoint Endpoint
+    {
+        get
+        {
+            var multiplexer = Multiplexer;
+            return new(multiplexer.Host, multiplexer.Port);
+        }
+    }
     public readonly RespireOptions Options;
     public readonly ILogger? Logger;
     private readonly DedicatedConnectionPool _dedicatedPool;
@@ -161,11 +169,11 @@ internal sealed class ClientCore : IAsyncDisposable
         int slot,
         RespireConnectionState state,
         Exception? error = null)
-        => NotifyCommandStateChanged(
-            Multiplexer,
-            slot,
-            new RespireConnectionStateChange(
-                new RespireEndpoint(Multiplexer.Host, Multiplexer.Port), state, error));
+    {
+        var multiplexer = Multiplexer;
+        NotifyCommandStateChanged(multiplexer, slot,
+            new RespireConnectionStateChange(new(multiplexer.Host, multiplexer.Port), state, error));
+    }
 
     internal void NotifyCommandStateChanged(int slot, RespireConnectionStateChange change)
         => NotifyCommandStateChanged(Multiplexer, slot, change);
@@ -409,7 +417,7 @@ internal sealed class ClientCore : IAsyncDisposable
         ClientCache?.StopInvalidationObservers();
         ClientCache?.StopSharedReads();
         ClientCache?.Clear();
-        var commandEndpoints = Cluster?.GetActiveEndpoints() ?? [new RespireEndpoint(Multiplexer.Host, Multiplexer.Port)];
+        var commandEndpoints = Cluster?.GetActiveEndpoints() ?? [Endpoint];
         lock (_stateGate)
         {
             _subscriptionState = RespireConnectionState.Disconnected;

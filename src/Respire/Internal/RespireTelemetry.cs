@@ -165,6 +165,11 @@ internal static class RespireTelemetry
     }
 
     public static OperationScope StartOperation(
+        string operation, RespireEndpoint endpoint, int database,
+        int? batchSize = null, string? storedProcedureName = null)
+        => StartOperation(operation, endpoint.Host, endpoint.Port, database, batchSize, storedProcedureName);
+
+    public static OperationScope StartOperation(
         string operation,
         string host,
         int port,
@@ -214,6 +219,11 @@ internal static class RespireTelemetry
 
         return new OperationScope(activity, metricEnabled ? Stopwatch.GetTimestamp() : 0);
     }
+
+    public static OperationScope StartBatchOperation<T>(
+        string prefix, IReadOnlyList<T> operations, Func<T, string> operationName,
+        RespireEndpoint endpoint, int database, out string operation)
+        => StartBatchOperation(prefix, operations, operationName, endpoint.Host, endpoint.Port, database, out operation);
 
     public static OperationScope StartBatchOperation<T>(
         string prefix,
@@ -273,15 +283,11 @@ internal static class RespireTelemetry
             Exception? error = null,
             RespireConnection? connection = null,
             int? batchSize = null)
-            => Complete(
-                operation,
-                connection?.Host ?? core.Multiplexer.Host,
-                connection?.Port ?? core.Multiplexer.Port,
-                core.Options.Database,
-                storedProcedureName,
-                error,
-                connection,
-                batchSize);
+        {
+            var endpoint = connection is null ? core.Endpoint : new RespireEndpoint(connection.Host, connection.Port);
+            Complete(operation, endpoint.Host, endpoint.Port, core.Options.Database,
+                storedProcedureName, error, connection, batchSize);
+        }
 
         public void Complete(
             string operation,

@@ -174,7 +174,7 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     /// <inheritdoc/>
-    public RespireEndpoint Endpoint => new(_core.Multiplexer.Host, _core.Multiplexer.Port);
+    public RespireEndpoint Endpoint => _core.Endpoint;
 
     /// <inheritdoc/>
     public bool IsConnected
@@ -2648,8 +2648,7 @@ public sealed partial class RespireClient : IRespireClient
 
             var telemetry = core.Sentinel is null ? RespireTelemetry.StartOperation(
                 operation,
-                core.Multiplexer.Host,
-                core.Multiplexer.Port,
+                core.Endpoint,
                 core.Options.Database,
                 storedProcedureName: storedProcedureName) : default;
             RespireConnection? connection = null;
@@ -2683,7 +2682,7 @@ public sealed partial class RespireClient : IRespireClient
                     ? new RespireTimeoutException(operation, timeout, cancelled,
                         connection?.CaptureDedicatedTimeoutDiagnostics()
                         ?? RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting,
-                            new RespireEndpoint(core.Multiplexer.Host, core.Multiplexer.Port)))
+                            core.Endpoint))
                     : null;
                 telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
                 if (connection is not null && !returned)
@@ -2986,8 +2985,7 @@ public sealed partial class RespireClient : IRespireClient
 
         var telemetry = core.Sentinel is null ? RespireTelemetry.StartOperation(
             script.EvalShaOperation,
-            core.Multiplexer.Host,
-            core.Multiplexer.Port,
+            core.Endpoint,
             core.Options.Database,
             storedProcedureName: script.Sha1) : default;
         RespireConnection? connection = null;

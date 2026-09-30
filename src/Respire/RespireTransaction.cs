@@ -251,8 +251,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
             "MULTI",
             _ops,
             static op => op.Operation,
-            core.Multiplexer.Host,
-            core.Multiplexer.Port,
+            core.Endpoint,
             core.Options.Database,
             out telemetryOperation) : default;
         RespireConnection? connection = _watchConnection;
