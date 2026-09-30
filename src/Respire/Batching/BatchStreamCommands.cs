@@ -23,6 +23,7 @@ public interface IBatchStreamCommands
     /// <summary>Trims by maximum length; returns the number removed. Redis: XTRIM MAXLEN.</summary>
     RespirePending<long> TrimByMaxLength(RespireKey key, long maxLength, bool approximate = false);
     /// <summary>Acknowledges pending group entries; returns the number newly acknowledged. Redis: XACK.</summary>
+    /// <remarks>An empty id list is sent to Redis and surfaces as a server error on the pending result.</remarks>
     RespirePending<long> Acknowledge(RespireKey key, string group, params ReadOnlySpan<RespireStreamId> ids);
 }
 
@@ -50,6 +51,7 @@ internal sealed class BatchStreamCommands(IPendingSink sink) : IBatchStreamComma
         var operation = descending ? "XREVRANGE" : "XRANGE";
         var verb = descending ? Verbs.XRevRange : Verbs.XRange;
         // Range entries own their fields and do not carry a consumer-group acknowledgement context.
+        // Keep fixed-arity command structs, matching the immediate path without an argument array.
         return count is { } take
             ? sink.Add<Cmd5, RespireStreamEntry[]>(operation, new Cmd5(verb, sink.Client.Key(SnapshotKey(key)), from, to, "COUNT", take),
                 static (_, value) => StreamCommands.ParseEntries(in value, client: null, resolvedKey: default, group: null))
@@ -64,6 +66,7 @@ internal sealed class BatchStreamCommands(IPendingSink sink) : IBatchStreamComma
     public RespirePending<long> TrimByMaxLength(RespireKey key, long maxLength, bool approximate = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(maxLength);
+        // Preserve the immediate path's fixed-arity command shapes without boxing or a wrapper.
         return approximate
             ? sink.Add<Cmd4, long>("XTRIM", new Cmd4(StreamCommands.XTrim, sink.Client.Key(SnapshotKey(key)), "MAXLEN", "~", maxLength),
                 static (_, value) => ResponseReader.Integer(in value))

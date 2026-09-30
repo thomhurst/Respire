@@ -45,7 +45,8 @@
 
 - `IRespireCommandQueue` adds `Streams`, exposing non-blocking stream operations on batches
   and transactions. External queue implementations, decorators, and mocks must implement
-  or forward this property. The facet supports `Add`, `Count`, `Range`, `Remove`,
+  or forward this property. This is an intentional pre-release compile-time break: new Streams
+  support requires an explicit implementation, following the [API policy](API_DESIGN.md). The facet supports `Add`, `Count`, `Range`, `Remove`,
   `TrimByMaxLength`, and `Acknowledge`; blocking reads and consumer loops remain client-only.
   See the [batch and transaction guide](../website/docs/guides/batches-and-transactions.md).
 
