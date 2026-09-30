@@ -336,6 +336,35 @@ Use `ClaimAsync` when the pending ids are already known. `ClaimPendingAsync` exp
 consumer's own pending-entry list, call `ReadGroupAsync` with an explicit `startAt`; that replay
 is non-blocking and completes after the pending entries are exhausted.
 
+### Stream metadata
+
+`Streams.CreateConsumerAsync(key, group, consumer)` explicitly creates a consumer in
+an existing stream group (Redis 6.2+, `XGROUP CREATECONSUMER`). It returns `true` for
+a new consumer and `false` for an existing consumer. It does not read entries or
+create a missing stream or group; missing groups and wrong key types are server errors.
+
+`Streams.SetLastIdAsync(key, lastId, entriesAdded: ..., maxDeletedId: ...)` exposes
+`XSETID` (Redis 5.0+). Both optional metadata arguments require Redis 7.0+ and can be
+supplied independently. Omitted metadata remains unchanged. This is an advanced
+restoration operation: Redis documents XSETID as an internal replication command.
+It changes the existing stream's last-generated ID without adding entries, trimming
+entries, or changing a consumer group's position. Use `SetGroupPositionAsync` for
+the group's last-delivered ID instead.
+
+Negative `entriesAdded` values fail locally. Redis validates IDs, rejects a last ID
+below the stream's highest existing entry, an entries-added count below its length,
+or a supplied maximum-deleted ID above the last ID. Redis 7.0 treats a supplied
+maximum-deleted ID of `0-0` as leaving that metadata unchanged.
+Server/version/permission errors propagate without emulation.
+
+Both methods accept cancellation, apply the client view's key prefix once, and route
+to that key's Cluster owner. Group and consumer names are not prefixed. Existing
+stream entries and binary field values are unchanged. These immediate metadata
+methods follow the existing group-management APIs; they are not batch operations.
+
+See Redis's [CREATECONSUMER](https://redis.io/docs/latest/commands/xgroup-createconsumer/)
+and [XSETID](https://redis.io/docs/latest/commands/xsetid/) references.
+
 ## Bitmaps, HyperLogLogs, and geo indexes
 
 ```csharp
