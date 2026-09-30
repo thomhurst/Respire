@@ -1,6 +1,9 @@
 using System.Text;
 using System.Security.Cryptography;
 using Respire.Commands;
+using Respire.Internal;
+using Respire.Networking;
+using Respire.Protocol;
 using TUnit.Core;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -260,6 +263,69 @@ public class StringFastPathWireTests
 
         await stream!.CopyToAsync(Stream.Null);
         await ping.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
+    public async Task GetStream_AskPrefixAndBulkReplyInSameRead()
+    {
+        await using var server = new FakeRespServer("$-1\r\n"u8.ToArray())
+        {
+            SuppressReply = static command => command == "GET key",
+            MinimumCommandsBeforeReply = 2
+        };
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        var command = new Cmd1(Verbs.Get, "key");
+        var pending = ClusterRouter.SendAskingBulkStreamAsync(connection, in command, default, "GET");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen < 2) await Task.Delay(10, timeout.Token);
+        await server.SendRawAsync("+OK\r\n$5\r\nhello\r\n"u8.ToArray());
+
+        await using var stream = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        using var reader = new StreamReader(stream!);
+        await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("hello");
+    }
+
+    [Test]
+    public async Task GetStream_PartialPayloadKeepsResponseWatchdogArmed()
+    {
+        await using var server = new FakeRespServer("$-1\r\n"u8.ToArray())
+        {
+            SuppressReply = static command => command == "GET key"
+        };
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1", server.Port,
+            new RespireConnectionOptions { ResponseTimeout = TimeSpan.FromMilliseconds(100) });
+        var command = new Cmd1(Verbs.Get, "key");
+        var pending = connection.SendBulkStreamAsync(in command, commandName: "GET");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen == 0) await Task.Delay(10, timeout.Token);
+        await server.SendRawAsync("$10\r\n"u8.ToArray());
+
+        await using var stream = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await connection.Closed.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(connection.IsConnected).IsFalse();
+        await Assert.That(stream).IsNotNull();
+    }
+
+    [Test]
+    public async Task GetStream_DisposeConnectionUnblocksUnreadPayloadBackpressure()
+    {
+        await using var server = new FakeRespServer("$-1\r\n"u8.ToArray())
+        {
+            SuppressReply = static command => command == "GET key"
+        };
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        var command = new Cmd1(Verbs.Get, "key");
+        var pending = connection.SendBulkStreamAsync(in command, commandName: "GET");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (server.CommandsSeen == 0) await Task.Delay(10, timeout.Token);
+        await server.SendRawAsync("$262144\r\n"u8.ToArray());
+        await server.SendRawAsync(new byte[256 * 1024]);
+        await using var stream = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.Delay(100);
+
+        await connection.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        stream!.Dispose();
     }
 
     [Test]

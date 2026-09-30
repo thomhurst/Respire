@@ -95,7 +95,8 @@ managed array:
 await using Stream? value = await redis.Strings.GetStreamAsync("archive:latest");
 if (value is not null)
 {
-    await value.CopyToAsync(destination, cancellationToken);
+    await using var destination = File.Create("archive.bin");
+    await value.CopyToAsync(destination);
 }
 ```
 

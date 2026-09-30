@@ -16,6 +16,8 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
     private RespBulkPayloadPipe? _payload;
     private Exception? _prefixError;
     private Exception? _completionError;
+    private Exception? _payloadAbortError;
+    private int _prefixReceived;
     private int _replyIndex;
     private bool _isMissing;
 
@@ -32,27 +34,49 @@ internal sealed class BulkStreamPendingResponseSource : PendingResponse, IValueT
 
     internal ValueTask<Stream?> Task => new(this, _core.Version);
 
-    internal bool IsFinalReply => !_hasPrefixReply || _replyIndex != 0;
+    internal bool IsFinalReply => !_hasPrefixReply || Volatile.Read(ref _prefixReceived) != 0;
 
-    internal bool CanStartStream => _prefixError is null && !IsCompleted(State);
+    internal bool CanStartStream => Volatile.Read(ref _prefixError) is null && !IsCompleted(State);
+
+    internal void ObservePrefix(in RespValue result)
+    {
+        if (!_hasPrefixReply || Volatile.Read(ref _prefixReceived) != 0) return;
+        if (result.IsError)
+            Volatile.Write(ref _prefixError, ResponseReader.ServerError(in result, _commandName));
+        Volatile.Write(ref _prefixReceived, 1);
+    }
 
     internal RespBulkPayloadPipe? BeginPayload()
     {
+        if (Volatile.Read(ref _payloadAbortError) is { } abortError)
+        {
+            TrySetException(abortError);
+            return null;
+        }
+
         if (!CanStartStream)
         {
             return null;
         }
 
         var payload = new RespBulkPayloadPipe();
-        _payload = payload;
+        Volatile.Write(ref _payload, payload);
+        if (Volatile.Read(ref _payloadAbortError) is { } lateAbort)
+            payload.Complete(lateAbort);
         if (base.TrySetResult(default))
         {
             return payload;
         }
 
-        _payload = null;
+        Volatile.Write(ref _payload, null);
         payload.Dispose();
         return null;
+    }
+
+    internal void AbortPayload(Exception exception)
+    {
+        Interlocked.CompareExchange(ref _payloadAbortError, exception, null);
+        Volatile.Read(ref _payload)?.Abort(Volatile.Read(ref _payloadAbortError));
     }
 
     internal void CompleteMissing()
@@ -206,6 +230,12 @@ internal sealed class RespBulkPayloadPipe : IDisposable
         {
             _pipe.Writer.Complete(exception);
         }
+    }
+
+    internal void Abort(Exception exception)
+    {
+        _pipe.Writer.CancelPendingFlush();
+        Complete(exception);
     }
 
     public void Dispose()

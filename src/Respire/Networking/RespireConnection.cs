@@ -93,6 +93,7 @@ internal sealed class RespireConnection : IAsyncDisposable
     private int _responseTimeoutSuppressions;
     private Exception? _abortReason;
     private readonly IConnectionGeneration? _generation;
+    private BulkStreamPendingResponseSource? _activeBulkStreamSource;
 
     // Set by the multiplexer before publication; endpoint aliases may later change owners.
     internal Respire.Infrastructure.RespireConnectionMultiplexer? Multiplexer { get; set; }
@@ -1807,20 +1808,29 @@ internal sealed class RespireConnection : IAsyncDisposable
                                 throw new RespireProtocolException("Streaming response order changed unexpectedly.");
                             }
 
-                            MarkReplyReceived();
-                            if (bulkLength == -1)
+                            Volatile.Write(ref _activeBulkStreamSource, streamSource);
+                            try
                             {
-                                start = headerEnd;
-                                streamSource.CompleteMissing();
-                                streamSource.ReleaseRef();
+                                if (bulkLength == -1)
+                                {
+                                    start = headerEnd;
+                                    streamSource.CompleteMissing();
+                                    MarkReplyReceived();
+                                    streamSource.ReleaseRef();
+                                }
+                                else
+                                {
+                                    start = headerEnd;
+                                    var streamed = await ReceiveBulkStreamAsync(
+                                        buffer, start, end, streamSource, (int)bulkLength).ConfigureAwait(false);
+                                    start = streamed.Start;
+                                    end = streamed.End;
+                                    MarkReplyReceived();
+                                }
                             }
-                            else
+                            finally
                             {
-                                start = headerEnd;
-                                var streamed = await ReceiveBulkStreamAsync(
-                                    buffer, start, end, streamSource, (int)bulkLength).ConfigureAwait(false);
-                                start = streamed.Start;
-                                end = streamed.End;
+                                Interlocked.CompareExchange(ref _activeBulkStreamSource, null, streamSource);
                             }
 
                             responseBytes = 0;
@@ -2208,7 +2218,12 @@ internal sealed class RespireConnection : IAsyncDisposable
             throw new RespireProtocolException($"Unsolicited response from {Host}:{Port} with no command in flight.");
         }
 
-        MarkReplyReceived();
+        var isStreamingPrefix = source is BulkStreamPendingResponseSource { IsFinalReply: false };
+        if (source is BulkStreamPendingResponseSource streamSource)
+            streamSource.ObservePrefix(in value);
+
+        if (!isStreamingPrefix)
+            MarkReplyReceived();
 
         _generation?.ObserveResponse(this, discardedOperation ?? source.CommandName, in value);
 
@@ -2538,6 +2553,8 @@ internal sealed class RespireConnection : IAsyncDisposable
     private void Abort(Exception? reason = null)
     {
         _watchdogCancellation?.Cancel();
+        var writeFailure = reason
+            ?? new RespireConnectionException($"Connection to {Host}:{Port} closed before writing completed.");
         lock (_writeGate)
         {
             if (_dead)
@@ -2547,10 +2564,10 @@ internal sealed class RespireConnection : IAsyncDisposable
 
             _dead = true;
             _abortReason = reason;
-            var writeFailure = reason
-                ?? new RespireConnectionException($"Connection to {Host}:{Port} closed before writing completed.");
             _activeBuffer.FailWrite(writeFailure);
         }
+
+        Volatile.Read(ref _activeBulkStreamSource)?.AbortPayload(writeFailure);
 
         try
         {
