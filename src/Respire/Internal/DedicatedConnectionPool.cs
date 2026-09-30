@@ -16,6 +16,8 @@ internal sealed class DedicatedConnectionPool(
 {
     private const int MaxIdle = 4;
 
+    // Cluster diagnostics acquire the router's _nodesGate before this gate. Never call
+    // back into the router or invoke user callbacks while holding this gate.
     private readonly object _gate = new();
     private readonly Stack<Entry> _idle = new(MaxIdle);
     // Keep closing entries registered until socket and receive/flush cleanup actually completes.
@@ -30,6 +32,17 @@ internal sealed class DedicatedConnectionPool(
     internal bool IsStopping
     {
         get { lock (_gate) return _stopping; }
+    }
+
+    internal (int Borrowed, int Connecting, bool CleanupFailed) CaptureRetirementState()
+    {
+        lock (_gate)
+        {
+            var borrowed = 0;
+            foreach (var entry in _connections.Values)
+                if (entry.State == State.Rented) borrowed++;
+            return (borrowed, _connecting, _closeError is not null);
+        }
     }
 
     private enum State { Idle, Rented, Closing }

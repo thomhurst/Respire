@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Respire.Infrastructure;
 
@@ -13,6 +14,10 @@ internal sealed partial class ClusterRouter
     {
         internal readonly RespireConnectionMultiplexer Node = node;
         internal readonly DedicatedConnectionPool? DedicatedPool = dedicatedPool;
+        internal readonly long StartedAt = Stopwatch.GetTimestamp();
+        private bool _cleanupFailed;
+        internal bool CleanupFailed => Volatile.Read(ref _cleanupFailed);
+        internal void MarkCleanupFailed() => Volatile.Write(ref _cleanupFailed, true);
         internal readonly TaskCompletionSource Completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
@@ -85,6 +90,7 @@ internal sealed partial class ClusterRouter
         catch (Exception error)
         {
             // Unexpected cleanup failure is not permission to forget an owed fence.
+            retirement.MarkCleanupFailed();
             // Join the pool started above even when the node path failed first.
             Exception failure = error;
             try { await poolDrain.ConfigureAwait(false); }
@@ -110,6 +116,7 @@ internal sealed partial class ClusterRouter
         }
         catch (Exception error)
         {
+            retirement.MarkCleanupFailed();
             if (!_stopRetirement.IsCancellationRequested)
                 _logger?.LogWarning(error, "Cluster generation cleanup failed at {Host}:{Port}", node.Host, node.Port);
             retirement.Completion.TrySetException(error);

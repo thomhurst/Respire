@@ -17,6 +17,29 @@ public class ClusterRetirementTests
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(5);
 
     [Test]
+    public async Task RetirementSnapshotsAreOwnedAndRequireALiveClient()
+    {
+        await using var standalone = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new RespireEndpoint("seed.invalid")],
+        });
+        await Assert.That(standalone.GetClusterRetirementSnapshot()).IsNull();
+        await using var client = CreateClient();
+        var snapshot = client.GetClusterRetirementSnapshot()!;
+        await Assert.That(snapshot.RetiringGenerationCount).IsEqualTo(0);
+        await Assert.That(snapshot.OldestRetirementAge).IsEqualTo(TimeSpan.Zero);
+        await Assert.That(snapshot.PendingCorrectionFenceCount).IsEqualTo(0);
+        var view = (RespireClient)client.WithKeyPrefix("tenant:");
+        await Assert.That(view.GetClusterRetirementSnapshot()!.RetiringGenerationCount).IsEqualTo(0);
+        await view.DisposeAsync();
+        await Assert.That(client.GetClusterRetirementSnapshot()).IsNotNull();
+        await client.DisposeAsync();
+        await Assert.That(() => client.GetClusterRetirementSnapshot()).ThrowsExactly<ObjectDisposedException>();
+        await Assert.That(() => view.GetClusterRetirementSnapshot()).ThrowsExactly<ObjectDisposedException>();
+        await Assert.That(snapshot.RetiringGenerationCount).IsEqualTo(0);
+    }
+
+    [Test]
     [Arguments("keyed")]
     [Arguments("unkeyed")]
     [Arguments("dedicated")]
@@ -516,6 +539,12 @@ public class ClusterRetirementTests
         await Assert.That(connection.IsConnected).IsTrue();
         await Assert.That(router.WaitForRetirementAsync().IsCompleted).IsFalse();
         await Assert.That(ReferenceEquals(pool, router.GetDedicatedPool(endpoint))).IsFalse();
+        var snapshot = client.GetClusterRetirementSnapshot()!;
+        await Assert.That(snapshot.RetiringGenerationCount).IsEqualTo(1);
+        await Assert.That(snapshot.BorrowedDedicatedConnectionCount).IsEqualTo(dedicated ? 1L : 0L);
+        await Assert.That(snapshot.PendingCorrectionFenceCount).IsEqualTo(0);
+        await Assert.That(snapshot.CleanupFailedGenerationCount).IsEqualTo(0);
+        if (!dedicated) await Assert.That(snapshot.UndrainedGenerationCount).IsEqualTo(1);
         await current.EnsureConnectedAsync();
         using (var reply = await current.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
             await Assert.That(reply.AsString()).IsEqualTo("PONG");
@@ -528,6 +557,9 @@ public class ClusterRetirementTests
         await Assert.That(ReferenceEquals(current, router.GetMultiplexer(endpoint))).IsTrue();
         await Assert.That(Count(router, "_retiringNodes")).IsEqualTo(0);
         await Assert.That(RetainedNodes(router)).IsEqualTo(2);
+        await Assert.That(client.GetClusterRetirementSnapshot()!.RetiringGenerationCount).IsEqualTo(0);
+        await Assert.That(client.GetClusterRetirementSnapshot()!.OldestRetirementAge).IsEqualTo(TimeSpan.Zero);
+        await Assert.That(snapshot.RetiringGenerationCount).IsEqualTo(1); // Owned historical observation.
     }
 
     [Test]
@@ -561,6 +593,7 @@ public class ClusterRetirementTests
             await Assert.That(identities.NodeIdCount).IsEqualTo(1);
             await Assert.That(identities.ReverseNodeIdCount).IsEqualTo(1);
             await Assert.That(identities.Endpoints.Count()).IsEqualTo(3); // seed, preferred, advertised alias
+            await Assert.That(client.GetClusterRetirementSnapshot()!.RetiringGenerationCount).IsEqualTo(0);
         }
         await Assert.That(client.Core.Multiplexer.IsRetired).IsFalse();
     }
@@ -586,10 +619,13 @@ public class ClusterRetirementTests
         var pending = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
         await received.Task.WaitAsync(Limit);
         Publish(router, endpoint, "new", 2);
+        var snapshot = client.GetClusterRetirementSnapshot()!;
         await client.DisposeAsync().AsTask().WaitAsync(Limit);
         await Assert.That(async () => await pending).Throws<RespireConnectionException>();
         await router.WaitForRetirementAsync().WaitAsync(Limit);
         await Assert.That(connection.IsConnected).IsFalse();
+        await Assert.That(snapshot.RetiringGenerationCount).IsEqualTo(1);
+        await Assert.That(() => client.GetClusterRetirementSnapshot()).ThrowsExactly<ObjectDisposedException>();
     }
 
     [Test]
@@ -666,6 +702,10 @@ public class ClusterRetirementTests
             await Assert.That(old.HasPendingCorrectionFences).IsFalse();
             await Assert.That(Count(router, "_retiringNodes")).IsEqualTo(1);
             await Assert.That(RetainedNodes(router)).IsEqualTo(3);
+            var snapshot = client.GetClusterRetirementSnapshot()!;
+            await Assert.That(snapshot.CleanupFailedGenerationCount).IsEqualTo(1);
+            await Assert.That(snapshot.UndrainedGenerationCount).IsEqualTo(1);
+            await Assert.That(snapshot.AwaitingFenceGenerationCount).IsEqualTo(0);
         }
         finally
         {
@@ -698,6 +738,10 @@ public class ClusterRetirementTests
         await Assert.That(error).IsSameReferenceAs(logger.Failure);
         await Assert.That(Count(router, "_retiringNodes")).IsEqualTo(1);
         await Assert.That(Count(router, "_ownedPools")).IsEqualTo(1);
+        var snapshot = client.GetClusterRetirementSnapshot()!;
+        await Assert.That(snapshot.CleanupFailedGenerationCount).IsEqualTo(1);
+        await Assert.That(snapshot.BorrowedDedicatedConnectionCount).IsEqualTo(0);
+        await Assert.That(snapshot.AwaitingFenceGenerationCount).IsEqualTo(0);
         await Assert.That(async () => await client.DisposeAsync().AsTask().WaitAsync(Limit)).ThrowsExactly<InvalidOperationException>();
         await Assert.That(borrowed.IsConnected).IsFalse();
     }
@@ -897,7 +941,9 @@ public class ClusterRetirementTests
     }
 
     [Test]
-    public async Task FailedFenceRetainsGenerationUntilAcknowledged()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FailedFenceRetainsGenerationUntilAcknowledged(bool disposeBeforeAcknowledgement)
     {
         var firstSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var retrySeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -928,10 +974,29 @@ public class ClusterRetirementTests
         await Assert.That(old.HasPendingCorrectionFences).IsTrue();
         await Assert.That(RetainedNodes(router)).IsEqualTo(3);
         await Assert.That(router.WaitForRetirementAsync().IsCompleted).IsFalse();
+        var snapshot = client.GetClusterRetirementSnapshot()!;
+        await Assert.That(snapshot.RetiringGenerationCount).IsEqualTo(1);
+        await Assert.That(snapshot.PendingCorrectionFenceCount).IsEqualTo(1);
+        await Assert.That(snapshot.AwaitingFenceGenerationCount).IsEqualTo(1);
+        await Assert.That(snapshot.UndrainedGenerationCount).IsEqualTo(0);
+        await Assert.That(snapshot.CleanupFailedGenerationCount).IsEqualTo(0);
+        await Assert.That(snapshot.OldestRetirementAge).IsGreaterThan(TimeSpan.Zero);
+        var later = client.GetClusterRetirementSnapshot()!;
+        await Assert.That(later.OldestRetirementAge).IsGreaterThanOrEqualTo(snapshot.OldestRetirementAge);
+        if (disposeBeforeAcknowledgement)
+        {
+            await client.DisposeAsync().AsTask().WaitAsync(Limit);
+            await Assert.That(() => client.GetClusterRetirementSnapshot()).ThrowsExactly<ObjectDisposedException>();
+            await Assert.That(snapshot.PendingCorrectionFenceCount).IsEqualTo(1);
+            return;
+        }
         await server.SendRawAsync(":1\r\n"u8.ToArray(), 2);
         await router.WaitForRetirementAsync().WaitAsync(Limit);
         await Assert.That(RetainedNodes(router)).IsEqualTo(2);
         await Assert.That(old.HasPendingCorrectionFences).IsFalse();
+        await Assert.That(client.GetClusterRetirementSnapshot()!.PendingCorrectionFenceCount).IsEqualTo(0);
+        await Assert.That(client.GetClusterRetirementSnapshot()!.RetiringGenerationCount).IsEqualTo(0);
+        await Assert.That(snapshot.PendingCorrectionFenceCount).IsEqualTo(1);
         // The shared retirement task still contains its first failure after the router's
         // successful fence retry. A later correction must use the now-safe original peer.
         await Assert.That(old.RetireAsync().IsFaulted).IsTrue();
