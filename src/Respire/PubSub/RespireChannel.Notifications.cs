@@ -5,6 +5,7 @@ using Respire.Internal;
 namespace Respire;
 
 /// <summary>The explicit Redis Cluster routing scope of a channel descriptor.</summary>
+/// <remarks>Additional scopes may be introduced in future versions. Handle unrecognized values explicitly.</remarks>
 public enum RespireChannelRoutingScope
 {
     /// <summary>Ordinary global Pub/Sub, with no notification semantics.</summary>
@@ -66,6 +67,7 @@ public readonly partial struct RespireChannel
         ValidateEvent(type);
         if (type.Contains((byte)'|')) throw new ArgumentException("The event name cannot contain '|'.", nameof(type));
         var keyBytes = key.ToBytes();
+        // Pipes in the key are unambiguous: only the first pipe separates event from key.
         var tail = Join(type, (byte)'|', keyBytes);
         return CreateNotification("subkeyspaceevent", database is null ? EscapePattern(tail) : tail, database,
             pattern: database is null, ClusterHash.GetSlot(keyBytes));
@@ -104,24 +106,19 @@ public readonly partial struct RespireChannel
         second.CopyTo(bytes.AsSpan(first.Length + 1));
         return bytes;
     }
-    private static byte[] PrefixPattern(RespireKey key)
-    {
-        var escaped = EscapePattern(key.ToBytes());
-        Array.Resize(ref escaped, escaped.Length + 1);
-        escaped[^1] = (byte)'*';
-        return escaped;
-    }
-    private static byte[] EscapePattern(ReadOnlySpan<byte> bytes)
+    private static byte[] PrefixPattern(RespireKey key) => EscapePattern(key.ToBytes(), appendWildcard: true);
+    private static byte[] EscapePattern(ReadOnlySpan<byte> bytes, bool appendWildcard = false)
     {
         var extra = 0;
         foreach (var value in bytes) if (IsGlob(value)) extra++;
-        var result = new byte[checked(bytes.Length + extra)];
+        var result = new byte[checked(bytes.Length + extra + (appendWildcard ? 1 : 0))];
         var index = 0;
         foreach (var value in bytes)
         {
             if (IsGlob(value)) result[index++] = (byte)'\\';
             result[index++] = value;
         }
+        if (appendWildcard) result[index] = (byte)'*';
         return result;
     }
     private static bool IsGlob(byte value) => value is (byte)'*' or (byte)'?' or (byte)'[' or (byte)']' or (byte)'\\';

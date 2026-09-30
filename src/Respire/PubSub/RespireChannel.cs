@@ -10,12 +10,10 @@ namespace Respire;
 public readonly partial struct RespireChannel : IEquatable<RespireChannel>
 {
     private readonly byte[]? _bytes;
-    // Keep the descriptor at 16 bytes on 64-bit runtimes: messages carry both a channel
-    // and an optional pattern. Zero encodes null; Redis slots fit in 15 bits after adding one.
-    private readonly uint _notificationDatabasePlusOne;
-    private readonly ushort _routingSlotPlusOne;
-    private readonly byte _kind;
-    private readonly byte _routingScope;
+    // Copy metadata as one scalar: every delivered message carries a channel and optional pattern.
+    // Low to high: kind (8 bits), scope (8), slot + 1 (16), database + 1 (32).
+    // Zero encodes null for slot/database, preserving default-channel semantics and a 16-byte size.
+    private readonly ulong _metadata;
 
     /// <summary>Creates a literal channel from valid UTF-16 text, encoded as UTF-8.</summary>
     /// <exception cref="ArgumentException">The text contains an unpaired surrogate.</exception>
@@ -33,10 +31,10 @@ public readonly partial struct RespireChannel : IEquatable<RespireChannel>
         int? notificationDatabase = null, int? routingSlot = null)
     {
         _bytes = bytes;
-        _kind = (byte)kind;
-        _routingScope = (byte)routingScope;
-        _notificationDatabasePlusOne = notificationDatabase is { } database ? (uint)database + 1 : 0;
-        _routingSlotPlusOne = routingSlot is { } slot ? checked((ushort)(slot + 1)) : (ushort)0;
+        var databasePlusOne = notificationDatabase is { } database ? (uint)database + 1 : 0;
+        var slotPlusOne = routingSlot is { } slot ? checked((ushort)(slot + 1)) : (ushort)0;
+        _metadata = (byte)kind | ((ulong)(byte)routingScope << 8)
+            | ((ulong)slotPlusOne << 16) | ((ulong)databasePlusOne << 32);
     }
 
     /// <summary>The exact owned channel bytes; accessing them does not allocate.</summary>
@@ -45,16 +43,30 @@ public readonly partial struct RespireChannel : IEquatable<RespireChannel>
 
     /// <summary>The explicit subscription command family. Reserved names do not change this value.</summary>
     /// <remarks>Kind is not part of equality or hashing; literal and pattern values with the same bytes compare equal.</remarks>
-    public SubscriptionKind Kind => (SubscriptionKind)_kind;
+    public SubscriptionKind Kind => (SubscriptionKind)(byte)_metadata;
 
     /// <summary>Whether this is a server-owned notification descriptor that cannot be published.</summary>
     public bool IsNotification => RoutingScope != RespireChannelRoutingScope.Global;
     /// <summary>The explicit routing scope; arbitrary reserved-looking bytes remain ordinary channels.</summary>
-    public RespireChannelRoutingScope RoutingScope => (RespireChannelRoutingScope)_routingScope;
+    public RespireChannelRoutingScope RoutingScope => (RespireChannelRoutingScope)(byte)(_metadata >> 8);
     /// <summary>The physical key's slot for KeyOwner descriptors; null otherwise.</summary>
-    public int? RoutingSlot => _routingSlotPlusOne == 0 ? null : _routingSlotPlusOne - 1;
+    public int? RoutingSlot
+    {
+        get
+        {
+            var slot = (ushort)(_metadata >> 16);
+            return slot == 0 ? null : slot - 1;
+        }
+    }
     /// <summary>The notification database, or null for all databases/ordinary channels.</summary>
-    public int? NotificationDatabase => _notificationDatabasePlusOne == 0 ? null : (int)(_notificationDatabasePlusOne - 1);
+    public int? NotificationDatabase
+    {
+        get
+        {
+            var database = (uint)(_metadata >> 32);
+            return database == 0 ? null : (int)(database - 1);
+        }
+    }
 
     /// <summary>The Redis Cluster slot computed from the raw bytes, including hash tags.</summary>
     public int ClusterSlot => ClusterHash.GetSlot(_bytes.AsSpan());
@@ -111,7 +123,8 @@ public readonly partial struct RespireChannel : IEquatable<RespireChannel>
     {
         if (IsNotification && kind != Kind)
             throw new ArgumentException("Notification descriptors retain their subscription kind; construct an ordinary channel to override it.", nameof(kind));
-        return new(_bytes, kind, RoutingScope, NotificationDatabase, RoutingSlot);
+        return new(_bytes, (_metadata & ~0xffUL) | (byte)kind);
     }
+    private RespireChannel(byte[]? bytes, ulong metadata) => (_bytes, _metadata) = (bytes, metadata);
     internal RespireValue AsValue() => new(Bytes);
 }
