@@ -391,6 +391,7 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
         RespireTelemetry.ClientCacheEvictions.Add(1);
     }
 
+    // Read-only here means preserving cached keyspace values. Diagnostic and script state may change.
     private static bool IsReadOnly(string operation)
         => IsCacheableRead(operation)
            || operation is
@@ -427,7 +428,8 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             "COMMAND INFO" or "COMMAND DOCS" or "COMMAND GETKEYS" or "MODULE LIST" or
             "CLUSTER INFO" or "CLUSTER NODES" or "CLUSTER SHARDS" or "CLUSTER LINKS" or "CLUSTER MYID" or
             "CLUSTER MYSHARDID" or "CLUSTER KEYSLOT" or "CLUSTER COUNTKEYSINSLOT" or "CLUSTER SLOT-STATS" or
-            "COMMANDLOG GET" or "COMMANDLOG LEN";
+            "COMMANDLOG GET" or "COMMANDLOG LEN" or
+            "HOTKEYS GET" or "HOTKEYS START" or "HOTKEYS STOP" or "HOTKEYS RESET";
 
     private static bool DisruptsClientCacheTracking<TCommand>(string operation, in TCommand command)
         where TCommand : struct, IRespCommand

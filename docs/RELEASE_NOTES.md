@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Hot-key tracking
+
+- Redis 8.6+ HOTKEYS APIs add a pinned server handle for START/GET/STOP/RESET and
+  explicit per-node operations. Owned snapshots preserve binary keys, measurement
+  units, optional metrics, and future fields. State changes require `AllowAdmin`.
+  Five new `IServerCommands` members are a breaking interface extension for external
+  implementers. See the [hot-key guide](../website/docs/guides/hot-keys.md) for shared
+  session ownership, sampling, resource costs, and cancellation behavior.
+
 ### Stream production and negative acknowledgements
 
 - `StreamAddOptions.Idempotency` adds mutually exclusive IDMP/IDMPAUTO production

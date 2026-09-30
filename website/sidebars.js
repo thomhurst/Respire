@@ -31,6 +31,7 @@ const sidebars = {
         'guides/server-diagnostics',
         'guides/cluster-inspection',
         'guides/command-logs',
+        'guides/hot-keys',
         'guides/batches-and-transactions',
         'guides/durability-acknowledgements',
         'guides/raw-commands',
