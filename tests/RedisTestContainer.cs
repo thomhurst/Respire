@@ -39,8 +39,7 @@ public sealed class RedisTestContainer : IAsyncInitializer, IAsyncDisposable
 
     public async Task InitializeAsync()
     {
-        var container = new RedisBuilder()
-            .WithImage("redis:7.4.11-alpine")
+        var container = new RedisBuilder("redis:7.0.15")
             .WithCommand("redis-server", "--databases", DatabaseCount.ToString())
             .Build();
         _container = container;

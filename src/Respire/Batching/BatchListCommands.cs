@@ -11,6 +11,10 @@ namespace Respire;
 /// variants (BLPOP, BLMOVE, …) have no deferred form because a batch cannot block. Collection
 /// cardinality uses <see cref="Count"/>.
 /// </summary>
+/// <remarks>
+/// Batches copy argument spans when queued, but referenced byte buffers must remain unchanged
+/// until execution completes. Transactions serialize arguments into their owned buffer when queued.
+/// </remarks>
 public interface IBatchListCommands
 {
     /// <summary>First matching zero-based index, or null. Negative rank searches from the tail; maxLength 0 scans without a limit. Redis: LPOS.</summary>
