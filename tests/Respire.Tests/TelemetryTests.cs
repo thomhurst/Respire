@@ -15,6 +15,7 @@ namespace Respire.Tests;
 public class TelemetryTests
 {
     [Test]
+    [NotInParallel] // This process-wide instrument also receives reconnects from wire tests.
     public async Task SubscriptionGap_EmitsCounterWithReasonTags()
     {
         using var capture = new TelemetryCapture();
@@ -488,6 +489,7 @@ public class TelemetryTests
                         listener.EnableMeasurementEvents(instrument);
                     }
                     else if (instrument.Name == "respire.pubsub.messages.dropped"
+                             || instrument.Name == "respire.pubsub.delivery.gaps"
                              || instrument.Name.StartsWith("respire.client_cache.", StringComparison.Ordinal))
                     {
                         listener.EnableMeasurementEvents(instrument);

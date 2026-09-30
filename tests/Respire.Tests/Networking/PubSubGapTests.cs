@@ -57,6 +57,39 @@ public class PubSubGapTests
     }
 
     [Test]
+    public async Task EachTargetResumesBehindItsOwnGap()
+    {
+        static byte[] Reply(string name) => Encoding.ASCII.GetBytes(
+            $"*3\r\n$9\r\nsubscribe\r\n$1\r\n{name}\r\n:1\r\n*3\r\n$7\r\nmessage\r\n$1\r\n{name}\r\n$1\r\n{name}\r\n");
+        await using var server = new FakeRespServer(2, Reply("a"), Reply("b"));
+        server.SuppressReply = command => command == "SUBSCRIBE stalled";
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+        });
+        await using var subscription = await client.SubscribeAsync(["a", "b"]);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
+        foreach (var expected in new[] { "a", "b" })
+        {
+            await Assert.That(await reader.MoveNextAsync()).IsTrue();
+            await Assert.That(reader.Current.Text).IsEqualTo(expected);
+        }
+        using var cancel = new CancellationTokenSource();
+        var stalled = client.SubscribeAsync("stalled", cancel.Token).AsTask();
+        while (server.CommandsSeen < 3) await Task.Delay(10, deadline.Token);
+        await cancel.CancelAsync();
+        await Assert.That(async () => await stalled).Throws<OperationCanceledException>();
+        foreach (var expected in new[] { "a", "b" })
+        {
+            await Assert.That(await reader.MoveNextAsync()).IsTrue();
+            await Assert.That(reader.Current.Kind).IsEqualTo(RespireMessageKind.Gap);
+            await Assert.That(await reader.MoveNextAsync()).IsTrue();
+            await Assert.That(reader.Current.Text).IsEqualTo(expected);
+        }
+    }
+
+    [Test]
     [Arguments(SubscriptionOverflow.DropOldest)]
     [Arguments(SubscriptionOverflow.DropNewest)]
     public async Task OverflowPreservesGapAndDataOrder(SubscriptionOverflow overflow)
