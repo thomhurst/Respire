@@ -42,12 +42,14 @@ public class ClientCacheInvalidationWireTests
     }
 
     [Test]
-    public async Task ObserverCanSynchronouslyDisposeSubscriptionAndClient()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ObserverCanSynchronouslyDisposeSubscriptionAndClient(bool coalesce)
     {
         await using var server = CreateServer();
-        await using var client = await ConnectAsync(server, RespireClientTrackingMode.OptIn);
+        await using var client = await ConnectAsync(server, RespireClientTrackingMode.OptIn, coalesce);
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        RespireClientCacheInvalidationSubscription? subscription = null;
+        IRespireClientCacheInvalidationSubscription? subscription = null;
         subscription = client.ClientSideCache!.SubscribeInvalidations("tenant:key", _ =>
         {
             try
@@ -123,13 +125,14 @@ public class ClientCacheInvalidationWireTests
         },
     };
 
-    private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server, RespireClientTrackingMode mode)
+    private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server, RespireClientTrackingMode mode, bool coalesce = false)
         => RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)],
             Connections = 1,
             ClientSideCache = new()
             {
+                CoalesceConcurrentMisses = coalesce,
                 TrackingMode = mode,
                 BroadcastPrefixes = mode == RespireClientTrackingMode.Broadcast ? ["tenant:"] : [],
             },

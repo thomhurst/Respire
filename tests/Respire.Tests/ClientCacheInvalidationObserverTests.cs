@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
+using Respire.Internal;
 using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -26,6 +27,82 @@ public class ClientCacheInvalidationObserverTests
         public long SizeBytes => 0;
         public RespireClientSideCacheStatistics GetStatistics() => default;
         public void Clear() { }
+    }
+
+    [Test]
+    public async Task ExternalImplementationsCanReturnTheirOwnSubscription()
+    {
+        IRespireClientSideCache cache = new ExternalObservingCache();
+        using var subscription = cache.SubscribeInvalidations("key", _ => { });
+        await Assert.That(subscription.Key).IsEqualTo(new RespireKey("key"));
+        await Assert.That(subscription.IsDisposed).IsFalse();
+        subscription.Dispose();
+        await Assert.That(subscription.IsDisposed).IsTrue();
+    }
+
+    private sealed class ExternalObservingCache : IRespireClientSideCache
+    {
+        public int Count => 0;
+        public long SizeBytes => 0;
+        public RespireClientSideCacheStatistics GetStatistics() => default;
+        public void Clear() { }
+        public IRespireClientCacheInvalidationSubscription SubscribeInvalidations(
+            RespireKey key, Action<RespireClientCacheInvalidation> observer, CancellationToken cancellationToken = default)
+            => new ExternalSubscription(key);
+    }
+
+    private sealed class ExternalSubscription(RespireKey key) : IRespireClientCacheInvalidationSubscription
+    {
+        public RespireKey Key => key;
+        public bool IsDisposed { get; private set; }
+        public Exception? LastObserverException => null;
+        public void Dispose() => IsDisposed = true;
+    }
+
+    [Test]
+    [Arguments(RespireClientCacheInvalidationReason.ExplicitClear)]
+    [Arguments(RespireClientCacheInvalidationReason.ContinuityLost)]
+    [Arguments(RespireClientCacheInvalidationReason.ServerInvalidation)]
+    public async Task ObserverReadCannotJoinProducerRetiredByInvalidation(RespireClientCacheInvalidationReason reason)
+    {
+        var cache = new ClientSideCacheCoordinator(new() { CoalesceConcurrentMisses = true });
+        RespireKey key = "key";
+        var identity = new ClientCacheCommandKey("GET", key.AsValue());
+        var originalReply = new TaskCompletionSource<RespValue>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refreshedReply = new TaskCompletionSource<RespValue>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var observerRead = new TaskCompletionSource<Task<RespValue>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var subscription = cache.SubscribeInvalidations(key, _ => observerRead.TrySetResult(Read(refreshedReply)));
+        try
+        {
+            var first = Read(originalReply);
+            var second = Read(originalReply);
+            await Assert.That(cache.ActiveSharedReadCount).IsEqualTo(1);
+            if (reason == RespireClientCacheInvalidationReason.ExplicitClear) cache.Clear();
+            else if (reason == RespireClientCacheInvalidationReason.ContinuityLost) cache.FlushForContinuityLoss();
+            else cache.Invalidate(in key, reason);
+
+            var refreshed = await observerRead.Task.WaitAsync(Limit);
+            await Assert.That(cache.ActiveSharedReadCount).IsEqualTo(2);
+            originalReply.SetResult(RespValue.BulkString("old"u8.ToArray()));
+            using var firstResult = await first.WaitAsync(Limit);
+            using var secondResult = await second.WaitAsync(Limit);
+            await Assert.That(firstResult.AsString()).IsEqualTo("old");
+            await Assert.That(secondResult.AsString()).IsEqualTo("old");
+            await Assert.That(refreshed.IsCompleted).IsFalse();
+            refreshedReply.SetResult(RespValue.BulkString("new"u8.ToArray()));
+            using var refreshedResult = await refreshed.WaitAsync(Limit);
+            await Assert.That(refreshedResult.AsString()).IsEqualTo("new");
+            await Assert.That(cache.ActiveSharedReadCount).IsEqualTo(0);
+        }
+        finally
+        {
+            originalReply.TrySetCanceled();
+            refreshedReply.TrySetCanceled();
+            cache.StopSharedReads();
+        }
+
+        Task<RespValue> Read(TaskCompletionSource<RespValue> reply) => cache.CoalesceReadAsync(
+            identity, reply, static (state, token) => new ValueTask<RespValue>(state.Task.WaitAsync(token)), default).AsTask();
     }
 
     [Test]
@@ -193,7 +270,7 @@ public class ClientCacheInvalidationObserverTests
         var cache = new ClientSideCacheCoordinator(new());
         RespireKey key = RespireKey.Empty;
         var completed = new TaskCompletionSource<RespireClientCacheInvalidation>(TaskCreationOptions.RunContinuationsAsynchronously);
-        RespireClientCacheInvalidationSubscription? subscription = null;
+        IRespireClientCacheInvalidationSubscription? subscription = null;
         subscription = cache.SubscribeInvalidations(key, change =>
         {
             subscription!.Dispose();

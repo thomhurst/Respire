@@ -267,12 +267,15 @@ and later callbacks continue. Use synchronous callbacks; `async void` exceptions
 captured by this API.
 
 Dispatch cost scales with the number of subscriptions: a global flush can schedule one worker
-per subscription, and registration/disposal briefly waits while that subscriber set is queued.
+per subscription. Registration and disposal publish new subscriber arrays; invalidation uses
+those immutable snapshots and queues callbacks outside the registration gate. A global flush
+still does work proportional to the subscriber count on its caller, which can hold other cache gates.
 There is no additional global subscription limit. Bound the number of live subscriptions in
 your application; the one-pending limit applies separately to each subscription. Only the most
 recent callback exception is retained. Catch and log inside your callback if every failure must
 be recorded. Third-party implementations of `IRespireClientSideCache` remain source-compatible;
-the default observation method throws `NotSupportedException` unless implemented.
+the default observation method throws `NotSupportedException` unless implemented. Implementations
+that support observation can return their own public `IRespireClientCacheInvalidationSubscription`.
 
 Dispose the returned subscription or cancel its token to discard pending delivery. Client
 disposal also stops every subscription. Disposal does not wait for a callback already selected

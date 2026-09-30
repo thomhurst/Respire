@@ -27,7 +27,19 @@ public readonly record struct RespireClientCacheInvalidation(
 /// <see cref="LastObserverException"/> and do not interrupt cache eviction or later callbacks.
 /// ExecutionContext is not captured. Use synchronous callbacks; async-void failures cannot be caught.
 /// Dispose does not join callbacks, so a callback may safely dispose itself or its client.</remarks>
-public sealed class RespireClientCacheInvalidationSubscription : IDisposable
+public interface IRespireClientCacheInvalidationSubscription : IDisposable
+{
+    /// <summary>The owned physical key supplied at registration.</summary>
+    RespireKey Key { get; }
+
+    /// <summary>Whether cancellation, subscription disposal, or client disposal stopped observation.</summary>
+    bool IsDisposed { get; }
+
+    /// <summary>The most recent callback failure, or null if no callback has thrown.</summary>
+    Exception? LastObserverException { get; }
+}
+
+internal sealed class RespireClientCacheInvalidationSubscription : IRespireClientCacheInvalidationSubscription
 {
     private readonly ClientSideCacheCoordinator _owner;
     private readonly Action<RespireClientCacheInvalidation> _observer;
