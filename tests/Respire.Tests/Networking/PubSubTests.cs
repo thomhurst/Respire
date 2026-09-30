@@ -139,7 +139,19 @@ public class PubSubTests
 
         await using var enumerator = subscription.GetAsyncEnumerator();
         await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+        if (overflow == SubscriptionOverflow.DropOldest)
+        {
+            await Assert.That(enumerator.Current.Kind).IsEqualTo(RespireMessageKind.Gap);
+            await Assert.That(enumerator.Current.Gap!.DroppedMessages).IsEqualTo(2);
+            await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+        }
         await Assert.That(enumerator.Current.Text).IsEqualTo(retainedMessage);
+        if (overflow == SubscriptionOverflow.DropNewest)
+        {
+            await Assert.That(await enumerator.MoveNextAsync()).IsTrue();
+            await Assert.That(enumerator.Current.Kind).IsEqualTo(RespireMessageKind.Gap);
+            await Assert.That(enumerator.Current.Gap!.DroppedMessages).IsEqualTo(2);
+        }
     }
 
     [Test]

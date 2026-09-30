@@ -5,6 +5,7 @@ on:
     paths:
       - 'src/Respire/PubSub/**'
       - 'benchmarks/Respire.Benchmarks/PubSubLookupBenchmarks.cs'
+      - 'benchmarks/Respire.Benchmarks/PubSubDeliveryBenchmarks.cs'
       - '.github/workflows/benchmark-pubsub.yml'
 
 permissions:
@@ -12,7 +13,7 @@ permissions:
 
 jobs:
   dispatch-comparison:
-    name: Compare pub/sub dispatch
+    name: Compare pub/sub dispatch (informational)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -33,10 +34,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          cp candidate/benchmarks/Respire.Benchmarks/PubSubDeliveryBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
           for phase in validation baseline-a candidate baseline-b; do
             source=baseline
             job=Medium
-            filter='*PubSubLookupBenchmarks.Utf8Lookup'
+            filter='*PubSubDeliveryBenchmarks*'
             if [ "$phase" = candidate ] || [ "$phase" = validation ]; then source=candidate; fi
             if [ "$phase" = validation ]; then job=Dry; filter='*PubSub*Benchmarks*'; fi
             (

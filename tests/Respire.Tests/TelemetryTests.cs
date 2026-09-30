@@ -15,6 +15,19 @@ namespace Respire.Tests;
 public class TelemetryTests
 {
     [Test]
+    [NotInParallel] // This process-wide instrument also receives reconnects from wire tests.
+    public async Task SubscriptionGap_EmitsCounterWithReasonTags()
+    {
+        using var capture = new TelemetryCapture();
+        RespireTelemetry.RecordSubscriptionGap(SubscriptionKind.Sharded, RespireSubscriptionGapReason.Reconnect);
+        var measurement = capture.Measurements.Single(item => item.InstrumentName == "respire.pubsub.delivery.gaps"
+            && item.Tags.GetValueOrDefault("respire.subscription.kind") as string == "Sharded"
+            && item.Tags.GetValueOrDefault("respire.subscription.gap.reason") as string == "Reconnect");
+        await Assert.That(measurement.Unit).IsEqualTo("{gap}");
+        await Assert.That(measurement.Value).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task SubscriptionDrop_EmitsCounterWithPolicyTags()
     {
         using var capture = new TelemetryCapture();
@@ -476,6 +489,7 @@ public class TelemetryTests
                         listener.EnableMeasurementEvents(instrument);
                     }
                     else if (instrument.Name == "respire.pubsub.messages.dropped"
+                             || instrument.Name == "respire.pubsub.delivery.gaps"
                              || instrument.Name.StartsWith("respire.client_cache.", StringComparison.Ordinal))
                     {
                         listener.EnableMeasurementEvents(instrument);

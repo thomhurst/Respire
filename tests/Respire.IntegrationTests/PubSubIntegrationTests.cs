@@ -244,10 +244,15 @@ public class PubSubIntegrationTests
             killed.AsInteger().Should().Be(1);
         }
 
-        var reconnectedMessage = ReadFirstAsync(subscription);
+        var reconnectedMessages = ReadAsync(subscription, 2);
         await PublishUntilReceiversAsync(channel, "after-reconnect", 1);
 
-        (await reconnectedMessage.WaitAsync(TimeSpan.FromSeconds(5))).Text.Should().Be("after-reconnect");
+        var resumed = await reconnectedMessages.WaitAsync(TimeSpan.FromSeconds(5));
+        resumed[0].Kind.Should().Be(RespireMessageKind.Gap);
+        resumed[0].Gap!.Reason.Should().Be(RespireSubscriptionGapReason.Reconnect);
+        resumed[0].Gap!.Duration.Should().BeGreaterThanOrEqualTo(TimeSpan.Zero);
+        resumed[1].Kind.Should().Be(RespireMessageKind.Message);
+        resumed[1].Text.Should().Be("after-reconnect");
         await connected.Task.WaitAsync(TimeSpan.FromSeconds(5));
         lock (changes)
         {
