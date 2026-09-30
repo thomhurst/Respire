@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Networking;
 using Respire.Protocol;
@@ -11,6 +12,45 @@ namespace Respire.Tests.Networking;
 
 public class CommandCatalogTests
 {
+    [Test]
+    [Arguments("GET", true)]
+    [Arguments("HGET", true)]
+    [Arguments("EVAL_RO", true)]
+    [Arguments("EVALSHA_RO", true)]
+    [Arguments("FCALL_RO", true)]
+    [Arguments("XREAD", true)]
+    [Arguments("SET", false)]
+    [Arguments("GETEX", false)]
+    [Arguments("EVAL", false)]
+    [Arguments("EVALSHA", false)]
+    [Arguments("FCALL", false)]
+    [Arguments("XREADGROUP", false)]
+    [Arguments("SORT", false)]
+    [Arguments("SORT_RO", true)]
+    [Arguments("JSON.GET", false)]
+    [Arguments("KEYDB.NHGET", false)]
+    [Arguments("READONLY", false)]
+    public async Task CatalogReadOnlyMetadataRequiresAuthoritativeFlags(string name, bool expected)
+    {
+        var descriptor = RespireCommands.All.ToArray().Single(command => command.Name == name);
+        await Assert.That(descriptor.IsReadOnly).IsEqualTo(expected);
+        RespireCommand callerSupplied = name;
+        await Assert.That(callerSupplied.IsReadOnly).IsFalse();
+    }
+
+    [Test]
+    public async Task ReadOnlyMetadataPreservesBehaviorAndDescriptorFootprint()
+    {
+        await Assert.That(default(RespireCommand).IsReadOnly).IsFalse();
+        await Assert.That(RespireCommands.Stream.XREAD.Behavior)
+            .IsEqualTo(RespireCommandBehavior.BlockingWhenRequested);
+        await Assert.That(RespireCommands.Cluster.READONLY.Behavior)
+            .IsEqualTo(RespireCommandBehavior.ConnectionScoped);
+        // The original descriptor held a Verb, name reference, source flags and an int behavior.
+        await Assert.That(Unsafe.SizeOf<RespireCommand>())
+            .IsEqualTo(Unsafe.SizeOf<Verb>() + IntPtr.Size + 2 * sizeof(int));
+    }
+
     [Test]
     public async Task Catalog_ContainsEveryAuditedCommandExactlyOnce()
     {

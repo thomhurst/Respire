@@ -11,10 +11,11 @@ public readonly struct RespireCommand
 {
     private readonly Verb _verb;
 
-    internal RespireCommand(string name, RespireCommandSource sources)
+    internal RespireCommand(string name, RespireCommandSource sources, bool isReadOnly = false)
     {
         Name = name;
         Sources = sources;
+        IsReadOnly = isReadOnly;
         _verb = new Verb(name);
         Behavior = Classify(name);
     }
@@ -33,6 +34,13 @@ public readonly struct RespireCommand
 
     /// <summary>Command references in which this command was found.</summary>
     public RespireCommandSource Sources { get; }
+
+    /// <summary>
+    /// Whether all audited providers explicitly mark this command read-only.
+    /// False includes unknown metadata and caller-supplied commands; it does not prove a command writes.
+    /// This metadata does not change routing, blocking behavior, or connection affinity.
+    /// </summary>
+    public bool IsReadOnly { get; }
 
     internal Verb Verb => _verb;
 
@@ -136,7 +144,8 @@ public readonly struct RespireCommand
     }
 }
 
-internal enum RespireCommandBehavior
+// Keep the behavior and read-only metadata within the descriptor's existing footprint.
+internal enum RespireCommandBehavior : byte
 {
     Multiplexed,
     Blocking,

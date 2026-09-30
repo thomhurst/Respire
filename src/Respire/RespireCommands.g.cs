@@ -9,7 +9,7 @@ public static class RespireCommands
     public static class Array
     {
         /// <summary><c>ARCOUNT</c>.</summary>
-        public static readonly RespireCommand ARCOUNT = new("ARCOUNT", RespireCommandSource.Redis);
+        public static readonly RespireCommand ARCOUNT = new("ARCOUNT", RespireCommandSource.Redis, isReadOnly: true);
 
         /// <summary><c>ARDEL</c>.</summary>
         public static readonly RespireCommand ARDEL = new("ARDEL", RespireCommandSource.Redis);
@@ -18,43 +18,43 @@ public static class RespireCommands
         public static readonly RespireCommand ARDELRANGE = new("ARDELRANGE", RespireCommandSource.Redis);
 
         /// <summary><c>ARGET</c>.</summary>
-        public static readonly RespireCommand ARGET = new("ARGET", RespireCommandSource.Redis);
+        public static readonly RespireCommand ARGET = new("ARGET", RespireCommandSource.Redis, isReadOnly: true);
 
         /// <summary><c>ARGETRANGE</c>.</summary>
-        public static readonly RespireCommand ARGETRANGE = new("ARGETRANGE", RespireCommandSource.Redis);
+        public static readonly RespireCommand ARGETRANGE = new("ARGETRANGE", RespireCommandSource.Redis, isReadOnly: true);
 
         /// <summary><c>ARGREP</c>.</summary>
-        public static readonly RespireCommand ARGREP = new("ARGREP", RespireCommandSource.Redis);
+        public static readonly RespireCommand ARGREP = new("ARGREP", RespireCommandSource.Redis, isReadOnly: true);
 
         /// <summary><c>ARINFO</c>.</summary>
-        public static readonly RespireCommand ARINFO = new("ARINFO", RespireCommandSource.Redis);
+        public static readonly RespireCommand ARINFO = new("ARINFO", RespireCommandSource.Redis, isReadOnly: true);
 
         /// <summary><c>ARINSERT</c>.</summary>
         public static readonly RespireCommand ARINSERT = new("ARINSERT", RespireCommandSource.Redis);
 
         /// <summary><c>ARLASTITEMS</c>.</summary>
-        public static readonly RespireCommand ARLASTITEMS = new("ARLASTITEMS", RespireCommandSource.Redis);
+        public static readonly RespireCommand ARLASTITEMS = new("ARLASTITEMS", RespireCommandSource.Redis, isReadOnly: true);
 
         /// <summary><c>ARLEN</c>.</summary>
-        public static readonly RespireCommand ARLEN = new("ARLEN", RespireCommandSource.Redis);
+        public static readonly RespireCommand ARLEN = new("ARLEN", RespireCommandSource.Redis, isReadOnly: true);
 
         /// <summary><c>ARMGET</c>.</summary>
-        public static readonly RespireCommand ARMGET = new("ARMGET", RespireCommandSource.Redis);
+        public static readonly RespireCommand ARMGET = new("ARMGET", RespireCommandSource.Redis, isReadOnly: true);
 
         /// <summary><c>ARMSET</c>.</summary>
         public static readonly RespireCommand ARMSET = new("ARMSET", RespireCommandSource.Redis);
 
         /// <summary><c>ARNEXT</c>.</summary>
-        public static readonly RespireCommand ARNEXT = new("ARNEXT", RespireCommandSource.Redis);
+        public static readonly RespireCommand ARNEXT = new("ARNEXT", RespireCommandSource.Redis, isReadOnly: true);
 
         /// <summary><c>AROP</c>.</summary>
-        public static readonly RespireCommand AROP = new("AROP", RespireCommandSource.Redis);
+        public static readonly RespireCommand AROP = new("AROP", RespireCommandSource.Redis, isReadOnly: true);
 
         /// <summary><c>ARRING</c>.</summary>
         public static readonly RespireCommand ARRING = new("ARRING", RespireCommandSource.Redis);
 
         /// <summary><c>ARSCAN</c>.</summary>
-        public static readonly RespireCommand ARSCAN = new("ARSCAN", RespireCommandSource.Redis);
+        public static readonly RespireCommand ARSCAN = new("ARSCAN", RespireCommandSource.Redis, isReadOnly: true);
 
         /// <summary><c>ARSEEK</c>.</summary>
         public static readonly RespireCommand ARSEEK = new("ARSEEK", RespireCommandSource.Redis);
@@ -68,22 +68,22 @@ public static class RespireCommands
     public static class Bitmap
     {
         /// <summary><c>BITCOUNT</c>.</summary>
-        public static readonly RespireCommand BITCOUNT = new("BITCOUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand BITCOUNT = new("BITCOUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>BITFIELD</c>.</summary>
         public static readonly RespireCommand BITFIELD = new("BITFIELD", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>BITFIELD_RO</c>.</summary>
-        public static readonly RespireCommand BITFIELD_RO = new("BITFIELD_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand BITFIELD_RO = new("BITFIELD_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>BITOP</c>.</summary>
         public static readonly RespireCommand BITOP = new("BITOP", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>BITPOS</c>.</summary>
-        public static readonly RespireCommand BITPOS = new("BITPOS", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand BITPOS = new("BITPOS", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>GETBIT</c>.</summary>
-        public static readonly RespireCommand GETBIT = new("GETBIT", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand GETBIT = new("GETBIT", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>SETBIT</c>.</summary>
         public static readonly RespireCommand SETBIT = new("SETBIT", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -243,7 +243,7 @@ public static class RespireCommands
         public static readonly RespireCommand CLUSTER_SYNCSLOTS = new("CLUSTER SYNCSLOTS", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>CLUSTERSCAN</c>.</summary>
-        public static readonly RespireCommand CLUSTERSCAN = new("CLUSTERSCAN", RespireCommandSource.Valkey);
+        public static readonly RespireCommand CLUSTERSCAN = new("CLUSTERSCAN", RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>READONLY</c>.</summary>
         public static readonly RespireCommand READONLY = new("READONLY", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -475,28 +475,28 @@ public static class RespireCommands
         public static readonly RespireCommand GEOADD = new("GEOADD", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>GEODIST</c>.</summary>
-        public static readonly RespireCommand GEODIST = new("GEODIST", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand GEODIST = new("GEODIST", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>GEOHASH</c>.</summary>
-        public static readonly RespireCommand GEOHASH = new("GEOHASH", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand GEOHASH = new("GEOHASH", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>GEOPOS</c>.</summary>
-        public static readonly RespireCommand GEOPOS = new("GEOPOS", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand GEOPOS = new("GEOPOS", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>GEORADIUS</c>.</summary>
         public static readonly RespireCommand GEORADIUS = new("GEORADIUS", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>GEORADIUS_RO</c>.</summary>
-        public static readonly RespireCommand GEORADIUS_RO = new("GEORADIUS_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand GEORADIUS_RO = new("GEORADIUS_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>GEORADIUSBYMEMBER</c>.</summary>
         public static readonly RespireCommand GEORADIUSBYMEMBER = new("GEORADIUSBYMEMBER", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>GEORADIUSBYMEMBER_RO</c>.</summary>
-        public static readonly RespireCommand GEORADIUSBYMEMBER_RO = new("GEORADIUSBYMEMBER_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand GEORADIUSBYMEMBER_RO = new("GEORADIUSBYMEMBER_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>GEOSEARCH</c>.</summary>
-        public static readonly RespireCommand GEOSEARCH = new("GEOSEARCH", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand GEOSEARCH = new("GEOSEARCH", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>GEOSEARCHSTORE</c>.</summary>
         public static readonly RespireCommand GEOSEARCHSTORE = new("GEOSEARCHSTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -510,7 +510,7 @@ public static class RespireCommands
         public static readonly RespireCommand HDEL = new("HDEL", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>HEXISTS</c>.</summary>
-        public static readonly RespireCommand HEXISTS = new("HEXISTS", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand HEXISTS = new("HEXISTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>HEXPIRE</c>.</summary>
         public static readonly RespireCommand HEXPIRE = new("HEXPIRE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -519,13 +519,13 @@ public static class RespireCommands
         public static readonly RespireCommand HEXPIREAT = new("HEXPIREAT", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>HEXPIRETIME</c>.</summary>
-        public static readonly RespireCommand HEXPIRETIME = new("HEXPIRETIME", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand HEXPIRETIME = new("HEXPIRETIME", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>HGET</c>.</summary>
-        public static readonly RespireCommand HGET = new("HGET", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand HGET = new("HGET", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>HGETALL</c>.</summary>
-        public static readonly RespireCommand HGETALL = new("HGETALL", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand HGETALL = new("HGETALL", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>HGETDEL</c>.</summary>
         public static readonly RespireCommand HGETDEL = new("HGETDEL", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -555,13 +555,13 @@ public static class RespireCommands
         public static readonly RespireCommand HINCRBYFLOAT = new("HINCRBYFLOAT", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>HKEYS</c>.</summary>
-        public static readonly RespireCommand HKEYS = new("HKEYS", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand HKEYS = new("HKEYS", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>HLEN</c>.</summary>
-        public static readonly RespireCommand HLEN = new("HLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand HLEN = new("HLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>HMGET</c>.</summary>
-        public static readonly RespireCommand HMGET = new("HMGET", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand HMGET = new("HMGET", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>HMSET</c>.</summary>
         public static readonly RespireCommand HMSET = new("HMSET", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -576,16 +576,16 @@ public static class RespireCommands
         public static readonly RespireCommand HPEXPIREAT = new("HPEXPIREAT", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>HPEXPIRETIME</c>.</summary>
-        public static readonly RespireCommand HPEXPIRETIME = new("HPEXPIRETIME", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand HPEXPIRETIME = new("HPEXPIRETIME", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>HPTTL</c>.</summary>
-        public static readonly RespireCommand HPTTL = new("HPTTL", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand HPTTL = new("HPTTL", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>HRANDFIELD</c>.</summary>
-        public static readonly RespireCommand HRANDFIELD = new("HRANDFIELD", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand HRANDFIELD = new("HRANDFIELD", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>HSCAN</c>.</summary>
-        public static readonly RespireCommand HSCAN = new("HSCAN", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand HSCAN = new("HSCAN", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>HSET</c>.</summary>
         public static readonly RespireCommand HSET = new("HSET", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -597,13 +597,13 @@ public static class RespireCommands
         public static readonly RespireCommand HSETNX = new("HSETNX", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>HSTRLEN</c>.</summary>
-        public static readonly RespireCommand HSTRLEN = new("HSTRLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand HSTRLEN = new("HSTRLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>HTTL</c>.</summary>
-        public static readonly RespireCommand HTTL = new("HTTL", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand HTTL = new("HTTL", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>HVALS</c>.</summary>
-        public static readonly RespireCommand HVALS = new("HVALS", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand HVALS = new("HVALS", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
     }
 
@@ -614,7 +614,7 @@ public static class RespireCommands
         public static readonly RespireCommand PFADD = new("PFADD", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>PFCOUNT</c>.</summary>
-        public static readonly RespireCommand PFCOUNT = new("PFCOUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand PFCOUNT = new("PFCOUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>PFDEBUG</c>.</summary>
         public static readonly RespireCommand PFDEBUG = new("PFDEBUG", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -720,10 +720,10 @@ public static class RespireCommands
         public static readonly RespireCommand DEL = new("DEL", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>DUMP</c>.</summary>
-        public static readonly RespireCommand DUMP = new("DUMP", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand DUMP = new("DUMP", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>EXISTS</c>.</summary>
-        public static readonly RespireCommand EXISTS = new("EXISTS", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand EXISTS = new("EXISTS", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>EXPIRE</c>.</summary>
         public static readonly RespireCommand EXPIRE = new("EXPIRE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -732,10 +732,10 @@ public static class RespireCommands
         public static readonly RespireCommand EXPIREAT = new("EXPIREAT", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>EXPIRETIME</c>.</summary>
-        public static readonly RespireCommand EXPIRETIME = new("EXPIRETIME", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand EXPIRETIME = new("EXPIRETIME", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>KEYS</c>.</summary>
-        public static readonly RespireCommand KEYS = new("KEYS", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand KEYS = new("KEYS", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>MIGRATE</c>.</summary>
         public static readonly RespireCommand MIGRATE = new("MIGRATE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -747,19 +747,19 @@ public static class RespireCommands
         public static readonly RespireCommand OBJECT = new("OBJECT", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>OBJECT ENCODING</c>.</summary>
-        public static readonly RespireCommand OBJECT_ENCODING = new("OBJECT ENCODING", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand OBJECT_ENCODING = new("OBJECT ENCODING", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>OBJECT FREQ</c>.</summary>
-        public static readonly RespireCommand OBJECT_FREQ = new("OBJECT FREQ", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand OBJECT_FREQ = new("OBJECT FREQ", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>OBJECT HELP</c>.</summary>
         public static readonly RespireCommand OBJECT_HELP = new("OBJECT HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>OBJECT IDLETIME</c>.</summary>
-        public static readonly RespireCommand OBJECT_IDLETIME = new("OBJECT IDLETIME", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand OBJECT_IDLETIME = new("OBJECT IDLETIME", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>OBJECT REFCOUNT</c>.</summary>
-        public static readonly RespireCommand OBJECT_REFCOUNT = new("OBJECT REFCOUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand OBJECT_REFCOUNT = new("OBJECT REFCOUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>PERSIST</c>.</summary>
         public static readonly RespireCommand PERSIST = new("PERSIST", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -771,13 +771,13 @@ public static class RespireCommands
         public static readonly RespireCommand PEXPIREAT = new("PEXPIREAT", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>PEXPIRETIME</c>.</summary>
-        public static readonly RespireCommand PEXPIRETIME = new("PEXPIRETIME", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand PEXPIRETIME = new("PEXPIRETIME", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>PTTL</c>.</summary>
-        public static readonly RespireCommand PTTL = new("PTTL", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand PTTL = new("PTTL", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>RANDOMKEY</c>.</summary>
-        public static readonly RespireCommand RANDOMKEY = new("RANDOMKEY", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand RANDOMKEY = new("RANDOMKEY", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>RENAME</c>.</summary>
         public static readonly RespireCommand RENAME = new("RENAME", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -789,22 +789,22 @@ public static class RespireCommands
         public static readonly RespireCommand RESTORE = new("RESTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>SCAN</c>.</summary>
-        public static readonly RespireCommand SCAN = new("SCAN", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand SCAN = new("SCAN", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>SORT</c>.</summary>
         public static readonly RespireCommand SORT = new("SORT", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>SORT_RO</c>.</summary>
-        public static readonly RespireCommand SORT_RO = new("SORT_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand SORT_RO = new("SORT_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>TOUCH</c>.</summary>
-        public static readonly RespireCommand TOUCH = new("TOUCH", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand TOUCH = new("TOUCH", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>TTL</c>.</summary>
-        public static readonly RespireCommand TTL = new("TTL", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand TTL = new("TTL", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>TYPE</c>.</summary>
-        public static readonly RespireCommand TYPE = new("TYPE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand TYPE = new("TYPE", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>UNLINK</c>.</summary>
         public static readonly RespireCommand UNLINK = new("UNLINK", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -871,13 +871,13 @@ public static class RespireCommands
         public static readonly RespireCommand BRPOPLPUSH = new("BRPOPLPUSH", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>LINDEX</c>.</summary>
-        public static readonly RespireCommand LINDEX = new("LINDEX", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand LINDEX = new("LINDEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>LINSERT</c>.</summary>
         public static readonly RespireCommand LINSERT = new("LINSERT", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>LLEN</c>.</summary>
-        public static readonly RespireCommand LLEN = new("LLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand LLEN = new("LLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>LMOVE</c>.</summary>
         public static readonly RespireCommand LMOVE = new("LMOVE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -892,7 +892,7 @@ public static class RespireCommands
         public static readonly RespireCommand LPOP = new("LPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>LPOS</c>.</summary>
-        public static readonly RespireCommand LPOS = new("LPOS", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand LPOS = new("LPOS", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>LPUSH</c>.</summary>
         public static readonly RespireCommand LPUSH = new("LPUSH", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -901,7 +901,7 @@ public static class RespireCommands
         public static readonly RespireCommand LPUSHX = new("LPUSHX", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>LRANGE</c>.</summary>
-        public static readonly RespireCommand LRANGE = new("LRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand LRANGE = new("LRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>LREM</c>.</summary>
         public static readonly RespireCommand LREM = new("LREM", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -983,19 +983,19 @@ public static class RespireCommands
         public static readonly RespireCommand EVAL = new("EVAL", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>EVAL_RO</c>.</summary>
-        public static readonly RespireCommand EVAL_RO = new("EVAL_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand EVAL_RO = new("EVAL_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>EVALSHA</c>.</summary>
         public static readonly RespireCommand EVALSHA = new("EVALSHA", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>EVALSHA_RO</c>.</summary>
-        public static readonly RespireCommand EVALSHA_RO = new("EVALSHA_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand EVALSHA_RO = new("EVALSHA_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>FCALL</c>.</summary>
         public static readonly RespireCommand FCALL = new("FCALL", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>FCALL_RO</c>.</summary>
-        public static readonly RespireCommand FCALL_RO = new("FCALL_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand FCALL_RO = new("FCALL_RO", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>FUNCTION</c>.</summary>
         public static readonly RespireCommand FUNCTION = new("FUNCTION", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -1364,7 +1364,7 @@ public static class RespireCommands
         public static readonly RespireCommand CONFIG_SET = new("CONFIG SET", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>DBSIZE</c>.</summary>
-        public static readonly RespireCommand DBSIZE = new("DBSIZE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand DBSIZE = new("DBSIZE", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>DEBUG</c>.</summary>
         public static readonly RespireCommand DEBUG = new("DEBUG", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -1427,7 +1427,7 @@ public static class RespireCommands
         public static readonly RespireCommand LATENCY_RESET = new("LATENCY RESET", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>LOLWUT</c>.</summary>
-        public static readonly RespireCommand LOLWUT = new("LOLWUT", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand LOLWUT = new("LOLWUT", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>MEMORY</c>.</summary>
         public static readonly RespireCommand MEMORY = new("MEMORY", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -1448,7 +1448,7 @@ public static class RespireCommands
         public static readonly RespireCommand MEMORY_STATS = new("MEMORY STATS", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>MEMORY USAGE</c>.</summary>
-        public static readonly RespireCommand MEMORY_USAGE = new("MEMORY USAGE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand MEMORY_USAGE = new("MEMORY USAGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>MODULE</c>.</summary>
         public static readonly RespireCommand MODULE = new("MODULE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -1534,34 +1534,34 @@ public static class RespireCommands
         public static readonly RespireCommand SADD = new("SADD", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>SCARD</c>.</summary>
-        public static readonly RespireCommand SCARD = new("SCARD", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand SCARD = new("SCARD", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>SDIFF</c>.</summary>
-        public static readonly RespireCommand SDIFF = new("SDIFF", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand SDIFF = new("SDIFF", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>SDIFFCARD</c>.</summary>
-        public static readonly RespireCommand SDIFFCARD = new("SDIFFCARD", RespireCommandSource.Redis);
+        public static readonly RespireCommand SDIFFCARD = new("SDIFFCARD", RespireCommandSource.Redis, isReadOnly: true);
 
         /// <summary><c>SDIFFSTORE</c>.</summary>
         public static readonly RespireCommand SDIFFSTORE = new("SDIFFSTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>SINTER</c>.</summary>
-        public static readonly RespireCommand SINTER = new("SINTER", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand SINTER = new("SINTER", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>SINTERCARD</c>.</summary>
-        public static readonly RespireCommand SINTERCARD = new("SINTERCARD", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand SINTERCARD = new("SINTERCARD", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>SINTERSTORE</c>.</summary>
         public static readonly RespireCommand SINTERSTORE = new("SINTERSTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>SISMEMBER</c>.</summary>
-        public static readonly RespireCommand SISMEMBER = new("SISMEMBER", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand SISMEMBER = new("SISMEMBER", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>SMEMBERS</c>.</summary>
-        public static readonly RespireCommand SMEMBERS = new("SMEMBERS", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand SMEMBERS = new("SMEMBERS", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>SMISMEMBER</c>.</summary>
-        public static readonly RespireCommand SMISMEMBER = new("SMISMEMBER", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand SMISMEMBER = new("SMISMEMBER", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>SMOVE</c>.</summary>
         public static readonly RespireCommand SMOVE = new("SMOVE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -1570,19 +1570,19 @@ public static class RespireCommands
         public static readonly RespireCommand SPOP = new("SPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>SRANDMEMBER</c>.</summary>
-        public static readonly RespireCommand SRANDMEMBER = new("SRANDMEMBER", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand SRANDMEMBER = new("SRANDMEMBER", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>SREM</c>.</summary>
         public static readonly RespireCommand SREM = new("SREM", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>SSCAN</c>.</summary>
-        public static readonly RespireCommand SSCAN = new("SSCAN", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand SSCAN = new("SSCAN", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>SUNION</c>.</summary>
-        public static readonly RespireCommand SUNION = new("SUNION", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand SUNION = new("SUNION", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>SUNIONCARD</c>.</summary>
-        public static readonly RespireCommand SUNIONCARD = new("SUNIONCARD", RespireCommandSource.Redis);
+        public static readonly RespireCommand SUNIONCARD = new("SUNIONCARD", RespireCommandSource.Redis, isReadOnly: true);
 
         /// <summary><c>SUNIONSTORE</c>.</summary>
         public static readonly RespireCommand SUNIONSTORE = new("SUNIONSTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -1605,13 +1605,13 @@ public static class RespireCommands
         public static readonly RespireCommand ZADD = new("ZADD", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>ZCARD</c>.</summary>
-        public static readonly RespireCommand ZCARD = new("ZCARD", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand ZCARD = new("ZCARD", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>ZCOUNT</c>.</summary>
-        public static readonly RespireCommand ZCOUNT = new("ZCOUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand ZCOUNT = new("ZCOUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>ZDIFF</c>.</summary>
-        public static readonly RespireCommand ZDIFF = new("ZDIFF", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand ZDIFF = new("ZDIFF", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>ZDIFFSTORE</c>.</summary>
         public static readonly RespireCommand ZDIFFSTORE = new("ZDIFFSTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -1620,22 +1620,22 @@ public static class RespireCommands
         public static readonly RespireCommand ZINCRBY = new("ZINCRBY", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>ZINTER</c>.</summary>
-        public static readonly RespireCommand ZINTER = new("ZINTER", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand ZINTER = new("ZINTER", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>ZINTERCARD</c>.</summary>
-        public static readonly RespireCommand ZINTERCARD = new("ZINTERCARD", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand ZINTERCARD = new("ZINTERCARD", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>ZINTERSTORE</c>.</summary>
         public static readonly RespireCommand ZINTERSTORE = new("ZINTERSTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>ZLEXCOUNT</c>.</summary>
-        public static readonly RespireCommand ZLEXCOUNT = new("ZLEXCOUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand ZLEXCOUNT = new("ZLEXCOUNT", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>ZMPOP</c>.</summary>
         public static readonly RespireCommand ZMPOP = new("ZMPOP", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>ZMSCORE</c>.</summary>
-        public static readonly RespireCommand ZMSCORE = new("ZMSCORE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand ZMSCORE = new("ZMSCORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>ZPOPMAX</c>.</summary>
         public static readonly RespireCommand ZPOPMAX = new("ZPOPMAX", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -1644,22 +1644,22 @@ public static class RespireCommands
         public static readonly RespireCommand ZPOPMIN = new("ZPOPMIN", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>ZRANDMEMBER</c>.</summary>
-        public static readonly RespireCommand ZRANDMEMBER = new("ZRANDMEMBER", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand ZRANDMEMBER = new("ZRANDMEMBER", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>ZRANGE</c>.</summary>
-        public static readonly RespireCommand ZRANGE = new("ZRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand ZRANGE = new("ZRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>ZRANGEBYLEX</c>.</summary>
-        public static readonly RespireCommand ZRANGEBYLEX = new("ZRANGEBYLEX", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand ZRANGEBYLEX = new("ZRANGEBYLEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>ZRANGEBYSCORE</c>.</summary>
-        public static readonly RespireCommand ZRANGEBYSCORE = new("ZRANGEBYSCORE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand ZRANGEBYSCORE = new("ZRANGEBYSCORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>ZRANGESTORE</c>.</summary>
         public static readonly RespireCommand ZRANGESTORE = new("ZRANGESTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>ZRANK</c>.</summary>
-        public static readonly RespireCommand ZRANK = new("ZRANK", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand ZRANK = new("ZRANK", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>ZREM</c>.</summary>
         public static readonly RespireCommand ZREM = new("ZREM", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -1674,25 +1674,25 @@ public static class RespireCommands
         public static readonly RespireCommand ZREMRANGEBYSCORE = new("ZREMRANGEBYSCORE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>ZREVRANGE</c>.</summary>
-        public static readonly RespireCommand ZREVRANGE = new("ZREVRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand ZREVRANGE = new("ZREVRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>ZREVRANGEBYLEX</c>.</summary>
-        public static readonly RespireCommand ZREVRANGEBYLEX = new("ZREVRANGEBYLEX", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand ZREVRANGEBYLEX = new("ZREVRANGEBYLEX", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>ZREVRANGEBYSCORE</c>.</summary>
-        public static readonly RespireCommand ZREVRANGEBYSCORE = new("ZREVRANGEBYSCORE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand ZREVRANGEBYSCORE = new("ZREVRANGEBYSCORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>ZREVRANK</c>.</summary>
-        public static readonly RespireCommand ZREVRANK = new("ZREVRANK", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand ZREVRANK = new("ZREVRANK", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>ZSCAN</c>.</summary>
-        public static readonly RespireCommand ZSCAN = new("ZSCAN", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand ZSCAN = new("ZSCAN", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>ZSCORE</c>.</summary>
-        public static readonly RespireCommand ZSCORE = new("ZSCORE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand ZSCORE = new("ZSCORE", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>ZUNION</c>.</summary>
-        public static readonly RespireCommand ZUNION = new("ZUNION", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand ZUNION = new("ZUNION", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>ZUNIONSTORE</c>.</summary>
         public static readonly RespireCommand ZUNIONSTORE = new("ZUNIONSTORE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -1754,37 +1754,37 @@ public static class RespireCommands
         public static readonly RespireCommand XINFO = new("XINFO", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>XINFO CONSUMERS</c>.</summary>
-        public static readonly RespireCommand XINFO_CONSUMERS = new("XINFO CONSUMERS", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand XINFO_CONSUMERS = new("XINFO CONSUMERS", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>XINFO GROUPS</c>.</summary>
-        public static readonly RespireCommand XINFO_GROUPS = new("XINFO GROUPS", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand XINFO_GROUPS = new("XINFO GROUPS", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>XINFO HELP</c>.</summary>
         public static readonly RespireCommand XINFO_HELP = new("XINFO HELP", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>XINFO STREAM</c>.</summary>
-        public static readonly RespireCommand XINFO_STREAM = new("XINFO STREAM", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand XINFO_STREAM = new("XINFO STREAM", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>XLEN</c>.</summary>
-        public static readonly RespireCommand XLEN = new("XLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand XLEN = new("XLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>XNACK</c>.</summary>
         public static readonly RespireCommand XNACK = new("XNACK", RespireCommandSource.Redis);
 
         /// <summary><c>XPENDING</c>.</summary>
-        public static readonly RespireCommand XPENDING = new("XPENDING", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand XPENDING = new("XPENDING", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>XRANGE</c>.</summary>
-        public static readonly RespireCommand XRANGE = new("XRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand XRANGE = new("XRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>XREAD</c>.</summary>
-        public static readonly RespireCommand XREAD = new("XREAD", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand XREAD = new("XREAD", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>XREADGROUP</c>.</summary>
         public static readonly RespireCommand XREADGROUP = new("XREADGROUP", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>XREVRANGE</c>.</summary>
-        public static readonly RespireCommand XREVRANGE = new("XREVRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand XREVRANGE = new("XREVRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>XSETID</c>.</summary>
         public static readonly RespireCommand XSETID = new("XSETID", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -1813,10 +1813,10 @@ public static class RespireCommands
         public static readonly RespireCommand DELIFEQ = new("DELIFEQ", RespireCommandSource.Valkey);
 
         /// <summary><c>DIGEST</c>.</summary>
-        public static readonly RespireCommand DIGEST = new("DIGEST", RespireCommandSource.Redis);
+        public static readonly RespireCommand DIGEST = new("DIGEST", RespireCommandSource.Redis, isReadOnly: true);
 
         /// <summary><c>GET</c>.</summary>
-        public static readonly RespireCommand GET = new("GET", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand GET = new("GET", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>GETDEL</c>.</summary>
         public static readonly RespireCommand GETDEL = new("GETDEL", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -1825,7 +1825,7 @@ public static class RespireCommands
         public static readonly RespireCommand GETEX = new("GETEX", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>GETRANGE</c>.</summary>
-        public static readonly RespireCommand GETRANGE = new("GETRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand GETRANGE = new("GETRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>GETSET</c>.</summary>
         public static readonly RespireCommand GETSET = new("GETSET", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -1843,10 +1843,10 @@ public static class RespireCommands
         public static readonly RespireCommand INCREX = new("INCREX", RespireCommandSource.Redis);
 
         /// <summary><c>LCS</c>.</summary>
-        public static readonly RespireCommand LCS = new("LCS", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand LCS = new("LCS", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>MGET</c>.</summary>
-        public static readonly RespireCommand MGET = new("MGET", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand MGET = new("MGET", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>MSET</c>.</summary>
         public static readonly RespireCommand MSET = new("MSET", RespireCommandSource.Redis | RespireCommandSource.Valkey);
@@ -1873,10 +1873,10 @@ public static class RespireCommands
         public static readonly RespireCommand SETRANGE = new("SETRANGE", RespireCommandSource.Redis | RespireCommandSource.Valkey);
 
         /// <summary><c>STRLEN</c>.</summary>
-        public static readonly RespireCommand STRLEN = new("STRLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand STRLEN = new("STRLEN", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
         /// <summary><c>SUBSTR</c>.</summary>
-        public static readonly RespireCommand SUBSTR = new("SUBSTR", RespireCommandSource.Redis | RespireCommandSource.Valkey);
+        public static readonly RespireCommand SUBSTR = new("SUBSTR", RespireCommandSource.Redis | RespireCommandSource.Valkey, isReadOnly: true);
 
     }
 

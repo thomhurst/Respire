@@ -22,6 +22,21 @@ records provenance; it is not a runtime feature-negotiation guarantee. Server ed
 configuration, loaded modules, permissions, and version still determine whether execution is
 accepted.
 
+`RespireCommand.IsReadOnly` is true only when every provider listed in `Sources` has
+authoritative core JSON metadata with the `READONLY` command flag and without `WRITE`.
+Conflicting flags or a provider without audited flags produce false. False means either
+write-capable or unknown; it is not evidence that a command writes. The pinned inputs are
+[Redis 8.10.0](https://github.com/redis/redis/tree/8.10.0/src/commands) and
+[Valkey 9.1.1](https://github.com/valkey-io/valkey/tree/9.1.1/src/commands).
+Manual module and compatible-server entries do not declare read-only metadata. A repeated
+manual entry for a provider does not erase that provider's authoritative core flags.
+
+Caller-supplied descriptors, including a string conversion of `"GET"`, and the default
+descriptor always have `IsReadOnly == false`. Names and suffixes do not establish this guarantee.
+Read-only scripts and functions use their explicit official variants (`EVAL_RO`, `EVALSHA_RO`,
+`FCALL_RO`); the ordinary variants remain false. This property describes command metadata only:
+it does not change routing, establish a key layout, or override blocking and connection scope.
+
 The compatible-server audit uses [KeyDB's 6.3.4 command table](https://github.com/Snapchat/KeyDB/blob/v6.3.4/src/server.cpp),
 the [KeyDB command reference](https://docs.keydb.dev/docs/commands/),
 [Dragonfly documentation at 31881bce](https://github.com/dragonflydb/documentation/tree/31881bce033d4cec47cb2e85865d46745760e499/docs/command-reference),
@@ -70,3 +85,7 @@ upgrading the pinned versions.
 behavior, argument boundaries, and the serialized command words of every descriptor. Typed facet
 tests additionally cover every convenience command, option form, response parser, and invalid
 shape introduced with the catalog.
+
+Run `pwsh ./scripts/Test-CommandCatalog.ps1` to exercise the generator with offline fixtures,
+including conflicting flags, missing metadata, duplicate providers, and reproducible output.
+The CI build runs these checks alongside the catalog behavior tests on both supported frameworks.
