@@ -13,6 +13,42 @@ namespace Respire.Tests.Networking;
 public class TransportRetirementTests
 {
     [Test]
+    [Arguments(RespireConnectionState.Reconnecting, false)]
+    [Arguments(RespireConnectionState.Connected, false)]
+    [Arguments(RespireConnectionState.Disconnected, false)]
+    [Arguments(RespireConnectionState.Reconnecting, true)]
+    [Arguments(RespireConnectionState.Connected, true)]
+    [Arguments(RespireConnectionState.Disconnected, true)]
+    public async Task ReconnectCallbacksCanSynchronouslyAwaitCleanup(RespireConnectionState state, bool dispose)
+    {
+        await using var server = new FakeRespServer(2, FakeRespServer.PongReply);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", server.Port);
+        await multiplexer.GetConnection().DisposeAsync();
+        if (state == RespireConnectionState.Disconnected) await server.DisposeAsync();
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handled = 0;
+        multiplexer.StateChanged += change =>
+        {
+            if (change.State != state || Interlocked.Exchange(ref handled, 1) != 0) return;
+            try
+            {
+                var cleanup = dispose ? multiplexer.DisposeAsync().AsTask() : multiplexer.RetireAsync();
+                // Bound the synchronous wait so the unfixed circular dependency fails without
+                // stranding the reconnect task or the test process during cleanup.
+                cleanup.WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
+                completed.TrySetResult();
+            }
+            catch (Exception error) { completed.TrySetException(error); }
+        };
+        try { _ = multiplexer.GetConnection(); }
+        catch (RespireConnectionRetiredException) { }
+        catch (RespireConnectionException) { }
+        catch (ObjectDisposedException) when (dispose) { }
+        await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(multiplexer.IsConnected).IsFalse();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task RetirementWaitsForLateIdentityPublication(bool disposeBeforeRetire)

@@ -740,14 +740,16 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             _activeReconnects++;
             publish = QueueLifecycleNotificationUnderLock(new StateNotification(slot, RespireConnectionState.Reconnecting, error));
         }
-        if (publish) DrainStateNotifications();
         _ = ReconnectAsync(slot);
+        // A handler can synchronously retire/dispose and wait for this reserved work.
+        if (publish) DrainStateNotifications();
     }
 
     private async Task ReconnectAsync(int slot)
     {
         RespireConnection? replacement = null;
         var reconnectGuardReleased = false;
+        var publish = false;
         try
         {
             replacement = await RespireConnection.ConnectAsync(Host, Port, _options, _logger, _stopConnecting.Token)
@@ -769,13 +771,11 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             RetireConnection(old);
             _logger?.LogInformation("Replaced dead connection {Slot} to {Host}:{Port}", slot, Host, Port);
             if (old is not null) await old.DisposeAsync().ConfigureAwait(false);
-            bool publish;
             lock (_lifecycleGate)
             {
                 publish = !IsRetired && Volatile.Read(ref _disposed) == 0
                     && QueueLifecycleNotificationUnderLock(new StateNotification(slot, RespireConnectionState.Connected, null));
             }
-            if (publish) DrainStateNotifications();
         }
         catch (Exception ex)
         {
@@ -790,9 +790,8 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             if (!IsRetired && Volatile.Read(ref _disposed) == 0)
             {
                 _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; will retry on next use", Host, Port);
-                var publish = EnqueueReconnectFailure(slot, ex);
+                publish = EnqueueReconnectFailure(slot, ex);
                 reconnectGuardReleased = true;
-                if (publish) DrainStateNotifications();
             }
         }
         finally
@@ -803,6 +802,8 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 if (--_activeReconnects == 0) _reconnectsDrained?.TrySetResult();
             }
         }
+        // Completion handlers must not wait for the reconnect that is invoking them.
+        if (publish) DrainStateNotifications();
     }
 
     private void ObserveConnectionFailure(int slot, RespireConnection connection)
