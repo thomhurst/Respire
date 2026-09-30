@@ -43,8 +43,9 @@ public class ServerHotKeysTests
         var snapshot = (await tracker.GetAsync())!.Single();
         if (cache is not null) await Assert.That(cache.Count).IsEqualTo(1);
         await Assert.That(await tracker.StopAsync()).IsTrue();
-        if (cache is not null) await Assert.That(cache.Count).IsEqualTo(0);
+        if (cache is not null) await Assert.That(cache.Count).IsEqualTo(1);
         await tracker.ResetAsync();
+        if (cache is not null) await Assert.That(cache.Count).IsEqualTo(1);
         var commands = server.ReceivedCommands.Select((command, index) => (command, socket: server.ReceivedConnectionIds[index]))
             .Where(row => row.command.StartsWith("HOTKEYS ")).ToArray();
         await Assert.That(commands.Select(x => x.command)).IsEquivalentTo([
@@ -61,6 +62,45 @@ public class ServerHotKeysTests
         await Assert.That(snapshot.TotalCpuUserMilliseconds).IsEqualTo(2);
         await Assert.That(snapshot.SampledCommandsSelectedSlotsMicroseconds).IsNull();
         await Assert.That(snapshot.AdditionalFields["future"][0].AsBytes()).IsEquivalentTo(new byte[] { 254, 0 });
+    }
+
+    [Test]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task DiagnosticControlsPreserveCachedValues(int surface)
+    {
+        await using var server = new FakeRespServer(5, "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(), FakeRespServer.OkReply);
+        server.SuppressReply = command =>
+        {
+            if (command != "HOTKEYS GET") return false;
+            _ = server.SendRawAsync(WireSnapshot(true), server.ReceivedConnectionIds[^1]); return true;
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server.Port) with
+            { Protocol = RespProtocol.Resp3, ClientSideCache = new() });
+        var cache = client.Core.ClientCache!;
+        RespireKey key = "cached"; var token = cache.BeginRead(in key); var value = RespValue.BulkString("retained");
+        cache.CompleteRead(in token, in value, allowInsert: true);
+        var tracker = await client.Server.GetHotKeysTrackerAsync();
+        Func<Task>[] operations = surface switch
+        {
+            0 => [async () => await tracker.StartAsync(new()), async () => await tracker.GetAsync(),
+                async () => await tracker.StopAsync(), async () => await tracker.ResetAsync()],
+            1 => [async () => await Assert.That((await client.Server.StartHotKeysOnAllNodesAsync(new())).Single().Value).IsTrue(),
+                async () => await Assert.That((await client.Server.GetHotKeysOnAllNodesAsync()).Single().Value![0].TrackingActive).IsTrue(),
+                async () => await Assert.That((await client.Server.StopHotKeysOnAllNodesAsync()).Single().Value).IsTrue(),
+                async () => await Assert.That((await client.Server.ResetHotKeysOnAllNodesAsync()).Single().Value).IsTrue()],
+            _ => [async () => { using var reply = await client.ExecuteAsync(RespireCommands.Server.HOTKEYS_START, "METRICS", 1, "CPU"); },
+                async () => { using var reply = await client.ExecuteAsync(RespireCommands.Server.HOTKEYS_GET); },
+                async () => { using var reply = await client.ExecuteAsync(RespireCommands.Server.HOTKEYS_STOP); },
+                async () => { using var reply = await client.ExecuteAsync(RespireCommands.Server.HOTKEYS_RESET); }],
+        };
+        foreach (var operation in operations)
+        {
+            await operation();
+            await Assert.That(cache.Count).IsEqualTo(1);
+        }
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("HOTKEYS "))).IsEqualTo(4);
     }
 
     [Test]

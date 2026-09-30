@@ -35,10 +35,13 @@ public sealed record RespireHotKeysOptions
         if (DurationSeconds is < 1 or > 1_000_000) throw new ArgumentOutOfRangeException(nameof(DurationSeconds));
         if (SampleRatio is < 1) throw new ArgumentOutOfRangeException(nameof(SampleRatio));
         if (Slots.Length > 16384) throw new ArgumentOutOfRangeException(nameof(Slots));
-        var seen = new HashSet<int>();
-        foreach (var slot in Slots.Span)
-            if ((uint)slot >= 16384 || !seen.Add(slot))
-                throw new ArgumentException("Slots must be distinct integers from 0 through 16383.", nameof(Slots));
+        if (!Slots.IsEmpty)
+        {
+            var seen = new HashSet<int>();
+            foreach (var slot in Slots.Span)
+                if ((uint)slot >= 16384 || !seen.Add(slot))
+                    throw new ArgumentException("Slots must be distinct integers from 0 through 16383.", nameof(Slots));
+        }
 
         var metricCount = Metrics == (RespireHotKeysMetrics.Cpu | RespireHotKeysMetrics.Network) ? 2 : 1;
         List<RespireValue> arguments = ["METRICS", metricCount];

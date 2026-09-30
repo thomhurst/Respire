@@ -13,6 +13,9 @@ connection, even when the client has multiple connections or Cluster routing cha
 handle uses a client-owned socket and requires no disposal. It does not reconnect,
 follow redirects, retry writes, or automatically stop tracking. After disconnection,
 reacquire explicitly and inspect the server's state before starting another session.
+Operations on a disconnected handle fail with `RespireConnectionException`; operations
+after parent-client disposal fail with `ObjectDisposedException`. HOTKEYS controls
+change diagnostic state only and preserve cached keyspace values.
 
 ```csharp
 // Construct redis with AllowAdmin = true to enable state-changing operations.

@@ -52,16 +52,13 @@ internal sealed partial class ServerCommands
         => MutateHotKeysOnAllNodesAsync("HOTKEYS RESET", new Cmd(HotKeysCommands.Reset), cancellationToken,
             static (ServerCommands _, in RespValue value) => HotKeysParser.Ok(in value));
 
-    private async ValueTask<RespireServerResult<bool>[]> MutateHotKeysOnAllNodesAsync<TCommand>(string operation,
+    private ValueTask<RespireServerResult<bool>[]> MutateHotKeysOnAllNodesAsync<TCommand>(string operation,
         TCommand command, CancellationToken cancellationToken, ResponseConverter<ServerCommands, bool> convert)
         where TCommand : struct, IRespCommand
     {
         EnsureAdminAllowed(operation);
         cancellationToken.ThrowIfCancellationRequested();
-        var cache = client.Core.ClientCache;
-        var fence = cache is null ? default : cache.BeforeCommand(operation, command);
-        try { return await FanOutAsync(operation, command, cancellationToken, convert).ConfigureAwait(false); }
-        finally { if (fence.IsRequired) cache!.CompleteMutation(in fence); }
+        return FanOutAsync(operation, command, cancellationToken, convert);
     }
 }
 
@@ -118,15 +115,12 @@ public sealed class RespireHotKeysTracker
         HotKeysParser.Ok(in reply);
     }
 
-    private async ValueTask<RespValue> SendAsync<TCommand>(string operation, TCommand command, CancellationToken cancellationToken)
+    private ValueTask<RespValue> SendAsync<TCommand>(string operation, TCommand command, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
         ObjectDisposedException.ThrowIf(_client.Core.Disposed, _client);
         cancellationToken.ThrowIfCancellationRequested();
-        var cache = _client.Core.ClientCache;
-        var fence = cache is null ? default : cache.BeforeCommand(operation, command);
-        try { return await _client.SendOnConnectionAsync(operation, _connection, command, cancellationToken).ConfigureAwait(false); }
-        finally { if (fence.IsRequired) cache!.CompleteMutation(in fence); }
+        return _client.SendOnConnectionAsync(operation, _connection, command, cancellationToken);
     }
 
     private void EnsureAdmin(string operation)
