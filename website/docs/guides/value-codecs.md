@@ -35,8 +35,9 @@ Above the threshold, a codec tries compression and keeps it only if its payload 
 smaller. Below the threshold, empty values, and incompressible values use the same frame
 with an uncompressed payload. Framing adds 18 bytes to either representation; a small
 value can therefore grow compared with storage without a codec. Encoding and decoding
-allocate owned buffers and consume CPU. Comparative measurements are tracked in
-[#527](https://github.com/thomhurst/Respire/issues/527); no throughput improvement is promised.
+allocate owned buffers and consume CPU. See the [focused benchmark design and reproduction
+guide](./value-codec-benchmarks.md) for equivalent payloads, allocation scope, and threshold
+comparisons. No throughput improvement is promised.
 
 The serializer decorator buffers the complete serialized value in rented storage, then
 asks the codec to write into its destination. Built-in codecs construct the final frame
