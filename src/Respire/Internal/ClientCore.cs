@@ -300,7 +300,8 @@ internal sealed class ClientCore : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                Logger?.LogWarning(ex, "Connection state-change handler threw");
+                try { Logger?.LogWarning(ex, "Connection state-change handler threw"); }
+                catch (Exception) { /* A user logger must not strand queued connection events. */ }
             }
         }
     }
