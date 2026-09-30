@@ -70,6 +70,11 @@ system's ephemeral range rather than fixed service ports. A small race exists be
 the temporary port reservations and Docker binding them; a collision fails startup and cleans
 up instead of connecting to another fixture. Other fixtures and existing services are never stopped.
 
+Local-host validation uses the host reported by Testcontainers after startup, so an
+unsupported remote engine can pull and start the container before rejection and owned
+cleanup. This can take as long as image pull/startup within `StartupTimeout`; checking
+`DOCKER_HOST` alone would not cover all Testcontainers endpoint configuration sources.
+
 This preserves the endpoint identity needed by [Sentinel discovery behind NAT](https://redis.io/docs/latest/operate/oss_and_stack/management/sentinel/#sentinel-docker-nat-and-possible-issues).
 
 All topology processes share one container. Use separate deployments for machine-level failure,

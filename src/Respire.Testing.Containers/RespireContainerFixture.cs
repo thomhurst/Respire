@@ -14,6 +14,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
 {
     /// <summary>The monitored service name used by Sentinel fixtures.</summary>
     public const string SentinelServiceName = "respire-test";
+    private const int ClusterPrimaryCount = 3;
     private readonly IContainer _container;
     private readonly RespireContainerOptions _options;
     private readonly int[] _ports;
@@ -66,7 +67,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         var ports = options.Topology switch
         {
             RespireContainerTopology.Standalone => [6379],
-            RespireContainerTopology.Cluster => ChooseLocalPorts(3),
+            RespireContainerTopology.Cluster => ChooseLocalPorts(ClusterPrimaryCount),
             _ => ChooseLocalPorts(5),
         };
         var fixture = new RespireContainerFixture(options, ports);
@@ -113,7 +114,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         var dataCount = _options.Topology switch
         {
             RespireContainerTopology.Standalone => 1,
-            RespireContainerTopology.Cluster => 3,
+            RespireContainerTopology.Cluster => ClusterPrimaryCount,
             _ => 2,
         };
         for (var index = 0; index < dataCount; index++)
@@ -136,8 +137,12 @@ public sealed class RespireContainerFixture : IAsyncDisposable
                     await CliAsync(_ports[0], ["CLUSTER", "MEET", "127.0.0.1", Number(_ports[index]), Number(16379 + index)], cancellationToken).ConfigureAwait(false);
             }
             foreach (var port in _ports)
-                await WaitForAsync(port, ["CLUSTER", "INFO"], text => text.Contains("cluster_state:ok", StringComparison.Ordinal)
-                    && text.Contains("cluster_known_nodes:3", StringComparison.Ordinal), cancellationToken).ConfigureAwait(false);
+                await WaitForAsync(port, ["CLUSTER", "INFO"], text =>
+                {
+                    var fields = text.Split('\n', StringSplitOptions.TrimEntries);
+                    return fields.Contains("cluster_state:ok", StringComparer.Ordinal)
+                        && fields.Contains($"cluster_known_nodes:{dataCount}", StringComparer.Ordinal);
+                }, cancellationToken).ConfigureAwait(false);
         }
         else if (_options.Topology == RespireContainerTopology.Sentinel)
         {
