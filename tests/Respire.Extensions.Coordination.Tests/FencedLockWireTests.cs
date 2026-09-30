@@ -9,6 +9,33 @@ namespace Respire.Extensions.Coordination.Tests;
 public class FencedLockWireTests
 {
     [Test]
+    [NotInParallel]
+    public async Task CancellationAfterSuccessfulReadWriteReplyReleasesUnreturnedLease()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var cancellation = new CancellationTokenSource();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStopped = activity =>
+            {
+                if (activity.GetTagItem("db.operation.name") is "EVALSHA"
+                    && activity.GetTagItem("server.port") is int port && port == server.Port)
+                    cancellation.Cancel();
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        await Assert.That(async () => await new RespireCoordination(client)
+            .TryAcquireReadLockAsync("{job}:rw", TimeSpan.FromSeconds(30), cancellation.Token)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
+        await Assert.That(server.ReceivedCommands.All(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal))).IsTrue();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task AcceptedAcquisitionIsNotReplayedAfterCancellationOrDisconnect(bool disconnect)

@@ -143,6 +143,65 @@ public sealed class RespireCoordination
         return fence
         """);
 
+    internal static readonly RespireScript AcquireReadWriteLock = RespireScript.Create("""
+        local t = redis.call('TIME')
+        local now = t[1] * 1000 + math.floor(t[2] / 1000)
+        redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
+        local role = ARGV[3]
+        if role == 'W:' and redis.call('ZCARD', KEYS[1]) ~= 0 then return 0 end
+        if role == 'R:' then
+            for _, member in ipairs(redis.call('ZRANGE', KEYS[1], 0, -1)) do
+                if string.sub(member, 1, 2) == 'W:' then return 0 end
+            end
+        end
+        local member = role .. ARGV[1]
+        local added = redis.call('ZADD', KEYS[1], 'NX', now + tonumber(ARGV[2]), member)
+        local latest = redis.call('ZREVRANGE', KEYS[1], 0, 0, 'WITHSCORES')
+        redis.call('PEXPIREAT', KEYS[1], math.ceil(tonumber(latest[2])))
+        return added
+        """);
+
+    internal static readonly RespireScript RenewReadWriteLock = RespireScript.Create("""
+        local t = redis.call('TIME')
+        local now = t[1] * 1000 + math.floor(t[2] / 1000)
+        redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
+        local member = ARGV[2] .. ARGV[1]
+        if not redis.call('ZSCORE', KEYS[1], member) then
+            if redis.call('ZCARD', KEYS[1]) == 0 then redis.call('DEL', KEYS[1]) end
+            return 0
+        end
+        redis.call('ZADD', KEYS[1], 'XX', now + tonumber(ARGV[3]), member)
+        local latest = redis.call('ZREVRANGE', KEYS[1], 0, 0, 'WITHSCORES')
+        redis.call('PEXPIREAT', KEYS[1], math.ceil(tonumber(latest[2])))
+        return 1
+        """);
+
+    internal static readonly RespireScript ReleaseReadWriteLock = RespireScript.Create("""
+        local t = redis.call('TIME')
+        local now = t[1] * 1000 + math.floor(t[2] / 1000)
+        redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
+        local removed = redis.call('ZREM', KEYS[1], ARGV[2] .. ARGV[1])
+        if redis.call('ZCARD', KEYS[1]) == 0 then
+            redis.call('DEL', KEYS[1])
+        else
+            local latest = redis.call('ZREVRANGE', KEYS[1], 0, 0, 'WITHSCORES')
+            redis.call('PEXPIREAT', KEYS[1], math.ceil(tonumber(latest[2])))
+        end
+        return removed
+        """);
+
+    internal static readonly RespireScript VerifyReadWriteLock = RespireScript.Create("""
+        local t = redis.call('TIME')
+        local now = t[1] * 1000 + math.floor(t[2] / 1000)
+        redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
+        local score = redis.call('ZSCORE', KEYS[1], ARGV[2] .. ARGV[1])
+        if not score then
+            if redis.call('ZCARD', KEYS[1]) == 0 then redis.call('DEL', KEYS[1]) end
+            return 0
+        end
+        return 1
+        """);
+
     private static readonly RespireScript AcquireHashFieldLease = RespireScript.Create("""
         local capability = redis.pcall('HPTTL', KEYS[1], 'FIELDS', 1, ARGV[1])
         if type(capability) == 'table' and capability.err then
@@ -212,6 +271,63 @@ public sealed class RespireCoordination
         var milliseconds = ValidateAcquisition(key, fencingCounterKey, duration);
         // Both inputs may wrap caller-owned binary buffers. Snapshot before the first await.
         return AcquireAsync(key.Snapshot(), fencingCounterKey.Snapshot(), milliseconds, cancellationToken);
+    }
+
+    /// <summary>Immediately tries to acquire a shared read lease. Contention returns an unacquired attempt.</summary>
+    /// <remarks>Acquisition has no queue or fairness guarantee. Retry or wait policy belongs to the caller.</remarks>
+    /// <param name="key">A dedicated key for this read/write lock.</param>
+    /// <param name="duration">A lease duration of at least one millisecond, truncated to whole milliseconds.</param>
+    /// <param name="cancellationToken">Cancels the command; an accepted lease expires naturally if its reply is lost.</param>
+    public ValueTask<RespireReadWriteLockAttempt> TryAcquireReadLockAsync(
+        RespireKey key, TimeSpan duration, CancellationToken cancellationToken = default)
+        => TryAcquireReadWriteLockAsync(key, duration, isWriter: false, cancellationToken);
+
+    /// <summary>Immediately tries to acquire an exclusive write lease. Contention returns an unacquired attempt.</summary>
+    /// <remarks>Acquisition has no queue or fairness guarantee. Retry or wait policy belongs to the caller.</remarks>
+    /// <param name="key">A dedicated key for this read/write lock.</param>
+    /// <param name="duration">A lease duration of at least one millisecond, truncated to whole milliseconds.</param>
+    /// <param name="cancellationToken">Cancels the command; an accepted lease expires naturally if its reply is lost.</param>
+    public ValueTask<RespireReadWriteLockAttempt> TryAcquireWriteLockAsync(
+        RespireKey key, TimeSpan duration, CancellationToken cancellationToken = default)
+        => TryAcquireReadWriteLockAsync(key, duration, isWriter: true, cancellationToken);
+
+    private ValueTask<RespireReadWriteLockAttempt> TryAcquireReadWriteLockAsync(
+        RespireKey key, TimeSpan duration, bool isWriter, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var milliseconds = duration.Ticks / TimeSpan.TicksPerMillisecond;
+        if (milliseconds <= 0) throw new ArgumentOutOfRangeException(nameof(duration), "Lease duration must be at least one millisecond.");
+        return AcquireReadWriteLockAsync(key.Snapshot(), milliseconds, isWriter, cancellationToken);
+    }
+
+    private async ValueTask<RespireReadWriteLockAttempt> AcquireReadWriteLockAsync(
+        RespireKey key, long milliseconds, bool isWriter, CancellationToken cancellationToken)
+    {
+        var owner = RespireLock.NewToken();
+        var started = Stopwatch.GetTimestamp();
+        using var response = await _client.Scripts.ExecuteAsync(AcquireReadWriteLock, [key],
+            [owner.Bytes, milliseconds, isWriter ? "W:" : "R:"], cancellationToken).ConfigureAwait(false);
+        if (response.AsInteger() != 1) return default;
+
+        var completed = Stopwatch.GetTimestamp();
+        var validity = TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond) - Stopwatch.GetElapsedTime(started, completed);
+        if (validity <= TimeSpan.Zero)
+        {
+            using var _ = await _client.Scripts.ExecuteAsync(ReleaseReadWriteLock, [key], [owner.Bytes, isWriter ? "W:" : "R:"], CancellationToken.None).ConfigureAwait(false);
+            return default;
+        }
+        var lease = new RespireReadWriteLock(_client, key, owner, isWriter,
+            TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond), validity, completed);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return new RespireReadWriteLockAttempt(lease);
+        }
+        catch (OperationCanceledException)
+        {
+            await lease.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     /// <summary>Waits without polling until this client acquires a fenced lease.</summary>

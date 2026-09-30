@@ -168,6 +168,31 @@ an unreturned lease that expires after its server-side duration. A reply arrivin
 local lease estimate elapses is not returned as acquired. There is no acquisition-owned
 keep-alive loop in this API; explicitly renew within a valid lease when needed.
 
+## Read-write leases
+
+The same package provides immediate shared-read and exclusive-write leases:
+
+```csharp
+await using var read = await coordination.TryAcquireReadLockAsync(
+    "{account:42}:rw", TimeSpan.FromSeconds(30));
+if (!read.Acquired) return;
+// Multiple read leases can coexist. A write attempt succeeds only after all readers release or expire.
+```
+
+Use `TryAcquireWriteLockAsync` for an exclusive lease. Both methods return immediately on
+contention; they do not queue, poll or promise fairness. Callers choose retry behavior.
+Each owner has a bounded lease. Renew it with `ResetExpiryAsync`, check it with
+`VerifyStillHeldAsync`, and release it with `ReleaseAsync` or `DisposeAsync`. A failed or
+uncertain renewal marks the local handle lost. Stop protected work when ownership is uncertain.
+
+One sorted-set key stores owner tokens and server-time expiry deadlines. Redis prunes expired
+owners atomically before each acquisition and expires the key at its latest owner deadline.
+Use a dedicated key for this primitive. Client prefixes and binary keys work as for other
+Respire commands. Redis Cluster needs no multi-key slot coordination. Asynchronous Redis
+failover can restore older lock state, so this primitive does not provide consensus safety.
+If cancellation or connection loss follows an accepted acquisition, its owner entry expires
+after the requested duration; the client does not replay or guess whether it acquired.
+
 ## Multi-node Redlock
 
 `RespireRedlockGroup` provides a quorum lease across an odd number of at least three independent
