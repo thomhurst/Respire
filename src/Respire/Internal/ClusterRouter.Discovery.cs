@@ -98,10 +98,17 @@ internal sealed partial class ClusterRouter
 
         // Retirement wrappers preserve the endpoint selected by the last BeforeCandidateAsync.
         // Repeated reports replace the pending failure; only scheduling another candidate consumes it.
+        // A caller can handle a scheduling cancellation as a retryable candidate failure (for
+        // example, READONLY's primary phase timeout). Clear only that same tentative terminal
+        // error; unrelated terminal failures and latched exhaustion remain authoritative.
         internal void Failed(Exception error)
         {
             Enter();
-            try { _failure = error; }
+            try
+            {
+                _failure = error;
+                if (Exhaustion is null && ReferenceEquals(_terminalError, error)) _terminalError = null;
+            }
             finally { Exit(); }
         }
 
@@ -112,6 +119,7 @@ internal sealed partial class ClusterRouter
             {
                 _endpoint = endpoint;
                 _failure = error;
+                if (Exhaustion is null && ReferenceEquals(_terminalError, error)) _terminalError = null;
             }
             finally { Exit(); }
         }
@@ -148,7 +156,7 @@ internal sealed partial class ClusterRouter
             }
             catch (Exception error)
             {
-                // Cancellation, disposal and exhaustion terminate candidate scheduling.
+                // Cancellation, disposal and exhaustion terminate this candidate scheduling attempt.
                 // Record the error before Exit so a racing Finish cannot publish success.
                 _terminalError ??= error;
                 throw;

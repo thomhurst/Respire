@@ -277,6 +277,9 @@ ordering is independent of command-slot and dedicated recovery notification queu
 from different sources have no shared ordering guarantee.
 A caller-cancelled round that started fallback emits a terminal `Disconnected` source event
 with the cancellation error and the same episode ID; cancellation is not policy exhaustion.
+A READONLY phase timeout is retryable while the overall recovery deadline remains active.
+If a later configured seed succeeds, that episode ends with `Connected`, without retaining
+the handled phase cancellation as a terminal error.
 Once replacement selection succeeds, later application errors (such as WRONGTYPE) or
 cancellation of an accepted command do not change that discovery outcome to Disconnected.
 The command still fails normally; physical connection health is reported independently.

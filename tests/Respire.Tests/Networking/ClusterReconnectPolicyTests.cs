@@ -563,6 +563,50 @@ public class ClusterReconnectPolicyTests
     }
 
     [Test]
+    [NotInParallel] // Keep time available for the real READONLY phase deadline and seed fallback.
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReadOnlyPhaseCancellationDoesNotPoisonSuccessfulSeedFallback(bool cachedOwner)
+    {
+        await using var candidate = new FakeRespServer(FakeRespServer.OkReply);
+        await using var target = new FakeRespServer(FakeRespServer.OkReply);
+        target.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n") : null;
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply, "-ERR unsupported topology\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port, target.Port) with
+        {
+            ConnectTimeout = TimeSpan.FromSeconds(4),
+            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
+                JitterRatio = 0, MaxAttempts = 2 },
+        });
+        var router = client.Core.Cluster!;
+        var source = await router.GetConnectionAsync(null, default, discovery: null);
+        router.SetSlotOwner(cachedOwner ? 42 : 43, router.GetMultiplexer(new("127.0.0.1", candidate.Port)));
+        var clock = new GatedDiscoveryClock(autoCompleteLaterDelays: true);
+        router.DiscoveryClock = clock;
+        var changes = new ConcurrentQueue<RespireConnectionStateChange>();
+        var terminal = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.DiscoveryStateChanged += change =>
+        {
+            changes.Enqueue(change);
+            if (change.NextReconnectDelay is null) terminal.TrySetResult(change);
+        };
+        // The first backoff remains gated until the primary phase expires. Later backoffs
+        // complete immediately, leaving the reserved seed phase free to recover.
+        var recovered = await router.GetRedirectConnectionAsync(new("READONLY demoted"), source, default, 42, discovery: null)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(recovered.Port).IsEqualTo(target.Port);
+        await Assert.That(candidate.CommandsSeen).IsEqualTo(0);
+        var ended = await terminal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(ended.SourceState).IsEqualTo(RespireConnectionState.Connected);
+        await Assert.That(ended.Error).IsNull();
+        await Assert.That(ended.ReconnectExhausted).IsFalse();
+        await Assert.That(ended.ReconnectAttempt).IsEqualTo(2);
+        await Assert.That(changes.Select(change => change.ReconnectEpisodeId).Distinct().Count()).IsEqualTo(1);
+        await Assert.That(target.ReceivedCommands).IsEquivalentTo(["AUTH test", "CLUSTER SLOTS"]);
+    }
+
+    [Test]
     public async Task SuccessfulRequiredMastersDoNotConsumeFallbackAttempts()
     {
         await using var unavailable = new FakeRespServer("-ERR seed unavailable\r\n"u8.ToArray());
@@ -750,13 +794,14 @@ public class ClusterReconnectPolicyTests
         await Assert.That(terminalCount).IsEqualTo(1);
     }
 
-    private sealed class GatedDiscoveryClock : TimeProvider
+    private sealed class GatedDiscoveryClock(bool autoCompleteLaterDelays = false) : TimeProvider
     {
         internal TaskCompletionSource<GatedTimer> Created { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
             var timer = new GatedTimer(callback, state);
-            Created.TrySetResult(timer);
+            if (!Created.TrySetResult(timer) && autoCompleteLaterDelays)
+                return TimeProvider.System.CreateTimer(callback, state, TimeSpan.Zero, Timeout.InfiniteTimeSpan);
             return timer;
         }
     }
