@@ -266,8 +266,8 @@ Pub/sub framing and delivery follow [Redis Pub/Sub](https://redis.io/docs/latest
 [SUBSCRIBE](https://redis.io/docs/latest/commands/subscribe/), and
 [UNSUBSCRIBE](https://redis.io/docs/latest/commands/unsubscribe/).
 Run real-server integration tests for version compatibility, unsupported commands, and
-operational behavior. Remaining collections and transactions remain tracked in
-[#540](https://github.com/thomhurst/Respire/issues/540) and
+operational behavior. Remaining transaction support is tracked in
+[#589](https://github.com/thomhurst/Respire/issues/589) under
 [#541](https://github.com/thomhurst/Respire/issues/541).
 
 ## Controlled faults

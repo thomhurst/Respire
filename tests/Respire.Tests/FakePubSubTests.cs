@@ -328,7 +328,7 @@ public class FakePubSubTests
             await Assert.That(await publisher.PublishAsync("drained", payload).AsTask().WaitAsync(Limit)).IsEqualTo(1);
             using var message = await subscriber.ReadAsync();
             await Assert.That(message.Type).IsEqualTo(RespDataType.Push);
-            await Assert.That(message.AsArray()[2].AsBytes().Length).IsEqualTo(payload.Length);
+            await Assert.That(message.AsArray()[2].AsSpan().Length).IsEqualTo(payload.Length);
         }
     }
 
