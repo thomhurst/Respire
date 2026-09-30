@@ -429,6 +429,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             var kind = ClassifyHelloError(message.AsSpan());
             if (kind != HelloErrorKind.Unsupported)
             {
+                // Provider-backed HELLO includes a secret; server text may echo it.
+                if (options.CredentialProvider is not null)
+                    throw new RespireAuthenticationException($"HELLO authentication failed for {Host}:{Port}.");
                 var hint = kind == HelloErrorKind.Other && message.StartsWith("ERR ", StringComparison.OrdinalIgnoreCase)
                     ? " If this endpoint does not support HELLO, explicitly set protocol=2."
                     : null;

@@ -16,7 +16,7 @@ internal sealed partial class RespireConnection
             => new AuthCommand(credentials.Username, credentials.Password).Write(ref writer);
     }
 
-    private async ValueTask<RespValue> SendCredentialRenewalAsync(RespireCredentials credentials, CancellationToken cancellationToken)
+    private ValueTask<RespValue> SendCredentialRenewalAsync(RespireCredentials credentials, CancellationToken cancellationToken)
     {
         lock (_writeGate)
         {
@@ -24,18 +24,8 @@ internal sealed partial class RespireConnection
             if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
             _credentialRenewalPending = true;
         }
-        try
-        {
-            // The renewal's token already carries its connection/credential deadline.
-            return await SendAsync(new CredentialRenewalAuthCommand(credentials), cancellationToken,
-                armCommandDeadline: false).ConfigureAwait(false);
-        }
-        finally
-        {
-            // AUTH continuations run inline on the serial completion worker. Renewal observers
-            // may synchronously await another reply, so leave that worker on success and failure.
-            await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
-        }
+        // The renewal's token already carries its connection/credential deadline.
+        return SendAsync(new CredentialRenewalAuthCommand(credentials), cancellationToken, armCommandDeadline: false);
     }
 
     private void CompleteCredentialRenewal()
@@ -120,6 +110,8 @@ internal sealed partial class RespireConnection
             }
         }
 
+        private enum RenewalOutcome { Renewed, Stopped, Failed }
+
         private async Task RunAsync()
         {
             var current = _initial!;
@@ -130,47 +122,21 @@ internal sealed partial class RespireConnection
             {
                 while (!_stop.IsCancellationRequested && connection.IsAcceptingCommands)
                 {
-                    if (current.ExpiresAt is not { } expiry)
-                    {
-                        Record(succeeded: true, "no-expiry");
-                        return;
-                    }
-                    var remaining = expiry - clock.GetUtcNow();
-                    if (remaining <= TimeSpan.Zero)
-                    {
-                        AbortExpired();
-                        return;
-                    }
-                    var delay = retry ? options.CredentialRefreshRetryDelay : remaining - options.CredentialRefreshBeforeExpiry;
-                    if (delay > TimeSpan.Zero)
-                    {
-                        delay = Min(delay, remaining, TimeSpan.FromDays(1));
-                        await Task.Delay(delay, clock, _stop.Token).ConfigureAwait(false);
-                        if (!connection.IsAcceptingCommands) return;
-                        remaining = expiry - clock.GetUtcNow();
-                        if (remaining <= TimeSpan.Zero)
-                        {
-                            AbortExpired();
-                            return;
-                        }
-                        if (!retry && remaining > options.CredentialRefreshBeforeExpiry) continue;
-                    }
-
-                    using var deadline = new CancellationTokenSource(Min(remaining, options.ConnectTimeout), clock);
+                    if (!await WaitUntilDueAsync(current, retry).ConfigureAwait(false)) return;
+                    var expiry = current.ExpiresAt!.Value;
+                    using var deadline = new CancellationTokenSource(Min(expiry - clock.GetUtcNow(), options.ConnectTimeout), clock);
                     using var linked = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token, deadline.Token);
-                    RespireCredentials next;
-                    try
+                    var next = await AcquireNextAsync(linked.Token).ConfigureAwait(false);
+                    if (next is null)
                     {
-                        next = await AcquireCredentialsAsync(connection.Host, connection.Port, options, linked.Token).ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException) when (_stop.IsCancellationRequested) { return; }
-                    catch (Exception)
-                    {
-                        Record(succeeded: false, "provider");
                         retry = true;
                         continue;
                     }
 
+                    // A provider or injected clock can complete inline on this connection's
+                    // serial reply worker. Yield in this observer-owning state machine, not
+                    // only in a helper whose task might complete before our await begins.
+                    await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
                     if (_stop.IsCancellationRequested || !connection.IsAcceptingCommands) return;
                     if (clock.GetUtcNow() >= expiry)
                     {
@@ -183,65 +149,131 @@ internal sealed partial class RespireConnection
                         retry = true;
                         continue;
                     }
-
-                    var renewed = false;
-                    try
-                    {
-                        if ((next.Username ?? "default") != (current.Username ?? "default"))
-                            throw new RespireAuthenticationException($"Credential renewal changed the ACL user for {connection.Host}:{connection.Port}.");
-                        var authRemaining = expiry - clock.GetUtcNow();
-                        if (next.ExpiresAt is { } nextExpiry)
-                            authRemaining = Min(authRemaining, nextExpiry - clock.GetUtcNow());
-                        if (authRemaining <= TimeSpan.Zero)
-                            throw new RespireAuthenticationException($"Replacement credentials expired before renewal for {connection.Host}:{connection.Port}.");
-                        using var authDeadline = new CancellationTokenSource(Min(authRemaining, options.ConnectTimeout), clock);
-                        using var authCancellation = CancellationTokenSource.CreateLinkedTokenSource(linked.Token, authDeadline.Token);
-                        PublishCacheMetrics(InvalidateCache());
-                        using var reply = await connection.SendCredentialRenewalAsync(next,
-                            authCancellation.Token).ConfigureAwait(false);
-                        if (reply.Type != RespDataType.SimpleString || !reply.AsSpan().SequenceEqual("OK"u8))
-                            throw new RespireAuthenticationException($"Credential renewal was rejected by {connection.Host}:{connection.Port}.");
-                        var completedAt = clock.GetUtcNow();
-                        if (completedAt >= expiry || next.ExpiresAt <= completedAt)
-                            throw new RespireAuthenticationException($"Credentials expired during renewal for {connection.Host}:{connection.Port}.");
-                        current = next;
-                        retry = false;
-                        renewed = true;
-                    }
-                    catch (OperationCanceledException) when (_stop.IsCancellationRequested) { return; }
-                    // Retirement can win after the checks above but before AUTH is enqueued.
-                    // Leave accepted commands to drain instead of aborting their connection.
-                    catch (RespireConnectionRetiredException) { return; }
-                    catch (Exception error)
-                    {
-                        connection.Abort(error as RespireAuthenticationException
-                            ?? new RespireAuthenticationException($"Credential renewal failed for {connection.Host}:{connection.Port}.", error));
-                        Record(succeeded: false, "reauthenticate");
+                    if (await ReauthenticateAsync(current, next, linked.Token).ConfigureAwait(false) != RenewalOutcome.Renewed)
                         return;
-                    }
-                    finally
-                    {
-                        var evictions = InvalidateCache();
-                        // Failure/stop keeps admission fenced until Abort marks the socket dead.
-                        // In particular, RequestStop can run before Abort acquires _writeGate.
-                        if (renewed) connection.CompleteCredentialRenewal();
-                        PublishCacheMetrics(evictions);
-                    }
-                    Record(succeeded: true, "reauthenticate");
+                    current = next;
+                    retry = false;
                 }
             }
             catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
             catch (Exception error)
             {
-                Record(succeeded: false, "worker");
                 connection.Abort(new RespireAuthenticationException($"Credential renewal stopped for {connection.Host}:{connection.Port}.", error));
+                Record(succeeded: false, "worker");
             }
+        }
+
+        private async ValueTask<bool> WaitUntilDueAsync(RespireCredentials current, bool retry)
+        {
+            var clock = options.CredentialTimeProvider;
+            if (current.ExpiresAt is not { } expiry)
+            {
+                Record(succeeded: true, "no-expiry");
+                return false;
+            }
+            while (!_stop.IsCancellationRequested && connection.IsAcceptingCommands)
+            {
+                var remaining = expiry - clock.GetUtcNow();
+                if (remaining <= TimeSpan.Zero)
+                {
+                    AbortExpired();
+                    return false;
+                }
+                var delay = retry ? options.CredentialRefreshRetryDelay : remaining - options.CredentialRefreshBeforeExpiry;
+                if (delay <= TimeSpan.Zero) return true;
+                await Task.Delay(Min(delay, remaining, TimeSpan.FromDays(1)), clock, _stop.Token).ConfigureAwait(false);
+                if (!connection.IsAcceptingCommands) return false;
+                remaining = expiry - clock.GetUtcNow();
+                if (remaining <= TimeSpan.Zero)
+                {
+                    AbortExpired();
+                    return false;
+                }
+                if (retry || remaining <= options.CredentialRefreshBeforeExpiry) return true;
+            }
+            return false;
+        }
+
+        private async ValueTask<RespireCredentials?> AcquireNextAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                return await AcquireCredentialsAsync(connection.Host, connection.Port, options, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (_stop.IsCancellationRequested) { throw; }
+            catch (Exception)
+            {
+                await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+                Record(succeeded: false, "provider");
+                return null;
+            }
+        }
+
+        private async ValueTask<RenewalOutcome> ReauthenticateAsync(
+            RespireCredentials current, RespireCredentials next, CancellationToken cancellationToken)
+        {
+            var renewed = false;
+            var clock = options.CredentialTimeProvider;
+            var expiry = current.ExpiresAt!.Value;
+            try
+            {
+                if ((next.Username ?? "default") != (current.Username ?? "default"))
+                    throw new RespireAuthenticationException($"Credential renewal changed the ACL user for {connection.Host}:{connection.Port}.");
+                var authRemaining = expiry - clock.GetUtcNow();
+                if (next.ExpiresAt is { } nextExpiry)
+                    authRemaining = Min(authRemaining, nextExpiry - clock.GetUtcNow());
+                if (authRemaining <= TimeSpan.Zero)
+                    throw new RespireAuthenticationException($"Replacement credentials expired before renewal for {connection.Host}:{connection.Port}.");
+                using var authDeadline = new CancellationTokenSource(Min(authRemaining, options.ConnectTimeout), clock);
+                using var authCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, authDeadline.Token);
+                PublishCacheMetrics(InvalidateCache());
+                using var reply = await connection.SendCredentialRenewalAsync(next, authCancellation.Token).ConfigureAwait(false);
+                if (reply.Type != RespDataType.SimpleString || !reply.AsSpan().SequenceEqual("OK"u8))
+                    throw new RespireAuthenticationException($"Credential renewal was rejected by {connection.Host}:{connection.Port}.");
+                renewed = true;
+            }
+            catch (OperationCanceledException) when (_stop.IsCancellationRequested) { return RenewalOutcome.Stopped; }
+            // Retirement can win before AUTH is enqueued. Accepted commands must still drain.
+            catch (RespireConnectionRetiredException) { return RenewalOutcome.Stopped; }
+            catch (Exception error)
+            {
+                connection.Abort(error as RespireAuthenticationException
+                    ?? new RespireAuthenticationException($"Credential renewal failed for {connection.Host}:{connection.Port}.", error));
+                await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+                Record(succeeded: false, "reauthenticate");
+                return RenewalOutcome.Failed;
+            }
+            finally
+            {
+                // AUTH replies resume inline on the serial completion worker. This method
+                // owns the observers, so this yield also covers a synchronously completed send.
+                await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+                var evictions = InvalidateCache();
+                // Only validated success opens admission. Stop/failure leaves it closed until
+                // Abort; RequestStop can run before Abort acquires the write gate.
+                if (renewed)
+                {
+                    // The scheduler hop or cache mutation may outlast the credentials.
+                    var completedAt = clock.GetUtcNow();
+                    if (completedAt >= expiry || next.ExpiresAt <= completedAt)
+                        throw new RespireAuthenticationException($"Credentials expired during renewal for {connection.Host}:{connection.Port}.");
+                    connection.CompleteCredentialRenewal();
+                }
+                PublishCacheMetrics(evictions);
+            }
+            Record(succeeded: true, "reauthenticate");
+            return RenewalOutcome.Renewed;
         }
 
         private int? InvalidateCache()
         {
+            // This internal callback mutates cache state, not user instrumentation. Failure
+            // must reach the worker's abort path; only metric observers may be ignored.
             try { return options.CredentialCacheInvalidation?.Invoke(); }
-            catch { return null; }
+            catch (Exception error)
+            {
+                throw new RespireAuthenticationException($"Credential cache invalidation failed for {connection.Host}:{connection.Port}.", error);
+            }
         }
 
         private static void PublishCacheMetrics(int? evictions)
@@ -255,8 +287,8 @@ internal sealed partial class RespireConnection
 
         private void AbortExpired()
         {
-            Record(succeeded: false, "expired");
             connection.Abort(new RespireAuthenticationException($"Credentials expired before renewal for {connection.Host}:{connection.Port}."));
+            Record(succeeded: false, "expired");
         }
 
         private void Record(bool? succeeded, string stage)

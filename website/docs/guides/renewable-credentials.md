@@ -86,6 +86,8 @@ writes. Admission resumes only after Redis returns OK and the replacement remain
 rejection, expiry, or disposal aborts the socket without sending those waiting commands.
 Waiting callers retain their cancellation and command-timeout bounds. Client-side cache state is flushed before and
 after re-authentication, preventing replies from an earlier cache epoch from being retained.
+If that internal cache mutation fails, the connection aborts without reopening command admission.
+This differs from an optional metrics callback failure, which remains isolated.
 
 A server-blocking command such as BLPOP prevents Redis from processing a later AUTH until the
 command completes. Keep blocking durations and token acquisition latency within the renewal
@@ -97,7 +99,7 @@ when renewal reaches its deadline. The refresh worker does not replay that comma
 
 Use `Protocol = RespProtocol.Resp3` for provider-backed subscriptions. Redis allows AUTH while
 subscribed in RESP3, preserving the existing socket and subscriptions. Respire rejects
-provider-backed RESP2 subscriptions because Redis [forbids AUTH in that subscribed state](https://redis.io/docs/latest/commands/subscribe/).
+provider-backed subscriptions using `Resp2` or `Auto`: automatic fallback could select RESP2, and Redis [forbids AUTH in that subscribed state](https://redis.io/docs/latest/commands/subscribe/).
 It does not silently change an explicit protocol selection or promise lossless reconnects.
 
 `SentinelCredentialProvider` supplies independent discovery credentials. When it is null,

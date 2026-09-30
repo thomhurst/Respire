@@ -15,33 +15,39 @@ public class CredentialProviderTests
     private static readonly byte[] Hello = "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
 
     [Test]
-    public async Task EveryNewConnectionObtainsCurrentCredentials()
+    [Arguments(RespProtocol.Auto)]
+    [Arguments(RespProtocol.Resp2)]
+    [Arguments(RespProtocol.Resp3)]
+    public async Task EveryNewConnectionObtainsCurrentCredentials(RespProtocol protocol)
     {
-        await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
+        await using var server = Server();
         var provider = new Provider();
         var options = new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) }, Connections = 1,
-            CredentialProvider = provider, Username = "ignored", Password = "ignored",
+            CredentialProvider = provider, Username = "ignored", Password = "ignored", Protocol = protocol,
         };
         await using (var first = await RespireClient.ConnectAsync(options)) { }
         provider.Current = new("user", "second");
         await using (var second = await RespireClient.ConnectAsync(options)) { }
         await Assert.That(provider.Calls).IsEqualTo(2);
         await Assert.That(server.ReceivedCommands)
-            .IsEquivalentTo(new[] { "AUTH user first", "AUTH user second" });
+            .IsEquivalentTo(protocol == RespProtocol.Resp2
+                ? new[] { "AUTH user first", "AUTH user second" }
+                : new[] { "HELLO 3 AUTH user first", "HELLO 3 AUTH user second" });
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task RejectedInitialAuthenticationHasTypedRedactedFailure(bool resp3)
+    [Arguments(RespProtocol.Auto)]
+    [Arguments(RespProtocol.Resp2)]
+    [Arguments(RespProtocol.Resp3)]
+    public async Task RejectedInitialAuthenticationHasTypedRedactedFailure(RespProtocol protocol)
     {
         await using var server = new FakeRespServer("-WRONGPASS private-token\r\n"u8.ToArray());
         try
         {
             await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-                new RespireConnectionOptions { CredentialProvider = new Provider(), UseResp3 = resp3 });
+                new RespireConnectionOptions { CredentialProvider = new Provider(), Protocol = protocol });
             throw new InvalidOperationException("Expected authentication failure.");
         }
         catch (RespireAuthenticationException error)
@@ -119,7 +125,7 @@ public class CredentialProviderTests
         var provider = ExpiringProvider(clock);
         await using var server = Server();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            Options(server, provider, clock) with { UseResp3 = resp3 });
+            Options(server, provider, clock) with { Protocol = resp3 ? RespProtocol.Resp3 : RespProtocol.Resp2 });
         await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(20)));
         server.SuppressReply = command => command == "PING" || command == "AUTH user second";
         var ping = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
@@ -524,7 +530,7 @@ public class CredentialProviderTests
     }
 
     [Test]
-    public async Task RenewalFlushesCacheBeforeAndAfterAuthDespiteObserverFailure()
+    public async Task ExpiryDuringFinalCacheFlushNeverReopensAdmission()
     {
         var clock = new Clock();
         var provider = ExpiringProvider(clock);
@@ -533,7 +539,78 @@ public class CredentialProviderTests
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             Options(server, provider, clock) with
             {
-                CredentialCacheInvalidation = () => { Interlocked.Increment(ref flushes); throw new InvalidOperationException(); },
+                CredentialCacheInvalidation = () =>
+                {
+                    if (Interlocked.Increment(ref flushes) == 2) clock.Advance(TimeSpan.FromSeconds(40));
+                    return 0;
+                },
+            });
+        await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(20)));
+        server.SuppressReply = command => command == "AUTH user second";
+        provider.Current = new("user", "second", clock.GetUtcNow().AddSeconds(60));
+        clock.Advance(TimeSpan.FromSeconds(20));
+        await UntilAsync(() => server.ReceivedCommands.Contains("AUTH user second"));
+        var pending = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        await server.SendRawAsync(FakeRespServer.OkReply);
+        await connection.CredentialRefreshCompletion!.WaitAsync(Limit);
+        await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<RespireException>();
+        await Assert.That(connection.CloseError is RespireAuthenticationException).IsTrue();
+        await Assert.That(server.ReceivedCommands.Contains("PING")).IsFalse();
+    }
+
+    [Test]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task CacheMutationFailureAbortsWithoutReopeningAdmission(int failingFlush)
+    {
+        var clock = new Clock();
+        var provider = ExpiringProvider(clock);
+        var flushes = 0;
+        await using var server = Server();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            Options(server, provider, clock) with
+            {
+                CredentialCacheInvalidation = () => Interlocked.Increment(ref flushes) == failingFlush
+                    ? throw new InvalidOperationException("cache mutation failed") : 0,
+            });
+        await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(20)));
+        provider.Current = new("user", "second", clock.GetUtcNow().AddSeconds(60));
+        clock.Advance(TimeSpan.FromSeconds(20));
+        await connection.CredentialRefreshCompletion!.WaitAsync(Limit);
+        await Assert.That(connection.IsConnected).IsFalse();
+        await Assert.That(connection.CloseError is RespireAuthenticationException).IsTrue();
+        await Assert.That(server.ReceivedCommands.Contains("AUTH user second")).IsEqualTo(failingFlush == 2);
+        await Assert.That(async () => await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
+            .Throws<RespireException>();
+        await Assert.That(server.ReceivedCommands.Contains("PING")).IsFalse();
+    }
+
+    [Test]
+    public async Task RenewalFlushesCacheBeforeAndAfterAuthDespiteObserverFailure()
+    {
+        var clock = new Clock();
+        var provider = ExpiringProvider(clock);
+        var flushes = 0;
+        var observe = new AsyncLocal<bool>();
+        var failures = 0;
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, observer) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.client_cache.continuity_flushes")
+                observer.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
+        {
+            if (!observe.Value) return;
+            Interlocked.Increment(ref failures);
+            throw new InvalidOperationException("observer failed");
+        });
+        listener.Start();
+        await using var server = Server();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            Options(server, provider, clock) with
+            {
+                CredentialCacheInvalidation = () => { observe.Value = true; Interlocked.Increment(ref flushes); return 0; },
             });
         await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(20)));
         server.SuppressReply = command => command == "AUTH user second";
@@ -542,7 +619,9 @@ public class CredentialProviderTests
         await UntilAsync(() => server.ReceivedCommands.Contains("AUTH user second"));
         await Assert.That(Volatile.Read(ref flushes)).IsEqualTo(1);
         await server.SendRawAsync(FakeRespServer.OkReply);
-        await UntilAsync(() => Volatile.Read(ref flushes) == 2);
+        await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(30)));
+        await Assert.That(Volatile.Read(ref flushes)).IsEqualTo(2);
+        await Assert.That(Volatile.Read(ref failures)).IsEqualTo(2);
         await Assert.That(connection.IsConnected).IsTrue();
     }
 
@@ -554,7 +633,7 @@ public class CredentialProviderTests
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
-            Endpoints = { new("127.0.0.1", server.Port) }, CredentialProvider = provider,
+            Endpoints = { new("127.0.0.1", server.Port) }, CredentialProvider = provider, Protocol = RespProtocol.Resp2,
             CredentialTimeProvider = clock, CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
         });
         await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(20)));
@@ -613,7 +692,9 @@ public class CredentialProviderTests
     }
 
     [Test]
-    public async Task RenewalMetricsObserversCanSendAfterAdmissionResumes()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RenewalMetricsObserversCanSendAfterAdmissionResumes(bool advanceFromReply)
     {
         var clock = new Clock();
         var provider = ExpiringProvider(clock);
@@ -644,7 +725,24 @@ public class CredentialProviderTests
         observedConnection = connection;
         await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(20)));
         provider.Current = new("user", "second", clock.GetUtcNow().AddSeconds(60));
-        clock.Advance(TimeSpan.FromSeconds(20));
+        if (advanceFromReply)
+        {
+            // Force the clock callback onto this connection's serial completion worker.
+            // The first cache metric must leave that worker before synchronously awaiting PING.
+            server.SuppressReply = command => command == "PING";
+            var advance = AdvanceFromReplyAsync();
+            await UntilAsync(() => server.ReceivedCommands.Contains("PING"));
+            server.SuppressReply = null;
+            await server.SendRawAsync("+PONG\r\n"u8.ToArray());
+            await advance.WaitAsync(Limit);
+        }
+        else clock.Advance(TimeSpan.FromSeconds(20));
+
+        async Task AdvanceFromReplyAsync()
+        {
+            using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).ConfigureAwait(false);
+            clock.Advance(TimeSpan.FromSeconds(20));
+        }
         await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(30)));
         await Assert.That(Volatile.Read(ref completed)).IsEqualTo(3);
         await Assert.That(connection.IsConnected).IsTrue();
@@ -695,13 +793,15 @@ public class CredentialProviderTests
     }
 
     [Test]
-    public async Task Resp2SubscriptionsRejectRenewableCredentials()
+    [Arguments(RespProtocol.Resp2)]
+    [Arguments(RespProtocol.Auto)]
+    public async Task SubscriptionsRequireStrictResp3ForRenewableCredentials(RespProtocol protocol)
     {
         await using var server = Server();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new("127.0.0.1", server.Port) }, CredentialProvider = new Provider(),
-            Protocol = RespProtocol.Resp2,
+            Protocol = protocol,
         });
         await Assert.That(async () => await client.SubscribeAsync("channel")).ThrowsExactly<RespireConfigurationException>();
     }
@@ -724,7 +824,7 @@ public class CredentialProviderTests
     private static RespireConnectionOptions Options(FakeRespServer server, Provider provider, Clock clock)
         => new RespireOptions
         {
-            Endpoints = { new("127.0.0.1", server.Port) }, Connections = 1, CredentialProvider = provider,
+            Endpoints = { new("127.0.0.1", server.Port) }, Connections = 1, CredentialProvider = provider, Protocol = RespProtocol.Resp2,
             CredentialTimeProvider = clock, CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10),
             CredentialRefreshRetryDelay = TimeSpan.FromSeconds(1), ConnectTimeout = Limit,
         }.ToConnectionOptions();
