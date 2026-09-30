@@ -17,6 +17,77 @@ namespace Respire.Tests.Networking;
 public class TlsTests
 {
     [Test]
+    public async Task DiscoveredSentinelPeerKeepsDedicatedTlsIdentity()
+    {
+        using var certificate = CreateCertificate("sentinel.example");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await using var stale = new FakeRespServer("*1\r\n$5\r\nslave\r\n"u8.ToArray());
+        await using var primary = new FakeRespServer("*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray(), FakeRespServer.PongReply);
+        var seed = new TcpListener(IPAddress.Loopback, 0);
+        var peer = new TcpListener(IPAddress.Loopback, 0);
+        seed.Start();
+        peer.Start();
+        var seedPort = ((IPEndPoint)seed.LocalEndpoint).Port;
+        var peerPort = ((IPEndPoint)peer.LocalEndpoint).Port;
+        var names = new System.Collections.Concurrent.ConcurrentQueue<string?>();
+        var servers = Task.WhenAll(ServeAsync(seed, stale.Port, peerPort), ServeAsync(peer, primary.Port, null));
+        try
+        {
+            await using var client = await RespireClient.ConnectAsync(new RespireOptions
+            {
+                Endpoints = [new("127.0.0.1", seedPort)], SentinelPrimaryName = "mymaster",
+                UseTls = false, SentinelUseTls = true,
+                SentinelTlsOptions = new SslClientAuthenticationOptions
+                {
+                    TargetHost = "sentinel.example", RemoteCertificateValidationCallback = (_, _, _, _) => true,
+                },
+            }, deadline.Token);
+            await client.PingAsync(deadline.Token);
+            await servers.WaitAsync(deadline.Token);
+            await Assert.That(names.ToArray()).IsEquivalentTo(["sentinel.example", "sentinel.example"]);
+            await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
+        }
+        finally
+        {
+            deadline.Cancel();
+            seed.Stop();
+            peer.Stop();
+            try { await servers; }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
+        }
+
+        async Task ServeAsync(TcpListener listener, int primaryPort, int? discoveredPort)
+        {
+            using var socket = await listener.AcceptSocketAsync(deadline.Token);
+            await using var network = new NetworkStream(socket, ownsSocket: false);
+            await using var tls = new SslStream(network);
+            await tls.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+            {
+                ServerCertificateSelectionCallback = (_, name) => { names.Enqueue(name); return certificate; },
+                EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+            }, deadline.Token);
+            await ReadCommandAsync("GET-MASTER-ADDR-BY-NAME");
+            await tls.WriteAsync(System.Text.Encoding.ASCII.GetBytes(
+                $"*2\r\n$9\r\n127.0.0.1\r\n${primaryPort.ToString().Length}\r\n{primaryPort}\r\n"), deadline.Token);
+            if (discoveredPort is { } port)
+            {
+                await ReadCommandAsync("SENTINELS");
+                await tls.WriteAsync(System.Text.Encoding.ASCII.GetBytes(
+                    $"*1\r\n*4\r\n$2\r\nip\r\n$9\r\n127.0.0.1\r\n$4\r\nport\r\n${port.ToString().Length}\r\n{port}\r\n"), deadline.Token);
+            }
+
+            async Task ReadCommandAsync(string command)
+            {
+                var expected = System.Text.Encoding.ASCII.GetBytes(
+                    $"*3\r\n$8\r\nSENTINEL\r\n${command.Length}\r\n{command}\r\n$8\r\nmymaster\r\n");
+                var actual = new byte[expected.Length];
+                await tls.ReadExactlyAsync(actual, deadline.Token);
+                await Assert.That(actual).IsEquivalentTo(expected);
+            }
+        }
+    }
+
+    [Test]
     public async Task TlsConnection_PerformsHandshakeBeforeRespTraffic()
     {
         using var certificate = CreateCertificate();

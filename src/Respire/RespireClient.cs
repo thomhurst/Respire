@@ -59,10 +59,36 @@ public sealed partial class RespireClient : IRespireClient
     public static async ValueTask<RespireClient> ConnectAsync(RespireOptions options, CancellationToken cancellationToken = default)
     {
         options = (options ?? throw new ArgumentNullException(nameof(options))).ValidateAndSnapshot();
+        if (string.IsNullOrWhiteSpace(options.SentinelPrimaryName))
+            return await ConnectPrimaryAsync(options, cancellationToken).ConfigureAwait(false);
         return await SentinelResolver.ResolveAndConnectPrimaryAsync(
             options,
-            ConnectPrimaryAsync,
+            ConnectSentinelPrimaryAsync,
             cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask<RespireClient> ConnectSentinelPrimaryAsync(
+        RespireOptions options, CancellationToken cancellationToken)
+    {
+        var client = await ConnectPrimaryAsync(options, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // Validate on a data connection owned by the candidate before exposing it.
+            using var reply = await client.SendAsync("ROLE", new Cmd(Verbs.Role), cancellationToken).ConfigureAwait(false);
+            if (reply.Type != RespDataType.Array)
+                throw new RespireProtocolException("Sentinel primary ROLE must return an array.");
+            var role = reply.AsArray();
+            if (role.Length < 3 || role[0].Type is not (RespDataType.BulkString or RespDataType.SimpleString)
+                || role[0].AsString() != "master" || role[1].Type != RespDataType.Integer
+                || role[2].Type != RespDataType.Array)
+                throw new RespireConnectionException("Sentinel candidate did not confirm a valid primary ROLE.");
+            return client;
+        }
+        catch
+        {
+            await client.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     private static async ValueTask<RespireClient> ConnectPrimaryAsync(

@@ -24,6 +24,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
     private readonly Task _acceptTask;
     private readonly CancellationTokenSource _cts = new();
     private readonly TaskCompletionSource<Socket> _clientSocket = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _peerClosed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly List<string> _receivedCommands = [];
     private readonly List<byte[][]> _receivedArguments = [];
     private readonly List<int> _receivedConnectionIds = [];
@@ -32,6 +33,8 @@ internal sealed class FakeRespServer : IAsyncDisposable
     private int _disposed;
 
     public int Port { get; }
+    /// <summary>Completes on peer EOF or reset, before server teardown.</summary>
+    public Task PeerClosed => _peerClosed.Task;
     public int CommandsSeen => Volatile.Read(ref _commandsSeen);
 
     /// <summary>
@@ -157,9 +160,18 @@ internal sealed class FakeRespServer : IAsyncDisposable
 
             while (!_cts.IsCancellationRequested)
             {
-                var read = await socket.ReceiveAsync(buffer.AsMemory(end), SocketFlags.None, _cts.Token);
+                int read;
+                try { read = await socket.ReceiveAsync(buffer.AsMemory(end), SocketFlags.None, _cts.Token); }
+                catch (SocketException error) when (!_cts.IsCancellationRequested
+                    && error.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted)
+                {
+                    // Respire deliberately uses Close(0) for abortive disposal, which is RST on Linux.
+                    _peerClosed.TrySetResult();
+                    return;
+                }
                 if (read == 0)
                 {
+                    _peerClosed.TrySetResult();
                     return;
                 }
 

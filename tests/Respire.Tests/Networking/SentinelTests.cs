@@ -11,6 +11,195 @@ namespace Respire.Tests.Networking;
 
 public class SentinelTests
 {
+    private static readonly byte[] PrimaryRole = "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray();
+
+    [Test]
+    [Arguments("*1\r\n$5\r\nslave\r\n")]
+    [Arguments("*2\r\n$8\r\nsentinel\r\n*0\r\n")]
+    [Arguments("+master\r\n")]
+    [Arguments("*1\r\n$6\r\nmaster\r\n")]
+    [Arguments("-NOPERM ROLE is denied\r\n")]
+    public async Task ConnectAsync_RejectsStaleOrInvalidPrimaryAndTriesDiscoveredPeer(string invalidRole)
+    {
+        await using var stale = new FakeRespServer(Encoding.ASCII.GetBytes(invalidRole));
+        await using var primary = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
+        await using var peer = new FakeRespServer(PrimaryReply(primary.Port));
+        await using var seed = new FakeRespServer(PrimaryReply(stale.Port), PeersReply(peer.Port));
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", seed.Port)],
+            SentinelPrimaryName = "mymaster",
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+        });
+        await client.PingAsync();
+        await stale.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(stale.ReceivedCommands).IsEquivalentTo(["ROLE"]);
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
+        await Assert.That(seed.ReceivedCommands).IsEquivalentTo(
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
+        // A newly learned peer is tried, but is not recursively expanded in this attempt.
+        await Assert.That(peer.ReceivedCommands).IsEquivalentTo(["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
+    }
+
+    [Test]
+    public async Task ConnectAsync_PeerDiscoveryAclFailureDoesNotRejectValidatedPrimary()
+    {
+        await using var primary = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
+        await using var seed = new FakeRespServer(PrimaryReply(primary.Port), "-NOPERM SENTINELS is denied\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", seed.Port)], SentinelPrimaryName = "mymaster",
+        });
+        await client.PingAsync();
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
+    }
+
+    [Test]
+    [Arguments("timeout")]
+    [Arguments("disconnect")]
+    [Arguments("protocol")]
+    public async Task ConnectAsync_OptionalPeerFailurePreservesTheCompletedPrimaryReply(string failure)
+    {
+        await using var primary = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
+        await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port), "?invalid RESP\r\n"u8.ToArray())
+        {
+            CloseConnectionAfterCommand = failure == "disconnect" ? 2 : null,
+            SuppressReply = command => failure == "timeout" && command == "SENTINEL SENTINELS mymaster",
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+            CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(2),
+        }).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await client.PingAsync();
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
+    }
+
+    [Test]
+    public async Task ConnectAsync_CallerCancellationDuringOptionalPeersIsNotSuppressed()
+    {
+        var peersRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var primary = new FakeRespServer(PrimaryRole);
+        await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port))
+        {
+            SuppressReply = command =>
+            {
+                if (command != "SENTINEL SENTINELS mymaster") return false;
+                peersRequested.TrySetResult();
+                return true;
+            },
+        };
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var pending = RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+            CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(10),
+        }, cancellation.Token).AsTask();
+        await peersRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+        var error = await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+        await sentinel.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(primary.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Discovery_CallerCancellationWinsOverConcurrentConnectionFailure(bool protocolFailure)
+    {
+        await using var sentinel = new FakeRespServer(PrimaryReply(6379), "*0\r\n"u8.ToArray());
+        using var cancellation = new CancellationTokenSource();
+        var options = new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+        };
+        var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options, (_, _) =>
+        {
+            cancellation.Cancel();
+            return ValueTask.FromException<int>(protocolFailure
+                ? new RespireProtocolException("Malformed response during cancellation.")
+                : new RespireConnectionException("Connection lost during cancellation."));
+        }, cancellation.Token).AsTask();
+        var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+    }
+
+    private static byte[] PeersReply(int port)
+        => Encoding.ASCII.GetBytes($"*1\r\n*4\r\n$2\r\nip\r\n$9\r\n127.0.0.1\r\n$4\r\nport\r\n${port.ToString().Length}\r\n{port}\r\n");
+
+    [Test]
+    public async Task DiscoveryStateRetainsSeedsBoundsPeersAndReturnsOwnedSnapshots()
+    {
+        var state = new SentinelDiscoveryState([new("seed.example", 26379), new("SEED.example", 26379)]);
+        await Assert.That(state.TryAdd(new("Seed.Example", 26379))).IsFalse();
+        for (var index = 0; index < SentinelDiscoveryState.MaximumDiscoveredEndpoints; index++)
+            await Assert.That(state.TryAdd(new("peer.example", 10000 + index))).IsTrue();
+        await Assert.That(state.TryAdd(new("overflow.example", 26379))).IsFalse();
+        var snapshot = state.Snapshot();
+        await Assert.That(snapshot.Length).IsEqualTo(1 + SentinelDiscoveryState.MaximumDiscoveredEndpoints);
+        snapshot[0] = new("changed.example", 1);
+        await Assert.That(state.Snapshot()[0]).IsEqualTo(new RespireEndpoint("seed.example", 26379));
+    }
+
+    [Test]
+    public async Task DiscoveryIgnoresMalformedAndDuplicatePeerRecords()
+    {
+        var records = "*5\r\n" + Record("", "26379") + Record("bad host", "26379")
+            + Record("peer.example", "65536") + Record("peer.example", "26379") + Record("PEER.example", "26379");
+        await using var seed = new FakeRespServer(PrimaryReply(6379), Encoding.ASCII.GetBytes(records));
+        var endpoint = new RespireEndpoint("127.0.0.1", seed.Port);
+        var state = new SentinelDiscoveryState([endpoint]);
+        var options = new RespireOptions { Endpoints = [endpoint], SentinelPrimaryName = "mymaster" };
+        var result = await SentinelResolver.ResolveAndConnectPrimaryAsync(options,
+            static (primaryOptions, _) => ValueTask.FromResult(primaryOptions.PrimaryEndpoint), default, state);
+        await Assert.That(result).IsEqualTo(new RespireEndpoint("127.0.0.1", 6379));
+        await Assert.That(state.Snapshot()).IsEquivalentTo([endpoint, new RespireEndpoint("peer.example", 26379)]);
+
+        static string Record(string host, string port)
+            => $"*4\r\n$2\r\nip\r\n${host.Length}\r\n{host}\r\n$4\r\nport\r\n${port.Length}\r\n{port}\r\n";
+    }
+
+    [Test]
+    public async Task ConnectAsync_CancellationDuringRolePreservesCallerTokenAndDisposesCandidate()
+    {
+        var roleRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var primary = new FakeRespServer(PrimaryRole)
+        {
+            SuppressReply = command => { if (command == "ROLE") roleRequested.TrySetResult(); return true; },
+        };
+        await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port), "*0\r\n"u8.ToArray());
+        using var cancellation = new CancellationTokenSource();
+        var pending = RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+            ConnectTimeout = TimeSpan.FromSeconds(10),
+        }, cancellation.Token).AsTask();
+        await roleRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+        var failure = await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+        await Assert.That(failure!.CancellationToken).IsEqualTo(cancellation.Token);
+        await primary.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
+    public async Task ConnectAsync_RoleTimeoutTriesNextConfiguredSentinel()
+    {
+        await using var stalled = new FakeRespServer(PrimaryRole) { SuppressReply = _ => true };
+        await using var primary = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
+        await using var first = new FakeRespServer(PrimaryReply(stalled.Port), "*0\r\n"u8.ToArray());
+        await using var second = new FakeRespServer(PrimaryReply(primary.Port), "*0\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
+            SentinelPrimaryName = "mymaster", CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(2),
+        }).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await client.PingAsync();
+        await stalled.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
+    }
+
     [Test]
     public async Task ConnectionString_ParsesSentinelOptions()
     {
@@ -132,7 +321,7 @@ public class SentinelTests
     [Test]
     public async Task ConnectAsync_DiscoversPrimaryFromSentinel()
     {
-        await using var primary = new FakeRespServer(FakeRespServer.PongReply);
+        await using var primary = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
         await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port));
 
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
@@ -145,8 +334,8 @@ public class SentinelTests
         _ = await client.PingAsync();
 
         await Assert.That(sentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
-        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["PING"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
     }
 
     [Test]
@@ -154,6 +343,7 @@ public class SentinelTests
     {
         await using var primary = new FakeRespServer(
             FakeRespServer.OkReply,
+            PrimaryRole,
             FakeRespServer.PongReply);
         await using var sentinel = new FakeRespServer(
             FakeRespServer.OkReply,
@@ -176,10 +366,12 @@ public class SentinelTests
         [
             "AUTH sentinel-user sentinel-secret",
             "SENTINEL GET-MASTER-ADDR-BY-NAME mymaster",
+            "SENTINEL SENTINELS mymaster",
         ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(
         [
             "AUTH redis-user redis-secret",
+            "ROLE",
             "PING",
         ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
     }
@@ -189,6 +381,7 @@ public class SentinelTests
     {
         await using var primary = new FakeRespServer(
             FakeRespServer.OkReply,
+            PrimaryRole,
             FakeRespServer.PongReply);
         await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port));
 
@@ -198,10 +391,11 @@ public class SentinelTests
         _ = await client.PingAsync();
 
         await Assert.That(sentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(
         [
             "AUTH redis-secret",
+            "ROLE",
             "PING",
         ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
     }
@@ -211,7 +405,7 @@ public class SentinelTests
     [Arguments(true)]
     public async Task ConnectAsync_FallsBackWhenSentinelReturnsInvalidPort(bool useConnectionString)
     {
-        await using var primary = new FakeRespServer(FakeRespServer.PongReply);
+        await using var primary = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
         await using var invalidSentinel = new FakeRespServer(PrimaryReply(65536));
         await using var validSentinel = new FakeRespServer(PrimaryReply(primary.Port));
 
@@ -235,16 +429,16 @@ public class SentinelTests
         _ = await client.PingAsync();
 
         await Assert.That(invalidSentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
         await Assert.That(validSentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
-        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["PING"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
     }
 
     [Test]
     public async Task ConnectAsync_TimesOutUnresponsiveSentinelAndFallsBack()
     {
-        await using var primary = new FakeRespServer(FakeRespServer.PongReply);
+        await using var primary = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
         await using var unresponsiveSentinel = new FakeRespServer(PrimaryReply(primary.Port));
         // Never race a delayed successful reply against the discovery deadline.
         unresponsiveSentinel.SuppressReply = static _ => true;
@@ -269,8 +463,8 @@ public class SentinelTests
         await Assert.That(unresponsiveSentinel.ReceivedCommands).IsEquivalentTo(
             ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
         await Assert.That(responsiveSentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
-        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["PING"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
     }
 
     [Test]
@@ -278,6 +472,7 @@ public class SentinelTests
     {
         await using var primary = new FakeRespServer(
             FakeRespServer.OkReply,
+            PrimaryRole,
             FakeRespServer.PongReply);
         primary.DelayReply(0, 1_200);
         await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port));
@@ -298,10 +493,11 @@ public class SentinelTests
         _ = await client.PingAsync();
 
         await Assert.That(sentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(
         [
             "AUTH redis-secret",
+            "ROLE",
             "PING",
         ], TUnit.Assertions.Enums.CollectionOrdering.Matching);
     }
@@ -312,7 +508,7 @@ public class SentinelTests
         using var unavailablePrimary = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         unavailablePrimary.Bind(new IPEndPoint(IPAddress.Loopback, 0));
         var unavailablePrimaryPort = ((IPEndPoint)unavailablePrimary.LocalEndPoint!).Port;
-        await using var primary = new FakeRespServer(FakeRespServer.PongReply);
+        await using var primary = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
         await using var staleSentinel = new FakeRespServer(PrimaryReply(unavailablePrimaryPort));
         await using var currentSentinel = new FakeRespServer(PrimaryReply(primary.Port));
 
@@ -330,10 +526,10 @@ public class SentinelTests
         _ = await client.PingAsync();
 
         await Assert.That(staleSentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
         await Assert.That(currentSentinel.ReceivedCommands).IsEquivalentTo(
-            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster"]);
-        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["PING"]);
+            ["SENTINEL GET-MASTER-ADDR-BY-NAME mymaster", "SENTINEL SENTINELS mymaster"]);
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
     }
 
     [Test]

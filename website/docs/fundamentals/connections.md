@@ -221,7 +221,18 @@ By default, Sentinel authentication inherits the primary Redis credentials. Set
 explicitly disable Sentinel authentication while retaining authentication on the discovered
 primary. When multiple Sentinel endpoints are configured, Respire also tries the next endpoint
 if discovery times out, returns invalid data, or reports a primary that cannot be reached during
-the initial connection.
+the initial connection. The candidate's data connection must return a valid primary `ROLE`
+before the client is returned. A reachable replica, malformed response, or denied `ROLE`
+is rejected and the candidate is disposed. Grant `ROLE` to the data-node credentials.
+
+Respire also requests `SENTINEL SENTINELS` and can try up to 64 learned peers after the
+configured endpoints. Duplicate hosts/ports and invalid peer addresses are ignored;
+configured seeds are retained. Newly learned peers do not recursively expand discovery
+within the same attempt. ACL errors, timeouts, protocol errors, or disconnects during this
+optional peer-list command do not discard an already completed primary reply. Discovery (including the peer-list request) uses
+its existing bounded deadline; primary setup and role validation receive a fresh connection
+deadline. Caller cancellation applies throughout. These checks follow the
+[Redis Sentinel client specification](https://redis.io/docs/latest/develop/reference/sentinel-clients/).
 
 Sentinel discovery always uses RESP2, so older Sentinel nodes can discover a RESP3 primary.
 Transport settings inherit from the primary by default. Set `SentinelUseTls` independently when

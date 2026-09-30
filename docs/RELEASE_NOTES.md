@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Sentinel discovery validation
+
+- Sentinel-discovered data connections must confirm a valid primary `ROLE` before
+  `ConnectAsync` returns. Data-node ACLs need `ROLE` permission; stale replicas and
+  invalid candidates are disposed before another Sentinel is tried. Optional
+  `SENTINEL SENTINELS` discovery adds bounded, deduplicated fallback peers while
+  retaining configured endpoints and Sentinel-specific TLS/authentication settings.
+  This is connection-time validation; automatic runtime failover remains planned.
+
 ### Hot-key tracking
 
 - Redis 8.6+ HOTKEYS APIs add a pinned server handle for START/GET/STOP/RESET and
