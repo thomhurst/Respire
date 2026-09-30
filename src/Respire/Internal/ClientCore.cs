@@ -417,7 +417,12 @@ internal sealed class ClientCore : IAsyncDisposable
         ClientCache?.StopInvalidationObservers();
         ClientCache?.StopSharedReads();
         ClientCache?.Clear();
-        var commandEndpoints = Cluster?.GetActiveEndpoints() ?? [Endpoint];
+        RespireEndpoint[] commandEndpoints;
+        if (Cluster is { } clusterRouter) commandEndpoints = clusterRouter.GetActiveEndpoints();
+        // A lazy Sentinel client has no data endpoint until a validated generation is published.
+        else if (Sentinel is { } sentinelRouter)
+            commandEndpoints = sentinelRouter.Current is { } generation ? [generation.Endpoint] : [];
+        else commandEndpoints = [Endpoint];
         lock (_stateGate)
         {
             _subscriptionState = RespireConnectionState.Disconnected;

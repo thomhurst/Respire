@@ -41,6 +41,39 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    [Arguments("unused")]
+    [Arguments("failed-validation")]
+    [Arguments("published")]
+    public async Task DisposalReportsOnlyPublishedDataEndpoints(string state)
+    {
+        await using var primary = Primary((_, command) => command == "ROLE" && state == "failed-validation"
+            ? "*0\r\n"u8.ToArray() : null);
+        await using var sentinel = Sentinel(() => primary.Port);
+        await using var client = RespireClient.Create(Options(sentinel.Port));
+        if (state == "failed-validation")
+            await Assert.That(async () => await client.PingAsync().AsTask().WaitAsync(Limit)).Throws<RespireConnectionException>();
+        else if (state == "published")
+            await client.PingAsync().AsTask().WaitAsync(Limit);
+        var changes = new ConcurrentQueue<RespireConnectionStateChange>();
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.ReconnectSource == RespireReconnectSource.Unspecified && change.State == RespireConnectionState.Disconnected)
+                changes.Enqueue(change);
+        };
+        var discoveryCommands = sentinel.CommandsSeen;
+        await client.DisposeAsync().AsTask().WaitAsync(Limit);
+        await Assert.That(sentinel.CommandsSeen).IsEqualTo(discoveryCommands);
+        await Assert.That(changes.Any(change => change.Endpoint.Port == sentinel.Port)).IsFalse();
+        await Assert.That(changes.Select(change => change.Endpoint).ToArray()).IsEquivalentTo(
+            state == "published" ? new[] { new RespireEndpoint("127.0.0.1", primary.Port) } : []);
+        if (state == "unused")
+        {
+            await Assert.That(sentinel.CommandsSeen).IsEqualTo(0);
+            await Assert.That(primary.CommandsSeen).IsEqualTo(0);
+        }
+    }
+
+    [Test]
     [NotInParallel]
     public async Task EndpointSnapshotsNeverMixPublishedGenerations()
     {
