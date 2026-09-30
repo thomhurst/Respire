@@ -472,7 +472,7 @@ public class LockCommandTests
     [Test]
     public async Task RespireLock_KeepAliveCancelsWhenOwnershipIsLost()
     {
-        await using var server = new FakeRespServer(FakeRespServer.OkReply, ":41\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), "$-1\r\n"u8.ToArray());
+        await using var server = CreateKeepAliveOwnershipLossServer();
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromMilliseconds(200));
 
@@ -490,6 +490,68 @@ public class LockCommandTests
         await Assert.That(keepAlive.Failure).IsNull();
         await Assert.That(mutex.IsReleased).IsTrue();
     }
+
+    [Test]
+    public async Task RespireLock_KeepAliveDeadlineWaitsForAcknowledgedFenceBeforeDisposal()
+    {
+        await using var server = CreateKeepAliveOwnershipLossServer();
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(5));
+        await client.EnsureReliableCorrectionOrderingAsync();
+
+        var renewalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fenceStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.SuppressReply = command =>
+        {
+            if (command.Contains(" IFEQ ", StringComparison.Ordinal))
+            {
+                renewalStarted.TrySetResult();
+                return true;
+            }
+
+            if (command == "CLIENT KILL ID 41")
+            {
+                fenceStarted.TrySetResult();
+                return true;
+            }
+
+            return false;
+        };
+
+        var keepAlive = await mutex.KeepAliveAsync();
+        Task? disposal = null;
+        try
+        {
+            await renewalStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await fenceStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(keepAlive.CancellationToken.IsCancellationRequested).IsTrue();
+            await Assert.That(keepAlive.OwnershipLost).IsTrue();
+            await Assert.That(mutex.IsReleased).IsTrue();
+
+            disposal = keepAlive.DisposeAsync().AsTask();
+            var observation = Task.Delay(TimeSpan.FromMilliseconds(100));
+            await Assert.That(await Task.WhenAny(disposal, observation)).IsSameReferenceAs(observation);
+            var fenceIndex = server.ReceivedCommands.ToList().IndexOf("CLIENT KILL ID 41");
+            await Assert.That(fenceIndex).IsGreaterThanOrEqualTo(0);
+            var controlConnection = server.ReceivedConnectionIds[fenceIndex];
+            await Assert.That(controlConnection).IsEqualTo(1);
+            await server.SendRawAsync(":1\r\n"u8.ToArray(), controlConnection);
+            await disposal.WaitAsync(TimeSpan.FromSeconds(10));
+            await Assert.That(keepAlive.Failure).IsNull();
+        }
+        finally
+        {
+            // A failed assertion must close the control socket before awaiting the loop.
+            // Disposing the keepalive first would itself wait for the missing fence reply.
+            await client.DisposeAsync();
+            await (disposal ?? keepAlive.DisposeAsync().AsTask()).WaitAsync(TimeSpan.FromSeconds(10));
+        }
+    }
+
+    private static FakeRespServer CreateKeepAliveOwnershipLossServer()
+        // A renewal can cross its lease deadline after acceptance. The resulting fence uses
+        // a separate connection, which the fixture must accept even when renewal replies fail.
+        => new(2, FakeRespServer.OkReply, ":41\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), "$-1\r\n"u8.ToArray());
 
     [Test]
     public async Task RespireLock_ManualShorteningReschedulesKeepAlive()
