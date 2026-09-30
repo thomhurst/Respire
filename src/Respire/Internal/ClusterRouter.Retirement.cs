@@ -84,7 +84,7 @@ internal sealed partial class ClusterRouter
             }
         }
         catch (Exception error) when (_stopRetirement.IsCancellationRequested
-            && error is (OperationCanceledException or ObjectDisposedException))
+            && (error is OperationCanceledException || error is ObjectDisposedException && node.IsDisposed))
         {
             // Explicit disposal cancels retries and disposes owned nodes. Retirement can
             // race between its disposed check and entering the fence, so either shutdown
@@ -113,6 +113,8 @@ internal sealed partial class ClusterRouter
             await Task.WhenAll(corrections.Select(DrainPoolAsync)).ConfigureAwait(false);
             lock (_nodesGate)
             {
+                // Shutdown releases router ownership after abortive cleanup. Unacknowledged
+                // fence IDs remain on the disposed node; this does not mark them successful.
                 _retiringNodes.Remove(node);
                 _identities.Forget(node);
             }

@@ -793,6 +793,37 @@ public class ClusterRetirementTests
     }
 
     [Test]
+    public async Task ShutdownSignalDoesNotHideAnUndisposedNodeFailure()
+    {
+        await using var client = CreateClient();
+        var router = client.Core.Cluster!;
+        var endpoint = new RespireEndpoint("retired.invalid");
+        Publish(router, endpoint, "old", 1);
+        var node = router.GetMultiplexer(endpoint);
+        var nodeRetirement = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        typeof(RespireConnectionMultiplexer).GetField("_retirementCompletion", Private)!.SetValue(node, nodeRetirement);
+        var failure = new ObjectDisposedException("unrelated resource");
+        try
+        {
+            Publish(router, endpoint, "new", 2);
+            var retirement = router.WaitForRetirementAsync();
+            // Stop retries without disposing this node. Its ODE must remain unexpected.
+            var stop = (CancellationTokenSource)typeof(ClusterRouter).GetField("_stopRetirement", Private)!.GetValue(router)!;
+            stop.Cancel();
+            nodeRetirement.SetException(failure);
+            var error = await Assert.That(async () => await retirement.WaitAsync(Limit)).ThrowsExactly<ObjectDisposedException>();
+            await Assert.That(error).IsSameReferenceAs(failure);
+            await Assert.That(client.GetClusterRetirementSnapshot()!.CleanupFailedGenerationCount).IsEqualTo(1);
+            await Assert.That(async () => await client.DisposeAsync().AsTask().WaitAsync(Limit)).ThrowsExactly<ObjectDisposedException>();
+        }
+        finally
+        {
+            nodeRetirement.TrySetException(failure);
+            _ = nodeRetirement.Task.Exception;
+        }
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(false, true)]
     [Arguments(true, false)]

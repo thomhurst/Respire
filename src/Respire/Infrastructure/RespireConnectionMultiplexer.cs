@@ -52,6 +52,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     public string Host { get; }
     public int Port { get; }
     public int ConnectionCount => _connections.Length;
+    internal bool IsDisposed => Volatile.Read(ref _disposed) != 0;
     internal bool IsRetired => Volatile.Read(ref _retired) != 0;
     private bool IsOperational => !IsRetired && Volatile.Read(ref _disposed) == 0;
     internal bool HasPendingCorrectionFences => !_retiredServerClientIds.IsEmpty;
