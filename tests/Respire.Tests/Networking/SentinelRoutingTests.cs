@@ -1678,7 +1678,9 @@ public class SentinelRoutingTests
     }
 
     [Test]
-    public async Task PermanentlyFailingFenceBacksOffUntilDisposalCancelsTheDelay()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task PermanentlyFailingFenceBacksOffUntilDisposalCancelsTheDelay(bool failRetirementWait)
     {
         var rejectFences = false;
         await using var primary = Primary((_, command) => command switch
@@ -1708,7 +1710,15 @@ public class SentinelRoutingTests
         var second = await clock.Timers.Reader.ReadAsync().AsTask().WaitAsync(Limit);
         await Assert.That(second.Delay).IsEqualTo(TimeSpan.FromSeconds(2));
         await Assert.That(generation.CountedAsRetired).IsTrue();
-        await client.DisposeAsync().AsTask().WaitAsync(Limit);
+        var actualRetirement = generation.Retirement;
+        if (failRetirementWait)
+        {
+            generation.Retirement = Task.FromException(new InvalidOperationException("Injected disposal failure."));
+            await Assert.That(async () => await client.DisposeAsync().AsTask().WaitAsync(Limit))
+                .ThrowsExactly<InvalidOperationException>();
+            await actualRetirement.WaitAsync(Limit);
+        }
+        else await client.DisposeAsync().AsTask().WaitAsync(Limit);
         await second.Disposed.Task.WaitAsync(Limit);
         await Assert.That(generation.Retirement.IsCompleted).IsTrue();
         await Assert.That(generation.CountedAsRetired).IsFalse();

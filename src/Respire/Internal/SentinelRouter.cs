@@ -282,13 +282,21 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             }
             catch (Exception error) { disposeError = error; }
             try { await Task.WhenAll(owned.Select(generation => generation.Retirement)).ConfigureAwait(false); }
-            catch (Exception error) when (disposeError is not null) { throw new AggregateException(disposeError, error); }
-            if (disposeError is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(disposeError).Throw();
-            lock (_gate)
+            catch (Exception error)
             {
-                foreach (var generation in owned) RemoveOwnedLocked(generation);
-                _correctionPools.Clear();
+                disposeError = disposeError is null ? error : new AggregateException(disposeError, error);
             }
+            finally
+            {
+                // Disposal ends ownership even when transport cleanup faults. Clear the
+                // retained-generation gauge before propagating any cleanup error.
+                lock (_gate)
+                {
+                    foreach (var generation in owned) RemoveOwnedLocked(generation);
+                    _correctionPools.Clear();
+                }
+            }
+            if (disposeError is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(disposeError).Throw();
             completion.TrySetResult();
         }
         catch (Exception error) { completion.TrySetException(error); }
