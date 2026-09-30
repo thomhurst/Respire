@@ -72,6 +72,10 @@ public class FakeSortedSetParityTests(RedisTestContainer fixture)
         byte[] binaryKey = [0, 255, .. Guid.NewGuid().ToByteArray()];
         await Number(client, "ZADD", binaryKey, 0, new byte[] { 255 }, 0, new byte[] { 0 }, 0, "", -1, "low", 1, "high");
         (await Members(client, "ZRANGE", binaryKey, 0, -1)).Should().Equal("6C6F77", "", "00", "FF", "68696768");
+        // Redis 7.x uses -1 as the no-LIMIT sentinel, even when explicitly supplied.
+        (await Members(client, "ZRANGE", binaryKey, 0, -1, "LIMIT", 0, -1)).Should().Equal("6C6F77", "", "00", "FF", "68696768");
+        (await Members(client, "ZRANGE", binaryKey, 0, -1, "LIMIT", 2, -1)).Should().Equal("6C6F77", "", "00", "FF", "68696768");
+        (await Members(client, "ZRANGE", binaryKey, 0, -1, "LIMIT", 0, 1, "LIMIT", 0, -1)).Should().Equal("6C6F77", "", "00", "FF", "68696768");
         (await Members(client, "ZRANGE", binaryKey, -3, -1, "REV")).Should().Equal("00", "", "6C6F77");
         (await Members(client, "ZREVRANGE", binaryKey, long.MinValue, long.MaxValue)).Should().Equal("68696768", "FF", "00", "", "6C6F77");
         (await Members(client, "ZRANGE", binaryKey, 0, long.MinValue)).Should().BeEmpty();
@@ -127,6 +131,8 @@ public class FakeSortedSetParityTests(RedisTestContainer fixture)
         foreach (var (command, args) in new (string, RespireValue[])[]
         {
             ("ZRANGE", ["key", 0, -1, "LIMIT", 0, 1]), ("ZRANGE", ["key", "-", "+", "BYLEX", "WITHSCORES"]),
+            ("ZRANGE", ["key", 0, -1, "LIMIT", 0, -2]),
+            ("ZRANGE", ["key", 0, -1, "LIMIT", 0, -1, "LIMIT", 0, 1]),
             ("ZRANGE", ["key", 0, -1, "REV", "REV"]), ("ZRANGE", ["key", 0, -1, "BYSCORE", "BYLEX"]),
             ("ZRANGE", ["key", 0, -1, "LIMIT", 1]), ("ZRANGE", ["key", "01", -1]),
             ("ZRANGEBYSCORE", ["key", "NaN", "+inf"]), ("ZCOUNT", ["key", "bad", 1]),
