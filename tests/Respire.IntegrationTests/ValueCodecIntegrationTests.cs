@@ -16,6 +16,8 @@ public class ValueCodecIntegrationTests(RedisTestContainer fixture)
     [Arguments("deflate", 3)]
     [Arguments("lz4", 2)]
     [Arguments("lz4", 3)]
+    [Arguments("zstd", 2)]
+    [Arguments("zstd", 3)]
     public async Task MixedCodecValuesRoundTripAcrossImmediateAndDeferredApis(string algorithm, int protocol)
     {
         var codec = CreateCodec(algorithm);
@@ -84,6 +86,7 @@ public class ValueCodecIntegrationTests(RedisTestContainer fixture)
     [Arguments("brotli")]
     [Arguments("deflate")]
     [Arguments("lz4")]
+    [Arguments("zstd")]
     public async Task CachedFramesDecodeIntoIndependentTypedValues(string algorithm)
     {
         var codec = CreateCodec(algorithm);
@@ -107,6 +110,7 @@ public class ValueCodecIntegrationTests(RedisTestContainer fixture)
         "brotli" => new BrotliValueCodec(),
         "deflate" => new DeflateValueCodec(),
         "lz4" => new Lz4ValueCodec(),
+        "zstd" => new ZstdValueCodec(),
         _ => throw new ArgumentOutOfRangeException(nameof(algorithm)),
     };
 

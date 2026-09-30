@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Respire.Compression.Zstd</PackageId>
+    <Title>Respire.Compression.Zstd</Title>
+    <Description>Optional bounded Zstandard value compression for Respire.</Description>
+    <PackageTags>$(PackageTags);compression;zstandard</PackageTags>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Respire\Respire.csproj" />
+    <PackageReference Include="ZstdSharp.Port" />
+  </ItemGroup>
+</Project>

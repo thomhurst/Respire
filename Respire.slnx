@@ -14,6 +14,7 @@
     <Project Path="benchmarks/Respire.Benchmarks/Respire.Benchmarks.csproj" />
     <Project Path="src/Respire.Analyzers/Respire.Analyzers.csproj" />
     <Project Path="src/Respire.Compression.Lz4/Respire.Compression.Lz4.csproj" />
+    <Project Path="src/Respire.Compression.Zstd/Respire.Compression.Zstd.csproj" />
     <Project Path="src/Respire.Extensions.Caching.Hybrid/Respire.Extensions.Caching.Hybrid.csproj" />
     <Project Path="src/Respire.Extensions.Caching/Respire.Extensions.Caching.csproj" />
     <Project Path="src/Respire.Extensions.DependencyInjection/Respire.Extensions.DependencyInjection.csproj" />
