@@ -6,8 +6,44 @@ description: Coordinate work with expiring, owner-checked Redis leases.
 # Distributed locks
 
 Respire's lock helpers use Redis leases: each lock has an owner token and an expiry. Acquisition is
-`SET ... NX PX`; extension and release use server-side compare-and-update scripts, so an expired
+`SET ... NX PX`; extension and release use atomic owner comparisons, so an expired
 handle cannot extend or delete a later owner's lock.
+
+## Native commands and compatibility
+
+Respire chooses the operation supported by each physical server connection:
+
+| Server | Extension | Release |
+| --- | --- | --- |
+| Redis 8.4+ | `SET key token IFEQ token PX milliseconds` | `DELEX key IFEQ token` |
+| Valkey 8.1–8.x | `SET key token IFEQ token PX milliseconds` | Lua compare-and-delete |
+| Valkey 9.0+ | `SET key token IFEQ token PX milliseconds` | `DELIFEQ key token` |
+| Older Redis/Valkey | Lua compare-and-`PEXPIRE` | Lua compare-and-delete |
+
+The first operation tries the native command. Release tries `DELEX`, then `DELIFEQ`, then Lua
+only when the preceding command returns its standard unknown-command error. Extension falls
+back only when the validated `SET ... IFEQ ... PX` command returns `ERR syntax error`. These
+replies confirm that the attempted operation did not execute. Missing scripts use the usual
+`EVALSHA` followed by `EVAL` after `NOSCRIPT`.
+
+Unsupported capabilities are remembered per physical connection. Each new connection discovers
+capabilities independently, including reconnects, failover destinations, and Cluster redirects.
+A mixed-version Cluster can therefore use native commands on some nodes and Lua on others.
+No `INFO` or `COMMAND` permission is needed for discovery. Managed renewal retains its existing
+`CLIENT ID` / `CLIENT KILL` permissions and cancellation fence on the connection that executed it.
+
+ACLs must permit the commands selected for the server: `SET` for acquisition and native renewal,
+`DELEX` for native release on Redis 8.4+, or `DELIFEQ` for native release on Valkey 9.0+.
+Lua fallback needs `EVALSHA`/`EVAL` and the script's `GET`, `DEL`, and `PEXPIRE` permissions.
+When upgrading Respire or the server, update any command allowlist that previously permitted
+only the Lua release/renewal path. `NOPERM` is returned to the caller; permission denial does
+not select a different implementation. There is no native-command opt-out setting.
+
+An ownership mismatch returns `false` without fallback. Timeouts, cancellation, connection loss,
+ACL denial, and other server errors do not trigger a Lua retry. A write with an uncertain outcome
+is never replayed for capability discovery. Token equality uses the original bytes; renewing a
+missing, expired, or replaced lock cannot recreate it or change another owner's TTL. As before,
+use a fresh token for each acquisition, and treat expiry estimates as local estimates.
 
 ## Acquire a lock
 

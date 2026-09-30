@@ -14,7 +14,7 @@ public class LockCommandTests
         await using var server = new FakeRespServer(
             FakeRespServer.OkReply,
             "$5\r\nowner\r\n"u8.ToArray(),
-            ":1\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
             ":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
@@ -28,8 +28,8 @@ public class LockCommandTests
         {
             "SET resource owner NX PX 30000",
             "GET resource",
-            $"EVALSHA {LockCommands.ExtendScript.Sha1} 1 resource owner 45000",
-            $"EVALSHA {LockCommands.ReleaseScript.Sha1} 1 resource owner",
+            "SET resource owner IFEQ owner PX 45000",
+            "DELEX resource IFEQ owner",
         });
     }
 
@@ -39,7 +39,7 @@ public class LockCommandTests
         await using var server = new FakeRespServer(
             "$-1\r\n"u8.ToArray(),
             "$-1\r\n"u8.ToArray(),
-            ":0\r\n"u8.ToArray(),
+            "$-1\r\n"u8.ToArray(),
             ":0\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
@@ -69,7 +69,7 @@ public class LockCommandTests
         await using var server = new FakeRespServer(
             FakeRespServer.OkReply,
             "$5\r\nowner\r\n"u8.ToArray(),
-            ":1\r\n"u8.ToArray(),
+            FakeRespServer.OkReply,
             ":1\r\n"u8.ToArray());
         await using var owner = await FakeRespServer.ConnectClientAsync(server.Port);
         var client = owner.WithKeyPrefix("tenant:");
@@ -83,8 +83,8 @@ public class LockCommandTests
         {
             "SET tenant:resource owner NX PX 30000",
             "GET tenant:resource",
-            $"EVALSHA {LockCommands.ExtendScript.Sha1} 1 tenant:resource owner 45000",
-            $"EVALSHA {LockCommands.ReleaseScript.Sha1} 1 tenant:resource owner",
+            "SET tenant:resource owner IFEQ owner PX 45000",
+            "DELEX tenant:resource IFEQ owner",
         });
     }
 
@@ -92,6 +92,8 @@ public class LockCommandTests
     public async Task LockScripts_FallBackToEvalAndSendLuaKeysAndArgs()
     {
         await using var server = new FakeRespServer(
+            NativeLockCommandTests.UnknownDelex,
+            NativeLockCommandTests.UnknownDelifeq,
             "-NOSCRIPT No matching script. Please use EVAL.\r\n"u8.ToArray(),
             ":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
@@ -99,11 +101,11 @@ public class LockCommandTests
         await Assert.That(await client.Locks.ReleaseAsync("resource", "owner")).IsTrue();
 
         var commands = server.ReceivedCommands;
-        await Assert.That(commands[0]).IsEqualTo($"EVALSHA {LockCommands.ReleaseScript.Sha1} 1 resource owner");
-        await Assert.That(commands[1]).StartsWith("EVAL ");
-        await Assert.That(commands[1]).Contains("redis.call('GET', KEYS[1]) == ARGV[1]");
-        await Assert.That(commands[1]).Contains("redis.call('DEL', KEYS[1])");
-        await Assert.That(commands[1]).EndsWith(" 1 resource owner");
+        await Assert.That(commands[2]).IsEqualTo($"EVALSHA {LockCommands.ReleaseScript.Sha1} 1 resource owner");
+        await Assert.That(commands[3]).StartsWith("EVAL ");
+        await Assert.That(commands[3]).Contains("redis.call('GET', KEYS[1]) == ARGV[1]");
+        await Assert.That(commands[3]).Contains("redis.call('DEL', KEYS[1])");
+        await Assert.That(commands[3]).EndsWith(" 1 resource owner");
     }
 
     [Test]
@@ -155,7 +157,7 @@ public class LockCommandTests
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
         {
             $"SET resource {token} NX PX 30000",
-            $"EVALSHA {LockCommands.ReleaseScript.Sha1} 1 resource {token}",
+            $"DELEX resource IFEQ {token}",
         });
     }
 
@@ -181,7 +183,7 @@ public class LockCommandTests
 
         await Assert.That(keepAliveCancellation.IsCancellationRequested).IsTrue();
         await Assert.That(server.ReceivedCommands[^1])
-            .StartsWith($"EVALSHA {LockCommands.ReleaseScript.Sha1}");
+            .StartsWith("DELEX resource IFEQ ");
     }
 
     [Test]
@@ -235,7 +237,7 @@ public class LockCommandTests
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
         {
             $"SET resource {token} NX PX 30000",
-            $"EVALSHA {LockCommands.ReleaseScript.Sha1} 1 resource {token}",
+            $"DELEX resource IFEQ {token}",
         });
     }
 
@@ -327,8 +329,8 @@ public class LockCommandTests
             FakeRespServer.OkReply,
             ":41\r\n"u8.ToArray(),
             ":1\r\n"u8.ToArray(),
-            ":1\r\n"u8.ToArray(),
-            ":0\r\n"u8.ToArray());
+            FakeRespServer.OkReply,
+            "$-1\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
@@ -430,7 +432,7 @@ public class LockCommandTests
 
         var extensionIndexes = server.ReceivedCommands
             .Select((command, index) => (command, index))
-            .Where(item => item.command.StartsWith("EVALSHA ", StringComparison.Ordinal))
+            .Where(item => item.command.Contains(" IFEQ ", StringComparison.Ordinal))
             .Select(item => item.index)
             .ToArray();
         var fenceIndex = server.ReceivedCommands
@@ -470,7 +472,7 @@ public class LockCommandTests
     [Test]
     public async Task RespireLock_KeepAliveCancelsWhenOwnershipIsLost()
     {
-        await using var server = new FakeRespServer(FakeRespServer.OkReply, ":0\r\n"u8.ToArray());
+        await using var server = new FakeRespServer(FakeRespServer.OkReply, ":41\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), "$-1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromMilliseconds(200));
 
@@ -692,7 +694,7 @@ public class LockCommandTests
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[]
         {
             $"SET tenant:resource {token} NX PX 30000",
-            $"EVALSHA {LockCommands.ReleaseScript.Sha1} 1 tenant:resource {token}",
+            $"DELEX tenant:resource IFEQ {token}",
         });
     }
 

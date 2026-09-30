@@ -84,7 +84,7 @@ public interface ILockCommands
 
     /// <summary>
     /// Releases the lock only when its value still matches <paramref name="token"/>.
-    /// Redis: EVALSHA/EVAL compare-and-DEL.
+    /// Uses native conditional deletion when supported, otherwise EVALSHA/EVAL compare-and-DEL.
     /// </summary>
     ValueTask<bool> ReleaseAsync(
         RespireKey key,
@@ -93,7 +93,7 @@ public interface ILockCommands
 
     /// <summary>
     /// Resets the lock expiry from now only when its value still matches <paramref name="token"/>.
-    /// Redis: EVALSHA/EVAL compare-and-PEXPIRE.
+    /// Uses SET IFEQ PX when supported, otherwise EVALSHA/EVAL compare-and-PEXPIRE.
     /// </summary>
     ValueTask<bool> ResetExpiryAsync(
         RespireKey key,
@@ -271,7 +271,7 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         CancellationToken cancellationToken = default)
     {
         ValidateToken(token);
-        return ExecuteBooleanScriptAsync(ReleaseScript, key, [token.AsValue()], cancellationToken);
+        return client.ExecuteLockAsync(key, token, null, cancellationToken);
     }
 
     public ValueTask<bool> ResetExpiryAsync(
@@ -282,7 +282,7 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
     {
         ValidateToken(token);
         var milliseconds = ValidateExpiry(newDuration, nameof(newDuration));
-        return ExecuteBooleanScriptAsync(ExtendScript, key, [token.AsValue(), milliseconds], cancellationToken);
+        return client.ExecuteLockAsync(key, token, milliseconds, cancellationToken);
     }
 
     async ValueTask<bool> IManagedLockCommands.ExtendManagedAsync(
@@ -295,15 +295,13 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
         ValidateToken(token);
         var milliseconds = ValidateExpiry(expiry);
         await client.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
-        RespireClient.TrackedScriptExecution? execution = null;
+        RespireClient.TrackedLockExecution? execution = null;
         try
         {
-            execution = await client.StartTrackedScriptExecutionAsync(
-                    ExtendScript, [key], [token.AsValue(), milliseconds], cancellationToken,
-                    requireReliableCorrectionOrdering: true)
+            execution = await client.StartLockExecutionAsync(
+                    key, token, milliseconds, requireIdentity: true, cancellationToken)
                 .ConfigureAwait(false);
-            using var result = await execution.Response.ConfigureAwait(false);
-            return result.AsInteger() >= 1;
+            return await execution.Response.ConfigureAwait(false);
         }
         catch (Exception ex) when (
             ex is OperationCanceledException or RespireTimeoutException or RespireConnectionException)
@@ -325,20 +323,6 @@ internal sealed class LockCommands(RespireClient client) : ILockCommands, IManag
             static (LockCommands _, in RespValue value) => value.IsNull
                 ? (RespireLockToken?)null
                 : RespireLockToken.FromOwnedBytes(value.AsSpan().ToArray()));
-
-    private async ValueTask<bool> ExecuteBooleanScriptAsync(
-        RespireScript script,
-        RespireKey key,
-        RespireValue[] args,
-        CancellationToken cancellationToken)
-    {
-        using var result = await client.ExecuteScriptAsync(
-                script,
-                client.BuildScriptTail([key], args),
-                cancellationToken)
-            .ConfigureAwait(false);
-        return result.AsInteger() >= 1;
-    }
 
     private static void ValidateToken(RespireLockToken token)
     {
