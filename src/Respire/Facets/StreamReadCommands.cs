@@ -46,12 +46,14 @@ internal sealed partial class StreamCommands
         int? count = null, TimeSpan? waitFor = null, CancellationToken cancellationToken = default)
         => ReadCoreAsync(BuildReadCommand(client, streams, count, waitFor), waitFor.HasValue, cancellationToken);
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespireStreamEntry[]> ReadSingleAsync(StreamReadCommand command, bool blocking, CancellationToken cancellationToken)
     {
         var result = await ReadCoreAsync(command, blocking, cancellationToken).ConfigureAwait(false);
         return result.Length == 0 ? [] : result[0].Entries;
     }
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespireStreamReadResult[]> ReadCoreAsync(StreamReadCommand command, bool blocking, CancellationToken cancellationToken)
     {
         using var reply = blocking
@@ -131,7 +133,7 @@ internal sealed partial class StreamCommands
         {
             if (!map && values[i].Type != RespDataType.Array)
                 throw new RespireProtocolException("XREAD returned an invalid stream pair.");
-            var pair = map ? values.AsSpan(i * 2, 2) : values[i].AsArray().AsSpan();
+            var pair = map ? values.Slice(i * 2, 2) : values[i].AsArray();
             if (pair.Length != 2 || pair[0].Type is not (RespDataType.BulkString or RespDataType.SimpleString)
                 || pair[1].Type != RespDataType.Array)
                 throw new RespireProtocolException("XREAD returned an invalid stream pair.");

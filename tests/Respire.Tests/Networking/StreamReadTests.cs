@@ -83,14 +83,16 @@ public class StreamReadTests
     public async Task ClusterRoutesAllPrefixedKeysToTheirSharedSlot(bool blocking)
     {
         await using var first = new FakeRespServer();
-        await using var second = new FakeRespServer(Reply(false, ("{foo}:one", ["1-0"]), ("{foo}:two", ["2-0"])));
+        await using var second = new FakeRespServer(blocking ? 2 : 1,
+            Reply(false, ("{foo}:one", ["1-0"]), ("{foo}:two", ["2-0"])));
         var topology = Encoding.ASCII.GetBytes(
             $"*2\r\n*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{first.Port}\r\n" +
             $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{second.Port}\r\n");
         await using var seed = new FakeRespServer(topology);
         await using var client = Create(seed.Port, cluster: true);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var result = await client.WithKeyPrefix("{foo}:").Streams.ReadAsync(
-            [("one", "0"), ("two", "0")], waitFor: blocking ? TimeSpan.FromSeconds(1) : null);
+            [("one", "0"), ("two", "0")], waitFor: blocking ? TimeSpan.FromSeconds(1) : null, cancellationToken: timeout.Token);
         await Assert.That(result.Select(x => x.Key.ToString())).IsEquivalentTo(["one", "two"], CollectionOrdering.Matching);
         await Assert.That(first.CommandsSeen).IsEqualTo(0);
         await Assert.That(second.ReceivedCommands).IsEquivalentTo(
