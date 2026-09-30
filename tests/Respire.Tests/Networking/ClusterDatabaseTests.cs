@@ -11,10 +11,12 @@ namespace Respire.Tests.Networking;
 public class ClusterDatabaseTests
 {
     private static readonly byte[] Hello = "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
-    internal static byte[] Info(string version = "9.0.0", string server = "valkey", string mode = "cluster")
+    internal static byte[] Info(string version = "9.0.0", string server = "valkey", string mode = "cluster", bool verbatim = false)
     {
         var body = $"# Server\r\nredis_version:7.2.4\r\nserver_name:{server}\r\nvalkey_version:{version}\r\nserver_mode:{mode}\r\n";
-        return Encoding.UTF8.GetBytes($"${Encoding.UTF8.GetByteCount(body)}\r\n{body}\r\n");
+        return verbatim
+            ? Encoding.UTF8.GetBytes($"={Encoding.UTF8.GetByteCount(body) + 4}\r\ntxt:{body}\r\n")
+            : Encoding.UTF8.GetBytes($"${Encoding.UTF8.GetByteCount(body)}\r\n{body}\r\n");
     }
 
     [Test]
@@ -22,7 +24,7 @@ public class ClusterDatabaseTests
     [Arguments(true)]
     public async Task HandshakeValidatesVersionBeforeSelectAndTracking(bool resp3)
     {
-        byte[][] replies = resp3 ? [Hello, Info(), FakeRespServer.OkReply, FakeRespServer.OkReply, FakeRespServer.PongReply]
+        byte[][] replies = resp3 ? [Hello, Info(verbatim: true), FakeRespServer.OkReply, FakeRespServer.OkReply, FakeRespServer.PongReply]
             : [Info(), FakeRespServer.OkReply, FakeRespServer.PongReply];
         await using var server = new FakeRespServer(replies);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,

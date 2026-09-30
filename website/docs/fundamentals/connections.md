@@ -323,6 +323,10 @@ dedicated blocking/control connections, and pub/sub connections. The selected da
 borrowed from another node's capability result. `HELLO` alone is insufficient because Valkey's
 version there is a Redis compatibility version.
 
+This opt-in handshake uses sequential round trips for `INFO SERVER`, `SELECT`, and, when
+enabled, `CLIENT TRACKING`. Validation completes before selection, and selection completes
+before tracking or application commands. This cost repeats for each new physical connection.
+
 Grant the client `INFO` and `SELECT` permissions when using a non-zero Cluster database.
 An incompatible server produces `RespireConfigurationException` during connection setup;
 `RespireClient.Create` remains lazy, so validation happens on first connection rather than at
