@@ -52,27 +52,29 @@ internal sealed partial class RespireConnection
     {
         using var timeout = new CancellationTokenSource(options.ConnectTimeout, options.CredentialTimeProvider);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        RespireCredentials credentials;
         try
         {
             // Bound even a provider that returns an incomplete task without honoring cancellation.
             // The provider remains caller-owned; cancellation must not dispose it.
             var pending = options.CredentialProvider!.GetCredentialsAsync(linked.Token);
-            var credentials = pending.IsCompletedSuccessfully ? pending.Result
+            credentials = pending.IsCompletedSuccessfully ? pending.Result
                 : await pending.AsTask().WaitAsync(linked.Token).ConfigureAwait(false);
             linked.Token.ThrowIfCancellationRequested();
-            if (credentials is null || credentials.ExpiresAt <= options.CredentialTimeProvider.GetUtcNow())
-                throw new RespireAuthenticationException($"Credential provider returned null or expired credentials for {host}:{port}.");
-            return credentials;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw new OperationCanceledException(cancellationToken);
         }
-        catch (RespireAuthenticationException) { throw; }
-        catch (Exception error)
+        catch (Exception)
         {
-            throw new RespireAuthenticationException($"Credential acquisition failed for {host}:{port}.", error);
+            // Provider-owned messages and inner exceptions can contain tokens, including
+            // exceptions already typed as RespireAuthenticationException. Do not retain them.
+            throw new RespireAuthenticationException($"Credential acquisition failed for {host}:{port}.");
         }
+        if (credentials is null || credentials.ExpiresAt <= options.CredentialTimeProvider.GetUtcNow())
+            throw new RespireAuthenticationException($"Credential provider returned null or expired credentials for {host}:{port}.");
+        return credentials;
     }
 
     private void StartCredentialRefresh(RespireConnectionOptions options)

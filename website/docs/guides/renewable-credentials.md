@@ -69,8 +69,12 @@ Each expiring connection starts renewal at `ExpiresAt - CredentialRefreshBeforeE
 The lead time and retry delay must each be at least one millisecond. Acquisition is bounded
 by `ConnectTimeout`; renewal is also bounded by the current credentials' remaining lifetime.
 Null or already expired credentials fail acquisition with `RespireAuthenticationException`.
-Initial AUTH rejection and failed live re-authentication also expose this exception type.
-Caller cancellation retains the caller's token.
+Initial AUTH/HELLO rejection and failed live re-authentication also expose this exception type.
+Provider-backed AUTH/HELLO errors are redacted regardless of the server error code. Exceptions
+thrown during provider acquisition are replaced with a generic typed failure without preserving
+provider text or an inner exception, including provider-thrown authentication exceptions.
+Record any safe provider diagnostics inside your own provider; Respire cannot determine which
+parts of an arbitrary exception contain credentials. Caller cancellation retains the caller's token.
 
 If acquisition fails while existing credentials remain valid, the connection stays open and
 retries after `CredentialRefreshRetryDelay`. Returning the same username, password, and expiry

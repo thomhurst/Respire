@@ -514,8 +514,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 {
                     if (failure is null && reply.IsError)
                     {
-                        failure = options.CredentialProvider is not null && (step == "AUTH"
-                            || (step == "HELLO" && reply.GetErrorMessage().StartsWith("WRONGPASS", StringComparison.Ordinal)))
+                        // Provider credentials may be echoed by arbitrary proxy/server error codes.
+                        failure = options.CredentialProvider is not null && step is ("AUTH" or "HELLO")
                             ? new RespireAuthenticationException($"Credential authentication failed for {Host}:{Port}.")
                             : CreateHandshakeException(in reply, step);
                     }

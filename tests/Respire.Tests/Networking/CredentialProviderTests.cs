@@ -38,22 +38,123 @@ public class CredentialProviderTests
     }
 
     [Test]
-    [Arguments(RespProtocol.Auto)]
-    [Arguments(RespProtocol.Resp2)]
-    [Arguments(RespProtocol.Resp3)]
-    public async Task RejectedInitialAuthenticationHasTypedRedactedFailure(RespProtocol protocol)
+    [Arguments(RespProtocol.Auto, "WRONGPASS")]
+    [Arguments(RespProtocol.Auto, "ERR")]
+    [Arguments(RespProtocol.Auto, "NOAUTH")]
+    [Arguments(RespProtocol.Resp2, "WRONGPASS")]
+    [Arguments(RespProtocol.Resp2, "ERR")]
+    [Arguments(RespProtocol.Resp2, "NOAUTH")]
+    [Arguments(RespProtocol.Resp3, "WRONGPASS")]
+    [Arguments(RespProtocol.Resp3, "ERR")]
+    [Arguments(RespProtocol.Resp3, "NOAUTH")]
+    public async Task RejectedInitialAuthenticationHasTypedRedactedFailure(RespProtocol protocol, string errorCode)
     {
-        await using var server = new FakeRespServer("-WRONGPASS private-token\r\n"u8.ToArray());
+        await using var server = new FakeRespServer(System.Text.Encoding.UTF8.GetBytes(
+            $"-{errorCode} invalid password private-token for private-user\r\n"));
         try
         {
             await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-                new RespireConnectionOptions { CredentialProvider = new Provider(), Protocol = protocol });
+                new RespireConnectionOptions
+                {
+                    CredentialProvider = new Provider { Current = new("private-user", "private-token") },
+                    Protocol = protocol,
+                });
             throw new InvalidOperationException("Expected authentication failure.");
         }
         catch (RespireAuthenticationException error)
         {
-            await Assert.That(error.ToString().Contains("private-token", StringComparison.Ordinal)).IsFalse();
+            await Assert.That(error.ToString().Contains("private-", StringComparison.Ordinal)).IsFalse();
         }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task InitialProviderFailuresDoNotExposeProviderExceptionText(bool typed)
+    {
+        await using var server = Server();
+        var provider = new Provider
+        {
+            Failure = typed ? new RespireAuthenticationException("private-token")
+                : new InvalidOperationException("private-token"),
+        };
+        try
+        {
+            await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+                new RespireConnectionOptions { CredentialProvider = provider });
+            throw new InvalidOperationException("Expected acquisition failure.");
+        }
+        catch (RespireAuthenticationException error)
+        {
+            await Assert.That(error.ToString().Contains("private-token", StringComparison.Ordinal)).IsFalse();
+            await Assert.That(error.InnerException).IsNull();
+        }
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task InvalidationObserversCanSynchronouslyReadAfterCredentialRenewal(bool broadcast, bool coalesce)
+    {
+        var clock = new Clock();
+        var provider = ExpiringProvider(clock);
+        var renewalReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var readStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var freshRead = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var renewed = 0;
+        await using var server = Server();
+        server.ReplyOverride = (_, command) =>
+        {
+            if (command.StartsWith("HELLO ", StringComparison.Ordinal)) return Hello;
+            if (command == "GET key")
+                return Volatile.Read(ref renewed) == 0 ? "$3\r\nold\r\n"u8.ToArray() : "$3\r\nnew\r\n"u8.ToArray();
+            return FakeRespServer.OkReply;
+        };
+        server.SuppressReply = command => command == "AUTH user second";
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1,
+            Protocol = RespProtocol.Resp3, CredentialProvider = provider, CredentialTimeProvider = clock,
+            CredentialRefreshBeforeExpiry = TimeSpan.FromSeconds(10), ConnectTimeout = Limit,
+            ClientSideCache = new()
+            {
+                CoalesceConcurrentMisses = coalesce,
+                TrackingMode = broadcast ? RespireClientTrackingMode.Broadcast : RespireClientTrackingMode.OptIn,
+            },
+        });
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("old");
+        using var subscription = client.ClientSideCache!.SubscribeInvalidations("key", invalidation =>
+        {
+            try
+            {
+                if (!invalidation.Reasons.HasFlag(RespireClientCacheInvalidationReason.ContinuityLost))
+                    throw new InvalidOperationException("Renewal must invalidate tracking continuity.");
+                // The first flush may dispatch before AUTH. Keep that callback alive across
+                // the fence and synchronously read once Redis has received the replacement.
+                renewalReceived.Task.WaitAsync(Limit).GetAwaiter().GetResult();
+                var read = client.GetStringAsync("key");
+                readStarted.TrySetResult();
+                freshRead.TrySetResult(read.AsTask().WaitAsync(Limit).GetAwaiter().GetResult());
+            }
+            catch (Exception error) { freshRead.TrySetException(error); }
+        });
+        await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(20)));
+        provider.Current = new("user", "second", clock.GetUtcNow().AddSeconds(60));
+        clock.Advance(TimeSpan.FromSeconds(20));
+        await UntilAsync(() => server.ReceivedCommands.Contains("AUTH user second"));
+        Volatile.Write(ref renewed, 1);
+        renewalReceived.TrySetResult();
+        await readStarted.Task.WaitAsync(Limit);
+        await Assert.That(freshRead.Task.IsCompleted).IsFalse();
+        await Assert.That(server.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+        await server.SendRawAsync(FakeRespServer.OkReply);
+        await Assert.That(await freshRead.Task.WaitAsync(Limit)).IsEqualTo("new");
+        await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(30)));
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("new");
+        await Assert.That(client.IsConnected).IsTrue();
     }
 
     [Test]
@@ -389,19 +490,22 @@ public class CredentialProviderTests
     }
 
     [Test]
-    public async Task RejectedRenewalClosesWithAuthenticationFailure()
+    [Arguments("WRONGPASS")]
+    [Arguments("ERR")]
+    public async Task RejectedRenewalClosesWithAuthenticationFailure(string errorCode)
     {
         var clock = new Clock();
         var provider = ExpiringProvider(clock);
         await using var server = Server();
         server.ReplyOverride = (_, command) => command == "AUTH user second"
-            ? "-WRONGPASS rejected\r\n"u8.ToArray() : FakeRespServer.OkReply;
+            ? System.Text.Encoding.UTF8.GetBytes($"-{errorCode} invalid password second\r\n") : FakeRespServer.OkReply;
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, Options(server, provider, clock));
         await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(20)));
         provider.Current = new("user", "second", clock.GetUtcNow().AddSeconds(60));
         clock.Advance(TimeSpan.FromSeconds(20));
         await connection.Closed.WaitAsync(Limit);
         await Assert.That(connection.CloseError is RespireAuthenticationException).IsTrue();
+        await Assert.That(connection.CloseError!.ToString().Contains("second", StringComparison.Ordinal)).IsFalse();
     }
 
     [Test]
