@@ -148,6 +148,13 @@ internal sealed partial class ClientSideCacheCoordinator
         {
             shared.Cancellation.Cancel();
         }
+        catch (AggregateException error)
+        {
+            // Factory cancellation callbacks are user code. Their failures must not
+            // interrupt caller cancellation or disposal of the remaining resources.
+            shared.Completion.TrySetException(error);
+            _ = shared.Completion.Task.Exception;
+        }
         finally
         {
             bool dispose;
