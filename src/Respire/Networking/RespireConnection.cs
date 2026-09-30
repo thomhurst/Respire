@@ -435,6 +435,7 @@ internal sealed class RespireConnection : IAsyncDisposable
             : requestedProtocol;
 
         List<(string Step, ValueTask<RespValue> Reply)>? pending = null;
+        // Auto already sent HELLO above; only explicitly requested RESP3 enters this branch.
         if (requestedProtocol == RespProtocol.Resp3)
         {
             (pending ??= new(3)).Add(("HELLO", SendAsync(

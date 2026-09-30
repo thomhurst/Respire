@@ -48,6 +48,10 @@ jobs:
           path: candidate
       - name: Validate then compare pinned builds on one runner
         shell: bash
+        env:
+          # Preserve each process's compiled hit path alongside the exported disassembly.
+          DOTNET_JitDisasm: Hit CachedGetAsync
+          DOTNET_JitDisasmDiffable: '1'
         run: |
           set -euo pipefail
           cp candidate/benchmarks/Respire.Benchmarks/ClientCacheTrackingBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
@@ -64,7 +68,7 @@ jobs:
               cd "$source"
               git rev-parse HEAD
               dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
-                --filter '*ClientCacheTrackingBenchmarks*' --job "$job" --exporters json markdown \
+                --filter '*ClientCacheTrackingBenchmarks*' --job "$job" --exporters json markdown --disasm --disasmDepth 3 \
                 --artifacts "$GITHUB_WORKSPACE/cache-results/$phase"
             ) > "$GITHUB_WORKSPACE/cache-$phase.log" 2>&1
           done
@@ -94,6 +98,48 @@ jobs:
           # Compare against both old-build controls instead of claiming this public API allocates zero.
           baseline_limit = min(hit_allocations["baseline-a"] + hit_allocations["baseline-b"])
           assert all(value <= baseline_limit for value in hit_allocations["candidate"]), hit_allocations
+      - name: Summarize matching cases and individual process launches
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          phases = {}
+          for phase in ("baseline-a", "candidate", "baseline-b"):
+              report = next(Path("cache-results", phase, "results").glob("*-report-full-compressed.json"))
+              cases = json.loads(report.read_text())["Benchmarks"]
+              phases[phase] = {(case["Method"], case["Parameters"]): case for case in cases}
+              assert "Assembly listing for method Respire.Benchmarks.ClientCacheTrackingBenchmarks:Hit" in Path(f"cache-{phase}.log").read_text(), phase
+          common = phases["baseline-a"].keys() & phases["candidate"].keys() & phases["baseline-b"].keys()
+          assert len(common) == 2, "Expected matching OPTIN hit and invalidation cases"
+          lines = ["## Candidate versus both controls", "",
+                   "Positive deltas mean slower. Retain process variation when assessing these aggregate timings.", "",
+                   "| Case | A ns | Candidate ns | B ns | Candidate/A | Candidate/B | Allocated B (A/candidate/B) |",
+                   "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"]
+          for key in sorted(common):
+              cases = [phases[phase][key] for phase in ("baseline-a", "candidate", "baseline-b")]
+              a, candidate, b = [case["Statistics"]["Mean"] for case in cases]
+              allocations = "/".join(str(case["Memory"]["BytesAllocatedPerOperation"]) for case in cases)
+              lines.append(f"| {key} | {a:.3f} | {candidate:.3f} | {b:.3f} | "
+                           f"{100 * (candidate / a - 1):+.2f}% | {100 * (candidate / b - 1):+.2f}% | {allocations} |")
+          lines.extend(["", "## Individual process launches", "",
+                        "These result samples are overhead-adjusted; launches are not independent repetitions of the full experiment.", "",
+                        "| Phase | Case | Launch | Mean ns | Min ns | Max ns |",
+                        "| --- | --- | ---: | ---: | ---: | ---: |"])
+          for phase, cases in phases.items():
+              for key, case in sorted(cases.items()):
+                  launches = {}
+                  for measurement in case["Measurements"]:
+                      if measurement["IterationStage"] == "Result" and measurement["IterationMode"] == "Workload":
+                          value = measurement["Nanoseconds"] / measurement["Operations"]
+                          launches.setdefault(measurement["LaunchIndex"], []).append(value)
+                  assert launches, (phase, key)
+                  for launch, values in sorted(launches.items()):
+                      lines.append(f"| {phase} | {key} | {launch} | {sum(values)/len(values):.3f} | {min(values):.3f} | {max(values):.3f} |")
+          summary = "\n".join(lines) + "\n"
+          Path("cache-results/comparison.md").write_text(summary)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(summary)
       - name: Publish mode and build comparisons
         if: always()
         shell: bash
