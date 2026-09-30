@@ -1213,6 +1213,76 @@ public class ClientSideCacheTests
         await Assert.That(target.ReceivedCommands[^1]).IsEqualTo("SCRIPT FLUSH");
     }
 
+    [Test]
+    public async Task ReadOnlyScriptPreservesCachedValues()
+    {
+        await using var server = new FakeRespServer(HelloReply, FakeRespServer.OkReply,
+            FakeRespServer.OkReply, "$5\r\nvalue\r\n"u8.ToArray(),
+            "-NOSCRIPT missing\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+        await client.GetStringAsync("key");
+        var script = RespireScript.Create("return 1", readOnly: true);
+        await Assert.That(await client.Scripts.ExecuteIntegerAsync(script)).IsEqualTo(1);
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        await Assert.That(client.ClientSideCache!.GetStatistics().Hits).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(6);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ScriptExistsRespectsHostCachePolicy(bool deferred)
+    {
+        await using var server = new FakeRespServer(HelloReply, FakeRespServer.OkReply,
+            FakeRespServer.OkReply, "$5\r\nvalue\r\n"u8.ToArray(), "*1\r\n:0\r\n"u8.ToArray(),
+            FakeRespServer.OkReply, "$5\r\nvalue\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+        await client.GetStringAsync("key");
+        if (deferred)
+        {
+            using var batch = client.CreateBatch();
+            var pending = batch.Scripts.Exists("digest");
+            await batch.ExecuteAsync();
+            await Assert.That(pending.Result).IsEquivalentTo([false]);
+        }
+        else
+        {
+            await Assert.That(await client.Scripts.ExistsAsync("digest")).IsEquivalentTo([false]);
+        }
+        // Batches retain their existing conservative whole-batch invalidation policy.
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(deferred ? 0 : 1);
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        await Assert.That(client.ClientSideCache.GetStatistics().Hits).IsEqualTo(deferred ? 0 : 1);
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(deferred ? 7 : 5);
+    }
+
+    [Test]
+    [Arguments(true, ScriptFlushMode.Default)]
+    [Arguments(false, ScriptFlushMode.Default)]
+    [Arguments(false, ScriptFlushMode.Sync)]
+    [Arguments(false, ScriptFlushMode.Async)]
+    public async Task ScriptCacheManagementPreservesCachedValues(bool load, ScriptFlushMode mode)
+    {
+        var script = RespireScript.Create("return 1");
+        var reply = load ? Encoding.ASCII.GetBytes($"$40\r\n{script.Sha1}\r\n") : FakeRespServer.OkReply;
+        await using var server = new FakeRespServer(HelloReply, FakeRespServer.OkReply,
+            FakeRespServer.OkReply, "$5\r\nvalue\r\n"u8.ToArray(), reply);
+        await using var client = await ConnectAsync(server);
+        await client.GetStringAsync("key");
+        if (load)
+        {
+            await Assert.That(await client.Scripts.LoadAsync(script)).IsEqualTo(script.Sha1);
+        }
+        else
+        {
+            await client.Scripts.FlushAsync(mode);
+        }
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        await Assert.That(client.ClientSideCache.GetStatistics().Hits).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(5);
+    }
+
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server)
         => RespireClient.ConnectAsync(new RespireOptions
         {

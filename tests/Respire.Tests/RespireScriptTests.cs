@@ -20,6 +20,16 @@ public class RespireScriptTests
     }
 
     [Test]
+    public async Task ReadOnlyMetadataDoesNotChangeDigestOrDefault()
+    {
+        var writable = RespireScript.Create("return 1");
+        var readOnly = RespireScript.Create("return 1", readOnly: true);
+        await Assert.That(writable.IsReadOnly).IsFalse();
+        await Assert.That(readOnly.IsReadOnly).IsTrue();
+        await Assert.That(readOnly.Sha1).IsEqualTo(writable.Sha1);
+    }
+
+    [Test]
     public async Task Create_ComputesSha1ForLongSource()
     {
         var source = new string('x', 1024);

@@ -219,6 +219,12 @@ internal static class Verbs
     public static readonly Verb Eval = new(2, "EVAL");
     public static readonly Verb EvalSha = new(2, "EVALSHA");
     public static readonly Verb ScriptLoad = new(-1, "SCRIPT", "LOAD");
+    public static readonly Verb EvalRo = new(2, "EVAL_RO");
+    public static readonly Verb EvalShaRo = new(2, "EVALSHA_RO");
+    public static readonly Verb ScriptExists = new(-1, "SCRIPT", "EXISTS");
+    public static readonly Verb ScriptFlush = new(-1, "SCRIPT", "FLUSH");
+    public static readonly Verb ScriptFlushSync = new(-1, "SCRIPT", "FLUSH", "SYNC");
+    public static readonly Verb ScriptFlushAsync = new(-1, "SCRIPT", "FLUSH", "ASYNC");
 
     // Transactions
     public static readonly Verb Watch = new("WATCH");

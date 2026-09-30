@@ -38,6 +38,14 @@ public class ScriptInterfaceTests
         await Assert.That(implementation.OriginalStorage).IsTrue();
     }
 
+    [Test]
+    public async Task ExistingImplementationsHaveExplicitUnsupportedCacheDefaults()
+    {
+        IScriptCommands commands = new SpanOnlyScripts([], []);
+        await Assert.That(async () => await commands.ExistsAsync("digest")).ThrowsExactly<NotSupportedException>();
+        await Assert.That(async () => await commands.FlushAsync()).ThrowsExactly<NotSupportedException>();
+    }
+
     private sealed class SpanOnlyScripts(RespireKey[] expectedKeys, RespireValue[] expectedArgs) : IScriptCommands
     {
         public int Calls { get; private set; }

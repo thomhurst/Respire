@@ -395,7 +395,7 @@ atomically in the same round trip.
 
 ## More capabilities
 
-- Lua scripts with automatic `EVALSHA` to `EVAL` fallback
+- [Lua scripts](docs/SCRIPTING.md) with automatic `EVALSHA` to `EVAL` fallback, read-only execution, and typed script cache commands
 - Streams and consumer groups with per-entry acknowledgement
 - Key-prefixed client views for multi-tenant applications
 - Redis Sentinel primary discovery when connecting

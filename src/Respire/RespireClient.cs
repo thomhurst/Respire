@@ -2505,7 +2505,7 @@ public sealed partial class RespireClient : IRespireClient
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         var cache = core.ClientCache;
-        var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
+        var mutationFence = cache is null || script.IsReadOnly ? default : cache.BeginUnknownMutation();
         var response = ExecuteScriptCoreAsync(script, tail, cancellationToken);
         return mutationFence.IsRequired
             ? CompleteMutationAsync(response, cache!, mutationFence)
@@ -2528,16 +2528,16 @@ public sealed partial class RespireClient : IRespireClient
             try
             {
                 clusterReply = await SendClusterAsync(
-                        "EVALSHA", cluster,
-                        new Cmd2N(Verbs.EvalSha, script.Sha1, tail[0], arguments),
+                        script.EvalShaOperation, cluster,
+                        new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], arguments),
                         cancellationToken, script.Sha1)
                     .ConfigureAwait(false);
             }
             catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.NoScript)
             {
                 clusterReply = await SendClusterAsync(
-                        "EVAL", cluster,
-                        new Cmd2N(Verbs.Eval, script.Source, tail[0], arguments),
+                        script.EvalOperation, cluster,
+                        new Cmd2N(script.EvalVerb, script.Source, tail[0], arguments),
                         cancellationToken, script.Sha1)
                     .ConfigureAwait(false);
             }
@@ -2546,7 +2546,7 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         var telemetry = RespireTelemetry.StartOperation(
-            "EVALSHA",
+            script.EvalShaOperation,
             core.Multiplexer.Host,
             core.Multiplexer.Port,
             core.Options.Database,
@@ -2558,12 +2558,12 @@ public sealed partial class RespireClient : IRespireClient
             connection = core.Multiplexer.GetConnection();
             var result = await ExecuteScriptOnConnectionCoreAsync(connection, script, tail, cancellationToken)
                 .ConfigureAwait(false);
-            telemetry.Complete(core, "EVALSHA", script.Sha1, connection: connection);
+            telemetry.Complete(core, script.EvalShaOperation, script.Sha1, connection: connection);
             return result;
         }
         catch (Exception ex)
         {
-            telemetry.Complete(core, "EVALSHA", script.Sha1, ex, connection);
+            telemetry.Complete(core, script.EvalShaOperation, script.Sha1, ex, connection);
             throw;
         }
     }
@@ -2583,7 +2583,7 @@ public sealed partial class RespireClient : IRespireClient
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
         var cache = core.ClientCache;
-        var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
+        var mutationFence = cache is null || script.IsReadOnly ? default : cache.BeginUnknownMutation();
         var responseOwnsFence = false;
         try
         {
@@ -2594,7 +2594,7 @@ public sealed partial class RespireClient : IRespireClient
             RespireConnection connection;
             if (core.Cluster is { } cluster)
             {
-                var command = new Cmd2N(Verbs.EvalSha, script.Sha1, tail[0], tail[1..]);
+                var command = new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], tail[1..]);
                 var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
                 connection = await GetTrackedClusterConnectionAsync(
                         cluster, slot, requiresIdentity, cancellationToken)
@@ -2744,14 +2744,14 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             return await ExecuteTrackedClusterCommandAsync(
-                    execution, cluster, connection, "EVALSHA", Verbs.EvalSha, script.Sha1, script.Sha1, tail,
+                    execution, cluster, connection, script.EvalShaOperation, script.EvalShaVerb, script.Sha1, script.Sha1, tail,
                     requiresIdentity, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.NoScript)
         {
             return await ExecuteTrackedClusterCommandAsync(
-                    execution, cluster, execution.Connection, "EVAL", Verbs.Eval, script.Source, script.Sha1, tail,
+                    execution, cluster, execution.Connection, script.EvalOperation, script.EvalVerb, script.Source, script.Sha1, tail,
                     requiresIdentity, cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -2811,7 +2811,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         var telemetry = RespireTelemetry.StartOperation(
-            "EVALSHA",
+            script.EvalShaOperation,
             connection.Host,
             connection.Port,
             core.Options.Database,
@@ -2820,12 +2820,12 @@ public sealed partial class RespireClient : IRespireClient
         {
             var result = await ExecuteScriptOnConnectionCoreAsync(connection, script, tail, cancellationToken)
                 .ConfigureAwait(false);
-            telemetry.Complete(core, "EVALSHA", script.Sha1, connection: connection);
+            telemetry.Complete(core, script.EvalShaOperation, script.Sha1, connection: connection);
             return result;
         }
         catch (Exception ex)
         {
-            telemetry.Complete(core, "EVALSHA", script.Sha1, ex, connection);
+            telemetry.Complete(core, script.EvalShaOperation, script.Sha1, ex, connection);
             throw;
         }
     }
@@ -2842,14 +2842,14 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             var reply = await SendOnConnectionCoreAsync(
-                    "EVALSHA", connection, new Cmd2N(Verbs.EvalSha, script.Sha1, tail[0], tail[1..]), cancellationToken)
+                    script.EvalShaOperation, connection, new Cmd2N(script.EvalShaVerb, script.Sha1, tail[0], tail[1..]), cancellationToken)
                 .ConfigureAwait(false);
             return new RespireResult(in reply, _core.Options.Serializer);
         }
         catch (RespireServerException ex) when (ex.Code == RespireErrorCodes.NoScript)
         {
             var reply = await SendOnConnectionCoreAsync(
-                    "EVAL", connection, new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]), cancellationToken)
+                    script.EvalOperation, connection, new Cmd2N(script.EvalVerb, script.Source, tail[0], tail[1..]), cancellationToken)
                 .ConfigureAwait(false);
             return new RespireResult(in reply, _core.Options.Serializer);
         }

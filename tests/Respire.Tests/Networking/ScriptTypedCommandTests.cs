@@ -10,7 +10,9 @@ namespace Respire.Tests.Networking;
 public class ScriptTypedCommandTests
 {
     [Test]
-    public async Task TypedConveniences_ConvertAndDisposeScriptReplies()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TypedConveniences_ConvertAndDisposeScriptReplies(bool readOnly)
     {
         await using var server = new FakeRespServer(
             "-NOSCRIPT missing\r\n"u8.ToArray(), "$7\r\npayload\r\n"u8.ToArray(),
@@ -23,7 +25,7 @@ public class ScriptTypedCommandTests
             Connections = 1,
             Serializer = serializer,
         });
-        var script = RespireScript.Create("return ARGV[1]");
+        var script = RespireScript.Create("return ARGV[1]", readOnly);
 
         var typed = await client.Scripts.ExecuteAsync<Payload>(script);
         var integer = await client.Scripts.ExecuteIntegerAsync(script);
@@ -36,13 +38,15 @@ public class ScriptTypedCommandTests
     }
 
     [Test]
-    public async Task SpanOverload_PreservesKeysAndArguments()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SpanOverload_PreservesKeysAndArguments(bool readOnly)
     {
         await using var server = new FakeRespServer(
             "-NOSCRIPT missing\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
         await using var owner = await FakeRespServer.ConnectClientAsync(server.Port);
         var client = owner.WithKeyPrefix("tenant:");
-        var script = RespireScript.Create("return #KEYS + #ARGV");
+        var script = RespireScript.Create("return #KEYS + #ARGV", readOnly);
         RespireKey[] keys = ["ignored", "key", "ignored"];
         RespireValue[] args = ["ignored", "argument", "ignored"];
 
@@ -55,9 +59,9 @@ public class ScriptTypedCommandTests
 
         await Assert.That(result.AsInteger()).IsEqualTo(1);
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo(
-            $"EVALSHA {script.Sha1} 1 tenant:key argument");
+            $"{(readOnly ? "EVALSHA_RO" : "EVALSHA")} {script.Sha1} 1 tenant:key argument");
         await Assert.That(server.ReceivedCommands[1]).IsEqualTo(
-            "EVAL return #KEYS + #ARGV 1 tenant:key argument");
+            $"{(readOnly ? "EVAL_RO" : "EVAL")} return #KEYS + #ARGV 1 tenant:key argument");
     }
 
     [Test]

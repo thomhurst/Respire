@@ -1180,12 +1180,97 @@ public class ClusterTests
     }
 
     [Test]
-    public async Task ScriptLoad_VisitsEveryMaster()
+    public async Task ReadOnlyScriptRoutesToKeyOwnerAndFallsBackOnNoScript()
+    {
+        var script = RespireScript.Create("return KEYS[1]", readOnly: true);
+        await using var target = new FakeRespServer("-NOSCRIPT missing\r\n"u8.ToArray(), ":7\r\n"u8.ToArray());
+        var topology = Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        await using var owner = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        var client = owner.WithKeyPrefix("tenant:");
+        await Assert.That(await client.Scripts.ExecuteIntegerAsync(script, ["{key}"])).IsEqualTo(7);
+        await Assert.That(target.ReceivedCommands).IsEquivalentTo([
+            $"EVALSHA_RO {script.Sha1} 1 tenant:{{key}}", "EVAL_RO return KEYS[1] 1 tenant:{key}"]);
+        await using var tx = client.CreateTransaction();
+        await Assert.That(() => tx.Scripts.Evaluate(script, ["{first}", "{second}"]))
+            .ThrowsExactly<InvalidOperationException>();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ScriptCacheFanOutObservesEveryPrimaryBeforeCompleting(bool firstFails)
+    {
+        var flags = "*1\r\n:1\r\n"u8.ToArray();
+        await using var firstNode = new FakeRespServer(flags) { SuppressReply = _ => true };
+        await using var secondNode = new FakeRespServer(flags) { SuppressReply = _ => true };
+        var topology = Encoding.ASCII.GetBytes(
+            $"*2\r\n" +
+            $"*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{firstNode.Port}\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{secondNode.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        var pending = client.Scripts.ExistsAsync("digest").AsTask();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (firstNode.CommandsSeen == 0 || secondNode.CommandsSeen == 0)
+        {
+            await Task.Delay(10, deadline.Token);
+        }
+        await firstNode.SendRawAsync(firstFails ? "-ERR rejected\r\n"u8.ToArray() : flags);
+        await Assert.That(pending.IsCompleted).IsFalse();
+        await secondNode.SendRawAsync(flags);
+        if (firstFails)
+        {
+            await Assert.That(async () => await pending).ThrowsExactly<RespireServerException>();
+        }
+        else
+        {
+            await Assert.That(await pending).IsEquivalentTo([true]);
+        }
+    }
+
+    [Test]
+    public async Task ScriptCacheQueriesRequireEveryPrimaryAndFlushFansOut()
+    {
+        await using var firstNode = new FakeRespServer("*2\r\n:1\r\n:1\r\n"u8.ToArray(), FakeRespServer.OkReply);
+        await using var secondNode = new FakeRespServer("*2\r\n:0\r\n:1\r\n"u8.ToArray(), FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes(
+            $"*2\r\n" +
+            $"*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{firstNode.Port}\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{secondNode.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        var exists = await client.Scripts.ExistsAsync("partial", "everywhere");
+        await client.Scripts.FlushAsync(ScriptFlushMode.Async);
+        await Assert.That(exists).IsEquivalentTo([false, true]);
+        await Assert.That(firstNode.ReceivedCommands).IsEquivalentTo([
+            "SCRIPT EXISTS partial everywhere", "SCRIPT FLUSH ASYNC"]);
+        await Assert.That(secondNode.ReceivedCommands).IsEquivalentTo(firstNode.ReceivedCommands);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ScriptLoad_VisitsEveryMaster(bool mismatchedDigest)
     {
         var script = RespireScript.Create("return 1");
         var response = Encoding.ASCII.GetBytes($"$40\r\n{script.Sha1}\r\n");
         await using var firstNode = new FakeRespServer(response);
-        await using var secondNode = new FakeRespServer(response);
+        await using var secondNode = new FakeRespServer(mismatchedDigest
+            ? Encoding.ASCII.GetBytes($"$40\r\n{new string('0', 40)}\r\n") : response);
         var topology = Encoding.ASCII.GetBytes(
             $"*2\r\n" +
             $"*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{firstNode.Port}\r\n" +
@@ -1197,9 +1282,15 @@ public class ClusterTests
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
 
-        var sha1 = await client.Scripts.LoadAsync(script);
-
-        await Assert.That(sha1).IsEqualTo(script.Sha1);
+        if (mismatchedDigest)
+        {
+            await Assert.That(async () => await client.Scripts.LoadAsync(script))
+                .Throws<RespireProtocolException>();
+        }
+        else
+        {
+            await Assert.That(await client.Scripts.LoadAsync(script)).IsEqualTo(script.Sha1);
+        }
         await Assert.That(firstNode.ReceivedCommands).IsEquivalentTo(["SCRIPT LOAD return 1"]);
         await Assert.That(secondNode.ReceivedCommands).IsEquivalentTo(["SCRIPT LOAD return 1"]);
     }

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Scripting
+
+- `RespireScript.Create(source, readOnly: true)` selects Redis 7+ read-only Lua commands.
+  Script cache management adds `ExistsAsync` and `FlushAsync`, with matching deferred
+  operations and deferred `Load`. Existing external `IScriptCommands` and
+  `IBatchScriptCommands` implementations remain source-compatible through default
+  members that throw `NotSupportedException`; decorators must forward these new members
+  to expose them. See the [scripting guide](SCRIPTING.md) for Cluster scope and versions.
+
 ### Breaking API changes
 
 - Count-based set and sorted-set pops are now named `PopManyAsync(key, count, ...)`.
