@@ -358,9 +358,15 @@ public sealed partial class RespireClient : IRespireClient
             return ExecuteRawAsync(command.Name, args, flags, cancellationToken);
         }
 
-        return TryGetPreencodedRawOperation(command, args, out var operation, out var rawArguments)
+        if (!TryGetPreencodedRawOperation(command, args, out var operation, out var rawArguments))
+        {
+            return ExecuteCatalogAsync(command, args, flags, cancellationToken);
+        }
+
+        // Report the rejection through the task, as ExecuteCatalogAsync does, rather than synchronously.
+        return _keyPrefix is null
             ? ExecuteRawAsync(operation, rawArguments, flags, cancellationToken)
-            : ExecuteCatalogAsync(command, args, flags, cancellationToken);
+            : ValueTask.FromException<RespireResult>(KeyPrefixNotSupported());
     }
 
     private ValueTask ExecuteCommandFireAndForgetAsync(
@@ -373,18 +379,27 @@ public sealed partial class RespireClient : IRespireClient
             return ExecuteRawFireAndForgetAsync(command.Name, args, cancellationToken);
         }
 
-        return TryGetPreencodedRawOperation(command, args, out var operation, out var rawArguments)
+        if (!TryGetPreencodedRawOperation(command, args, out var operation, out var rawArguments))
+        {
+            return ExecuteCatalogFireAndForgetAsync(command, args, cancellationToken);
+        }
+
+        return _keyPrefix is null
             ? ExecuteRawFireAndForgetAsync(operation, rawArguments, cancellationToken)
-            : ExecuteCatalogFireAndForgetAsync(command, args, cancellationToken);
+            : ValueTask.FromException(KeyPrefixNotSupported());
     }
 
-    private bool TryGetPreencodedRawOperation(
+    /// <summary>
+    /// Selects the subcommand-aware raw path for pre-encoded parent commands whose first argument is a
+    /// known subcommand. Callers must still apply the key-prefix rejection that catalog execution applies.
+    /// </summary>
+    private static bool TryGetPreencodedRawOperation(
         RespireCommand command,
         RespireValue[] args,
         out string operation,
         out RespireValue[] rawArguments)
     {
-        var multiplexedSubcommand = IsMultiplexedRawSubcommand(command.Name, [], args);
+        var multiplexedSubcommand = IsMultiplexedRawSubcommand(command.Name, ReadOnlySpan<string>.Empty, args);
         if (command.Behavior == RespireCommandBehavior.ConnectionScoped && !multiplexedSubcommand)
         {
             operation = string.Empty;
@@ -394,7 +409,6 @@ public sealed partial class RespireClient : IRespireClient
 
         if (args.Length > 0 && KnownRawOperation(command.Name, args[0]) is { } normalized)
         {
-            ValidateCatalogKeyPrefix();
             operation = normalized;
             rawArguments = args.AsSpan(1).ToArray();
             return true;
@@ -402,7 +416,6 @@ public sealed partial class RespireClient : IRespireClient
 
         operation = command.Name;
         rawArguments = args;
-        if (multiplexedSubcommand) ValidateCatalogKeyPrefix();
         return multiplexedSubcommand;
     }
 
@@ -675,11 +688,14 @@ public sealed partial class RespireClient : IRespireClient
     {
         if (_keyPrefix is not null)
         {
-            throw new NotSupportedException(
-                "Catalog commands cannot run through a key-prefixed view because not every command has a known key layout. " +
-                "Use the typed command facets instead.");
+            throw KeyPrefixNotSupported();
         }
     }
+
+    private static NotSupportedException KeyPrefixNotSupported()
+        => new(
+            "Catalog commands cannot run through a key-prefixed view because not every command has a known key layout. " +
+            "Use the typed command facets instead.");
 
     private static void ValidateResultFlags(RespireCommandFlags flags)
     {

@@ -48,7 +48,11 @@ Typed methods copy strings/bytes as needed and dispose the pooled root reply, in
 
 ## Execution policies
 
-Generated methods use `IRespireClient.ExecuteAsync` with `RespireCommand.Create`. This preserves catalog command safety, cancellation, routing, redirection flags, and client-side cache invalidation. An already-canceled token is rejected before argument encoding or sending; cancellation after admission does not guarantee the server did not execute the command. Connection-affine operations such as `AUTH` remain rejected. Unknown module commands conservatively invalidate the local cache; a generated declaration does not make them cacheable or read-only.
+Generated methods use `IRespireClient.ExecuteAsync` with `RespireCommand.Create`. This preserves catalog command safety, cancellation, routing, redirection flags, and client-side cache invalidation. An already-canceled token is rejected before argument encoding or sending; cancellation after admission does not guarantee the server did not execute the command. Connection-affine operations such as `AUTH` remain rejected. Unknown module commands conservatively invalidate the local cache; a generated declaration does not make them cacheable or read-only. Declaring a module command read-only is not supported yet, so read-only module calls such as `JSON.GET` also invalidate client-side cache entries.
+
+Argument, cancellation, and safety failures are reported through the returned task for every return shape, including the non-async `ValueTask<RespireResult>` shape; a call does not throw before returning its task.
+
+Unknown module commands are treated as non-blocking and run on the shared multiplexed connections. Do not declare module commands that wait server-side for data (for example, blocking pops); they would stall every command queued behind them on that connection.
 
 Key-prefixed views reject generated commands, just as they reject raw/catalog commands, because arbitrary module key layouts are unknown. A `RespireKey` parameter alone does not declare routing metadata. Known cluster layouts retain slot validation; unknown layouts use existing raw routing heuristics and server validation. Use unprefixed clients and explicitly formed keys, and verify your module's routing requirements. The first-party JSON, Search, TimeSeries, and probabilistic packages remain separate work under [#417](https://github.com/thomhurst/Respire/issues/417).
 

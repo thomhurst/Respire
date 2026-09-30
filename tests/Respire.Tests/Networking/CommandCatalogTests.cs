@@ -67,6 +67,11 @@ public class CommandCatalogTests
             .IsEqualTo(9);
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.Dragonfly)))
             .IsEqualTo(18);
+        // IsCallerSupplied keys off the pre-encoded verb because RespireCommand.Create also uses
+        // RespireCommandSource.None; every catalog entry must still be pre-encoded with a source.
+        await Assert.That(commands.Where(static command =>
+                command.IsCallerSupplied || command.Sources == RespireCommandSource.None))
+            .IsEmpty();
     }
 
     [Test]
@@ -288,11 +293,12 @@ public class CommandCatalogTests
 
         await Assert.That(async () => await tenant.ExecuteAsync(RespireCommands.String.GET, "settings"))
             .Throws<NotSupportedException>();
-        await Assert.That(async () => await tenant.ExecuteAsync(RespireCommand.Create("XGROUP"), "DESTROY", "stream", "group"))
-            .Throws<NotSupportedException>();
-        await Assert.That(async () => await tenant.ExecuteFireAndForgetAsync(
-                RespireCommand.Create("XGROUP"), "DESTROY", "stream", "group"))
-            .Throws<NotSupportedException>();
+        // Subcommand-normalized descriptors report the rejection through the returned task.
+        var pending = tenant.ExecuteAsync(RespireCommand.Create("XGROUP"), "DESTROY", "stream", "group");
+        await Assert.That(async () => await pending).Throws<NotSupportedException>();
+        var pendingFireAndForget = tenant.ExecuteFireAndForgetAsync(
+            RespireCommand.Create("XGROUP"), "DESTROY", "stream", "group");
+        await Assert.That(async () => await pendingFireAndForget).Throws<NotSupportedException>();
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 

@@ -25,6 +25,8 @@ internal interface IGeneratedModule
     ValueTask<RespireResult> Raw(RespireCommandFlags flags = RespireCommandFlags.None);
     [RespireCommand("CUSTOM.RAW")]
     Task<RespireResult> RawTask();
+    [RespireCommand("CUSTOM.RAW")]
+    ValueTask<RespireResult> RawValues(RespireValue[] values, CancellationToken token = default);
     [RespireCommand("CUSTOM.WRITE")]
     ValueTask Write(RespireKey key, RespireValue value);
     [RespireCommand("CUSTOM.ERROR")]
@@ -157,6 +159,12 @@ public class GeneratedCommandTests
         cancellation.Cancel();
         var count = server.CommandsSeen;
         await Assert.That(async () => await module.JsonGet("key", token: cancellation.Token)).Throws<OperationCanceledException>();
+        // The non-async raw shape reports failures through its task, like every other return shape.
+        var canceled = module.RawValues([], cancellation.Token);
+        await Assert.That(canceled.IsCanceled).IsTrue();
+        await Assert.That(async () => { using var result = await canceled; }).Throws<OperationCanceledException>();
+        var missing = module.RawValues(null!);
+        await Assert.That(async () => { using var result = await missing; }).Throws<ArgumentNullException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(count);
     }
 

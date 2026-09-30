@@ -78,14 +78,41 @@ public class RespireCommandGeneratorTests
         await Assert.That(diagnostics).IsEmpty();
     }
 
-    private static (string Generated, Diagnostic[] Diagnostics) Generate(string source)
+    [Test]
+    [Arguments("[RespireCommand(\"X.GET\")] ValueTask<int> Get(string key);")]
+    [Arguments("[RespireCommand(\"X.GET\")] int Get(string key);")]
+    public async Task UnrelatedEditsReuseCachedModelsWithoutRetainingSymbols(string method)
+    {
+        var parseOptions = new CSharpParseOptions(LanguageVersion.CSharp12);
+        var compilation = CreateCompilation(Preamble + "namespace Demo { [RespireCommands] public interface IModule { " + method + " } }", parseOptions);
+        GeneratorDriver driver = CSharpGeneratorDriver.Create([new RespireCommandGenerator().AsSourceGenerator()],
+            parseOptions: parseOptions, driverOptions: new GeneratorDriverOptions(IncrementalGeneratorOutputKind.None, trackIncrementalGeneratorSteps: true));
+        driver = driver.RunGenerators(compilation);
+        var first = driver.GetRunResult().Results.Single();
+        await Assert.That(first.TrackedSteps["RespireCommandInterfaces"]
+            .SelectMany(step => step.Outputs).Any(output => output.Value is ISymbol or Compilation)).IsFalse();
+
+        driver = driver.RunGenerators(compilation.AddSyntaxTrees(CSharpSyntaxTree.ParseText("class Unrelated { }", parseOptions)));
+        var second = driver.GetRunResult().Results.Single();
+        await Assert.That(second.TrackedSteps["RespireCommandInterfaces"].SelectMany(step => step.Outputs)
+            .All(output => output.Reason is IncrementalStepRunReason.Cached or IncrementalStepRunReason.Unchanged)).IsTrue();
+        await Assert.That(second.TrackedOutputSteps.SelectMany(step => step.Value).SelectMany(step => step.Outputs)
+            .All(output => output.Reason == IncrementalStepRunReason.Cached)).IsTrue();
+    }
+
+    private static CSharpCompilation CreateCompilation(string source, CSharpParseOptions parseOptions)
     {
         var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
             .Append(typeof(RespireCommand).Assembly.Location).Distinct(StringComparer.OrdinalIgnoreCase)
             .Select(path => MetadataReference.CreateFromFile(path));
-        var parseOptions = new CSharpParseOptions(LanguageVersion.CSharp12);
-        var compilation = CSharpCompilation.Create("GeneratedConsumer", [CSharpSyntaxTree.ParseText(source, parseOptions)], references,
+        return CSharpCompilation.Create("GeneratedConsumer", [CSharpSyntaxTree.ParseText(source, parseOptions)], references,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+    }
+
+    private static (string Generated, Diagnostic[] Diagnostics) Generate(string source)
+    {
+        var parseOptions = new CSharpParseOptions(LanguageVersion.CSharp12);
+        var compilation = CreateCompilation(source, parseOptions);
         GeneratorDriver driver = CSharpGeneratorDriver.Create([new RespireCommandGenerator().AsSourceGenerator()], parseOptions: parseOptions);
         driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out var generatorDiagnostics);
         return (string.Join("\n", driver.GetRunResult().GeneratedTrees.Select(tree => tree.ToString())),

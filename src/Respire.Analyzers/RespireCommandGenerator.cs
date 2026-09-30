@@ -20,55 +20,56 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
             | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier
             | SymbolDisplayMiscellaneousOptions.UseSpecialTypes);
 
+    internal const string ModelStepName = "RespireCommandInterfaces";
+
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
+        // The transform projects each interface into rendered source plus location-free diagnostic data.
+        // The model is value-equatable and holds no symbols, so unchanged interfaces skip the output step
+        // and the pipeline never roots a Compilation between runs.
         var interfaces = context.SyntaxProvider.ForAttributeWithMetadataName(
-            "Respire.RespireCommandsAttribute",
-            static (node, _) => node is InterfaceDeclarationSyntax,
-            static (attribute, _) => (INamedTypeSymbol)attribute.TargetSymbol);
-        context.RegisterSourceOutput(interfaces, static (output, type) => Generate(output, type));
+                "Respire.RespireCommandsAttribute",
+                static (node, _) => node is InterfaceDeclarationSyntax,
+                static (attribute, cancellationToken) => Build((INamedTypeSymbol)attribute.TargetSymbol, cancellationToken))
+            .WithTrackingName(ModelStepName);
+        context.RegisterSourceOutput(interfaces, static (output, model) => Emit(output, model));
     }
 
-    private static void Generate(SourceProductionContext context, INamedTypeSymbol type)
+    private static void Emit(SourceProductionContext context, GeneratedInterface model)
+    {
+        foreach (var diagnostic in model.Diagnostics)
+            context.ReportDiagnostic(diagnostic.ToDiagnostic());
+        if (model.HintName is not null && model.Source is not null)
+            context.AddSource(model.HintName, SourceText.From(model.Source, Encoding.UTF8));
+    }
+
+    private static GeneratedInterface Build(INamedTypeSymbol type, CancellationToken cancellationToken)
     {
         if (type.ContainingType is not null || type.Arity != 0 || type.Interfaces.Length != 0
             || type.IsFileLocal || type.DeclaredAccessibility is not (Accessibility.Public or Accessibility.Internal))
         {
-            Report(context, type, "Command interfaces must be public or internal, top-level, non-generic, and have no base interfaces.");
-            return;
+            return GeneratedInterface.Failed(type, "Command interfaces must be public or internal, top-level, non-generic, and have no base interfaces.");
         }
 
         var methods = type.GetMembers().OfType<IMethodSymbol>().ToArray();
         if (type.GetMembers().Any(member => member is not IMethodSymbol))
-        {
-            Report(context, type, "Command interfaces can contain only attributed abstract instance methods.");
-            return;
-        }
+            return GeneratedInterface.Failed(type, "Command interfaces can contain only attributed abstract instance methods.");
 
-        var valid = true;
+        var errors = new List<DiagnosticInfo>();
         foreach (var method in methods)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var error = ValidateMethod(method);
-            if (error is not null)
-            {
-                Report(context, method, error);
-                valid = false;
-            }
+            if (error is not null) errors.Add(DiagnosticInfo.Create(method, error));
         }
-        if (!valid) return;
+        if (errors.Count != 0) return new GeneratedInterface(null, null, errors.ToArray());
 
         var className = type.Name + "Implementation";
         if (type.ContainingNamespace.GetTypeMembers(className).Length != 0)
-        {
-            Report(context, type, $"Generated type '{className}' already exists in this namespace.");
-            return;
-        }
+            return GeneratedInterface.Failed(type, $"Generated type '{className}' already exists in this namespace.");
 
         if (methods.Any(method => method.Name == className))
-        {
-            Report(context, type, "A command method cannot have the same name as its generated implementation class.");
-            return;
-        }
+            return GeneratedInterface.Failed(type, "A command method cannot have the same name as its generated implementation class.");
         var memberNames = new HashSet<string>(methods.Select(method => method.Name)
             .Concat(methods.SelectMany(method => method.Parameters).Select(parameter => parameter.Name)), StringComparer.Ordinal);
         var clientField = LocalName(memberNames, "__client");
@@ -88,7 +89,7 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
         source.Append("}\n");
         if (!type.ContainingNamespace.IsGlobalNamespace) source.Append("}\n");
         // Full metadata identity prevents collisions between equal simple names in distinct namespaces.
-        context.AddSource(type.ToDisplayString().Replace("@", "") + ".Respire.g.cs", SourceText.From(source.ToString(), Encoding.UTF8));
+        return new GeneratedInterface(type.ToDisplayString().Replace("@", "") + ".Respire.g.cs", source.ToString(), []);
     }
 
     private static string? ValidateMethod(IMethodSymbol method)
@@ -131,7 +132,7 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
 
     private static bool IsTask(INamedTypeSymbol type)
         => type.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks"
-            && type.Name is "Task" or "ValueTask";
+            && (type.Name is "Task" or "ValueTask");
 
     private static bool IsCancellation(ITypeSymbol type)
         => type.ToDisplayString() == "System.Threading.CancellationToken";
@@ -193,8 +194,16 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
             .Append(Escape(method.Name)).Append('(');
         source.Append(string.Join(", ", method.Parameters.Select(ParameterDeclaration)));
         source.Append(")\n    {\n");
+        // The non-async ValueTask<RespireResult> shape reports argument and cancellation failures through the
+        // returned task, matching the async shapes, instead of throwing before a task exists.
         if (cancellation is not null)
-            source.Append("        ").Append(Escape(cancellation.Name)).Append(".ThrowIfCancellationRequested();\n");
+        {
+            source.Append("        ");
+            if (direct)
+                source.Append("if (").Append(Escape(cancellation.Name)).Append(".IsCancellationRequested) return global::System.Threading.Tasks.ValueTask.FromCanceled<global::Respire.RespireResult>(")
+                    .Append(Escape(cancellation.Name)).Append(");\n");
+            else source.Append(Escape(cancellation.Name)).Append(".ThrowIfCancellationRequested();\n");
+        }
         // Generated locals use names allocated against user parameters, including deliberately adversarial names.
         var usedNames = new HashSet<string>(method.Parameters.Select(parameter => parameter.Name), StringComparer.Ordinal);
         var values = LocalName(usedNames, "__arguments");
@@ -204,8 +213,12 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
         var output = LocalName(usedNames, "__output");
         var loop = LocalName(usedNames, "__index");
         foreach (var parameter in expanded)
-            source.Append("        if (").Append(Escape(parameter.Name)).Append(" is null) throw new global::System.ArgumentNullException(nameof(")
-                .Append(Escape(parameter.Name)).Append("));\n");
+        {
+            var nullArgument = "new global::System.ArgumentNullException(nameof(" + Escape(parameter.Name) + "))";
+            source.Append("        if (").Append(Escape(parameter.Name)).Append(" is null) ")
+                .Append(direct ? "return global::System.Threading.Tasks.ValueTask.FromException<global::Respire.RespireResult>(" + nullArgument + ")" : "throw " + nullArgument)
+                .Append(";\n");
+        }
         source.Append("        var ").Append(values).Append(" = new global::Respire.RespireValue[checked(")
             .Append(arguments.Length - expanded.Length);
         foreach (var parameter in expanded) source.Append(" + ").Append(Escape(parameter.Name)).Append(".Length");
@@ -311,6 +324,55 @@ public sealed class RespireCommandGenerator : IIncrementalGenerator
 
     private static string TypeName(ITypeSymbol type) => type.ToDisplayString(TypeFormat);
     private static string Escape(string name) => "@" + name;
-    private static void Report(SourceProductionContext context, ISymbol symbol, string message)
-        => context.ReportDiagnostic(Diagnostic.Create(InvalidDeclaration, symbol.Locations.FirstOrDefault(), message));
+
+    /// <summary>Rendered output for one interface. Value equality lets the incremental driver cache it.</summary>
+    private sealed class GeneratedInterface(string? hintName, string? source, DiagnosticInfo[] diagnostics)
+        : IEquatable<GeneratedInterface>
+    {
+        public string? HintName { get; } = hintName;
+        public string? Source { get; } = source;
+        public DiagnosticInfo[] Diagnostics { get; } = diagnostics;
+
+        public static GeneratedInterface Failed(ISymbol symbol, string message)
+            => new(null, null, [DiagnosticInfo.Create(symbol, message)]);
+
+        public bool Equals(GeneratedInterface? other)
+            => other is not null && HintName == other.HintName && Source == other.Source
+                && Diagnostics.SequenceEqual(other.Diagnostics);
+
+        public override bool Equals(object? obj) => Equals(obj as GeneratedInterface);
+
+        public override int GetHashCode()
+            => ((HintName?.GetHashCode() ?? 0) * 397) ^ (Source?.Length ?? 0) ^ Diagnostics.Length;
+    }
+
+    /// <summary>A diagnostic captured without Location or SyntaxTree references.</summary>
+    private sealed class DiagnosticInfo(string message, string? filePath, TextSpan span, LinePositionSpan lineSpan)
+        : IEquatable<DiagnosticInfo>
+    {
+        private readonly string _message = message;
+        private readonly string? _filePath = filePath;
+        private readonly TextSpan _span = span;
+        private readonly LinePositionSpan _lineSpan = lineSpan;
+
+        public static DiagnosticInfo Create(ISymbol symbol, string message)
+        {
+            var location = symbol.Locations.FirstOrDefault(candidate => candidate.IsInSource);
+            return location?.SourceTree is { } tree
+                ? new DiagnosticInfo(message, tree.FilePath, location.SourceSpan, location.GetLineSpan().Span)
+                : new DiagnosticInfo(message, null, default, default);
+        }
+
+        public Diagnostic ToDiagnostic()
+            => Diagnostic.Create(InvalidDeclaration,
+                _filePath is null ? Location.None : Location.Create(_filePath, _span, _lineSpan), _message);
+
+        public bool Equals(DiagnosticInfo? other)
+            => other is not null && _message == other._message && _filePath == other._filePath
+                && _span.Equals(other._span) && _lineSpan.Equals(other._lineSpan);
+
+        public override bool Equals(object? obj) => Equals(obj as DiagnosticInfo);
+
+        public override int GetHashCode() => (_message.GetHashCode() * 397) ^ _span.GetHashCode();
+    }
 }
