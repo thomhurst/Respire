@@ -214,6 +214,7 @@ public class TimeoutDiagnosticsTests
         });
         client.RemovalLeaseTtl = TimeSpan.FromSeconds(1);
         using var caller = new CancellationTokenSource();
+        // RespireClient.LeaseExpiryMargin adds one second; the remaining three allow scheduling.
         var completionTimeout = client.RemovalLeaseTtl + TimeSpan.FromSeconds(4);
         var removal = client.UnlinkGuardedAsync("private-key", caller.Token).AsTask();
         await scriptSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -422,9 +423,11 @@ public class TimeoutDiagnosticsTests
             if (command.StartsWith("UNLINK ", StringComparison.Ordinal))
             {
                 // Recorded command indices remain stable if another connection appends a command.
+                // Select the first revocation here; SingleCommand below reports duplicates outside
+                // the server callback, where an exception cannot strand the test awaiting a reply.
                 var commands = target.ReceivedArguments;
                 var index = Enumerable.Range(0, commands.Count)
-                    .Single(i => commands[i][0].AsSpan().SequenceEqual("UNLINK"u8));
+                    .First(i => commands[i][0].AsSpan().SequenceEqual("UNLINK"u8));
                 revocationSeen.TrySetResult(target.ReceivedConnectionIds[index]);
                 return true;
             }
