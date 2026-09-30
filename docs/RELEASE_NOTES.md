@@ -5,6 +5,8 @@
 ### Distributed locks
 
 - Distributed locks use native conditional renewal/deletion on supported Redis and Valkey versions, with per-connection Lua fallback on older servers and preserved managed cancellation fencing.
+  Update lock command ACL allowlists for native renewal (`SET`) and release (`DELEX` on Redis 8.4+
+  or `DELIFEQ` on Valkey 9.0+). `NOPERM` is surfaced without Lua fallback.
 
 ### String comparisons
 

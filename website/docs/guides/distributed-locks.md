@@ -32,6 +32,13 @@ A mixed-version Cluster can therefore use native commands on some nodes and Lua 
 No `INFO` or `COMMAND` permission is needed for discovery. Managed renewal retains its existing
 `CLIENT ID` / `CLIENT KILL` permissions and cancellation fence on the connection that executed it.
 
+ACLs must permit the commands selected for the server: `SET` for acquisition and native renewal,
+`DELEX` for native release on Redis 8.4+, or `DELIFEQ` for native release on Valkey 9.0+.
+Lua fallback needs `EVALSHA`/`EVAL` and the script's `GET`, `DEL`, and `PEXPIRE` permissions.
+When upgrading Respire or the server, update any command allowlist that previously permitted
+only the Lua release/renewal path. `NOPERM` is returned to the caller; permission denial does
+not select a different implementation. There is no native-command opt-out setting.
+
 An ownership mismatch returns `false` without fallback. Timeouts, cancellation, connection loss,
 ACL denial, and other server errors do not trigger a Lua retry. A write with an uncertain outcome
 is never replayed for capability discovery. Token equality uses the original bytes; renewing a
