@@ -10,13 +10,15 @@ namespace Respire.IntegrationTests;
 public class ValueCodecIntegrationTests(RedisTestContainer fixture)
 {
     [Test]
-    [Arguments(false, 2)]
-    [Arguments(false, 3)]
-    [Arguments(true, 2)]
-    [Arguments(true, 3)]
-    public async Task MixedCodecValuesRoundTripAcrossImmediateAndDeferredApis(bool deflate, int protocol)
+    [Arguments("brotli", 2)]
+    [Arguments("brotli", 3)]
+    [Arguments("deflate", 2)]
+    [Arguments("deflate", 3)]
+    [Arguments("lz4", 2)]
+    [Arguments("lz4", 3)]
+    public async Task MixedCodecValuesRoundTripAcrossImmediateAndDeferredApis(string algorithm, int protocol)
     {
-        RespireValueCodec codec = deflate ? new DeflateValueCodec() : new BrotliValueCodec();
+        var codec = CreateCodec(algorithm);
         var serializer = new RespireValueCodecSerializer(RespireSerializer.Default, codec);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
@@ -79,11 +81,12 @@ public class ValueCodecIntegrationTests(RedisTestContainer fixture)
 
     [Test]
     [NotInParallel] // Exact hit assertions require stable tracking connections.
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task CachedFramesDecodeIntoIndependentTypedValues(bool deflate)
+    [Arguments("brotli")]
+    [Arguments("deflate")]
+    [Arguments("lz4")]
+    public async Task CachedFramesDecodeIntoIndependentTypedValues(string algorithm)
     {
-        IRespireValueCodec codec = deflate ? new DeflateValueCodec() : new BrotliValueCodec();
+        var codec = CreateCodec(algorithm);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new(fixture.Host, fixture.Port)], Database = fixture.Database,
@@ -98,6 +101,14 @@ public class ValueCodecIntegrationTests(RedisTestContainer fixture)
         second.Text.Should().Be(new string('x', 8192));
         client.ClientSideCache.GetStatistics().Hits.Should().BeGreaterThan(before);
     }
+
+    private static RespireValueCodec CreateCodec(string algorithm) => algorithm switch
+    {
+        "brotli" => new BrotliValueCodec(),
+        "deflate" => new DeflateValueCodec(),
+        "lz4" => new Lz4ValueCodec(),
+        _ => throw new ArgumentOutOfRangeException(nameof(algorithm)),
+    };
 
     public sealed record Payload(string Text);
     public sealed class MutablePayload { public string Text { get; set; } = ""; }

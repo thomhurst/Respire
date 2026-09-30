@@ -12,11 +12,12 @@ namespace Respire.Tests.Networking;
 public class ValueCodecCommandTests
 {
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task TypedValuesUseCodecWhilePrimitiveAndRawPathsStayUnchanged(bool deflate)
+    [Arguments("brotli")]
+    [Arguments("deflate")]
+    [Arguments("lz4")]
+    public async Task TypedValuesUseCodecWhilePrimitiveAndRawPathsStayUnchanged(string algorithm)
     {
-        var codec = ValueCodecTests.Create(deflate);
+        var codec = ValueCodecTests.Create(algorithm);
         var serializer = new RespireValueCodecSerializer(RespireSerializer.Default, codec);
         var value = new Payload(new string('x', 4096));
         var buffer = new ArrayBufferWriter<byte>();
@@ -53,13 +54,15 @@ public class ValueCodecCommandTests
     }
 
     [Test]
-    [Arguments(false, false)]
-    [Arguments(false, true)]
-    [Arguments(true, false)]
-    [Arguments(true, true)]
-    public async Task DeferredValuesOwnTheirEncodedSnapshot(bool deflate, bool transaction)
+    [Arguments("brotli", false)]
+    [Arguments("brotli", true)]
+    [Arguments("deflate", false)]
+    [Arguments("deflate", true)]
+    [Arguments("lz4", false)]
+    [Arguments("lz4", true)]
+    public async Task DeferredValuesOwnTheirEncodedSnapshot(string algorithm, bool transaction)
     {
-        var codec = ValueCodecTests.Create(deflate);
+        var codec = ValueCodecTests.Create(algorithm);
         var serializer = new RespireValueCodecSerializer(RespireSerializer.Default, codec);
         var value = new MutablePayload { Text = new string('x', 4096) };
         var expectedText = value.Text;

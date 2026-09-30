@@ -117,6 +117,43 @@ bypass this decorator. Distributed-cache configuration is a separate opt-in inte
 tracked in [#524](https://github.com/thomhurst/Respire/issues/524); setting a client's
 serializer does not compress the distributed cache's raw payload field.
 
+## Optional LZ4 package
+
+Install `Respire.Compression.Lz4` to use `Lz4ValueCodec`. Its K4os dependency stays out
+of the core Respire package. The codec implements the same `IRespireValueCodec`
+contract as Brotli and Deflate, including both array and destination overloads.
+
+```csharp
+using Respire.Compression;
+using Respire.Serialization;
+
+var codec = new Lz4ValueCodec(new RespireValueCodecOptions
+{
+    MinimumLength = 1024,
+    MaximumDecodedLength = 1024 * 1024
+}, level: 0);
+var serializer = new RespireValueCodecSerializer(RespireSerializer.Default, codec);
+var options = new RespireOptions { Serializer = serializer };
+byte[] frame = codec.Encode(new byte[4096]);
+byte[] restored = codec.Decode(frame);
+if (restored.Length != 4096) throw new InvalidOperationException("Round trip failed.");
+```
+
+Level `0` selects fast compression; levels `3`–`12` select increasing high-compression
+settings. Other levels are rejected. Decoding does not depend on the encoder's level.
+Small or incompressible values use the shared uncompressed frame. Compressed values use
+algorithm ID `3` with one raw LZ4 block: neither an LZ4 frame stream nor a K4os pickle.
+There is no dictionary or native-library requirement. Different algorithm decoders can
+read shared uncompressed frames, but compressed LZ4 values require an LZ4 decoder.
+
+The package uses [K4os.Compression.LZ4 1.3.8](https://www.nuget.org/packages/K4os.Compression.LZ4/1.3.8),
+under its [MIT license](https://github.com/MiloszKrajewski/K4os.Compression.LZ4/blob/1.3.8/LICENSE).
+Its bounded span [block APIs](https://github.com/MiloszKrajewski/K4os.Compression.LZ4/blob/1.3.8/src/K4os.Compression.LZ4/LZ4Codec.cs)
+write only into caller-provided storage. The shared frame checks the declared length
+before allocating output; a failed decode does not advance a destination writer.
+The dependency uses unsafe managed code internally. No throughput, latency, or
+zero-allocation claim is implied; measurements remain tracked in #527.
+
 ## Frame and bounds
 
 Version 1 uses this byte layout; offsets and length exclude any Redis RESP framing:
@@ -125,7 +162,7 @@ Version 1 uses this byte layout; offsets and length exclude any Redis RESP frami
 | --- | --- | --- |
 | 0 | 4 | Magic bytes `52 56 43 00` (`RVC` followed by NUL) |
 | 4 | 1 | Frame version, currently `1` |
-| 5 | 1 | Algorithm: `0` uncompressed, `1` Brotli, `2` raw DEFLATE |
+| 5 | 1 | Algorithm: `0` uncompressed, `1` Brotli, `2` raw DEFLATE, `3` raw LZ4 block |
 | 6 | 4 | Original length, unsigned little-endian |
 | 10 | 8 | First eight bytes of SHA-256 of the encoded payload |
 | 18 | remaining | Encoded payload |
@@ -147,7 +184,7 @@ budget or a Redis server limit. Set `MaximumDecodedLength` to the smallest appli
 value limit that fits your data, and account for concurrent reads when choosing it.
 
 The public `RespireValueCodec` base class shares these framing rules with optional/custom
-codecs. IDs 3 and 4 are reserved for LZ4 and Zstandard packages; IDs 16–255 are available
+codecs. ID 3 belongs to the optional LZ4 package; ID 4 is reserved for Zstandard. IDs 16–255 are available
 for an application's custom codecs and must be coordinated between its readers and writers.
 The protected constructor rejects IDs 0–15; built-in implementations use an internal
 reserved-ID constructor, also available to explicitly trusted optional codec assemblies.
@@ -158,7 +195,7 @@ the original input; return false when compressed output does not fit. There is n
 fallback between algorithms.
 
 These are additive public types; existing client and facet interfaces gain no members.
-Optional LZ4/Zstandard packages and measured trade-offs remain separate deliverables in
+The optional Zstandard package and measured trade-offs remain separate deliverables in
 [#425](https://github.com/thomhurst/Respire/issues/425).
 
 Implementation references: [.NET BrotliEncoder](https://learn.microsoft.com/dotnet/api/system.io.compression.brotliencoder),
