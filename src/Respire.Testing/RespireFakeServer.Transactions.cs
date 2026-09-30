@@ -57,10 +57,12 @@ public sealed partial class RespireFakeServer
 
     private FakeReply RejectCommand(Connection connection, string command, FakeReply error)
     {
-        if (connection.Transaction is null) return error;
-        connection.TransactionError = true;
-        connection.Transaction.Clear();
-        connection.QueuedBytes = 0;
+        if (connection.Transaction is not null)
+        {
+            connection.TransactionError = true;
+            connection.Transaction.Clear();
+            connection.QueuedBytes = 0;
+        }
         if (command != "EXEC") return error;
         ClearTransaction(connection);
         var reason = (string)error.Value!;

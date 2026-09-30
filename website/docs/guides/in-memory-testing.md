@@ -245,7 +245,7 @@ if (pending.Status != RespirePendingStatus.Aborted || await client.ExistsAsync("
     throw new InvalidOperationException("An aborted transaction must not mutate data.");
 ```
 
-`WATCH` observes supported string, key, hash, list, and set mutations and expiry, including
+`WATCH` observes supported string, key, hash, list, set, and sorted-set mutations and expiry, including
 expiry detected at `EXEC` without an intervening read. Rejected conditional writes and true
 no-ops do not invalidate a watch. Redis treats some equal-value operations as writes: `SET`,
 `HSET`, `LSET`, and an unchanged `LTRIM` still invalidate watches. Watching an already expired

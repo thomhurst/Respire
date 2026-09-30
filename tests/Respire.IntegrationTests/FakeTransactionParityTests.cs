@@ -156,6 +156,22 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
             new([ ["RPUSH", "key", "value"] ], ["LREM", "key", "0", "value"], true),
             new([ ["RPUSH", "key", "value"] ], ["LINSERT", "key", "BEFORE", "missing", "new"], false),
             new([ ["RPUSH", "key", "value"] ], ["LINSERT", "key", "BEFORE", "value", "new"], true),
+            new([], ["ZADD", "key", "1", "member"], true),
+            new([], ["ZADD", "key", "XX", "1", "member"], false),
+            new([ ["ZADD", "key", "1", "member"] ], ["ZADD", "key", "1", "member"], false),
+            new([ ["ZADD", "key", "1", "member"] ], ["ZADD", "key", "2", "member"], true),
+            new([ ["ZADD", "key", "1", "member"] ], ["ZADD", "key", "NX", "2", "member"], false),
+            new([ ["ZADD", "key", "1", "member"] ], ["ZADD", "key", "GT", "0", "member"], false),
+            new([ ["ZADD", "key", "1", "member"] ], ["ZINCRBY", "key", "0", "member"], false),
+            new([ ["ZADD", "key", "1", "member"] ], ["ZINCRBY", "key", "1", "member"], true),
+            new([ ["ZADD", "key", "1", "member"] ], ["ZREM", "key", "missing"], false),
+            new([ ["ZADD", "key", "1", "member"] ], ["ZREM", "key", "member"], true),
+            new([ ["ZADD", "key", "1", "member"] ], ["ZPOPMIN", "key", "0"], false),
+            new([ ["ZADD", "key", "1", "member"] ], ["ZPOPMAX", "key"], true),
+            new([ ["ZADD", "key", "1", "member"] ], ["ZREMRANGEBYRANK", "key", "0", "-1"], true),
+            new([ ["ZADD", "key", "1", "member"] ], ["ZREMRANGEBYSCORE", "key", "2", "3"], false),
+            new([ ["ZADD", "key", "1", "member"] ], ["ZREMRANGEBYSCORE", "key", "1", "1"], true),
+            new([ ["ZADD", "key", "1", "member"] ], ["ZREMRANGEBYLEX", "key", "-", "+"], true),
         })
         {
             using (var cleared = await writer.CommandAsync("DEL", "key", "other", "marker")) { }
@@ -211,19 +227,26 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
     private sealed record WatchCase(string[][] Setup, string[] Mutation, bool Changes, bool Error = false);
 
     [Test]
-    [Arguments(false, 2)]
-    [Arguments(false, 3)]
-    [Arguments(true, 2)]
-    [Arguments(true, 3)]
-    public async Task MalformedExecAbortsImmediatelyAndClearsWatch(bool useFake, int protocol)
+    [Arguments(false, 2, false)]
+    [Arguments(false, 3, false)]
+    [Arguments(true, 2, false)]
+    [Arguments(true, 3, false)]
+    [Arguments(false, 2, true)]
+    [Arguments(false, 3, true)]
+    [Arguments(true, 2, true)]
+    [Arguments(true, 3, true)]
+    public async Task MalformedExecAbortsImmediatelyAndClearsWatch(bool useFake, int protocol, bool multi)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = Options(fake, protocol);
         await using var session = await TestRespSession.ConnectAsync(options);
         await using var observer = await RespireClient.ConnectAsync(options);
         await Text(session, "OK", "WATCH", "key");
-        await Text(session, "OK", "MULTI");
-        await Text(session, "QUEUED", "SET", "discarded", "never");
+        if (multi)
+        {
+            await Text(session, "OK", "MULTI");
+            await Text(session, "QUEUED", "SET", "discarded", "never");
+        }
         using (var malformed = await session.CommandAsync("EXEC", "extra"))
             malformed.GetErrorMessage().Should().Be("EXECABORT Transaction discarded because of: wrong number of arguments for 'exec' command");
         (await observer.ExistsAsync("discarded")).Should().BeFalse();
