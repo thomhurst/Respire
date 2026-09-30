@@ -273,7 +273,9 @@ public class StringFastPathWireTests
             SuppressReply = static command => command == "GET key",
             MinimumCommandsBeforeReply = 2
         };
-        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        await using var connection = await RespireConnection.ConnectAsync(
+            "127.0.0.1", server.Port,
+            new RespireConnectionOptions { ResponseTimeout = TimeSpan.FromMilliseconds(100) });
         var command = new Cmd1(Verbs.Get, "key");
         var pending = ClusterRouter.SendAskingBulkStreamAsync(connection, in command, default, "GET");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -283,6 +285,8 @@ public class StringFastPathWireTests
         await using var stream = await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         using var reader = new StreamReader(stream!);
         await Assert.That(await reader.ReadToEndAsync()).IsEqualTo("hello");
+        await Task.Delay(250);
+        await Assert.That(connection.IsConnected).IsTrue();
     }
 
     [Test]

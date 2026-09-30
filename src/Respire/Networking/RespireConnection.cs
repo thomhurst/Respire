@@ -2261,12 +2261,10 @@ internal sealed class RespireConnection : IAsyncDisposable
             throw new RespireProtocolException($"Unsolicited response from {Host}:{Port} with no command in flight.");
         }
 
-        var isStreamingPrefix = source is BulkStreamPendingResponseSource { IsFinalReply: false };
         if (source is BulkStreamPendingResponseSource streamSource)
             streamSource.ObservePrefix(in value);
 
-        if (!isStreamingPrefix)
-            MarkReplyReceived();
+        MarkReplyReceived();
 
         _generation?.ObserveResponse(this, discardedOperation ?? source.CommandName, in value);
 
