@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -30,6 +31,39 @@ public class FencedLockWireTests
         if (disconnect) await Assert.That(async () => await pending).Throws<RespireConnectionException>();
         else await Assert.That(async () => await pending).Throws<OperationCanceledException>();
         await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("EVAL", StringComparison.Ordinal))).IsEqualTo(1);
+    }
+
+    [Test]
+    [NotInParallel] // Activity completion deterministically cancels after the script reply was parsed.
+    public async Task CancellationAfterSuccessfulReplyReleasesTheUnreturnedLease()
+    {
+        await using var server = new FakeRespServer("$1\r\n1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var cancellation = new CancellationTokenSource();
+        var repliesCompleted = 0;
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStopped = activity =>
+            {
+                if (activity.GetTagItem("db.operation.name") is not "EVALSHA" || activity.GetTagItem("server.port") is not int port
+                    || port != server.Port) return;
+                Interlocked.Increment(ref repliesCompleted);
+                cancellation.Cancel();
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+        var error = await Assert.That(async () => await new RespireCoordination(client)
+            .TryAcquireFencedLockAsync("{job}:lease", "{job}:counter", TimeSpan.FromSeconds(30), cancellation.Token)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+        await Assert.That(repliesCompleted).IsEqualTo(1);
+        var commands = server.ReceivedCommands;
+        await Assert.That(commands.Count).IsEqualTo(2);
+        await Assert.That(commands[0].StartsWith("EVALSHA ", StringComparison.Ordinal)).IsTrue();
+        var owner = System.Text.Encoding.ASCII.GetString(server.ReceivedArguments[0][5]);
+        await Assert.That(commands[1]).IsEqualTo($"DELEX {{job}}:lease IFEQ {owner}");
     }
 
     [Test]

@@ -24,6 +24,7 @@ public sealed class RespireCoordination
         if redis.call('PTTL', KEYS[2]) >= 0 then
             return redis.error_reply('ERR fencing counter must not expire')
         end
+        -- INCR rejects Int64 overflow (including oversized digit strings) before creating a lease.
         redis.call('INCR', KEYS[2])
         local fence = redis.call('GET', KEYS[2])
         redis.call('SET', KEYS[1], ARGV[1], 'NX', 'PX', ARGV[2])

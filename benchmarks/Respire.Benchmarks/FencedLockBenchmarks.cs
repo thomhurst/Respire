@@ -54,20 +54,31 @@ public class FencedLockBenchmarks
     }
 
     [Benchmark]
-    public async Task<long> AcquireRelease()
+    public Task<long> AcquireRelease()
     {
         _operations++;
 #if FENCED_LOCKS
-        if (Fenced)
-        {
-            await using var attempt = await _coordination.TryAcquireFencedLockAsync(_key, _counter, _duration);
-            return attempt.Lock.FencingToken;
-        }
+        if (Fenced) return AcquireFencedAsync();
 #endif
+        return AcquireStandardAsync();
+    }
+
+    // Keep the standard async state machine identical in the baseline and candidate builds.
+    // Conditional fenced-lease locals in one async method would inflate only the candidate control.
+    private async Task<long> AcquireStandardAsync()
+    {
         await using var standard = await _client.Locks.AcquireAsync(_key, _duration);
         if (!standard.Acquired) throw new InvalidOperationException("Uncontended benchmark lease was not acquired.");
         return 1;
     }
+
+#if FENCED_LOCKS
+    private async Task<long> AcquireFencedAsync()
+    {
+        await using var attempt = await _coordination.TryAcquireFencedLockAsync(_key, _counter, _duration);
+        return attempt.Lock.FencingToken;
+    }
+#endif
 
     [GlobalCleanup]
     public async Task Cleanup()
