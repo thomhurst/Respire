@@ -35,6 +35,48 @@ entries and partial-hit behavior; other replies use exact command-and-argument i
 Missing keys are cached too. Replies are deep-owned internally and converted for each call, so
 enabling caching does not introduce shared mutable objects.
 
+## Concurrent misses
+
+Set `ClientSideCache.CoalesceConcurrentMisses = true` to share concurrent misses for the same
+command and byte-for-byte arguments within a client. Sharing is opt-in; the default is `false`. This covers typed `GET` variants, identical ordered `MGET` miss lists, and all
+eligible deterministic query reads. Typed and raw calls can join the same wire command; each
+caller still performs its own conversion and receives independently owned results and leases.
+With sharing enabled, typed and raw `GET`/`MGET` use the same per-key entries, so either caller
+can populate later hits for both APIs. Raw `MGET` also reuses the typed partial-hit path.
+Binary keys and arguments are snapshotted. Prefix views use resolved wire keys; separate clients,
+databases, and Cluster routing contexts never share work. `GET` and `MGET` are different identities,
+and partially overlapping `MGET` lists are not split into individual `GET` requests.
+
+Canceling one caller does not cancel callers still waiting for the shared request. When the last
+caller cancels, Respire retires and cancels that request. An already accepted command may still
+execute on Redis; its reply is drained in protocol order. The next caller can start a new request.
+Each caller's cancellation token bounds only that caller's wait. The physical request keeps its
+original `CommandTimeout` deadline; joining an existing request does not restart that deadline.
+Client disposal cancels all shared work, including reads retired by an earlier invalidation.
+Server and transport failures reach every remaining caller, retire the shared request, and allow
+a later call to retry. Sharing never replays an accepted command after a transport failure.
+
+Invalidations, explicit `Clear()`, and tracking continuity changes prevent new callers from joining
+older work. Callers already waiting may receive their original read result, but the existing
+invalidation fences reject stale cache insertion. Retirement is conservative: an invalidation
+currently ends joining for all pending identities, even those with unrelated keys. Reads
+started during an invalidation run independently and
+cannot become a source for later callers. Overlapping invalidations keep that interval open
+until every cache-state change finishes. Completed work
+is always removed, including oversized responses and other replies that cannot enter the cache.
+Cache hit/miss counters remain per caller, not per wire request. The process-wide observable
+counter `respire.client_cache.shared_read.retirements` counts pending identities removed by invalidation,
+clearing, or continuity loss. Normal completion and last-caller cancellation are excluded.
+Use this counter to assess how often churn prevents new callers from joining existing work.
+
+Sharing adds bookkeeping and owned-result copies on misses. Keep the default independent
+requests for workloads with little contention. A sole remaining waiter can take the producer's
+owned result; other waiters receive separate copies. Cache hits retain their existing fast path. The CI contention benchmark
+compares default single-caller misses, opted-in single-caller misses, and opted-in 32-caller bursts
+for `GET`, `MGET`, and `HGET`, plus hot `GET`, against both same-run baseline controls. Latency and allocations
+include one complete burst and its local cache eviction. Process CPU counters include benchmark
+warmup/calibration and background client work; they are diagnostic, not per-operation CPU samples.
+
 ## Why this is different
 
 StackExchange.Redis 3.1.13 supports RESP3 and exposes keyspace notifications, but it does not

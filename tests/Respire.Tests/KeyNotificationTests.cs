@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text;
 using Respire.Serialization;
 using TUnit.Assertions;
@@ -240,17 +241,39 @@ public class KeyNotificationTests
     }
 
     [Test]
+    [NotInParallel] // The shared no-GC measurement boundary is process-wide.
     public async Task RepeatedParsingAndStructEnumerationAllocateNothing()
     {
         var message = Message("__subkeyevent@0__:hset", "3:key|1:a,0:,3:x,y");
-        for (var index = 0; index < 100; index++) ParseAndCount(message);
+        _ = MeasureParsingAllocations(message, allocate: false, iterations: 100);
+        _ = MeasureParsingAllocations(message, allocate: true, iterations: 100);
+        // Keep concurrent GC and surrounding async/assertion allocations outside the
+        // counter interval. See docs/ALLOCATION_MEASUREMENT.md for this shared boundary.
+        var (measured, control) = AllocationMeasurement.WithoutConcurrentGc(() =>
+            (MeasureParsingAllocations(message, allocate: false, iterations: 1000),
+                MeasureParsingAllocations(message, allocate: true, iterations: 1000)));
+        await Assert.That(measured.Count).IsEqualTo(4000);
+        await Assert.That(control.Count).IsEqualTo(4000);
+        await Assert.That(measured.Allocated).IsEqualTo(0L);
+        await Assert.That(control.Allocated).IsGreaterThanOrEqualTo(1000L * 37);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static (long Allocated, int Count) MeasureParsingAllocations(
+        RespireMessage message, bool allocate, int iterations)
+    {
         var before = GC.GetAllocatedBytesForCurrentThread();
         var count = 0;
-        for (var index = 0; index < 1000; index++) count += ParseAndCount(message);
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-        await Assert.That(count).IsEqualTo(4000);
-        await Assert.That(allocated).IsEqualTo(0L);
+        for (var index = 0; index < iterations; index++)
+        {
+            count += ParseAndCount(message);
+            if (allocate) GC.KeepAlive(AllocateParsingControl());
+        }
+        return (GC.GetAllocatedBytesForCurrentThread() - before, count);
     }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static object AllocateParsingControl() => new byte[37];
 
     private static int ParseAndCount(RespireMessage message)
     {

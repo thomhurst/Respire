@@ -48,6 +48,15 @@ public sealed record RespireClientSideCacheOptions
             throw new RespireConfigurationException("ClientSideCache.BroadcastPrefixes requires Broadcast tracking.");
         return this with { BroadcastPrefixes = BroadcastPrefixSet.Create(BroadcastPrefixes) };
     }
+
+    /// <summary>
+    /// Shares concurrent equivalent cache misses within this client. Each caller can cancel
+    /// independently; the shared request is canceled when its last caller leaves. Defaults to false.
+    /// </summary>
+    /// <remarks>Each caller's cancellation token bounds only its own wait. The physical request
+    /// retains its original <see cref="RespireOptions.CommandTimeout"/> deadline; joining later
+    /// does not restart that deadline.</remarks>
+    public bool CoalesceConcurrentMisses { get; init; }
 }
 
 /// <summary>Cumulative and current state of a Respire client-side cache.</summary>
@@ -76,7 +85,7 @@ public interface IRespireClientSideCache
     void Clear();
 }
 
-internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
+internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCache
 {
     private const int EntryOverhead = 64;
 
@@ -136,6 +145,23 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
         RespireTelemetry.ClientCacheMisses.Add(1);
         value = default;
         return false;
+    }
+
+    internal bool TryPeek(in RespireKey key, out RespValue value)
+    {
+        if (Volatile.Read(ref _store).TryGet(in key, out var payload))
+        {
+            value = payload is null ? RespValue.Null : RespValue.BulkString(payload);
+            return true;
+        }
+        value = default;
+        return false;
+    }
+
+    internal bool TryPeek(in QueryRequest request, out RespValue value)
+    {
+        var query = request.Query;
+        return Volatile.Read(ref _store).TryGet(in query, out value);
     }
 
     internal bool TryCreateQuery<TCommand>(
@@ -316,19 +342,24 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
 
     internal void Invalidate(in RespireKey key)
     {
-        if (_inflight.TryGetValue(key, out var state))
+        BeginSharedReadInvalidation();
+        try
         {
-            lock (state)
+            if (_inflight.TryGetValue(key, out var state))
             {
-                state.Generation++;
+                lock (state)
+                {
+                    state.Generation++;
+                }
+            }
+
+            lock (_queryLock)
+            {
+                Interlocked.Increment(ref _queryEpoch);
+                Volatile.Read(ref _store).Remove(in key, CacheRemoval.Invalidation);
             }
         }
-
-        lock (_queryLock)
-        {
-            Interlocked.Increment(ref _queryEpoch);
-            Volatile.Read(ref _store).Remove(in key, CacheRemoval.Invalidation);
-        }
+        finally { EndSharedReadInvalidation(); }
         Interlocked.Increment(ref _invalidations);
         RespireTelemetry.ClientCacheInvalidations.Add(1);
     }
@@ -415,20 +446,25 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
 
     private int FlushState(bool continuityLost)
     {
-        Interlocked.Increment(ref _continuityEpoch);
-        Interlocked.Increment(ref _queryEpoch);
-        var replacement = new CacheStore(_options, RecordEviction);
-        var removed = Interlocked.Exchange(ref _store, replacement).Count;
-        if (removed > 0)
+        BeginSharedReadInvalidation();
+        try
         {
-            Interlocked.Add(ref _evictions, removed);
-        }
+            Interlocked.Increment(ref _continuityEpoch);
+            Interlocked.Increment(ref _queryEpoch);
+            var replacement = new CacheStore(_options, RecordEviction);
+            var removed = Interlocked.Exchange(ref _store, replacement).Count;
+            if (removed > 0)
+            {
+                Interlocked.Add(ref _evictions, removed);
+            }
 
-        if (continuityLost)
-        {
-            Interlocked.Increment(ref _continuityFlushes);
+            if (continuityLost)
+            {
+                Interlocked.Increment(ref _continuityFlushes);
+            }
+            return removed;
         }
-        return removed;
+        finally { EndSharedReadInvalidation(); }
     }
 
     private static void PublishFlushMetrics(int removed, bool continuityLost)

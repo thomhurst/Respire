@@ -1336,7 +1336,8 @@ public sealed partial class RespireClient : IRespireClient
     internal ValueTask<TResult[]> CachedGetManyAsync<TResult>(
         ReadOnlySpan<RespireKey> keys,
         CancellationToken cancellationToken,
-        ResponseConverter<RespireClient, TResult> converter)
+        ResponseConverter<RespireClient, TResult> converter,
+        bool keysResolved = false)
     {
         var cache = _core.ClientCache;
         if (keys.Length == 0)
@@ -1365,7 +1366,7 @@ public sealed partial class RespireClient : IRespireClient
             int? clusterSlot = null;
             for (var i = 0; i < keys.Length; i++)
             {
-                var resolvedKey = ResolveKey(keys[i]);
+                var resolvedKey = keysResolved ? keys[i] : ResolveKey(keys[i]);
                 arguments[i] = resolvedKey.AsValue();
                 ValidateMGetClusterSlot(in resolvedKey, ref clusterSlot);
             }
@@ -1395,7 +1396,7 @@ public sealed partial class RespireClient : IRespireClient
         int? cachedClusterSlot = null;
         for (var i = 0; i < keys.Length; i++)
         {
-            var resolvedKey = ResolveKey(keys[i]);
+            var resolvedKey = keysResolved ? keys[i] : ResolveKey(keys[i]);
             ValidateMGetClusterSlot(in resolvedKey, ref cachedClusterSlot);
             if (cache.TryGet(in resolvedKey, out var cached))
             {
@@ -1443,19 +1444,47 @@ public sealed partial class RespireClient : IRespireClient
         clusterSlot = keySlot;
     }
 
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    private async ValueTask<TResult> GetAndCacheAsync<TResult>(
+    // Ordinary misses convert and release their wire response inside one pooled async state.
+    // Only shared producers transfer that response to the coordinator's ownership boundary.
+    private ValueTask<TResult> GetAndCacheAsync<TResult>(
         RespireKey resolvedKey,
         ClientSideCacheCoordinator cache,
         CancellationToken cancellationToken,
         ResponseConverter<RespireClient, TResult> converter)
+        => cache.CoalesceConcurrentMisses
+            ? GetSharedAndCacheAsync(resolvedKey, cache, cancellationToken, converter)
+            : FetchGetAndCacheAsync(resolvedKey, cache, cancellationToken, converter);
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<TResult> GetSharedAndCacheAsync<TResult>(
+        RespireKey resolvedKey, ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
+        ResponseConverter<RespireClient, TResult> converter)
     {
+        var identity = new ClientCacheCommandKey("GET", resolvedKey.AsValue());
+        using var response = await cache.CoalesceReadAsync(
+            identity, (Client: this, Key: resolvedKey, Cache: cache),
+            static (state, token) => state.Client.FetchGetAndCacheAsync(state.Key, state.Cache, token,
+                static (RespireClient _, in RespValue value) => value, transferResponse: true),
+            cancellationToken).ConfigureAwait(false);
+        return converter(this, in response);
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<TResult> FetchGetAndCacheAsync<TResult>(
+        RespireKey resolvedKey, ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
+        ResponseConverter<RespireClient, TResult> converter, bool transferResponse = false)
+    {
+        if (cache.CoalesceConcurrentMisses && cache.TryPeek(in resolvedKey, out var cached))
+            return converter(this, in cached);
         var token = cache.BeginRead(in resolvedKey);
         var command = new Cmd1(Verbs.Get, token.State.Key.AsValue());
         var response = default(RespValue);
         var released = false;
+        var returned = false;
         var allowInsert = true;
         Action<bool>? onRedirect = null;
         if (_core.Cluster is not null)
@@ -1473,7 +1502,9 @@ public sealed partial class RespireClient : IRespireClient
                 "GET", command, cancellationToken, onRedirect).ConfigureAwait(false);
             released = true;
             cache.CompleteRead(in token, in response, allowInsert);
-            return converter(this, in response);
+            var result = converter(this, in response);
+            returned = transferResponse;
+            return result;
         }
         finally
         {
@@ -1481,15 +1512,11 @@ public sealed partial class RespireClient : IRespireClient
             {
                 cache.CompleteRead(in token, in response, allowInsert: false);
             }
-
-            response.Dispose();
+            if (!returned) response.Dispose();
         }
     }
 
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    private async ValueTask<TResult[]> GetManyAndCacheAsync<TResult>(
+    private ValueTask<TResult[]> GetManyAndCacheAsync<TResult>(
         RespireKey[] missingKeys,
         TResult[] result,
         int[] missingIndexes,
@@ -1497,7 +1524,69 @@ public sealed partial class RespireClient : IRespireClient
         ClientSideCacheCoordinator cache,
         CancellationToken cancellationToken,
         ResponseConverter<RespireClient, TResult> converter)
+        => cache.CoalesceConcurrentMisses
+            ? GetManySharedAndCacheAsync(missingKeys, result, missingIndexes, missingCount, cache, cancellationToken, converter)
+            : FetchManyAndCacheAsync(missingKeys, missingCount, cache, cancellationToken,
+                (Client: this, Result: result, Indexes: missingIndexes, Converter: converter),
+                static ((RespireClient Client, TResult[] Result, int[] Indexes, ResponseConverter<RespireClient, TResult> Converter) state, in RespValue response) =>
+                {
+                    var values = response.AsArray();
+                    for (var index = 0; index < values.Length; index++)
+                        state.Result[state.Indexes[index]] = state.Converter(state.Client, in values[index]);
+                    return state.Result;
+                });
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<TResult[]> GetManySharedAndCacheAsync<TResult>(
+        RespireKey[] missingKeys, TResult[] result, int[] missingIndexes, int missingCount,
+        ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
+        ResponseConverter<RespireClient, TResult> converter)
     {
+        var identityArguments = new RespireValue[missingCount];
+        for (var i = 0; i < missingCount; i++) identityArguments[i] = missingKeys[i].AsValue();
+        var identity = new ClientCacheCommandKey("MGET", identityArguments);
+        using var response = await cache.CoalesceReadAsync(
+            identity, (Client: this, Keys: missingKeys, Count: missingCount, Cache: cache),
+            static (state, token) => state.Client.FetchManyAndCacheAsync(
+                state.Keys, state.Count, state.Cache, token, state.Client,
+                static (RespireClient _, in RespValue value) => value, transferResponse: true), cancellationToken).ConfigureAwait(false);
+        var values = response.AsArray();
+        if (values.Length != missingCount)
+            throw new RespireProtocolException($"MGET returned {values.Length} values for {missingCount} keys.");
+        for (var i = 0; i < missingCount; i++)
+            result[missingIndexes[i]] = converter(this, in values[i]);
+        return result;
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<TResult> FetchManyAndCacheAsync<TState, TResult>(
+        RespireKey[] missingKeys, int missingCount, ClientSideCacheCoordinator cache,
+        CancellationToken cancellationToken, TState state, ResponseConverter<TState, TResult> converter,
+        bool transferResponse = false)
+    {
+        if (cache.CoalesceConcurrentMisses && cache.TryPeek(in missingKeys[0], out var firstCached))
+        {
+            var cachedValues = new RespValue[missingCount];
+            cachedValues[0] = firstCached;
+            var allCached = true;
+            for (var i = 1; i < missingCount; i++)
+            {
+                if (!cache.TryPeek(in missingKeys[i], out cachedValues[i]))
+                {
+                    allCached = false;
+                    break;
+                }
+            }
+            if (allCached)
+            {
+                var cached = RespValue.Array(cachedValues);
+                return converter(state, in cached);
+            }
+        }
         var arguments = new RespireValue[missingCount];
         var tokens = new ClientSideCacheCoordinator.ReadToken[missingCount];
         for (var i = 0; i < missingCount; i++)
@@ -1509,6 +1598,7 @@ public sealed partial class RespireClient : IRespireClient
 
         var response = default(RespValue);
         var completed = 0;
+        var returned = false;
         var allowInsert = true;
         Action<bool>? onRedirect = null;
         if (_core.Cluster is not null)
@@ -1541,19 +1631,19 @@ public sealed partial class RespireClient : IRespireClient
                 ref readonly var value = ref values[index];
                 cache.CompleteRead(in tokens[index], in value, allowInsert);
                 completed++;
-                result[missingIndexes[index]] = converter(this, in value);
             }
 
+            var result = converter(state, in response);
+            returned = transferResponse;
             return result;
         }
         finally
         {
+            if (!returned) response.Dispose();
             for (; completed < missingCount; completed++)
             {
                 cache.CompleteRead(in tokens[completed], in response, allowInsert: false);
             }
-
-            response.Dispose();
         }
     }
 
@@ -1730,6 +1820,16 @@ public sealed partial class RespireClient : IRespireClient
             && cache is not null
             && cache.TryCreateQuery(operation, in command, out var query))
         {
+            // Shared GET/MGET producers must populate the same per-key representation,
+            // regardless of whether a typed or raw caller wins the miss.
+            if (cache.CoalesceConcurrentMisses)
+            {
+                if (operation == "GET" && query.Query.ArgumentCount == 1)
+                    return CachedGetAsync(query.PrimaryKey, cancellationToken,
+                        static (RespireClient _, in RespValue value) => value.ToOwned());
+                if (operation == "MGET" && query.Query.ArgumentCount > 0)
+                    return CachedRawGetManyAsync(query.Query, cancellationToken);
+            }
             if (cache.TryGet(in query, out var cached))
             {
                 return new ValueTask<RespValue>(cached);
@@ -1767,7 +1867,31 @@ public sealed partial class RespireClient : IRespireClient
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
-    private async ValueTask<RespValue> QueryAndCacheAsync<TCommand>(
+    private async ValueTask<RespValue> CachedRawGetManyAsync(
+        ClientCacheCommandKey query, CancellationToken cancellationToken)
+    {
+        var keys = new RespireKey[query.ArgumentCount];
+        for (var index = 0; index < keys.Length; index++) keys[index] = query.GetArgument(index).AsKey();
+        var values = await CachedGetManyAsync(keys, cancellationToken,
+            static (RespireClient _, in RespValue value) => value.ToOwned(), keysResolved: true).ConfigureAwait(false);
+        return RespValue.Array(values);
+    }
+
+    private ValueTask<RespValue> QueryAndCacheAsync<TCommand>(
+        string operation, TCommand command, ClientSideCacheCoordinator cache,
+        ClientSideCacheCoordinator.QueryRequest request, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+        => !cache.CoalesceConcurrentMisses
+            ? FetchQueryAndCacheAsync(operation, command, cache, request, cancellationToken)
+            : cache.CoalesceReadAsync(
+                request.Query, (Client: this, Operation: operation, Command: command, Cache: cache, Request: request),
+                static (state, token) => state.Client.FetchQueryAndCacheAsync(
+                    state.Operation, state.Command, state.Cache, state.Request, token), cancellationToken);
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<RespValue> FetchQueryAndCacheAsync<TCommand>(
         string operation,
         TCommand command,
         ClientSideCacheCoordinator cache,
@@ -1775,6 +1899,7 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
+        if (cache.CoalesceConcurrentMisses && cache.TryPeek(in request, out var cached)) return cached;
         var snapshot = SnapshotCommand.Create(in command);
         var token = cache.BeginRead(operation, in request);
         var completed = false;
@@ -1803,6 +1928,7 @@ public sealed partial class RespireClient : IRespireClient
             if (!completed)
             {
                 cache.CompleteRead(in token, in response, allowInsert: false);
+                response.Dispose();
             }
         }
     }
