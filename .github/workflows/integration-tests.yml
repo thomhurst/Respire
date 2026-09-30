@@ -87,6 +87,16 @@ jobs:
         env:
           DOCKER_HOST: unix:///var/run/docker.sock
       
+      - name: Run Caching Tests on Redis 7.4
+        run: |
+          dotnet run --project tests/Respire.Extensions.Caching.Tests/Respire.Extensions.Caching.Tests.csproj \
+            -c Release \
+            -f ${{ matrix.framework }} \
+            --no-build
+        env:
+          DOCKER_HOST: unix:///var/run/docker.sock
+          RESPIRE_TEST_REDIS_IMAGE: redis:7.4.11-alpine
+
       # Test reports and coverage are not available with dotnet run
       # TUnit will handle its own output formatting
       
