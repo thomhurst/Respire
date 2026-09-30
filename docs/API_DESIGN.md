@@ -398,7 +398,9 @@ await foreach (var entry in redis.Streams.ReadGroupAsync(
 
 `AddAsync(key, [("type", "click"), ...])` returns the generated `RespireStreamId`
 (comparable struct, not string).
-Pass `StreamAddOptions` to select an id, trim with `MAXLEN`, or require an existing stream.
+Pass `StreamAddOptions` to select an id, trim with `MAXLEN` or `MINID`, or require an existing stream.
+`Limit` bounds approximate trimming work; exact trimming does not accept a limit.
+`TrimAsync(key, StreamTrimOptions)` and deferred `Streams.Trim` share those threshold/limit rules.
 The options overload returns `null` when `CreateStream` is false and the stream is absent.
 `RangeAsync(key, start, end, count, descending: true)` reads the newest matching entries first with `XREVRANGE`.
 Streams and sorted sets use an optional `descending = false` parameter immediately before the cancellation token.

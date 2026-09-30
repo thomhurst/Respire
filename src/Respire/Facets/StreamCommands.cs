@@ -251,10 +251,17 @@ public readonly record struct StreamAddOptions
     /// <summary>Gets the entry id, or null to let Redis generate one.</summary>
     public RespireStreamId? Id { get; init; }
 
-    /// <summary>Gets the maximum stream length, or null to leave the stream untrimmed.</summary>
+    /// <summary>Gets the maximum stream length; mutually exclusive with MinId.</summary>
     public long? MaxLength { get; init; }
 
-    /// <summary>Gets whether maximum-length trimming may be approximate. Defaults to true.</summary>
+    /// <summary>Evicts entries older than this numeric stream id. Requires Redis 6.2+.</summary>
+    public RespireStreamId? MinId { get; init; }
+
+    /// <summary>Limits approximate trimming work. Requires a threshold and Redis 6.2+; zero disables the limit.</summary>
+    public long? Limit { get; init; }
+
+    /// <summary>Gets whether trimming may be approximate. Defaults to true.</summary>
+    /// <remarks>Unlike XADD, <see cref="StreamTrimOptions.Approximate"/> defaults to false for XTRIM.</remarks>
     public bool ApproximateTrim
     {
         get => _approximateTrim ?? true;
@@ -268,16 +275,23 @@ public readonly record struct StreamAddOptions
         init => _createStream = value;
     }
 
+    internal StreamTrimOptions ToTrimOptions() => new()
+    {
+        MaxLength = MaxLength, MinId = MinId, Approximate = ApproximateTrim, Limit = Limit,
+    };
+
     /// <inheritdoc/>
     public bool Equals(StreamAddOptions other)
         => Id == other.Id
            && MaxLength == other.MaxLength
+           && MinId == other.MinId
+           && Limit == other.Limit
            && ApproximateTrim == other.ApproximateTrim
            && CreateStream == other.CreateStream;
 
     /// <inheritdoc/>
     public override int GetHashCode()
-        => HashCode.Combine(Id, MaxLength, ApproximateTrim, CreateStream);
+        => HashCode.Combine(Id, MaxLength, MinId, Limit, ApproximateTrim, CreateStream);
 }
 
 /// <summary>
@@ -339,6 +353,9 @@ public interface IStreamCommands
         long maxLength,
         bool approximate = false,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Trims by MAXLEN or MINID; returns the number removed. Redis: XTRIM.</summary>
+    ValueTask<long> TrimAsync(RespireKey key, StreamTrimOptions options, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Creates a consumer group (and, by default, the stream itself if missing). Returns false
@@ -525,13 +542,8 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         bool snapshotValues = false)
     {
-        if (options.MaxLength is { } maxLength)
-        {
-            ArgumentOutOfRangeException.ThrowIfNegative(maxLength);
-        }
-
-        var optionCount = (options.CreateStream ? 0 : 1)
-            + (options.MaxLength.HasValue ? options.ApproximateTrim ? 3 : 2 : 0);
+        var trim = options.ToTrimOptions();
+        var optionCount = (options.CreateStream ? 0 : 1) + trim.ValidateAndCountArguments(requireThreshold: false, nameof(options));
         var args = new RespireValue[optionCount + 1 + fields.Length * 2];
         var offset = 0;
         if (!options.CreateStream)
@@ -539,16 +551,7 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
             args[offset++] = "NOMKSTREAM";
         }
 
-        if (options.MaxLength is { } trimLength)
-        {
-            args[offset++] = "MAXLEN";
-            if (options.ApproximateTrim)
-            {
-                args[offset++] = "~";
-            }
-
-            args[offset++] = trimLength;
-        }
+        offset += trim.CopyArgumentsTo(args.AsSpan(offset));
 
         args[offset++] = options.Id?.Value ?? "*";
         for (var i = 0; i < fields.Length; i++)
@@ -627,6 +630,16 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
                 "XTRIM", new Cmd4(XTrim, client.Key(in key), "MAXLEN", "~", maxLength), cancellationToken)
             : client.IntegerAsync(
                 "XTRIM", new Cmd3(XTrim, client.Key(in key), "MAXLEN", maxLength), cancellationToken);
+    }
+
+    public ValueTask<long> TrimAsync(RespireKey key, StreamTrimOptions options, CancellationToken cancellationToken = default)
+        => client.IntegerAsync("XTRIM", BuildTrimCommand(client, key, options), cancellationToken);
+
+    internal static Cmd1N BuildTrimCommand(RespireClient client, RespireKey key, StreamTrimOptions options)
+    {
+        var args = new RespireValue[options.ValidateAndCountArguments(requireThreshold: true, nameof(options))];
+        options.CopyArgumentsTo(args);
+        return new Cmd1N(XTrim, client.Key(in key), args);
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]

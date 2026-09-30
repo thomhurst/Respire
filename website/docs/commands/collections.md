@@ -302,6 +302,48 @@ await redis.SortedSets.AddAsync("binary:scores", entries, cancellationToken);
 
 ## Streams
 
+### Trimming
+
+Use `StreamAddOptions.MinId` or `MaxLength` to trim while appending. Use `Streams.TrimAsync`
+with `StreamTrimOptions` to trim an existing stream and receive the number of entries removed.
+`MinId` removes entries with lower numeric IDs; `MaxLength` retains the newest entries up to
+the requested length. The thresholds are mutually exclusive. `TrimAsync` requires one;
+`AddAsync` leaves the stream untrimmed when neither is supplied.
+
+```csharp
+await redis.Streams.AddAsync("events", new StreamAddOptions
+{
+    MinId = "1700000000000-0", Limit = 1000,
+}, ("type", "updated"));
+
+long removed = await redis.Streams.TrimAsync("events", new StreamTrimOptions
+{
+    MinId = "1700000000000-0", Approximate = true, Limit = 0,
+});
+```
+
+`StreamAddOptions.ApproximateTrim` defaults to `true`; `StreamTrimOptions.Approximate` and
+the existing `TrimByMaxLengthAsync` shortcut default to `false`. Approximate trimming removes
+whole internal stream nodes and can retain entries beyond the threshold. `Limit` is allowed
+only with approximate trimming and a threshold; it bounds trimming work rather than promising
+an exact removed count. Zero disables the work limit, while null leaves the server default.
+Lengths and limits must be non-negative, and `MinId` accepts numeric IDs (including a
+milliseconds-only ID), not range or consumer-read sentinels. Invalid combinations fail before I/O.
+
+MINID and LIMIT require Redis 6.2+; MAXLEN is available from Redis 5.0. Unsupported servers
+return their normal command errors. See the [XADD](https://redis.io/docs/latest/commands/xadd/)
+and [XTRIM](https://redis.io/docs/latest/commands/xtrim/) references. Existing MAXLEN overloads
+retain their signatures and defaults.
+
+Batches and transactions expose the same options through `Streams.Add` and `Streams.Trim`.
+They validate at enqueue time and copy or serialize supplied keys and values then. Immediate
+calls borrow binary keys and field values until their returned operation completes. Stream IDs
+are immutable strings. Prefixing and Cluster slot routing apply to the stream key only.
+Custom `IStreamCommands` and `IBatchStreamCommands` implementations must add `TrimAsync` and
+`Trim`, respectively; `StreamAddOptions` equality includes `MinId` and `Limit`.
+
+### Consumer groups
+
 ```csharp
 await redis.Streams.CreateGroupAsync("events", "processors", createStream: true);
 

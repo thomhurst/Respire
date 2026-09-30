@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Stream trimming
+
+- `StreamAddOptions` adds `MinId` and `Limit`. `Streams.TrimAsync` and deferred `Streams.Trim`
+  accept `StreamTrimOptions` for MAXLEN/MINID with exact or approximate trimming. LIMIT requires
+  approximate trimming; MINID/LIMIT require Redis 6.2+. Existing MAXLEN overloads and defaults
+  are unchanged. Custom stream-facet implementations must add the new trim member. See
+  [stream trimming](../website/docs/commands/collections.md#trimming) for validation and input lifetimes.
+
 ### Distributed locks
 
 - Distributed locks use native conditional renewal/deletion on supported Redis and Valkey versions, with per-connection Lua fallback on older servers and preserved managed cancellation fencing.
