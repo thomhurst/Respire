@@ -297,6 +297,13 @@ An alias does not change an existing connection's TLS certificate/SNI name. Conf
 that explicit value remains authoritative. Configured seed connections are reused when
 topology identifies their aliases.
 
+Cluster topology refresh runs every 60 seconds by default. Set
+`ClusterTopologyRefreshInterval` to `null` or `TimeSpan.Zero` to disable periodic refresh.
+The router also refreshes after primary connection loss and coalesces refresh work triggered by
+redirects or concurrent `READONLY` recoveries. Refresh uses one bounded discovery round and keeps
+the last published slot map when discovery fails. Replica endpoints, node IDs, and aliases from
+`CLUSTER SLOTS` stay current in router metadata; command routing still uses primaries.
+
 ## Redis Sentinel
 
 Set `SentinelPrimaryName` to resolve the current primary from one or more Sentinel endpoints before

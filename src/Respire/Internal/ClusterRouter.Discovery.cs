@@ -15,6 +15,271 @@ internal sealed partial class ClusterRouter
     // episode ID when an observer aggregates them without retaining the client instance.
     private static long _nextDiscoveryEpisode;
     internal TimeProvider DiscoveryClock { get; set; } = TimeProvider.System;
+    private readonly SemaphoreSlim _topologyRefreshSignal = new(0, 1);
+    private Task? _topologyRefreshWorker;
+    private int _topologyRefreshDelayMilliseconds;
+    private readonly object _sharedRefreshGate = new();
+    private Task<object?>? _sharedRefreshTask;
+    private ReadOnlyRefreshFlight? _readOnlyRefreshFlight;
+    private long _lastTopologyRefreshTimestamp;
+    private bool _hasTopologyRefreshTimestamp;
+    private bool _lastTopologyRefreshResult;
+
+    private sealed class ReadOnlyRefreshFlight(CancellationTokenSource cancellation)
+    {
+        internal CancellationTokenSource Cancellation { get; } = cancellation;
+        internal int Waiters;
+        internal bool Completed;
+    }
+
+    private Task<RespireConnectionMultiplexer?> RefreshReadOnlySharedAsync(
+        RespireServerException rejection, RespireConnection source, int slot, CancellationToken waiterToken,
+        DiscoveryRound? discovery)
+    {
+        TaskCompletionSource<object?>? start = null;
+        Task<object?> task;
+        ReadOnlyRefreshFlight? flight;
+        lock (_sharedRefreshGate)
+        {
+            if (_sharedRefreshTask is null)
+            {
+                start = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                _sharedRefreshTask = start.Task;
+                _readOnlyRefreshFlight = new(CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token));
+            }
+            task = _sharedRefreshTask;
+            flight = _readOnlyRefreshFlight;
+            if (flight is not null) flight.Waiters++;
+        }
+        if (start is not null)
+            _ = CompleteSharedRefreshAsync(start, async () =>
+                await RunReadOnlyRefreshAsync(rejection, source, slot, flight!.Cancellation.Token, discovery).ConfigureAwait(false), flight);
+        return AwaitReadOnlyRefreshAsync(task, waiterToken, flight);
+    }
+
+    private async Task<RespireConnectionMultiplexer?> AwaitReadOnlyRefreshAsync(
+        Task<object?> task, CancellationToken waiterToken, ReadOnlyRefreshFlight? flight)
+    {
+        try { return await task.WaitAsync(waiterToken).ConfigureAwait(false) as RespireConnectionMultiplexer; }
+        finally { ReleaseReadOnlyWaiter(flight); }
+    }
+
+    private void ReleaseReadOnlyWaiter(ReadOnlyRefreshFlight? flight)
+    {
+        if (flight is null) return;
+        CancellationTokenSource? cancel = null;
+        lock (_sharedRefreshGate)
+        {
+            if (ReferenceEquals(_readOnlyRefreshFlight, flight) && !flight.Completed && --flight.Waiters == 0)
+                cancel = flight.Cancellation;
+        }
+        try { cancel?.Cancel(); }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async Task CompleteSharedRefreshAsync(TaskCompletionSource<object?> completion, Func<Task<object?>> work,
+        ReadOnlyRefreshFlight? readOnlyFlight = null)
+    {
+        try
+        {
+            var result = await work().ConfigureAwait(false);
+            lock (_sharedRefreshGate)
+            {
+                _lastTopologyRefreshResult = result is true or RespireConnectionMultiplexer;
+                _lastTopologyRefreshTimestamp = DiscoveryClock.GetTimestamp();
+                _hasTopologyRefreshTimestamp = true;
+            }
+            completion.TrySetResult(result);
+        }
+        catch (Exception error) { completion.TrySetException(error); }
+        finally
+        {
+            lock (_sharedRefreshGate)
+            {
+                if (ReferenceEquals(_sharedRefreshTask, completion.Task)) _sharedRefreshTask = null;
+                if (readOnlyFlight is not null && ReferenceEquals(_readOnlyRefreshFlight, readOnlyFlight))
+                {
+                    readOnlyFlight.Completed = true;
+                    _readOnlyRefreshFlight = null;
+                }
+            }
+            readOnlyFlight?.Cancellation.Dispose();
+        }
+    }
+
+    private async Task<RespireConnectionMultiplexer?> RunReadOnlyRefreshAsync(
+        RespireServerException rejection, RespireConnection source, int slot, CancellationToken cancellationToken,
+        DiscoveryRound? discovery)
+    {
+        using var scope = BeginDiscovery(discovery);
+        try
+        {
+            scope.Round?.Failed(new RespireEndpoint(source.Host, source.Port), rejection);
+            return await RefreshReadOnlyOwnerCoreAsync(rejection, source, slot, cancellationToken, scope.Round)
+                .ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            scope.SetTerminalError(error);
+            if (error is OperationCanceledException or RespireException or IOException)
+            {
+                try { _logger?.LogDebug(error, "Redis Cluster READONLY recovery failed"); }
+                catch (Exception) { }
+                return null;
+            }
+            throw;
+        }
+    }
+
+    private Task<bool> RefreshTopologySharedAsync(CancellationToken waiterToken)
+    {
+        Task<object?> refresh;
+        TaskCompletionSource<object?>? start = null;
+        ReadOnlyRefreshFlight? readOnlyFlight;
+        lock (_sharedRefreshGate)
+        {
+            if (_sharedRefreshTask is null && _hasTopologyRefreshTimestamp
+                && DiscoveryClock.GetElapsedTime(_lastTopologyRefreshTimestamp) < TimeSpan.FromSeconds(5))
+            {
+                return waiterToken.CanBeCanceled
+                    ? Task.FromResult(_lastTopologyRefreshResult).WaitAsync(waiterToken)
+                    : Task.FromResult(_lastTopologyRefreshResult);
+            }
+            if (_sharedRefreshTask is null)
+            {
+                start = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                _sharedRefreshTask = start.Task;
+            }
+            refresh = _sharedRefreshTask;
+            readOnlyFlight = _readOnlyRefreshFlight;
+            if (readOnlyFlight is not null) readOnlyFlight.Waiters++;
+        }
+        if (start is not null) _ = CompleteSharedRefreshAsync(start, async () =>
+            await RunTopologyRefreshAsync().ConfigureAwait(false));
+        return AwaitTopologyRefreshAsync(refresh, waiterToken, readOnlyFlight);
+    }
+
+    private async Task<bool> AwaitTopologyRefreshAsync(Task<object?> task, CancellationToken waiterToken,
+        ReadOnlyRefreshFlight? flight)
+    {
+        try
+        {
+            var refresh = AwaitTopologyRefreshResultAsync(task);
+            return waiterToken.CanBeCanceled
+                ? await refresh.WaitAsync(waiterToken).ConfigureAwait(false)
+                : await refresh.ConfigureAwait(false);
+        }
+        finally { ReleaseReadOnlyWaiter(flight); }
+    }
+
+    private static async Task<bool> AwaitTopologyRefreshResultAsync(Task<object?> task)
+        => await task.ConfigureAwait(false) is true or RespireConnectionMultiplexer;
+
+    private async Task<bool> RunTopologyRefreshAsync()
+    {
+        using var scope = BeginDiscovery(null);
+        try
+        {
+            using var deadline = new CancellationTokenSource(_options.CommandTimeout ?? _options.ConnectTimeout);
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, _stopDiscovery.Token);
+            var round = scope.Round;
+            var candidates = new List<RespireConnectionMultiplexer>();
+            var seen = new HashSet<RespireConnectionMultiplexer>(ReferenceEqualityComparer.Instance);
+            foreach (var master in Volatile.Read(ref _masters))
+            {
+                if (master.IsConnected && !master.IsRetired && seen.Add(master)) candidates.Add(master);
+            }
+            foreach (var endpoint in _seeds)
+            {
+                var seedNode = GetOrCreateNode(endpoint);
+                if (seen.Add(seedNode)) candidates.Add(seedNode);
+            }
+            var connected = candidates.Select((node, index) => (node, index))
+                .Where(static candidate => candidate.node.IsConnected && !candidate.node.IsRetired)
+                .Select(static candidate => candidate.index).ToArray();
+            var position = connected.Length == 0 ? -1 : connected[Random.Shared.Next(connected.Length)];
+            if (position > 0) candidates = candidates.Skip(position).Concat(candidates.Take(position)).ToList();
+            foreach (var candidate in candidates)
+            {
+                linked.Token.ThrowIfCancellationRequested();
+                try
+                {
+                    await EnsureRouteNodeConnectedAsync(candidate, linked.Token, round).ConfigureAwait(false);
+                    if (await TryLoadSlotsAsync(candidate, linked.Token, requireComplete: true).ConfigureAwait(false)
+                        && HasCompleteTopology())
+                    {
+                        SetSeed(candidate);
+                        return true;
+                    }
+                    round?.FailedNode(candidate, new RespireConnectionException("Cluster candidate did not provide a complete topology."));
+                }
+                catch (Exception error) when (error is not OperationCanceledException && IsDiscoveryFailure(error))
+                {
+                    round?.FailedNode(candidate, error);
+                }
+            }
+            scope.SetTerminalError(new RespireConnectionException("Redis Cluster topology refresh found no complete topology."));
+            try { _logger?.LogWarning("Redis Cluster topology refresh failed for all {CandidateCount} candidates", candidates.Count); }
+            catch (Exception) { }
+            return false;
+        }
+        catch (Exception error)
+        {
+            scope.SetTerminalError(error);
+            try { _logger?.LogDebug(error, "Redis Cluster topology refresh failed"); }
+            catch (Exception) { }
+            return false;
+        }
+    }
+
+    private void StartTopologyRefreshWorker()
+    {
+        var interval = _options.ClusterTopologyRefreshInterval;
+        _topologyRefreshWorker = Task.Run(async () =>
+        {
+            while (!_stopDiscovery.IsCancellationRequested)
+            {
+                using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(_stopDiscovery.Token);
+                var signal = _topologyRefreshSignal.WaitAsync(waitCancellation.Token);
+                var timer = interval is { } delay && delay > TimeSpan.Zero
+                    ? Task.Delay(delay, TimeProvider.System, waitCancellation.Token)
+                    : Task.Delay(Timeout.InfiniteTimeSpan, waitCancellation.Token);
+                var completed = await Task.WhenAny(timer, signal).ConfigureAwait(false);
+                await waitCancellation.CancelAsync().ConfigureAwait(false);
+                try { await Task.WhenAll(timer, signal).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (waitCancellation.IsCancellationRequested) { }
+                if (_stopDiscovery.IsCancellationRequested) return;
+                if (ReferenceEquals(completed, signal))
+                {
+                    var delayMilliseconds = Interlocked.Exchange(ref _topologyRefreshDelayMilliseconds, 0);
+                    if (delayMilliseconds > 0)
+                    {
+                        try
+                        {
+                            await Task.Delay(TimeSpan.FromMilliseconds(delayMilliseconds), TimeProvider.System, _stopDiscovery.Token)
+                                .ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException) when (_stopDiscovery.IsCancellationRequested) { return; }
+                    }
+                }
+                try { await RefreshTopologySharedAsync(_stopDiscovery.Token).ConfigureAwait(false); }
+                catch (Exception error) when (error is not OperationCanceledException)
+                {
+                    try { _logger?.LogDebug(error, "Periodic Redis Cluster topology refresh failed"); }
+                    catch (Exception) { }
+                }
+            }
+        });
+    }
+
+    internal void SignalTopologyRefresh(int delayMilliseconds = 0)
+    {
+        if (Volatile.Read(ref _disposed) != 0) return;
+        if (delayMilliseconds == 0) Interlocked.Exchange(ref _topologyRefreshDelayMilliseconds, 0);
+        else Interlocked.CompareExchange(ref _topologyRefreshDelayMilliseconds, delayMilliseconds, 0);
+        try { _topologyRefreshSignal.Release(); }
+        catch (SemaphoreFullException) { }
+    }
 
     internal event Action<RespireConnectionStateChange>? DiscoveryStateChanged;
 

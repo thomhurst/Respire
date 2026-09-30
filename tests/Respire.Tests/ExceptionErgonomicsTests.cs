@@ -89,4 +89,25 @@ public class ExceptionErgonomicsTests
         await Assert.That(() => RespireClient.Create(options))
             .ThrowsExactly<RespireConfigurationException>();
     }
+
+    [Test]
+    public async Task ClusterTopologyRefreshInterval_DefaultsToOneMinute()
+    {
+        await Assert.That(new RespireOptions().ClusterTopologyRefreshInterval)
+            .IsEqualTo(TimeSpan.FromSeconds(60));
+    }
+
+    [Test]
+    public async Task Create_WithNegativeClusterTopologyRefreshInterval_ThrowsConfigurationException()
+    {
+        var options = new RespireOptions
+        {
+            UseCluster = true,
+            Endpoints = [new RespireEndpoint("localhost")],
+            ClusterTopologyRefreshInterval = TimeSpan.FromMilliseconds(-1),
+        };
+
+        await Assert.That(() => RespireClient.Create(options))
+            .ThrowsExactly<RespireConfigurationException>();
+    }
 }

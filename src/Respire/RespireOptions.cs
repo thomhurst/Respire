@@ -212,6 +212,9 @@ public sealed record RespireOptions
     /// Cluster discovery shares one fallback budget across nested node and seed selection per round.</remarks>
     public RespireReconnectPolicy? ReconnectPolicy { get; init; }
 
+    /// <summary>Interval for background Redis Cluster topology refresh. Null or zero disables periodic refresh.</summary>
+    public TimeSpan? ClusterTopologyRefreshInterval { get; init; } = TimeSpan.FromSeconds(60);
+
     /// <summary>Use TLS. Enabled automatically for <c>rediss://</c> connection strings.</summary>
     public bool UseTls { get; init; }
 
@@ -340,6 +343,8 @@ public sealed record RespireOptions
         Require(CredentialRefreshRetryDelay >= TimeSpan.FromMilliseconds(1), nameof(CredentialRefreshRetryDelay), "must be at least one millisecond");
         Require(ThreadPoolWarningThreshold > TimeSpan.Zero, nameof(ThreadPoolWarningThreshold), "must be positive");
         ReconnectPolicy?.Validate();
+        Require(ClusterTopologyRefreshInterval is null || ClusterTopologyRefreshInterval >= TimeSpan.Zero,
+            nameof(ClusterTopologyRefreshInterval), "must be non-negative or null");
         Require(
             CommandTimeout is null || CommandTimeout >= TimeSpan.FromMilliseconds(1),
             nameof(CommandTimeout),
