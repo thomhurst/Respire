@@ -142,7 +142,7 @@ public class FakeTransactionTests
         using (var queued = await session.CommandAsync("SET", "key", "value"))
             await Assert.That(queued.IsError).IsEqualTo(command == "SET");
         using (var aborted = await session.CommandAsync("EXEC"))
-            await Assert.That(aborted.AsString()).StartsWith("EXECABORT");
+            await Assert.That(aborted.GetErrorMessage()).StartsWith("EXECABORT");
         await Assert.That(WatcherCount(server)).IsEqualTo(0);
         using (var absent = await session.CommandAsync("GET", "key")) await Assert.That(absent.IsNull).IsTrue();
         using (var next = await session.CommandAsync("MULTI")) { }
@@ -183,9 +183,9 @@ public class FakeTransactionTests
             await Assert.That(queued.AsString()).IsEqualTo("QUEUED");
         }
         using (var rejected = await session.CommandBytesAsync("SET"u8.ToArray(), "key"u8.ToArray(), payload))
-            await Assert.That(rejected.AsString()).Contains("transaction queue exceeds 16 MiB");
+            await Assert.That(rejected.GetErrorMessage()).Contains("transaction queue exceeds 16 MiB");
         using (var aborted = await session.CommandAsync("EXEC"))
-            await Assert.That(aborted.AsString()).StartsWith("EXECABORT");
+            await Assert.That(aborted.GetErrorMessage()).StartsWith("EXECABORT");
         using (var absent = await session.CommandAsync("GET", "key")) await Assert.That(absent.IsNull).IsTrue();
         using (var multi = await session.CommandAsync("MULTI")) { }
         using (var queued = await session.CommandAsync("SET", "key", "small")) { }
@@ -235,7 +235,7 @@ public class FakeTransactionTests
             using (var multi = await session.CommandAsync("MULTI")) { }
             using (var rejected = await session.CommandAsync(arguments)) await Assert.That(rejected.IsError).IsTrue();
             using (var aborted = await session.CommandAsync("EXEC"))
-                await Assert.That(aborted.AsString()).StartsWith("EXECABORT");
+                await Assert.That(aborted.GetErrorMessage()).StartsWith("EXECABORT");
             using var alive = await session.CommandAsync("PING");
             await Assert.That(alive.AsString()).IsEqualTo("PONG");
         }

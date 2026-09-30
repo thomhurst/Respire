@@ -69,6 +69,7 @@ public sealed partial class RespireFakeServer
     private FakeReply Watch(Connection connection, byte[][] args)
     {
         if (connection.Transaction is not null) return FakeReply.Error("ERR WATCH inside MULTI is not allowed");
+        // An invalidated watch stays invalid until UNWATCH, DISCARD, or EXEC clears it.
         if (connection.WatchChanged) return FakeReply.Ok;
         for (var index = 1; index < args.Length; index++)
         {
@@ -100,6 +101,7 @@ public sealed partial class RespireFakeServer
         connection.Transaction = null;
         connection.TransactionError = false;
         connection.QueuedBytes = 0;
+        // Redis clears both the queue and all WATCH registrations after EXEC or DISCARD.
         Unwatch(connection);
     }
 

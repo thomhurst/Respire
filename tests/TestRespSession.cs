@@ -33,11 +33,11 @@ internal sealed class TestRespSession(Stream stream, TcpClient? socket = null) :
         try
         {
             using var hello = await session.CommandAsync("HELLO", ((int)options.Protocol).ToString());
-            if (hello.IsError) throw new IOException(hello.AsString());
+            if (hello.IsError) throw new IOException(hello.GetErrorMessage());
             if (options.Database != 0)
             {
                 using var selected = await session.CommandAsync("SELECT", options.Database.ToString());
-                if (selected.IsError) throw new IOException(selected.AsString());
+                if (selected.IsError) throw new IOException(selected.GetErrorMessage());
             }
             return session;
         }

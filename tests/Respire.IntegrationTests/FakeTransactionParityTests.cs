@@ -24,14 +24,14 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
             using (var error = await session.CommandAsync(invalid)) error.IsError.Should().BeTrue();
             await Text(session, "QUEUED", "SET", "never", "value");
             using (var aborted = await session.CommandAsync("EXEC"))
-                aborted.AsString().Should().StartWith("EXECABORT");
+                aborted.GetErrorMessage().Should().StartWith("EXECABORT");
             (await observer.ExistsAsync("never")).Should().BeFalse();
         }
         await observer.SetAsync("wrong", "not a number");
         await Text(session, "OK", "WATCH", "watched");
         await Text(session, "OK", "MULTI");
-        using (var nested = await session.CommandAsync("MULTI")) nested.AsString().Should().Contain("nested");
-        using (var watch = await session.CommandAsync("WATCH", "other")) watch.AsString().Should().Contain("inside MULTI");
+        using (var nested = await session.CommandAsync("MULTI")) nested.GetErrorMessage().Should().Contain("nested");
+        using (var watch = await session.CommandAsync("WATCH", "other")) watch.GetErrorMessage().Should().Contain("inside MULTI");
         await Text(session, "QUEUED", "SET", "never", "value", "invalid-option");
         await Text(session, "QUEUED", "INCR", "wrong");
         await Text(session, "QUEUED", "SET", "applied", "value");
@@ -204,7 +204,7 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
         foreach (var command in new[] { "EXEC", "DISCARD" })
         {
             using var invalid = await session.CommandAsync(command);
-            invalid.AsString().Should().Be($"ERR {command} without MULTI");
+            invalid.GetErrorMessage().Should().Be($"ERR {command} without MULTI");
         }
     }
 
