@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
@@ -138,7 +139,7 @@ internal sealed partial class RespireConnection
                     // A provider or injected clock can complete inline on this connection's
                     // serial reply worker. Yield in this observer-owning state machine, not
                     // only in a helper whose task might complete before our await begins.
-                    await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+                    await YieldOffReplyWorker();
                     if (_stop.IsCancellationRequested || !connection.IsAcceptingCommands) return;
                     if (clock.GetUtcNow() >= expiry)
                     {
@@ -173,6 +174,9 @@ internal sealed partial class RespireConnection
                 Record(succeeded: true, "no-expiry");
                 return false;
             }
+            // A retry consumes the whole configured delay; a refresh waits for the lead time.
+            // Timers are armed in bounded chunks, and expiry is rechecked after every chunk.
+            var retryDelay = options.CredentialRefreshRetryDelay;
             while (!_stop.IsCancellationRequested && connection.IsAcceptingCommands)
             {
                 var remaining = expiry - clock.GetUtcNow();
@@ -181,36 +185,11 @@ internal sealed partial class RespireConnection
                     AbortExpired();
                     return false;
                 }
-                if (retry)
-                {
-                    var retryDelay = options.CredentialRefreshRetryDelay;
-                    while (retryDelay > TimeSpan.Zero)
-                    {
-                        remaining = expiry - clock.GetUtcNow();
-                        if (remaining <= TimeSpan.Zero)
-                        {
-                            AbortExpired();
-                            return false;
-                        }
-                        var delay = Min(retryDelay, remaining, TimeSpan.FromDays(1));
-                        await Task.Delay(delay, clock, _stop.Token).ConfigureAwait(false);
-                        if (!connection.IsAcceptingCommands) return false;
-                        retryDelay -= delay;
-                    }
-                    return true;
-                }
-
-                var refreshDelay = remaining - options.CredentialRefreshBeforeExpiry;
-                if (refreshDelay <= TimeSpan.Zero) return true;
-                await Task.Delay(Min(refreshDelay, remaining, TimeSpan.FromDays(1)), clock, _stop.Token).ConfigureAwait(false);
-                if (!connection.IsAcceptingCommands) return false;
-                remaining = expiry - clock.GetUtcNow();
-                if (remaining <= TimeSpan.Zero)
-                {
-                    AbortExpired();
-                    return false;
-                }
-                if (remaining <= options.CredentialRefreshBeforeExpiry) return true;
+                var wait = retry ? retryDelay : remaining - options.CredentialRefreshBeforeExpiry;
+                if (wait <= TimeSpan.Zero) return true;
+                var delay = Min(wait, remaining, MaxTimerChunk);
+                await Task.Delay(delay, clock, _stop.Token).ConfigureAwait(false);
+                retryDelay -= delay;
             }
             return false;
         }
@@ -224,7 +203,7 @@ internal sealed partial class RespireConnection
             catch (OperationCanceledException) when (_stop.IsCancellationRequested) { throw; }
             catch (Exception)
             {
-                await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+                await YieldOffReplyWorker();
                 Record(succeeded: false, "provider");
                 return null;
             }
@@ -233,12 +212,13 @@ internal sealed partial class RespireConnection
         private async ValueTask<RenewalOutcome> ReauthenticateAsync(
             RespireCredentials current, RespireCredentials next, CancellationToken cancellationToken)
         {
-            var renewed = false;
             var clock = options.CredentialTimeProvider;
             var expiry = current.ExpiresAt!.Value;
+            RenewalOutcome outcome;
             try
             {
-                if ((next.Username ?? "default") != (current.Username ?? "default"))
+                // Redis ACL user names are case-sensitive, so the comparison is ordinal.
+                if (!string.Equals(next.Username ?? "default", current.Username ?? "default", StringComparison.Ordinal))
                     throw new RespireAuthenticationException($"Credential renewal changed the ACL user for {connection.Host}:{connection.Port}.");
                 var authRemaining = expiry - clock.GetUtcNow();
                 if (next.ExpiresAt is { } nextExpiry)
@@ -251,39 +231,58 @@ internal sealed partial class RespireConnection
                 using var reply = await connection.SendCredentialRenewalAsync(next, authCancellation.Token).ConfigureAwait(false);
                 if (reply.Type != RespDataType.SimpleString || !reply.AsSpan().SequenceEqual("OK"u8))
                     throw new RespireAuthenticationException($"Credential renewal was rejected by {connection.Host}:{connection.Port}.");
-                renewed = true;
+                outcome = RenewalOutcome.Renewed;
             }
-            catch (OperationCanceledException) when (_stop.IsCancellationRequested) { return RenewalOutcome.Stopped; }
+            catch (OperationCanceledException) when (_stop.IsCancellationRequested) { outcome = RenewalOutcome.Stopped; }
             // Retirement can win before AUTH is enqueued. Accepted commands must still drain.
-            catch (RespireConnectionRetiredException) { return RenewalOutcome.Stopped; }
+            catch (RespireConnectionRetiredException) { outcome = RenewalOutcome.Stopped; }
             catch (Exception error)
             {
+                // Abort before yielding so fenced callers observe the authentication failure promptly.
                 connection.Abort(error as RespireAuthenticationException
                     ?? new RespireAuthenticationException($"Credential renewal failed for {connection.Host}:{connection.Port}.", error));
-                await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
-                Record(succeeded: false, "reauthenticate");
-                return RenewalOutcome.Failed;
+                outcome = RenewalOutcome.Failed;
             }
-            finally
+
+            // AUTH replies resume inline on the serial completion worker. This method owns
+            // the observers, so this hop also covers a synchronously completed send.
+            await YieldOffReplyWorker();
+            if (outcome == RenewalOutcome.Failed) Record(succeeded: false, "reauthenticate");
+            int? evictions = null;
+            try
             {
-                // AUTH replies resume inline on the serial completion worker. This method
-                // owns the observers, so this yield also covers a synchronously completed send.
-                await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
-                var evictions = InvalidateCache();
-                // Only validated success opens admission. Stop/failure leaves it closed until
-                // Abort; RequestStop can run before Abort acquires the write gate.
-                if (renewed)
-                {
-                    // The scheduler hop or cache mutation may outlast the credentials.
-                    var completedAt = clock.GetUtcNow();
-                    if (completedAt >= expiry || next.ExpiresAt <= completedAt)
-                        throw new RespireAuthenticationException($"Credentials expired during renewal for {connection.Host}:{connection.Port}.");
-                    connection.CompleteCredentialRenewal();
-                }
-                PublishCacheMetrics(evictions);
+                evictions = InvalidateCache();
             }
-            Record(succeeded: true, "reauthenticate");
-            return RenewalOutcome.Renewed;
+            catch (RespireAuthenticationException error)
+            {
+                // After a failure the connection is already aborted; keep the original error.
+                if (outcome != RenewalOutcome.Failed)
+                {
+                    connection.Abort(error);
+                    Record(succeeded: false, "reauthenticate");
+                    outcome = RenewalOutcome.Failed;
+                }
+            }
+            // Only validated success opens admission. Stop/failure leaves it closed until
+            // Abort; RequestStop can run before Abort acquires the write gate.
+            if (outcome == RenewalOutcome.Renewed)
+            {
+                // The scheduler hop or cache mutation may outlast the credentials.
+                var completedAt = clock.GetUtcNow();
+                if (completedAt >= expiry || next.ExpiresAt <= completedAt)
+                {
+                    connection.Abort(new RespireAuthenticationException($"Credentials expired during renewal for {connection.Host}:{connection.Port}."));
+                    Record(succeeded: false, "expired");
+                    outcome = RenewalOutcome.Failed;
+                }
+                else
+                {
+                    connection.CompleteCredentialRenewal();
+                    Record(succeeded: true, "reauthenticate");
+                }
+            }
+            PublishCacheMetrics(evictions);
+            return outcome;
         }
 
         private int? InvalidateCache()
@@ -332,6 +331,16 @@ internal sealed partial class RespireConnection
                 _stop.Dispose();
             }
         }
+
+        // Observer callbacks (telemetry, cache invalidation and cache metrics) must never run
+        // inline on the connection's serial reply worker: one that waits on this connection
+        // would block the worker that has to deliver its reply. Each observer-owning state
+        // machine awaits this after any await that can resume on that worker.
+        private static ConfiguredTaskAwaitable YieldOffReplyWorker()
+            => Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+
+        // Bounds each armed timer; long waits are consumed in chunks with expiry rechecks.
+        private static readonly TimeSpan MaxTimerChunk = TimeSpan.FromDays(1);
 
         private static TimeSpan Min(TimeSpan first, TimeSpan second)
             => first <= second ? first : second;

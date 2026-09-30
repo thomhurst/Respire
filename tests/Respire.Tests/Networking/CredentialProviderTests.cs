@@ -412,6 +412,31 @@ public class CredentialProviderTests
         await Assert.That(reply.AsString()).IsEqualTo("PONG");
     }
 
+    private static System.Diagnostics.Metrics.MeterListener ListenForRefreshes(
+        int serverPort, System.Collections.Concurrent.ConcurrentQueue<(string? Stage, string? Outcome)> events)
+    {
+        var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, observer) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.authentication.refresh")
+                observer.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            int? port = null;
+            string? stage = null, outcome = null;
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "server.port") port = (int)tag.Value!;
+                if (tag.Key == "respire.authentication.stage") stage = (string)tag.Value!;
+                if (tag.Key == "respire.authentication.outcome") outcome = (string)tag.Value!;
+            }
+            if (port == serverPort) events.Enqueue((stage, outcome));
+        });
+        listener.Start();
+        return listener;
+    }
+
     private static Task StartSend(RespireConnection connection, string kind, bool direct, CancellationToken cancellationToken = default)
     {
         // The large-frame fallback is thread-static. Set and restore it synchronously
@@ -640,6 +665,8 @@ public class CredentialProviderTests
         var provider = ExpiringProvider(clock);
         var flushes = 0;
         await using var server = Server();
+        var events = new System.Collections.Concurrent.ConcurrentQueue<(string? Stage, string? Outcome)>();
+        using var listener = ListenForRefreshes(server.Port, events);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             Options(server, provider, clock) with
             {
@@ -659,7 +686,9 @@ public class CredentialProviderTests
         await connection.CredentialRefreshCompletion!.WaitAsync(Limit);
         await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<RespireException>();
         await Assert.That(connection.CloseError is RespireAuthenticationException).IsTrue();
+        await Assert.That(connection.CloseError!.Message).Contains("expired during renewal");
         await Assert.That(server.ReceivedCommands.Contains("PING")).IsFalse();
+        await Assert.That(events.ToArray()).IsEquivalentTo(new (string?, string?)[] { ("expired", "failure") });
     }
 
     [Test]
@@ -671,6 +700,8 @@ public class CredentialProviderTests
         var provider = ExpiringProvider(clock);
         var flushes = 0;
         await using var server = Server();
+        var events = new System.Collections.Concurrent.ConcurrentQueue<(string? Stage, string? Outcome)>();
+        using var listener = ListenForRefreshes(server.Port, events);
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
             Options(server, provider, clock) with
             {
@@ -687,6 +718,9 @@ public class CredentialProviderTests
         await Assert.That(async () => await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
             .Throws<RespireException>();
         await Assert.That(server.ReceivedCommands.Contains("PING")).IsFalse();
+        await Assert.That(connection.CloseError!.Message).Contains("cache invalidation failed");
+        // One failure is recorded at its own stage; nothing escapes to the generic worker catch.
+        await Assert.That(events.ToArray()).IsEquivalentTo(new (string?, string?)[] { ("reauthenticate", "failure") });
     }
 
     [Test]
