@@ -972,13 +972,11 @@ public class ClientSideCacheTests
     }
 
     [Test]
-    public async Task ClusterAskRedirect_ReturnsReadWithoutCachingUntrackedTarget()
+    public async Task ClusterAskRedirect_TracksReadOnTarget()
     {
         await using var target = new FakeRespServer(
             HelloReply,
             FakeRespServer.OkReply,
-            FakeRespServer.OkReply,
-            "$5\r\nvalue\r\n"u8.ToArray(),
             FakeRespServer.OkReply,
             "$5\r\nvalue\r\n"u8.ToArray())
         {
@@ -989,8 +987,6 @@ public class ClientSideCacheTests
             HelloReply,
             FakeRespServer.OkReply,
             "*0\r\n"u8.ToArray(),
-            FakeRespServer.OkReply,
-            Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{target.Port}\r\n"),
             FakeRespServer.OkReply,
             Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{target.Port}\r\n"));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
@@ -1003,13 +999,13 @@ public class ClientSideCacheTests
 
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
-        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
 
         await Assert.That(target.ReceivedCommands.Take(2)).IsEquivalentTo([
             "HELLO 3", "CLIENT TRACKING ON OPTIN",
         ]);
         await Assert.That(target.ReceivedCommands.Skip(2)).IsEquivalentTo([
-            "ASKING", "GET key", "ASKING", "GET key",
+            "ASKING", "CLIENT CACHING YES", "GET key",
         ]);
     }
 

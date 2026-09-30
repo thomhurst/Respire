@@ -1708,7 +1708,7 @@ public sealed partial class RespireClient : IRespireClient
                     connection = await cluster.GetReplacementConnectionAsync(
                         sendAsking ? connection : null, slot, null, cancellationToken, discovery).ConfigureAwait(false);
                     discoveryPending = false;
-                    onRedirect?.Invoke(!sendAsking);
+                    onRedirect?.Invoke(true);
                     continue;
                 }
 
@@ -1731,7 +1731,7 @@ public sealed partial class RespireClient : IRespireClient
                     .ConfigureAwait(false);
                 discoveryPending = false;
                 sendAsking = error.Code == RespireErrorCodes.Ask;
-                onRedirect?.Invoke(!sendAsking);
+                onRedirect?.Invoke(true);
             }
         }
         catch (Exception error)
@@ -1765,6 +1765,11 @@ public sealed partial class RespireClient : IRespireClient
     {
         if (sendAsking)
         {
+            if (!_broadcastTracking)
+            {
+                return ClusterRouter.SendTrackedAskingAsync(
+                    connection, in command, cancellationToken, operation);
+            }
             return ClusterRouter.SendAskingAsync(
                 connection, in command, cancellationToken, operation);
         }

@@ -27,6 +27,9 @@ internal static class RespireNotificationWaiter
             catch (SemaphoreFullException) { }
             catch (ObjectDisposedException) { }
         }, cancellationToken);
+        if (!subscription.Stopped.CanBeCanceled)
+            throw new NotSupportedException(
+                "Coordination invalidation subscriptions must expose a cancellable Stopped token.");
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken, subscription.Stopped);
 

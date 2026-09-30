@@ -39,6 +39,8 @@ Enable RESP3 client-side caching when creating the client. No `notify-keyspace-e
 need to be enabled on Redis; client tracking sends invalidations for tracked reads.
 
 ```csharp
+using Respire.Extensions.Coordination;
+
 await using var waitingClient = await RespireClient.ConnectAsync(new RespireOptions
 {
     Endpoints = ["localhost:6379"],
