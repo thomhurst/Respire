@@ -73,6 +73,8 @@ public interface IRespireClient : IAsyncDisposable
     /// <summary>Reads a tracked value, or computes and conditionally stores it with a server TTL. Requires Redis 7+ and ClientSideCache.</summary>
     /// <remarks>
     /// Uses GET then SET NX GET. A concurrent writer wins; its value and TTL are preserved.
+    /// Server support is not preflighted; an unsupported SET can fail after the factory runs.
+    /// Existing third-party implementations default to NotSupportedException unless they implement this method.
     /// A null factory result is returned without storing it. Stored default values do not call the factory.
     /// TTL is positive, truncated to milliseconds, and starts at the successful SET; hits do not extend it.
     /// With CoalesceConcurrentMisses enabled, equivalent physical key, T and TTL calls share the first

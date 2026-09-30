@@ -130,6 +130,14 @@ conditional cache-aside write. Enable `ClientSideCache`; Redis 7 or later is req
 [`SET NX GET`](https://redis.io/docs/latest/commands/set/). Existing hits use normal local
 caching, serialization and key-prefix rules.
 
+Support for `NX` and `GET` together starts in Redis 7.0; `GET` alone was introduced in 6.2.
+The helper does not preflight server capabilities. On an unsupported server or proxy, a miss
+can run the factory before the conditional write fails with the original server error.
+Factory work and accepted writes are not replayed. Use this helper only on deployments
+supporting that command combination, and keep factories safe to run without a subsequent write.
+The default `IRespireClient` implementation throws `NotSupportedException`; third-party
+implementations and decorators must implement or forward the helper explicitly.
+
 <!-- doc-test-tail-declaration: split-before=public sealed record Product -->
 ```csharp
 using Respire;

@@ -1,3 +1,4 @@
+#define RESPIRE_CACHE_ASIDE_API
 using System.Diagnostics;
 using System.Text.Json;
 using BenchmarkDotNet.Attributes;
@@ -35,13 +36,18 @@ public class CacheAsideBenchmarks
             ClientSideCache = new() { CoalesceConcurrentMisses = Scenario != Workload.DefaultSingle },
         };
         _client = await RespireClient.ConnectAsync(options);
-        _read = Environment.GetEnvironmentVariable("RESPIRE_CACHE_ASIDE_BASELINE") == "1"
-            ? ReferenceReadAsync
-            : typeof(RespireClient).GetMethods().Single(method => method.Name == "GetOrSetAsync" && method.IsGenericMethodDefinition)
-                .MakeGenericMethod(typeof(string)).CreateDelegate<Read>();
+        // CI removes only the file-local symbol for the old-build fixture. Both adapters
+        // use the same delegate signature; binding is checked by the compiler, not reflection.
+#if RESPIRE_CACHE_ASIDE_API
+        _read = static (client, key, factory, ttl, token) => client.GetOrSetAsync(key, factory, ttl, token);
+#else
+        _read = ReferenceReadAsync;
+#endif
         _factory = FactoryAsync;
         await _client.SetAsync(_key, "value", TimeSpan.FromHours(1));
         _ = await _client.GetStringAsync(_key);
+        if (await _read(_client, _key, _factory, Ttl, default) != "value" || _factoryCalls != 0)
+            throw new InvalidOperationException("The selected cache-aside adapter did not return the primed hit.");
         _cpuStarted = Process.GetCurrentProcess().TotalProcessorTime;
         _started = Stopwatch.GetTimestamp();
     }

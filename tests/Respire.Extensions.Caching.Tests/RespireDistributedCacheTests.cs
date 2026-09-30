@@ -11,6 +11,19 @@ namespace Respire.Extensions.Caching.Tests;
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class RespireDistributedCacheTests(RedisTestContainer fixture)
 {
+    [Test]
+    public async Task ExistingDecoratorRejectsUnsupportedCacheAsideWithoutRunningFactory()
+    {
+        IRespireClient decorator = new ScriptInterceptingClient(Client, static (_, send) => send());
+        var calls = 0;
+        await Assert.That(async () => await decorator.GetOrSetAsync<string>("key", _ =>
+        {
+            calls++;
+            return ValueTask.FromResult<string?>("unused");
+        }, TimeSpan.FromSeconds(1))).ThrowsExactly<NotSupportedException>();
+        await Assert.That(calls).IsEqualTo(0);
+    }
+
     private RespireClient? _client;
     private RespireDistributedCache? _cache;
     // TUnit creates a test instance per case; retain its pause only for failure cleanup.

@@ -52,7 +52,9 @@ jobs:
           set -euo pipefail
           # The shared fixture must compile against both pinned APIs. A mismatch fails this
           # step; the always() upload below retains its phase log without masking that failure.
-          cp candidate/benchmarks/Respire.Benchmarks/CacheAsideBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
+          # Only the feature adapter differs; workload, delegate signature and settings stay identical.
+          sed '/^#define RESPIRE_CACHE_ASIDE_API$/d' candidate/benchmarks/Respire.Benchmarks/CacheAsideBenchmarks.cs \
+            > baseline/benchmarks/Respire.Benchmarks/CacheAsideBenchmarks.cs
           for phase in validation baseline-a candidate baseline-b; do
             source=baseline
             job=Medium
@@ -62,11 +64,22 @@ jobs:
             (
               cd "$source"
               git rev-parse HEAD
-              if [ "$source" = baseline ]; then export RESPIRE_CACHE_ASIDE_BASELINE=1; fi
               dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
                 --filter "$filter" --job "$job" --exporters json markdown \
                 --artifacts "$GITHUB_WORKSPACE/results/$phase"
             ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
+            # BDN can exit successfully after setup failures. Reject missing measurements
+            # immediately, before spending runner time on the remaining phases.
+            python - "$GITHUB_WORKSPACE/results/$phase/results" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          reports = list(Path(sys.argv[1]).glob("*-report-full-compressed.json"))
+          assert len(reports) == 1, sys.argv[1]
+          cases = json.loads(reports[0].read_text())["Benchmarks"]
+          assert len(cases) == 6, reports[0]
+          assert all(case.get("Statistics") and case["Statistics"]["Mean"] > 0 for case in cases), reports[0]
+          PY
           done
       - name: Require completed measurements
         shell: python
@@ -98,7 +111,7 @@ jobs:
           for key, candidate in phases["candidate"].items():
               if key[0] == "HotGetOrSet":
                   controls = [phases[phase][key]["Memory"]["BytesAllocatedPerOperation"] for phase in ("baseline-a", "baseline-b")]
-                  assert candidate["Memory"]["BytesAllocatedPerOperation"] <= max(controls), f"Hot helper allocation increased: {key}"
+                  assert candidate["Memory"]["BytesAllocatedPerOperation"] <= min(controls), f"Hot helper allocation increased: {key}"
           lines = ["## Candidate versus both baseline controls", "",
                    "Positive time deltas mean slower. Control drift shows runner variation; these are informational measurements.", "",
                    "| Case | A ns | Candidate ns | B ns | Candidate/A | Candidate/B | B/A drift | Allocated B (A/candidate/B) |",

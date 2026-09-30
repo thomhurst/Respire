@@ -84,6 +84,29 @@ public class CacheAsideTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task UnsupportedConditionalSetPreservesServerErrorWithoutReplayingFactory(bool coalesce)
+    {
+        await using var server = new CacheServer();
+        var supportedReply = server.Server.ReplyOverride!;
+        server.Server.ReplyOverride = (connection, command) => command.StartsWith("SET ")
+            ? "-ERR syntax error\r\n"u8.ToArray() : supportedReply(connection, command);
+        await using var client = await server.ConnectAsync(coalesce);
+        var calls = 0;
+        var error = await Assert.That(async () => await client.GetOrSetAsync<string>("key", _ =>
+        {
+            calls++;
+            return ValueTask.FromResult<string?>("created");
+        }, Ttl)).ThrowsExactly<RespireServerException>();
+        await Assert.That(error!.Code).IsEqualTo("ERR");
+        await Assert.That(error.Message).Contains("syntax error");
+        await Assert.That(calls).IsEqualTo(1);
+        await Assert.That(server.Commands.Count(command => command.StartsWith("SET "))).IsEqualTo(1);
+        await Assert.That(server.SuccessfulSets).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task StoredDefaultsAndSerializedNullDoNotInvokeFactory()
     {
         await using var server = new CacheServer();
