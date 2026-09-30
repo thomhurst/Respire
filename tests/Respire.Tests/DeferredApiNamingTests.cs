@@ -75,6 +75,7 @@ public class DeferredApiNamingTests
             "Sets",
             "SortedSets",
             "Strings",
+            "Streams",
         });
 
         await using var client = RespireClient.Create("localhost:6379");

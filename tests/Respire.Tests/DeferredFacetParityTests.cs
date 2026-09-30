@@ -52,6 +52,29 @@ public class DeferredFacetParityTests
         await Assert.That(expected.Except(actual).ToArray()).IsEmpty();
     }
 
+    [Test]
+    public async Task SupportedStreamOverloadsHaveMatchingDeferredShape()
+    {
+        // Group administration, pending-entry management, metadata, and consumer loops are
+        // outside the current deferred facet. New method names must be classified explicitly.
+        string[] clientOnly =
+        [
+            nameof(IStreamCommands.CreateGroupAsync), nameof(IStreamCommands.DeleteGroupAsync),
+            nameof(IStreamCommands.DeleteConsumerAsync), nameof(IStreamCommands.SetGroupPositionAsync),
+            nameof(IStreamCommands.PendingSummaryAsync), nameof(IStreamCommands.PendingAsync),
+            nameof(IStreamCommands.ClaimAsync), nameof(IStreamCommands.ClaimPendingAsync),
+            nameof(IStreamCommands.InfoAsync), nameof(IStreamCommands.GroupInfoAsync),
+            nameof(IStreamCommands.ConsumerInfoAsync), nameof(IStreamCommands.ReadGroupAsync),
+        ];
+        var immediate = typeof(IStreamCommands).GetMethods();
+        await Assert.That(clientOnly.Except(immediate.Select(method => method.Name)).ToArray()).IsEmpty();
+        var expected = immediate.Where(method => !clientOnly.Contains(method.Name))
+            .Select(method => Signature(method, immediate: true));
+        var actual = typeof(IBatchStreamCommands).GetMethods().Select(method => Signature(method, immediate: false));
+        await Assert.That(expected.Except(actual).ToArray()).IsEmpty();
+        await Assert.That(actual.Except(expected).ToArray()).IsEmpty();
+    }
+
     private static string Signature(MethodInfo method, bool immediate)
     {
         // Compare generic parameters by position; this shape audit does not compare their constraints.

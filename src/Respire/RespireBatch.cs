@@ -23,9 +23,10 @@ namespace Respire;
 /// non-blocking form, without the client's <c>waitFor</c> argument. Streaming and leased reads
 /// (<c>ScanAsync</c>, <c>GetLeaseAsync</c>) have no deferred form. Script commands use
 /// <c>Evaluate</c> rather than the client's <c>ExecuteAsync</c> name and return owned results.
-/// Streams, server administration, and distributed locks remain client-only because their
-/// blocking, streaming, connection-scoped, or managed-lifetime semantics do not fit a deferred
-/// single-flush command queue.
+/// Stream append, range, count, remove, trim, and acknowledge commands support deferred execution.
+/// Blocking stream reads, consumer loops, group administration, server administration, and distributed
+/// locks remain client-only because their blocking, streaming, connection-scoped, or managed-lifetime
+/// semantics do not fit a deferred single-flush command queue.
 /// </remarks>
 public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSink
 {
@@ -45,6 +46,7 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
     private IBatchGeoCommands? _geo;
     private IBatchScriptCommands? _scripts;
     private IBatchFunctionCommands? _functions;
+    private IBatchStreamCommands? _streams;
 
     internal RespireBatch(RespireClient client) => _client = client;
 
@@ -89,6 +91,9 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
 
     /// <summary>Redis Functions, without automatic reload or replay.</summary>
     public IBatchFunctionCommands Functions => _functions ??= new BatchFunctionCommands(this);
+
+    /// <summary>Non-blocking stream append, range, count, acknowledge, remove, and trim commands.</summary>
+    public IBatchStreamCommands Streams => _streams ??= new BatchStreamCommands(this);
 
     // Root shortcuts, mirroring the client's.
 
@@ -138,6 +143,8 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
         => Keys.Expire(key, expiry, when);
 
     RespireClient IPendingSink.Client => _client;
+
+    bool IPendingSink.DefersSerialization => true;
 
     RespirePending<T> IPendingSink.Add<TCommand, T>(
         string operation, in TCommand command, Func<RespireClient, RespValue, T> convert)

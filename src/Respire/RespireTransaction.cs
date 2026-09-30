@@ -39,6 +39,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
     private IBatchGeoCommands? _geo;
     private IBatchScriptCommands? _scripts;
     private IBatchFunctionCommands? _functions;
+    private IBatchStreamCommands? _streams;
 
     internal RespireTransactionBase(RespireClient client, RespireConnection? watchConnection)
     {
@@ -84,6 +85,9 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
 
     /// <summary>Redis Functions, without automatic reload or replay.</summary>
     public IBatchFunctionCommands Functions => _functions ??= new BatchFunctionCommands(this);
+
+    /// <summary>Non-blocking stream append, range, count, acknowledge, remove, and trim commands.</summary>
+    public IBatchStreamCommands Streams => _streams ??= new BatchStreamCommands(this);
 
     // Root shortcuts, mirroring the client's.
 
@@ -133,6 +137,8 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         => Keys.Expire(key, expiry, when);
 
     RespireClient IPendingSink.Client => _client;
+
+    bool IPendingSink.DefersSerialization => false;
 
     // Multi-key validation is read-only. Add applies the command's representative routing slot
     // only after serialization succeeds, so a rejected command cannot pin the transaction.
