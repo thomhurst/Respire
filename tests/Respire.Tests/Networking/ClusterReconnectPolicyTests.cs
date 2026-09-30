@@ -428,6 +428,59 @@ public class ClusterReconnectPolicyTests
         await Assert.That(episodes.Distinct().Count()).IsEqualTo(2);
     }
 
+    [Test]
+    public async Task SuccessfulRequiredMastersDoNotConsumeFallbackAttempts()
+    {
+        await using var unavailable = new FakeRespServer("-ERR seed unavailable\r\n"u8.ToArray());
+        await using var first = new FakeRespServer(FakeRespServer.OkReply);
+        await using var second = new FakeRespServer(FakeRespServer.OkReply);
+        await using var third = new FakeRespServer(FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes("*3\r\n"
+            + Range(0, 5460, first.Port) + Range(5461, 10921, second.Port) + Range(10922, 16383, third.Port));
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : null,
+        };
+        await using var client = RespireClient.Create(Options(unavailable.Port, seed.Port));
+        var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(default);
+        await Assert.That(connections.Select(connection => connection.Port).ToArray())
+            .IsEquivalentTo([first.Port, second.Port, third.Port]);
+        await Assert.That(unavailable.ReceivedCommands).IsEquivalentTo(["AUTH test"]);
+        await Assert.That(first.ReceivedCommands).IsEquivalentTo(["AUTH test"]);
+        await Assert.That(second.ReceivedCommands).IsEquivalentTo(["AUTH test"]);
+        await Assert.That(third.ReceivedCommands).IsEquivalentTo(["AUTH test"]);
+
+        static string Range(int start, int end, int port)
+            => $"*3\r\n:{start}\r\n:{end}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{port}\r\n";
+    }
+
+    [Test]
+    public async Task DiscoveryObserverCanSynchronouslyDisposeClient()
+    {
+        await using var first = new FakeRespServer("-ERR seed unavailable\r\n"u8.ToArray());
+        await using var second = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = RespireClient.Create(Options(first.Port, second.Port) with
+        {
+            ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
+                JitterRatio = 0, MaxAttempts = 1 },
+        });
+        var disposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery || change.NextReconnectDelay is null) return;
+            try
+            {
+                client.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                disposed.TrySetResult();
+            }
+            catch (Exception error) { disposed.TrySetException(error); }
+        };
+        var operation = client.Core.Cluster!.EnsureConnectedAsync(default).AsTask();
+        await disposed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(async () => await operation.WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
+        await Assert.That(second.CommandsSeen).IsEqualTo(0);
+    }
+
     private sealed class DiscoveryMetrics : IDisposable
     {
         private readonly MeterListener _listener = new();
