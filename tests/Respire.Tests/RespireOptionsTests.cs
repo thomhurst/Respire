@@ -25,10 +25,26 @@ public class RespireOptionsTests
         {
             Protocol = RespProtocol.Resp2,
             ClientSideCache = new(),
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
         });
 
         await Assert.That(client.Core.Options.Protocol).IsEqualTo(RespProtocol.Resp3);
+        await Assert.That(client.Core.Options.MaintenanceNotifications)
+            .IsEqualTo(RespireMaintenanceNotificationMode.Enabled);
         await Assert.That(client.ClientSideCache).IsNotNull();
+    }
+
+    [Test]
+    public async Task MaintenanceNotifications_RequireEffectiveResp3Protocol()
+    {
+        var options = ValidOptions() with
+        {
+            Protocol = RespProtocol.Resp2,
+            MaintenanceNotifications = RespireMaintenanceNotificationMode.Enabled,
+        };
+
+        await Assert.That(() => RespireClient.Create(options))
+            .ThrowsExactly<RespireConfigurationException>();
     }
 
     [Test]

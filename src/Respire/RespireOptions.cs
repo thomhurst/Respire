@@ -307,8 +307,9 @@ public sealed record RespireOptions
         }
 
         Require(Protocol is RespProtocol.Auto or RespProtocol.Resp2 or RespProtocol.Resp3, nameof(Protocol), "must be Auto, Resp2, or Resp3");
+        var effectiveProtocol = ClientSideCache is null ? Protocol : RespProtocol.Resp3;
         Require(Enum.IsDefined(MaintenanceNotifications), nameof(MaintenanceNotifications), "must be Disabled, Auto, or Enabled");
-        Require(MaintenanceNotifications != RespireMaintenanceNotificationMode.Enabled || Protocol != RespProtocol.Resp2,
+        Require(MaintenanceNotifications != RespireMaintenanceNotificationMode.Enabled || effectiveProtocol != RespProtocol.Resp2,
             nameof(MaintenanceNotifications), "requires RESP3 when Enabled");
         Require(MaintenanceRelaxedTimeout >= TimeSpan.FromMilliseconds(1) && MaintenanceRelaxedTimeout <= TimeSpan.FromDays(1),
             nameof(MaintenanceRelaxedTimeout), "must be between one millisecond and one day");
@@ -380,7 +381,7 @@ public sealed record RespireOptions
         return this with
         {
             Endpoints = new List<RespireEndpoint>(Endpoints),
-            Protocol = ClientSideCache is null ? Protocol : RespProtocol.Resp3,
+            Protocol = effectiveProtocol,
             ClientSideCache = ClientSideCache?.SnapshotTracking(),
         };
     }
