@@ -83,11 +83,12 @@ internal static class CommandMetadataParser
         var step = Integer(in row[5]);
         var categories = row.Length > 6 ? Strings(in row[6]) : [];
         var tips = row.Length > 7 ? Strings(in row[7]) : [];
-        var specifications = row.Length > 8 ? OwnItems(Items(in row[8])) : [];
+        var specifications = row.Length > 8 ? OwnItems(Items(in row[8], allowSet: true)) : [];
         RespireCommandInfo[] subcommands = [];
         if (row.Length > 9)
         {
-            var nested = Items(in row[9]);
+            // Redis uses an empty RESP3 set when this command has no subcommands.
+            var nested = Items(in row[9], allowSet: true);
             subcommands = new RespireCommandInfo[nested.Length];
             for (var index = 0; index < nested.Length; index++) subcommands[index] = InfoEntry(in nested[index]);
         }
@@ -121,7 +122,7 @@ internal static class CommandMetadataParser
         RespireCommandHistory[] history = [];
         if (fields.Remove("history", out var historyValue))
         {
-            var items = Items(in historyValue);
+            var items = Items(in historyValue, allowSet: true);
             history = new RespireCommandHistory[items.Length];
             for (var index = 0; index < items.Length; index++)
             {

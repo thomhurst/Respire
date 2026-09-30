@@ -40,6 +40,9 @@ public class ServerMetadataIntegrationTests
             docs.Single(x => x.Name == "get").Arguments.Should().Contain(x => x.Type == "key");
             (await server.CommandInfoAsync(["CONFIG GET"]))[0]!.Name.Should().Be("config|get");
             info[0]!.KeySpecifications.Should().NotBeEmpty();
+            var setDocs = (await server.CommandDocsAsync(["SET"])).Single();
+            setDocs.History.Should().NotBeEmpty();
+            (await server.CommandInfoAsync(["CONFIG"]))[0]!.Subcommands.Should().Contain(x => x.Name == "config|get");
             (await server.CommandDocsOnAllNodesAsync(["GET"]))[0].Value.Single().Name.Should().Be("get");
         }
         else

@@ -34,8 +34,8 @@ public class ServerMetadataCommandTests
     [Test]
     public async Task Resp3MapsAndSetsAreParsedAndOwned()
     {
-        var info = "*1\r\n*10\r\n$3\r\nget\r\n:2\r\n~1\r\n+readonly\r\n:1\r\n:1\r\n:1\r\n~1\r\n+@read\r\n~0\r\n*0\r\n*0\r\n"u8.ToArray();
-        var docs = "%1\r\n+get\r\n%2\r\n+summary\r\n+description\r\n+doc_flags\r\n~1\r\n+future\r\n"u8.ToArray();
+        var info = "*1\r\n*10\r\n$3\r\nget\r\n:2\r\n~1\r\n+readonly\r\n:1\r\n:1\r\n:1\r\n~1\r\n+@read\r\n~0\r\n~1\r\n%1\r\n+future\r\n+owned\r\n~0\r\n"u8.ToArray();
+        var docs = "%1\r\n+get\r\n%3\r\n+summary\r\n+description\r\n+doc_flags\r\n~1\r\n+future\r\n+history\r\n~1\r\n*2\r\n+7.0\r\n+changed\r\n"u8.ToArray();
         var modules = "*1\r\n%3\r\n+name\r\n+mod\r\n+ver\r\n:1\r\n+future\r\n%1\r\n+x\r\n+y\r\n"u8.ToArray();
         await using var server = new FakeRespServer(info, docs, modules);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
@@ -45,7 +45,9 @@ public class ServerMetadataCommandTests
         await client.DisposeAsync();
         await Assert.That(commands[0]!.Flags).IsEquivalentTo(["readonly"]);
         await Assert.That(commands[0]!.AclCategories).IsEquivalentTo(["@read"]);
+        await Assert.That(commands[0]!.KeySpecifications[0][1].AsString()).IsEqualTo("owned");
         await Assert.That(descriptions[0].Flags).IsEquivalentTo(["future"]);
+        await Assert.That(descriptions[0].History.Single()).IsEqualTo(new RespireCommandHistory("7.0", "changed"));
         await Assert.That(loaded[0].AdditionalFields["future"][1].AsString()).IsEqualTo("y");
     }
 
@@ -145,40 +147,59 @@ public class ServerMetadataCommandTests
     [Arguments(false, true)]
     [Arguments(true, false)]
     [Arguments(true, true)]
-    public async Task ConfigurationMutationsFenceCachedReadsThroughSuccessOrFailure(bool allNodes, bool fail)
+    public async Task AllMetadataMutationsFenceCachedReadsThroughSuccessOrFailure(bool allNodes, bool fail)
     {
-        var received = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
-        server.SuppressReply = command =>
-        {
-            if (command == "HELLO 3")
-            {
-                _ = server.SendRawAsync("%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(), server.ReceivedConnectionIds[^1]);
-                return true;
-            }
-            if (!command.Equals("CONFIG RESETSTAT", StringComparison.Ordinal)) return false;
-            received.TrySetResult(server.ReceivedConnectionIds[^1]);
-            return true;
-        };
-        await using var client = await RespireClient.ConnectAsync(new RespireOptions
-        {
-            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = true, ClientSideCache = new(),
-        });
-        var cache = client.Core.ClientCache!;
-        Insert(cache);
-        var mutation = allNodes ? MutateAll() : client.Server.ConfigResetStatisticsAsync().AsTask();
-        var connection = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.That(cache.Count).IsEqualTo(0);
-        Insert(cache);
-        await server.SendRawAsync(fail ? "-ERR invalid rule\r\n"u8.ToArray() : FakeRespServer.OkReply, connection);
-        if (fail && !allNodes) await Assert.That(async () => await mutation).ThrowsExactly<RespireServerException>();
-        else await mutation.WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.That(cache.Count).IsEqualTo(0);
+        string[] operations = ["CONFIG REWRITE", "CONFIG RESETSTAT", "SAVE", "BGSAVE", "BGREWRITEAOF"];
+        for (var operationIndex = 0; operationIndex < operations.Length; operationIndex++)
+            await CheckMutation(operations[operationIndex], operationIndex);
 
-        async Task MutateAll()
+        async Task CheckMutation(string operation, int operationIndex)
         {
-            var results = await client.Server.ConfigResetStatisticsOnAllNodesAsync();
-            await Assert.That(results[0].IsSuccess).IsEqualTo(!fail);
+            var received = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+            await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
+            server.SuppressReply = command =>
+            {
+                if (command == "HELLO 3")
+                {
+                    _ = server.SendRawAsync("%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(), server.ReceivedConnectionIds[^1]);
+                    return true;
+                }
+                if (!command.Equals(operation, StringComparison.Ordinal)) return false;
+                received.TrySetResult(server.ReceivedConnectionIds[^1]);
+                return true;
+            };
+            await using var client = await RespireClient.ConnectAsync(new RespireOptions
+            {
+                Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = true, ClientSideCache = new(),
+            });
+            var cache = client.Core.ClientCache!;
+            Insert(cache);
+            var mutation = allNodes ? MutateAll() : Mutations(client.Server)[operationIndex]();
+            var connection = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(cache.Count).IsEqualTo(0);
+            Insert(cache);
+            byte[] success = operation.StartsWith("BG", StringComparison.Ordinal)
+                ? "+Background saving started\r\n"u8.ToArray() : FakeRespServer.OkReply;
+            await server.SendRawAsync(fail ? "-ERR mutation failed\r\n"u8.ToArray() : success, connection);
+            if (fail && !allNodes) await Assert.That(async () => await mutation).ThrowsExactly<RespireServerException>();
+            else await mutation.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(cache.Count).IsEqualTo(0);
+
+            Task MutateAll() => operation switch
+            {
+                "CONFIG REWRITE" => CheckResult(client.Server.ConfigRewriteOnAllNodesAsync()),
+                "CONFIG RESETSTAT" => CheckResult(client.Server.ConfigResetStatisticsOnAllNodesAsync()),
+                "SAVE" => CheckResult(client.Server.SaveOnAllNodesAsync()),
+                "BGSAVE" => CheckResult(client.Server.BackgroundSaveOnAllNodesAsync()),
+                "BGREWRITEAOF" => CheckResult(client.Server.BackgroundRewriteAofOnAllNodesAsync()),
+                _ => throw new InvalidOperationException(operation),
+            };
+
+            async Task CheckResult<T>(ValueTask<RespireServerResult<T>[]> response)
+            {
+                var results = await response;
+                await Assert.That(results[0].IsSuccess).IsEqualTo(!fail);
+            }
         }
 
         static void Insert(ClientSideCacheCoordinator cache)
