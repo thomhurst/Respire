@@ -63,6 +63,7 @@ internal sealed partial class ClusterRouter
             // Reserve this lease first: pruning must not retire its pool before rent completes.
             unused = PruneCorrectionPeersLocked(identity.Multiplexer);
         }
+        // RetirePoolAsync logs failures and leaves failed pools owned for explicit disposal.
         foreach (var pool in unused) _ = RetirePoolAsync(pool);
         return new(this, entry);
     }
@@ -116,6 +117,7 @@ internal sealed partial class ClusterRouter
             if (change.State != RespireConnectionState.Connected) return;
             List<DedicatedConnectionPool> unused;
             lock (_nodesGate) unused = PruneCorrectionPeersLocked(node);
+            // RetirePoolAsync logs failures and leaves failed pools owned for explicit disposal.
             foreach (var pool in unused) _ = RetirePoolAsync(pool);
         };
         _correctionStateHandlers.Add(node, handler);

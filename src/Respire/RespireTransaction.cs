@@ -392,9 +392,20 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
             {
                 connection ??= await _client.AcquireConnectionAsync(slot, token)
                     .ConfigureAwait(false);
-                var reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, token,
-                        core.Options.CommandTimeout, cancellationToken)
-                    .ConfigureAwait(false);
+                RespValue reply;
+                try
+                {
+                    reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, token,
+                            core.Options.CommandTimeout, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (RespireConnectionRetiredException) when (_watchConnection is null
+                    && cluster is not null && cluster.CanRetryRetirement(attempt, token))
+                {
+                    // The transport rejects the complete MULTI/EXEC frame before accepting any part.
+                    connection = null;
+                    continue;
+                }
                 if (!reply.IsError || cluster is null || attempt >= ClusterRouter.RedirectLimit)
                 {
                     return reply;

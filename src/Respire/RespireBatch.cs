@@ -497,6 +497,11 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                 {
                     value = await send.ConfigureAwait(false);
                 }
+                catch (RespireConnectionRetiredException)
+                {
+                    // Retry only this rejected operation; other pipeline entries may already be accepted.
+                    value = await client.SendAsync(Operation, command, cancellationToken).ConfigureAwait(false);
+                }
                 catch (RespireServerException error) when (
                     ClusterRouter.CanRecover(error, command.TryGetClusterSlot(out var slot) ? slot : null))
                 {

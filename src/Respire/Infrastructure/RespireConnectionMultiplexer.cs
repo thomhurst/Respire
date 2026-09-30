@@ -587,9 +587,15 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     }
 
     internal bool HasCurrentPeer(string host, int port)
-        => !IsRetired && _connections.Any(connection => connection is { IsAcceptingCommands: true }
-            && (connection.NetworkPeerAddress ?? connection.Host) == host
-            && (connection.NetworkPeerPort ?? connection.Port) == port);
+    {
+        if (IsRetired) return false;
+        foreach (var connection in _connections)
+            if (connection is { IsAcceptingCommands: true }
+                && (connection.NetworkPeerAddress ?? connection.Host) == host
+                && (connection.NetworkPeerPort ?? connection.Port) == port)
+                return true;
+        return false;
+    }
 
     internal async ValueTask FenceRetiredConnectionsAsync(CancellationToken cancellationToken = default)
     {

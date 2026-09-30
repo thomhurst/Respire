@@ -49,7 +49,8 @@ internal sealed partial class ClusterRouter
                 _logger?.LogDebug(error, "Cluster generation retirement needs correction cleanup at {Host}:{Port}", node.Host, node.Port);
             }
 
-            var retryDelay = TimeSpan.FromSeconds(1);
+            const int maximumRetrySeconds = 30;
+            var retrySeconds = 1;
             while (node.HasPendingCorrectionFences && !_stopRetirement.IsCancellationRequested)
             {
                 try
@@ -61,19 +62,19 @@ internal sealed partial class ClusterRouter
                 catch (Exception error) when (!_stopRetirement.IsCancellationRequested)
                 {
                     // An unacknowledged kill never releases generation ownership.
-                    if (retryDelay.TotalSeconds == 30)
+                    if (retrySeconds == maximumRetrySeconds)
                     {
                         int retained;
                         lock (_nodesGate) retained = _retiringNodes.Count;
                         _logger?.LogWarning(error,
                             "Cluster fence still unavailable at {Host}:{Port}; retrying in {DelaySeconds}s; {RetiringGenerationCount} generations remain in retirement",
-                            node.Host, node.Port, retryDelay.TotalSeconds, retained);
+                            node.Host, node.Port, retrySeconds, retained);
                     }
                     else
                         _logger?.LogDebug(error, "Cluster fence retry failed at {Host}:{Port}; retrying in {DelaySeconds}s",
-                            node.Host, node.Port, retryDelay.TotalSeconds);
-                    await Task.Delay(retryDelay, _stopRetirement.Token).ConfigureAwait(false);
-                    retryDelay = TimeSpan.FromSeconds(Math.Min(30, retryDelay.TotalSeconds * 2));
+                            node.Host, node.Port, retrySeconds);
+                    await Task.Delay(TimeSpan.FromSeconds(retrySeconds), _stopRetirement.Token).ConfigureAwait(false);
+                    retrySeconds = Math.Min(maximumRetrySeconds, retrySeconds * 2);
                 }
             }
         }

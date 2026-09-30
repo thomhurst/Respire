@@ -30,6 +30,17 @@ Accepted commands may still be draining; await the retirement task to observe co
 
 `RespireConnectionRetiredException` is internal and distinct from an ambiguous `RespireConnectionException`. A router may select the current generation and retry only an operation rejected with the retired exception: that operation did not enqueue any bytes. It must not retry an accepted command merely because topology changed. Cluster topology publication detaches old generations before starting their graceful retirement.
 
+Cluster command, tracked-read, fire-and-forget, script, lock, batch, and unwatched transaction
+paths retry that rejection with the existing bounded redirect budget. ASK retries retain the
+temporary target and ASKING prefix without changing the slot owner. Tracked executions publish
+the replacement identity before writing, and cached reads refresh their continuity token.
+An accepted batch entry is never replayed because another entry was rejected.
+
+Blocking commands, WATCH creation, and durability batches can also reselect a pool retired
+between selection and rent, including retirement cancellation during the handshake. This retry
+ends at successful rent; it never replays application commands or WATCH state. The returned pool
+stays with its lease through return or disposal. Caller cancellation and client disposal stop retries.
+
 ## Correction ownership
 
 Successful drains need no server-side kill: all accepted replies have been consumed. Failed transports with a known Redis client ID retain their `CLIENT KILL` obligation, including identities obtained during interrupted correction bootstrap. Retirement and disposal wait for an in-progress CLIENT ID bootstrap to publish before completing

@@ -163,6 +163,21 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             return connectedNode.GetConnection();
         }
 
+        if (slot is null)
+        {
+            // A replacement generation can be known but not connected yet. Seed discovery
+            // is unnecessary when a current master can serve this unkeyed command.
+            foreach (var master in Volatile.Read(ref _masters))
+            {
+                try
+                {
+                    await master.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                    return master.GetConnection();
+                }
+                catch (Exception error) when (CanRetryConnectionFailure(error, cancellationToken)) { }
+            }
+        }
+
         if (slot is { } cachedSlot && Volatile.Read(ref _slots[cachedSlot]) is { } cachedNode)
         {
             try
@@ -230,12 +245,44 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         }
     }
 
-    internal async ValueTask<RespireConnection> GetTrackedConnectionAsync(
+    internal ValueTask<RespireConnection> GetTrackedConnectionAsync(
         int? slot, bool requireIdentity, CancellationToken cancellationToken)
+        => GetReplacementConnectionAsync(null, slot, requireIdentity, cancellationToken);
+
+    internal bool CanRetryRetirement(int attempt, CancellationToken cancellationToken)
+        => attempt < MaxRedirects && !cancellationToken.IsCancellationRequested && Volatile.Read(ref _disposed) == 0;
+
+    // An ASK target is temporary: preserve its endpoint without changing the slot owner.
+    // Callers may retry only commands rejected before acceptance, never ambiguous I/O failures.
+    internal async ValueTask<RespireConnection> GetReplacementConnectionAsync(
+        RespireConnection? askingSource, int? slot, bool? requireIdentity, CancellationToken cancellationToken)
     {
-        var connection = await GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
-        return await EnableCorrectionOrderingAsync(connection, requireIdentity, cancellationToken)
-            .ConfigureAwait(false);
+        for (var attempt = 0; ; attempt++)
+        {
+            RespireConnectionMultiplexer? node = null;
+            try
+            {
+                RespireConnection connection;
+                if (askingSource is null)
+                    connection = await GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
+                else
+                {
+                    node = GetOrCreateNode(new(askingSource.Host, askingSource.Port), observe: false, redirect: true);
+                    await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                    connection = slot is { } value ? node.GetConnection(value) : node.GetConnection();
+                }
+                node = connection.Multiplexer;
+                return requireIdentity is { } required
+                    ? await EnableCorrectionOrderingAsync(connection, required, cancellationToken, observe: askingSource is null)
+                        .ConfigureAwait(false)
+                    : connection;
+            }
+            catch (Exception error) when (CanRetryRetirement(attempt, cancellationToken)
+                && (error is RespireConnectionRetiredException || error is OperationCanceledException && node?.IsRetired == true))
+            {
+                // Selection and identity setup have not accepted the application command.
+            }
+        }
     }
 
     internal async ValueTask<RespireConnection> GetTrackedRedirectConnectionAsync(
@@ -247,9 +294,20 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     {
         var connection = await GetRedirectConnectionAsync(error, source, cancellationToken, commandSlot)
             .ConfigureAwait(false);
-        return await EnableCorrectionOrderingAsync(
-                connection, requireIdentity, cancellationToken, observe: error.Code != "ASK")
-            .ConfigureAwait(false);
+        try
+        {
+            return await EnableCorrectionOrderingAsync(
+                    connection, requireIdentity, cancellationToken, observe: error.Code != "ASK")
+                .ConfigureAwait(false);
+        }
+        catch (Exception failure) when (CanRetryRetirement(0, cancellationToken)
+            && (failure is RespireConnectionRetiredException
+                || failure is OperationCanceledException && connection.Multiplexer?.IsRetired == true))
+        {
+            return await GetReplacementConnectionAsync(
+                error.Code == RespireErrorCodes.Ask ? connection : null, commandSlot, requireIdentity, cancellationToken)
+                .ConfigureAwait(false);
+        }
     }
 
     internal async ValueTask<DedicatedConnectionPool> GetDedicatedPoolAsync(
@@ -330,6 +388,29 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     internal DedicatedConnectionPool GetDedicatedPool(RespireEndpoint endpoint)
         => GetOrCreateDedicatedPool(endpoint);
+
+    internal async ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
+        DedicatedConnectionPool pool, int? slot, CancellationToken cancellationToken,
+        bool reuseIdle = true, RespireServerException? askRedirect = null, RespireConnection? redirectSource = null)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                var connection = await pool.RentAsync(cancellationToken, reuseIdle: reuseIdle).ConfigureAwait(false);
+                return (pool, connection);
+            }
+            catch (Exception error) when (CanRetryRetirement(attempt, cancellationToken) && pool.IsStopping
+                && error is ObjectDisposedException or OperationCanceledException)
+            {
+                // Retirement can cancel a pending handshake; no application command was sent.
+                pool = askRedirect is null
+                    ? await GetDedicatedPoolAsync(slot, cancellationToken).ConfigureAwait(false)
+                    : await GetRedirectDedicatedPoolAsync(askRedirect, redirectSource!, cancellationToken, slot)
+                        .ConfigureAwait(false);
+            }
+        }
+    }
 
     internal ValueTask RetireConnectionAsync(RespireEndpoint endpoint, long serverClientId)
         => GetOrCreateNode(endpoint).RetireConnectionAsync(serverClientId);

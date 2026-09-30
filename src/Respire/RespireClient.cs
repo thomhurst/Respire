@@ -1079,7 +1079,11 @@ public sealed partial class RespireClient : IRespireClient
         var pool = cluster is null ? _core.DedicatedPool
             : await cluster.GetDedicatedPoolAsync(slot, cancellationToken).ConfigureAwait(false);
         // The owning pool must follow the lease through commit/disposal, even if topology changes.
-        var connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
+        RespireConnection connection;
+        if (cluster is null)
+            connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
+        else
+            (pool, connection) = await cluster.RentDedicatedConnectionAsync(pool, slot, cancellationToken).ConfigureAwait(false);
         try
         {
             var command = new CmdN(Verbs.Watch, watchKeys);
@@ -1550,8 +1554,20 @@ public sealed partial class RespireClient : IRespireClient
         var sendAsking = false;
         for (var attempt = 0; ; attempt++)
         {
-            var response = await SendTrackedOnConnectionAsync(
-                operation, connection, command, cancellationToken, sendAsking).ConfigureAwait(false);
+            RespValue response;
+            try
+            {
+                response = await SendTrackedOnConnectionAsync(
+                    operation, connection, command, cancellationToken, sendAsking).ConfigureAwait(false);
+            }
+            catch (RespireConnectionRetiredException) when (cluster.CanRetryRetirement(attempt, cancellationToken))
+            {
+                _core.ClientCache?.FlushForContinuityLoss();
+                connection = await cluster.GetReplacementConnectionAsync(
+                    sendAsking ? connection : null, slot, null, cancellationToken).ConfigureAwait(false);
+                onRedirect?.Invoke(!sendAsking);
+                continue;
+            }
 
             if (!response.IsError)
             {
@@ -1885,6 +1901,12 @@ public sealed partial class RespireClient : IRespireClient
                         operation, connection, command, cancellationToken, storedProcedureName, sendAsking)
                     .ConfigureAwait(false);
             }
+            catch (RespireConnectionRetiredException) when (cluster.CanRetryRetirement(attempt, cancellationToken))
+            {
+                _core.ClientCache?.FlushForContinuityLoss();
+                connection = await cluster.GetReplacementConnectionAsync(
+                    sendAsking ? connection : null, slot, null, cancellationToken).ConfigureAwait(false);
+            }
             catch (RespireServerException error)
                 when (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
             {
@@ -2129,10 +2151,21 @@ public sealed partial class RespireClient : IRespireClient
         {
             var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
             var connection = await cluster.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
-            await SendFireAndForgetOnConnectionAsync(
-                    operation, connection, command, cancellationToken, storedProcedureName)
-                .ConfigureAwait(false);
-            return;
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    await SendFireAndForgetOnConnectionAsync(
+                            operation, connection, command, cancellationToken, storedProcedureName)
+                        .ConfigureAwait(false);
+                    return;
+                }
+                catch (RespireConnectionRetiredException) when (cluster.CanRetryRetirement(attempt, cancellationToken))
+                {
+                    connection = await cluster.GetReplacementConnectionAsync(null, slot, null, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+            }
         }
 
         try
@@ -2367,6 +2400,8 @@ public sealed partial class RespireClient : IRespireClient
         RespireTelemetry.OperationScope telemetry = default;
         var telemetryStarted = false;
         var sendAsking = false;
+        RespireConnection? askingSource = null;
+        RespireServerException? askRedirect = null;
 
         for (var attempt = 0; ; attempt++)
         {
@@ -2375,7 +2410,8 @@ public sealed partial class RespireClient : IRespireClient
             var acquiringRedirectPool = false;
             try
             {
-                connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
+                (pool, connection) = await cluster.RentDedicatedConnectionAsync(
+                    pool, slot, cancellationToken, askRedirect: askRedirect, redirectSource: askingSource).ConfigureAwait(false);
                 if (!telemetryStarted)
                 {
                     telemetry = RespireTelemetry.StartOperation(
@@ -2410,6 +2446,8 @@ public sealed partial class RespireClient : IRespireClient
                         returned = true;
                         pool = redirectedPool;
                         sendAsking = error.Code == RespireErrorCodes.Ask;
+                        askingSource = sendAsking ? connection : null;
+                        askRedirect = sendAsking ? error : null;
                         continue;
                     }
 
@@ -2725,22 +2763,27 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
-    private async ValueTask<RespireConnection> GetTrackedClusterConnectionAsync(
+    private ValueTask<RespireConnection> GetTrackedClusterConnectionAsync(
         ClusterRouter cluster,
         int? slot,
         bool requireIdentity,
         CancellationToken cancellationToken)
+        => GetTrackedReplacementConnectionAsync(cluster, null, slot, requireIdentity, cancellationToken);
+
+    private async ValueTask<RespireConnection> GetTrackedReplacementConnectionAsync(
+        ClusterRouter cluster, RespireConnection? askingSource, int? slot,
+        bool requireIdentity, CancellationToken cancellationToken)
     {
         if (_core.Options.CommandTimeout is not { } timeout)
         {
-            return await cluster.GetTrackedConnectionAsync(slot, requireIdentity, cancellationToken)
+            return await cluster.GetReplacementConnectionAsync(askingSource, slot, requireIdentity, cancellationToken)
                 .ConfigureAwait(false);
         }
 
         using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
         try
         {
-            return await cluster.GetTrackedConnectionAsync(slot, requireIdentity, timeoutSource.Token)
+            return await cluster.GetReplacementConnectionAsync(askingSource, slot, requireIdentity, timeoutSource.Token)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -2853,6 +2896,14 @@ public sealed partial class RespireClient : IRespireClient
                         cancellationToken, storedProcedureName, sendAsking)
                     .ConfigureAwait(false);
                 return new RespireResult(in reply, _core.Options.Serializer);
+            }
+            catch (RespireConnectionRetiredException) when (cluster.CanRetryRetirement(attempt, cancellationToken))
+            {
+                connection = await GetTrackedReplacementConnectionAsync(
+                    cluster, sendAsking ? connection : null, slot, requiresIdentity, cancellationToken).ConfigureAwait(false);
+                execution.Connection = connection;
+                execution.ConnectionIdentity = GetTrackedConnectionIdentity(
+                    connection, cluster.HasReliableCorrectionOrdering(connection), sendAsking);
             }
             catch (RespireServerException error)
                 when (attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
