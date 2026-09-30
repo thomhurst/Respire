@@ -138,6 +138,8 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
 
     RespireClient IPendingSink.Client => _client;
 
+    bool IPendingSink.DefersSerialization => false;
+
     // Multi-key validation is read-only. Add applies the command's representative routing slot
     // only after serialization succeeds, so a rejected command cannot pin the transaction.
     private void ValidateClusterKeys(ReadOnlySpan<RespireKey> keys)

@@ -144,6 +144,8 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
 
     RespireClient IPendingSink.Client => _client;
 
+    bool IPendingSink.DefersSerialization => true;
+
     RespirePending<T> IPendingSink.Add<TCommand, T>(
         string operation, in TCommand command, Func<RespireClient, RespValue, T> convert)
         => Add<TCommand, T>(operation, in command, convert);

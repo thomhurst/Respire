@@ -30,13 +30,13 @@ internal sealed class BatchStreamCommands(IPendingSink sink) : IBatchStreamComma
 {
     public RespirePending<RespireStreamId> Add(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
         => sink.Add<Cmd1N, RespireStreamId>("XADD",
-            StreamCommands.BuildAddCommand(sink.Client, SnapshotKey(key), default, fields, snapshotValues: sink is RespireBatch),
+            StreamCommands.BuildAddCommand(sink.Client, SnapshotKey(key), default, fields, snapshotValues: sink.DefersSerialization),
             static (_, value) => new RespireStreamId(ResponseReader.String(in value)));
 
     public RespirePending<RespireStreamId?> Add(RespireKey key, StreamAddOptions options,
         params ReadOnlySpan<(string Field, RespireValue Value)> fields)
         => sink.Add<Cmd1N, RespireStreamId?>("XADD",
-            StreamCommands.BuildAddCommand(sink.Client, SnapshotKey(key), options, fields, snapshotValues: sink is RespireBatch),
+            StreamCommands.BuildAddCommand(sink.Client, SnapshotKey(key), options, fields, snapshotValues: sink.DefersSerialization),
             static (_, value) => value.IsNull ? default(RespireStreamId?) : new RespireStreamId(ResponseReader.String(in value)));
 
     public RespirePending<long> Count(RespireKey key)
@@ -76,5 +76,5 @@ internal sealed class BatchStreamCommands(IPendingSink sink) : IBatchStreamComma
             static (_, value) => ResponseReader.Integer(in value));
 
     // Transactions serialize during Add; batches retain the command until ExecuteAsync.
-    private RespireKey SnapshotKey(RespireKey key) => sink is RespireBatch ? key.Snapshot() : key;
+    private RespireKey SnapshotKey(RespireKey key) => sink.DefersSerialization ? key.Snapshot() : key;
 }

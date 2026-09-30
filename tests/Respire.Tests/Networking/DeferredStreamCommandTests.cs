@@ -97,6 +97,33 @@ public class DeferredStreamCommandTests
     }
 
     [Test]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task EmptyAcknowledgementPreservesServerValidationAcrossSurfaces(int surface)
+    {
+        byte[][] replies = ["-ERR wrong number of arguments for 'xack' command\r\n"u8.ToArray()];
+        await using var server = new FakeRespServer(WrapReplies(replies, transactional: surface == 2));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        if (surface == 0)
+        {
+            await Assert.That(async () => await client.Streams.AcknowledgeAsync("events", "workers", []))
+                .Throws<RespireServerException>();
+        }
+        else
+        {
+            using var batch = surface == 1 ? client.CreateBatch() : null;
+            await using var transaction = surface == 2 ? client.CreateTransaction() : null;
+            IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
+            var acknowledged = queue.Streams.Acknowledge("events", "workers", []);
+            if (transaction is not null) await transaction.CommitAsync();
+            else await Assert.That(async () => await batch!.ExecuteAsync()).Throws<RespireServerException>();
+            await Assert.That(() => acknowledged.Result).Throws<RespireServerException>();
+        }
+        await Assert.That(server.ReceivedCommands).Contains("XACK events workers");
+    }
+
+    [Test]
     public async Task InvalidArgumentsAndCrossSlotCommandsDoNotEnqueue()
     {
         await using var client = RespireClient.Create(new RespireOptions { UseCluster = true, Endpoints = [new("127.0.0.1", 1)] });
