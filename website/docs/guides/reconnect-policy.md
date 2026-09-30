@@ -236,7 +236,11 @@ result. Failed rounds do not permanently disable the router.
 MOVED, ASK, and READONLY are explicit server rejections. Their first replacement consumes
 attempt one. If recovery cannot establish a replacement, the original server exception
 is preserved. ASK keeps its temporary target; tracked identity setup and retirement
-reselection share the ongoing round. Dedicated physical connection retries retain their
+reselection share the ongoing round. A command rejected before acceptance by topology
+retirement starts fallback at attempt one. Repeated retirement during that command,
+including an individual rejected batch entry or an unwatched transaction, retains the
+same budget until completion. Accepted batch entries and watched transactions are never
+replayed. Dedicated physical connection retries retain their
 separate per-rent budget; node selection does not reset a discovery budget. Neither path
 replays a command after ambiguous acceptance or a lost reply.
 

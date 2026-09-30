@@ -202,13 +202,97 @@ public class ClusterRetirementTests
     }
 
     [Test]
-    [Arguments("ordinary")]
-    [Arguments("no-redirect")]
-    [Arguments("tracked")]
-    [Arguments("fire-forget")]
-    [Arguments("batch")]
-    [Arguments("transaction")]
-    public async Task RejectedCommandRetriesWithoutReplayingAcceptedWork(string path)
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RepeatedRejectedSendsCannotRestartTheRetirementBudget(bool configuredPolicy)
+    {
+        var full = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var acceptedCount = 0;
+        await using var first = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            SuppressReply = command =>
+            {
+                if (Interlocked.Increment(ref acceptedCount) == 4) full.TrySetResult();
+                return true;
+            },
+        };
+        await using var second = new FakeRespServer(FakeRespServer.OkReply);
+        await using var last = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = CreateClient(maxInflightCommands: 4,
+            reconnectPolicy: configuredPolicy ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 } : null);
+        using var timeout = new CancellationTokenSource(Limit);
+        var router = client.Core.Cluster!;
+        Publish(router, new("127.0.0.1", first.Port), "first", 1);
+        var original = await router.GetConnectionAsync(42, timeout.Token);
+        var accepted = Enumerable.Range(0, 4)
+            .Select(_ => original.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token).AsTask()).ToArray();
+        await full.Task.WaitAsync(timeout.Token);
+        var changes = new System.Collections.Concurrent.ConcurrentQueue<RespireConnectionStateChange>();
+        var exhausted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
+            changes.Enqueue(change);
+            if (change.ReconnectExhausted) exhausted.TrySetResult();
+        };
+        var replacements = 0;
+        // This callback runs after replacement selection and before the tracked command's next send.
+        // Retire that replacement deterministically, without racing the notification dispatcher.
+        Action<bool> onRedirect = _ =>
+        {
+            if (++replacements == 1) Publish(router, new("127.0.0.1", last.Port), "last", 3);
+        };
+        var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
+        var pending = ((ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
+            ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, onRedirect])!).AsTask();
+        Publish(router, new("127.0.0.1", second.Port), "second", 2);
+        try
+        {
+            if (configuredPolicy)
+            {
+                await Assert.That(async () => { using var reply = await pending.WaitAsync(timeout.Token); })
+                    .ThrowsExactly<RespireReconnectLimitException>();
+                await exhausted.Task.WaitAsync(timeout.Token);
+                await Assert.That(replacements).IsEqualTo(1);
+                await Assert.That(last.CommandsSeen).IsEqualTo(0);
+                var events = changes.ToArray();
+                await Assert.That(events.Length).IsEqualTo(2);
+                await Assert.That(events[0].ReconnectAttempt).IsEqualTo(1);
+                await Assert.That(events[1].ReconnectAttempt).IsEqualTo(1);
+                await Assert.That(events[0].ReconnectEpisodeId).IsEqualTo(events[1].ReconnectEpisodeId);
+            }
+            else
+            {
+                using var reply = await pending.WaitAsync(timeout.Token);
+                await Assert.That(reply.AsString()).IsEqualTo("OK");
+                await Assert.That(replacements).IsEqualTo(2);
+                await Assert.That(last.ReceivedCommands).IsEquivalentTo(["CLIENT CACHING YES", "SET key value"]);
+            }
+            await Assert.That(second.CommandsSeen).IsEqualTo(0);
+            await Assert.That(accepted.All(task => !task.IsCompleted)).IsTrue();
+        }
+        finally
+        {
+            await first.SendRawAsync("+PONG\r\n+PONG\r\n+PONG\r\n+PONG\r\n"u8.ToArray());
+            foreach (var task in accepted) { using var reply = await task.WaitAsync(timeout.Token); }
+        }
+        await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
+    }
+
+    [Test]
+    [Arguments("ordinary", false)]
+    [Arguments("ordinary", true)]
+    [Arguments("no-redirect", false)]
+    [Arguments("no-redirect", true)]
+    [Arguments("tracked", false)]
+    [Arguments("tracked", true)]
+    [Arguments("fire-forget", false)]
+    [Arguments("fire-forget", true)]
+    [Arguments("batch", false)]
+    [Arguments("batch", true)]
+    [Arguments("transaction", false)]
+    [Arguments("transaction", true)]
+    public async Task RejectedCommandRetriesWithoutReplayingAcceptedWork(string path, bool configuredPolicy)
     {
         var full = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var retried = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -225,7 +309,15 @@ public class ClusterRetirementTests
                 return true;
             },
         };
-        await using var client = CreateClient(maxInflightCommands: 4, allowAdmin: true);
+        await using var client = CreateClient(maxInflightCommands: 4, allowAdmin: true,
+            reconnectPolicy: configuredPolicy ? new() { InitialDelay = TimeSpan.FromMilliseconds(10),
+                JitterRatio = 0, MaxAttempts = 1 } : null);
+        var scheduled = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.ReconnectSource == RespireReconnectSource.ClusterDiscovery && change.NextReconnectDelay is not null)
+                scheduled.TrySetResult(change);
+        };
         using var timeout = new CancellationTokenSource(Limit);
         var router = client.Core.Cluster!;
         var endpoint = new RespireEndpoint("127.0.0.1", server.Port);
@@ -240,6 +332,13 @@ public class ClusterRetirementTests
         Publish(router, endpoint, "new", 2);
         await retry.WaitAsync(timeout.Token);
         await retried.Task.WaitAsync(timeout.Token);
+        if (configuredPolicy)
+        {
+            var change = await scheduled.Task.WaitAsync(timeout.Token);
+            await Assert.That(change.ReconnectAttempt).IsEqualTo(1);
+            await Assert.That(change.NextReconnectDelay).IsEqualTo(TimeSpan.FromMilliseconds(10));
+            await Assert.That(change.Error).IsTypeOf<RespireConnectionRetiredException>();
+        }
         await Assert.That(accepted.All(task => !task.IsCompleted)).IsTrue();
         await Assert.That(server.ReceivedCommands.Take(4)).IsEquivalentTo(["PING", "PING", "PING", "PING"]);
         await Assert.That(server.ReceivedConnectionIds.Take(4)).IsEquivalentTo([0, 0, 0, 0]);

@@ -421,10 +421,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireConnection source,
         bool requireIdentity,
         CancellationToken cancellationToken,
-        int? commandSlot = null)
+        int? commandSlot = null, DiscoveryRound? discovery = null)
     {
-        using var scope = BeginDiscovery(null);
-        var discovery = scope.Round;
+        using var scope = BeginDiscovery(discovery);
+        discovery = scope.Round;
         try
         {
             var connection = await GetRedirectConnectionAsync(error, source, cancellationToken, commandSlot, discovery)

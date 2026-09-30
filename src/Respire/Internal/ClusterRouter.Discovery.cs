@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
+using Respire.Networking;
 
 namespace Respire.Internal;
 
@@ -31,8 +33,33 @@ internal sealed partial class ClusterRouter
         }
     }
 
+    // A command creates a round only after a send is rejected before acceptance. Keeping
+    // this round in the command loop prevents each retired generation starting a new budget.
+    internal void RecordRetirement(ref DiscoveryRound? round, RespireConnection source, Exception error)
+    {
+        if (_options.ReconnectPolicy is not { } policy) return;
+        round ??= new DiscoveryRound(this, policy);
+        round.Failed(new RespireEndpoint(source.Host, source.Port), error);
+    }
+
+    // One asynchronous control flow owns a round. Nested discovery helpers borrow it only
+    // through sequential awaits; master fan-out is sequential too. Concurrent callers own
+    // separate rounds, even when the seed gate coalesces their physical connection work.
+    // Failed records a rejected candidate; BeforeCandidateAsync consumes that failure once.
+    // Success alone does not consume another attempt (for example, required master fan-out).
     internal sealed class DiscoveryRound(ClusterRouter owner, RespireReconnectPolicy policy)
     {
+#if DEBUG
+        private int _waiting;
+#endif
+        [Conditional("DEBUG")]
+        private void AssertSequential()
+        {
+#if DEBUG
+            Debug.Assert(Volatile.Read(ref _waiting) == 0, "DiscoveryRound must have only one sequential consumer.");
+#endif
+        }
+
         private Exception? _failure;
         private RespireEndpoint _endpoint;
         private int _attempts;
@@ -41,16 +68,22 @@ internal sealed partial class ClusterRouter
         internal Exception? TerminalError { get; set; }
         internal bool HasPendingFailure => _failure is not null;
 
-        internal void Failed(Exception error) => _failure = error;
+        internal void Failed(Exception error)
+        {
+            AssertSequential();
+            _failure = error;
+        }
 
         internal void Failed(RespireEndpoint endpoint, Exception error)
         {
+            AssertSequential();
             _endpoint = endpoint;
             _failure = error;
         }
 
         internal ValueTask BeforeCandidateAsync(RespireEndpoint endpoint, CancellationToken cancellationToken)
         {
+            AssertSequential();
             cancellationToken.ThrowIfCancellationRequested();
             ObjectDisposedException.ThrowIf(Volatile.Read(ref owner._disposed) != 0, owner);
             if (Exhaustion is { } exhausted) throw exhausted;
@@ -79,16 +112,26 @@ internal sealed partial class ClusterRouter
 
         private async ValueTask WaitAsync(TimeSpan delay, CancellationToken callerToken)
         {
+#if DEBUG
+            Debug.Assert(Interlocked.Exchange(ref _waiting, 1) == 0);
+#endif
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(callerToken, owner._stopDiscovery.Token);
             try { await Task.Delay(delay, linked.Token).ConfigureAwait(false); }
             catch (OperationCanceledException error) when (callerToken.IsCancellationRequested)
             {
                 throw new OperationCanceledException(error.Message, error, callerToken);
             }
+            finally
+            {
+#if DEBUG
+                Volatile.Write(ref _waiting, 0);
+#endif
+            }
         }
 
         internal void Finish()
         {
+            AssertSequential();
             if (_attempts == 0 || Exhaustion is not null || Volatile.Read(ref owner._disposed) != 0) return;
             Publish(TerminalError is null ? RespireConnectionState.Connected : RespireConnectionState.Disconnected, TerminalError);
         }

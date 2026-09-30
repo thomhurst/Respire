@@ -390,61 +390,73 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
 
         async ValueTask<RespValue> SendAsync(CancellationToken token)
         {
-            var cluster = core.Cluster;
-            var slot = _hasClusterSlot ? _clusterSlot : (int?)null;
-            for (var attempt = 0; ; attempt++)
+            ClusterRouter.DiscoveryRound? discovery = null;
+            try
             {
-                connection ??= await _client.AcquireConnectionAsync(slot, token)
-                    .ConfigureAwait(false);
-                RespValue reply;
-                try
+                var cluster = core.Cluster;
+                var slot = _hasClusterSlot ? _clusterSlot : (int?)null;
+                for (var attempt = 0; ; attempt++)
                 {
-                    reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, token,
-                            core.Options.CommandTimeout, cancellationToken)
+                    connection ??= await _client.AcquireConnectionAsync(slot, token)
+                        .ConfigureAwait(false);
+                    RespValue reply;
+                    try
+                    {
+                        reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, token,
+                                core.Options.CommandTimeout, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    catch (RespireConnectionRetiredException retirement) when (_watchConnection is null
+                        && cluster is not null && cluster.CanRetryRetirement(attempt, token))
+                    {
+                        // The transport rejects the complete MULTI/EXEC frame before accepting any part.
+                        cluster.RecordRetirement(ref discovery, connection, retirement);
+                        connection = await cluster.GetReplacementConnectionAsync(null, slot, null, token, discovery)
+                            .ConfigureAwait(false);
+                        continue;
+                    }
+                    if (!reply.IsError || cluster is null || attempt >= ClusterRouter.RedirectLimit)
+                    {
+                        return reply;
+                    }
+
+                    var redirect = ResponseReader.ServerError(in reply, "MULTI/EXEC");
+                    // EXEC result arrays can contain partial success and are returned above.
+                    if (!ClusterRouter.CanRecover(redirect, slot))
+                    {
+                        return reply;
+                    }
+
+                    reply.Dispose();
+                    if (_watchConnection is not null)
+                    {
+                        // Replaying on another connection would lose WATCH and could commit stale reads.
+                        cluster.LearnWatchedRoute(redirect, connection, slot);
+                        throw new RespireTransactionRetryException(redirect);
+                    }
+                    if (ClusterRouter.IsRedirect(redirect)
+                        && !ClusterRouter.TryParseRedirect(redirect, connection.Host, out _, out _))
+                    {
+                        throw redirect;
+                    }
+
+                    if (redirect.Code == RespireErrorCodes.Ask)
+                    {
+                        throw new RespireConnectionException(
+                            "Redis Cluster transactions cannot follow ASK redirects during slot migration.",
+                            redirect);
+                    }
+
+                    connection = await cluster.GetRedirectConnectionAsync(redirect, connection, token, slot, discovery)
                         .ConfigureAwait(false);
                 }
-                catch (RespireConnectionRetiredException) when (_watchConnection is null
-                    && cluster is not null && cluster.CanRetryRetirement(attempt, token))
-                {
-                    // The transport rejects the complete MULTI/EXEC frame before accepting any part.
-                    connection = null;
-                    continue;
-                }
-                if (!reply.IsError || cluster is null || attempt >= ClusterRouter.RedirectLimit)
-                {
-                    return reply;
-                }
-
-                var redirect = ResponseReader.ServerError(in reply, "MULTI/EXEC");
-                // EXEC result arrays can contain partial success and are returned above.
-                if (!ClusterRouter.CanRecover(redirect, slot))
-                {
-                    return reply;
-                }
-
-                reply.Dispose();
-                if (_watchConnection is not null)
-                {
-                    // Replaying on another connection would lose WATCH and could commit stale reads.
-                    cluster.LearnWatchedRoute(redirect, connection, slot);
-                    throw new RespireTransactionRetryException(redirect);
-                }
-                if (ClusterRouter.IsRedirect(redirect)
-                    && !ClusterRouter.TryParseRedirect(redirect, connection.Host, out _, out _))
-                {
-                    throw redirect;
-                }
-
-                if (redirect.Code == RespireErrorCodes.Ask)
-                {
-                    throw new RespireConnectionException(
-                        "Redis Cluster transactions cannot follow ASK redirects during slot migration.",
-                        redirect);
-                }
-
-                connection = await cluster.GetRedirectConnectionAsync(redirect, connection, token, slot)
-                    .ConfigureAwait(false);
             }
+            catch (Exception error)
+            {
+                if (discovery is not null) discovery.TerminalError = error;
+                throw;
+            }
+            finally { discovery?.Finish(); }
         }
     }
 
