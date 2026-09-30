@@ -1831,7 +1831,7 @@ public sealed partial class RespireClient : IRespireClient
                     return CachedRawGetManyAsync(query.Query, cancellationToken);
             }
 
-            if (operation == "HMGET" && query.Query.ArgumentCount >= 2)
+            if (cache.ReuseHashFields && operation == "HMGET" && query.Query.ArgumentCount >= 2)
                 return CachedHashGetManyAsync(cache, query, cancellationToken);
             if (cache.TryGet(in query, out var cached))
             {

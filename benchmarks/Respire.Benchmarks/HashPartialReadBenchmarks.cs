@@ -9,7 +9,7 @@ namespace Respire.Benchmarks;
 [InvocationCount(1)]
 public class HashPartialReadBenchmarks
 {
-    private const int HashCount = 64;
+    private const int HashCount = 512;
     private readonly string[] _keys = Enumerable.Range(0, HashCount)
         .Select(index => $"respire:hash-partial:{Guid.NewGuid():N}:{index}").ToArray();
     private readonly string[] _fields = ["a", "b", "c", "d"];
@@ -24,15 +24,29 @@ public class HashPartialReadBenchmarks
     [Params(0, 2, 4)]
     public int CachedFields { get; set; }
 
+    [ParamsSource(nameof(Modes))]
+    public bool ReuseHashFields { get; set; }
+
+    public IEnumerable<bool> Modes => Environment.GetEnvironmentVariable("RESPIRE_BENCH_BASELINE") == "1"
+        ? [false] : [false, true];
+
     [GlobalSetup]
     public async Task Setup()
     {
         var host = Environment.GetEnvironmentVariable("REDIS_HOST") ?? "127.0.0.1";
         var port = int.Parse(Environment.GetEnvironmentVariable("REDIS_PORT") ?? "6379");
+        var cache = new RespireClientSideCacheOptions();
+        if (ReuseHashFields)
+        {
+            // Setup-only reflection keeps the identical fixture source compatible with old builds.
+            var option = typeof(RespireClientSideCacheOptions).GetProperty("ReuseHashFields")
+                ?? throw new InvalidOperationException("The selected build does not support partial hash reads.");
+            option.SetValue(cache, true);
+        }
         _client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new(host, port) }, Connections = 1,
-            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+            Protocol = RespProtocol.Resp3, ClientSideCache = cache,
         });
         foreach (var key in _keys)
             foreach (var field in _fields)
@@ -76,7 +90,7 @@ public class HashPartialReadBenchmarks
         _process.Refresh();
         Console.WriteLine("HASH_PARTIAL_PROCESS_METRICS " + JsonSerializer.Serialize(new
         {
-            CachedFields, reads = _reads, elapsedSeconds = Stopwatch.GetElapsedTime(_startedAt).TotalSeconds,
+            CachedFields, ReuseHashFields, reads = _reads, elapsedSeconds = Stopwatch.GetElapsedTime(_startedAt).TotalSeconds,
             cpuMilliseconds = (_process.TotalProcessorTime - _cpuAt).TotalMilliseconds
         }));
         foreach (var key in _keys) await _client.DeleteAsync(key);

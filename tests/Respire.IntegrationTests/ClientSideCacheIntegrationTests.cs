@@ -103,7 +103,7 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
     [Test]
     public async Task HashReads_AreCachedAndInvalidated()
     {
-        await using var resources = await Resources.CreateAsync(fixture);
+        await using var resources = await Resources.CreateAsync(fixture, reuseHashFields: true);
         var key = $"cache:hash-reads:{Guid.NewGuid():N}";
         await resources.Database.HashSetAsync(key, [
             new HashEntry("first", "one"),
@@ -362,7 +362,7 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
     [Test]
     public async Task HashMultiReadsShareBinaryFieldsAndInvalidateOnExternalWrite()
     {
-        await using var resources = await Resources.CreateAsync(fixture);
+        await using var resources = await Resources.CreateAsync(fixture, reuseHashFields: true);
         var key = $"cache:hash-partial:{Guid.NewGuid():N}";
         byte[] binaryField = [0, 255, 1];
         await resources.Database.HashSetAsync(key, [new HashEntry(binaryField, "binary"), new HashEntry("a", "A")]);
@@ -390,7 +390,7 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
     [Test]
     public async Task HashMultiReadsCacheAbsentHashesAndInvalidateOnCreation()
     {
-        await using var resources = await Resources.CreateAsync(fixture);
+        await using var resources = await Resources.CreateAsync(fixture, reuseHashFields: true);
         var key = $"cache:hash-absent:{Guid.NewGuid():N}";
         await Assert.That(await resources.Client.Hashes.GetManyAsync(key, "a", "b"))
             .IsEquivalentTo(new string?[] { null, null });
@@ -408,7 +408,7 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
     public async Task HashMultiReadsDiscardFieldsAcrossReconnect()
     {
         var name = $"respire-hash-reconnect-{Guid.NewGuid():N}";
-        await using var resources = await Resources.CreateAsync(fixture, name);
+        await using var resources = await Resources.CreateAsync(fixture, name, reuseHashFields: true);
         var key = $"cache:hash-reconnect:{Guid.NewGuid():N}";
         await resources.Database.HashSetAsync(key, [new HashEntry("a", "old"), new HashEntry("b", "B")]);
         await resources.Client.Hashes.GetManyAsync(key, "a", "b");
@@ -489,12 +489,12 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
 
         public static async Task<Resources> CreateAsync(
             RedisTestContainer fixture,
-            string? clientName = null)
+            string? clientName = null, bool reuseHashFields = false)
         {
             var options = RespireOptions.Parse(fixture.ConnectionString) with
             {
                 ClientName = clientName,
-                ClientSideCache = new(),
+                ClientSideCache = new() { ReuseHashFields = reuseHashFields },
             };
             var client = await RespireClient.ConnectAsync(options);
             var multiplexer = await ConnectionMultiplexer.ConnectAsync(

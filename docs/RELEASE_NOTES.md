@@ -4,11 +4,13 @@
 
 ### Partial cached hash reads
 
-Immediate HMGET reads reuse cached HGET fields and fetch remaining fields in one request,
+With `ClientSideCache.ReuseHashFields = true`, immediate HMGET reads reuse cached HGET fields
+and fetch remaining fields in one request,
 including typed and raw calls. Field order, duplicates, binary raw arguments, missing values,
 Cluster redirects, and hash-key invalidation retain their normal contracts. Malformed replies
 cannot publish partial field entries. Raw MGET keeps exact-query caching; typed MGET retains
-its existing per-key partial-hit behavior.
+its existing per-key partial-hit behavior. The option defaults to false: field reuse reduces
+network payload for overlapping requests at the cost of additional cache metadata and allocations.
 
 ### Typed key notifications
 

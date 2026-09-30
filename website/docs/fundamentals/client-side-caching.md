@@ -30,7 +30,7 @@ await using var redis = await RespireClient.ConnectAsync(new RespireOptions
 Existing typed APIs and catalog `ExecuteAsync` calls then use the cache transparently. This covers
 deterministic keyed reads across strings, keys, hashes, lists, sets, sorted sets, streams, bitmaps,
 geospatial indexes, Redis arrays, JSON, and vector sets. Typed `GET` and `MGET` keep optimized
-per-key entries and partial-hit behavior. `HMGET` reuses individual `HGET` field entries;
+per-key entries and partial-hit behavior. Opting into `ReuseHashFields` lets `HMGET` reuse individual `HGET` field entries;
 other replies use exact command-and-argument identities.
 
 Missing keys are cached too. Replies are deep-owned internally and converted for each call, so
@@ -80,7 +80,9 @@ warmup/calibration and background client work; they are diagnostic, not per-oper
 
 ## Partial hash reads
 
-Immediate `Hashes.GetManyAsync` and raw `HMGET` calls look up each field using the same
+Set `ClientSideCache = new() { ReuseHashFields = true }` to enable partial hash reads.
+The default is false and retains exact-query HMGET caching. When enabled, immediate
+`Hashes.GetManyAsync` and raw `HMGET` calls look up each field using the same
 cache identity as `HGET`. Cached fields are returned locally; all missing fields are sent
 in one `HMGET`. Results retain requested order, duplicate fields, and nulls for absent hashes
 or fields. An all-hit request sends no command. Binary fields are supported through raw
@@ -102,8 +104,14 @@ Typed `Strings.GetManyAsync` retains its existing per-key partial-hit path and c
 Cluster slots even on all-hit requests. Raw MGET continues to use its exact-query cache;
 it does not split overlapping lists into individual GET requests.
 
-The CI hash benchmark compares 0/4, 2/4, and 4/4 cached fields against two same-run baseline
-controls. Each measured batch reads 64 independent hashes once. Cache clearing and field
+Field reuse trades additional entries, lookup work, and owned-result allocations for fewer
+transferred values on overlapping field lists. Small local Redis responses can be slower in
+this mode, even with partial hits; it is not a universal optimization. Benchmark your payload
+sizes, field overlap, and network conditions before enabling it.
+
+The CI hash benchmark compares default and opted-in 0/4, 2/4, and 4/4 cached fields, with
+the default path also checked against two same-run baseline controls. Each measured batch reads
+512 independent hashes once. Cache clearing and field
 priming happen outside the measured batch, so misses cannot turn into hits partway through
 an iteration. Process CPU diagnostics include that priming and benchmark warmup/calibration.
 

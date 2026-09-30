@@ -18,6 +18,12 @@ public enum RespireClientTrackingMode
 /// <summary>Bounds and expiration policy for RESP3 server-assisted client-side caching.</summary>
 public sealed record RespireClientSideCacheOptions
 {
+    /// <summary>Reuse HGET field entries across HMGET requests. Defaults to false.</summary>
+    /// <remarks>Partial reads reduce transferred values for overlapping field lists but require
+    /// more cache entries and allocations than exact-query caching. Results may combine values
+    /// read at different times. Benchmark representative field counts and payload sizes.</remarks>
+    public bool ReuseHashFields { get; init; }
+
     /// <summary>Redis tracking mode. Defaults to OptIn.</summary>
     public RespireClientTrackingMode TrackingMode { get; init; }
 
@@ -112,6 +118,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
     }
 
     public int Count => Volatile.Read(ref _store).Count;
+
+    internal bool ReuseHashFields => _options.ReuseHashFields;
 
     public long SizeBytes => Volatile.Read(ref _store).SizeBytes;
 

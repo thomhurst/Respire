@@ -14,8 +14,9 @@ public sealed partial class RespireClient
         cancellationToken.ThrowIfCancellationRequested();
         var fieldCount = request.Query.ArgumentCount - 1;
         var result = new RespValue[fieldCount];
-        List<RespireValue>? missingFields = null;
-        List<int>? missingIndexes = null;
+        RespireValue[]? missingFields = null;
+        int[]? missingIndexes = null;
+        var missingCount = 0;
         var key = request.PrimaryKey;
         for (var index = 0; index < fieldCount; index++)
         {
@@ -29,19 +30,19 @@ public sealed partial class RespireClient
             else
             {
                 // Snapshot before the first await: raw callers may own mutable binary fields.
-                (missingFields ??= new(fieldCount)).Add(field.Snapshot());
-                (missingIndexes ??= new(fieldCount)).Add(index);
+                (missingFields ??= new RespireValue[fieldCount])[missingCount] = field.Snapshot();
+                (missingIndexes ??= new int[fieldCount])[missingCount++] = index;
             }
         }
-        return missingFields is null
-            ? ValueTask.FromResult(RespValue.Array(result))
-            : FetchHashFieldsAndCacheAsync(key.Snapshot(), missingFields.ToArray(), missingIndexes!, result,
-                cache, cancellationToken);
+        if (missingFields is null) return ValueTask.FromResult(RespValue.Array(result));
+        if (missingCount != missingFields.Length) Array.Resize(ref missingFields, missingCount);
+        return FetchHashFieldsAndCacheAsync(key.Snapshot(), missingFields, missingIndexes!, result,
+            cache, cancellationToken);
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespValue> FetchHashFieldsAndCacheAsync(
-        RespireKey key, RespireValue[] fields, List<int> missingIndexes, RespValue[] result,
+        RespireKey key, RespireValue[] fields, int[] missingIndexes, RespValue[] result,
         ClientSideCacheCoordinator cache, CancellationToken cancellationToken)
     {
         // Each field uses the existing HGET identity and hash-key dependency. A single hash
