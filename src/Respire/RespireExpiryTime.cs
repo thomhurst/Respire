@@ -39,7 +39,7 @@ public readonly struct RespireExpiryTime
     /// The Redis timestamp exceeds the range of DateTimeOffset. Use UnixTimeMilliseconds to
     /// inspect such timestamps without conversion, or TryGetExpiresAt for a nonthrowing conversion.
     /// </exception>
-    public DateTimeOffset? ExpiresAt => UnixTimeMilliseconds is { } timestamp
+    public DateTimeOffset? GetExpiresAt() => UnixTimeMilliseconds is { } timestamp
         ? DateTimeOffset.FromUnixTimeMilliseconds(timestamp)
         : null;
 

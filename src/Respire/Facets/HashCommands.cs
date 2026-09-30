@@ -359,6 +359,8 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
             cancellationToken, this,
             static (HashCommands _, in RespValue value) => ParseRandomPairs(in value));
 
+    // Params spans must be last, so each default/explicit-precision form has a separate
+    // span-plus-token overload. Keep all four forms for variadic calls and cancellation.
     public ValueTask<RespireExpiryTime[]> ExpiryTimeAsync(RespireKey key, params ReadOnlySpan<string> fields)
         => ExpiryTimeAsync(key, ExpiryTimePrecision.Milliseconds, fields, CancellationToken.None);
 

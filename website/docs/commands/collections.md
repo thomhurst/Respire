@@ -60,7 +60,7 @@ Results follow input order, including
 repeated fields. `Exists` distinguishes missing fields from persistent fields; `HasExpiry`
 indicates an expiration is set. `UnixTimeMilliseconds` always uses milliseconds, including
 when requesting whole-second resolution, and is null when missing or persistent. The numeric
-timestamp preserves Redis values beyond the range of `DateTimeOffset`. Use `ExpiresAt` for a
+timestamp preserves Redis values beyond the range of `DateTimeOffset`. Use `GetExpiresAt()` for a
 nullable UTC `DateTimeOffset`; that conversion throws if a timestamp exceeds its supported range.
 Use `TryGetExpiresAt(out DateTimeOffset expiresAt)` for a nonthrowing conversion; it returns
 false for missing/persistent fields and timestamps outside the supported range.

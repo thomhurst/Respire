@@ -98,7 +98,7 @@ public class HashReadIntegrationTests(ModernRedisTestContainer fixture)
         var defaultPrecision = await ExecuteAsync(client, mode,
             () => client.Hashes.ExpiryTimeAsync(key, fields), h => h.ExpiryTime(key, fields));
         defaultPrecision[1].UnixTimeMilliseconds.Should().Be(expires.ToUnixTimeMilliseconds());
-        defaultPrecision[1].ExpiresAt.Should().Be(expires);
+        defaultPrecision[1].GetExpiresAt().Should().Be(expires);
         foreach (var precision in new[] { ExpiryTimePrecision.Milliseconds, ExpiryTimePrecision.Seconds })
         {
             var result = await ExecuteAsync(client, mode,

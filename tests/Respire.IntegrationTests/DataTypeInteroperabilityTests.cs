@@ -251,7 +251,11 @@ public class DataTypeInteroperabilityTests
 
         // Use StackExchange to scan keys
         var server = _stackExchangeMultiplexer.GetServer(_fixture.Host, _fixture.Port);
-        var keys = server.Keys(database: _fixture.Database, pattern: "pattern:a:*").ToList();
+        var keys = new List<RedisKey>();
+        await foreach (var key in server.KeysAsync(database: _fixture.Database, pattern: "pattern:a:*"))
+        {
+            keys.Add(key);
+        }
         keys.Should().HaveCount(2);
 
         // Delete pattern with StackExchange

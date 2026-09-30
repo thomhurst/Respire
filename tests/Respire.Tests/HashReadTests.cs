@@ -89,8 +89,8 @@ public class HashReadTests
         await Assert.That(seconds.UnixTimeMilliseconds).IsEqualTo(timestamp);
         await Assert.That(milliseconds.Exists && milliseconds.HasExpiry).IsTrue();
         await Assert.That(default(RespireExpiryTime).Exists).IsFalse();
-        await Assert.That(() => milliseconds.ExpiresAt).Throws<ArgumentOutOfRangeException>();
-        await Assert.That(default(RespireExpiryTime).ExpiresAt).IsNull();
+        await Assert.That(() => milliseconds.GetExpiresAt()).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(default(RespireExpiryTime).GetExpiresAt()).IsNull();
     }
 
     [Test]
