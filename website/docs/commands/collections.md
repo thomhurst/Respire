@@ -302,6 +302,64 @@ await redis.SortedSets.AddAsync("binary:scores", entries, cancellationToken);
 
 ## Streams
 
+### Idempotent production (Redis 8.6+)
+
+Set `StreamAddOptions.Idempotency` to `StreamIdempotency.Manual(producerId, messageId)`
+for IDMP, or `StreamIdempotency.Automatic(producerId)` for IDMPAUTO. One options value
+selects exactly one mode; null keeps ordinary XADD behavior. Both require an automatic
+entry ID (`Id = null` or `"*"`). Identifiers must be nonempty; factories copy binary
+identifiers, which are never key-prefixed. Equality includes the mode and identifier bytes.
+
+```csharp
+var options = new StreamAddOptions
+{
+    Idempotency = StreamIdempotency.Manual("orders-producer", "event-42"),
+};
+RespireStreamId? first = await redis.Streams.AddAsync("orders", options, ("status", "paid"));
+RespireStreamId? duplicate = await redis.Streams.AddAsync("orders", options, ("status", "paid"));
+```
+
+Within Redis's retained deduplication history, the same producer/message identity returns
+the original entry ID even when a manual-mode payload differs. Automatic mode derives
+the identity from the field/value payload. Different producers have separate histories.
+Duration and size limits can expire or evict identities; deleting the stream also removes
+its history. This is not an unlimited exactly-once guarantee. See
+[XADD](https://redis.io/docs/latest/commands/xadd/) and
+[Redis's implementation](https://github.com/redis/redis/blob/8.8/src/t_stream.c).
+
+Existing `Streams.Add` batch/transaction methods accept the same options. Trimming,
+reference policies, and NOMKSTREAM remain composable. Older servers return their normal
+errors. The client does not add automatic write retries. Cancellation after dispatch
+cannot prove that a write did not execute; applications must choose any retry policy.
+
+### Negative acknowledgements (Redis 8.8+)
+
+`NegativeAcknowledgeAsync` runs XNACK, releasing pending entries from their consumers
+without acknowledging or deleting them. `Silent` decreases delivery counts, stopping
+at zero; `Fail` preserves them; `Fatal` sets them to `long.MaxValue`. Released entries
+are immediately claimable. `PendingAsync` retains Redis's empty consumer and `-1 ms`
+idle sentinel. See [XNACK](https://redis.io/docs/latest/commands/xnack/).
+
+```csharp
+long released = await redis.Streams.NegativeAcknowledgeAsync(
+    "orders", "workers", StreamNackMode.Fail, "1710000000000-0");
+```
+
+The result is Redis's aggregate count, not per-ID outcomes. Duplicate existing IDs
+count repeatedly. Absent PEL entries are skipped unless `StreamNackOptions.Force`
+creates unowned references for existing stream entries. Missing stream entries are
+still skipped. New forced entries start with zero deliveries, except Fatal mode.
+`RetryCount` overrides any mode with a nonnegative count; these advanced controls
+are usually unnecessary for ordinary consumers.
+
+Both overloads have `Streams.NegativeAcknowledge` batch/transaction counterparts.
+IDs must be numeric. Group names accept raw binary arguments and are copied; only
+the stream key is prefixed and routed. Deferred calls snapshot inputs when enqueued.
+Pre-cancelled calls send nothing; later cancellation cannot undo a write. Unsupported
+servers and missing groups surface server errors without fallback or write replay.
+External `IStreamCommands` and `IBatchStreamCommands` implementations must add the
+two respective overloads.
+
 ### Trimming
 
 Use `StreamAddOptions.MinId` or `MaxLength` to trim while appending. Use `Streams.TrimAsync`

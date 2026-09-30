@@ -84,13 +84,7 @@ internal sealed partial class StreamCommands
     {
         RequireIds(ids);
         var token = ReferencePolicyToken(policy);
-        foreach (var id in ids)
-        {
-            if (id == RespireStreamId.Min || id == RespireStreamId.Max || id == RespireStreamId.New)
-                throw new ArgumentException("Removal requires numeric stream IDs.", nameof(ids));
-            try { _ = id.CompareTo(RespireStreamId.Beginning); }
-            catch (FormatException error) { throw new ArgumentException("Removal requires numeric stream IDs.", nameof(ids), error); }
-        }
+        ValidateNumericIds(ids);
         var arguments = new RespireValue[ids.Length + (group is null ? 3 : 4)];
         var index = 0;
         if (group is not null) arguments[index++] = group;
@@ -99,6 +93,17 @@ internal sealed partial class StreamCommands
         arguments[index++] = ids.Length;
         foreach (var id in ids) arguments[index++] = id.Value;
         return new Cmd1N(group is null ? XDelEx : XAckDel, client.Key(key), arguments);
+    }
+
+    private static void ValidateNumericIds(ReadOnlySpan<RespireStreamId> ids)
+    {
+        foreach (var id in ids)
+        {
+            if (id == RespireStreamId.Min || id == RespireStreamId.Max || id == RespireStreamId.New)
+                throw new ArgumentException("The command requires numeric stream IDs.", nameof(ids));
+            try { _ = id.CompareTo(RespireStreamId.Beginning); }
+            catch (FormatException error) { throw new ArgumentException("The command requires numeric stream IDs.", nameof(ids), error); }
+        }
     }
 
     internal static RespireStreamDeletionResult[] ParseDeletionResults(in RespValue value)

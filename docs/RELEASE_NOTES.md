@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Stream production and negative acknowledgements
+
+- `StreamAddOptions.Idempotency` adds mutually exclusive IDMP/IDMPAUTO production
+  with owned binary identifiers (Redis 8.6+). `Streams.NegativeAcknowledgeAsync` and
+  deferred `NegativeAcknowledge` expose XNACK modes, retry counts, and FORCE (Redis 8.8+).
+  XNACK returns the server's aggregate count; it does not report per-ID outcomes.
+  External stream-facet implementations must add both overloads. See the
+  [stream guide](../website/docs/commands/collections.md#idempotent-production-redis-86)
+  for deduplication limits, PEL effects, version requirements, and cancellation.
+
 ### Stream reference policies
 
 - Redis 8.2+ stream removal adds XDELEX and XACKDEL through `RemoveAsync(key, policy, ids)`

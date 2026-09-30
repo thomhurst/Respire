@@ -263,6 +263,9 @@ public readonly record struct StreamAddOptions
     /// <summary>Redis 8.2+ reference handling when trimming. Null preserves the legacy wire format.</summary>
     public StreamReferencePolicy? ReferencePolicy { get; init; }
 
+    /// <summary>Redis 8.6+ producer deduplication. Requires an automatically generated entry ID; null omits it.</summary>
+    public StreamIdempotency? Idempotency { get; init; }
+
     /// <summary>Gets whether trimming may be approximate. Defaults to true.</summary>
     /// <remarks>Unlike XADD, <see cref="StreamTrimOptions.Approximate"/> defaults to false for XTRIM.</remarks>
     public bool ApproximateTrim
@@ -291,12 +294,13 @@ public readonly record struct StreamAddOptions
            && MinId == other.MinId
            && Limit == other.Limit
            && ReferencePolicy == other.ReferencePolicy
+           && Idempotency == other.Idempotency
            && ApproximateTrim == other.ApproximateTrim
            && CreateStream == other.CreateStream;
 
     /// <inheritdoc/>
     public override int GetHashCode()
-        => HashCode.Combine(Id, MaxLength, MinId, Limit, ReferencePolicy, ApproximateTrim, CreateStream);
+        => HashCode.Combine(Id, MaxLength, MinId, Limit, ReferencePolicy, Idempotency, ApproximateTrim, CreateStream);
 }
 
 /// <summary>
@@ -548,7 +552,10 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         bool snapshotValues = false)
     {
         var trim = options.ToTrimOptions();
-        var optionCount = (options.CreateStream ? 0 : 1) + trim.ValidateAndCountArguments(requireThreshold: false, nameof(options));
+        if (options.Idempotency is not null && options.Id is { } explicitId && explicitId.Value != "*")
+            throw new ArgumentException("Idempotency requires an automatically generated entry ID (*).", nameof(options));
+        var optionCount = (options.CreateStream ? 0 : 1) + (options.Idempotency?.ArgumentCount ?? 0)
+            + trim.ValidateAndCountArguments(requireThreshold: false, nameof(options));
         var args = new RespireValue[optionCount + 1 + fields.Length * 2];
         var offset = 0;
         if (!options.CreateStream)
@@ -557,6 +564,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
         }
 
         offset += trim.CopyArgumentsTo(args.AsSpan(offset));
+        if (options.Idempotency is { } idempotency) offset += idempotency.CopyArgumentsTo(args.AsSpan(offset));
 
         args[offset++] = options.Id?.Value ?? "*";
         for (var i = 0; i < fields.Length; i++)
@@ -575,6 +583,7 @@ internal sealed partial class StreamCommands(RespireClient client) : IStreamComm
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<RespireStreamId?> AddOptionalAsync(Cmd1N command, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var id = await client.StringOrNullAsync("XADD", command, cancellationToken).ConfigureAwait(false);
         return id is null ? default(RespireStreamId?) : new RespireStreamId(id);
     }
