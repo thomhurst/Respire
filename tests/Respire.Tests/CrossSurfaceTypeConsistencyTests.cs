@@ -13,7 +13,7 @@ public class CrossSurfaceTypeConsistencyTests
     [Arguments(typeof(IHyperLogLogCommands), "MergeAsync", typeof(IBatchHyperLogLogCommands), "Merge")]
     [Arguments(typeof(IStringCommands), "SetManyAsync", typeof(IBatchStringCommands), "SetMany")]
     [Arguments(typeof(IStringCommands), "SetManyIfNotExistsAsync", typeof(IBatchStringCommands), "SetManyIfNotExists")]
-    public async Task UnconditionalWrites_MatchDeferredBooleanConfirmations(
+    public async Task Writes_MatchDeferredBooleanResults(
         Type immediate, string immediateName, Type deferred, string deferredName)
     {
         var methods = immediate.GetMethods().Where(method => method.Name == immediateName).ToArray();
