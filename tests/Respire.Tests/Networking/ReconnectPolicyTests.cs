@@ -326,6 +326,11 @@ public class ReconnectPolicyTests
         var multiplexer = client.Core.Multiplexer;
         await multiplexer.EnsureReliableCorrectionOrderingAsync();
         var original = multiplexer.GetConnection();
+        // Retirement can schedule a replacement before the continuation stops the listener.
+        // Reject that replacement's CLIENT ID handshake too, so the unavailable case cannot
+        // transiently publish a healthy connection when the test thread is delayed.
+        if (unavailable)
+            server.ReplyOverride = (connectionId, _) => connectionId == 0 ? null : "-ERR replacement unavailable\r\n"u8.ToArray();
         await original.RetireAsync(); // A successful drain leaves no owed CLIENT KILL fence.
         await Assert.That(original.DrainedSuccessfully).IsTrue();
         if (unavailable) await server.DisposeAsync();

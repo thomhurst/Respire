@@ -303,7 +303,11 @@ primary. `ConnectionStateChanged` reports endpoint changes, and the `Respire` me
 `respire.sentinel.failover` for validated primary endpoint changes, tagged with `server.address`
 and `server.port`. State observers may dispose the client synchronously. Disposal suppresses
 queued notifications but does not wait for an observer already running; that callback may
-finish after disposal returns.
+finish after disposal returns. The process-wide `respire.sentinel.generations.retired` gauge
+counts retired generations still owned while accepted commands, borrowed leases, or correction
+fences drain. A nonzero value can be expected during handoff; a value that keeps growing
+indicates retained work to investigate. There is no forced drain deadline that abandons
+accepted commands or an unacknowledged correction fence.
 
 This is reactive discovery. Sentinel event subscriptions and the real-server failover matrix
 remain tracked by [#549](https://github.com/thomhurst/Respire/issues/549). No background Sentinel

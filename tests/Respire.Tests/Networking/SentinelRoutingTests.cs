@@ -582,7 +582,7 @@ public class SentinelRoutingTests
             if (!intercept.Value) return;
             intercept.Value = false;
             Volatile.Write(ref port, promoted.Port);
-            using var error = Protocol.RespValue.Error("READONLY replica");
+            using var error = Respire.Protocol.RespValue.Error("READONLY replica");
             generation.ObserveResponse(connection, "SET", in error);
         });
         listener.Start();
@@ -664,6 +664,53 @@ public class SentinelRoutingTests
         catch (Exception) when (client.Core.Disposed) { }
         await disposed.Task.WaitAsync(Limit);
         await Assert.That(client.IsConnected).IsFalse();
+    }
+
+    [Test]
+    public async Task ConsecutiveFailoversRetainAndDisposeBothDrainingGenerations()
+    {
+        await using var first = Primary((_, command) => command.StartsWith("SET retire")
+            ? "-READONLY replica\r\n"u8.ToArray() : null);
+        await using var second = Primary((_, command) => command.StartsWith("SET retire")
+            ? "-READONLY replica\r\n"u8.ToArray() : null);
+        first.SuppressReply = second.SuppressReply = command => command.StartsWith("BLPOP ");
+        await using var third = Primary();
+        var port = first.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        var original = client.Core.Sentinel!.Current!;
+        var firstRead = client.Lists.LeftPopAsync("first", waitFor: Timeout.InfiniteTimeSpan).AsTask();
+        await WaitForCommandAsync(first, "BLPOP ");
+        Volatile.Write(ref port, second.Port);
+        await Assert.That(async () => await client.SetAsync("retire:first", "value")).Throws<RespireServerException>();
+        await client.SetAsync("second", "value");
+        var replacement = client.Core.Sentinel.Current!;
+        var secondRead = client.Lists.LeftPopAsync("second", waitFor: Timeout.InfiniteTimeSpan).AsTask();
+        await WaitForCommandAsync(second, "BLPOP ");
+        Volatile.Write(ref port, third.Port);
+        await Assert.That(async () => await client.SetAsync("retire:second", "value")).Throws<RespireServerException>();
+        await client.SetAsync("third", "value");
+        await Assert.That(original.Retirement.IsCompleted).IsFalse();
+        await Assert.That(replacement.Retirement.IsCompleted).IsFalse();
+        long retained = 0;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, meter) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.sentinel.generations.retired")
+                meter.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, _, _) => retained = value);
+        listener.Start();
+        listener.RecordObservableInstruments();
+        await Assert.That(retained).IsGreaterThanOrEqualTo(2);
+        await client.DisposeAsync().AsTask().WaitAsync(Limit);
+        await Assert.That(async () => await firstRead.WaitAsync(Limit)).Throws<Exception>();
+        await Assert.That(async () => await secondRead.WaitAsync(Limit)).Throws<Exception>();
+        await Assert.That(original.Retirement.IsCompleted).IsTrue();
+        await Assert.That(replacement.Retirement.IsCompleted).IsTrue();
+        await Assert.That(original.CountedAsRetired).IsFalse();
+        await Assert.That(replacement.CountedAsRetired).IsFalse();
+        await Assert.That(third.ReceivedCommands.Any(command => command.StartsWith("BLPOP "))).IsFalse();
     }
 
     private static async Task WaitForCommandAsync(FakeRespServer server, string prefix)

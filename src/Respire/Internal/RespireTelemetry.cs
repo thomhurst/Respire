@@ -27,6 +27,10 @@ internal static class RespireTelemetry
     public static readonly Counter<long> SentinelFailovers = Meter.CreateCounter<long>(
         "respire.sentinel.failover", unit: "{failover}", description: "Validated Sentinel primary endpoint changes published by the client.");
 
+    public static readonly ObservableGauge<long> SentinelRetiredGenerations = Meter.CreateObservableGauge(
+        "respire.sentinel.generations.retired", () => SentinelRouter.RetiredGenerationCount, "{generation}",
+        "Process-wide retired Sentinel generations still owned while commands, leases, or correction fences drain.");
+
     public static readonly ObservableGauge<double> ThreadPoolSchedulingDelay = Meter.CreateObservableGauge(
         "respire.thread_pool.scheduling.delay", ThreadPoolMonitor.ObserveDelay, "s",
         "Latest process-wide probe scheduling delay; a lower bound while the probe is pending.");

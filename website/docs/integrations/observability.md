@@ -143,4 +143,7 @@ Sentinel handoffs. Prefix views share these events. The `respire.sentinel.failov
 records primary endpoint changes with `server.address` and `server.port` tags. Initial
 discovery and reconnection to the same endpoint do not increment it. Lifecycle observers run
 outside discovery and transport work; queued events are suppressed after client disposal.
+The process-wide `respire.sentinel.generations.retired` gauge reports retired generations
+still owned while accepted work or correction fences drain. Continued growth warrants
+investigation; client disposal aborts and joins retained connection work.
 See [Sentinel connections](../fundamentals/connections.md#redis-sentinel) for drain and no-replay behavior.

@@ -10,6 +10,9 @@ namespace Respire.Internal;
 // their accepted commands, borrowed leases, and correction fences finish or disposal aborts them.
 internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
 {
+    private static long _retiredGenerationCount;
+    internal static long RetiredGenerationCount => Interlocked.Read(ref _retiredGenerationCount);
+
     private readonly object _gate = new();
     private readonly SemaphoreSlim _discoveryGate = new(1, 1);
     private readonly CancellationTokenSource _lifetime = new();
@@ -107,7 +110,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 if (unpublished is not null)
                 {
                     await unpublished.DisposeAsync().ConfigureAwait(false);
-                    lock (_gate) _owned.Remove(unpublished);
+                    lock (_gate) RemoveOwnedLocked(unpublished);
                 }
             }
             finally { if (acquired) _discoveryGate.Release(); }
@@ -130,7 +133,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         catch
         {
             await generation.DisposeAsync().ConfigureAwait(false);
-            lock (_gate) _owned.Remove(generation);
+            lock (_gate) RemoveOwnedLocked(generation);
             throw;
         }
     }
@@ -146,12 +149,21 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             // published generation can lose client continuity or need background draining.
             // The transport admission check sees retirement before any waiting caller resumes.
             // Cache invalidation is synchronous; metrics and health callbacks run elsewhere.
+            generation.CountedAsRetired = true;
+            Interlocked.Increment(ref _retiredGenerationCount);
             var evictions = core.ClientCache?.FlushForContinuityLossWithoutMetrics();
             if (evictions is { } count)
                 QueueNotificationLocked(() => ClientSideCacheCoordinator.PublishContinuityFlushMetrics(count));
             QueueNotificationLocked(() => core.NotifySentinelDisconnected(generation.Multiplexer));
             generation.Retirement = Task.Run(() => DrainAsync(generation));
         }
+    }
+
+    private void RemoveOwnedLocked(Generation generation)
+    {
+        if (!_owned.Remove(generation) || !generation.CountedAsRetired) return;
+        generation.CountedAsRetired = false;
+        Interlocked.Decrement(ref _retiredGenerationCount);
     }
 
     // Do not join this chain during disposal: an observer may synchronously dispose the
@@ -198,7 +210,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             }
             await poolDrain.ConfigureAwait(false);
             await connectionsDrained.ConfigureAwait(false);
-            lock (_gate) _owned.Remove(generation);
+            lock (_gate) RemoveOwnedLocked(generation);
         }
         catch (Exception error)
         {
@@ -249,7 +261,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             if (disposeError is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(disposeError).Throw();
             lock (_gate)
             {
-                _owned.Clear();
+                foreach (var generation in owned) RemoveOwnedLocked(generation);
                 _correctionPools.Clear();
             }
             completion.TrySetResult();
@@ -268,6 +280,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         internal readonly DedicatedConnectionPool Pool;
         internal readonly RespireConnectionOptions ConnectionOptions;
         internal Task Retirement = Task.CompletedTask;
+        internal bool CountedAsRetired; // Accessed only under the router gate.
 
         internal Generation(SentinelRouter owner, ClientCore core, RespireOptions options)
         {
