@@ -227,6 +227,54 @@ public class FakeServerTests
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
     }
 
+    [Test]
+    public async Task BinaryKeysAreOwnedAndComparedByTheirExactBytes()
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+        byte[] first = [0, 255, 65];
+        byte[] second = [0, 254, 65];
+        await client.SetAsync(first, "first");
+        await client.SetAsync(second, "second");
+        first[2] = 97;
+        await client.SetAsync(first, "lowercase");
+        await Assert.That(await client.GetStringAsync(new byte[] { 0, 255, 65 })).IsEqualTo("first");
+        await Assert.That(await client.GetStringAsync(new byte[] { 0, 254, 65 })).IsEqualTo("second");
+        await Assert.That(await client.GetStringAsync(new byte[] { 0, 255, 97 })).IsEqualTo("lowercase");
+        await Assert.That(await Number(client, "DEL", new byte[] { 0, 255, 65 })).IsEqualTo(1);
+        await Assert.That(await client.GetStringAsync(second)).IsEqualTo("second");
+    }
+
+    [Test]
+    public async Task OversizedRequestsAreReportedDuringServerDisposal()
+    {
+        var server = new RespireFakeServer();
+        var options = server.CreateOptions();
+        await using var stream = await options.TestingStreamFactory!(options.Endpoints[0].Host, 6379, default);
+        // The bulk payload itself is legal RESP, but its complete request would exceed the cap.
+        var request = new byte[16 * 1024 * 1024];
+        "*2\r\n$4\r\nECHO\r\n$16777216\r\n"u8.CopyTo(request);
+        try
+        {
+            try
+            {
+                await stream.WriteAsync(request).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (Exception error) when (error is IOException or OperationCanceledException)
+            {
+                // Closing the reader may finish the in-flight flush before it returns.
+                // The server's exact retained size-limit error is asserted below.
+            }
+            await Assert.That(await stream.ReadAsync(new byte[1]).AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(0);
+        }
+        finally
+        {
+            var error = await Assert.That(async () => await server.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
+                .ThrowsExactly<IOException>();
+            await Assert.That(error!.Message).Contains("16 MiB");
+        }
+    }
+
     public sealed record Person(string Name, int Age);
 
     [Test]

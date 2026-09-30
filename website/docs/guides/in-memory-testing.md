@@ -64,7 +64,8 @@ Only database zero and standalone operation are supported. Authentication, TLS, 
 Sentinel, scripts/functions, client-side tracking, collection commands, pub/sub, transactions,
 persistence and administrative diagnostics are not simulated. Unsupported handshake features
 fail initialization. Do not enable these modes and infer production behavior from the fake.
-Individual RESP requests are limited to 16 MiB; larger requests close their connection.
+Individual RESP requests are limited to 16 MiB; larger requests close their connection
+and report the size-limit error when the server is disposed.
 There is no eviction policy or total memory budget: keep test datasets bounded.
 
 ## Expiry and determinism
@@ -74,6 +75,8 @@ the Unix epoch by default and advances only when requested. A command samples ti
 and keys expire on access at or after their deadline. `TTL` uses Redis's nearest-second
 rounding; `PTTL` provides millisecond precision. Missing and persistent keys retain the
 usual `-2` and `-1` sentinel results.
+Advancing the clock takes effect when the next command samples time; it does not alter
+the time already sampled by an executing command.
 
 The controllable clock affects server expiry only. It does not advance client timeouts,
 schedule asynchronous work, or guarantee ordering between simultaneous callers. Use awaited

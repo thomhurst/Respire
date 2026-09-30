@@ -37,32 +37,32 @@ public sealed partial class RespireFakeServer
         }
         var old = Find(args[1]);
         if ((nx && old is not null) || (xx && old is null)) return get ? FakeReply.Bulk(old?.Value) : FakeReply.Null;
-        _entries[Key(args[1])] = new Entry(args[2], keepTtl ? old?.ExpiresAt : expiresAt);
+        _entries[args[1]] = new Entry(args[2], keepTtl ? old?.ExpiresAt : expiresAt);
         return get ? FakeReply.Bulk(old?.Value) : FakeReply.Ok;
     }
 
     private FakeReply MultiSet(string command, byte[][] args)
     {
-        if (args.Length < 3 || args.Length % 2 == 0) return Syntax(command);
+        if (args.Length % 2 == 0) return WrongArity(command);
         if (command == "MSETNX")
             for (var index = 1; index < args.Length; index += 2)
                 if (Find(args[index]) is not null) return FakeReply.Integer(0);
         for (var index = 1; index < args.Length; index += 2)
-            _entries[Key(args[index])] = new Entry(args[index + 1]);
+            _entries[args[index]] = new Entry(args[index + 1]);
         return command == "MSETNX" ? FakeReply.Integer(1) : FakeReply.Ok;
     }
 
     private FakeReply GetDelete(byte[] key)
     {
         var old = Find(key);
-        _entries.Remove(Key(key));
+        _entries.Remove(key);
         return FakeReply.Bulk(old?.Value);
     }
 
     private FakeReply GetSet(byte[] key, byte[] value)
     {
         var old = Find(key);
-        _entries[Key(key)] = new Entry(value);
+        _entries[key] = new Entry(value);
         return FakeReply.Bulk(old?.Value);
     }
 
@@ -70,7 +70,7 @@ public sealed partial class RespireFakeServer
     {
         var old = Find(key);
         byte[] combined = [.. old?.Value ?? [], .. value];
-        _entries[Key(key)] = new Entry(combined, old?.ExpiresAt);
+        _entries[key] = new Entry(combined, old?.ExpiresAt);
         return FakeReply.Integer(combined.Length);
     }
 
@@ -79,7 +79,7 @@ public sealed partial class RespireFakeServer
         var old = Find(key);
         var current = old is null ? 0 : Integer(old.Value);
         var result = subtract ? checked(current - amount) : checked(current + amount);
-        _entries[Key(key)] = new Entry(Encoding.ASCII.GetBytes(result.ToString(CultureInfo.InvariantCulture)), old?.ExpiresAt);
+        _entries[key] = new Entry(Encoding.ASCII.GetBytes(result.ToString(CultureInfo.InvariantCulture)), old?.ExpiresAt);
         return FakeReply.Integer(result);
     }
 
@@ -102,7 +102,7 @@ public sealed partial class RespireFakeServer
             options.Contains("GT") && (entry.ExpiresAt is null || expires <= entry.ExpiresAt) ||
             options.Contains("LT") && entry.ExpiresAt is { } old && expires >= old) return FakeReply.Integer(0);
         entry.ExpiresAt = expires;
-        if (expires <= Now) _entries.Remove(Key(args[1]));
+        if (expires <= Now) _entries.Remove(args[1]);
         return FakeReply.Integer(1);
     }
 

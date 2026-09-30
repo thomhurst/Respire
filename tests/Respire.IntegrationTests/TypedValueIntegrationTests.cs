@@ -49,6 +49,35 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     [Arguments(false, 3)]
     [Arguments(true, 2)]
     [Arguments(true, 3)]
+    public async Task CommandArityErrorsPreserveStateAndFollowingReplies(bool useFake, int protocol)
+    {
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        var key = Guid.NewGuid().ToString("N");
+        await client.SetAsync(key, "original");
+        foreach (var (command, arguments) in new (string, RespireValue[])[]
+        {
+            ("GET", [key, "extra"]),
+            ("SET", [key]),
+            ("MSET", [key, "changed", "missing-value"]),
+            ("EXPIRE", [key]),
+            ("DEL", []),
+        })
+        {
+            Func<Task> invalid = async () => { using var ignored = await client.ExecuteAsync(command, arguments); };
+            await invalid.Should().ThrowAsync<RespireServerException>().WithMessage("*wrong number of arguments*");
+            (await client.GetStringAsync(key)).Should().Be("original");
+        }
+        using var lowerCase = await client.ExecuteAsync("gEt", key);
+        lowerCase.AsString().Should().Be("original");
+    }
+
+    [Test]
+    [Arguments(false, 2)]
+    [Arguments(false, 3)]
+    [Arguments(true, 2)]
+    [Arguments(true, 3)]
     public async Task EchoPreservesBinaryArgumentAndRejectsMissingArgument(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;

@@ -14,7 +14,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
     private readonly object _gate = new();
     private readonly string _host = $"respire-fake-{Guid.NewGuid():N}";
     private readonly TimeProvider _clock;
-    private readonly Dictionary<string, Entry> _entries = new(StringComparer.Ordinal);
+    private readonly Dictionary<byte[], Entry> _entries = new(BinaryKeyComparer.Instance);
     private readonly HashSet<Connection> _connections = [];
     private Task? _disposeTask;
     private bool _disposed;
@@ -65,7 +65,11 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
             {
                 if (length == buffer.Length)
                 {
-                    if (length == MaximumRequestBytes) throw new IOException("Fake request exceeds 16 MiB.");
+                    if (length == MaximumRequestBytes)
+                    {
+                        connection.Failed = true;
+                        throw new IOException("Fake request exceeds 16 MiB.");
+                    }
                     System.Array.Resize(ref buffer, Math.Min(buffer.Length * 2, MaximumRequestBytes));
                 }
                 var read = await connection.Stream.ReadAsync(buffer.AsMemory(length)).ConfigureAwait(false);
@@ -153,34 +157,11 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         _commandTime = _clock.GetUtcNow().ToUnixTimeMilliseconds();
         try
         {
-            return command switch
-            {
-                "HELLO" => Hello(connection, args),
-                "PING" when args.Length == 1 => FakeReply.Simple("PONG"),
-                "PING" or "ECHO" when args.Length == 2 => FakeReply.Bulk(args[1]),
-                "PING" or "ECHO" => FakeReply.Error($"ERR wrong number of arguments for '{command.ToLowerInvariant()}' command"),
-                "SELECT" when args.Length == 2 && Token(args[1]) == "0" => FakeReply.Ok,
-                "CLIENT" => Client(connection, args),
-                "GET" when args.Length == 2 => FakeReply.Bulk(Find(args[1])?.Value),
-                "SET" => Set(args),
-                "MGET" when args.Length >= 2 => FakeReply.Array(args.Skip(1).Select(key => FakeReply.Bulk(Find(key)?.Value)).ToArray()),
-                "MSET" or "MSETNX" => MultiSet(command, args),
-                "DEL" or "UNLINK" when args.Length >= 2 => FakeReply.Integer(args.Skip(1).Count(Remove)),
-                "EXISTS" when args.Length >= 2 => FakeReply.Integer(args.Skip(1).Count(key => Find(key) is not null)),
-                "TYPE" when args.Length == 2 => FakeReply.Simple(Find(args[1]) is null ? "none" : "string"),
-                "GETDEL" when args.Length == 2 => GetDelete(args[1]),
-                "GETSET" when args.Length == 3 => GetSet(args[1], args[2]),
-                "STRLEN" when args.Length == 2 => FakeReply.Integer(Find(args[1])?.Value.Length ?? 0),
-                "APPEND" when args.Length == 3 => Append(args[1], args[2]),
-                "INCR" or "DECR" when args.Length == 2 => Increment(args[1], command == "INCR" ? 1 : -1),
-                "INCRBY" when args.Length == 3 => Increment(args[1], Integer(args[2])),
-                "DECRBY" when args.Length == 3 => Increment(args[1], Integer(args[2]), subtract: true),
-                "GETEX" => GetExpire(args),
-                "EXPIRE" or "PEXPIRE" or "EXPIREAT" or "PEXPIREAT" => Expire(command, args),
-                "TTL" or "PTTL" or "EXPIRETIME" or "PEXPIRETIME" when args.Length == 2 => TimeToLive(command, args[1]),
-                "PERSIST" when args.Length == 2 => Persist(args[1]),
-                _ => FakeReply.Error($"ERR Respire.Testing does not support command or arguments: {command}"),
-            };
+            if (!Commands.TryGetValue(command, out var handler))
+                return FakeReply.Error($"ERR Respire.Testing does not support command or arguments: {command}");
+            if (args.Length < handler.MinimumArity || args.Length > handler.MaximumArity)
+                return WrongArity(command);
+            return handler.Execute(this, connection, args);
         }
         catch (FormatException) { return FakeReply.Error("ERR value is not an integer or out of range"); }
         catch (OverflowException) { return FakeReply.Error("ERR increment or expiry would overflow"); }
@@ -212,7 +193,8 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
 
     private long Now => _commandTime;
     private static string Token(byte[] bytes) => Encoding.UTF8.GetString(bytes).ToUpperInvariant();
-    private static string Key(byte[] bytes) => Convert.ToBase64String(bytes);
+    private static FakeReply WrongArity(string command)
+        => FakeReply.Error($"ERR wrong number of arguments for '{command.ToLowerInvariant()}' command");
     private static long Integer(byte[] bytes)
     {
         if (!System.Buffers.Text.Utf8Parser.TryParse(bytes, out long value, out var consumed) || consumed != bytes.Length)
@@ -224,13 +206,26 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
 
     private Entry? Find(byte[] key)
     {
-        var encoded = Key(key);
-        if (!_entries.TryGetValue(encoded, out var entry)) return null;
-        if (entry.ExpiresAt is { } expires && expires <= Now) { _entries.Remove(encoded); return null; }
+        if (!_entries.TryGetValue(key, out var entry)) return null;
+        if (entry.ExpiresAt is { } expires && expires <= Now) { _entries.Remove(key); return null; }
         return entry;
     }
 
-    private bool Remove(byte[] key) => Find(key) is not null && _entries.Remove(Key(key));
+    private bool Remove(byte[] key) => Find(key) is not null && _entries.Remove(key);
+
+    // ReadArguments owns each byte array. Stored keys never reference client or parser buffers.
+    private sealed class BinaryKeyComparer : IEqualityComparer<byte[]>
+    {
+        internal static readonly BinaryKeyComparer Instance = new();
+        public bool Equals(byte[]? left, byte[]? right)
+            => ReferenceEquals(left, right) || left is not null && right is not null && left.AsSpan().SequenceEqual(right);
+        public int GetHashCode(byte[] bytes)
+        {
+            var hash = new HashCode();
+            foreach (var value in bytes) hash.Add(value);
+            return hash.ToHashCode();
+        }
+    }
 
     /// <summary>Closes every owned pipe connection and waits for its server loop. Concurrent disposal joins the same task.</summary>
     public ValueTask DisposeAsync()
