@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO.Pipelines;
@@ -7,6 +8,7 @@ using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.Logging;
+using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
 
@@ -49,6 +51,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private readonly Socket? _socket;
     private readonly Stream? _stream;
     private readonly Lock _writeGate = new();
+    private readonly SemaphoreSlim _streamingGate = new(1, 1);
     private readonly InflightRing _inflight;
     private readonly PendingResponsePool _sourcePool;
     private readonly int _receiveBufferSize;
@@ -79,6 +82,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     private bool _dead;
     private bool _retired;
     private bool _sending;
+    private bool _streamingActive;
     private TaskCompletionSource? _retirementCompletion;
     private TaskCompletionSource? _disposeCompletion;
     private bool _drainedSuccessfully;
@@ -112,6 +116,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     public int Port { get; }
     public bool IsConnected => !Volatile.Read(ref _dead);
     internal bool IsAcceptingCommands => IsConnected && !Volatile.Read(ref _retired) && _generation?.IsRetired != true;
+    internal int WriteBufferCapacity => Math.Max(_activeBuffer.Capacity, _spareBuffer.Capacity);
     internal bool DrainedSuccessfully => Volatile.Read(ref _drainedSuccessfully);
 
     /// <summary>
@@ -1193,6 +1198,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TCommand : struct, IRespCommand
     {
         if (!commandDeadline.IsSet && armCommandDeadline) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+        if (command is StreamedSetCommand streamedSet)
+        {
+            return SendStreamedSetAsync(streamedSet, cancellationToken, armCommandDeadline);
+        }
+
         var source = _sourcePool.Rent(throwOnError, commandName);
         bool enqueued;
         bool startedBatch;
@@ -1224,6 +1234,206 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         return SendSlowAsync(command, source, discardRepliesBefore, cancellationToken, throwOnError,
             commandName, armCommandDeadline, commandDeadline, pinToConnection);
+    }
+
+    private async ValueTask<RespValue> SendStreamedSetAsync(
+        StreamedSetCommand command, CancellationToken cancellationToken, bool armCommandDeadline)
+    {
+        var deadline = armCommandDeadline && _commandTimeoutMilliseconds != 0
+            ? Environment.TickCount64 + _commandTimeoutMilliseconds
+            : 0;
+        using var timeoutCancellation = deadline == 0 ? null : new CancellationTokenSource(_commandTimeout!.Value);
+        using var linkedCancellation = timeoutCancellation is null
+            ? null
+            : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCancellation.Token);
+        var effectiveCancellation = linkedCancellation?.Token ?? cancellationToken;
+        await _streamingGate.WaitAsync(effectiveCancellation).ConfigureAwait(false);
+        PendingResponseSource source;
+        try
+        {
+            source = _sourcePool.Rent(throwOnError: true, commandName: "SET");
+        }
+        catch
+        {
+            _streamingGate.Release();
+            throw;
+        }
+        var streamingStarted = false;
+        var requestStarted = false;
+        var requestQueued = false;
+        var queuedBatchStarted = false;
+        try
+        {
+            lock (_writeGate)
+            {
+                ThrowIfRetired();
+                if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+                _streamingActive = true;
+                streamingStarted = true;
+            }
+
+            await DrainBufferedWritesAsync(effectiveCancellation).ConfigureAwait(false);
+            while (true)
+            {
+                effectiveCancellation.ThrowIfCancellationRequested();
+                var capacityAvailable = _capacitySignal.WaitAsync(effectiveCancellation);
+                lock (_writeGate)
+                {
+                    ThrowIfRetired();
+                    if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+                    if (_inflight.Capacity - _inflight.Count > 0) break;
+                }
+
+                await capacityAvailable.ConfigureAwait(false);
+            }
+
+            source.Deadline = deadline;
+
+            requestStarted = true;
+            var write = AppendStreamingStart(command, out queuedBatchStarted, out var requestWriteStart);
+            ScheduleFlush(queuedBatchStarted);
+            await write.ConfigureAwait(false);
+
+            var chunk = ArrayPool<byte>.Shared.Rent(32 * 1024);
+            try
+            {
+                var remaining = command.Length;
+                while (remaining > 0)
+                {
+                    var read = await command.Source.ReadAsync(
+                        chunk.AsMemory(0, (int)Math.Min(chunk.Length, remaining)), effectiveCancellation)
+                        .ConfigureAwait(false);
+                    if (read == 0) throw new EndOfStreamException("Stream ended before its declared SET length.");
+                    remaining -= read;
+                    write = AppendStreamingBytes(chunk.AsSpan(0, read));
+                    ScheduleFlush(startedBatch: false);
+                    await write.ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(chunk);
+            }
+
+            AppendStreamingEnd(command, source, requestWriteStart, out queuedBatchStarted);
+            requestQueued = true;
+            source.RegisterCancellation(cancellationToken);
+            ScheduleFlush(queuedBatchStarted);
+        }
+        catch (OperationCanceledException error) when (timeoutCancellation is not null
+            && IsDeadlineCancellation(error, effectiveCancellation, cancellationToken))
+        {
+            if (requestStarted && !requestQueued)
+                Abort(new RespireConnectionException(
+                    $"Streamed SET on {Host}:{Port} timed out before its RESP frame completed.", error));
+            if (!requestQueued) ReclaimUnpublished(source);
+            throw new RespireTimeoutException("SET", _commandTimeout!.Value, error,
+                CaptureTimeoutDiagnostics(stage: requestStarted
+                    ? RespireCommandStage.Writing
+                    : RespireCommandStage.WaitingForCapacity));
+        }
+        catch (Exception error)
+        {
+            if (requestStarted && !requestQueued)
+            {
+                Abort(new RespireConnectionException(
+                    $"Streamed SET on {Host}:{Port} did not complete; connection was closed to preserve RESP framing.", error));
+            }
+            if (!requestQueued) ReclaimUnpublished(source);
+            throw;
+        }
+        finally
+        {
+            if (streamingStarted)
+            {
+                lock (_writeGate) _streamingActive = false;
+                _capacitySignal.Signal();
+            }
+            _streamingGate.Release();
+        }
+
+        return await source.Task.ConfigureAwait(false);
+    }
+
+    private async Task DrainBufferedWritesAsync(CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            Task? write = null;
+            var schedule = false;
+            lock (_writeGate)
+            {
+                ThrowIfRetired();
+                if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+                if (_activeBuffer.Count > 0)
+                {
+                    write = _activeBuffer.WriteCompletion;
+                    schedule = true;
+                }
+                else if (Volatile.Read(ref _sending))
+                {
+                    write = _spareBuffer.WriteCompletion;
+                }
+                else
+                {
+                    return;
+                }
+            }
+
+            if (schedule) ScheduleFlush(startedBatch: false);
+            if (write is not null) await write.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private Task AppendStreamingStart(
+        StreamedSetCommand command, out bool startedBatch, out long requestWriteStart)
+    {
+        lock (_writeGate)
+        {
+            ThrowIfRetired();
+            if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+            var start = _activeBuffer.Count;
+            startedBatch = start == 0 && _inflight.Count == 0;
+            requestWriteStart = _enqueuedBytes;
+            var writer = new RespWriter(_activeBuffer);
+            command.WriteStart(ref writer);
+            Volatile.Write(ref _enqueuedBytes, _enqueuedBytes + _activeBuffer.Count - start);
+            return _activeBuffer.WriteCompletion;
+        }
+    }
+
+    private Task AppendStreamingBytes(ReadOnlySpan<byte> bytes)
+    {
+        lock (_writeGate)
+        {
+            ThrowIfRetired();
+            if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+            _activeBuffer.Append(bytes);
+            Volatile.Write(ref _enqueuedBytes, _enqueuedBytes + bytes.Length);
+            return _activeBuffer.WriteCompletion;
+        }
+    }
+
+    private void AppendStreamingEnd(
+        StreamedSetCommand command, PendingResponse source, long requestWriteStart, out bool startedBatch)
+    {
+        lock (_writeGate)
+        {
+            ThrowIfRetired();
+            if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+            var start = _activeBuffer.Count;
+            startedBatch = start == 0 && _inflight.Count == 0;
+            var writer = new RespWriter(_activeBuffer);
+            command.WriteEnd(ref writer);
+            var length = _activeBuffer.Count - start;
+            var requestWriteEnd = _enqueuedBytes + length;
+            source.WriteStart = requestWriteStart;
+            source.WriteEnd = requestWriteEnd;
+            Volatile.Write(ref _enqueuedBytes, requestWriteEnd);
+            if (_responseTimeout is not null) _activeReplyCount++;
+            if (!_inflight.TryEnqueue(source, requestWriteEnd))
+                throw new InvalidOperationException("No in-flight slot remained for streamed SET response.");
+        }
     }
 
     /// <summary>
@@ -1380,7 +1590,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     throw ClosedBeforeEnqueue();
                 }
 
-                if ((_credentialRenewalPending && typeof(TCommand) != typeof(CredentialRenewalAuthCommand))
+                if (_streamingActive
+                    || (_credentialRenewalPending && typeof(TCommand) != typeof(CredentialRenewalAuthCommand))
                     || _inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
                 {
                     return false;
@@ -1454,7 +1665,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 throw ClosedBeforeEnqueue();
             }
 
-            if ((_credentialRenewalPending && typeof(TCommand) != typeof(CredentialRenewalAuthCommand))
+            if (_streamingActive
+                || (_credentialRenewalPending && typeof(TCommand) != typeof(CredentialRenewalAuthCommand))
                 || _inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
             {
                 return false;
@@ -1954,11 +2166,12 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
                     MarkRepliesSent(sendingReplyCount);
 
+                    // The socket write has completed; publish idle before completing the buffer
+                    // so a streaming producer cannot miss the send-completion signal.
+                    Volatile.Write(ref _sending, false);
                     sending.CompleteWrite();
                     sending.Reset();
                     sending = null;
-                    // Publish the completed send before waking the drain; receive completion also pulses capacity.
-                    Volatile.Write(ref _sending, false);
                     if (Volatile.Read(ref _retired)) _capacitySignal.Signal();
 
                     if (++synchronousBatches >= MaxSynchronousBatchesBeforeYield)
@@ -2862,6 +3075,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             _dead = true;
             _abortReason = reason;
             _activeBuffer.FailWrite(writeFailure);
+            if (Volatile.Read(ref _sending)) _spareBuffer.FailWrite(writeFailure);
+            Volatile.Write(ref _sending, false);
         }
 
         Volatile.Read(ref _activeBulkStreamSource)?.AbortPayload(writeFailure);

@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Diagnostics.CodeAnalysis;
 using Respire.Commands;
 using Respire.Internal;
@@ -70,6 +71,27 @@ public partial interface IStringCommands
     ValueTask<bool> SetAsync(
         RespireKey key,
         RespireValue value,
+        RespireExpiry expiry = default,
+        SetWhen when = SetWhen.Always,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets a key from exactly <paramref name="length"/> bytes read from <paramref name="value"/>.
+    /// The stream remains open. Cancellation or a read failure during transmission closes the
+    /// connection to preserve RESP framing. Respire does not retry streamed writes.
+    /// </summary>
+    ValueTask<bool> SetAsync(
+        RespireKey key,
+        Stream value,
+        long length,
+        RespireExpiry expiry = default,
+        SetWhen when = SetWhen.Always,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Sets a key from a sequence without combining its segments into one payload buffer.</summary>
+    ValueTask<bool> SetAsync(
+        RespireKey key,
+        ReadOnlySequence<byte> value,
         RespireExpiry expiry = default,
         SetWhen when = SetWhen.Always,
         CancellationToken cancellationToken = default);
@@ -262,6 +284,28 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
         SetCommand.ValidateExpiry(expiry);
         return client.OkOrNullAsync(
             "SET", new SetCommand(client.Key(in key), value, expiry, when, returnOld: false), cancellationToken);
+    }
+
+    public ValueTask<bool> SetAsync(
+        RespireKey key, Stream value, long length, RespireExpiry expiry = default,
+        SetWhen when = SetWhen.Always, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        if (!value.CanRead) throw new ArgumentException("The source stream must be readable.", nameof(value));
+        ArgumentOutOfRangeException.ThrowIfNegative(length);
+        SetCommand.ValidateExpiry(expiry);
+        return client.OkOrNullAsync("SET",
+            new StreamedSetCommand(client.Key(in key), value, length, expiry, when), cancellationToken);
+    }
+
+    public ValueTask<bool> SetAsync(
+        RespireKey key, ReadOnlySequence<byte> value, RespireExpiry expiry = default,
+        SetWhen when = SetWhen.Always, CancellationToken cancellationToken = default)
+    {
+        SetCommand.ValidateExpiry(expiry);
+        return client.OkOrNullAsync("SET",
+            new StreamedSetCommand(client.Key(in key), new SequencePayloadStream(value), value.Length, expiry, when),
+            cancellationToken);
     }
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]

@@ -42,6 +42,19 @@ internal ref struct RespWriter
         _buffer.Advance(value.Length + 2);
     }
 
+    /// <summary>Writes a bulk string header without allocating or writing its payload.</summary>
+    public void WriteBulkStringHeader(long length)
+        => WritePrefixedLine(RespConstants.BulkStringPrefix, length);
+
+    /// <summary>Writes the CRLF that terminates a bulk string payload.</summary>
+    public void WriteBulkStringTerminator()
+    {
+        var span = _buffer.GetSpan(2);
+        span[0] = RespConstants.CarriageReturn;
+        span[1] = RespConstants.LineFeed;
+        _buffer.Advance(2);
+    }
+
     /// <summary>Writes FP32 components in little-endian order without a temporary vector buffer.</summary>
     public void WriteBulkFloat32(scoped ReadOnlySpan<float> values)
     {

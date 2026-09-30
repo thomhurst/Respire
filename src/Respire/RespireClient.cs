@@ -2139,7 +2139,7 @@ public sealed partial class RespireClient : IRespireClient
                 cluster,
                 command,
                 cancellationToken,
-                noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect));
+                noRedirect: HasFlag(flags, RespireCommandFlags.NoRedirect) || command is StreamedSetCommand);
         }
         else if (core.Sentinel is not null || !core.Multiplexer.IsInitialized)
         {
@@ -2428,7 +2428,8 @@ public sealed partial class RespireClient : IRespireClient
                             operation, connection, command, cancellationToken, storedProcedureName, sendAsking)
                         .ConfigureAwait(false);
                 }
-                catch (RespireConnectionRetiredException retirement) when (cluster.CanRetryRetirement(attempt, cancellationToken))
+                catch (RespireConnectionRetiredException retirement) when (command is not StreamedSetCommand
+                    && cluster.CanRetryRetirement(attempt, cancellationToken))
                 {
                     cluster.RecordRejection(ref discovery, connection, retirement);
                     _core.ClientCache?.FlushForContinuityLoss();

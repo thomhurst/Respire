@@ -17,6 +17,25 @@ await redis.SetAsync("visits", 1);
 long visits = await redis.IncrementAsync("visits");
 ```
 
+For large binary values, stream the payload without building a payload-sized command buffer:
+
+```csharp
+await using var file = File.OpenRead("archive.bin");
+await redis.Strings.SetAsync("archive", file, file.Length);
+```
+
+The stream overload requires an exact, non-negative byte length. Respire reads no more than
+that length, leaves the stream open, and does not seek it. The source must provide all declared
+bytes; early end throws `EndOfStreamException`. The `ReadOnlySequence<byte>` overload sends
+segments incrementally too; keep its memory unchanged until the returned task completes.
+
+Respire holds that connection's write path for the complete RESP frame, so later commands on
+the connection follow the streamed `SET`. Cancellation or a read failure before Respire queues
+the complete frame closes the connection to prevent later bytes from being parsed as another
+command. After the complete frame is queued, cancellation only cancels the wait for its reply.
+A streamed write is not retried automatically. Redirect replies and transport failures are
+returned to the caller; after a transport failure, Redis may or may not have applied the write.
+
 Conditional writes use `SetWhen`:
 
 ```csharp

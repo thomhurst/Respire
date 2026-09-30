@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Reflection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -33,6 +34,12 @@ public class DeferredFacetParityTests
         // Leased replies require explicit pooled-buffer ownership outside deferred completion.
         typeof(IStringCommands).GetMethod(nameof(IStringCommands.GetLeaseAsync),
             [typeof(RespireKey), typeof(CancellationToken)])!,
+        // Stream payloads are immediate-only: deferred batches snapshot values and cannot hold
+        // a multiplexed connection while asynchronously reading an external source.
+        typeof(IStringCommands).GetMethod(nameof(IStringCommands.SetAsync),
+            [typeof(RespireKey), typeof(Stream), typeof(long), typeof(RespireExpiry), typeof(SetWhen), typeof(CancellationToken)])!,
+        typeof(IStringCommands).GetMethod(nameof(IStringCommands.SetAsync),
+            [typeof(RespireKey), typeof(ReadOnlySequence<byte>), typeof(RespireExpiry), typeof(SetWhen), typeof(CancellationToken)])!,
     ];
 
     [Test]
