@@ -41,6 +41,17 @@
   for accuracy, memory, serialization, and ownership limits. Performance evidence is
   tracked separately in #534; no zero-copy networking or throughput guarantee is implied.
 
+### Proactive thread-pool diagnostics
+
+- A shared background probe now measures thread-pool scheduling delay before command
+  timeouts occur. Observable metrics, throttled warnings, and immutable timeout snapshots
+  expose the delay and worker counters. Monitoring is enabled by default; set
+  `ThreadPoolMonitoring = false` to opt out per client. `ThreadPoolWarningThreshold`
+  configures warning sensitivity. Both settings are also available on the DI options
+  builder for default and keyed registrations. See
+  [observability](../website/docs/integrations/observability.md#thread-pool-scheduling)
+  for sampling, lifecycle, units, and interpretation.
+
 ### Stream production and negative acknowledgements
 
 - `StreamAddOptions.Idempotency` adds mutually exclusive IDMP/IDMPAUTO production

@@ -23,6 +23,19 @@ internal static class RespireTelemetry
     public static readonly ActivitySource Source = new(SourceName, Version);
     public static readonly Meter Meter = new(SourceName, Version);
 
+    public static readonly ObservableGauge<double> ThreadPoolSchedulingDelay = Meter.CreateObservableGauge(
+        "respire.thread_pool.scheduling.delay", ThreadPoolMonitor.ObserveDelay, "s",
+        "Latest process-wide probe scheduling delay; a lower bound while the probe is pending.");
+    public static readonly ObservableGauge<long> ThreadPoolBusyWorkers = Meter.CreateObservableGauge(
+        "respire.thread_pool.workers.busy", ThreadPoolMonitor.ObserveBusyWorkers, "{thread}",
+        "Busy worker threads when the scheduling probe was sampled.");
+    public static readonly ObservableGauge<long> ThreadPoolMinimumWorkers = Meter.CreateObservableGauge(
+        "respire.thread_pool.workers.min", ThreadPoolMonitor.ObserveMinimumWorkers, "{thread}",
+        "Configured minimum worker threads when the scheduling probe was sampled.");
+    public static readonly ObservableGauge<long> ThreadPoolPendingWork = Meter.CreateObservableGauge(
+        "respire.thread_pool.work.pending", ThreadPoolMonitor.ObservePendingWork, "{work_item}",
+        "Queued thread-pool work items when the scheduling probe was sampled.");
+
     public static readonly Histogram<double> OperationDuration = Meter.CreateHistogram<double>(
         "db.client.operation.duration",
         unit: "s",

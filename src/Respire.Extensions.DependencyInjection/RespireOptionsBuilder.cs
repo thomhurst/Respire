@@ -106,6 +106,12 @@ public sealed class RespireOptionsBuilder
     /// <inheritdoc cref="RespireOptions.LoggerFactory"/>
     public ILoggerFactory? LoggerFactory { get; set; }
 
+    /// <inheritdoc cref="RespireOptions.ThreadPoolMonitoring"/>
+    public bool ThreadPoolMonitoring { get; set; } = true;
+
+    /// <inheritdoc cref="RespireOptions.ThreadPoolWarningThreshold"/>
+    public TimeSpan ThreadPoolWarningThreshold { get; set; } = TimeSpan.FromMilliseconds(500);
+
     /// <inheritdoc cref="RespireOptions.TcpKeepAliveTime"/>
     public TimeSpan? TcpKeepAliveTime { get; set; }
 
@@ -154,6 +160,8 @@ public sealed class RespireOptionsBuilder
         Serializer = Serializer,
         ClientSideCache = ClientSideCache,
         LoggerFactory = LoggerFactory,
+        ThreadPoolMonitoring = ThreadPoolMonitoring,
+        ThreadPoolWarningThreshold = ThreadPoolWarningThreshold,
         TcpKeepAliveTime = TcpKeepAliveTime,
         TcpKeepAliveInterval = TcpKeepAliveInterval,
         TcpKeepAliveRetryCount = TcpKeepAliveRetryCount,

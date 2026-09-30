@@ -37,3 +37,56 @@ redis.ConnectionStateChanged += change =>
 ```
 
 A transient reconnection is expected to move through connection states; use application-level thresholds before paging an operator.
+
+## Thread-pool scheduling
+
+A shared background thread samples thread-pool scheduling once per second while at least
+one client has monitoring enabled (the default). It queues one probe at a time and measures
+how long the pool takes to execute it. It can report a pending probe even when every worker
+is blocked. Successful Redis commands do not update this monitor.
+
+The `Respire` meter exposes four observable gauges:
+
+| Instrument | Unit | Meaning |
+| --- | --- | --- |
+| `respire.thread_pool.scheduling.delay` | seconds | Latest probe's scheduling delay |
+| `respire.thread_pool.workers.busy` | threads | Maximum minus available worker threads |
+| `respire.thread_pool.workers.min` | threads | Configured minimum worker threads |
+| `respire.thread_pool.work.pending` | work items | Process-wide queued thread-pool work |
+
+When delay reaches `ThreadPoolWarningThreshold` (500 ms by default), the
+`Respire.ThreadPool` logger emits a warning with counters and remediation guidance.
+Warnings are limited to one per client every 30 seconds. Inspect synchronous blocking
+and long-running work; prefer asynchronous I/O. Respire never changes thread-pool limits.
+Clients can have different thresholds and logger providers, so warnings are delivered
+per client. Multiple clients sharing a logging sink can therefore report the same stall.
+Logging is best effort and runs serially on the sampler thread. Logger providers must
+return promptly; a blocking provider delays sampling and other clients' warnings.
+
+`RespireTimeoutDiagnostics.ThreadPoolProbe` retains the latest immutable sample, including
+`CapturedAt` and `IsPending`. A pending delay is a lower bound until that probe executes.
+Inspect the timestamp when judging freshness. GC pauses or process suspension can also
+increase delay, so a warning alone does not prove thread-pool starvation.
+Recovery becomes visible on a later sample, not immediately when the probe runs; a
+recovered pool can still show a delayed observation until the next one-second sample.
+
+Configure the threshold or disable monitoring for a client:
+
+```csharp
+var options = new RespireOptions
+{
+    Endpoints = { new RespireEndpoint("localhost") },
+    ThreadPoolMonitoring = false,
+    ThreadPoolWarningThreshold = TimeSpan.FromSeconds(1)
+};
+```
+
+Disabling monitoring removes that client's subscription and warnings. Other clients may
+keep the shared probe running, so its process-wide sample can still appear in timeout
+diagnostics. Disposing the final subscribed client stops sampling and clears the current
+sample. Metrics have no value before the first sample or after the final subscription ends.
+Diagnostics captured after the final subscription ends have no probe sample; previously
+captured timeout diagnostics retain their immutable sample.
+If a probe is still queued when monitoring restarts, its original queue timestamp is
+retained. Its delay includes the interval with no subscribers because that work item
+has still not executed; restarting monitoring does not reset an existing scheduling stall.

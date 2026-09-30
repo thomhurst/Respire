@@ -22,6 +22,7 @@ internal sealed class ClientCore : IAsyncDisposable
     private RespireEndpoint? _subscriptionEndpoint;
     private RespireConnectionState _subscriptionState = RespireConnectionState.Connected;
     private bool _publishingState;
+    private IDisposable? _threadPoolMonitor;
 
     public readonly RespireConnectionMultiplexer Multiplexer;
     public readonly RespireOptions Options;
@@ -59,6 +60,8 @@ internal sealed class ClientCore : IAsyncDisposable
         {
             Multiplexer.SlotStateChanged += NotifyCommandStateChanged;
         }
+        if (options.ThreadPoolMonitoring)
+            _threadPoolMonitor = ThreadPoolMonitor.Acquire(options.CreateLogger("Respire.ThreadPool"), options.ThreadPoolWarningThreshold);
     }
 
     public ValueTask EnsureConnectedAsync(CancellationToken cancellationToken)
@@ -334,6 +337,7 @@ internal sealed class ClientCore : IAsyncDisposable
         }
 
         Disposed = true;
+        Interlocked.Exchange(ref _threadPoolMonitor, null)?.Dispose();
         ClientCache?.Clear();
         var commandEndpoints = Cluster?.GetActiveEndpoints() ?? [Options.PrimaryEndpoint];
         lock (_stateGate)
