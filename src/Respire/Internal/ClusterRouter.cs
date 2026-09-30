@@ -371,8 +371,12 @@ internal sealed class ClusterRouter : IAsyncDisposable
             budget.Token.ThrowIfCancellationRequested();
             // Give the final configured seed all remaining time; the demoted source is
             // only a best-effort fallback if that seed fails before the deadline.
-            using var attempt = primaryPhase ? null : budget.CreateFallbackAttempt(index >= candidates.Count - 2);
-            var attemptToken = attempt?.Token ?? budget.PrimaryToken;
+            var attemptToken = primaryPhase ? budget.PrimaryToken
+                : budget.GetFallbackToken(index >= candidates.Count - 2);
+            if (attemptToken.IsCancellationRequested)
+            {
+                continue;
+            }
             if (!await TryDiscoverReadOnlyOwnerAsync(candidate, attemptToken, budget.Token).ConfigureAwait(false))
             {
                 continue;

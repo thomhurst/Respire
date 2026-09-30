@@ -51,6 +51,9 @@ round is bounded by `ConnectTimeout`, and commands share the existing five-retry
 budget. If discovery fails or still identifies the same node, the original `READONLY` error is
 returned, including for keyed fire-and-forget commands. Cached-owner probes and discovered
 primaries share at most half of the round deadline, leaving time for configured seeds.
+Earlier configured seeds then share half of the remaining time; the final configured seed
+can use the entire remainder. Exhausted phases skip remaining candidates in that phase.
+This preserves a usable final-seed allowance even with many stalled earlier endpoints.
 Caller cancellation still cancels recovery.
 
 This applies to immediate, raw/catalog, fire-and-forget, batch, blocking/dedicated, and tracked

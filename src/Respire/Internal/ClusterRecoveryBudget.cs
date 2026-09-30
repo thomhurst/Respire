@@ -9,6 +9,7 @@ internal sealed class ClusterRecoveryBudget : IDisposable
     private readonly TimeSpan _duration;
     private readonly CancellationTokenSource _round;
     private readonly CancellationTokenSource _primaries;
+    private CancellationTokenSource? _earlySeeds;
 
     internal ClusterRecoveryBudget(CancellationToken callerToken, TimeSpan duration)
     {
@@ -21,16 +22,27 @@ internal sealed class ClusterRecoveryBudget : IDisposable
     internal CancellationToken Token => _round.Token;
     internal CancellationToken PrimaryToken => _primaries.Token;
 
-    internal CancellationTokenSource CreateFallbackAttempt(bool last)
+    internal CancellationToken GetFallbackToken(bool last)
     {
-        var remaining = _duration - Stopwatch.GetElapsedTime(_started);
-        // Reclaim time from quick failures. The last fallback uses the entire remainder.
-        var ticks = last ? remaining.Ticks : remaining.Ticks / 2;
-        return CommandTimeoutCancellation.Create(Token, TimeSpan.FromTicks(Math.Max(1, ticks)));
+        if (last)
+        {
+            return Token;
+        }
+
+        // All earlier seeds share one phase. Reserve half of the time left when seed
+        // discovery begins for the final configured seed, regardless of list length.
+        if (_earlySeeds is null)
+        {
+            var remaining = _duration - Stopwatch.GetElapsedTime(_started);
+            _earlySeeds = CommandTimeoutCancellation.Create(Token,
+                TimeSpan.FromTicks(Math.Max(1, remaining.Ticks / 2)));
+        }
+        return _earlySeeds.Token;
     }
 
     public void Dispose()
     {
+        _earlySeeds?.Dispose();
         _primaries.Dispose();
         _round.Dispose();
     }

@@ -12,6 +12,82 @@ public class ClusterReadOnlyTests
     private static readonly byte[] ReadOnlyReply = "-READONLY You can't write against a read only replica.\r\n"u8.ToArray();
 
     [Test]
+    public async Task ManyStalledSeedsLeaveUsableTimeForFinalSeed()
+    {
+        await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(ReadOnlyReply);
+        await using var initialSeed = new FakeRespServer(Topology(replica.Port));
+        await using var finalSeed = new FakeRespServer(Topology(replacement.Port));
+        finalSeed.DelayReply(0, 600);
+        var stalledSeeds = Enumerable.Range(0, 8)
+            .Select(_ => new FakeRespServer { SuppressReply = _ => true }).ToArray();
+        try
+        {
+            var options = new RespireOptions
+            {
+                UseCluster = true,
+                Connections = 1,
+                ConnectTimeout = TimeSpan.FromSeconds(2),
+                CommandTimeout = null,
+                Endpoints = [new("127.0.0.1", initialSeed.Port),
+                    .. stalledSeeds.Select(seed => new RespireEndpoint("127.0.0.1", seed.Port)),
+                    new("127.0.0.1", finalSeed.Port)],
+            };
+            await using var client = await RespireClient.ConnectAsync(options);
+            initialSeed.SuppressReply = _ => true;
+
+            await Assert.That(await client.SetAsync("key", "value")).IsTrue();
+            await Assert.That(finalSeed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
+            await Assert.That(replacement.ReceivedCommands).IsEquivalentTo(["SET key value"]);
+        }
+        finally
+        {
+            foreach (var seed in stalledSeeds)
+            {
+                await seed.DisposeAsync();
+            }
+        }
+    }
+
+    [Test]
+    public async Task OlderRefresh_PreservesOwnerChangedAwayAndBack()
+    {
+        await using var original = new FakeRespServer();
+        await using var intermediate = new FakeRespServer();
+        await using var stale = new FakeRespServer();
+        await using var seed = new FakeRespServer(Topology(original.Port));
+        await using var client = await ConnectAsync(seed.Port);
+        var router = client.Core.Cluster!;
+        var refreshing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        seed.SuppressReply = _ => { refreshing.TrySetResult(); return true; };
+        var refresh = router.GetMasterConnectionsAsync(CancellationToken.None).AsTask();
+        await refreshing.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var slot = ClusterHash.GetSlot("key");
+        var originalOwner = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", original.Port));
+        router.SetSlotOwner(slot, router.GetMultiplexer(new RespireEndpoint("127.0.0.1", intermediate.Port)));
+        router.SetSlotOwner(slot, originalOwner);
+        await seed.SendRawAsync(Topology(stale.Port));
+        _ = await refresh.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await Assert.That((await router.GetConnectionAsync(slot, CancellationToken.None)).Port).IsEqualTo(original.Port);
+        await Assert.That((await router.GetConnectionAsync((slot + 1) % 16384, CancellationToken.None)).Port)
+            .IsEqualTo(stale.Port);
+    }
+
+    [Test]
+    public async Task DisposedDiscoveryCandidate_PropagatesProgrammingFailure()
+    {
+        await using var replica = new FakeRespServer(ReadOnlyReply);
+        await using var other = new FakeRespServer();
+        await using var seed = new FakeRespServer(SplitTopology(other.Port, replica.Port));
+        await using var client = await ConnectAsync(seed.Port);
+        await client.Core.Cluster!.GetMultiplexer(new RespireEndpoint("127.0.0.1", other.Port)).DisposeAsync();
+
+        await Assert.That(async () => await client.SetAsync("key", "value")).Throws<ObjectDisposedException>();
+        await Assert.That(seed.CommandsSeen).IsEqualTo(1);
+    }
+    [Test]
     public async Task TwoStalledPrimariesStillLeaveTimeForSeedDiscovery()
     {
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
