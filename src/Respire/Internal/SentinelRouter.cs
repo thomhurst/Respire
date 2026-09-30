@@ -65,6 +65,9 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     internal async ValueTask<Generation> GetGenerationAsync(CancellationToken cancellationToken)
     {
         lock (_gate) ObjectDisposedException.ThrowIf(_disposed, this);
+        // An unexpected close retires a Sentinel generation, even when that multiplexer
+        // could reconnect. Reconnecting the former primary alone cannot establish that it
+        // is still the elected primary; discovery and ROLE validation select a new generation.
         if (Current is { IsRetired: false } current && current.Multiplexer.IsConnected) return current;
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
         var acquired = false;
@@ -195,7 +198,11 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         try
         {
             try { await generation.Multiplexer.RetireAsync().ConfigureAwait(false); }
-            catch (Exception) when (generation.Multiplexer.RetirementDrained && !_lifetime.IsCancellationRequested) { }
+            catch (Exception error) when (generation.Multiplexer.RetirementDrained && !_lifetime.IsCancellationRequested)
+            {
+                try { core.Logger?.LogDebug(error, "Sentinel transport retirement reported an error after draining at {Endpoint}", generation.Endpoint); }
+                catch (Exception) { /* Diagnostics must not abandon correction-fence cleanup. */ }
+            }
             var delay = 1;
             while (generation.Multiplexer.HasPendingCorrectionFences && !_lifetime.IsCancellationRequested)
             {

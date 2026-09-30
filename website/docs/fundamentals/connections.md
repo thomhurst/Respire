@@ -304,7 +304,11 @@ primary and report their normal delivery gap; Redis cannot replay missed publica
 Explicit server connections remain pinned to the endpoint selected by the application.
 Correction operations retain their original physical peer rather than following a new
 primary. `Endpoint` reads host and port from one generation snapshot; a later handoff can make
-that snapshot historical, but cannot combine fields from different primaries.
+that snapshot historical, but cannot combine fields from different primaries. Before a lazy
+Sentinel client has resolved and validated its first primary, `Endpoint` throws
+`InvalidOperationException`; it never returns a Sentinel discovery address as the data endpoint.
+Reading the property performs no I/O. Use `ConnectAsync`, or await the first command on a client
+created with `Create`, before reading it. Failed discovery leaves the endpoint unavailable.
 `ConnectionStateChanged` reports endpoint changes, and the `Respire` meter records
 `respire.sentinel.failover` for validated primary endpoint changes, tagged with `server.address`
 and `server.port`. State observers may dispose the client synchronously. Disposal suppresses
@@ -313,7 +317,10 @@ finish after disposal returns. The process-wide `respire.sentinel.generations.re
 counts retired generations still owned while accepted commands, borrowed leases, or correction
 fences drain. A nonzero value can be expected during handoff; a value that keeps growing
 indicates retained work to investigate. There is no forced drain deadline that abandons
-accepted commands or an unacknowledged correction fence.
+accepted commands or an unacknowledged correction fence. Retention preserves ownership of
+that server-side ordering obligation; a time or attempt cap could discard it before the old
+server acknowledges the fence. Repeated failovers during an outage can therefore grow retained
+state until the fences succeed or client disposal aborts cleanup.
 
 This is reactive discovery. Sentinel event subscriptions and the real-server failover matrix
 remain tracked by [#549](https://github.com/thomhurst/Respire/issues/549). No background Sentinel

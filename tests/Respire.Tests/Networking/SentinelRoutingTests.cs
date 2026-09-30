@@ -15,6 +15,32 @@ public class SentinelRoutingTests
     private static readonly byte[] PrimaryRole = "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray();
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task LazySentinelEndpointIsUnavailableUntilValidatedPrimary(bool failValidation)
+    {
+        var valid = !failValidation;
+        await using var primary = Primary((_, command) => command == "ROLE" && !Volatile.Read(ref valid)
+            ? "*0\r\n"u8.ToArray() : null);
+        await using var sentinel = Sentinel(() => primary.Port);
+        await using var client = RespireClient.Create(Options(sentinel.Port));
+        await using var prefixed = client.WithKeyPrefix("tenant:");
+        foreach (IRespireClient view in new[] { client, prefixed })
+            await Assert.That(() => _ = view.Endpoint).ThrowsExactly<InvalidOperationException>();
+        await Assert.That(sentinel.CommandsSeen).IsEqualTo(0);
+        await Assert.That(primary.CommandsSeen).IsEqualTo(0);
+        if (failValidation)
+        {
+            await Assert.That(async () => await client.PingAsync().AsTask().WaitAsync(Limit)).Throws<RespireConnectionException>();
+            await Assert.That(() => _ = client.Endpoint).ThrowsExactly<InvalidOperationException>();
+            Volatile.Write(ref valid, true);
+        }
+        await prefixed.PingAsync().AsTask().WaitAsync(Limit);
+        await Assert.That(client.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", primary.Port));
+        await Assert.That(prefixed.Endpoint).IsEqualTo(client.Endpoint);
+    }
+
+    [Test]
     [NotInParallel]
     public async Task EndpointSnapshotsNeverMixPublishedGenerations()
     {
@@ -1188,6 +1214,57 @@ public class SentinelRoutingTests
         await Assert.That(generation.Retirement.IsCompleted).IsTrue();
         await Assert.That(generation.CountedAsRetired).IsFalse();
         await Assert.That(clock.Timers.Reader.TryRead(out _)).IsFalse();
+    }
+
+    [Test]
+    public async Task ConsecutiveFailoversKeepBothCorrectionFencesUntilClientDisposal()
+    {
+        var rejectFences = new int[2];
+        byte[]? Reply(int primary, string command) => command switch
+        {
+            "CLIENT ID" => Encoding.ASCII.GetBytes($":{41 + primary}\r\n"),
+            _ when command.StartsWith("CLIENT KILL ") => Volatile.Read(ref rejectFences[primary]) != 0
+                ? "-ERR fencing unavailable\r\n"u8.ToArray() : ":0\r\n"u8.ToArray(),
+            _ => null,
+        };
+        await using var first = Primary((_, command) => Reply(0, command));
+        await using var second = Primary((_, command) => Reply(1, command));
+        await using var third = Primary();
+        var port = first.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        var router = client.Core.Sentinel!;
+        var clock = new FenceClock();
+        router.Clock = clock;
+        var generations = new List<Respire.Internal.SentinelRouter.Generation>();
+        var timers = new List<FenceTimer>();
+        var primaries = new[] { first, second };
+        for (var index = 0; index < primaries.Length; index++)
+        {
+            Volatile.Write(ref port, primaries[index].Port);
+            await client.EnsureReliableCorrectionOrderingAsync().AsTask().WaitAsync(Limit);
+            generations.Add(router.Current!);
+            Volatile.Write(ref rejectFences[index], 1);
+            primaries[index].CloseConnectionAfterCommand = primaries[index].CommandsSeen + 1;
+            await Assert.That(async () => await client.SetAsync("lost", "value").AsTask().WaitAsync(Limit))
+                .Throws<RespireConnectionException>();
+            timers.Add(await clock.Timers.Reader.ReadAsync().AsTask().WaitAsync(Limit));
+        }
+        Volatile.Write(ref port, third.Port);
+        await client.SetAsync("current", "value").AsTask().WaitAsync(Limit);
+        foreach (var generation in generations)
+        {
+            await Assert.That(generation.Multiplexer.HasPendingCorrectionFences).IsTrue();
+            await Assert.That(generation.CountedAsRetired).IsTrue();
+            await Assert.That(generation.Retirement.IsCompleted).IsFalse();
+        }
+        await client.DisposeAsync().AsTask().WaitAsync(Limit);
+        foreach (var timer in timers) await timer.Disposed.Task.WaitAsync(Limit);
+        foreach (var generation in generations)
+        {
+            await Assert.That(generation.Retirement.IsCompleted).IsTrue();
+            await Assert.That(generation.CountedAsRetired).IsFalse();
+        }
     }
 
     private sealed class FenceClock : TimeProvider

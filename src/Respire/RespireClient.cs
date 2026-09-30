@@ -174,7 +174,11 @@ public sealed partial class RespireClient : IRespireClient
     }
 
     /// <inheritdoc/>
-    public RespireEndpoint Endpoint => _core.Endpoint;
+    public RespireEndpoint Endpoint
+        => _core.Sentinel is { } sentinel
+            ? sentinel.Current?.Endpoint ?? throw new InvalidOperationException(
+                "The Sentinel primary endpoint is unavailable until discovery succeeds. Use ConnectAsync or await the first command.")
+            : _core.Endpoint;
 
     /// <inheritdoc/>
     public bool IsConnected
