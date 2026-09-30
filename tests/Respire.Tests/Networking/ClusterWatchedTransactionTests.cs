@@ -155,6 +155,45 @@ public class ClusterWatchedTransactionTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReadOnlyFromPreviousOwnerPreservesTheNewRoute(bool duringCommit)
+    {
+        await using var replacement = new FakeRespServer(2, FakeRespServer.OkReply, FakeRespServer.OkReply, Queued, Committed);
+        byte[] readOnly = "-READONLY replica\r\n"u8.ToArray();
+        byte[][] replies = duringCommit
+            ? [FakeRespServer.OkReply, FakeRespServer.OkReply, readOnly, "-EXECABORT discarded\r\n"u8.ToArray()]
+            : [readOnly];
+        await using var owner = new FakeRespServer(2, replies);
+        await using var seed = new FakeRespServer(Topology(owner.Port));
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+        owner.SuppressReply = command =>
+        {
+            if (command == (duringCommit ? "SET {a}:watched old" : "WATCH {a}:watched"))
+            {
+                var router = client.Core.Cluster!;
+                router.SetSlotOwner(ClusterHash.GetSlot("{a}:watched"),
+                    router.GetMultiplexer(new RespireEndpoint("127.0.0.1", replacement.Port)));
+            }
+            return false;
+        };
+        var error = await Assert.That(async () =>
+        {
+            await using var transaction = await client.CreateTransactionAsync(["{a}:watched"]);
+            _ = transaction.Set("{a}:watched", "old");
+            await transaction.CommitAsync();
+        }).ThrowsExactly<RespireTransactionRetryException>();
+        await Assert.That(error!.ServerError.Code).IsEqualTo("READONLY");
+        await Assert.That(replacement.ReceivedCommands).IsEmpty();
+        await using var fresh = await client.CreateTransactionAsync(["{a}:watched"]);
+        _ = fresh.Set("{a}:watched", "fresh");
+        await Assert.That(await fresh.CommitAsync()).IsTrue();
+        await Assert.That(replacement.ReceivedCommands).IsEquivalentTo(
+            ["WATCH {a}:watched", "MULTI", "SET {a}:watched fresh", "EXEC"], CollectionOrdering.Matching);
+        await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
+    }
+
+    [Test]
     public async Task ExecutedElementErrorsAreNotRetried()
     {
         await using var owner = new FakeRespServer(2, FakeRespServer.OkReply, FakeRespServer.OkReply,

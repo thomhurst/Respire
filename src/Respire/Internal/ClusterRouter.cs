@@ -324,7 +324,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
         => connection.Multiplexer?.HasReliableCorrectionOrdering == true;
 
     // Learn routing for a new attempt without sending any part of the rejected watched transaction.
-    internal RespireTransactionRetryException CreateWatchedTransactionRetryException(
+    internal RespireTransactionRetryException LearnWatchedRouteAndCreateRetryException(
         RespireServerException error, RespireConnection source, int? watchedSlot)
     {
         if (error.Code == RespireErrorCodes.Moved
