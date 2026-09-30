@@ -1,0 +1,93 @@
+name: Value codec benchmarks
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths:
+      - 'Directory.Packages.props'
+      - 'src/Respire/Compression/**'
+      - 'src/Respire.Compression.Lz4/**'
+      - 'src/Respire.Compression.Zstd/**'
+      - 'benchmarks/Respire.Benchmarks/ValueCodecBenchmarks.cs'
+      - 'benchmarks/Respire.Benchmarks/Respire.Benchmarks.csproj'
+      - '.github/scripts/value_codec_report.py'
+      - '.github/scripts/test_value_codec_report.py'
+      - '.github/workflows/benchmark-value-codecs.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  report-tests:
+    name: Validate codec report
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: python3 -m unittest discover -s .github/scripts -p test_value_codec_report.py
+  codecs:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (contains(github.event.pull_request.labels.*.name, 'benchmark-value-codecs') &&
+       (github.event.action != 'labeled' || github.event.label.name == 'benchmark-value-codecs'))
+    name: Value codecs (${{ matrix.framework }}, ${{ matrix.direction }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    concurrency:
+      group: value-codecs-${{ github.event.pull_request.number || github.ref }}-${{ matrix.framework }}-${{ matrix.direction }}
+      cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net10.0]
+        direction: [Encode, Decode]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - name: Record environment and build the focused benchmark
+        env:
+          FRAMEWORK: ${{ matrix.framework }}
+        run: |
+          mkdir -p results
+          git rev-parse HEAD > results/revision.txt
+          dotnet --info > results/dotnet-info.txt
+          lscpu > results/cpu.txt
+          dotnet build benchmarks/Respire.Benchmarks -c Release -f "$FRAMEWORK" > results/build.log 2>&1
+          dotnet list benchmarks/Respire.Benchmarks package --include-transitive > results/packages.txt
+      - name: Validate, inspect a representative case, then measure
+        env:
+          FRAMEWORK: ${{ matrix.framework }}
+          DIRECTION: ${{ matrix.direction }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The report validates complete setup metadata against every measured case.
+          # No Redis process or unrelated benchmark runs alongside this job.
+          for phase in validation representative measurement; do
+            job=Default
+            launches=2
+            filter='*ValueCodecBenchmarks*'
+            if [ "$phase" = validation ]; then job=Dry; launches=1; fi
+            if [ "$phase" = representative ]; then
+              filter="$(cat results/representative-filter.txt)"
+              launches=1
+            fi
+            dotnet run --project benchmarks/Respire.Benchmarks -c Release -f "$FRAMEWORK" --no-build -- \
+              --filter "$filter" --allCategories "$DIRECTION" --job "$job" --launchCount "$launches" \
+              --exporters json markdown --artifacts "$GITHUB_WORKSPACE/results/$phase" \
+              > "results/$phase.log" 2>&1
+            python3 .github/scripts/value_codec_report.py --root results --phase "$phase" --direction "$DIRECTION"
+          done
+          cat results/measurement-summary.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: value-codecs-${{ matrix.framework }}-${{ matrix.direction }}
+          path: results/
+          retention-days: 30
