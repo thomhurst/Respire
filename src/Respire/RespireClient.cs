@@ -2655,6 +2655,7 @@ public sealed partial class RespireClient : IRespireClient
                     .ConfigureAwait(false);
             }
 
+            var sentinelStarted = core.Sentinel is null ? 0 : RespireTelemetry.CaptureStartTimestamp();
             var telemetry = core.Sentinel is null ? RespireTelemetry.StartOperation(
                 operation,
                 core.Endpoint,
@@ -2669,7 +2670,7 @@ public sealed partial class RespireClient : IRespireClient
                 connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
                 if (core.Sentinel is not null)
                     telemetry = RespireTelemetry.StartOperation(operation, connection.Host, connection.Port,
-                        core.Options.Database, storedProcedureName: storedProcedureName);
+                        core.Options.Database, storedProcedureName: storedProcedureName, started: sentinelStarted);
                 var response = await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken)
                     .ConfigureAwait(false);
                 pool.Return(connection);
@@ -2693,6 +2694,9 @@ public sealed partial class RespireClient : IRespireClient
                         ?? RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting,
                             core.Endpoint))
                     : null;
+                if (connection is null)
+                    RespireTelemetry.RecordUnroutedFailure(operation, core.Options.Database,
+                        sentinelStarted, timeoutError ?? ex, storedProcedureName);
                 telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
                 if (connection is not null && !returned)
                 {
@@ -2992,6 +2996,7 @@ public sealed partial class RespireClient : IRespireClient
             return new RespireResult(in clusterReply, _core.Options.Serializer);
         }
 
+        var sentinelStarted = core.Sentinel is null ? 0 : RespireTelemetry.CaptureStartTimestamp();
         var telemetry = core.Sentinel is null ? RespireTelemetry.StartOperation(
             script.EvalShaOperation,
             core.Endpoint,
@@ -3004,7 +3009,7 @@ public sealed partial class RespireClient : IRespireClient
             connection = core.Multiplexer.GetConnection();
             if (core.Sentinel is not null)
                 telemetry = RespireTelemetry.StartOperation(script.EvalShaOperation, connection.Host, connection.Port,
-                    core.Options.Database, storedProcedureName: script.Sha1);
+                    core.Options.Database, storedProcedureName: script.Sha1, started: sentinelStarted);
             var result = await ExecuteScriptOnConnectionCoreAsync(connection, script, tail, cancellationToken)
                 .ConfigureAwait(false);
             telemetry.Complete(core, script.EvalShaOperation, script.Sha1, connection: connection);
@@ -3012,6 +3017,9 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception ex)
         {
+            if (connection is null)
+                RespireTelemetry.RecordUnroutedFailure(script.EvalShaOperation, core.Options.Database,
+                    sentinelStarted, ex, script.Sha1);
             telemetry.Complete(core, script.EvalShaOperation, script.Sha1, ex, connection);
             throw;
         }

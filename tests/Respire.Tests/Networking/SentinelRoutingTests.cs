@@ -853,7 +853,7 @@ public class SentinelRoutingTests
     [Arguments("FCALL")]
     [Arguments("FCALL_RO")]
     [Arguments("HGETALL")]
-    public async Task DiscardedRepliesKeepTheirOperationWithoutWaitingForTheReply(string operation)
+    public async Task FireAndForgetKeepsSentinelMetadataAndRejectsUnsupportedAffinity(string operation)
     {
         await using var primary = Primary();
         await using var promoted = Primary();
@@ -861,6 +861,15 @@ public class SentinelRoutingTests
         await using var sentinel = Sentinel(() => Volatile.Read(ref port));
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with { MaxInflightCommands = 2 });
         var generation = client.Core.Sentinel!.Current!;
+        if (operation == "EXEC")
+        {
+            // EXEC is connection-affine and intentionally cannot enter the discarded path.
+            await Assert.That(async () => await client.ExecuteFireAndForgetAsync((RespireCommand)operation, []))
+                .ThrowsExactly<NotSupportedException>();
+            await Assert.That(primary.ReceivedCommands.Contains("EXEC")).IsFalse();
+            await Assert.That(generation.IsRetired).IsFalse();
+            return;
+        }
         primary.SuppressReply = command => command == operation || command == "PING";
         Volatile.Write(ref port, promoted.Port);
 
@@ -1088,14 +1097,31 @@ public class SentinelRoutingTests
     [Arguments("batch", false)]
     [Arguments("durability", false)]
     [Arguments("transaction", false)]
-    public async Task FailedBatchDiscoveryRetainsTelemetryWithoutInventingAPrimary(string kind, bool trace)
+    [Arguments("blocking", true)]
+    [Arguments("blocking", false)]
+    [Arguments("script", true)]
+    [Arguments("script", false)]
+    [Arguments("blocking-rental", true)]
+    [Arguments("blocking-rental", false)]
+    public async Task FailedDiscoveryRetainsTelemetryWithoutInventingAPrimary(string kind, bool trace)
     {
+        var operation = kind switch { "blocking" or "blocking-rental" => "BLPOP", "script" => "EVALSHA", _ => "SET" };
+        var rental = kind == "blocking-rental";
         var queried = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var primary = Primary();
+        var roles = 0;
+        primary.SuppressReply = command =>
+        {
+            if (!rental || command != "ROLE" || Interlocked.Increment(ref roles) != 2) return false;
+            queried.TrySetResult();
+            return true;
+        };
         await using var sentinel = new FakeRespServer("*0\r\n"u8.ToArray())
         {
+            ReplyOverride = (_, _) => rental ? AddressReply(primary.Port) : null,
             SuppressReply = command =>
             {
-                if (!command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")) return false;
+                if (rental || !command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")) return false;
                 queried.TrySetResult();
                 return true;
             },
@@ -1106,7 +1132,7 @@ public class SentinelRoutingTests
         {
             ShouldListenTo = source => trace && source.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStopped = activity => { if (activity.OperationName == "SET") activities.Add(activity); },
+            ActivityStopped = activity => { if (Equals(activity.GetTagItem("db.operation.name"), operation)) activities.Add(activity); },
         };
         ActivitySource.AddActivityListener(activityListener);
         var measurements = new List<(double Duration, Dictionary<string, object?> Tags)>();
@@ -1119,7 +1145,7 @@ public class SentinelRoutingTests
         meterListener.SetMeasurementEventCallback<double>((_, duration, tags, _) =>
         {
             var captured = tags.ToArray().ToDictionary(pair => pair.Key, pair => pair.Value);
-            if (Equals(captured["db.operation.name"], "SET")) measurements.Add((duration, captured));
+            if (Equals(captured["db.operation.name"], operation)) measurements.Add((duration, captured));
         });
         meterListener.Start();
         using var batch = client.CreateBatch();
@@ -1128,13 +1154,16 @@ public class SentinelRoutingTests
         _ = transaction.Set("key", "value");
         Task execution = kind switch
         {
+            "blocking" or "blocking-rental" => client.Lists.LeftPopAsync("key", waitFor: Timeout.InfiniteTimeSpan).AsTask(),
+            "script" => client.Scripts.ExecuteAsync(RespireScript.Create("return 1")).AsTask(),
             "transaction" => transaction.CommitAsync().AsTask(),
             "durability" => batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1)).AsTask(),
             _ => batch.ExecuteAsync().AsTask(),
         };
         await queried.Task.WaitAsync(Limit);
         var releaseTime = DateTime.UtcNow;
-        await sentinel.SendRawAsync("$-1\r\n"u8.ToArray());
+        if (rental) await primary.SendRawAsync("*0\r\n"u8.ToArray(), connectionId: 1);
+        else await sentinel.SendRawAsync("$-1\r\n"u8.ToArray());
         await Assert.That(async () => await execution.WaitAsync(Limit)).Throws<RespireConnectionException>();
         await Assert.That(measurements.Count).IsEqualTo(1);
         await Assert.That(measurements[0].Duration).IsGreaterThan(0);
@@ -1202,6 +1231,83 @@ public class SentinelRoutingTests
         }
         await Assert.That(samples.Any(tags => Equals(tags["server.port"], primary.Port))).IsTrue();
         await Assert.That(samples.Any(tags => Equals(tags["server.port"], sentinel.Port))).IsFalse();
+    }
+
+    [Test]
+    [NotInParallel]
+    [Arguments("blocking", false)]
+    [Arguments("blocking", true)]
+    [Arguments("script", false)]
+    [Arguments("script", true)]
+    public async Task SuccessfulSentinelOperationIncludesDiscoveryInItsDuration(string kind, bool trace)
+    {
+        var operation = kind == "blocking" ? "BLPOP" : "EVALSHA";
+        await using var primary = Primary((_, command) => command switch
+        {
+            "BLPOP key 0" => "*2\r\n$3\r\nkey\r\n$5\r\nvalue\r\n"u8.ToArray(),
+            _ when command.StartsWith("EVALSHA ") => ":1\r\n"u8.ToArray(),
+            _ => null,
+        });
+        var queried = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var sentinel = Sentinel(() => primary.Port);
+        sentinel.SuppressReply = command =>
+        {
+            if (!command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")) return false;
+            queried.TrySetResult();
+            return true;
+        };
+        await using var client = RespireClient.Create(Options(sentinel.Port));
+        var activities = new List<Activity>();
+        var sampled = new List<Dictionary<string, object?>>();
+        using var activityListener = new ActivityListener
+        {
+            ShouldListenTo = source => trace && source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
+            {
+                if (options.Name.StartsWith(operation)) sampled.Add(options.Tags!.ToDictionary(tag => tag.Key, tag => tag.Value));
+                return ActivitySamplingResult.AllDataAndRecorded;
+            },
+            ActivityStopped = activity => { if (Equals(activity.GetTagItem("db.operation.name"), operation)) activities.Add(activity); },
+        };
+        ActivitySource.AddActivityListener(activityListener);
+        var measurements = new List<(double Duration, Dictionary<string, object?> Tags)>();
+        using var meterListener = new MeterListener();
+        meterListener.InstrumentPublished = (instrument, listener) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+                listener.EnableMeasurementEvents(instrument);
+        };
+        meterListener.SetMeasurementEventCallback<double>((_, duration, tags, _) =>
+        {
+            var captured = tags.ToArray().ToDictionary(pair => pair.Key, pair => pair.Value);
+            if (Equals(captured["db.operation.name"], operation)) measurements.Add((duration, captured));
+        });
+        meterListener.Start();
+        var execution = ExecuteAsync();
+        await queried.Task.WaitAsync(Limit);
+        var releaseTime = DateTime.UtcNow;
+        await sentinel.SendRawAsync(AddressReply(primary.Port));
+        await execution.WaitAsync(Limit);
+        await Assert.That(measurements.Count).IsEqualTo(1);
+        await Assert.That(measurements[0].Duration).IsGreaterThan(0);
+        await Assert.That(measurements[0].Tags["server.port"]).IsEqualTo(primary.Port);
+        await Assert.That(measurements[0].Tags.ContainsKey("error.type")).IsFalse();
+        await Assert.That(activities.Count).IsEqualTo(trace ? 1 : 0);
+        if (trace)
+        {
+            await Assert.That(sampled.Single()["server.port"]).IsEqualTo(primary.Port);
+            await Assert.That(activities[0].StartTimeUtc <= releaseTime).IsTrue();
+        }
+
+        async Task ExecuteAsync()
+        {
+            if (kind == "blocking") await client.Lists.LeftPopAsync("key", waitFor: Timeout.InfiniteTimeSpan);
+            else
+            {
+                using var result = await client.Scripts.ExecuteAsync(RespireScript.Create("return 1"));
+                await Assert.That(result.AsInteger()).IsEqualTo(1);
+            }
+        }
     }
 
     [Test]
