@@ -623,7 +623,8 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             "LPUSH" or "RPUSH" or "LPUSHX" or "RPUSHX" or "LPOP" or "RPOP" or "LREM" or "LTRIM" or "LSET" or "LINSERT" or
             "SADD" or "SREM" or "SPOP" or
             "ZADD" or "ZINCRBY" or "ZREM" or "ZREMRANGEBYRANK" or "ZREMRANGEBYSCORE" or "ZREMRANGEBYLEX" or
-            "XADD" or "XACK" or "XDEL" or "XTRIM" or "XGROUP CREATE" or "XGROUP DESTROY" or
+            "XADD" or "XACK" or "XDEL" or "XTRIM" or "XSETID" or
+            "XGROUP CREATE" or "XGROUP DESTROY" or "XGROUP CREATECONSUMER" or
             "SETBIT" or "BITFIELD" or "PFADD" or "GEOADD";
 
     internal readonly record struct ReadToken(
