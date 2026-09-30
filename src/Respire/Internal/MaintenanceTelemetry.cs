@@ -9,9 +9,12 @@ internal sealed class MaintenanceTelemetry(string host, int port, int database, 
 {
     private const int Capacity = 256;
     private readonly object _gate = new();
-    private readonly Queue<(MaintenanceNotification Notification, DateTimeOffset Received)> _pending = [];
+    private readonly Queue<(DiagnosticNotification Notification, DateTimeOffset Received)> _pending = [];
     private bool _dispatching;
     private long _dropped;
+
+    private readonly record struct DiagnosticNotification(string Kind, long SequenceId, long? Seconds,
+        RespireEndpoint? Target);
 
     internal void Publish(MaintenanceNotification notification)
     {
@@ -22,7 +25,8 @@ internal sealed class MaintenanceTelemetry(string host, int port, int database, 
                 _pending.Dequeue();
                 _dropped++;
             }
-            _pending.Enqueue((notification, DateTimeOffset.UtcNow));
+            _pending.Enqueue((new(notification.Kind, notification.SequenceId, notification.Seconds, notification.Target),
+                DateTimeOffset.UtcNow));
             if (_dispatching) return;
             _dispatching = true;
         }
@@ -33,7 +37,7 @@ internal sealed class MaintenanceTelemetry(string host, int port, int database, 
     {
         while (true)
         {
-            (MaintenanceNotification Notification, DateTimeOffset Received) item;
+            (DiagnosticNotification Notification, DateTimeOffset Received) item;
             long dropped;
             lock (_gate)
             {
@@ -43,7 +47,6 @@ internal sealed class MaintenanceTelemetry(string host, int port, int database, 
                     return;
                 }
                 dropped = _dropped;
-                _dropped = 0;
             }
             var notification = item.Notification;
             try
@@ -61,20 +64,52 @@ internal sealed class MaintenanceTelemetry(string host, int port, int database, 
                 using var activity = RespireTelemetry.Source.StartActivity("redis.maintenance", ActivityKind.Consumer,
                     default(ActivityContext), tags, startTime: item.Received);
                 activity?.AddEvent(new ActivityEvent(notification.Kind, item.Received));
+            }
+            catch (Exception error)
+            {
+                LogFailure(error);
+            }
+
+            try
+            {
                 RespireTelemetry.MaintenanceNotifications.Add(1,
                     new KeyValuePair<string, object?>("server.address", host),
                     new KeyValuePair<string, object?>("server.port", port),
                     new KeyValuePair<string, object?>("respire.maintenance.kind", notification.Kind));
-                if (dropped != 0) RespireTelemetry.MaintenanceNotificationsDropped.Add(dropped);
+            }
+            catch (Exception error)
+            {
+                LogFailure(error);
+            }
+
+            if (dropped != 0)
+            {
+                try
+                {
+                    RespireTelemetry.MaintenanceNotificationsDropped.Add(dropped);
+                    lock (_gate) _dropped -= dropped;
+                }
+                catch (Exception error)
+                {
+                    LogFailure(error);
+                }
+            }
+
+            try
+            {
                 logger?.LogInformation("Redis maintenance {Kind} ({SequenceId}) on {Host}:{Port}",
                     notification.Kind, notification.SequenceId, host, port);
             }
             catch (Exception error)
             {
-                // Diagnostic failures cannot stop protocol progress or strand the dispatch queue.
-                try { logger?.LogWarning(error, "Maintenance diagnostic listener threw"); }
-                catch { /* A failing logger is also an isolated diagnostic listener. */ }
+                LogFailure(error);
             }
         }
+    }
+
+    private void LogFailure(Exception error)
+    {
+        try { logger?.LogWarning(error, "Maintenance diagnostic listener threw"); }
+        catch { /* A failing logger is also an isolated diagnostic listener. */ }
     }
 }

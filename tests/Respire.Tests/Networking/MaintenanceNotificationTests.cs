@@ -268,7 +268,8 @@ public class MaintenanceNotificationTests
 
         await using var unlimitedServer = Server();
         unlimitedServer.SuppressReply = command => command == "PING";
-        await using var unlimited = await Connect(unlimitedServer, null, window: TimeSpan.FromMilliseconds(100));
+        // Keep the active window long enough for a loaded runner to observe it.
+        await using var unlimited = await Connect(unlimitedServer, null, window: TimeSpan.FromSeconds(2));
         await unlimitedServer.SendRawAsync(Start("MIGRATING", 1));
         await WaitForMaintenance(unlimited);
         var unlimitedPending = unlimited.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
