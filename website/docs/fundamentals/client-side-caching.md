@@ -266,6 +266,14 @@ interrupt eviction or other observers; `LastObserverException` retains its lates
 and later callbacks continue. Use synchronous callbacks; `async void` exceptions cannot be
 captured by this API.
 
+Dispatch cost scales with the number of subscriptions: a global flush can schedule one worker
+per subscription, and registration/disposal briefly waits while that subscriber set is queued.
+There is no additional global subscription limit. Bound the number of live subscriptions in
+your application; the one-pending limit applies separately to each subscription. Only the most
+recent callback exception is retained. Catch and log inside your callback if every failure must
+be recorded. Third-party implementations of `IRespireClientSideCache` remain source-compatible;
+the default observation method throws `NotSupportedException` unless implemented.
+
 Dispose the returned subscription or cancel its token to discard pending delivery. Client
 disposal also stops every subscription. Disposal does not wait for a callback already selected
 for execution, so that callback may finish afterward and may safely dispose itself or its client.
