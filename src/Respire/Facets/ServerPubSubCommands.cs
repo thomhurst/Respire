@@ -33,38 +33,45 @@ internal sealed partial class ServerCommands
     private static readonly Verb PubSubNumSub = new(-1, "PUBSUB", "NUMSUB");
     private static readonly Verb PubSubShardNumSub = new(-1, "PUBSUB", "SHARDNUMSUB");
     private static readonly Verb PubSubNumPat = new(-1, "PUBSUB", "NUMPAT");
+    private readonly record struct PubSubCall<T>(string Operation, CmdN Command, ResponseConverter<ServerCommands, T> Convert);
+    private static readonly PubSubCall<long> PatternCountCall = new("PUBSUB NUMPAT", new CmdN(PubSubNumPat, []),
+        static (ServerCommands _, in RespValue value) => ParseSubscriptionCount(in value));
 
     public ValueTask<RespireChannel[]> PubSubChannelsAsync(RespireChannel? pattern = null, bool sharded = false, CancellationToken cancellationToken = default)
-        => ConvertAsync<CmdN, RespireChannel[]>(sharded ? "PUBSUB SHARDCHANNELS" : "PUBSUB CHANNELS",
-            new CmdN(sharded ? PubSubShardChannels : PubSubChannels, PatternArguments(pattern)), cancellationToken,
-            sharded ? static (ServerCommands _, in RespValue value) => ParseChannels(in value, true)
-                : static (ServerCommands _, in RespValue value) => ParseChannels(in value, false));
+        => ExecutePubSubCallAsync(CreateChannelsCall(pattern, sharded), cancellationToken);
 
     public ValueTask<RespireChannelSubscriberCount[]> PubSubSubscriberCountsAsync(ReadOnlySpan<RespireChannel> channels, bool sharded = false, CancellationToken cancellationToken = default)
-        => ConvertAsync<CmdN, RespireChannelSubscriberCount[]>(sharded ? "PUBSUB SHARDNUMSUB" : "PUBSUB NUMSUB",
-            new CmdN(sharded ? PubSubShardNumSub : PubSubNumSub, ChannelArguments(channels)), cancellationToken,
-            sharded ? static (ServerCommands _, in RespValue value) => ParseSubscriberCounts(in value, true)
-                : static (ServerCommands _, in RespValue value) => ParseSubscriberCounts(in value, false));
+        => ExecutePubSubCallAsync(CreateCountsCall(channels, sharded), cancellationToken);
 
     public ValueTask<long> PubSubPatternCountAsync(CancellationToken cancellationToken = default)
-        => ConvertAsync("PUBSUB NUMPAT", new Cmd(PubSubNumPat), cancellationToken,
-            static (ServerCommands _, in RespValue value) => ParseSubscriptionCount(in value));
+        => ExecutePubSubCallAsync(PatternCountCall, cancellationToken);
 
     public ValueTask<RespireServerResult<RespireChannel[]>[]> PubSubChannelsOnAllNodesAsync(RespireChannel? pattern = null, bool sharded = false, CancellationToken cancellationToken = default)
-        => FanOutAsync<CmdN, RespireChannel[]>(sharded ? "PUBSUB SHARDCHANNELS" : "PUBSUB CHANNELS",
-            new CmdN(sharded ? PubSubShardChannels : PubSubChannels, PatternArguments(pattern)), cancellationToken,
+        => ExecutePubSubCallOnAllNodesAsync(CreateChannelsCall(pattern, sharded), cancellationToken);
+
+    public ValueTask<RespireServerResult<RespireChannelSubscriberCount[]>[]> PubSubSubscriberCountsOnAllNodesAsync(ReadOnlySpan<RespireChannel> channels, bool sharded = false, CancellationToken cancellationToken = default)
+        => ExecutePubSubCallOnAllNodesAsync(CreateCountsCall(channels, sharded), cancellationToken);
+
+    public ValueTask<RespireServerResult<long>[]> PubSubPatternCountOnAllNodesAsync(CancellationToken cancellationToken = default)
+        => ExecutePubSubCallOnAllNodesAsync(PatternCountCall, cancellationToken);
+
+    private ValueTask<T> ExecutePubSubCallAsync<T>(PubSubCall<T> call, CancellationToken cancellationToken)
+        => ConvertAsync(call.Operation, call.Command, cancellationToken, call.Convert);
+
+    private ValueTask<RespireServerResult<T>[]> ExecutePubSubCallOnAllNodesAsync<T>(PubSubCall<T> call, CancellationToken cancellationToken)
+        => FanOutAsync(call.Operation, call.Command, cancellationToken, call.Convert);
+
+    private static PubSubCall<RespireChannel[]> CreateChannelsCall(RespireChannel? pattern, bool sharded)
+        => new(sharded ? "PUBSUB SHARDCHANNELS" : "PUBSUB CHANNELS",
+            new CmdN(sharded ? PubSubShardChannels : PubSubChannels, PatternArguments(pattern)),
             sharded ? static (ServerCommands _, in RespValue value) => ParseChannels(in value, true)
                 : static (ServerCommands _, in RespValue value) => ParseChannels(in value, false));
 
-    public ValueTask<RespireServerResult<RespireChannelSubscriberCount[]>[]> PubSubSubscriberCountsOnAllNodesAsync(ReadOnlySpan<RespireChannel> channels, bool sharded = false, CancellationToken cancellationToken = default)
-        => FanOutAsync<CmdN, RespireChannelSubscriberCount[]>(sharded ? "PUBSUB SHARDNUMSUB" : "PUBSUB NUMSUB",
-            new CmdN(sharded ? PubSubShardNumSub : PubSubNumSub, ChannelArguments(channels)), cancellationToken,
+    private static PubSubCall<RespireChannelSubscriberCount[]> CreateCountsCall(ReadOnlySpan<RespireChannel> channels, bool sharded)
+        => new(sharded ? "PUBSUB SHARDNUMSUB" : "PUBSUB NUMSUB",
+            new CmdN(sharded ? PubSubShardNumSub : PubSubNumSub, ChannelArguments(channels)),
             sharded ? static (ServerCommands _, in RespValue value) => ParseSubscriberCounts(in value, true)
                 : static (ServerCommands _, in RespValue value) => ParseSubscriberCounts(in value, false));
-
-    public ValueTask<RespireServerResult<long>[]> PubSubPatternCountOnAllNodesAsync(CancellationToken cancellationToken = default)
-        => FanOutAsync("PUBSUB NUMPAT", new Cmd(PubSubNumPat), cancellationToken,
-            static (ServerCommands _, in RespValue value) => ParseSubscriptionCount(in value));
 
     private static RespireValue[] PatternArguments(RespireChannel? pattern)
         => pattern is { } value ? [value.AsValue()] : [];

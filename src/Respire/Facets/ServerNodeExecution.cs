@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Diagnostics.CodeAnalysis;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
@@ -24,6 +25,13 @@ public sealed class RespireServerResult<T>
     public Exception? Error { get; }
     /// <summary>The owned result. Throws InvalidOperationException with Error as its inner exception on failure.</summary>
     public T Value => Error is null ? _value : throw new InvalidOperationException("The server operation failed.", Error);
+    /// <summary>Returns the owned value on success, or false and the default value on failure.</summary>
+    public bool TryGetValue([MaybeNullWhen(false)] out T value)
+    {
+        value = _value;
+        return IsSuccess;
+    }
+
     internal static RespireServerResult<T> Success(RespireEndpoint endpoint, T value) => new(endpoint, value, null);
     internal static RespireServerResult<T> Failure(RespireEndpoint endpoint, Exception error) => new(endpoint, default!, error);
 }
@@ -39,21 +47,24 @@ internal sealed partial class ServerCommands
         ObjectDisposedException.ThrowIf(client.Core.Disposed, client);
         cancellationToken.ThrowIfCancellationRequested();
         var endpoints = await DiscoverServerEndpointsAsync(cancellationToken).ConfigureAwait(false);
+        using var capacity = new SemaphoreSlim(8);
         var tasks = new Task<RespireServerResult<T>>[endpoints.Length];
         for (var index = 0; index < endpoints.Length; index++)
-            tasks[index] = ExecuteOnNodeAsync(endpoints[index], operation, command, convert, cancellationToken);
+            tasks[index] = ExecuteOnNodeAsync(endpoints[index], operation, command, convert, capacity, cancellationToken);
         return await Task.WhenAll(tasks).ConfigureAwait(false);
     }
 
     private async Task<RespireServerResult<T>> ExecuteOnNodeAsync<TCommand, T>(
         RespireEndpoint endpoint, string operation, TCommand command,
-        ResponseConverter<ServerCommands, T> convert, CancellationToken cancellationToken)
+        ResponseConverter<ServerCommands, T> convert, SemaphoreSlim capacity, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
         DedicatedConnectionPool? pool = null;
+        var entered = false;
         try
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            await capacity.WaitAsync(cancellationToken).ConfigureAwait(false);
+            entered = true;
             // Introspection must not retain every historical replica in the routing pool cache.
             pool = client.Core.CreateServerPool(endpoint);
             var connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
@@ -67,12 +78,20 @@ internal sealed partial class ServerCommands
         }
         finally
         {
-            if (pool is not null) await client.Core.ReleaseServerPoolAsync(pool).ConfigureAwait(false);
+            try
+            {
+                if (pool is not null) await client.Core.ReleaseServerPoolAsync(pool).ConfigureAwait(false);
+            }
+            finally
+            {
+                if (entered) capacity.Release();
+            }
         }
     }
 
     private async ValueTask<RespireEndpoint[]> DiscoverServerEndpointsAsync(CancellationToken cancellationToken)
     {
+        // Acquisition selects a client-owned multiplexed connection, not a dedicated lease.
         var connection = await client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
         var source = new RespireEndpoint(connection.Host, connection.Port);
         if (client.Core.Cluster is null) return [source];

@@ -55,6 +55,8 @@ Each result retains its endpoint and either an owned `Value` or the original
 `Error`. Accessing `Value` on failure throws `InvalidOperationException` with that
 error as its inner exception. Counts are not summed and channel names are not
 deduplicated across nodes. Standalone execution returns one result.
+`TryGetValue(out var value)` provides non-throwing access; on failure it returns
+false and assigns the default value, while `Error` retains the original exception.
 
 Cluster discovery uses CLUSTER NODES on a reachable connection, requiring that ACL
 permission. It keeps the reachable address of the reporting node and uses advertised
@@ -65,11 +67,13 @@ partial topology is never silently presented as complete. Membership can change
 after the snapshot; no atomic Cluster-wide observation is promised.
 
 Each call re-runs CLUSTER NODES and opens one temporary dedicated connection per
-discovered endpoint. Fan-out concurrency is uncapped; polling large clusters can
-create connection bursts, so choose an appropriate polling interval. These pools
+discovered endpoint, with at most eight nodes active at once. This limit applies
+per call; avoid overlapping polls when controlling total connection demand. These pools
 are scoped to the call and closed on every outcome, including success. They do not
 retain historical replicas or add transports to the routing pool cache. Client
 disposal tracks and aborts active fan-out pools, including pending handshakes.
+Connection setup uses `ConnectTimeout`; commands use `CommandTimeout` and the
+configured response watchdog. Caller cancellation also covers nodes awaiting capacity.
 
 Execution preserves authentication/TLS. A failed node produces an endpoint-associated
 error while other nodes can succeed. Cancellation before or during discovery throws. After discovery,

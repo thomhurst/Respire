@@ -9,6 +9,91 @@ namespace Respire.Tests.Networking;
 public class ServerPubSubCommandTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FanOutLimitsActiveNodesAndAttributesQueuedCancellation(bool cancel)
+    {
+        var servers = Enumerable.Range(0, 10).Select(index => new FakeRespServer(index == 0 ? 2 : 1, Integer(index))).ToArray();
+        try
+        {
+            var started = new System.Collections.Concurrent.ConcurrentQueue<(FakeRespServer Server, int Connection)>();
+            var firstWave = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var allStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var topology = string.Join('\n', servers.Select((server, index) =>
+                $"n{index} 127.0.0.1:{server.Port}@2 {(index == 0 ? "myself,master" : "slave")} {(index == 0 ? "-" : "n0")} 0 0 1 connected"));
+            foreach (var server in servers)
+            {
+                server.SuppressReply = command =>
+                {
+                    if (command == "CLUSTER SLOTS") { _ = server.SendRawAsync(Slots(server.Port)); return true; }
+                    if (command == "CLUSTER NODES") { _ = server.SendRawAsync(Bulk(Encoding.ASCII.GetBytes(topology))); return true; }
+                    if (command != "PUBSUB NUMPAT") return false;
+                    started.Enqueue((server, server.ReceivedConnectionIds[^1]));
+                    if (started.Count == 8) firstWave.TrySetResult();
+                    if (started.Count == 10) allStarted.TrySetResult();
+                    return true;
+                };
+            }
+            await using var client = await RespireClient.ConnectAsync(new RespireOptions
+            {
+                UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", servers[0].Port)],
+            });
+            using var cancellation = new CancellationTokenSource();
+            var executing = client.Server.PubSubPatternCountOnAllNodesAsync(cancellation.Token).AsTask();
+            await firstWave.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(started.Count).IsEqualTo(8);
+            if (cancel)
+            {
+                cancellation.Cancel();
+            }
+            else
+            {
+                foreach (var item in started.ToArray()) await item.Server.SendRawAsync(Integer(1), item.Connection);
+                await allStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                foreach (var item in started.ToArray().Skip(8)) await item.Server.SendRawAsync(Integer(1), item.Connection);
+            }
+            var results = await executing.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(results.Select(result => result.Endpoint.Port)).IsEquivalentTo(servers.Select(server => server.Port));
+            foreach (var result in results)
+            {
+                if (cancel)
+                {
+                    await Assert.That(result.Error).IsAssignableTo<OperationCanceledException>();
+                    await Assert.That(((OperationCanceledException)result.Error!).CancellationToken).IsEqualTo(cancellation.Token);
+                }
+                else await Assert.That(result.Value).IsEqualTo(1);
+            }
+            await Assert.That(started.Count).IsEqualTo(cancel ? 8 : 10);
+        }
+        finally
+        {
+            foreach (var server in servers) await server.DisposeAsync();
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Resp3SetsAndMapsProduceOwnedBinaryResults(bool sharded)
+    {
+        byte[] name = [255, 0, 13, 10];
+        byte[] set = [.. "~2\r\n"u8, .. Bulk(name), .. Bulk([])];
+        byte[] map = [.. "%2\r\n"u8, .. Bulk(name), .. Integer(2), .. Bulk([]), .. Integer(0)];
+        await using var server = new FakeRespServer(set, map);
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var channels = await client.Server.PubSubChannelsAsync(sharded: sharded);
+        var counts = await client.Server.PubSubSubscriberCountsAsync([name, default], sharded);
+        await client.DisposeAsync();
+        await Assert.That(channels[0].Bytes.ToArray()).IsEquivalentTo(name);
+        await Assert.That(channels[1].Bytes.IsEmpty).IsTrue();
+        await Assert.That(counts[0].Channel.Bytes.ToArray()).IsEquivalentTo(name);
+        await Assert.That(counts[0].Subscribers).IsEqualTo(2);
+        await Assert.That(counts[1].Channel.Bytes.IsEmpty).IsTrue();
+        await Assert.That(counts[1].Subscribers).IsEqualTo(0);
+        await Assert.That(counts[0].Channel.Kind).IsEqualTo(sharded ? SubscriptionKind.Sharded : SubscriptionKind.Channel);
+    }
+
+    [Test]
     public async Task FanOutClosesConnectionsWhenReplicaMembershipChanges()
     {
         await using var firstReplica = new FakeRespServer(Integer(7));
@@ -163,8 +248,12 @@ public class ServerPubSubCommandTests
         await Assert.That(results.Length).IsEqualTo(3);
         await Assert.That(results.Single(x => x.Endpoint.Port == seed.Port).Value).IsEqualTo(3);
         await Assert.That(results.Single(x => x.Endpoint.Port == replica.Port).Value).IsEqualTo(7);
+        await Assert.That(results.Single(x => x.Endpoint.Port == replica.Port).TryGetValue(out var subscribers)).IsTrue();
+        await Assert.That(subscribers).IsEqualTo(7);
         var failure = results.Single(x => x.Endpoint.Port == failed.Port);
         await Assert.That(failure.Error).IsTypeOf<RespireServerException>();
+        await Assert.That(failure.TryGetValue(out var missing)).IsFalse();
+        await Assert.That(missing).IsEqualTo(0);
         await Assert.That(() => failure.Value).Throws<InvalidOperationException>();
         await Assert.That(replica.ReceivedCommands).IsEquivalentTo(["PUBSUB NUMPAT"]);
         await Assert.That(failed.ReceivedCommands).IsEquivalentTo(["PUBSUB NUMPAT"]);
