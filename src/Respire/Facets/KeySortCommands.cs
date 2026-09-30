@@ -143,6 +143,7 @@ internal sealed partial class KeyCommands
             // Hash-tag validation must therefore inspect the complete prefixed pattern.
             if (resolved.Contains((byte)0) || !ClusterHash.TryGetFixedPatternSlot(resolved, out var slot))
                 throw new NotSupportedException("Cluster SORT external patterns require a fixed nonempty hash tag before the wildcard (Redis 7.4+).");
+            // Match the other multi-key facets: reject CROSSSLOT locally using the shared exception type.
             if (source.AsKey().ClusterSlot != slot)
                 throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", operation);
         }

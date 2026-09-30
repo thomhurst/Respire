@@ -11,6 +11,45 @@ namespace Respire.Tests.Networking;
 public class KeySortCommandTests
 {
     [Test]
+    public async Task SortOptionsOwnPatternsAndUseContentEquality()
+    {
+        byte[] by = "weight:*"u8.ToArray();
+        byte[] pattern = [0xff, 0, (byte)'*'];
+        RespireKey[] patterns = ["unused", pattern, "#", "unused"];
+        var options = new RespireSortOptions
+        {
+            By = by, Get = patterns.AsMemory(1, 2), Alpha = true,
+            Descending = true, ReadOnly = true, Limit = new(1, 3),
+        };
+        var copy = options with { };
+        var hash = options.GetHashCode();
+        var lookup = new Dictionary<RespireSortOptions, int> { [options] = 1 };
+        Array.Fill(by, (byte)'x');
+        Array.Fill(pattern, (byte)'x');
+        patterns[2] = "changed";
+        var equal = new RespireSortOptions
+        {
+            By = "weight:*", Get = new RespireKey[] { new byte[] { 0xff, 0, (byte)'*' }, "#" },
+            Alpha = true, Descending = true, ReadOnly = true, Limit = new(1, 3),
+        };
+        await Assert.That(options == equal).IsTrue();
+        await Assert.That(copy == equal).IsTrue();
+        await Assert.That(options.Equals((object)equal)).IsTrue();
+        await Assert.That(options.GetHashCode()).IsEqualTo(hash);
+        await Assert.That(equal.GetHashCode()).IsEqualTo(hash);
+        await Assert.That(lookup[equal]).IsEqualTo(1);
+        await Assert.That(options.Equals((RespireSortOptions?)null)).IsFalse();
+        await Assert.That(new RespireSortOptions() == new RespireSortOptions { Get = Array.Empty<RespireKey>() }).IsTrue();
+        RespireSortOptions[] different =
+        [
+            options with { By = "other:*" }, options with { Get = new RespireKey[] { "#", new byte[] { 0xff, 0, (byte)'*' } } },
+            options with { Alpha = false }, options with { Descending = false },
+            options with { ReadOnly = false }, options with { Limit = new(1, 4) },
+        ];
+        foreach (var changed in different) await Assert.That(options == changed).IsFalse();
+    }
+
+    [Test]
     [Arguments("{}", false)]
     [Arguments("{a", false)]
     [Arguments("a}{b}", true)]
