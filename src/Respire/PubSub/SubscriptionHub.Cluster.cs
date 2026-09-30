@@ -49,7 +49,8 @@ internal sealed partial class SubscriptionHub
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 if (_shardedExhaustion is { } exhausted) throw exhausted;
-                if (core.Options.ReconnectPolicy is not null && _shardedRecovery is { Task.IsCompleted: false })
+                // Both configured and default recovery own the routes until their episode ends.
+                if (_shardedRecovery is { Task.IsCompleted: false })
                     throw new RespireConnectionException("Sharded pub/sub recovery is in progress. Subscribe again after recovery completes.");
                 if (!_observingClusterTopology)
                 {
@@ -204,6 +205,9 @@ internal sealed partial class SubscriptionHub
             // of FIFO acceptance; keep the expectation for the eventual command reply.
             if (hasPendingResponse && primary.ExpectedUnsubscribe is { } expected && elements[1].AsSpan().SequenceEqual(expected.Span))
             {
+                // Redis does not distinguish a same-channel migration confirmation from
+                // our reply. Either confirms removal; consume one FIFO slot, then filter
+                // any duplicate so it cannot complete the next control command.
                 primary.ExpectedUnsubscribe = null;
                 primary.Confirmed.Remove(expected);
                 return false;
@@ -430,6 +434,8 @@ internal sealed partial class SubscriptionHub
                         {
                             if (failure is null && !_shardedRecoveryRequested)
                             {
+                                // Retain even removed owners until this terminal notification clears
+                                // their previously published health state; then discard the episode.
                                 foreach (var endpoint in _shardedRecoveryEndpoints)
                                     QueueConfiguredState(endpoint, RespireConnectionState.Connected, null, attempt, clusterSharded: true);
                                 _shardedRecoveryEndpoints.Clear();

@@ -223,6 +223,86 @@ public class ClusterShardedPubSubTests
 
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RecoveryRejectsNewSubscriptionsWithOrWithoutConfiguredPolicy(bool configured)
+    {
+        await using var cluster = new Cluster(2);
+        await using var client = cluster.CreateClient(configured ? new()
+        {
+            InitialDelay = TimeSpan.FromSeconds(1), MaxDelay = TimeSpan.FromSeconds(1),
+            JitterRatio = 0, MaxAttempts = 3,
+        } : null);
+        var clock = new RecoveryClock();
+        await using var hub = new SubscriptionHub(client.Core, clock);
+        await using var subscription = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None);
+        var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.ReconnectSource == RespireReconnectSource.PubSub && change.State == RespireConnectionState.Connected)
+                recovered.TrySetResult();
+        };
+        cluster.FirstOverride = (_, command) => command == "SSUBSCRIBE bar" ? "-ERR denied\r\n"u8.ToArray() : null;
+        await cluster.First.SendRawAsync(cluster.Confirmation("sunsubscribe", "bar"), ControlIds(cluster.First).Last());
+        var retry = await clock.NextAsync();
+        await Assert.That(async () => await hub.SubscribeAsync(SubscriptionKind.Sharded, ["foo"], new(), CancellationToken.None))
+            .ThrowsExactly<RespireConnectionException>();
+        await Assert.That(cluster.Second.ReceivedCommands.Contains("SSUBSCRIBE foo")).IsFalse();
+        cluster.FirstOverride = null;
+        retry.Fire();
+        await recovered.Task.WaitAsync(Deadline);
+        await using var added = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["foo"], new(), CancellationToken.None);
+        await Assert.That(cluster.Second.ReceivedCommands.Count(command => command == "SSUBSCRIBE foo")).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task HubDisposalDetachesTopologyHandlerWhileRouterRemainsAlive()
+    {
+        await using var cluster = new Cluster(2);
+        await using var client = cluster.CreateClient();
+        await using var hub = new SubscriptionHub(client.Core);
+        await using var subscription = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None);
+        var router = client.Core.Cluster!;
+        var topologyEvent = router.GetType().GetField("TopologyChanged",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        bool IsAttached() => ((Delegate?)topologyEvent.GetValue(router))?.GetInvocationList()
+            .Any(handler => ReferenceEquals(handler.Target, hub)) == true;
+        await Assert.That(IsAttached()).IsTrue();
+        await hub.DisposeAsync().AsTask().WaitAsync(Deadline);
+        await Assert.That(IsAttached()).IsFalse();
+        router.SetSlotOwner(ClusterHash.GetSlot("bar"), router.GetMultiplexer(new("127.0.0.1", cluster.Second.Port)));
+        await Assert.That(await subscription.Completion).IsEqualTo(RespireSubscriptionEndReason.ClientDisposed);
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task SameChannelMigrationDuringUnsubscribeDoesNotConsumeNextControlReply(int protocol)
+    {
+        await using var cluster = new Cluster(protocol);
+        await using var client = cluster.CreateClient();
+        await using var removed = await client.SubscribeShardedAsync("bar");
+        await using var healthy = await client.SubscribeShardedAsync("baz");
+        var socket = ControlIds(cluster.First).First();
+        cluster.First.SuppressReply = command => command is "SUNSUBSCRIBE bar" or "SSUBSCRIBE b";
+        var removal = removed.DisposeAsync().AsTask();
+        await WaitAsync(() => cluster.First.ReceivedCommands.Contains("SUNSUBSCRIBE bar"));
+        // The migration confirmation is indistinguishable from the command's own reply.
+        await cluster.First.SendRawAsync(cluster.Confirmation("sunsubscribe", "bar"), socket);
+        await removal.WaitAsync(Deadline);
+        var pending = client.SubscribeShardedAsync("b").AsTask();
+        await WaitAsync(() => cluster.First.ReceivedCommands.Contains("SSUBSCRIBE b"));
+        await using var reader = healthy.GetAsyncEnumerator();
+        await cluster.First.SendRawAsync([.. cluster.Confirmation("sunsubscribe", "bar"),
+            .. cluster.Message("baz", "duplicate processed")], socket);
+        await Assert.That(await reader.MoveNextAsync().AsTask().WaitAsync(Deadline)).IsTrue();
+        await Assert.That(reader.Current.Text).IsEqualTo("duplicate processed");
+        await Assert.That(pending.IsCompleted).IsFalse();
+        await cluster.First.SendRawAsync(cluster.Confirmation("ssubscribe", "b"), socket);
+        await using var added = await pending.WaitAsync(Deadline);
+    }
+
     private sealed class RecoveryClock : TimeProvider
     {
         private readonly System.Threading.Channels.Channel<RecoveryTimer> _timers =

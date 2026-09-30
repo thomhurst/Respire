@@ -108,7 +108,9 @@ Sharded Cluster subscriptions share one recovery episode and configured attempt 
 with health retained for every affected primary until the episode completes. An attempt on
 another primary cannot clear an earlier primary's failure. Successful recovery clears all
 affected endpoints; exhaustion marks them disconnected. Topology-driven recovery reports
-subscription owners rather than an unrelated configured seed.
+subscription owners rather than an unrelated configured seed. New sharded subscriptions
+fail while an episode is active, with or without a configured `ReconnectPolicy`; subscribe
+again after recovery completes. Existing subscriptions keep their buffers and routes.
 
 The sharded recovery budget is
 separate from regular channel and pattern subscriptions. Exhausting that budget completes all
