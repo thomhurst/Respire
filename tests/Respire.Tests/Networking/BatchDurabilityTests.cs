@@ -81,6 +81,9 @@ public class BatchDurabilityTests
     [Arguments(true)]
     public async Task AcknowledgementFollowsAllWritesOnAnExclusiveConnection(bool aof)
     {
+        // Initial SET replies must complete before WAIT is sent. Give that setup a
+        // scheduling budget under the parallel suite, then outwait both deadlines.
+        var ordinaryTimeout = TimeSpan.FromSeconds(2);
         var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(3, FakeRespServer.OkReply)
         {
@@ -94,15 +97,19 @@ public class BatchDurabilityTests
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 2,
-            CommandTimeout = TimeSpan.FromMilliseconds(200), ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(200),
+            CommandTimeout = ordinaryTimeout, ConnectionIdleReadTimeout = ordinaryTimeout,
         });
         using var batch = client.WithKeyPrefix("tenant:").CreateBatch();
         var first = batch.Set("a", "first");
         var second = batch.Set("b", "second");
         var executing = Execute(batch, aof, replicas: 2, TimeSpan.FromSeconds(5));
+        // Surface an early write/acquisition failure instead of hiding it behind the
+        // server-observation timeout, which otherwise loses the actual failure stage.
+        await Task.WhenAny(waiting.Task, executing).WaitAsync(TimeSpan.FromSeconds(5));
+        if (executing.IsCompleted) await executing;
         await waiting.Task.WaitAsync(TimeSpan.FromSeconds(5));
         // A blocking acknowledgement must not inherit ordinary command/response deadlines or occupy a multiplexed socket.
-        await Task.Delay(500);
+        await Task.Delay(ordinaryTimeout + TimeSpan.FromSeconds(1));
         await Assert.That(executing.IsCompleted).IsFalse();
         await client.SetAsync("outside", "unrelated");
         var commands = server.ReceivedCommands;

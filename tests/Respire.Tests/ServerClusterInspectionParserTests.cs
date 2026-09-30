@@ -97,6 +97,22 @@ public class ServerClusterInspectionParserTests
     }
 
     [Test]
+    public async Task LinksRequireTheAssociatedPeerId()
+    {
+        // Redis emits CLUSTER LINKS entries only for node-associated links. A missing
+        // or null peer is malformed, not an unassociated inbound-link placeholder.
+        RespValue[] fields = [Text("direction"), Text("from"), Text("create-time"), RespValue.Integer(1234),
+            Text("events"), Text("r"), Text("send-buffer-allocated"), RespValue.Integer(512),
+            Text("send-buffer-used"), RespValue.Integer(4)];
+        using var missing = RespValue.Array(RespValue.Array(fields));
+        using var nullPeer = RespValue.Array(RespValue.Array([.. fields, Text("node"), RespValue.Null]));
+        using var numericPeer = RespValue.Array(RespValue.Array([.. fields, Text("node"), RespValue.Integer(1)]));
+        await Assert.That(() => ClusterInspectionParser.Links(in missing)).ThrowsExactly<RespireProtocolException>();
+        await Assert.That(() => ClusterInspectionParser.Links(in nullPeer)).ThrowsExactly<RespireProtocolException>();
+        await Assert.That(() => ClusterInspectionParser.Links(in numericPeer)).ThrowsExactly<RespireProtocolException>();
+    }
+
+    [Test]
     public async Task MalformedShapesSlotsAndCountsAreRejected()
     {
         await Assert.That(() => ClusterInspectionParser.Shards(RespValue.Array(RespValue.Array(Text("slots")))))
