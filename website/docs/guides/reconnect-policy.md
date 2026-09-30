@@ -39,7 +39,11 @@ slots and counters. Healthy slots remain usable when another slot is exhausted.
 
 When every slot at an endpoint has exhausted recovery, acquisition throws
 `RespireReconnectLimitException`, a `RespireConnectionException`. Individual failure
-events retain the original connection error. A command that notices a failed connection
+events retain the original connection error. Identity setup requires every slot, so it
+throws when any required slot is exhausted even if another slot can still serve ordinary
+commands. Failed correction fences retain their server-side identity obligations; a
+terminal recovery error does not mark an unacknowledged fence complete.
+A command that notices a failed connection
 can still fail while replacement proceeds, as it did before configuring this policy.
 Each connection attempt retains `ConnectTimeout`; initial connection setup is not retried
 by this policy. Command deadlines and caller cancellation still bound their own waits.
@@ -57,7 +61,7 @@ retry decisions still need to account for command idempotency.
 | Property | Meaning |
 | --- | --- |
 | `ReconnectAttempt` | One-based configured attempt; zero for transitions without policy metadata |
-| `ConnectionSlot` | Source slot within this endpoint's multiplexer generation; null without policy metadata |
+| `ConnectionSlot` | Source slot within this endpoint's multiplexer generation, including null-policy recovery; null for endpoint-wide transitions |
 | `NextReconnectDelay` | Actual scheduled delay before this attempt; null when no attempt is scheduled |
 | `ReconnectExhausted` | This slot reached its configured limit |
 

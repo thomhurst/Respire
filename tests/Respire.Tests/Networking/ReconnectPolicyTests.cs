@@ -104,6 +104,90 @@ public class ReconnectPolicyTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task IdentitySetupPropagatesExhaustionWithOrWithoutCallerCancellation(bool cancellable)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        await using var client = await RespireClient.ConnectAsync(Options(server.Port,
+            new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 }));
+        var original = client.Core.Multiplexer.GetConnection();
+        await server.DisposeAsync();
+        await original.DisposeAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        async Task Initialize()
+        {
+            if (cancellable) await client.Core.Multiplexer.EnsureReliableCorrectionOrderingAsync(deadline.Token);
+            else await client.TryEnsureReliableCorrectionOrderingAsync();
+        }
+        await Assert.That(async () => await Initialize().WaitAsync(TimeSpan.FromSeconds(3)))
+            .ThrowsExactly<RespireReconnectLimitException>();
+        await Assert.That(client.Core.Multiplexer.HasReliableCorrectionOrdering).IsFalse();
+    }
+
+    [Test]
+    public async Task IdentitySetupRequiresEachSlotEvenWhenAnotherSlotIsHealthy()
+    {
+        await using var server = new FakeRespServer(3, FakeRespServer.OkReply, ":42\r\n"u8.ToArray(), FakeRespServer.PongReply);
+        var handshakes = 0;
+        server.SuppressReply = command =>
+        {
+            if (command != "CLIENT SETNAME policy-test" || Interlocked.Increment(ref handshakes) != 3) return false;
+            server.SendRawAsync("-ERR rejected replacement\r\n"u8.ToArray(), 2).GetAwaiter().GetResult();
+            return true;
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server.Port,
+            new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 }) with
+            { Connections = 2, ClientName = "policy-test" });
+        await client.Core.Multiplexer.GetConnection(0).DisposeAsync();
+        await Assert.That(async () => await client.Core.Multiplexer.EnsureReliableCorrectionOrderingAsync()
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(3))).ThrowsExactly<RespireReconnectLimitException>();
+        await Assert.That(client.IsConnected).IsTrue();
+        await client.PingAsync();
+        await Assert.That(handshakes).IsEqualTo(3);
+    }
+
+    [Test]
+    public async Task ExhaustedFenceRetainsTheFailedConnectionsIdentity()
+    {
+        await using var server = new FakeRespServer(":42\r\n"u8.ToArray(), ":0\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(Options(server.Port,
+            new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 }));
+        await client.Core.Multiplexer.EnsureReliableCorrectionOrderingAsync();
+        var original = client.Core.Multiplexer.GetConnection();
+        // A command with an uncertain outcome keeps the server-side identity owed to the fence.
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.SuppressReply = _ => { received.TrySetResult(); return true; };
+        var pending = client.PingAsync().AsTask();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        await server.DisposeAsync();
+        await Assert.That(async () => await pending).Throws<RespireConnectionException>();
+        await original.DisposeAsync();
+        await Assert.That(async () => await client.Core.Multiplexer.FenceRetiredConnectionsAsync()
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(3))).ThrowsExactly<RespireReconnectLimitException>();
+        await Assert.That(client.Core.Multiplexer.HasPendingCorrectionFences).IsTrue();
+    }
+
+    [Test]
+    public async Task LegacyRecoveryStillReportsItsSourceSlot()
+    {
+        await using var server = new FakeRespServer(2, FakeRespServer.PongReply);
+        await using var client = await RespireClient.ConnectAsync(Options(server.Port, new()) with { ReconnectPolicy = null });
+        var scheduled = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.State == RespireConnectionState.Reconnecting) scheduled.TrySetResult(change);
+        };
+        await client.Core.Multiplexer.GetConnection().DisposeAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        await client.Core.Multiplexer.GetHealthyConnectionAsync(deadline.Token);
+        var change = await scheduled.Task.WaitAsync(deadline.Token);
+        await Assert.That(change.ConnectionSlot).IsEqualTo((int?)0);
+        await Assert.That(change.ReconnectAttempt).IsEqualTo(0);
+        await Assert.That(change.NextReconnectDelay).IsNull();
+    }
+
+    [Test]
     public async Task RecoveryDoesNotReplayAnAcceptedCommand()
     {
         await using var server = new FakeRespServer(2, FakeRespServer.PongReply) { CloseConnectionAfterCommand = 1 };

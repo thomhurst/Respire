@@ -24,7 +24,7 @@ public readonly record struct RespireConnectionStateChange(
 {
     /// <summary>One-based configured replacement attempt; zero for transitions without policy metadata.</summary>
     public int ReconnectAttempt { get; init; }
-    /// <summary>Zero-based source slot within this endpoint's multiplexer generation; null without policy metadata.</summary>
+    /// <summary>Zero-based source slot within this endpoint's multiplexer generation; null for endpoint-wide transitions.</summary>
     public int? ConnectionSlot { get; init; }
     /// <summary>Delay reserved before this Reconnecting attempt; null when no attempt is scheduled.</summary>
     public TimeSpan? NextReconnectDelay { get; init; }

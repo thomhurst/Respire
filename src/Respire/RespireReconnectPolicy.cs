@@ -17,6 +17,8 @@ public sealed record RespireReconnectPolicy
     /// <remarks>Exhaustion persists until the client is recreated. Successful replacement resets the count.</remarks>
     public int? MaxAttempts { get; init; }
 
+    internal bool IsExhausted(int attempts) => MaxAttempts is { } maximum && attempts >= maximum;
+
     internal void Validate()
     {
         if (InitialDelay < TimeSpan.Zero || MaxDelay < InitialDelay || MaxDelay > TimeSpan.FromDays(1)

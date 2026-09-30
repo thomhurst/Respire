@@ -28,7 +28,7 @@ public class RespireConnectionException : RespireException
     }
 }
 
-/// <summary>All command connection slots at an endpoint exhausted their configured recovery attempts.</summary>
+/// <summary>The command connection slots required by an operation exhausted their configured recovery attempts.</summary>
 public sealed class RespireReconnectLimitException(string message) : RespireConnectionException(message);
 
 /// <summary>The byte stream violated the RESP protocol; the connection is no longer usable.</summary>
