@@ -143,6 +143,12 @@ internal sealed class ClusterRouter : IAsyncDisposable
                     _ = await TryLoadSlotsAsync(node, cancellationToken).ConfigureAwait(false);
                     return;
                 }
+                catch (RespireConfigurationException)
+                {
+                    // An incompatible Cluster database is a configuration failure, not a
+                    // transient seed outage. Preserve the actionable validation exception.
+                    throw;
+                }
                 catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
                 {
                     lastError = ex;

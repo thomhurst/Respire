@@ -309,3 +309,32 @@ Respire reconnects failed connections in the background. Pub/sub subscriptions r
 Use `rediss://` to enable TLS. Portless `redis://` and `rediss://` URIs both use Redis's standard port, `6379`; specify an explicit port when your provider uses another one.
 
 :::
+
+## Non-zero databases in Valkey Cluster
+
+Set `UseCluster = true` and `Database` to the required database number when connecting to a
+Valkey 9+ cluster. Configure `cluster-databases` on every cluster node first: it defaults to
+`1`, so database `0` is the only valid selection until that setting is increased. The standalone
+`databases` setting does not enable additional Cluster databases.
+
+Respire verifies `INFO SERVER` reports Valkey 9+ in Cluster mode before sending `SELECT` on each
+physical connection. This includes discovered nodes, MOVED/ASK destinations, replacement sockets,
+dedicated blocking/control connections, and pub/sub connections. The selected database is never
+borrowed from another node's capability result. `HELLO` alone is insufficient because Valkey's
+version there is a Redis compatibility version.
+
+Grant the client `INFO` and `SELECT` permissions when using a non-zero Cluster database.
+An incompatible server produces `RespireConfigurationException` during connection setup;
+`RespireClient.Create` remains lazy, so validation happens on first connection rather than at
+construction. Authentication errors, denied discovery/selection, and out-of-range database
+errors fail connection setup; Respire never falls back to database `0`. Reconnection repeats
+validation and selection before the socket can execute application commands.
+
+Database `0` and standalone connections retain their existing handshake and need no new discovery
+permission. Redis Cluster and Valkey before version 9 still support only database `0`.
+Hash slots depend on key bytes, not the selected database; multi-key and transaction slot rules
+still apply. Pub/sub channels are not isolated by logical database. Each client has one configured
+database; create separate clients for different databases instead of sending raw `SELECT`.
+
+See Valkey's [SELECT reference](https://valkey.io/commands/select/) and
+[Cluster specification](https://valkey.io/topics/cluster-spec/) for server configuration and scope.

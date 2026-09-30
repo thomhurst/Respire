@@ -82,9 +82,9 @@ public class ExceptionErgonomicsTests
     }
 
     [Test]
-    public async Task Create_WithClusterDatabase_ThrowsConfigurationException()
+    public async Task Create_WithNegativeDatabase_ThrowsConfigurationException()
     {
-        var options = new RespireOptions { UseCluster = true, Database = 1 };
+        var options = new RespireOptions { UseCluster = true, Database = -1 };
 
         await Assert.That(() => RespireClient.Create(options))
             .ThrowsExactly<RespireConfigurationException>();

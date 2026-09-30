@@ -159,7 +159,10 @@ public sealed record RespireOptions
     /// <summary>When set, CLIENT SETNAME runs during the handshake — invaluable in CLIENT LIST.</summary>
     public string? ClientName { get; init; }
 
-    /// <summary>Logical database SELECTed during the handshake.</summary>
+    /// <summary>
+    /// Logical database SELECTed during every connection handshake. Non-zero Cluster databases
+    /// require Valkey 9+ with cluster-databases configured and INFO/SELECT permissions.
+    /// </summary>
     public int Database { get; init; }
 
     /// <summary>Allows high-risk administrative commands such as FLUSHDB, FLUSHALL, and CONFIG SET.</summary>
@@ -359,6 +362,7 @@ public sealed record RespireOptions
             Password = Password,
             ClientName = ClientName,
             Database = Database,
+            RequireClusterDatabaseSupport = UseCluster && Database != 0,
             UseResp3 = Protocol == RespProtocol.Resp3,
             TcpKeepAliveTime = TcpKeepAliveTime,
             TcpKeepAliveInterval = TcpKeepAliveInterval,

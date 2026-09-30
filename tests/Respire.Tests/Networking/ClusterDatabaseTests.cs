@@ -1,0 +1,171 @@
+using System.Text;
+using Respire.Commands;
+using Respire.Internal;
+using Respire.Networking;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+
+namespace Respire.Tests.Networking;
+
+public class ClusterDatabaseTests
+{
+    private static readonly byte[] Hello = "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray();
+    internal static byte[] Info(string version = "9.0.0", string server = "valkey", string mode = "cluster")
+    {
+        var body = $"# Server\r\nredis_version:7.2.4\r\nserver_name:{server}\r\nvalkey_version:{version}\r\nserver_mode:{mode}\r\n";
+        return Encoding.UTF8.GetBytes($"${Encoding.UTF8.GetByteCount(body)}\r\n{body}\r\n");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task HandshakeValidatesVersionBeforeSelectAndTracking(bool resp3)
+    {
+        byte[][] replies = resp3 ? [Hello, Info(), FakeRespServer.OkReply, FakeRespServer.OkReply, FakeRespServer.PongReply]
+            : [Info(), FakeRespServer.OkReply, FakeRespServer.PongReply];
+        await using var server = new FakeRespServer(replies);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new RespireConnectionOptions
+            {
+                Database = 2, RequireClusterDatabaseSupport = true, UseResp3 = resp3, EnableClientTracking = resp3,
+            });
+        using var pong = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+        await Assert.That(pong.AsString()).IsEqualTo("PONG");
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(resp3
+            ? new[] { "HELLO 3", "INFO SERVER", "SELECT 2", "CLIENT TRACKING ON OPTIN", "PING" }
+            : new[] { "INFO SERVER", "SELECT 2", "PING" });
+    }
+
+    [Test]
+    [Arguments("8.1.0", "valkey", "cluster")]
+    [Arguments("9.0.0", "redis", "cluster")]
+    [Arguments("9.0.0", "valkey", "standalone")]
+    [Arguments("not-a-version", "valkey", "cluster")]
+    public async Task UnsupportedServersFailBeforeSelectOrUserCommands(string version, string name, string mode)
+    {
+        await using var server = new FakeRespServer(Info(version, name, mode));
+        var error = await Assert.That(async () => await RespireClient.ConnectAsync(Options(server.Port)))
+            .ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(error!.Message).Contains("database 0");
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "INFO SERVER" });
+    }
+
+    [Test]
+    [Arguments("9.0.0-rc1")]
+    [Arguments("10.0.0")]
+    public async Task CompatibleVersionsAndFutureMajorsAreAccepted(string version)
+    {
+        await using var server = new FakeRespServer(Info(version), FakeRespServer.OkReply);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new RespireConnectionOptions { Database = 2, RequireClusterDatabaseSupport = true });
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "INFO SERVER", "SELECT 2" });
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DeniedInfoOrSelectDoesNotPublishConnection(bool select)
+    {
+        byte[] denied = "-NOPERM denied\r\n"u8.ToArray();
+        await using var server = new FakeRespServer(select ? [Info(), denied] : [denied]);
+        var error = await Assert.That(async () => await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new RespireConnectionOptions { Database = 2, RequireClusterDatabaseSupport = true }))
+            .ThrowsExactly<RespireConnectionException>();
+        await Assert.That(error!.Message).Contains(select ? "SELECT failed" : "INFO SERVER failed");
+        await Assert.That(server.CommandsSeen).IsEqualTo(select ? 2 : 1);
+    }
+
+    [Test]
+    public async Task AuthenticationErrorRemainsTheFirstFailure()
+    {
+        await using var server = new FakeRespServer("-WRONGPASS invalid credentials\r\n"u8.ToArray(),
+            "-NOAUTH Authentication required\r\n"u8.ToArray());
+        var error = await Assert.That(async () => await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new RespireConnectionOptions { Database = 2, RequireClusterDatabaseSupport = true, Password = "secret" }))
+            .ThrowsExactly<RespireConnectionException>();
+        await Assert.That(error!.Message).Contains("AUTH failed");
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "AUTH secret", "INFO SERVER" });
+    }
+
+    [Test]
+    public async Task CancelledCapabilityDiscoveryDoesNotSendSelect()
+    {
+        var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer { SuppressReply = _ => { arrived.TrySetResult(); return true; } };
+        using var cancellation = new CancellationTokenSource();
+        var connecting = RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new RespireConnectionOptions { Database = 2, RequireClusterDatabaseSupport = true }, cancellationToken: cancellation.Token);
+        await arrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+        await Assert.That(async () => await connecting).Throws<OperationCanceledException>();
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "INFO SERVER" });
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task EveryRoutedDestinationSelectsBeforeRedirectedCommand(bool ask)
+    {
+        await using var target = new FakeRespServer(ask
+            ? [Info(), FakeRespServer.OkReply, FakeRespServer.OkReply, FakeRespServer.OkReply]
+            : [Info(), FakeRespServer.OkReply, FakeRespServer.OkReply]);
+        var slot = ClusterHash.GetSlot("key");
+        await using var owner = new FakeRespServer(Info(), FakeRespServer.OkReply,
+            Encoding.ASCII.GetBytes($"-{(ask ? "ASK" : "MOVED")} {slot} 127.0.0.1:{target.Port}\r\n"));
+        await using var seed = new FakeRespServer(Info(), FakeRespServer.OkReply, Topology(owner.Port));
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+        await client.SetAsync("key", "value");
+        await Assert.That(seed.ReceivedCommands).IsEquivalentTo(new[] { "INFO SERVER", "SELECT 2", "CLUSTER SLOTS" });
+        await Assert.That(owner.ReceivedCommands).IsEquivalentTo(new[] { "INFO SERVER", "SELECT 2", "SET key value" });
+        await Assert.That(target.ReceivedCommands).IsEquivalentTo(ask
+            ? new[] { "INFO SERVER", "SELECT 2", "ASKING", "SET key value" }
+            : new[] { "INFO SERVER", "SELECT 2", "SET key value" });
+    }
+
+    [Test]
+    public async Task UnsupportedRedirectTargetDoesNotInheritSeedCapabilities()
+    {
+        await using var target = new FakeRespServer(Info("8.1.0"));
+        var slot = ClusterHash.GetSlot("key");
+        await using var seed = new FakeRespServer(Info(), FakeRespServer.OkReply, "*0\r\n"u8.ToArray(),
+            Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+        await Assert.That(async () => await client.SetAsync("key", "value")).ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(target.ReceivedCommands).IsEquivalentTo(new[] { "INFO SERVER" });
+    }
+
+    [Test]
+    public async Task ReconnectRepeatsCapabilityCheckAndSelect()
+    {
+        await using var server = new FakeRespServer(2, Info(), FakeRespServer.OkReply);
+        var options = Options(server.Port).ToConnectionOptions();
+        await using var multiplexer = Respire.Infrastructure.RespireConnectionMultiplexer.Create(
+            "127.0.0.1", server.Port, 1, options, null);
+        await multiplexer.EnsureConnectedAsync();
+        await multiplexer.GetConnection().DisposeAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await multiplexer.GetHealthyConnectionAsync(timeout.Token);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "INFO SERVER", "SELECT 2", "INFO SERVER", "SELECT 2" });
+        await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DatabaseZeroAndStandaloneKeepTheirExistingHandshake(bool cluster)
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        var options = Options(server.Port) with { UseCluster = cluster, Database = cluster ? 0 : 2 };
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, options.ToConnectionOptions());
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(cluster ? Array.Empty<string>() : ["SELECT 2"]);
+    }
+
+    private static RespireOptions Options(int port) => new()
+    {
+        UseCluster = true, Database = 2, Connections = 1, Endpoints = { new RespireEndpoint("127.0.0.1", port) },
+    };
+
+    private static byte[] Topology(int port) => Encoding.ASCII.GetBytes(
+        $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{port}\r\n");
+}

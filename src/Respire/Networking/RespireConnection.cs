@@ -385,13 +385,20 @@ internal sealed class RespireConnection : IAsyncDisposable
                 new Commands.ClientSetNameCommand(options.ClientName), cancellationToken, armCommandDeadline: armCommandDeadline)));
         }
 
-        if (options.Database != 0)
+        if (options.RequireClusterDatabaseSupport)
+        {
+            // HELLO reports a Redis compatibility version on Valkey. INFO identifies the
+            // actual implementation/version, independently for every new physical socket.
+            (pending ??= new(3)).Add(("INFO SERVER", SendAsync(
+                new Commands.Cmd1(Commands.Verbs.Info, "SERVER"), cancellationToken, armCommandDeadline: armCommandDeadline)));
+        }
+        else if (options.Database != 0)
         {
             (pending ??= new(3)).Add(("SELECT", SendAsync(
                 new Commands.SelectCommand(options.Database), cancellationToken, armCommandDeadline: armCommandDeadline)));
         }
 
-        if (options.EnableClientTracking)
+        if (options.EnableClientTracking && !options.RequireClusterDatabaseSupport)
         {
             (pending ??= new(4)).Add(("CLIENT TRACKING", SendAsync(
                 new Commands.ClientTrackingCommand(), cancellationToken, armCommandDeadline: armCommandDeadline)));
@@ -418,6 +425,10 @@ internal sealed class RespireConnection : IAsyncDisposable
                     {
                         ValidateHelloProtocol(in reply);
                     }
+                    else if (failure is null && step == "INFO SERVER")
+                    {
+                        ValidateClusterDatabaseSupport(in reply);
+                    }
                 }
                 finally
                 {
@@ -436,6 +447,49 @@ internal sealed class RespireConnection : IAsyncDisposable
         {
             ExceptionDispatchInfo.Capture(failure).Throw();
         }
+
+        if (options.RequireClusterDatabaseSupport)
+        {
+            // Do not select a database or publish this connection until capability validation
+            // succeeds. SELECT also verifies the configured database range and ACL permission.
+            await CompleteHandshakeStepAsync("SELECT", new Commands.SelectCommand(options.Database),
+                cancellationToken, armCommandDeadline).ConfigureAwait(false);
+            if (options.EnableClientTracking)
+            {
+                await CompleteHandshakeStepAsync("CLIENT TRACKING", new Commands.ClientTrackingCommand(),
+                    cancellationToken, armCommandDeadline).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async ValueTask CompleteHandshakeStepAsync<TCommand>(string step, TCommand command,
+        CancellationToken cancellationToken, bool armCommandDeadline) where TCommand : struct, IRespCommand
+    {
+        using var reply = await SendAsync(command, cancellationToken, armCommandDeadline: armCommandDeadline)
+            .ConfigureAwait(false);
+        if (reply.IsError) throw CreateHandshakeException(in reply, step);
+    }
+
+    private void ValidateClusterDatabaseSupport(in RespValue reply)
+    {
+        string? server = null, version = null, mode = null;
+        foreach (var line in reply.AsString().Split('\n', StringSplitOptions.TrimEntries))
+        {
+            if (line.StartsWith("server_name:", StringComparison.Ordinal)) server = line[12..];
+            else if (line.StartsWith("valkey_version:", StringComparison.Ordinal)) version = line[15..];
+            else if (line.StartsWith("server_mode:", StringComparison.Ordinal)) mode = line[12..];
+        }
+
+        var versionNumber = version?.Split('-', 2)[0];
+        if (string.Equals(server, "valkey", StringComparison.OrdinalIgnoreCase)
+            && mode == "cluster" && Version.TryParse(versionNumber, out var parsed) && parsed.Major >= 9)
+        {
+            return;
+        }
+
+        throw new RespireConfigurationException(
+            $"Redis Cluster supports database 0 only. Non-zero Cluster databases require Valkey 9+; " +
+            $"INFO SERVER from {Host}:{Port} did not confirm a compatible Valkey cluster.");
     }
 
     private RespireConnectionException CreateHandshakeException(in RespValue reply, string step)
@@ -2311,6 +2365,9 @@ internal sealed record RespireConnectionOptions
 
     /// <summary>Logical database SELECTed during the handshake; 0 skips the SELECT.</summary>
     public int Database { get; init; }
+
+    /// <summary>Verify Valkey 9+ Cluster support before selecting a non-zero database.</summary>
+    internal bool RequireClusterDatabaseSupport { get; init; }
 
     /// <summary>Negotiate RESP3 via HELLO 3 during the handshake. Requires Redis 6+.</summary>
     public bool UseResp3 { get; init; }
