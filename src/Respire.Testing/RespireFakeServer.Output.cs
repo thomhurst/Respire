@@ -65,6 +65,7 @@ public sealed partial class RespireFakeServer
     // The writer releases each sent or abandoned frame exactly once.
     private static void ReleaseOutput(Connection connection, Outbound output)
     {
+        // Successful writes already completed Flushed; cancellation only wins for abandoned frames.
         output.Flushed.TrySetCanceled(connection.Lifetime.Token);
         if (output.Push)
             Interlocked.Add(ref connection.PendingPushBytes, -output.Bytes.Length);
