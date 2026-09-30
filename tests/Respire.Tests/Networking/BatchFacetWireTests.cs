@@ -1,5 +1,3 @@
-using System.Net;
-using System.Net.Sockets;
 using TUnit.Assertions;
 using TUnit.Assertions.Enums;
 using TUnit.Assertions.Extensions;
@@ -205,10 +203,8 @@ public class BatchFacetWireTests
     [Arguments(true)]
     public async Task ExecuteAsync_ConnectionFailureFaultsEveryPending(bool inspect)
     {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var unavailablePort = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
+        using var unavailable = new ReservedUnavailablePort();
+        var unavailablePort = unavailable.Port;
 
         await using var client = RespireClient.Create(new RespireOptions
         {

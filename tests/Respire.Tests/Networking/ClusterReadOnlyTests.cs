@@ -21,9 +21,8 @@ public class ClusterReadOnlyTests
         // Cached-owner connection failure can consume the primary phase first. This reply
         // fits the final quarter-round but cannot run on the already-expired early-seed token.
         healthySeed.DelayReply(0, 100);
-        await using var unavailable = new FakeRespServer();
+        using var unavailable = new ReservedUnavailablePort();
         var unavailablePort = unavailable.Port;
-        await unavailable.DisposeAsync();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             UseCluster = true, Connections = 1, ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = null,
@@ -206,9 +205,8 @@ public class ClusterReadOnlyTests
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
         await using var replica = new FakeRespServer(ReadOnlyReply);
         await using var seed = new FakeRespServer(Topology(replica.Port), Topology(replacement.Port));
-        await using var unavailable = new FakeRespServer(FakeRespServer.OkReply);
+        using var unavailable = new ReservedUnavailablePort();
         var unavailablePort = unavailable.Port;
-        await unavailable.DisposeAsync();
         await using var client = await ConnectAsync(seed.Port, TimeSpan.FromSeconds(5));
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         replica.SuppressReply = _ => { received.TrySetResult(); return true; };
