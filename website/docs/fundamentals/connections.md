@@ -289,7 +289,11 @@ validates the primary; `ConnectAsync` performs the same work eagerly. Prefixed v
 sharing the same client core across primary changes.
 
 A disconnect, READONLY reply, or a ROLE response identifying a replica retires the affected
-generation. The next operation resolves Sentinel again and publishes a validated replacement.
+generation. The next operation resolves Sentinel again and publishes a validated replacement,
+even when Sentinel returns the same endpoint after a brief disconnect. This deliberately
+revalidates the primary role before accepting new work; there is no reconnect grace period.
+EXEC and script array replies are scanned for nested READONLY errors in time proportional to
+their elements. Ordinary collection reads do not perform this additional scan.
 New commands cannot enter a retired generation. Already accepted commands and blocking
 operations drain on their original sockets; ambiguous writes and existing WATCH state are
 never replayed. Start a new watched transaction after a failover. Client disposal aborts

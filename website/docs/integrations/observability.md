@@ -146,5 +146,8 @@ measurements remain queued even when disposal suppresses lifecycle callbacks. Li
 outside discovery and transport work; queued events are suppressed after client disposal.
 The process-wide `respire.sentinel.generations.retired` gauge reports retired generations
 still owned while accepted work or correction fences drain. Continued growth warrants
-investigation; client disposal aborts and joins retained connection work.
+investigation. A persistently nonzero value after normal commands and borrowed leases have
+finished can indicate an unreachable correction peer or failed cleanup; inspect the warning
+logs. Retention has no deadline that abandons an unacknowledged fence. Client disposal aborts
+and joins retained connection work.
 See [Sentinel connections](../fundamentals/connections.md#redis-sentinel) for drain and no-replay behavior.

@@ -167,6 +167,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
 
     // Do not join this chain during disposal: an observer may synchronously dispose the
     // client itself. Queued callbacks are suppressed; an active callback may finish later.
+    // Task.Run must keep user callbacks asynchronous: callers hold the publication gate.
     private void QueueNotificationLocked(Action notification, bool suppressAfterDisposal = true)
     {
         var previous = _notifications;
@@ -346,15 +347,36 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
 
         private static bool ContainsReadOnly(in RespValue reply)
         {
-            if (reply.IsError)
-            {
-                var error = reply.GetErrorMessage();
-                return error == "READONLY" || error.StartsWith("READONLY ", StringComparison.Ordinal);
-            }
+            if (reply.IsError) return IsReadOnlyError(in reply);
             if (reply.Type != RespDataType.Array) return false;
-            foreach (var element in reply.AsArray())
-                if (ContainsReadOnly(in element)) return true;
-            return false;
+            // The parser accepts arbitrary nesting. Flat replies need no allocation;
+            // nested arrays retain only the parents with unvisited siblings.
+            Stack<(RespValue Parent, int NextIndex)>? parents = null;
+            var current = reply;
+            var index = 0;
+            while (true)
+            {
+                var elements = current.AsArray();
+                if (index == elements.Length)
+                {
+                    if (parents is null || !parents.TryPop(out var parent)) return false;
+                    (current, index) = parent;
+                    continue;
+                }
+                var element = elements[index++];
+                if (element.IsError && IsReadOnlyError(in element)) return true;
+                if (element.Type != RespDataType.Array) continue;
+                if (index < elements.Length)
+                    (parents ??= new()).Push((current, index));
+                current = element;
+                index = 0;
+            }
+        }
+
+        private static bool IsReadOnlyError(in RespValue reply)
+        {
+            var error = reply.GetErrorMessage();
+            return error == "READONLY" || error.StartsWith("READONLY ", StringComparison.Ordinal);
         }
 
         public async ValueTask DisposeAsync()

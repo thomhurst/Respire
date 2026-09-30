@@ -135,6 +135,24 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    public async Task DisconnectRevalidatesTheSamePrimaryBeforeAcceptingNewWork()
+    {
+        await using var primary = Primary();
+        primary.CloseConnectionAfterCommand = 2;
+        await using var sentinel = Sentinel(() => primary.Port);
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        var original = client.Core.Sentinel!.Current!;
+        await Assert.That(async () => await client.IncrementAsync("ambiguous").AsTask().WaitAsync(Limit))
+            .Throws<RespireConnectionException>();
+        primary.CloseConnectionAfterCommand = null;
+        await client.SetAsync("next", "value").AsTask().WaitAsync(Limit);
+        await Assert.That(original.IsRetired).IsTrue();
+        await Assert.That(client.Core.Sentinel.Current).IsNotSameReferenceAs(original);
+        await Assert.That(sentinel.ReceivedCommands.Count(command => command.StartsWith("SENTINEL GET-MASTER"))).IsEqualTo(2);
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "INCR ambiguous", "ROLE", "SET next value"]);
+    }
+
+    [Test]
     public async Task ConcurrentFirstWritesShareOneValidatedDiscovery()
     {
         await using var primary = Primary();
@@ -444,6 +462,55 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task ManagedLockInitializesTheSelectedGenerationAfterPromotion(bool release, bool rejectIdentity)
+    {
+        var rejectWrites = false;
+        static byte[]? IdentityReply(string command, int clientId)
+            => command == "CLIENT ID" ? Encoding.ASCII.GetBytes($":{clientId}\r\n")
+                : command.StartsWith("CLIENT KILL ") ? ":0\r\n"u8.ToArray() : null;
+        await using var oldPrimary = Primary((_, command) => command.StartsWith("SET ") && Volatile.Read(ref rejectWrites)
+            ? "-READONLY replica\r\n"u8.ToArray() : IdentityReply(command, 41));
+        await using var promoted = Primary((_, command) => command == "CLIENT ID" && rejectIdentity
+            ? "-ERR identity unavailable\r\n"u8.ToArray()
+            : command.StartsWith("DELEX ") ? ":1\r\n"u8.ToArray() : IdentityReply(command, 42));
+        var primaryPort = oldPrimary.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        await client.EnsureReliableCorrectionOrderingAsync().AsTask().WaitAsync(Limit);
+        await Assert.That(oldPrimary.ReceivedCommands).Contains("CLIENT ID");
+
+        // Fail over after the managed-lock preflight, before selecting its command connection.
+        Volatile.Write(ref primaryPort, promoted.Port);
+        Volatile.Write(ref rejectWrites, true);
+        await Assert.That(async () => await client.SetAsync("trigger", "value")).Throws<RespireServerException>();
+        if (rejectIdentity)
+        {
+            await Assert.That(async () =>
+            {
+                var execution = await client.StartLockExecutionAsync("key", "token", release ? null : 1000, true, default);
+                await execution.Response;
+            }).ThrowsExactly<RespireServerException>();
+            await Assert.That(promoted.ReceivedCommands.Any(IsLockMutation)).IsFalse();
+        }
+        else
+        {
+            var execution = await client.StartLockExecutionAsync("key", "token", release ? null : 1000, true, default);
+            await Assert.That(await execution.Response).IsTrue();
+            await Assert.That(execution.ConnectionIdentity.ServerClientId).IsEqualTo(42);
+            await Assert.That(execution.ConnectionIdentity.Endpoint.Port).IsEqualTo(promoted.Port);
+            var commands = promoted.ReceivedCommands.ToList();
+            await Assert.That(commands.IndexOf("CLIENT ID")).IsLessThan(commands.FindIndex(IsLockMutation));
+        }
+        await Assert.That(oldPrimary.ReceivedCommands.Any(IsLockMutation)).IsFalse();
+
+        static bool IsLockMutation(string command) => command.StartsWith("SET key ") || command.StartsWith("DELEX key ");
+    }
+
+    [Test]
     public async Task CapturedServerPoolRemainsPinnedAfterPromotion()
     {
         var rejectWrites = false;
@@ -554,6 +621,23 @@ public class SentinelRoutingTests
         await Assert.That(client.IsConnected).IsFalse();
         await client.SetAsync("next", "value").AsTask().WaitAsync(Limit);
         await Assert.That(promoted.ReceivedCommands).IsEquivalentTo(["ROLE", "SET next value"]);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task NestedReadOnlyScanResumesAfterDeepNonErrorArrays(bool readOnly)
+    {
+        // Every level has a scalar sibling before and after its child. The final error
+        // requires returning through all pending parents rather than stopping at a scalar.
+        var reply = "*3\r\n:0\r\n" + string.Concat(Enumerable.Repeat("*3\r\n:1\r\n", 256))
+            + ":2\r\n" + string.Concat(Enumerable.Repeat(":3\r\n", 256))
+            + (readOnly ? "-READONLY replica\r\n" : ":4\r\n");
+        await using var primary = Primary((_, command) => command == "EVAL" ? Encoding.ASCII.GetBytes(reply) : null);
+        await using var sentinel = Sentinel(() => primary.Port);
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        using var response = await client.ExecuteAsync((RespireCommand)"EVAL", []);
+        await Assert.That(client.IsConnected).IsEqualTo(!readOnly);
     }
 
     [Test]

@@ -3044,18 +3044,16 @@ public sealed partial class RespireClient : IRespireClient
             }
             else
             {
-                if (core.Sentinel is not null)
-                {
-                    await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-                    await core.Multiplexer.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
-                }
-                if (!core.Multiplexer.HasReliableCorrectionOrdering)
+                var multiplexer = core.Sentinel is { } sentinel
+                    ? (await sentinel.GetGenerationAsync(cancellationToken).ConfigureAwait(false)).Multiplexer
+                    : core.Multiplexer;
+                if (core.Sentinel is null && !multiplexer.HasReliableCorrectionOrdering)
                 {
                     throw new InvalidOperationException(
                         "Reliable correction ordering must be initialized before a tracked script starts.");
                 }
 
-                connection = await GetTrackedConnectionAsync(core.Multiplexer, cancellationToken)
+                connection = await GetTrackedConnectionAsync(multiplexer, cancellationToken)
                     .ConfigureAwait(false);
             }
 
@@ -3087,12 +3085,18 @@ public sealed partial class RespireClient : IRespireClient
     {
         if (_core.Options.CommandTimeout is not { } timeout)
         {
+            // Initialize the captured generation: failover may have retired the preflight generation.
+            if (_core.Sentinel is not null)
+                await multiplexer.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
             return await multiplexer.GetHealthyConnectionAsync(cancellationToken).ConfigureAwait(false);
         }
 
         using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
         try
         {
+            // Initialize the captured generation: failover may have retired the preflight generation.
+            if (_core.Sentinel is not null)
+                await multiplexer.EnsureReliableCorrectionOrderingAsync(timeoutSource.Token).ConfigureAwait(false);
             return await multiplexer.GetHealthyConnectionAsync(timeoutSource.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
