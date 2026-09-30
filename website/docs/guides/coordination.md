@@ -23,9 +23,38 @@ Console.WriteLine($"Acquired fencing token {attempt.Lock.FencingToken}");
 // Send this token with protected writes. The receiving resource must enforce it.
 ```
 
-Acquisition does not wait or poll. An unsuccessful attempt has `Acquired == false`; accessing
-its `Lock` throws `RespireLockNotAcquiredException`. The coordinator does not own its client.
-Notification-driven waiting and other coordination primitives are tracked separately.
+`TryAcquireFencedLockAsync` is immediate and does not wait or poll. An unsuccessful attempt has
+`Acquired == false`; accessing its `Lock` throws `RespireLockNotAcquiredException`. The
+coordinator does not own its client.
+
+## Wait for a fenced lease
+
+`AcquireFencedLockAsync` waits for server-assisted client-cache invalidations and retries the
+atomic acquisition script after each wake. It subscribes before checking the lease key, so a
+release or expiry during the check leaves a queued wake-up. Notifications are hints: only the
+Lua acquisition script grants ownership. The waiter does not poll, and cancellation stops local
+waiting without replaying an accepted acquisition.
+
+Enable RESP3 client-side caching when creating the client. No `notify-keyspace-events` flags
+need to be enabled on Redis; client tracking sends invalidations for tracked reads.
+
+```csharp
+await using var waitingClient = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = ["localhost:6379"],
+    Protocol = RespProtocol.Resp3,
+    ClientSideCache = new RespireClientSideCacheOptions(),
+});
+var waitingCoordination = new RespireCoordination(waitingClient);
+await using var lease = await waitingCoordination.AcquireFencedLockAsync(
+    "{invoice:42}:lease", "{invoice:42}:fence", TimeSpan.FromSeconds(30), CancellationToken.None);
+```
+
+The subscription uses the physical key after client prefixes are applied. In Cluster, the lease
+and counter must share a slot, as above; the read and script route to that slot's owner. A lost
+tracking connection flushes tracked state and wakes the waiter to check again. The waiter also
+schedules one wake from the lease key's `PTTL`, so expiration does not depend on an immediate
+invalidation. A protected resource must still validate the fencing token on every write.
 
 ## Keep the counter's history
 

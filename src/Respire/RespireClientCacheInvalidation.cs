@@ -37,6 +37,9 @@ public interface IRespireClientCacheInvalidationSubscription : IDisposable
 
     /// <summary>The most recent callback failure, or null if no callback has thrown.</summary>
     Exception? LastObserverException { get; }
+
+    /// <summary>Is canceled when the observer or its owning cache stops the subscription.</summary>
+    CancellationToken Stopped => CancellationToken.None;
 }
 
 internal sealed class RespireClientCacheInvalidationSubscription : IRespireClientCacheInvalidationSubscription
@@ -45,6 +48,8 @@ internal sealed class RespireClientCacheInvalidationSubscription : IRespireClien
     private readonly Action<RespireClientCacheInvalidation> _observer;
     private readonly Lock _gate = new();
     private CancellationTokenRegistration _cancellation;
+    private readonly CancellationTokenSource _stopped = new();
+    private readonly CancellationToken _stoppedToken;
     private RespireClientCacheInvalidationReason _pending;
     private bool _dispatching;
     private int _disposed;
@@ -52,7 +57,10 @@ internal sealed class RespireClientCacheInvalidationSubscription : IRespireClien
 
     internal RespireClientCacheInvalidationSubscription(ClientSideCacheCoordinator owner,
         RespireKey key, Action<RespireClientCacheInvalidation> observer)
-        => (_owner, Key, _observer) = (owner, key, observer);
+    {
+        (_owner, Key, _observer) = (owner, key, observer);
+        _stoppedToken = _stopped.Token;
+    }
 
     /// <summary>The owned physical key supplied at registration.</summary>
     public RespireKey Key { get; }
@@ -62,6 +70,8 @@ internal sealed class RespireClientCacheInvalidationSubscription : IRespireClien
 
     /// <summary>The most recent callback failure, or null if no callback has thrown.</summary>
     public Exception? LastObserverException => Volatile.Read(ref _lastObserverException);
+
+    public CancellationToken Stopped => _stoppedToken;
 
     internal void RegisterCancellation(CancellationToken cancellationToken)
     {
@@ -121,6 +131,7 @@ internal sealed class RespireClientCacheInvalidationSubscription : IRespireClien
     private void DisposeCore(bool removeFromOwner)
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        _stopped.Cancel();
         if (removeFromOwner) _owner.RemoveInvalidationObserver(this);
         CancellationTokenRegistration registration;
         lock (_gate)

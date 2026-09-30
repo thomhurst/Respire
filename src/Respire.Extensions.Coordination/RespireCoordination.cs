@@ -48,11 +48,49 @@ public sealed class RespireCoordination
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var milliseconds = duration.Ticks / TimeSpan.TicksPerMillisecond;
-        if (milliseconds <= 0) throw new ArgumentOutOfRangeException(nameof(duration), "Lease duration must be at least one millisecond.");
-        if (key == fencingCounterKey) throw new ArgumentException("Lock and fencing counter keys must differ.", nameof(fencingCounterKey));
+        var milliseconds = ValidateAcquisition(key, fencingCounterKey, duration);
         // Both inputs may wrap caller-owned binary buffers. Snapshot before the first await.
         return AcquireAsync(key.Snapshot(), fencingCounterKey.Snapshot(), milliseconds, cancellationToken);
+    }
+
+    /// <summary>Waits without polling until this client acquires a fenced lease.</summary>
+    /// <param name="key">The lease key, before the client's prefix.</param>
+    /// <param name="fencingCounterKey">A distinct persistent counter key in the same Cluster slot.</param>
+    /// <param name="duration">A positive lease duration of at least one millisecond.</param>
+    /// <param name="cancellationToken">Cancels the wait; an accepted acquisition can still execute and expire naturally.</param>
+    /// <remarks>
+    /// Requires RESP3 client-side caching/tracking. Subscribe-before-check ordering avoids missed
+    /// wakeups; every wake retries the atomic acquisition script, so a notification never grants
+    /// ownership. Notifications are hints and can be coalesced. The lease PTTL schedules one
+    /// expiry wake if Redis delays its invalidation. Reconnect continuity loss wakes waiters to
+    /// recheck. Client tracking must be active on connections to Cluster slot owners.
+    /// Cancellation or connection loss after Redis accepts acquisition can leave an unreturned
+    /// lease until its server-side duration elapses.
+    /// </remarks>
+    public async ValueTask<RespireFencedLock> AcquireFencedLockAsync(
+        RespireKey key, RespireKey fencingCounterKey, TimeSpan duration,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var milliseconds = ValidateAcquisition(key, fencingCounterKey, duration);
+        var leaseKey = key.Snapshot();
+        var counterKey = fencingCounterKey.Snapshot();
+        return await RespireNotificationWaiter.WaitAsync(_client, leaseKey, async token =>
+        {
+            var attempt = await AcquireAsync(leaseKey, counterKey, milliseconds, token).ConfigureAwait(false);
+            if (!attempt.Acquired) return (false, default(RespireFencedLock)!);
+            return (true, attempt.Lock);
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static long ValidateAcquisition(RespireKey key, RespireKey fencingCounterKey, TimeSpan duration)
+    {
+        var milliseconds = duration.Ticks / TimeSpan.TicksPerMillisecond;
+        if (milliseconds <= 0)
+            throw new ArgumentOutOfRangeException(nameof(duration), "Lease duration must be at least one millisecond.");
+        if (key == fencingCounterKey)
+            throw new ArgumentException("Lock and fencing counter keys must differ.", nameof(fencingCounterKey));
+        return milliseconds;
     }
 
     private async ValueTask<RespireFencedLockAttempt> AcquireAsync(
