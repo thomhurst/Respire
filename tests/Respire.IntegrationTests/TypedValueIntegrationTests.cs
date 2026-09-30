@@ -20,7 +20,8 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
 
         // The gap TryGetAsync closes: GetAsync<int> answers 0 for both cases.
         (await client.GetAsync<int>("typed:absent")).Should().Be(0);
@@ -51,7 +52,8 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         var payload = new TypedPayload(7, "seven");
 
         await client.SetAsync("typed:payload", payload);
@@ -75,7 +77,8 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
-        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         var deletedPayload = new TypedPayload(8, "deleted");
         var expiredPayload = new TypedPayload(9, "expired");
         await client.SetAsync("typed:combined:delete", deletedPayload);
