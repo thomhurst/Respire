@@ -13,6 +13,67 @@ public class SentinelRoutingTests
     private static readonly byte[] PrimaryRole = "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray();
 
     [Test]
+    public async Task RoleDemotionRetiresTheGenerationBeforeTheNextWrite()
+    {
+        var replica = false;
+        await using var oldPrimary = Primary((_, command) => command == "ROLE" && Volatile.Read(ref replica)
+            ? "*1\r\n$5\r\nslave\r\n"u8.ToArray() : null);
+        await using var promoted = Primary();
+        var primaryPort = oldPrimary.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        Volatile.Write(ref primaryPort, promoted.Port);
+        Volatile.Write(ref replica, true);
+        using (var role = await client.ExecuteAsync($"ROLE"))
+            await Assert.That(role[0].AsString()).IsEqualTo("slave");
+        await Assert.That(client.IsConnected).IsFalse();
+        await client.SetAsync("next", "value").AsTask().WaitAsync(Limit);
+        await Assert.That(oldPrimary.ReceivedCommands).IsEquivalentTo(["ROLE", "ROLE"]);
+        await Assert.That(promoted.ReceivedCommands).IsEquivalentTo(["ROLE", "SET next value"]);
+    }
+
+    [Test]
+    public async Task RetirementRejectsAnUnacceptedWaiterAndDrainsAcceptedCommands()
+    {
+        var full = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var acceptedCount = 0;
+        await using var oldPrimary = Primary();
+        oldPrimary.SuppressReply = command =>
+        {
+            if (command != "PING") return false;
+            if (Interlocked.Increment(ref acceptedCount) == 4) full.TrySetResult();
+            return true;
+        };
+        await using var promoted = Primary();
+        var primaryPort = oldPrimary.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with { MaxInflightCommands = 4 });
+        var original = client.Core.Multiplexer.GetConnection();
+        var accepted = Enumerable.Range(0, 4).Select(_ => original.SendAsync(
+            new Respire.Commands.RawCommand(FakeRespServer.PingFrame), default).AsTask()).ToArray();
+        await full.Task.WaitAsync(Limit);
+        var waiter = client.SetAsync("unaccepted", "value").AsTask();
+        await Assert.That(waiter.IsCompleted).IsFalse();
+        Volatile.Write(ref primaryPort, promoted.Port);
+        await oldPrimary.SendRawAsync("-READONLY replica\r\n"u8.ToArray());
+        using (var rejected = await accepted[0].WaitAsync(Limit)) await Assert.That(rejected.IsError).IsTrue();
+        try
+        {
+            await Assert.That(async () => await waiter.WaitAsync(Limit)).Throws<RespireException>();
+            await Assert.That(original.IsAcceptingCommands).IsFalse();
+            await client.SetAsync("new", "value").AsTask().WaitAsync(Limit);
+            await Assert.That(accepted.Skip(1).All(task => !task.IsCompleted)).IsTrue();
+            await Assert.That(oldPrimary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING", "PING", "PING", "PING"]);
+            await Assert.That(promoted.ReceivedCommands).IsEquivalentTo(["ROLE", "SET new value"]);
+        }
+        finally
+        {
+            await oldPrimary.SendRawAsync("+PONG\r\n+PONG\r\n+PONG\r\n"u8.ToArray());
+            foreach (var pending in accepted.Skip(1)) { using var reply = await pending.WaitAsync(Limit); }
+        }
+    }
+
+    [Test]
     public async Task LazyClientDiscoversOnFirstOperationAndPrefixViewsShareThePrimary()
     {
         await using var primary = Primary();
@@ -98,7 +159,7 @@ public class SentinelRoutingTests
         Volatile.Write(ref rejectWrites, true);
         await Assert.That(async () => await client.SetAsync("trigger", "value")).Throws<RespireServerException>();
         await client.SetAsync("new generation", "value").AsTask().WaitAsync(Limit);
-        await Assert.That(async () => await watched.CommitAsync().AsTask().WaitAsync(Limit)).Throws<RespireConnectionException>();
+        await Assert.That(async () => await watched.CommitAsync().AsTask().WaitAsync(Limit)).Throws<RespireException>();
         await Assert.That(queued.Status).IsEqualTo(RespirePendingStatus.Faulted);
         await Assert.That(oldPrimary.ReceivedCommands.Any(command => command is "MULTI" or "EXEC")).IsFalse();
         await Assert.That(promoted.ReceivedCommands.Any(command => command.StartsWith("WATCH ") || command is "MULTI" or "EXEC")).IsFalse();

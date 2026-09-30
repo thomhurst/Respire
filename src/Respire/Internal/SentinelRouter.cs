@@ -226,9 +226,18 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 owned = _owned.ToArray();
                 corrections = _correctionPools.ToArray();
             }
-            await Task.WhenAll(corrections.Select(pool => pool.DisposeAsync().AsTask())).ConfigureAwait(false);
-            await Task.WhenAll(owned.Select(generation => generation.DisposeAsync().AsTask())).ConfigureAwait(false);
-            await Task.WhenAll(owned.Select(generation => generation.Retirement)).ConfigureAwait(false);
+            // Start every owned cleanup before observing failures, then join retirement too.
+            // A failing correction or connection must not strand another generation.
+            Exception? disposeError = null;
+            try
+            {
+                await Task.WhenAll(corrections.Select(pool => pool.DisposeAsync().AsTask())
+                    .Concat(owned.Select(generation => generation.DisposeAsync().AsTask()))).ConfigureAwait(false);
+            }
+            catch (Exception error) { disposeError = error; }
+            try { await Task.WhenAll(owned.Select(generation => generation.Retirement)).ConfigureAwait(false); }
+            catch (Exception error) when (disposeError is not null) { throw new AggregateException(disposeError, error); }
+            if (disposeError is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(disposeError).Throw();
             lock (_gate)
             {
                 _owned.Clear();
@@ -327,9 +336,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             TryRetire();
             RespireConnection[] connections;
             lock (_connectionsGate) connections = _connections.ToArray();
-            await Task.WhenAll(connections.Select(connection => connection.DisposeAsync().AsTask())).ConfigureAwait(false);
-            await Pool.DisposeAsync().ConfigureAwait(false);
-            await Multiplexer.DisposeAsync().ConfigureAwait(false);
+            await Task.WhenAll(connections.Select(connection => connection.DisposeAsync().AsTask())
+                .Append(Pool.DisposeAsync().AsTask()).Append(Multiplexer.DisposeAsync().AsTask())).ConfigureAwait(false);
         }
     }
 }

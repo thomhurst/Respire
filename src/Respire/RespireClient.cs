@@ -2855,7 +2855,7 @@ public sealed partial class RespireClient : IRespireClient
             return;
         }
 
-        if (core.Multiplexer.HasReliableCorrectionOrdering)
+        if ((core.Sentinel is null || core.Sentinel.IsConnected) && core.Multiplexer.HasReliableCorrectionOrdering)
         {
             return;
         }
