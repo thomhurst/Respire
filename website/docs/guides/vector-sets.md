@@ -133,7 +133,9 @@ Protocol reference: [Redis 8.6 vector-set implementation](https://github.com/red
 [CI run 36700806149](https://github.com/thomhurst/Respire/actions/runs/36700806149)
 measured candidate `a98b4750a968ccd5371f0a4d9583a17642b17dfb` between two runs of
 baseline `09926d2c50e73986d09f8438fec24a1e854fc87b` on one GitHub-hosted runner.
-The candidate adds benchmark coverage without changing production encoding. The same
+These numbers come from the earlier benchmark-harness revision named above, before
+report-gate and documentation fixes. Timed methods and production encoding are unchanged
+in those follow-ups. The candidate adds benchmark coverage without changing production encoding. The same
 benchmark source was copied into the baseline checkout. This compares encoding
 alternatives; differences between revisions are runner variation, not a shipped speedup.
 
@@ -142,14 +144,14 @@ Environment: BenchmarkDotNet 0.15.8, Ubuntu 24.04.5, Intel Xeon 6973P-C 2.60 GHz
 Concurrent Workstation GC. Each phase used one Default-job launch with adaptive
 warmup/measurement iterations. A six-case Dry validation preceded the A/B/A sequence.
 
-| Components | Encoding | Candidate mean ± StdDev (ns) | Managed B/op | Complete RESP bytes |
+| Components | Encoding | Candidate mean +/- StdDev (ns) | Managed B/op | Complete RESP bytes |
 | ---: | --- | ---: | ---: | ---: |
-| 16 | Direct FP32 | 35.79 ± 0.53 | 0 | 120 |
-| 16 | Intermediate array FP32 | 62.54 ± 1.00 | 88 | 120 |
-| 16 | VALUES | 987.81 ± 1.82 | 0 | 315 |
-| 1,536 | Direct FP32 | 76.30 ± 0.25 | 0 | 6,202 |
-| 1,536 | Intermediate array FP32 | 470.97 ± 35.63 | 6,168 | 6,202 |
-| 1,536 | VALUES | 102,003.89 ± 152.99 | 0 | 26,026 |
+| 16 | Direct FP32 | 35.79 +/- 0.53 | 0 | 120 |
+| 16 | Intermediate array FP32 | 62.54 +/- 1.00 | 88 | 120 |
+| 16 | VALUES | 987.81 +/- 1.82 | 0 | 315 |
+| 1,536 | Direct FP32 | 76.30 +/- 0.25 | 0 | 6,202 |
+| 1,536 | Intermediate array FP32 | 470.97 +/- 35.63 | 6,168 | 6,202 |
+| 1,536 | VALUES | 102,003.89 +/- 152.99 | 0 | 26,026 |
 
 Inputs use seed 534 with finite components in [-1, 1], including positive and negative
 zero. All methods encode the complete `VADD vectors ... member` command into equally

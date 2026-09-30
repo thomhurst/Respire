@@ -39,6 +39,7 @@ public class VectorEncodingBenchmarks
         _intermediate = new(verb, key, _intermediateArguments);
 
         // Validate whole RESP frames and every FP32 bit outside timed operations.
+        // Each method resets the buffer, so setup call order leaves no timed state dependency.
         var originalCapacity = _buffer.Capacity;
         var fp32Bytes = DirectFp32();
         var direct = _buffer.WrittenMemory.ToArray();
