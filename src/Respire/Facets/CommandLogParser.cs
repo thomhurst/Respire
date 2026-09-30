@@ -10,21 +10,30 @@ internal static class CommandLogParser
         var result = new RespireCommandLogEntry[rows.Length];
         for (var index = 0; index < rows.Length; index++)
         {
-            var fields = Array(in rows[index]);
-            if (fields.Length < 6) throw new RespireProtocolException("COMMANDLOG entry must contain at least six fields.");
-            var id = NonnegativeInteger(in fields[0]);
-            var timestamp = NonnegativeInteger(in fields[1]);
-            var metric = NonnegativeInteger(in fields[2]);
-            var arguments = Array(in fields[3]);
-            var ownedArguments = new byte[arguments.Length][];
-            for (var argument = 0; argument < arguments.Length; argument++) ownedArguments[argument] = Bytes(in arguments[argument]);
-            var address = Bytes(in fields[4]);
-            var name = Bytes(in fields[5]);
-            var additional = new RespireResult[fields.Length - 6];
-            for (var field = 6; field < fields.Length; field++) additional[field - 6] = new(fields[field].ToOwned());
-            result[index] = new(type, id, timestamp, metric, ownedArguments, address, name, additional);
+            try { result[index] = Entry(in rows[index], type); }
+            catch (RespireProtocolException error)
+            {
+                throw new RespireProtocolException($"COMMANDLOG entry at index {index}: {error.Message}", error);
+            }
         }
         return result;
+    }
+
+    private static RespireCommandLogEntry Entry(in RespValue value, RespireCommandLogType type)
+    {
+        var fields = Array(in value);
+        if (fields.Length < 6) throw new RespireProtocolException("COMMANDLOG entry must contain at least six fields.");
+        var id = NonnegativeInteger(in fields[0]);
+        var timestamp = NonnegativeInteger(in fields[1]);
+        var metric = NonnegativeInteger(in fields[2]);
+        var arguments = Array(in fields[3]);
+        var ownedArguments = new byte[arguments.Length][];
+        for (var argument = 0; argument < arguments.Length; argument++) ownedArguments[argument] = Bytes(in arguments[argument]);
+        var address = Bytes(in fields[4]);
+        var name = Bytes(in fields[5]);
+        var additional = new RespireResult[fields.Length - 6];
+        for (var field = 6; field < fields.Length; field++) additional[field - 6] = new(fields[field].ToOwned());
+        return new(type, id, timestamp, metric, ownedArguments, address, name, additional);
     }
 
     internal static long NonnegativeInteger(in RespValue value)

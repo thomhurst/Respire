@@ -87,6 +87,10 @@ public class ServerCommandLogTests
             RespValue.Array(RespValue.Array(RespValue.Integer(0), RespValue.Integer(0), RespValue.Integer(0), RespValue.Array(RespValue.Integer(0)), binary, binary))];
         foreach (var value in malformed)
             await Assert.That(() => CommandLogParser.Parse(in value, RespireCommandLogType.Slow)).Throws<RespireProtocolException>();
+        var badSecondRow = RespValue.Array(row, RespValue.Array());
+        var contextual = await Assert.That(() => CommandLogParser.Parse(in badSecondRow, RespireCommandLogType.Slow)).Throws<RespireProtocolException>();
+        await Assert.That(contextual!.Message).Contains("index 1");
+        await Assert.That(contextual.InnerException).IsTypeOf<RespireProtocolException>();
         await Assert.That(() => CommandLogParser.NonnegativeInteger(RespValue.Integer(-1))).Throws<RespireProtocolException>();
         await Assert.That(() => CommandLogParser.Ok(RespValue.BulkString("OK"))).Throws<RespireProtocolException>();
     }
