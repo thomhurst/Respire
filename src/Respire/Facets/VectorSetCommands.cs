@@ -96,9 +96,7 @@ internal sealed class VectorSetCommands(RespireClient client) : IVectorSetComman
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public ValueTask<T?> GetAttributesAsync<T>(RespireKey key, RespireValue member, CancellationToken cancellationToken = default)
         => Convert("VGETATTR", Build(client, RespireCommands.VectorSet.VGETATTR.Verb, key, member), cancellationToken,
-            static (VectorSetCommands state, in RespValue value) => DeserializeAttributes<T>(state.Client, in value));
-
-    private RespireClient Client => client;
+            client, static (RespireClient state, in RespValue value) => DeserializeAttributes<T>(state, in value));
 
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
@@ -141,7 +139,7 @@ internal sealed class VectorSetCommands(RespireClient client) : IVectorSetComman
         ValidateVector(vector.Span, encoding);
         RespireValue.ThrowIfNull(member, nameof(member));
         if (options.ReduceDimensions is <= 0) throw new ArgumentOutOfRangeException(nameof(options.ReduceDimensions));
-        ValidateEffort(options.ExplorationFactor);
+        ValidateEffort(options.ExplorationFactor, nameof(options.ExplorationFactor));
         if (options.Links is < 4 or > 4096) throw new ArgumentOutOfRangeException(nameof(options.Links));
         if (!Enum.IsDefined(options.Quantization)) throw new ArgumentOutOfRangeException(nameof(options.Quantization));
         RespireValue[] before = options.ReduceDimensions is { } dimensions ? ["REDUCE", dimensions] : [];
@@ -171,7 +169,7 @@ internal sealed class VectorSetCommands(RespireClient client) : IVectorSetComman
     private static RespireValue[] SearchArguments(RespireVectorSearchOptions options)
     {
         if (options.Count is <= 0) throw new ArgumentOutOfRangeException(nameof(options.Count));
-        ValidateEffort(options.ExplorationFactor);
+        ValidateEffort(options.ExplorationFactor, nameof(options.ExplorationFactor));
         if (options.FilterExplorationFactor is <= 0) throw new ArgumentOutOfRangeException(nameof(options.FilterExplorationFactor));
         if (options.Epsilon is { } epsilon && (!double.IsFinite(epsilon) || epsilon is < 0 or > 1))
             throw new ArgumentOutOfRangeException(nameof(options.Epsilon));
@@ -197,9 +195,9 @@ internal sealed class VectorSetCommands(RespireClient client) : IVectorSetComman
             if (!float.IsFinite(component)) throw new ArgumentException("Vector components must be finite.", nameof(vector));
     }
 
-    private static void ValidateEffort(int? effort)
+    private static void ValidateEffort(int? effort, string parameterName)
     {
-        if (effort is <= 0 or > 1_000_000) throw new ArgumentOutOfRangeException(nameof(effort));
+        if (effort is <= 0 or > 1_000_000) throw new ArgumentOutOfRangeException(parameterName);
     }
 
     internal static Cmd1N Build(RespireClient client, Verb verb, RespireKey key, params RespireValue[] arguments)

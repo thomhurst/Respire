@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Globalization;
 using System.Text;
 using Respire.Commands;
 using TUnit.Assertions;
@@ -111,6 +112,43 @@ public class VectorSetCommandTests
         await Assert.That(commands[9][3]).IsEquivalentTo(expectedJson);
         await Assert.That(commands[11][3]).IsEquivalentTo(expectedJson);
         await Assert.That(Encoding.ASCII.GetString(commands[16][4])).IsEqualTo("10");
+    }
+
+    [Test]
+    public async Task ValuesEncodingIsInvariantAndRoundTripsSinglePrecision()
+    {
+        var originalCulture = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("fr-FR");
+            float[] vector = [1.25f, 1e-5f, 1e20f, float.Epsilon, float.MaxValue, -float.MaxValue, 1.2345678f];
+            await using var server = new FakeRespServer(":1\r\n"u8.ToArray());
+            await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+            await client.VectorSets.AddAsync("k", vector, "m", encoding: RespireVectorEncoding.Values);
+            var values = server.ReceivedArguments.Single().Skip(4).Take(vector.Length)
+                .Select(Encoding.ASCII.GetString).ToArray();
+            await Assert.That(values[0]).IsEqualTo("1.25");
+            await Assert.That(values[1]).IsEqualTo("1E-05");
+            await Assert.That(values[2]).IsEqualTo("1E+20");
+            for (var index = 0; index < vector.Length; index++)
+            {
+                var parsed = float.Parse(values[index], NumberStyles.Float, CultureInfo.InvariantCulture);
+                await Assert.That(BitConverter.SingleToInt32Bits(parsed)).IsEqualTo(BitConverter.SingleToInt32Bits(vector[index]));
+            }
+        }
+        finally { CultureInfo.CurrentCulture = originalCulture; }
+    }
+
+    [Test]
+    public async Task InvalidExplorationFactorNamesThePublicOption()
+    {
+        await using var client = RespireClient.Create("redis://localhost:1");
+        var addError = await Assert.That(async () => await client.VectorSets.AddAsync("k", new[] { 1f }, "m",
+            new() { ExplorationFactor = 0 })).ThrowsExactly<ArgumentOutOfRangeException>();
+        var searchError = await Assert.That(async () => await client.VectorSets.SearchAsync("k", new[] { 1f },
+            new() { ExplorationFactor = 1_000_001 })).ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(addError!.ParamName).IsEqualTo(nameof(RespireVectorAddOptions.ExplorationFactor));
+        await Assert.That(searchError!.ParamName).IsEqualTo(nameof(RespireVectorSearchOptions.ExplorationFactor));
     }
 
     [Test]
