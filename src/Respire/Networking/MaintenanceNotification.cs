@@ -20,7 +20,7 @@ internal sealed record MaintenanceNotification(string Kind, long SequenceId, lon
     {
         if (value.Type != RespDataType.Push) return null;
         var items = value.AsArray();
-        if (items.Length < 2 || !IsString(items[0]) || items[0].AsSpan().Length > 12
+        if (items.Length < 2 || !IsString(items[0]) || !IsMaintenanceKind(items[0].AsSpan())
             || items[1].Type != RespDataType.Integer) return null;
         var kind = items[0].AsString();
         var sequence = items[1].AsInteger();
@@ -71,6 +71,15 @@ internal sealed record MaintenanceNotification(string Kind, long SequenceId, lon
 
     private static bool IsString(in RespValue value)
         => value.Type is RespDataType.SimpleString or RespDataType.BulkString;
+
+    private static bool IsMaintenanceKind(ReadOnlySpan<byte> kind)
+        => kind.SequenceEqual("MOVING"u8)
+            || kind.SequenceEqual("MIGRATING"u8)
+            || kind.SequenceEqual("MIGRATED"u8)
+            || kind.SequenceEqual("FAILING_OVER"u8)
+            || kind.SequenceEqual("FAILED_OVER"u8)
+            || kind.SequenceEqual("SMIGRATING"u8)
+            || kind.SequenceEqual("SMIGRATED"u8);
 
     private static bool TrySeconds(in RespValue value, out long seconds)
     {

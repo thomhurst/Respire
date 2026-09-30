@@ -448,6 +448,23 @@ public class MaintenanceNotificationTests
         await Assert.That(result.AsString()).IsEqualTo("PONG");
     }
 
+    [Test]
+    public async Task UnrelatedResp3PushKindsDoNotAllocateDuringMaintenanceParsing()
+    {
+        var bytes = ">3\r\n+invalidate\r\n:1\r\n*0\r\n"u8.ToArray();
+        var position = 0;
+        if (RespParser.TryParseValue(bytes, ref position, out var value) != RespParseStatus.Done)
+            throw new Exception("Invalid test fixture");
+        using (value)
+        {
+            _ = MaintenanceNotification.Parse(in value); // JIT warm-up.
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            for (var i = 0; i < 100; i++) _ = MaintenanceNotification.Parse(in value);
+            var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            await Assert.That(allocated).IsEqualTo(0L);
+        }
+    }
+
     private static MaintenanceNotification? Parse(string wire)
     {
         var position = 0;
