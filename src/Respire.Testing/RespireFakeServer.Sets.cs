@@ -8,7 +8,9 @@ public sealed partial class RespireFakeServer
     {
         var entry = Find(args[1]);
         var set = entry?.Set ?? new HashSet<byte[]>(BinaryKeyComparer.Instance);
-        var added = args.Skip(2).Count(set.Add);
+        var added = 0;
+        for (var index = 2; index < args.Length; index++)
+            if (set.Add(args[index])) added++;
         if (entry is null) _entries[args[1]] = new Entry(set);
         return FakeReply.Integer(added);
     }
@@ -17,7 +19,9 @@ public sealed partial class RespireFakeServer
     {
         var set = Find(args[1])?.Set;
         if (set is null) return FakeReply.Integer(0);
-        var removed = args.Skip(2).Count(set.Remove);
+        var removed = 0;
+        for (var index = 2; index < args.Length; index++)
+            if (set.Remove(args[index])) removed++;
         if (set.Count == 0) _entries.Remove(args[1]);
         return FakeReply.Integer(removed);
     }
@@ -25,7 +29,10 @@ public sealed partial class RespireFakeServer
     private FakeReply SetContainsMany(byte[][] args)
     {
         var set = Find(args[1])?.Set;
-        return FakeReply.Array(args.Skip(2).Select(member => FakeReply.Integer(set?.Contains(member) == true ? 1 : 0)).ToArray());
+        var replies = new FakeReply[args.Length - 2];
+        for (var index = 2; index < args.Length; index++)
+            replies[index - 2] = FakeReply.Integer(set?.Contains(args[index]) == true ? 1 : 0);
+        return FakeReply.Array(replies);
     }
 
     private FakeReply SetMove(byte[][] args)
@@ -60,9 +67,20 @@ public sealed partial class RespireFakeServer
     {
         var start = store ? 2 : 1;
         var sets = ReadSets(args, start, args.Length - start);
+        var result = CombineSets(sets, operation);
+        if (!store) return FakeReply.Set(result.Select(FakeReply.Bulk).ToArray());
+        // Materialize first: destination may alias any source. STORE replaces its type and TTL.
+        if (result.Count == 0) _entries.Remove(args[1]);
+        else _entries[args[1]] = new Entry(result);
+        return FakeReply.Integer(result.Count);
+    }
+
+    private static HashSet<byte[]> CombineSets(HashSet<byte[]>?[] sets, SetOperation operation)
+    {
         var result = new HashSet<byte[]>(sets[0] ?? [], BinaryKeyComparer.Instance);
-        foreach (var set in sets.Skip(1))
+        for (var index = 1; index < sets.Length; index++)
         {
+            var set = sets[index];
             switch (operation)
             {
                 case SetOperation.Intersection: result.IntersectWith(set ?? []); break;
@@ -70,11 +88,7 @@ public sealed partial class RespireFakeServer
                 case SetOperation.Difference: result.ExceptWith(set ?? []); break;
             }
         }
-        if (!store) return FakeReply.Set(result.Select(FakeReply.Bulk).ToArray());
-        // Materialize first: destination may alias any source. STORE replaces its type and TTL.
-        if (result.Count == 0) _entries.Remove(args[1]);
-        else _entries[args[1]] = new Entry(result);
-        return FakeReply.Integer(result.Count);
+        return result;
     }
 
     private FakeReply SetIntersectCount(byte[][] args)
