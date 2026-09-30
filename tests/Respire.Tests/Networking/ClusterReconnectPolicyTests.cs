@@ -478,6 +478,50 @@ public class ClusterReconnectPolicyTests
     }
 
     [Test]
+    [Arguments("command", false)]
+    [Arguments("command", true)]
+    [Arguments("tracked", false)]
+    [Arguments("tracked", true)]
+    [Arguments("dedicated", false)]
+    [Arguments("dedicated", true)]
+    public async Task FailedCachedOwnerUsesNextDistinctMaster(string path, bool configured)
+    {
+        await using var failed = new FakeRespServer(2, "-ERR owner unavailable\r\n"u8.ToArray());
+        await using var healthy = new FakeRespServer(2, FakeRespServer.OkReply);
+        healthy.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{healthy.Port}\r\n")
+            : null;
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply, "-ERR unsupported topology\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
+        {
+            ReconnectPolicy = configured ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 } : null,
+        });
+        var router = client.Core.Cluster!;
+        var failedOwner = router.GetMultiplexer(new("127.0.0.1", failed.Port));
+        router.SetSlotOwner(42, failedOwner);
+        router.SetSlotOwner(43, failedOwner); // Clearing slot 42 must leave this owner in the master list.
+        router.SetSlotOwner(44, router.GetMultiplexer(new("127.0.0.1", healthy.Port)));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        if (path == "dedicated")
+        {
+            var pool = await router.GetDedicatedPoolAsync(42, timeout.Token, discovery: null);
+            var connection = await pool.RentAsync(timeout.Token);
+            try { await Assert.That(connection.Port).IsEqualTo(healthy.Port); }
+            finally { pool.Return(connection); }
+        }
+        else
+        {
+            var connection = path == "tracked"
+                ? await router.GetTrackedConnectionAsync(42, true, timeout.Token, discovery: null)
+                : await router.GetConnectionAsync(42, timeout.Token, discovery: null);
+            await Assert.That(connection.Port).IsEqualTo(healthy.Port);
+        }
+        await Assert.That(failed.ReceivedCommands).IsEquivalentTo(["AUTH test"]);
+        await Assert.That(healthy.ReceivedCommands.Count(command => command == "CLUSTER SLOTS")).IsEqualTo(1);
+        await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["AUTH test", "CLUSTER SLOTS"]);
+    }
+
+    [Test]
     public async Task DiscoveryRoundRejectsConcurrentMutationAndReleasesGuardAfterCancellation()
     {
         await using var client = RespireClient.Create(Options(1));

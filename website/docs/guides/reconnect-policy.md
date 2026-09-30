@@ -262,9 +262,12 @@ failed candidate, only when another fallback would exceed the budget. Successful
 at the limit and candidate depletion do not count as policy exhaustion. Lifecycle events
 use `ReconnectSource.ClusterDiscovery`, a process-local `ReconnectEpisodeId`, and a null
 `ConnectionSlot`. Episode IDs are scoped by `ReconnectSource`; include it when correlating
-events from different recovery paths. `SourceState` describes discovery; `State` retains aggregate physical
-endpoint health. Discovery never inserts a synthetic failed command slot. Measurements
-and lifecycle callbacks run on an ordered asynchronous queue; keep observers short.
+events from different recovery paths. Cluster discovery IDs share one counter across clients in
+this process. `SourceState` describes discovery; `State` retains aggregate physical endpoint
+health. Discovery never inserts a synthetic failed command slot. Measurements
+and lifecycle callbacks run on an ordered asynchronous queue; keep observers short. Discovery
+ordering is independent of command-slot and dedicated recovery notification queues; events
+from different sources have no shared ordering guarantee.
 A caller-cancelled round that started fallback emits a terminal `Disconnected` source event
 with the cancellation error and the same episode ID; cancellation is not policy exhaustion.
 Scheduled measurements survive disposal, while pending lifecycle events are suppressed.

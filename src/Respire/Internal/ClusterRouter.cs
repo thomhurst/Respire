@@ -248,6 +248,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             }
         }
 
+        RespireConnectionMultiplexer? failedOwner = null;
         if (slot is { } cachedSlot && Volatile.Read(ref _slots[cachedSlot]) is { } cachedNode)
         {
             try
@@ -259,12 +260,13 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             {
                 discovery?.Failed(Endpoint(cachedNode), error);
                 ClearSlotOwner(cachedSlot, cachedNode);
+                failedOwner = cachedNode;
                 // Refresh through another discovered master before falling back to seeds.
             }
         }
 
         if (slot is { } refreshSlot
-            && await TryRefreshSlotThroughKnownMastersAsync(refreshSlot, cancellationToken, discovery).ConfigureAwait(false)
+            && await TryRefreshSlotThroughKnownMastersAsync(refreshSlot, failedOwner, cancellationToken, discovery).ConfigureAwait(false)
                 is { } refreshedNode)
         {
             return refreshedNode.GetConnection(refreshSlot);
@@ -493,6 +495,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     private async ValueTask<DedicatedConnectionPool> GetDedicatedPoolCoreAsync(int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
+        RespireConnectionMultiplexer? failedOwner = null;
         if (slot is { } cachedSlot && Volatile.Read(ref _slots[cachedSlot]) is { } cachedNode)
         {
             try
@@ -504,12 +507,13 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             {
                 discovery?.Failed(Endpoint(cachedNode), error);
                 ClearSlotOwner(cachedSlot, cachedNode);
+                failedOwner = cachedNode;
                 // Refresh through another discovered master before falling back to seeds.
             }
         }
 
         if (slot is { } refreshSlot
-            && await TryRefreshSlotThroughKnownMastersAsync(refreshSlot, cancellationToken, discovery).ConfigureAwait(false)
+            && await TryRefreshSlotThroughKnownMastersAsync(refreshSlot, failedOwner, cancellationToken, discovery).ConfigureAwait(false)
                 is { } refreshedNode)
         {
             return GetOrCreateDedicatedPool(new RespireEndpoint(refreshedNode.Host, refreshedNode.Port));
@@ -1067,10 +1071,14 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     private async ValueTask<RespireConnectionMultiplexer?> TryRefreshSlotThroughKnownMastersAsync(
         int slot,
+        RespireConnectionMultiplexer? failedOwner,
         CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
         foreach (var master in Volatile.Read(ref _masters))
         {
+            // A failed owner can still own other slots. Spend fallback budget on a distinct
+            // generation instead of immediately retrying the already rejected connection.
+            if (ReferenceEquals(master, failedOwner)) continue;
             if (!await TryRefreshTopologyAsync(master, cancellationToken, discovery).ConfigureAwait(false))
             {
                 continue;
