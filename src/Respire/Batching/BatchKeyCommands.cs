@@ -29,7 +29,10 @@ public interface IBatchKeyCommands
     RespirePending<RespireTtl> Expiry(RespireKey key);
 
     /// <summary>Absolute expiration, distinguishing missing and persistent keys. Redis 7+: EXPIRETIME/PEXPIRETIME.</summary>
-    RespirePending<RespireExpiryTime> ExpiryTime(RespireKey key, ExpiryTimePrecision precision = ExpiryTimePrecision.Milliseconds);
+    RespirePending<RespireExpiryTime> ExpiryTime(RespireKey key);
+
+    /// <summary>Absolute expiration at the requested server precision. Redis 7+: EXPIRETIME/PEXPIRETIME.</summary>
+    RespirePending<RespireExpiryTime> ExpiryTime(RespireKey key, ExpiryTimePrecision precision);
 
     /// <summary>The server's internal value encoding, or null for a missing key. Redis: OBJECT ENCODING.</summary>
     RespirePending<string?> Encoding(RespireKey key);
@@ -121,7 +124,10 @@ internal sealed class BatchKeyCommands(IPendingSink sink) : IBatchKeyCommands
             "PTTL", new Cmd1(Verbs.Pttl, sink.Client.Key(in key)),
             static (c, v) => RespireTtl.FromRedisMilliseconds(ResponseReader.Integer(in v)));
 
-    public RespirePending<RespireExpiryTime> ExpiryTime(RespireKey key, ExpiryTimePrecision precision = ExpiryTimePrecision.Milliseconds)
+    public RespirePending<RespireExpiryTime> ExpiryTime(RespireKey key)
+        => ExpiryTime(key, ExpiryTimePrecision.Milliseconds);
+
+    public RespirePending<RespireExpiryTime> ExpiryTime(RespireKey key, ExpiryTimePrecision precision)
     {
         var (operation, verb) = KeyCommands.ExpiryTimeCommand(precision);
         return sink.Add<Cmd1, RespireExpiryTime>(operation, new Cmd1(verb, sink.Client.Key(in key)),
