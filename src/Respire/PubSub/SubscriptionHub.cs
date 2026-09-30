@@ -573,7 +573,7 @@ internal sealed partial class SubscriptionHub(ClientCore core) : IAsyncDisposabl
             }
             // Measurements describe scheduled work and survive disposal. Lifecycle events
             // still queued when disposal wins must not restore the client's subscription state.
-            if (!_disposed) core.NotifySubscriptionStateChanged(change);
+            if (!_disposed && !core.Disposed) core.NotifySubscriptionStateChanged(change);
         }
     }
 

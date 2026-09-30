@@ -94,6 +94,7 @@ internal sealed class ClientCore : IAsyncDisposable
     {
         lock (_stateGate)
         {
+            if (Disposed) return;
             var previousEndpoint = _subscriptionEndpoint;
             _subscriptionEndpoint = change.Endpoint;
             _subscriptionState = change.State;
@@ -284,7 +285,9 @@ internal sealed class ClientCore : IAsyncDisposable
                     return;
                 }
 
-                if (Disposed && change.ReconnectSource == RespireReconnectSource.Dedicated) continue;
+                // Recovery can have been queued before disposal started while an earlier
+                // observer held the dispatcher. The terminal client event has no recovery source.
+                if (Disposed && change.ReconnectSource is RespireReconnectSource.Dedicated or RespireReconnectSource.PubSub) continue;
 
                 handlers = ConnectionStateChanged;
             }

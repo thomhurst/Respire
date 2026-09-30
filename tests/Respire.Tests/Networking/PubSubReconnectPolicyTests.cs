@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
+using System.Reflection;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
@@ -369,19 +370,30 @@ public class PubSubReconnectPolicyTests
     }
 
     [Test]
-    public async Task DisposalPreservesQueuedExhaustionMeasurements()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DisposalPreservesQueuedExhaustionMeasurements(bool holdClientDisposal)
     {
         await using var server = new FakeRespServer(2, Confirmation) { CloseConnectionAfterCommand = 2 };
         await using var client = RespireClient.Create(Options(server.Port, Policy(attempts: 1)));
         await using var subscription = await client.SubscribeAsync("ch");
         using var deadline = new CancellationTokenSource(Deadline);
+        var hub = client.Core.Hub;
         using var releaseObserver = new ManualResetEventSlim();
+        using var releaseDisposal = new ManualResetEventSlim();
+        var disposalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task? disposal = null;
         var observingAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var observedExhaustion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var lifecycleEvents = new ConcurrentQueue<RespireConnectionStateChange>();
         client.ConnectionStateChanged += change =>
         {
             if (change.ReconnectSource == RespireReconnectSource.PubSub) lifecycleEvents.Enqueue(change);
+            else if (holdClientDisposal && change.State == RespireConnectionState.Disconnected)
+            {
+                disposalStarted.TrySetResult();
+                if (!releaseDisposal.Wait(Deadline)) throw new TimeoutException("Test did not release client disposal.");
+            }
         };
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, current) =>
@@ -419,15 +431,78 @@ public class PubSubReconnectPolicyTests
             await Assert.That(await subscription.Completion.WaitAsync(deadline.Token))
                 .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
             // The first measurement holds the dispatcher, so terminal telemetry is still queued.
-            await client.DisposeAsync().AsTask().WaitAsync(deadline.Token);
+            disposal = Task.Run(async () => await client.DisposeAsync());
+            if (holdClientDisposal)
+            {
+                // The terminal client callback precedes hub disposal. Keep that interval open
+                // while the independent dispatcher drains its queued recovery observations.
+                await disposalStarted.Task.WaitAsync(deadline.Token);
+                await Assert.That(client.Core.Disposed).IsTrue();
+            }
+            else await disposal.WaitAsync(deadline.Token);
             releaseObserver.Set();
             await observedExhaustion.Task.WaitAsync(deadline.Token);
+            var gate = hub.GetType().GetField("_reconnectStateGate",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(hub)!;
+            var publishing = hub.GetType().GetField("_publishingReconnectState",
+                BindingFlags.Instance | BindingFlags.NonPublic)!;
+            while (true)
+            {
+                lock (gate) { if (!(bool)publishing.GetValue(hub)!) break; }
+                await Task.Delay(1, deadline.Token);
+            }
+            releaseDisposal.Set();
+            await disposal.WaitAsync(deadline.Token);
             await Assert.That(lifecycleEvents.IsEmpty).IsTrue();
         }
         finally
         {
             releaseObserver.Set();
+            releaseDisposal.Set();
+            if (disposal is not null) await disposal.WaitAsync(Deadline);
             await client.DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task ClientDisposalSuppressesRecoveryAlreadyQueuedForLifecycleDelivery()
+    {
+        await using var client = RespireClient.Create(Options(6379, Policy()));
+        using var releaseObserver = new ManualResetEventSlim();
+        var observing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var changes = new ConcurrentQueue<RespireConnectionStateChange>();
+        client.ConnectionStateChanged += change =>
+        {
+            changes.Enqueue(change);
+            if (change.ReconnectAttempt != 1) return;
+            observing.TrySetResult();
+            if (!releaseObserver.Wait(Deadline)) throw new TimeoutException("Test did not release the lifecycle observer.");
+        };
+        var first = new RespireConnectionStateChange(new RespireEndpoint("127.0.0.1", 6379),
+            RespireConnectionState.Reconnecting, null)
+        {
+            ReconnectSource = RespireReconnectSource.PubSub,
+            SourceState = RespireConnectionState.Reconnecting,
+            ReconnectAttempt = 1,
+        };
+        var publisher = Task.Run(() => client.Core.NotifySubscriptionStateChanged(first));
+        try
+        {
+            await observing.Task.WaitAsync(Deadline);
+            client.Core.NotifySubscriptionStateChanged(first with { ReconnectAttempt = 2 });
+            await client.DisposeAsync();
+            releaseObserver.Set();
+            await publisher.WaitAsync(Deadline);
+            var delivered = changes.ToArray();
+            await Assert.That(delivered.Length).IsEqualTo(2);
+            await Assert.That(delivered[0].ReconnectAttempt).IsEqualTo(1);
+            await Assert.That(delivered[1].State).IsEqualTo(RespireConnectionState.Disconnected);
+            await Assert.That(delivered[1].ReconnectAttempt).IsEqualTo(0);
+        }
+        finally
+        {
+            releaseObserver.Set();
+            await publisher.WaitAsync(Deadline);
         }
     }
 
