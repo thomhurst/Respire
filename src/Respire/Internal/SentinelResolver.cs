@@ -100,7 +100,10 @@ internal static class SentinelResolver
                     endpoint.Port);
                 if (fallbackAttempts > 0 && options.ReconnectPolicy?.IsExhausted(fallbackAttempts) == true)
                 {
-                    RespireTelemetry.RecordDiscoveryReconnect(endpoint, "sentinel-discovery", fallbackAttempts, null, logger);
+                    // Exhaustion means the policy prevented trying a remaining candidate.
+                    // Reaching the same count on the final candidate is ordinary depletion.
+                    if (index + 1 < sentinelEndpoints.Count)
+                        RespireTelemetry.RecordDiscoveryReconnect(endpoint, "sentinel-discovery", fallbackAttempts, null, logger);
                     break;
                 }
             }

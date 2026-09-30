@@ -43,7 +43,7 @@ internal static class RespireTelemetry
         "respire.connection.reconnect.delay", unit: "s", description: "Scheduled delay before a configured connection replacement or discovery fallback attempt.");
 
     public static readonly Counter<long> ReconnectExhaustions = Meter.CreateCounter<long>(
-        "respire.connection.reconnect.exhausted", unit: "{episode}", description: "Recovery episodes that reached the configured replacement attempt limit.");
+        "respire.connection.reconnect.exhausted", unit: "{episode}", description: "Recovery episodes stopped by the configured replacement attempt limit.");
 
     internal static void RecordReconnectExhaustion(string host, int port, RespireReconnectSource source = RespireReconnectSource.Command)
         => ReconnectExhaustions.Add(1, new KeyValuePair<string, object?>("server.address", host),

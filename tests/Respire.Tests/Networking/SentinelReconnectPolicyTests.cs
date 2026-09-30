@@ -16,6 +16,27 @@ public class SentinelReconnectPolicyTests
     private static readonly byte[] PrimaryRole = "*3\r\n$6\r\nmaster\r\n:0\r\n*0\r\n"u8.ToArray();
 
     [Test]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task CandidateDepletionDoesNotReportPolicyStoppingTraversal(int maximumAttempts)
+    {
+        await using var second = new FakeRespServer("-NOPERM second unavailable\r\n"u8.ToArray(), EmptyPeers);
+        await using var first = new FakeRespServer("-ERR first unavailable\r\n"u8.ToArray(), EmptyPeers);
+        using var metrics = new DiscoveryMetrics(second.Port);
+        var options = Options(first.Port, second.Port) with
+        {
+            ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = maximumAttempts },
+        };
+        var error = await Assert.That(async () => await RespireClient.ConnectAsync(options))
+            .ThrowsExactly<RespireConnectionException>();
+        await Assert.That(error!.InnerException is RespireServerException { Code: "NOPERM" }).IsTrue();
+        await Assert.That(first.CommandsSeen).IsEqualTo(2);
+        await Assert.That(second.CommandsSeen).IsEqualTo(2);
+        await Assert.That(metrics.Attempts.ToArray()).IsEquivalentTo(new long[] { 1 });
+        await Assert.That(metrics.Exhaustions).IsEqualTo(0L);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task FallbackLimitSpansConfiguredAndLearnedPeers(bool learned)
@@ -68,6 +89,7 @@ public class SentinelReconnectPolicyTests
         long scheduledAt = 0;
         using var metrics = new DiscoveryMetrics(second.Port, () =>
         {
+            // MeterListener invokes this synchronously before the resolver starts its delay.
             scheduledAt = Stopwatch.GetTimestamp();
             if (cancel) cancellation.Cancel();
         });

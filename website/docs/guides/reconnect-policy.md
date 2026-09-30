@@ -138,7 +138,7 @@ The `Respire` meter records `respire.connection.reconnect.attempt` (attempt numb
 and `respire.connection.source` (`command` or `dedicated`).
 They record scheduled replacement attempts, including waits later cancelled by disposal.
 They are histograms of events, not live countdown gauges. The counter
-`respire.connection.reconnect.exhausted` records each episode that reaches its limit, with the same
+`respire.connection.reconnect.exhausted` records each episode stopped by its attempt limit, with the same
 endpoint tags, so operators can alert on terminal recovery failures. Successful command execution
 does not record these instruments or inspect policy counters.
 
@@ -149,6 +149,10 @@ each later configured or learned Sentinel candidate consumes one fallback attemp
 waits the policy delay before I/O. `MaxAttempts = 1` therefore permits the first
 candidate plus one fallback. A rejected primary `ROLE` response consumes that same
 candidate attempt; peer expansion and primary connection do not start nested budgets.
+For example, with configured candidates A and B and peers C and D learned from A,
+`MaxAttempts = 1` allows A then B. If both fail, C and D remain untried and the policy
+exhaustion counter increments. With only A and B available, both still run, but their
+failure ends through candidate depletion rather than policy exhaustion.
 The existing finite traversal still stops when candidates run out, even with a null
 `MaxAttempts`. Endpoints are not cycled indefinitely.
 
@@ -164,9 +168,11 @@ No application command is replayed during discovery.
 The same attempt/delay/exhaustion instruments carry the candidate's `server.address`
 and `server.port` plus `respire.reconnect.scope = sentinel-discovery`. Exhaustion is
 attributed to the final failed fallback. Scheduling is recorded before delay, including
-waits later cancelled by the caller. Successful fallback does not record exhaustion. Running out of candidates before the
-configured attempt limit also does not emit policy exhaustion; observe the returned
-connection exception to detect every terminal discovery failure.
+waits later cancelled by the caller. Exhaustion is recorded only when the failed fallback
+uses the budget and at least one candidate remains untried. Successful fallback and running
+out of candidates do not record exhaustion, even when the final candidate coincides with
+the attempt limit. Observe the returned connection exception to detect every terminal
+discovery failure.
 Initial Sentinel resolution has no returned client for `ConnectionStateChanged`
 subscriptions; lifecycle events for ongoing failover belong to #396. This policy does
 not enable automatic failover or lazy Sentinel routing.
