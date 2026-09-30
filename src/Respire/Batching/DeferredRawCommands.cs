@@ -75,9 +75,9 @@ internal static class DeferredRawCommands
         return operation;
     }
 
-    private readonly record struct KeyLayout(int Start, int Count, int Stride = 1, int Extra = -1);
+    internal readonly record struct KeyLayout(int Start, int Count, int Stride = 1, int Extra = -1);
 
-    private static KeyLayout GetLayout(string operation, ReadOnlySpan<RespireValue> args)
+    internal static KeyLayout GetLayout(string operation, ReadOnlySpan<RespireValue> args)
     {
         switch (operation)
         {

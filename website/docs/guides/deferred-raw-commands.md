@@ -22,6 +22,11 @@ Later edits to the argument array or its binary buffers do not change the comman
 Keys receive the view's prefix; values, fields, script source, and script arguments
 do not. Queueing never opens a connection or sends the command.
 
+Prefer typed facets when they expose the operation you need. Raw enqueueing parses
+the command name, allocates a token array, and snapshots binary arguments; replies
+are also copied into owned storage. This escape hatch does not promise allocation-free
+execution.
+
 ## Results and failures
 
 Deferred raw results copy replies into GC-managed storage. Unread results do not

@@ -26,6 +26,7 @@ public class DeferredRawIntegrationTests(RedisTestContainer fixture)
         var hash = queue.Execute("HSET", "hash", "field", "value");
         var aggregate = queue.Execute("HGETALL", "hash");
         var script = queue.Execute("EVAL", "return {KEYS[1],ARGV[1],redis.error_reply('nested')}", 1, "key", "argument");
+        var keylessScript = queue.Execute("EVAL", "return ARGV[1]", 0, "argument-only");
         var ping = queue.Execute("PING");
         var echo = queue.Execute("ECHO", "key");
         Array.Fill(key, (byte)'x');
@@ -38,6 +39,7 @@ public class DeferredRawIntegrationTests(RedisTestContainer fixture)
         using var hashResult = hash.Result;
         using var aggregateResult = aggregate.Result;
         using var scriptResult = script.Result;
+        using var keylessScriptResult = keylessScript.Result;
         using var pingResult = ping.Result;
         using var echoResult = echo.Result;
         storedResult.AsString().Should().Be("OK");
@@ -50,6 +52,7 @@ public class DeferredRawIntegrationTests(RedisTestContainer fixture)
         scriptResult[0].AsString().Should().Be("raw:key");
         scriptResult[1].AsString().Should().Be("argument");
         scriptResult[2].IsError.Should().BeTrue();
+        keylessScriptResult.AsString().Should().Be("argument-only");
         pingResult.AsString().Should().Be("PONG");
         echoResult.AsString().Should().Be("key");
         (await client.Keys.ExistsAsync("hash")).Should().BeFalse();

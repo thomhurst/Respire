@@ -146,6 +146,7 @@ public class DeferredRawCommandTests
         await Assert.That(() => transaction.Execute("MGET", "{a}:one", "{b}:two")).Throws<RespireServerException>();
         await Assert.That(() => transaction.Execute("EVAL", "return 1", -1)).Throws<ArgumentException>();
         await Assert.That(() => transaction.Execute("EVAL", "return 1", long.MaxValue)).Throws<ArgumentException>();
+        await Assert.That(() => transaction.Execute("EVAL", "return 1", 2, "only-one-key")).Throws<ArgumentException>();
         await Assert.That(() => transaction.Execute("ZINTERSTORE", "{a}:dest", 1, "{b}:source")).Throws<RespireServerException>();
         await Assert.That(() => transaction.Execute("MSET", "key")).Throws<ArgumentException>();
         await Assert.That(() => transaction.Execute("GET")).Throws<ArgumentException>();
@@ -168,6 +169,7 @@ public class DeferredRawCommandTests
             ("MSET", ["one", "{wrong}", "two", "value"], "MSET {tenant}:one {wrong} {tenant}:two value"),
             ("BITOP", ["AND", "dest", "one", "two"], "BITOP AND {tenant}:dest {tenant}:one {tenant}:two"),
             ("FCALL", ["name", 2, "one", "two", "{wrong}"], "FCALL name 2 {tenant}:one {tenant}:two {wrong}"),
+            ("EVAL", ["return ARGV[1]", 0, "{wrong}"], "EVAL return ARGV[1] 0 {wrong}"),
             ("LMPOP", [2, "one", "two", "LEFT"], "LMPOP 2 {tenant}:one {tenant}:two LEFT"),
             ("ZUNIONSTORE", ["dest", 2, "one", "two", "WEIGHTS", 1, 2], "ZUNIONSTORE {tenant}:dest 2 {tenant}:one {tenant}:two WEIGHTS 1 2"),
             (RespireCommands.Key.OBJECT_ENCODING, ["one"], "OBJECT ENCODING {tenant}:one"),
