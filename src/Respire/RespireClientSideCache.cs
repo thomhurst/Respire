@@ -21,7 +21,8 @@ public sealed record RespireClientSideCacheOptions
     /// <summary>Reuse HGET field entries across HMGET requests. Defaults to false.</summary>
     /// <remarks>Partial reads reduce transferred values for overlapping field lists but require
     /// more cache entries and allocations than exact-query caching. Results may combine values
-    /// read at different times. Benchmark representative field counts and payload sizes.</remarks>
+    /// read at different times and do not form an atomic snapshot of the hash.
+    /// Benchmark representative field counts and payload sizes.</remarks>
     public bool ReuseHashFields { get; init; }
 
     /// <summary>Redis tracking mode. Defaults to OptIn.</summary>
