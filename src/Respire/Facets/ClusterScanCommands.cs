@@ -170,13 +170,15 @@ internal sealed partial class KeyCommands
             }
         }
         if (state.ActiveNode is { } active && (!topology.Nodes.TryGetValue(active, out var node)
-            || node.Metadata.ConfigurationEpoch != state.Epoch)) state.ResetPass();
+            || node.Metadata.ConfigurationEpoch != state.Epoch
+            || !state.PassSlots.Any(static eligible => eligible))) state.ResetPass();
     }
 
     private static ScanNode? SelectScanNode(ClusterScanState state, ScanTopology topology)
     {
         // Once all remaining slots are moving, no pass can certify progress. Return a
         // waiting page without issuing INFO/SCAN until stable work becomes available.
+        // ReconcileScan has already removed missing nodes and passes with no eligible slots.
         for (var slot = 0; slot < ClusterHash.SlotCount; slot++)
             if (!state.Completed[slot] && !topology.Moving[slot])
                 return topology.Nodes[state.ActiveNode ?? state.Owners[slot]];

@@ -159,6 +159,34 @@ public class ClusterScanTests
     }
 
     [Test]
+    public async Task InvalidatedActivePassYieldsToStableWorkOnAnotherNode()
+    {
+        await using var cluster = new ScanCluster();
+        cluster.First.Slots = "0";
+        cluster.Second.Slots = "1-16383";
+        cluster.First.Scan = _ => Page("17");
+        cluster.Second.Scan = _ => Page("0", KeyInSlot(1));
+        await using var client = await cluster.ConnectAsync();
+        var page = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start);
+        cluster.First.Transitions = "[0->-second]";
+        cluster.Second.Transitions = "[0-<-first]";
+        page = await client.Keys.ScanClusterPageAsync(page.Cursor);
+        await Assert.That(page.Keys).IsEquivalentTo([KeyInSlot(1)]);
+        await Assert.That(page.Cursor.CompletedSlotCount).IsEqualTo(16383);
+        await Assert.That(cluster.First.Server.ReceivedCommands.Where(command => command.StartsWith("SCAN ")))
+            .IsEquivalentTo(["SCAN 0 COUNT 250"]);
+
+        // A settled slot starts a new pass; the abandoned node-local cursor cannot be reused.
+        cluster.First.Transitions = cluster.Second.Transitions = "";
+        cluster.First.Scan = _ => Page("0", KeyInSlot(0));
+        page = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Parse(page.Cursor.ToString()));
+        await Assert.That(page.Cursor.IsComplete).IsTrue();
+        await Assert.That(page.Keys).IsEquivalentTo([KeyInSlot(0)]);
+        await Assert.That(cluster.First.Server.ReceivedCommands.Where(command => command.StartsWith("SCAN ")))
+            .IsEquivalentTo(["SCAN 0 COUNT 250", "SCAN 0 COUNT 250"]);
+    }
+
+    [Test]
     public async Task MigrationDuringFinalPageDoesNotCertifyLostSlot()
     {
         await using var cluster = new ScanCluster();

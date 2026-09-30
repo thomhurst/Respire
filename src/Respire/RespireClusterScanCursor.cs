@@ -10,6 +10,7 @@ namespace Respire;
 /// are possible. A cursor is not a snapshot of the database and is not an authenticated token.</remarks>
 public sealed class RespireClusterScanCursor
 {
+    private const int FormatMagic = 0x31435352; // RSC1
     private const int MaximumEncodedLength = 6 * 1024 * 1024;
     internal ClusterScanState? State { get; }
     internal RespireClusterScanCursor(ClusterScanState? state)
@@ -30,7 +31,7 @@ public sealed class RespireClusterScanCursor
     {
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
-        writer.Write(0x31435352); // RSC1
+        writer.Write(FormatMagic);
         writer.Write(State is not null);
         if (State is { } state)
         {
@@ -73,7 +74,7 @@ public sealed class RespireClusterScanCursor
         {
             using var stream = new MemoryStream(Convert.FromBase64String(value), writable: false);
             using var reader = new BinaryReader(stream, new UTF8Encoding(false, true));
-            if (reader.ReadInt32() != 0x31435352) throw new FormatException("Unsupported Cluster scan cursor version.");
+            if (reader.ReadInt32() != FormatMagic) throw new FormatException("Unsupported Cluster scan cursor version.");
             if (!reader.ReadBoolean())
             {
                 if (stream.Position != stream.Length) throw new FormatException("Unexpected cursor data.");

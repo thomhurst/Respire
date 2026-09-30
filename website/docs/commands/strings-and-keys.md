@@ -336,12 +336,20 @@ This requires `SCAN`, `CLUSTER SLOTS`, `CLUSTER NODES`, and `INFO` permissions. 
 validation adds round trips per page; use a larger count hint to amortize them. Incomplete
 or contradictory ownership and unavailable primaries fail explicitly instead of silently
 omitting keys. The scan follows Cluster-reported ownership and epochs; it is not a database
-snapshot or a history of unreported topology changes. Continuously present keys remain
-covered across completed resharding and failover, but keys inserted/deleted during iteration
-have Redis SCAN's usual weak guarantees. Continuous topology changes may prevent completion;
+snapshot or a history of unreported topology changes. Topology is sampled on every page,
+not only at pass boundaries. A reported migration or owner change invalidates that slot's
+active pass even if its original owner returns later. A complete A-to-B-to-A move between
+two metadata reads can remain invisible when the reported identities and epochs also match;
+this scan cannot guarantee coverage across that unobserved history. For observed changes,
+continuously present keys remain covered across completed resharding and failover. Keys
+inserted/deleted during iteration have Redis SCAN's usual weak guarantees. Continuous topology changes may prevent completion;
 use cancellation to bound the work. Standalone scans retain their existing cursor loop.
 
 `Parse` rejects malformed, oversized, or unsupported-version tokens; `TryParse` returns
 false instead. Tokens are versioned Base64 data, not encrypted or authenticated. They contain
 filters and node identities, but no passwords, sockets, or process-local registry handles.
-Treat checkpoints as application state, and start a new scan with `Start` after completion.
+Treat checkpoints as trusted application state; do not accept arbitrary client-supplied tokens
+as validated scan progress. Authenticate them at the application boundary if they cross a
+trust boundary, and enforce storage/request size limits. Tokens can be several kilobytes;
+the encoded ceiling is 6 MiB and fragmented slot layouts increase their size. Start a new scan
+with `Start` after completion.
