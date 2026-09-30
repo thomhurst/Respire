@@ -2,6 +2,7 @@ namespace Respire.Testing;
 
 public sealed partial class RespireFakeServer
 {
+    // Command dispatch invokes these handlers synchronously while holding _gate.
     private readonly Dictionary<byte[], HashSet<Connection>> _subscribers = new(BinaryKeyComparer.Instance);
 
     private static FakeReply Ping(Connection connection, byte[][] args)
@@ -54,6 +55,8 @@ public sealed partial class RespireFakeServer
         foreach (var listener in listeners.ToArray())
         {
             if (listener.Closed || listener.Lifetime.IsCancellationRequested) continue;
+            // Count the active route even if this publication triggers its output limit.
+            // As with Redis, a receiver count is not an acknowledgement of delivery.
             receivers++;
             var bytes = listener.Resp3 ? resp3 ??= message.Encode(true) : resp2 ??= message.Encode(false);
             QueueOutputLocked(listener, bytes, push: true)?.Ready.TrySetResult();

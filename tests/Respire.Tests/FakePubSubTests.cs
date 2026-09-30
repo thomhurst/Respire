@@ -300,10 +300,11 @@ public class FakePubSubTests
         await slow.SendAsync("SUBSCRIBE", "slow");
         await Confirmation(slow, "subscribe", "slow", 1, 2);
         var payload = new byte[256 * 1024];
-        long receivers = 1;
-        for (var index = 0; index < 66 && receivers != 0; index++)
-            receivers = await publisher.PublishAsync("slow", payload).AsTask().WaitAsync(Limit);
-        await Assert.That(receivers).IsEqualTo(0);
+        // 63 encoded messages fit; the 64th exceeds 16 MiB once frame bytes are included.
+        // Even the publication that disconnects this receiver counts its active route.
+        for (var index = 0; index < 64; index++)
+            await Assert.That(await publisher.PublishAsync("slow", payload).AsTask().WaitAsync(Limit)).IsEqualTo(1);
+        await Assert.That(await publisher.PublishAsync("slow", payload).AsTask().WaitAsync(Limit)).IsEqualTo(0);
         await Assert.That(await publisher.SetAsync("still responsive", "yes")).IsTrue();
         await server.DisposeAsync().AsTask().WaitAsync(Limit);
     }

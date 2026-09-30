@@ -210,7 +210,9 @@ including when an after-execution fault holds the acknowledgement. Publications 
 for a subscriber to read. The fake disconnects a slow subscriber when its pending encoded
 push bytes would exceed 16 MiB, including a push currently waiting for the pipe to flush.
 This is a fixed test-fixture bound, not Redis's configurable output-buffer policy. Receiver
-counts do not guarantee delivery: a connection can close after being counted. Closing a
+counts do not guarantee delivery: a connection can close after being counted. The publication
+that exceeds the bound still counts the disconnected subscriber; subsequent publications do not.
+Closing a
 connection removes its routes; client/server disposal also cancels and joins pending output.
 The real client can reconnect and resubscribe, emitting its normal gap marker. Publications
 during a gap are lost; the fake does not retain or replay them. Caller cancellation alone
