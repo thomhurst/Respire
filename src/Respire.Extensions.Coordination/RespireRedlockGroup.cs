@@ -5,7 +5,10 @@ namespace Respire.Extensions.Coordination;
 /// <summary>Bounds work against each independent Redis node in a Redlock attempt.</summary>
 public sealed record RespireRedlockOptions
 {
-    /// <summary>Maximum time to wait for one node operation. Default is one second.</summary>
+    /// <summary>
+    /// Maximum time to wait for one node operation. Default is one second. Must be positive and at
+    /// most 4,294,967,294 milliseconds (about 49.7 days), the longest supported timer delay.
+    /// </summary>
     public TimeSpan NodeTimeout { get; init; } = TimeSpan.FromSeconds(1);
 
     /// <summary>Fraction of the lease subtracted for clock drift. Default is 0.01.</summary>
@@ -39,9 +42,7 @@ public readonly struct RespireRedlockAttempt : IAsyncDisposable
 public sealed class RespireRedlockGroup
 {
     private const int TokenLength = 32;
-    private readonly IRespireClient[] _clients;
-    private readonly RespireRedlockOptions _options;
-    private readonly TimeProvider _clock;
+    private readonly RespireRedlockNodes _nodes;
 
     /// <summary>Creates a Redlock group from an odd set of at least three independent clients.</summary>
     public RespireRedlockGroup(
@@ -50,20 +51,20 @@ public sealed class RespireRedlockGroup
         TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(clients);
-        _clients = clients.ToArray();
-        if (_clients.Length < 3 || (_clients.Length & 1) == 0)
+        var nodes = clients.ToArray();
+        if (nodes.Length < 3 || (nodes.Length & 1) == 0)
             throw new ArgumentException("Redlock requires an odd number of at least three independent clients.", nameof(clients));
-        if (_clients.Any(static client => client is null))
+        if (nodes.Any(static client => client is null))
             throw new ArgumentException("Redlock clients cannot contain null.", nameof(clients));
-        if (_clients.Distinct(ReferenceEqualityComparer.Instance).Count() != _clients.Length)
+        if (nodes.Distinct(ReferenceEqualityComparer.Instance).Count() != nodes.Length)
             throw new ArgumentException("Each Redlock node requires a distinct client instance.", nameof(clients));
 
-        _options = options ?? new RespireRedlockOptions();
-        if (_options.NodeTimeout <= TimeSpan.Zero)
-            throw new ArgumentOutOfRangeException(nameof(options), "NodeTimeout must be positive.");
-        if (!double.IsFinite(_options.DriftFactor) || _options.DriftFactor < 0 || _options.DriftFactor >= 1)
+        options ??= new RespireRedlockOptions();
+        if (options.NodeTimeout <= TimeSpan.Zero || options.NodeTimeout > RespireRedlockNodes.MaxNodeTimeout)
+            throw new ArgumentOutOfRangeException(nameof(options), "NodeTimeout must be positive and at most 4,294,967,294 milliseconds.");
+        if (!double.IsFinite(options.DriftFactor) || options.DriftFactor < 0 || options.DriftFactor >= 1)
             throw new ArgumentOutOfRangeException(nameof(options), "DriftFactor must be finite and in [0, 1).");
-        _clock = timeProvider ?? TimeProvider.System;
+        _nodes = new RespireRedlockNodes(nodes, options, timeProvider ?? TimeProvider.System);
     }
 
     /// <summary>Immediately tries to acquire a lease on a quorum of independent Redis nodes.</summary>
@@ -73,7 +74,8 @@ public sealed class RespireRedlockGroup
     /// <remarks>
     /// The returned validity subtracts elapsed acquisition time and the configured drift allowance
     /// plus two milliseconds. A failed or uncertain attempt releases its token from every node;
-    /// any node that cannot be reached relies on its bounded expiry.
+    /// any node that cannot be reached relies on its bounded expiry. A node that timed out can
+    /// still apply the acquisition after that cleanup, and then holds the token until expiry.
     /// </remarks>
     public async ValueTask<RespireRedlockAttempt> TryAcquireAsync(
         RespireKey key,
@@ -81,40 +83,88 @@ public sealed class RespireRedlockGroup
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (duration.Ticks / TimeSpan.TicksPerMillisecond < 1)
-            throw new ArgumentOutOfRangeException(nameof(duration), "Lease duration must be at least one millisecond.");
+        RespireRedlockNodes.ValidateDuration(duration, nameof(duration));
 
+        // One owned copy: every node, the handle, and cleanup must target the same key bytes.
+        key = key.Snapshot();
         var tokenBytes = RandomNumberGenerator.GetBytes(TokenLength);
         var token = new RespireLockToken(tokenBytes);
         CryptographicOperations.ZeroMemory(tokenBytes);
-        var started = _clock.GetTimestamp();
+        var started = _nodes.Clock.GetTimestamp();
+        _nodes.ValidateDeadline(started, duration, nameof(duration));
         bool[] acquired;
         try
         {
-            acquired = await RunOnNodesAsync(
+            acquired = await _nodes.RunAsync(
                 (client, cancellation) => client.Locks.TryTakeAsync(key, token, duration, cancellation),
                 cancellationToken).ConfigureAwait(false);
         }
         catch
         {
-            await ReleaseEverywhereAsync(key, token).ConfigureAwait(false);
+            await _nodes.ReleaseAsync(key, token).ConfigureAwait(false);
             throw;
         }
 
-        var completed = _clock.GetTimestamp();
-        var validity = CalculateValidity(duration, _clock.GetElapsedTime(started, completed), _options.DriftFactor);
-        if (acquired.Count(static success => success) >= Quorum && validity > TimeSpan.Zero)
-        {
-            return new RespireRedlockAttempt(new RespireRedlock(
-                _clients, key, token, duration, validity, completed, Quorum, _options, _clock));
-        }
+        if (_nodes.TryCreateLease(acquired, duration, started) is { } lease)
+            return new RespireRedlockAttempt(new RespireRedlock(_nodes, key, token, lease));
 
-        await ReleaseEverywhereAsync(key, token).ConfigureAwait(false);
+        await _nodes.ReleaseAsync(key, token).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         return default;
     }
+}
 
-    private int Quorum => _clients.Length / 2 + 1;
+/// <summary>Shared node fan-out, quorum, and timing rules for a group and its leases.</summary>
+internal sealed class RespireRedlockNodes
+{
+    /// <summary>Largest per-node timeout supported by <see cref="CancellationTokenSource.CancelAfter(TimeSpan)"/>.</summary>
+    internal static readonly TimeSpan MaxNodeTimeout = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
+
+    private readonly IRespireClient[] _clients;
+    private readonly TimeSpan _nodeTimeout;
+    private readonly double _driftFactor;
+
+    internal RespireRedlockNodes(IRespireClient[] clients, RespireRedlockOptions options, TimeProvider clock)
+    {
+        _clients = clients;
+        _nodeTimeout = options.NodeTimeout;
+        _driftFactor = options.DriftFactor;
+        Clock = clock;
+        Quorum = clients.Length / 2 + 1;
+    }
+
+    internal TimeProvider Clock { get; }
+
+    internal int Quorum { get; }
+
+    internal static void ValidateDuration(TimeSpan duration, string parameterName)
+    {
+        if (duration.Ticks / TimeSpan.TicksPerMillisecond < 1)
+            throw new ArgumentOutOfRangeException(parameterName, "Lease duration must be at least one millisecond.");
+    }
+
+    /// <summary>Rejects a lease whose local deadline cannot be represented, before any node is contacted.</summary>
+    internal void ValidateDeadline(long started, TimeSpan duration, string parameterName)
+    {
+        if (!TryAddDuration(started, duration, out _))
+            throw new ArgumentOutOfRangeException(parameterName, "Lease duration is too long to track locally.");
+    }
+
+    /// <summary>
+    /// Builds the lease state when a quorum succeeded with positive validity. The validity and the
+    /// deadline share one completion timestamp, so the deadline equals the start plus the
+    /// duration less drift, however long the process paused between samples.
+    /// </summary>
+    internal RespireRedlockLease? TryCreateLease(bool[] results, TimeSpan duration, long started)
+    {
+        if (results.Count(static success => success) < Quorum) return null;
+        var completed = Clock.GetTimestamp();
+        var validity = CalculateValidity(duration, Clock.GetElapsedTime(started, completed), _driftFactor);
+        if (validity <= TimeSpan.Zero) return null;
+        // ValidateDeadline proved started + duration fits; completed + validity cannot exceed it.
+        var validUntil = TryAddDuration(completed, validity, out var deadline) ? deadline : long.MaxValue;
+        return new RespireRedlockLease(duration, validity, validUntil);
+    }
 
     internal static TimeSpan CalculateValidity(TimeSpan duration, TimeSpan elapsed, double driftFactor)
     {
@@ -124,7 +174,7 @@ public sealed class RespireRedlockGroup
         return remainingTicks > 0 ? TimeSpan.FromTicks((long)remainingTicks) : TimeSpan.Zero;
     }
 
-    internal async ValueTask<bool[]> RunOnNodesAsync(
+    internal async ValueTask<bool[]> RunAsync(
         Func<IRespireClient, CancellationToken, ValueTask<bool>> operation,
         CancellationToken cancellationToken)
     {
@@ -134,18 +184,38 @@ public sealed class RespireRedlockGroup
         return await Task.WhenAll(pending).ConfigureAwait(false);
     }
 
-    internal async ValueTask<bool[]> ReleaseEverywhereAsync(RespireKey key, RespireLockToken token)
-        => await RunOnNodesAsync(
+    /// <summary>Releases a token everywhere; each node wait is bounded by the node timeout, not the caller.</summary>
+    internal async ValueTask<bool> ReleaseAsync(RespireKey key, RespireLockToken token)
+    {
+        var released = await RunAsync(
             (client, cancellation) => client.Locks.ReleaseAsync(key, token, cancellation),
             CancellationToken.None).ConfigureAwait(false);
+        return released.Count(static success => success) >= Quorum;
+    }
 
+    private bool TryAddDuration(long timestamp, TimeSpan duration, out long deadline)
+    {
+        try
+        {
+            deadline = checked(timestamp + (long)((decimal)duration.Ticks * Clock.TimestampFrequency / TimeSpan.TicksPerSecond));
+            return true;
+        }
+        catch (OverflowException)
+        {
+            deadline = 0;
+            return false;
+        }
+    }
+
+    // A failing, timed-out, or disposed node counts as unavailable, as the Redlock algorithm
+    // prescribes; only caller cancellation escapes so uncertain attempts can be cleaned up.
     private async Task<bool> RunOnNodeAsync(
         IRespireClient client,
         Func<IRespireClient, CancellationToken, ValueTask<bool>> operation,
         CancellationToken callerToken)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(callerToken);
-        timeout.CancelAfter(_options.NodeTimeout);
+        timeout.CancelAfter(_nodeTimeout);
         Task<bool>? command = null;
         try
         {
@@ -175,33 +245,23 @@ public sealed class RespireRedlockGroup
     }
 }
 
+/// <summary>One immutable lease generation, published atomically so readers never mix renewals.</summary>
+internal sealed record RespireRedlockLease(TimeSpan Duration, TimeSpan Validity, long ValidUntil);
+
 /// <summary>A Redlock lease acquired on a quorum; operations remain attached to supplied clients.</summary>
 public sealed class RespireRedlock : IAsyncDisposable
 {
-    private readonly IRespireClient[] _clients;
-    private readonly RespireRedlockOptions _options;
-    private readonly TimeProvider _clock;
-    private readonly int _quorum;
+    private readonly RespireRedlockNodes _nodes;
     private readonly SemaphoreSlim _operationGate = new(1, 1);
-    private long _validUntil;
-    private long _validityTicks;
-    private long _durationTicks;
+    private RespireRedlockLease _lease;
     private int _released;
 
-    internal RespireRedlock(
-        IRespireClient[] clients, RespireKey key, RespireLockToken token,
-        TimeSpan duration, TimeSpan validity, long started, int quorum,
-        RespireRedlockOptions options, TimeProvider clock)
+    internal RespireRedlock(RespireRedlockNodes nodes, RespireKey key, RespireLockToken token, RespireRedlockLease lease)
     {
-        _clients = clients;
-        Key = key.Snapshot();
+        _nodes = nodes;
+        Key = key;
         Token = token;
-        _durationTicks = duration.Ticks;
-        _validityTicks = validity.Ticks;
-        _validUntil = AddTimestampDuration(started, validity, clock.TimestampFrequency);
-        _quorum = quorum;
-        _options = options;
-        _clock = clock;
+        _lease = lease;
     }
 
     /// <summary>Lock key before each client's configured key prefix.</summary>
@@ -209,16 +269,17 @@ public sealed class RespireRedlock : IAsyncDisposable
     /// <summary>Random binary owner value stored on every node in the acquired quorum.</summary>
     public RespireLockToken Token { get; }
     /// <summary>Configured lease duration.</summary>
-    public TimeSpan Duration => TimeSpan.FromTicks(Interlocked.Read(ref _durationTicks));
+    public TimeSpan Duration => Volatile.Read(ref _lease).Duration;
     /// <summary>Validity after acquisition elapsed time and configured drift allowance.</summary>
-    public TimeSpan Validity => TimeSpan.FromTicks(Interlocked.Read(ref _validityTicks));
+    public TimeSpan Validity => Volatile.Read(ref _lease).Validity;
     /// <summary>Conservative estimate; it does not prove continued server ownership.</summary>
     public TimeSpan RemainingEstimate
     {
         get
         {
             if (Volatile.Read(ref _released) != 0) return TimeSpan.Zero;
-            var remaining = _clock.GetElapsedTime(_clock.GetTimestamp(), Interlocked.Read(ref _validUntil));
+            var clock = _nodes.Clock;
+            var remaining = clock.GetElapsedTime(clock.GetTimestamp(), Volatile.Read(ref _lease).ValidUntil);
             return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
         }
     }
@@ -226,21 +287,28 @@ public sealed class RespireRedlock : IAsyncDisposable
     public bool IsReleased => Volatile.Read(ref _released) != 0 || RemainingEstimate == TimeSpan.Zero;
 
     /// <summary>Renews this token on a quorum and recomputes validity from the new attempt.</summary>
+    /// <remarks>
+    /// Returns <see langword="false"/> without contacting nodes when the handle is already released
+    /// or locally expired. When a renewal is not confirmed on a quorum with positive validity,
+    /// including node timeouts and caller cancellation, the handle is marked released and the
+    /// token is removed best-effort from every node. A partial renewal leaves nodes with different
+    /// expiries, so the previous validity estimate no longer holds and the lease cannot be kept.
+    /// </remarks>
     public async ValueTask<bool> ResetExpiryAsync(
         TimeSpan duration,
         CancellationToken cancellationToken = default)
     {
-        if (duration.Ticks / TimeSpan.TicksPerMillisecond < 1)
-            throw new ArgumentOutOfRangeException(nameof(duration), "Lease duration must be at least one millisecond.");
+        RespireRedlockNodes.ValidateDuration(duration, nameof(duration));
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             if (IsReleased) return false;
-            var started = _clock.GetTimestamp();
+            var started = _nodes.Clock.GetTimestamp();
+            _nodes.ValidateDeadline(started, duration, nameof(duration));
             bool[] renewed;
             try
             {
-                renewed = await RunOnNodesAsync(
+                renewed = await _nodes.RunAsync(
                     (client, token) => client.Locks.ResetExpiryAsync(Key, Token, duration, token),
                     cancellationToken).ConfigureAwait(false);
             }
@@ -250,13 +318,9 @@ public sealed class RespireRedlock : IAsyncDisposable
                 throw;
             }
 
-            var completed = _clock.GetTimestamp();
-            var validity = RespireRedlockGroup.CalculateValidity(duration, _clock.GetElapsedTime(started, completed), _options.DriftFactor);
-            if (renewed.Count(static success => success) >= _quorum && validity > TimeSpan.Zero)
+            if (_nodes.TryCreateLease(renewed, duration, started) is { } lease)
             {
-                Interlocked.Exchange(ref _durationTicks, duration.Ticks);
-                Interlocked.Exchange(ref _validityTicks, validity.Ticks);
-                Interlocked.Exchange(ref _validUntil, AddTimestampDuration(completed, validity, _clock.TimestampFrequency));
+                Volatile.Write(ref _lease, lease);
                 return true;
             }
 
@@ -270,17 +334,18 @@ public sealed class RespireRedlock : IAsyncDisposable
     }
 
     /// <summary>Releases this token from every node; returns true when a quorum confirmed release.</summary>
+    /// <param name="cancellationToken">
+    /// Cancels only waiting for a concurrent renewal or release. Once started, the release runs to
+    /// completion on every node, bounded by <see cref="RespireRedlockOptions.NodeTimeout"/>.
+    /// </param>
+    /// <remarks>The handle stops reporting ownership before any node is contacted.</remarks>
     public async ValueTask<bool> ReleaseAsync(CancellationToken cancellationToken = default)
     {
         await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (Volatile.Read(ref _released) != 0) return false;
-            Interlocked.Exchange(ref _released, 1);
-            var released = await RunOnNodesAsync(
-                (client, token) => client.Locks.ReleaseAsync(Key, Token, token),
-                cancellationToken).ConfigureAwait(false);
-            return released.Count(static success => success) >= _quorum;
+            if (Interlocked.Exchange(ref _released, 1) != 0) return false;
+            return await _nodes.ReleaseAsync(Key, Token).ConfigureAwait(false);
         }
         finally
         {
@@ -297,57 +362,7 @@ public sealed class RespireRedlock : IAsyncDisposable
 
     private async ValueTask LoseOwnershipAsync()
     {
-        Interlocked.Exchange(ref _released, 1);
-        _ = await RunOnNodesAsync(
-            (client, token) => client.Locks.ReleaseAsync(Key, Token, token),
-            CancellationToken.None).ConfigureAwait(false);
-    }
-
-    private async ValueTask<bool[]> RunOnNodesAsync(
-        Func<IRespireClient, CancellationToken, ValueTask<bool>> operation,
-        CancellationToken cancellationToken)
-    {
-        var pending = new Task<bool>[_clients.Length];
-        for (var i = 0; i < _clients.Length; i++)
-            pending[i] = RunOnNodeAsync(_clients[i], operation, cancellationToken);
-        return await Task.WhenAll(pending).ConfigureAwait(false);
-    }
-
-    private static long AddTimestampDuration(long timestamp, TimeSpan duration, long timestampFrequency)
-        => checked(timestamp + (long)((decimal)duration.Ticks * timestampFrequency / TimeSpan.TicksPerSecond));
-
-    private async Task<bool> RunOnNodeAsync(
-        IRespireClient client,
-        Func<IRespireClient, CancellationToken, ValueTask<bool>> operation,
-        CancellationToken callerToken)
-    {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(callerToken);
-        timeout.CancelAfter(_options.NodeTimeout);
-        Task<bool>? command = null;
-        try
-        {
-            command = operation(client, timeout.Token).AsTask();
-            return await command.WaitAsync(timeout.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (callerToken.IsCancellationRequested)
-        {
-            Observe(command);
-            throw;
-        }
-        catch (Exception) when (!callerToken.IsCancellationRequested)
-        {
-            Observe(command);
-            return false;
-        }
-    }
-
-    private static void Observe(Task<bool>? task)
-    {
-        if (task is null || task.IsCompleted) return;
-        _ = task.ContinueWith(
-            static completed => _ = completed.Exception,
-            CancellationToken.None,
-            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
+        Volatile.Write(ref _released, 1);
+        _ = await _nodes.ReleaseAsync(Key, Token).ConfigureAwait(false);
     }
 }

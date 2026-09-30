@@ -133,12 +133,19 @@ Console.WriteLine($"Estimated lease time: {attempt.Lock.RemainingEstimate}");
 // Complete protected work within the estimated validity.
 ```
 
-Call `ResetExpiryAsync` before validity expires to renew on a quorum. Call `ReleaseAsync` to
-remove the token from all nodes. `RemainingEstimate` is local timing information; it cannot
-prove current ownership. Dispose the attempt to release best-effort. The clients remain owned
-by the caller.
+Call `ResetExpiryAsync` before validity expires to renew on a quorum. A renewal that a quorum
+does not confirm, including one ended by node timeouts or caller cancellation, ends the lease:
+the handle reports released and the token is removed best-effort from every node, because a
+partial renewal leaves nodes with different expiries. Acquire again if work must continue.
+
+Call `ReleaseAsync` to remove the token from all nodes. Its cancellation token only bounds the
+wait for a concurrent renewal; once started, release runs on every node within `NodeTimeout`.
+`RemainingEstimate` is local timing information; it cannot prove current ownership. Dispose the
+attempt to release best-effort. The clients remain owned by the caller.
 
 Redlock does not provide consensus or fencing tokens. Redis asynchronous replication, failover,
 partitions and clock drift can violate mutual exclusion. A node that cannot be reached during
-cleanup retains its lease until server-side expiry. Use a consensus-backed lock or a protected
+cleanup retains its lease until server-side expiry. A node that exceeds `NodeTimeout` counts as
+failed, but its command can still arrive after cleanup has run; that node then holds the token
+until expiry, which can make the next attempts on that key fail to reach a quorum. Use a consensus-backed lock or a protected
 resource that enforces fencing tokens when stale owners must be rejected.
