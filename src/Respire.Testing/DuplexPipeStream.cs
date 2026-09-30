@@ -2,7 +2,7 @@ using System.IO.Pipelines;
 
 namespace Respire.Testing;
 
-internal sealed class DuplexPipeStream(PipeReader reader, PipeWriter writer) : Stream
+internal sealed class DuplexPipeStream(PipeReader reader, PipeWriter writer, Action? onDispose = null) : Stream
 {
     private readonly Stream _input = reader.AsStream();
     private readonly Stream _output = writer.AsStream();
@@ -26,6 +26,7 @@ internal sealed class DuplexPipeStream(PipeReader reader, PipeWriter writer) : S
     {
         if (disposing && Interlocked.Exchange(ref _disposed, 1) == 0)
         {
+            onDispose?.Invoke();
             reader.CancelPendingRead();
             writer.CancelPendingFlush();
             _input.Dispose();
