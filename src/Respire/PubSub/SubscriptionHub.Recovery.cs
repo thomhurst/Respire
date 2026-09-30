@@ -67,7 +67,7 @@ internal sealed partial class SubscriptionHub
                 if (attempt < int.MaxValue) attempt++;
                 var delay = policy.GetDelay(attempt);
                 QueueConfiguredState(endpoint, RespireConnectionState.Reconnecting, failure, attempt, delay);
-                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(delay, _recoveryClock, cancellationToken).ConfigureAwait(false);
 
                 await _controlGate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try

@@ -60,41 +60,21 @@ public readonly struct RespireKey : IEquatable<RespireKey>
         ? Encoding.UTF8.GetByteCount(_string)
         : _bytes.Length;
 
-    // SnapshotTracking supplies binary keys, so cache matching reuses its owned wire bytes.
-    internal ReadOnlyMemory<byte> AsBytes()
-        => _string is not null ? Encoding.UTF8.GetBytes(_string) : _bytes;
-
-    // Prefixes must be non-overlapping and sorted by wire bytes.
-    internal bool StartsWithAny(ReadOnlyMemory<byte>[] prefixes)
+    internal bool StartsWithAny(Internal.BroadcastPrefixSet prefixes)
     {
-        if (_string is null) return MatchesPrefix(_bytes.Span, prefixes);
+        if (_string is null) return prefixes.Matches(_bytes.Span);
         var length = Encoding.UTF8.GetByteCount(_string);
         byte[]? rented = null;
         Span<byte> encoded = length <= 256 ? stackalloc byte[length] : (rented = ArrayPool<byte>.Shared.Rent(length));
         try
         {
             var written = Encoding.UTF8.GetBytes(_string, encoded);
-            return MatchesPrefix(encoded[..written], prefixes);
+            return prefixes.Matches(encoded[..written]);
         }
         finally
         {
             if (rented is not null) ArrayPool<byte>.Shared.Return(rented);
         }
-    }
-
-    private static bool MatchesPrefix(ReadOnlySpan<byte> key, ReadOnlyMemory<byte>[] prefixes)
-    {
-        var low = 0;
-        var high = prefixes.Length - 1;
-        while (low <= high)
-        {
-            var middle = low + ((high - low) / 2);
-            var prefix = prefixes[middle].Span;
-            if (key.StartsWith(prefix)) return true;
-            if (key.SequenceCompareTo(prefix) < 0) high = middle - 1;
-            else low = middle + 1;
-        }
-        return false;
     }
 
     /// <summary>Returns a copy of this key with <paramref name="prefix"/> prepended.</summary>

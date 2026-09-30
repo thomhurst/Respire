@@ -3,6 +3,7 @@ using System.Diagnostics.Metrics;
 using System.Reflection;
 using System.Text;
 using Microsoft.Extensions.Logging;
+using Respire.Internal;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -135,9 +136,13 @@ public class PubSubReconnectPolicyTests
     {
         await using var server = new FakeRespServer(2, Confirmation) { CloseConnectionAfterCommand = 3 };
         await using var client = RespireClient.Create(Options(server.Port, Policy(milliseconds: 500)));
-        await using var retained = await client.SubscribeAsync("ch");
-        await using var removed = await client.SubscribeAsync("ch");
+        var clock = new GatedRecoveryClock();
+        await using var hub = new SubscriptionHub(client.Core, clock);
         using var deadline = new CancellationTokenSource(Deadline);
+        ValueTask<RespireSubscription> Subscribe(string name)
+            => hub.SubscribeAsync(SubscriptionKind.Channel, [name], new(), deadline.Token);
+        await using var retained = await Subscribe("ch");
+        await using var removed = await Subscribe("ch");
         var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
@@ -145,16 +150,27 @@ public class PubSubReconnectPolicyTests
             if (change.NextReconnectDelay is not null) waiting.TrySetResult();
             if (change.State == RespireConnectionState.Connected) recovered.TrySetResult();
         };
-        await Assert.That(async () => await client.SubscribeAsync("lost", deadline.Token)).Throws<RespireConnectionException>();
-        await waiting.Task.WaitAsync(deadline.Token);
-        await removed.DisposeAsync();
-        await Assert.That(async () => await client.SubscribeAsync("new", deadline.Token)).ThrowsExactly<RespireConnectionException>();
-        await recovered.Task.WaitAsync(deadline.Token);
-        await Assert.That(server.ReceivedCommands.Count(command => command == "SUBSCRIBE ch")).IsEqualTo(3);
-        await Assert.That(server.ReceivedCommands.Contains("SUBSCRIBE new")).IsFalse();
-        await Assert.That(await removed.Completion).IsEqualTo(RespireSubscriptionEndReason.Disposed);
-        await Assert.That(retained.IsDisposed).IsFalse();
-        await client.DisposeAsync();
+        try
+        {
+            await Assert.That(async () => await Subscribe("lost")).Throws<RespireConnectionException>();
+            await waiting.Task.WaitAsync(deadline.Token);
+            var timer = await clock.Created.Task.WaitAsync(deadline.Token);
+            await Assert.That(timer.DueTime).IsEqualTo(TimeSpan.FromMilliseconds(500));
+            await removed.DisposeAsync();
+            await Assert.That(async () => await Subscribe("new")).ThrowsExactly<RespireConnectionException>();
+            await Assert.That(server.CommandsSeen).IsEqualTo(3);
+            await Assert.That(recovered.Task.IsCompleted).IsFalse();
+            timer.Fire();
+            await recovered.Task.WaitAsync(deadline.Token);
+            await Assert.That(server.ReceivedCommands.Count(command => command == "SUBSCRIBE ch")).IsEqualTo(3);
+            await Assert.That(server.ReceivedCommands.Contains("SUBSCRIBE new")).IsFalse();
+            await Assert.That(await removed.Completion).IsEqualTo(RespireSubscriptionEndReason.Disposed);
+            await Assert.That(retained.IsDisposed).IsFalse();
+        }
+        finally
+        {
+            await hub.DisposeAsync();
+        }
     }
 
     [Test]
@@ -523,4 +539,29 @@ public class PubSubReconnectPolicyTests
         await disposed.Task.WaitAsync(Deadline);
         await Assert.That(await subscription.Completion).IsEqualTo(RespireSubscriptionEndReason.ClientDisposed);
     }
+    private sealed class GatedRecoveryClock : TimeProvider
+    {
+        internal TaskCompletionSource<GatedTimer> Created { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new GatedTimer(callback, state, dueTime);
+            Created.SetResult(timer);
+            return timer;
+        }
+    }
+
+    private sealed class GatedTimer(TimerCallback callback, object? state, TimeSpan dueTime) : ITimer
+    {
+        private int _finished;
+        internal TimeSpan DueTime { get; } = dueTime;
+        internal void Fire()
+        {
+            if (Interlocked.Exchange(ref _finished, 1) == 0) callback(state);
+        }
+        public bool Change(TimeSpan dueTime, TimeSpan period) => Volatile.Read(ref _finished) == 0;
+        public void Dispose() => Interlocked.Exchange(ref _finished, 1);
+        public ValueTask DisposeAsync() { Dispose(); return default; }
+    }
+
 }

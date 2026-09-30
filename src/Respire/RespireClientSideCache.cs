@@ -46,19 +46,7 @@ public sealed record RespireClientSideCacheOptions
             throw new RespireConfigurationException("ClientSideCache.BroadcastPrefixes cannot be null.");
         if (TrackingMode != RespireClientTrackingMode.Broadcast && BroadcastPrefixes.Count != 0)
             throw new RespireConfigurationException("ClientSideCache.BroadcastPrefixes requires Broadcast tracking.");
-        var prefixes = new RespireKey[BroadcastPrefixes.Count];
-        var bytes = new byte[prefixes.Length][];
-        for (var index = 0; index < prefixes.Length; index++)
-        {
-            var argument = BroadcastPrefixes[index].AsValue();
-            bytes[index] = new byte[argument.GetWireLength()];
-            argument.WriteWirePayload(bytes[index]);
-            for (var previous = 0; previous < index; previous++)
-                if (bytes[index].AsSpan().StartsWith(bytes[previous]) || bytes[previous].AsSpan().StartsWith(bytes[index]))
-                    throw new RespireConfigurationException("ClientSideCache.BroadcastPrefixes must not overlap or repeat.");
-            prefixes[index] = new RespireKey(bytes[index]);
-        }
-        return this with { BroadcastPrefixes = Array.AsReadOnly(prefixes) };
+        return this with { BroadcastPrefixes = BroadcastPrefixSet.Create(BroadcastPrefixes) };
     }
 }
 
@@ -93,7 +81,7 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
     private const int EntryOverhead = 64;
 
     private readonly RespireClientSideCacheOptions _options;
-    private readonly ReadOnlyMemory<byte>[] _broadcastPrefixes;
+    private readonly BroadcastPrefixSet _broadcastPrefixes;
     private readonly ConcurrentDictionary<RespireKey, InflightRead> _inflight = new();
     private readonly Lock _queryLock = new();
     private CacheStore _store;
@@ -109,9 +97,8 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
     {
         _options = options;
         _broadcastPrefixes = options.TrackingMode == RespireClientTrackingMode.Broadcast
-            ? options.BroadcastPrefixes.Select(static prefix => prefix.AsBytes()).ToArray()
-            : [];
-        Array.Sort(_broadcastPrefixes, static (left, right) => left.Span.SequenceCompareTo(right.Span));
+            ? BroadcastPrefixSet.Create(options.BroadcastPrefixes)
+            : BroadcastPrefixSet.Empty;
         _store = new CacheStore(options, RecordEviction);
     }
 
@@ -192,18 +179,20 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
     {
         var query = request.Query.Snapshot();
         var primaryKey = request.PrimaryKey;
+        var dependencies = CreateDependencies(operation, in query, in primaryKey);
         return new QueryReadToken(
             query,
-            CreateDependencies(operation, in query, in primaryKey),
+            dependencies,
             Volatile.Read(ref _queryEpoch),
             Volatile.Read(ref _continuityEpoch),
-            Volatile.Read(ref _store));
+            Volatile.Read(ref _store),
+            CanTrackAll(dependencies));
     }
 
     internal void CompleteRead(in QueryReadToken token, in RespValue response, bool allowInsert)
     {
         if (!allowInsert
-            || !CanTrackAll(token.Dependencies)
+            || !token.CanCache
             || Volatile.Read(ref _queryEpoch) != token.QueryEpoch
             || Volatile.Read(ref _continuityEpoch) != token.ContinuityEpoch
             || !ReferenceEquals(Volatile.Read(ref _store), token.Store))
@@ -241,11 +230,19 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             token.Dependencies,
             Volatile.Read(ref _queryEpoch),
             Volatile.Read(ref _continuityEpoch),
-            Volatile.Read(ref _store));
+            Volatile.Read(ref _store),
+            token.CanCache);
 
     internal ReadToken BeginRead(in RespireKey key)
     {
         var ownedKey = key.Snapshot();
+        if (!CanTrack(in ownedKey))
+        {
+            // Keep owned wire arguments without registering an invalidation generation for
+            // a key that can never be cached. Coverage is immutable for this coordinator.
+            return new ReadToken(new InflightRead(ownedKey, canCache: false) { Readers = 1 }, 0,
+                Volatile.Read(ref _continuityEpoch), Volatile.Read(ref _store));
+        }
         while (true)
         {
             var state = _inflight.GetOrAdd(ownedKey, static key => new InflightRead(key));
@@ -274,7 +271,7 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             try
             {
                 if (allowInsert
-                    && CanTrack(state.Key)
+                    && state.CanCache
                     && state.Generation == token.Generation
                     && Volatile.Read(ref _continuityEpoch) == token.ContinuityEpoch
                     && ReferenceEquals(Volatile.Read(ref _store), token.Store))
@@ -288,8 +285,11 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
                 if (state.Readers == 0)
                 {
                     state.Retired = true;
-                    ((ICollection<KeyValuePair<RespireKey, InflightRead>>)_inflight)
-                        .Remove(new KeyValuePair<RespireKey, InflightRead>(state.Key, state));
+                    if (state.CanCache)
+                    {
+                        ((ICollection<KeyValuePair<RespireKey, InflightRead>>)_inflight)
+                            .Remove(new KeyValuePair<RespireKey, InflightRead>(state.Key, state));
+                    }
                 }
             }
         }
@@ -304,11 +304,11 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
     }
 
     private bool CanTrack(in RespireKey key)
-        => _broadcastPrefixes.Length == 0 || key.StartsWithAny(_broadcastPrefixes);
+        => _broadcastPrefixes.Contains(in key);
 
     private bool CanTrackAll(RespireKey[] keys)
     {
-        if (_broadcastPrefixes.Length == 0) return true;
+        if (_broadcastPrefixes.Count == 0) return true;
         foreach (var key in keys)
             if (!CanTrack(in key)) return false;
         return true;
@@ -706,11 +706,13 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
         RespireKey[] Dependencies,
         long QueryEpoch,
         long ContinuityEpoch,
-        CacheStore Store);
+        CacheStore Store,
+        bool CanCache);
 
-    internal sealed class InflightRead(RespireKey key)
+    internal sealed class InflightRead(RespireKey key, bool canCache = true)
     {
         public RespireKey Key { get; } = key;
+        public bool CanCache { get; } = canCache;
         public long Generation;
         public int Readers;
         public bool Retired;

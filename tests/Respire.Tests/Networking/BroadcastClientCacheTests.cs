@@ -198,6 +198,37 @@ public class BroadcastClientCacheTests
         await Assert.That(cache.TryGet(in empty, out _)).IsFalse();
     }
 
+    [Test]
+    public async Task DirectCoordinatorOwnsAndValidatesItsPrefixSet()
+    {
+        byte[] prefix = [(byte)'a'];
+        var cache = new ClientSideCacheCoordinator(Broadcast([prefix]));
+        prefix[0] = (byte)'z';
+        RespireKey covered = "a:key";
+        RespireKey uncovered = "z:key";
+        var first = cache.BeginRead(in covered);
+        var second = cache.BeginRead(in uncovered);
+        var response = RespValue.BulkString("value");
+        cache.CompleteRead(in first, in response, allowInsert: true);
+        cache.CompleteRead(in second, in response, allowInsert: true);
+        await Assert.That(cache.TryGet(in covered, out _)).IsTrue();
+        await Assert.That(cache.TryGet(in uncovered, out _)).IsFalse();
+        await Assert.That(() => new ClientSideCacheCoordinator(Broadcast(["z", "ab", "x", "a"])))
+            .ThrowsExactly<RespireConfigurationException>();
+    }
+
+    [Test]
+    public async Task OneEmptyPrefixTracksEveryKey()
+    {
+        await using var server = new FakeRespServer(Hello, FakeRespServer.OkReply, Old);
+        await using var client = await RespireClient.ConnectAsync(Options(server, [RespireKey.Empty]));
+        await Assert.That(await client.GetStringAsync("any:key")).IsEqualTo("old");
+        await Assert.That(await client.GetStringAsync("any:key")).IsEqualTo("old");
+        await Assert.That(server.ReceivedArguments[1].Length).IsEqualTo(6);
+        await Assert.That(server.ReceivedArguments[1][5].Length).IsEqualTo(0);
+        await Assert.That(server.ReceivedCommands.Count(command => command == "GET any:key")).IsEqualTo(1);
+    }
+
     private static RespireClientSideCacheOptions Broadcast(IReadOnlyList<RespireKey> prefixes)
         => new() { TrackingMode = RespireClientTrackingMode.Broadcast, BroadcastPrefixes = prefixes };
 
