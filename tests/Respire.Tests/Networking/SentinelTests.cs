@@ -480,6 +480,7 @@ public class SentinelTests
     }
 
     [Test]
+    [NotInParallel]
     public async Task ConnectAsync_GivesPrimaryFreshConnectTimeoutAfterSlowDiscovery()
     {
         await using var primary = new FakeRespServer(
@@ -497,8 +498,9 @@ public class SentinelTests
             SentinelPrimaryName = "mymaster",
             Password = "redis-secret",
             SentinelPassword = string.Empty,
-            // Each phase fits comfortably, but their combined 2.4 seconds exceeds this timeout.
-            // Reusing discovery's budget for the primary connection would therefore still fail.
+            // Each phase fits, but their combined 2.4 seconds exceeds the 2-second discovery budget.
+            // Run alone so parallel test load cannot consume a phase's scheduling headroom.
+            // Reusing discovery's token for the primary connection would therefore still fail.
             CommandTimeout = TimeSpan.FromSeconds(2),
             ConnectTimeout = TimeSpan.FromSeconds(3),
         });

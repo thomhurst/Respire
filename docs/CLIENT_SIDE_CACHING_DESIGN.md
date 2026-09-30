@@ -67,9 +67,23 @@ which it can prove the full dependency set:
   `VISMEMBER`, `VLINKS`, `VRANGE`, `VSIM`).
 
 Typed APIs, catalog `ExecuteAsync`, interpolated commands, and `GetLeaseAsync` use the same policy.
-`GET` and `MGET` retain optimized per-key storage: one entry serves every typed representation,
-and `MGET` sends only misses. Other reads are cached by exact command invocation, including command
-name and ordered wire-equivalent arguments.
+Typed `GET` and `MGET` retain optimized per-key storage: one entry serves every typed GET
+shape and typed MGET fetches only misses. Raw GET/MGET retain exact-query identities by default; coalescing uses the typed per-key entries.
+With `ReuseHashFields = true`, immediate HMGET (typed, catalog, string, or interpolated) uses HGET identities for individual
+fields and sends only misses in one HMGET. Cached nulls, field order, and duplicates are
+preserved; raw arguments support binary fields. The entire returned array is validated before
+any field is published. Each field remains dependent on the physical hash key, so invalidation
+removes all field projections and existing epochs reject stale in-flight insertion. Hash and
+string multi-read hit/miss statistics count each field/key lookup. These cached compositions
+can contain values read at different times; they are not atomic server snapshots.
+The option defaults to false because per-field entries and independently owned responses cost
+more allocations and CPU than an exact-query entry for small responses. The default HMGET path
+and other replies are stored by exact command invocation, including command name and ordered
+wire-equivalent arguments. With both options enabled, an identical physical hash key and ordered
+missing-field list share one HMGET producer. Each waiter merges the owned reply into its own
+cached values and output indexes. Different missing lists proceed independently. The existing
+coordinator detaches canceled waiters and ends joining on invalidation or continuity loss.
+Hashes outside broadcast coverage use exact-query handling without per-field lookup overhead.
 
 Commands marked with nondeterministic output (`DUMP`, relative TTL, the core cursor scans), random
 commands, probabilistic structures, blocking reads, scripts/functions, time series, Search,
@@ -252,7 +266,7 @@ The implementation is covered by deterministic wire, concurrency, and Redis inte
 
 - tracked handshake and atomic prelude validation;
 - scalar, negative, aggregate, lease, raw/catalog, structured-command, argument-identity, and
-  partial-hit `MGET` behavior;
+  partial-hit `MGET` and `HMGET` behavior, including shared `HGET` fields and malformed replies;
 - single-key and multi-key projection invalidation, typed conversion, and local mutation;
 - explicit exclusion of cursor, random, time-varying, probabilistic, and blocking reads;
 - key and null invalidation pushes;

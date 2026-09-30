@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Partial cached hash reads
+
+With `ClientSideCache.ReuseHashFields = true`, immediate HMGET reads reuse cached HGET fields
+and fetch remaining fields in one request,
+including typed and raw calls. Field order, duplicates, binary raw arguments, missing values,
+Cluster redirects, and hash-key invalidation retain their normal contracts. Malformed replies
+cannot publish partial field entries. Raw MGET uses exact-query caching by default and the typed
+per-key path when coalescing is enabled. Typed MGET retains its partial-hit behavior. The option defaults to false: field reuse reduces
+network payload for overlapping requests at the cost of additional cache metadata and allocations.
+When coalescing is also enabled, identical ordered missing fields share one HMGET request while
+independent lists proceed separately. Hashes outside broadcast prefix coverage bypass field reuse.
+With field reuse enabled, hit/miss counters count each field lookup, including duplicates; compare
+these separately from default exact-query statistics.
+
 ### Typed key notifications
 
 Added binary-safe keyspace, keyevent, and Redis 8.8 subkey channel factories and allocation-free notification parsing. Explicit physical-key prefixes, database scopes, unknown events, and malformed-frame handling are documented. Notification descriptors are server-owned and cannot be published. Cluster delivery remains #298; subscriptions never change server configuration.
