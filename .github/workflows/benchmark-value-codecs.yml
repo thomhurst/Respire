@@ -5,6 +5,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
     paths:
+      - 'Directory.Packages.props'
       - 'src/Respire/Compression/**'
       - 'src/Respire.Compression.Lz4/**'
       - 'src/Respire.Compression.Zstd/**'
@@ -22,6 +23,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  report-tests:
+    name: Validate codec report
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: python3 -m unittest discover -s .github/scripts -p test_value_codec_report.py
   codecs:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'benchmark-value-codecs')
     name: Value codecs (${{ matrix.framework }}, ${{ matrix.direction }})
@@ -51,7 +58,6 @@ jobs:
           lscpu > results/cpu.txt
           dotnet build benchmarks/Respire.Benchmarks -c Release -f "$FRAMEWORK" > results/build.log 2>&1
           dotnet list benchmarks/Respire.Benchmarks package --include-transitive > results/packages.txt
-          python3 -m unittest discover -s .github/scripts -p test_value_codec_report.py
       - name: Validate, inspect a representative case, then measure
         env:
           FRAMEWORK: ${{ matrix.framework }}

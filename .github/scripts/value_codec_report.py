@@ -1,7 +1,6 @@
 """Validate focused BDN results and join measured costs to checked payload sizes."""
 
 import argparse
-import itertools
 import json
 import math
 from pathlib import Path
@@ -27,8 +26,9 @@ def generate(root, phase, direction):
             raise ValueError(f"Payload metadata changed across launches: {key}")
         metadata[key] = item
 
-    expected = set(itertools.product((64, 16384), ("RepeatedText", "RandomBytes"), (0, 1024),
-                                     ("Raw", "Brotli", "Deflate", "Lz4", "Zstd")))
+    # Setup emits every codec for each input independently of which method is timed.
+    # Missing methods therefore remain detectable without a second parameter matrix.
+    expected = set(metadata)
     if phase == "representative":
         expected = {(16384, "RepeatedText", 1024, "Brotli")}
     rows = {}
@@ -46,8 +46,12 @@ def generate(root, phase, direction):
         allocated = case["Memory"]["BytesAllocatedPerOperation"]
         if allocated is None or not math.isfinite(allocated) or allocated < 0:
             raise ValueError(f"Missing allocation measurement: {key}")
+        raw_key = (*key[:3], "Raw")
+        for required in (key, raw_key):
+            if required not in metadata:
+                raise ValueError(f"Missing size metadata for {phase}: {required}")
         item = metadata[key]
-        raw = metadata[(*key[:3], "Raw")]
+        raw = metadata[raw_key]
         if raw["EncodedBytes"] != key[0] or item["PayloadSha256"] != raw["PayloadSha256"]:
             raise ValueError(f"Codec and disabled baseline used different payloads: {key}")
         rows[key] = dict(item, Direction=direction, MeanNanoseconds=statistics["Mean"],
@@ -55,6 +59,8 @@ def generate(root, phase, direction):
                          AllocatedBytes=allocated)
         if key == (16384, "RepeatedText", 1024, "Brotli"):
             representative_filter = case["FullName"]
+    if phase != "representative" and len(expected) != 40:
+        raise ValueError(f"Expected metadata for 40 cases in {phase}, got {len(expected)}")
     if rows.keys() != expected:
         raise ValueError(f"Incomplete benchmark matrix: missing={expected - rows.keys()}, extra={rows.keys() - expected}")
     if phase == "validation":

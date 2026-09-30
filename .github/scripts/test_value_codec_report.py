@@ -54,6 +54,16 @@ class ValueCodecReportTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     value_codec_report.generate(root, "validation", "Encode")
 
+    def test_missing_size_metadata_names_the_case(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.fixture(root)
+            log = root / "validation.log"
+            lines = log.read_text(encoding="utf-8").splitlines()
+            log.write_text("\n".join(lines[1:]), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Missing size metadata.*Raw"):
+                value_codec_report.generate(root, "validation", "Encode")
+
     def test_changed_payload_between_launches_cannot_report_success(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
