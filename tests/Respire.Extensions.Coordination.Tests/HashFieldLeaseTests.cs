@@ -62,6 +62,37 @@ public class HashFieldLeaseTests
     }
 
     [Test]
+    public async Task ExpiringHashKeyIsRejectedBeforeLeaseFieldIsWritten()
+    {
+        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions() with { Connections = 1 });
+        await client.Hashes.SetAsync("registry", "unrelated", "value");
+        await client.Keys.ExpireAsync("registry", RespireExpiry.In(TimeSpan.FromSeconds(30)));
+        var coordination = new RespireCoordination(client);
+
+        var error = await Assert.That(async () => await coordination.TryAcquireLeaseAsync(
+                "registry", "worker", TimeSpan.FromSeconds(5)))
+            .Throws<RespireServerException>();
+        await Assert.That(error!.Message).Contains("hash key without key expiration");
+        await Assert.That(await client.Hashes.GetBytesAsync("registry", "worker")).IsNull();
+    }
+
+    [Test]
+    public async Task LeaseDurationReportsWholeMillisecondsAppliedByRedis()
+    {
+        await using var fixture = await RespireContainerFixture.StartAsync(new() { Image = "redis:7.4-alpine" });
+        await using var client = await RespireClient.ConnectAsync(fixture.CreateOptions() with { Connections = 1 });
+        var coordination = new RespireCoordination(client);
+        var requested = TimeSpan.FromTicks(TimeSpan.TicksPerMillisecond * 1500 + 7);
+        await using var lease = await coordination.TryAcquireLeaseAsync("registry", "worker", requested)
+            ?? throw new InvalidOperationException("Expected lease acquisition.");
+
+        await Assert.That(lease.Duration).IsEqualTo(TimeSpan.FromMilliseconds(1500));
+        await Assert.That(await lease.ResetExpiryAsync(requested)).IsTrue();
+        await Assert.That(lease.Duration).IsEqualTo(TimeSpan.FromMilliseconds(1500));
+    }
+
+    [Test]
     public async Task ClusterKeepsHashFieldLeaseOperationsOnThePrefixedSlotOwner()
     {
         await using var fixture = await RespireContainerFixture.StartAsync(new()

@@ -40,6 +40,9 @@ public sealed class RespireCoordination
             end
             return redis.error_reply(capability.err)
         end
+        if redis.call('PTTL', KEYS[1]) >= 0 then
+            return redis.error_reply('ERR coordination leases require a hash key without key expiration')
+        end
         if redis.call('HSETNX', KEYS[1], ARGV[1], ARGV[2]) == 0 then return false end
         local expiry = redis.pcall('HPEXPIRE', KEYS[1], ARGV[3], 'FIELDS', 1, ARGV[1])
         if type(expiry) == 'table' and expiry.err then
@@ -72,7 +75,7 @@ public sealed class RespireCoordination
             return redis.error_reply(ttl.err)
         end
         return ttl[1] > 0 and 1 or 0
-        """);
+        """, readOnly: true);
 
     private static readonly RespireScript ReleaseHashFieldLease = RespireScript.Create("""
         if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[2] then return 0 end
@@ -162,7 +165,9 @@ public sealed class RespireCoordination
             [field, owner.Bytes, milliseconds], cancellationToken).ConfigureAwait(false);
         if (response.IsNull || response.AsInteger() == 0) return null;
         cancellationToken.ThrowIfCancellationRequested();
-        return new RespireCoordinationLease(this, hashKey, field, owner, duration, started);
+        var appliedDuration = TimeSpan.FromMilliseconds(milliseconds);
+        var lease = new RespireCoordinationLease(this, hashKey, field, owner, appliedDuration, started);
+        return lease.RemainingEstimate > TimeSpan.Zero ? lease : null;
     }
 
     /// <summary>Waits for and acquires a named lease stored in a Redis hash field.</summary>
