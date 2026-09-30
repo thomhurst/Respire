@@ -68,11 +68,12 @@ jobs:
                 --artifacts "$GITHUB_WORKSPACE/cache-results/$phase"
             ) > "$GITHUB_WORKSPACE/cache-$phase.log" 2>&1
           done
-      - name: Require completed cases and allocation-free hits
+      - name: Require completed cases and no extra hit allocations
         shell: python
         run: |
           import json
           from pathlib import Path
+          hit_allocations = {}
           for phase in ("validation", "baseline-a", "candidate", "baseline-b"):
               reports = list(Path("cache-results", phase, "results").glob("*-report-full-compressed.json"))
               assert len(reports) == 1, f"Missing or duplicate report: {phase}"
@@ -82,13 +83,17 @@ jobs:
               for case in cases:
                   assert case["Statistics"] and case["Statistics"]["Mean"] > 0, case["FullName"]
                   if phase != "validation" and case["Method"] == "Hit":
-                      assert case["Memory"]["BytesAllocatedPerOperation"] == 0, case["FullName"]
+                      hit_allocations.setdefault(phase, []).append(case["Memory"]["BytesAllocatedPerOperation"])
               metrics = [json.loads(line.split("CACHE_TRACKING_PROCESS_METRICS ", 1)[1])
                          for line in Path(f"cache-{phase}.log").read_text(encoding="utf-8").splitlines()
                          if line.startswith("CACHE_TRACKING_PROCESS_METRICS ")]
               expected_modes = {"OptIn", "Broadcast", "BroadcastPrefix"} if expected == 6 else {"OptIn"}
               assert {row["Mode"] for row in metrics} == expected_modes, phase
               assert all(row["elapsedSeconds"] > 0 and row["cpuMilliseconds"] >= 0 and row["allocatedBytes"] >= 0 for row in metrics)
+          # GetStringAsync materializes an owned string even on a hit (64 B for this fixture).
+          # Compare against both old-build controls instead of claiming this public API allocates zero.
+          baseline_limit = min(hit_allocations["baseline-a"] + hit_allocations["baseline-b"])
+          assert all(value <= baseline_limit for value in hit_allocations["candidate"]), hit_allocations
       - name: Publish mode and build comparisons
         if: always()
         shell: bash

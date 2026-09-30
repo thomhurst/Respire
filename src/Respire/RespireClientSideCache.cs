@@ -93,7 +93,7 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
     private const int EntryOverhead = 64;
 
     private readonly RespireClientSideCacheOptions _options;
-    private readonly byte[][] _broadcastPrefixes;
+    private readonly ReadOnlyMemory<byte>[] _broadcastPrefixes;
     private readonly ConcurrentDictionary<RespireKey, InflightRead> _inflight = new();
     private readonly Lock _queryLock = new();
     private CacheStore _store;
@@ -109,13 +109,7 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
     {
         _options = options;
         _broadcastPrefixes = options.TrackingMode == RespireClientTrackingMode.Broadcast
-            ? options.BroadcastPrefixes.Select(static prefix =>
-            {
-                var argument = prefix.AsValue();
-                var bytes = new byte[argument.GetWireLength()];
-                argument.WriteWirePayload(bytes);
-                return bytes;
-            }).ToArray()
+            ? options.BroadcastPrefixes.Select(static prefix => prefix.AsBytes()).ToArray()
             : [];
         _store = new CacheStore(options, RecordEviction);
     }

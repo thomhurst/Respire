@@ -60,7 +60,11 @@ public readonly struct RespireKey : IEquatable<RespireKey>
         ? Encoding.UTF8.GetByteCount(_string)
         : _bytes.Length;
 
-    internal bool StartsWithAny(byte[][] prefixes)
+    // SnapshotTracking supplies binary keys, so cache matching reuses its owned wire bytes.
+    internal ReadOnlyMemory<byte> AsBytes()
+        => _string is not null ? Encoding.UTF8.GetBytes(_string) : _bytes;
+
+    internal bool StartsWithAny(ReadOnlyMemory<byte>[] prefixes)
     {
         if (_string is null) return MatchesPrefix(_bytes.Span, prefixes);
         var length = Encoding.UTF8.GetByteCount(_string);
@@ -77,10 +81,10 @@ public readonly struct RespireKey : IEquatable<RespireKey>
         }
     }
 
-    private static bool MatchesPrefix(ReadOnlySpan<byte> key, byte[][] prefixes)
+    private static bool MatchesPrefix(ReadOnlySpan<byte> key, ReadOnlyMemory<byte>[] prefixes)
     {
         foreach (var prefix in prefixes)
-            if (key.StartsWith(prefix)) return true;
+            if (key.StartsWith(prefix.Span)) return true;
         return false;
     }
 

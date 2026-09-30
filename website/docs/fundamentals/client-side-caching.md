@@ -118,8 +118,9 @@ continuity use the same eviction and stale-insertion checks as `OptIn`.
 RESP3 remains required. Standalone, discovered Sentinel data connections, and Redis/Valkey
 Cluster data nodes retain the selected configuration; Cluster slot and database restrictions
 still apply. Blocking/dedicated commands, batches, and transactions continue to bypass caching.
-Changing mode or prefixes requires creating a new client. `Broadcast` can use one in-flight
-command slot; `OptIn` needs two for its validated command prefix.
+Changing mode or prefixes requires creating a new client. Non-Cluster `Broadcast` clients can
+use one in-flight command slot. `OptIn` needs two for its validated command prefix, and Cluster
+caching needs two in either mode for atomic `ASKING` plus command redirects.
 
 Redis documents that BCAST trades per-read tracking entries for invalidations on all matching
 writes, even when this client never read those keys. More prefixes add server work, and broad

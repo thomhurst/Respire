@@ -144,6 +144,16 @@ public class BroadcastClientCacheTests
     }
 
     [Test]
+    public async Task ClusterBroadcastRequiresTwoSlotsForAskingBeforeConnecting()
+    {
+        await Assert.That(() => RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new("localhost", 1)], UseCluster = true,
+            MaxInflightCommands = 1, ClientSideCache = Broadcast([]),
+        })).ThrowsExactly<RespireConfigurationException>();
+    }
+
+    [Test]
     public async Task PrefixMatchingHandlesUnicodeAndLongKeysWithoutChangingBinaryIdentity()
     {
         var cache = new ClientSideCacheCoordinator(Broadcast(["é:", "long:"]));

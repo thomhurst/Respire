@@ -18,11 +18,11 @@ public class BroadcastClientCacheIntegrationTests(RedisTestContainer fixture)
         var key = prefix + "key";
         var options = RespireOptions.Parse(fixture.ConnectionString) with { AllowAdmin = true, Connections = 1 };
         await using var writer = await RespireClient.ConnectAsync(options);
+        await writer.SetAsync(key, "old");
         await using var reader = await RespireClient.ConnectAsync(options with
         {
             ClientSideCache = Broadcast(usePrefix ? [prefix] : []),
         });
-        await writer.SetAsync(key, "old");
         await Assert.That(await reader.GetStringAsync(key)).IsEqualTo("old");
         var hits = reader.ClientSideCache!.GetStatistics().Hits;
         await Assert.That(await reader.GetStringAsync(key)).IsEqualTo("old");
@@ -50,9 +50,9 @@ public class BroadcastClientCacheIntegrationTests(RedisTestContainer fixture)
         byte[] uncovered = [254, .. prefix, 0, 128];
         var options = RespireOptions.Parse(fixture.ConnectionString);
         await using var writer = await RespireClient.ConnectAsync(options);
-        await using var reader = await RespireClient.ConnectAsync(options with { ClientSideCache = Broadcast([prefix]) });
         await writer.SetAsync(covered, "old");
         await writer.SetAsync(uncovered, "outside");
+        await using var reader = await RespireClient.ConnectAsync(options with { ClientSideCache = Broadcast([prefix]) });
         await reader.GetStringAsync(covered);
         await reader.GetStringAsync(uncovered);
         await Assert.That(reader.ClientSideCache!.Count).IsEqualTo(1);
@@ -108,20 +108,19 @@ public class BroadcastClientCacheTopologyTests
         await using var fixture = await RespireContainerFixture.StartAsync(new() { Server = server, Topology = topology });
         var options = fixture.CreateOptions();
         await using var writer = await RespireClient.ConnectAsync(options);
-        await using var reader = await RespireClient.ConnectAsync(options with
-        {
-            ClientSideCache = BroadcastClientCacheIntegrationTests.Broadcast(["hot:"]),
-        });
         // The fixture partitions slots into thirds; touch every primary in Cluster mode.
         var keys = Enumerable.Range(0, 100).Select(index => $"hot:{index}")
             .GroupBy(key => Math.Min(new RespireKey(key).ClusterSlot / 5461, 2))
             .Select(group => group.First()).ToArray();
         await Assert.That(keys.Length).IsEqualTo(3);
-        foreach (var key in keys)
+        // Seed before enabling BCAST so setup invalidations cannot race the cache assertions.
+        foreach (var key in keys) await writer.SetAsync(key, "old");
+        await using var reader = await RespireClient.ConnectAsync(options with
         {
-            await writer.SetAsync(key, "old");
+            ClientSideCache = BroadcastClientCacheIntegrationTests.Broadcast(["hot:"]),
+        });
+        foreach (var key in keys)
             await Assert.That(await reader.GetStringAsync(key)).IsEqualTo("old");
-        }
         await Assert.That(reader.ClientSideCache!.Count).IsEqualTo(3);
         foreach (var key in keys) await writer.SetAsync(key, "new");
         await BroadcastClientCacheIntegrationTests.UntilAsync(() => reader.ClientSideCache.Count == 0);

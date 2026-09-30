@@ -325,9 +325,9 @@ public sealed record RespireOptions
         if (ClientSideCache is { } cache)
         {
             Require(
-                cache.TrackingMode == RespireClientTrackingMode.Broadcast || MaxInflightCommands >= 2,
+                (cache.TrackingMode == RespireClientTrackingMode.Broadcast && !UseCluster) || MaxInflightCommands >= 2,
                 nameof(MaxInflightCommands),
-                "must be at least two when client-side caching is enabled");
+                "must be at least two for OPTIN caching or Cluster caching with ASK redirects");
             Require(cache.MaxEntries >= 1, nameof(ClientSideCache), "must have MaxEntries of at least one");
             Require(cache.MaxSizeBytes >= 1, nameof(ClientSideCache), "must have MaxSizeBytes of at least one");
             Require(

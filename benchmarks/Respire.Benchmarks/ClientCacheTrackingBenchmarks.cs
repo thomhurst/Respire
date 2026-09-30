@@ -46,9 +46,8 @@ public class ClientCacheTrackingBenchmarks
                     .SetValue(cache, new RespireKey[] { "cache:benchmark:" });
         }
         _writer = await RespireClient.ConnectAsync(options);
-        _reader = await RespireClient.ConnectAsync(options with { ClientSideCache = cache });
         await _writer.SetAsync(_key, _value);
-        await _reader.PingAsync();
+        _reader = await RespireClient.ConnectAsync(options with { ClientSideCache = cache });
         if (await _reader.GetStringAsync(_key) != _value || _reader.ClientSideCache!.Count != 1)
             throw new InvalidOperationException("Cache setup did not retain the expected value.");
         var hits = _reader.ClientSideCache.GetStatistics().Hits;
