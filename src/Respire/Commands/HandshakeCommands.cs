@@ -54,11 +54,24 @@ internal readonly struct ClientSetNameCommand(string name) : IRespCommand
     }
 }
 
-/// <summary>CLIENT TRACKING ON OPTIN.</summary>
-internal readonly struct ClientTrackingCommand : IRespCommand
+/// <summary>CLIENT TRACKING ON with the selected registration mode.</summary>
+internal readonly struct ClientTrackingCommand(RespireClientSideCacheOptions? options = null) : IRespCommand
 {
     public void Write(ref RespWriter writer)
-        => writer.WriteRaw("*4\r\n$6\r\nCLIENT\r\n$8\r\nTRACKING\r\n$2\r\nON\r\n$5\r\nOPTIN\r\n"u8);
+    {
+        if (options?.TrackingMode != RespireClientTrackingMode.Broadcast)
+        {
+            writer.WriteRaw("*4\r\n$6\r\nCLIENT\r\n$8\r\nTRACKING\r\n$2\r\nON\r\n$5\r\nOPTIN\r\n"u8);
+            return;
+        }
+        writer.WriteArrayHeader(checked(4 + options.BroadcastPrefixes.Count * 2));
+        writer.WriteRaw("$6\r\nCLIENT\r\n$8\r\nTRACKING\r\n$2\r\nON\r\n$5\r\nBCAST\r\n"u8);
+        foreach (var prefix in options.BroadcastPrefixes)
+        {
+            writer.WriteRaw("$6\r\nPREFIX\r\n"u8);
+            prefix.WriteTo(ref writer);
+        }
+    }
 }
 
 /// <summary>CLIENT CACHING YES.</summary>

@@ -325,7 +325,7 @@ public sealed record RespireOptions
         if (ClientSideCache is { } cache)
         {
             Require(
-                MaxInflightCommands >= 2,
+                cache.TrackingMode == RespireClientTrackingMode.Broadcast || MaxInflightCommands >= 2,
                 nameof(MaxInflightCommands),
                 "must be at least two when client-side caching is enabled");
             Require(cache.MaxEntries >= 1, nameof(ClientSideCache), "must have MaxEntries of at least one");
@@ -357,6 +357,7 @@ public sealed record RespireOptions
         {
             Endpoints = new List<RespireEndpoint>(Endpoints),
             Protocol = ClientSideCache is null ? Protocol : RespProtocol.Resp3,
+            ClientSideCache = ClientSideCache?.SnapshotTracking(),
         };
     }
 
@@ -396,6 +397,7 @@ public sealed record RespireOptions
             MaxInflightCommands = MaxInflightCommands,
             PushHandler = pushHandler,
             EnableClientTracking = enableClientTracking,
+            ClientTrackingOptions = enableClientTracking ? ClientSideCache : null,
         };
 
     /// <summary>

@@ -1645,7 +1645,7 @@ public sealed partial class RespireClient : IRespireClient
             : SendTrackedOnConnectionCoreAsync(
                 operation, connection, command, cancellationToken, sendAsking);
 
-    private static ValueTask<RespValue> SendTrackedOnConnectionCoreAsync<TCommand>(
+    private ValueTask<RespValue> SendTrackedOnConnectionCoreAsync<TCommand>(
         string operation,
         RespireConnection connection,
         TCommand command,
@@ -1660,6 +1660,8 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         var caching = new ClientCachingCommand();
+        if (_core.Options.ClientSideCache?.TrackingMode == RespireClientTrackingMode.Broadcast)
+            return connection.SendAsync(command, cancellationToken, commandName: operation);
         return connection.SendValidatedPrefixedAsync(
             in caching, in command, cancellationToken, operation);
     }

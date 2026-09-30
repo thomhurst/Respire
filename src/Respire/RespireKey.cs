@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 using Respire.Protocol;
 
@@ -58,6 +59,30 @@ public readonly struct RespireKey : IEquatable<RespireKey>
     internal int WireLength => _string is not null
         ? Encoding.UTF8.GetByteCount(_string)
         : _bytes.Length;
+
+    internal bool StartsWithAny(byte[][] prefixes)
+    {
+        if (_string is null) return MatchesPrefix(_bytes.Span, prefixes);
+        var length = Encoding.UTF8.GetByteCount(_string);
+        byte[]? rented = null;
+        Span<byte> encoded = length <= 256 ? stackalloc byte[length] : (rented = ArrayPool<byte>.Shared.Rent(length));
+        try
+        {
+            var written = Encoding.UTF8.GetBytes(_string, encoded);
+            return MatchesPrefix(encoded[..written], prefixes);
+        }
+        finally
+        {
+            if (rented is not null) ArrayPool<byte>.Shared.Return(rented);
+        }
+    }
+
+    private static bool MatchesPrefix(ReadOnlySpan<byte> key, byte[][] prefixes)
+    {
+        foreach (var prefix in prefixes)
+            if (key.StartsWith(prefix)) return true;
+        return false;
+    }
 
     /// <summary>Returns a copy of this key with <paramref name="prefix"/> prepended.</summary>
     internal RespireKey Prepend(string prefix)
