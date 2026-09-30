@@ -35,6 +35,7 @@ const sidebars = {
         'guides/command-logs',
         'guides/hot-keys',
         'guides/value-codecs',
+        'guides/in-memory-testing',
         'guides/batches-and-transactions',
         'guides/durability-acknowledgements',
         'guides/raw-commands',

@@ -12,6 +12,7 @@
     <PackageReference Include="Respire" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Compression.Lz4" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Compression.Zstd" Version="$(RespirePackageVersion)" />
+    <PackageReference Include="Respire.Testing" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Extensions.Caching" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Extensions.Caching.Hybrid" Version="$(RespirePackageVersion)" />
     <PackageReference Include="Respire.Extensions.DependencyInjection" Version="$(RespirePackageVersion)" />

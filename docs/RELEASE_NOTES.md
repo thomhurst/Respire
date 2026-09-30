@@ -46,6 +46,14 @@
   is replayed. Dedicated, pub/sub, and discovery integration remain separate #401 children.
   See the [reconnect guide](../website/docs/guides/reconnect-policy.md).
 
+### In-memory testing foundation
+
+- `Respire.Testing` provides a disposable pipe-backed RESP server for real client tests
+  without sockets or Docker. It supports a documented strings/keys subset, atomic commands,
+  binary data, and a controllable expiry clock. Unsupported features fail explicitly.
+  The internal stream seam keeps the ordinary TCP path direct. See the
+  [testing guide](../website/docs/guides/in-memory-testing.md) for supported commands and limits.
+
 ### Hot-key tracking
 
 - Redis 8.6+ HOTKEYS APIs add a pinned server handle for START/GET/STOP/RESET and

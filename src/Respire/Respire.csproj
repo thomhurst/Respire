@@ -23,6 +23,7 @@
     <InternalsVisibleTo Include="Respire.Compression.Lz4" />
     <!-- The optional package implements reserved value-codec algorithm ID 4. -->
     <InternalsVisibleTo Include="Respire.Compression.Zstd" />
+    <InternalsVisibleTo Include="Respire.Testing" />
   </ItemGroup>
 
   <ItemGroup>
