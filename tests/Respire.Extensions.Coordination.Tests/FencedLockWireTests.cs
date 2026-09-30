@@ -67,6 +67,26 @@ public class FencedLockWireTests
     }
 
     [Test]
+    [Arguments("invalid")]
+    [Arguments("0")]
+    [Arguments("-1")]
+    [Arguments("9223372036854775808")]
+    public async Task MalformedAcquisitionReplyReleasesTheUnreturnedLease(string token)
+    {
+        var reply = System.Text.Encoding.ASCII.GetBytes($"${token.Length}\r\n{token}\r\n");
+        await using var server = new FakeRespServer(reply, ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await Assert.That(async () => await new RespireCoordination(client)
+            .TryAcquireFencedLockAsync("{job}:lease", "{job}:counter", TimeSpan.FromSeconds(30))
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5))).ThrowsExactly<RespireProtocolException>();
+        var commands = server.ReceivedCommands;
+        await Assert.That(commands.Count).IsEqualTo(2);
+        await Assert.That(commands[0].StartsWith("EVALSHA ", StringComparison.Ordinal)).IsTrue();
+        var owner = System.Text.Encoding.ASCII.GetString(server.ReceivedArguments[0][5]);
+        await Assert.That(commands[1]).IsEqualTo($"DELEX {{job}}:lease IFEQ {owner}");
+    }
+
+    [Test]
     public async Task SameKeyAndInvalidDurationFailBeforeConnecting()
     {
         await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("unused.invalid")] });

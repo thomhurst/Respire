@@ -13,6 +13,7 @@ public sealed class RespireCoordination
         => _client = client ?? throw new ArgumentNullException(nameof(client));
 
     internal static readonly RespireScript AcquireFencedLock = RespireScript.Create("""
+        -- Keep the invariant even when this script is invoked without the managed entry point.
         if KEYS[1] == KEYS[2] then
             return redis.error_reply('ERR lock and fencing counter keys must differ')
         end
