@@ -626,6 +626,9 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 lifetime.CancelAfter(_options.ConnectTimeout);
                 var options = _options with
                 {
+                    // The lifetime above bounds the entire fence. A second connect timer
+                    // could fire first and escape classification as a CLIENT KILL timeout.
+                    ConnectTimeout = Timeout.InfiniteTimeSpan,
                     EnableClientTracking = false, PushHandler = null, SubscriptionConfirmationHandler = null,
                     TlsOptions = _options.UseTls ? RespireConnection.CreateTlsOptions(_options.TlsOptions, Host) : _options.TlsOptions,
                 };
