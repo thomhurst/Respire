@@ -11,6 +11,16 @@
   implementers. See the [hot-key guide](../website/docs/guides/hot-keys.md) for shared
   session ownership, sampling, resource costs, and cancellation behavior.
 
+### Opt-in value codecs
+
+- `IRespireValueCodec`, the shared framed-codec base, and built-in Brotli/Deflate codecs
+  provide owned mixed compressed/uncompressed values with bounded decoding.
+  `RespireValueCodecSerializer` decorates the existing serializer; primitive and raw
+  value paths and all default behavior are unchanged. See
+  [value codecs](../website/docs/guides/value-codecs.md) for framing, migration, collection
+  identity constraints, and explicit raw-byte use. Cache integration and optional codec
+  packages remain separate work; no existing client interface gains members.
+
 ### Stream production and negative acknowledgements
 
 - `StreamAddOptions.Idempotency` adds mutually exclusive IDMP/IDMPAUTO production

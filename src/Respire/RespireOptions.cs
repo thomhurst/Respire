@@ -205,7 +205,8 @@ public sealed record RespireOptions
     /// </summary>
     public int Connections { get; init; } = 1;
 
-    /// <summary>Serializer behind non-primitive typed values. System.Text.Json by default.</summary>
+    /// <summary>Serializer behind non-primitive typed values. System.Text.Json by default.
+    /// Wrap with RespireValueCodecSerializer to opt into framed value compression.</summary>
     public IRespireSerializer Serializer { get; init; } = RespireSerializer.Default;
 
     /// <summary>
