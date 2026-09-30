@@ -104,6 +104,8 @@ internal sealed class ThreadPoolMonitor
                 Lease[] observers;
                 lock (Gate)
                 {
+                    // A replacement sampler can start before this thread exits; only
+                    // the current instance may publish a sample or requeue the probe.
                     if (!ReferenceEquals(_current, this)) return;
                     now = Stopwatch.GetTimestamp();
                     completed = SharedProbe.CompletedAt;
