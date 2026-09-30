@@ -85,6 +85,7 @@ internal static class KeyNotificationParser
         {
             if (!TryReadLength(remaining, out var length, out var start)) return false;
             count++;
+            // TryReadLength proves start + length <= remaining.Length without overflow.
             remaining = remaining[(start + length)..];
             if (remaining.IsEmpty) break;
             if (remaining[0] != (byte)',') return false;

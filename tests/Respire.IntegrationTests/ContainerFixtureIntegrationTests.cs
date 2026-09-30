@@ -169,14 +169,19 @@ public class ContainerFixtureIntegrationTests
         var selectedPorts = new List<int[]>();
         try
         {
-            await using var fixture = await RespireContainerFixture.StartAsync(options, default, async (ports, token) =>
+            // Let Docker reserve the competitor's port atomically before fixture selection.
+            // Starting a blocker on a probed port can itself lose the race under parallel CI.
+            blocker = RespireContainerFixture.BuildContainer(options with { Topology = RespireContainerTopology.Standalone }, [6379]);
+            using var deadline = new CancellationTokenSource(options.StartupTimeout);
+            await blocker.StartAsync(deadline.Token);
+            var occupiedPort = blocker.GetMappedPublicPort(6379);
+            await using var fixture = await RespireContainerFixture.StartAsync(options, deadline.Token, async (ports, token) =>
             {
                 if (selectedPorts.Count == 0)
                 {
-                    // Occupy an already selected port through the same Docker engine.
-                    // This creates a real collision on Linux and Docker Desktop alike.
-                    blocker = RespireContainerFixture.BuildContainer(options, [ports[0]]);
-                    await blocker.StartAsync(token);
+                    // Inject the known occupied port into the first fixture attempt. The real
+                    // Docker bind must fail, while the independent competing owner stays alive.
+                    ports[0] = occupiedPort;
                 }
                 else
                 {

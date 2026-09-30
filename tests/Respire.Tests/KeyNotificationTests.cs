@@ -185,12 +185,20 @@ public class KeyNotificationTests
         await Assert.That(default(RespireChannel).NotificationDatabase).IsNull();
         await Assert.That(default(RespireChannel).RoutingSlot).IsNull();
         await Assert.That(RespireChannel.KeyEvent("set"u8).NotificationDatabase).IsNull();
-        foreach (var database in new[] { 0, int.MaxValue })
+        foreach (var slot in new[] { 0, 16383 })
         {
-            var channel = RespireChannel.KeySpaceSingleKey("key", database);
-            await Assert.That(channel.NotificationDatabase).IsEqualTo(database);
-            await Assert.That(RespireChannel.Literal(channel).NotificationDatabase).IsEqualTo(database);
-            await Assert.That(channel.RoutingSlot).IsEqualTo(new RespireKey("key").ClusterSlot);
+            var index = 0;
+            RespireKey key;
+            do { key = new RespireKey($"metadata:{index++}"); } while (key.ClusterSlot != slot);
+            foreach (var database in new[] { 0, int.MaxValue })
+            {
+                var channel = RespireChannel.KeySpaceSingleKey(key, database);
+                await Assert.That(channel.NotificationDatabase).IsEqualTo(database);
+                await Assert.That(RespireChannel.Literal(channel).NotificationDatabase).IsEqualTo(database);
+                await Assert.That(channel.RoutingSlot).IsEqualTo(slot);
+                await Assert.That(channel.Kind).IsEqualTo(SubscriptionKind.Channel);
+                await Assert.That(channel.RoutingScope).IsEqualTo(RespireChannelRoutingScope.KeyOwner);
+            }
         }
     }
 
