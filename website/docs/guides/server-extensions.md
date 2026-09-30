@@ -43,8 +43,8 @@ spaces with underscores, for example `DFLYCLUSTER_SLOT_MIGRATION_STATUS` sends
 | KeyDB member expiry | `EXPIREMEMBER`, `EXPIREMEMBERAT`, `PEXPIREMEMBERAT` |
 | Other KeyDB extensions | `KEYDB.CRON`, `KEYDB.HRENAME`, `KEYDB.MEXISTS`, `KEYDB.NHGET`, `KEYDB.NHSET`, `REPLPING` |
 
-The audit uses the KeyDB 6.3.4 command table, Dragonfly's documentation snapshot
-`31881bce033d4cec47cb2e85865d46745760e499`, and the Dragonfly 2.0.0 Cluster guide.
+The [canonical catalog audit](https://github.com/thomhurst/Respire/blob/main/docs/COMMAND_COVERAGE.md)
+records the exact server versions and source commits used for the descriptor inventory.
 Documentation may cover extensions newer than your installed server. `Sources`
 records audit provenance, not runtime availability or equivalent semantics across servers.
 For example, Dragonfly's `HSETEX` argument form differs from Redis's; use the existing
@@ -76,7 +76,10 @@ The real-server smoke tests verify `CL.THROTTLE`, `SADDEX`, `FIELDTTL`, and
 `KEYDB.HRENAME`, and `KEYDB.MEXISTS` on KeyDB 6.3.4, each under RESP2 and RESP3.
 These scenarios do not certify every descriptor against those image versions. They carry
 the `CompatibleServers` test category and can also be selected or excluded by the
-`ServerExtensionIntegrationTests` class filter. CI runs them without skips.
+`ServerExtensionIntegrationTests` class filter. CI runs them without skips. The KeyDB
+fixture requires a Docker engine capable of running its pinned x86_64 image, either
+natively or through configured emulation; the test process architecture alone does not
+determine the architecture of a local or remote Docker engine.
 
 References: [Dragonfly command documentation](https://github.com/dragonflydb/documentation/tree/31881bce033d4cec47cb2e85865d46745760e499/docs/command-reference),
 [Dragonfly Cluster administration](https://github.com/dragonflydb/dragonfly/blob/v2.0.0/docs/cluster-mode.md),
