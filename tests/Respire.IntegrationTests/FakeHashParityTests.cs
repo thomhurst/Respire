@@ -142,13 +142,20 @@ public class FakeHashParityTests(RedisTestContainer fixture)
             await increment.Should().ThrowAsync<RespireServerException>();
             (await client.Hashes.GetStringAsync(key, "count")).Should().Be("-2");
         }
+        foreach (var invalid in new[] { "text", "01", "9223372036854775808" })
+        {
+            await client.Hashes.SetAsync(key, "invalid", invalid);
+            Func<Task> increment = async () => { using var ignored = await client.ExecuteAsync("HINCRBY", key, "invalid", 1); };
+            await increment.Should().ThrowAsync<RespireServerException>().WithMessage("ERR hash value is not an integer");
+            (await client.Hashes.GetStringAsync(key, "invalid")).Should().Be(invalid);
+        }
         await client.Hashes.SetAsync(key, "count", long.MaxValue);
         Func<Task> overflow = async () => { using var ignored = await client.ExecuteAsync("HINCRBY", key, "count", 1); };
-        await overflow.Should().ThrowAsync<RespireServerException>();
+        await overflow.Should().ThrowAsync<RespireServerException>().WithMessage("ERR increment or decrement would overflow");
         (await client.Hashes.GetStringAsync(key, "count")).Should().Be(long.MaxValue.ToString());
         await client.Hashes.SetAsync(key, "minimum", long.MinValue);
         Func<Task> underflow = async () => { using var ignored = await client.ExecuteAsync("HINCRBY", key, "minimum", -1); };
-        await underflow.Should().ThrowAsync<RespireServerException>();
+        await underflow.Should().ThrowAsync<RespireServerException>().WithMessage("ERR increment or decrement would overflow");
         (await client.Hashes.GetStringAsync(key, "minimum")).Should().Be(long.MinValue.ToString());
         foreach (var (command, arguments) in new (string, RespireValue[])[]
         {

@@ -49,7 +49,10 @@ public sealed partial class RespireFakeServer
         var entry = Find(args[1]);
         var hash = entry?.Hash;
         var previous = hash?.GetValueOrDefault(args[2]);
-        var result = checked((previous is null ? 0 : Integer(previous)) + amount);
+        long result;
+        try { result = checked((previous is null ? 0 : Integer(previous)) + amount); }
+        catch (FormatException) { return FakeReply.Error("ERR hash value is not an integer"); }
+        catch (OverflowException) { return FakeReply.Error("ERR increment or decrement would overflow"); }
         // Parse and check overflow before publishing a new hash or changing an existing field.
         var value = Encoding.ASCII.GetBytes(result.ToString(CultureInfo.InvariantCulture));
         if (hash is null)
