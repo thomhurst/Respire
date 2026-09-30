@@ -222,6 +222,8 @@ internal sealed partial class StreamCommands
             if (cause is RespireServerException server) return server.IsTransient;
             if (cause is AuthenticationException or RespireConfigurationException or ObjectDisposedException) return false;
         }
+        // Pool retirement can cancel a private lifetime token while the caller remains active.
+        // The catch filter above excludes caller cancellation and client disposal before retrying it.
         return error is RespireConnectionException or RespireTimeoutException or IOException or SocketException or OperationCanceledException;
     }
 }
