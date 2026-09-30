@@ -75,7 +75,10 @@ pending operation. Binary key/argument memory remains borrowed until completion.
 
 ### Loading and reloads
 
-A library holds source and an explicit replacement policy. Immediate execution tries the
+A library holds source and an explicit replacement policy. Reusable libraries require an
+unquoted, unescaped `name=library_name` header token; quoted headers are rejected locally
+rather than approximating Redis escape rules. Direct `LoadAsync(source)` leaves full header
+validation to Redis. Immediate execution tries the
 function first. Only Redis's exact `ERR Function not found` reply permits one reload and
 one retry; timeouts, connection failures, and other execution errors escape unchanged.
 Application functions must not manufacture that reserved reply, because it is interpreted
@@ -88,12 +91,16 @@ library as loaded, so a later missing-function call can reload after a flush. Th
 inspects only the named library using an escaped `FUNCTION LIST LIBRARYNAME` pattern with
 `WITHCODE`, accepts identical
 source, and loads missing libraries. A different source with the same library name produces
-a server collision error by default. `Create(source, replace: true)` explicitly permits
+a server collision error by default. If another client loads between inspection and LOAD,
+the exact library-already-exists error triggers one more source inspection; only identical
+source is accepted, without another LOAD. `Create(source, replace: true)` explicitly permits
 replacement during loading. Existing registered functions are used as-is; this option does
 not enforce source equality on every invocation. Use `LoadAsync` to deploy a replacement
 before calling a function that already exists. Concurrent external deployment or flush can
 still cause the bounded retry to fail. Automatic reload needs permission to inspect and
-load libraries in addition to calling functions.
+load libraries in addition to calling functions. Applications deploying different sources
+under one name with replacement enabled can repeatedly replace each other; use a coordinated
+deployment or versioned library/function names.
 
 ### Administration and scope
 

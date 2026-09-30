@@ -264,4 +264,42 @@ public class FunctionCommandTests
         await Assert.That(FunctionCommands.EscapeLibraryPattern(@"a[b]*?\c")).IsEqualTo(@"a\[b\]\*\?\\c");
     }
 
+    [Test]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task ConcurrentExternalLoadAcceptsOnlyIdenticalSource(int outcome)
+    {
+        const string source = "#!lua name=sample\nreturn 1";
+        var loadedSource = outcome == 1 ? source + " -- changed" : source;
+        var metadata = outcome == 2 ? "*0\r\n"u8.ToArray() : Encoding.UTF8.GetBytes(
+            "*1\r\n*8\r\n+library_name\r\n+sample\r\n+engine\r\n+LUA\r\n+functions\r\n*0\r\n+library_code\r\n" +
+            $"${Encoding.UTF8.GetByteCount(loadedSource)}\r\n{loadedSource}\r\n");
+        await using var server = new FakeRespServer("-ERR Function not found\r\n"u8.ToArray(), "*0\r\n"u8.ToArray(),
+            "-ERR Library 'sample' already exists\r\n"u8.ToArray(), metadata, ":42\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var function = RespireFunctionLibrary.Create(source).Function("function");
+        if (outcome == 0)
+            await Assert.That(await client.Functions.ExecuteIntegerAsync(function)).IsEqualTo(42);
+        else
+        {
+            var error = await Assert.That(async () => await client.Functions.ExecuteIntegerAsync(function)).ThrowsExactly<RespireServerException>();
+            await Assert.That(error!.Message).IsEqualTo("ERR Library 'sample' already exists");
+        }
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("FUNCTION LOAD ", StringComparison.Ordinal))).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands.Count(command => command == "FUNCTION LIST LIBRARYNAME sample WITHCODE")).IsEqualTo(2);
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("FCALL ", StringComparison.Ordinal))).IsEqualTo(outcome == 0 ? 2 : 1);
+    }
+
+    [Test]
+    [Arguments("#!lua name=\"sample\"\nreturn 1")]
+    [Arguments("#!lua name='sample'\nreturn 1")]
+    [Arguments("#!lua name=sam\\ple\nreturn 1")]
+    public async Task ReusableLibrariesRejectQuotedOrEscapedNames(string source)
+        => await Assert.That(() => RespireFunctionLibrary.Create(source)).Throws<ArgumentException>();
+
+    [Test]
+    public async Task ReusableLibraryHeaderAllowsWhitespaceAroundPlainName()
+        => await Assert.That(RespireFunctionLibrary.Create("#!lua\t name=sample \r\nreturn 1").Name).IsEqualTo("sample");
+
 }

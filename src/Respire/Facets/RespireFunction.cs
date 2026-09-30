@@ -43,7 +43,7 @@ public sealed class RespireFunctionLibrary
     /// <summary>Whether loading may replace an existing library with different source.</summary>
     public bool Replace { get; }
 
-    /// <summary>Creates a reusable library. Redis validates the engine and function definitions when loaded.</summary>
+    /// <summary>Creates a reusable library with an unquoted name header. Redis validates the engine and function definitions when loaded.</summary>
     public static RespireFunctionLibrary Create(string source, bool replace = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(source);
@@ -54,7 +54,12 @@ public sealed class RespireFunctionLibrary
             .Where(token => token.StartsWith("name=", StringComparison.Ordinal)).ToArray();
         if (names.Length != 1 || names[0].Length == 5)
             throw new ArgumentException("The library header must declare exactly one nonempty name.", nameof(source));
-        return new(source, names[0][5..], replace);
+        var name = names[0][5..];
+        // Redis also accepts quoted header tokens. Require the simple unquoted form here
+        // instead of guessing its shell-style escape rules and caching the wrong name.
+        if (name.IndexOfAny(['\"', '\\', '\'']) >= 0)
+            throw new ArgumentException("Reusable library names must use an unquoted, unescaped header token.", nameof(source));
+        return new(source, name, replace);
     }
 
     /// <summary>References a function in this library, enabling one reload/retry for immediate execution.</summary>

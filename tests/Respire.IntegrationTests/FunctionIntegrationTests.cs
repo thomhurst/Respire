@@ -98,12 +98,13 @@ public class FunctionIntegrationTests
         await using var server = new RedisBuilder("redis:7.0.15").Build();
         await server.StartAsync();
         await using var client = await RespireClient.ConnectAsync($"redis://{server.Hostname}:{server.GetMappedPublicPort(6379)}?protocol={protocol}");
+        await using var secondClient = await RespireClient.ConnectAsync($"redis://{server.Hostname}:{server.GetMappedPublicPort(6379)}?protocol={protocol}");
         var library = RespireFunctionLibrary.Create(Source);
         var function = library.Function("write");
         foreach (var round in new[] { 0, 1 })
         {
             if (round == 1) await client.Functions.FlushAsync();
-            var results = await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => client.Functions.ExecuteIntegerAsync(function, ["counter"]).AsTask()));
+            var results = await Task.WhenAll(Enumerable.Range(0, 12).Select(i => (i % 2 == 0 ? client : secondClient).Functions.ExecuteIntegerAsync(function, ["counter"]).AsTask()));
             results.Distinct().Should().HaveCount(12);
         }
         (await client.GetAsync<long>("counter")).Should().Be(24);

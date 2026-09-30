@@ -227,12 +227,27 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
     {
         // Inspect before loading: concurrent first use accepts identical source, but never silently
         // overwrites a different library unless replacement was explicitly requested.
+        if (await HasMatchingSourceAsync(connection, library, cancellationToken).ConfigureAwait(false)) return;
+        try
+        {
+            _ = await SendAndConvertAsync(connection, "FUNCTION LOAD", LoadCommand(library.Source, library.Replace),
+                static (FunctionCommands _, in RespValue value) => ResponseReader.String(in value), cancellationToken).ConfigureAwait(false);
+        }
+        catch (RespireServerException error) when (!library.Replace
+            && error.Message == $"ERR Library '{library.Name}' already exists")
+        {
+            // Another client/process may load after our LIST. Accept only identical source;
+            // never replace, retry LOAD, or hide a conflicting library's original error.
+            if (!await HasMatchingSourceAsync(connection, library, cancellationToken).ConfigureAwait(false)) throw;
+        }
+    }
+
+    private async ValueTask<bool> HasMatchingSourceAsync(RespireConnection connection,
+        RespireFunctionLibrary library, CancellationToken cancellationToken)
+    {
         var libraries = await SendAndConvertAsync(connection, "FUNCTION LIST", ListCommand(EscapeLibraryPattern(library.Name), true),
             static (FunctionCommands _, in RespValue value) => FunctionResponseReader.Libraries(in value), cancellationToken).ConfigureAwait(false);
-        var existing = libraries.FirstOrDefault(item => item.Name == library.Name);
-        if (existing?.Code == library.Source) return;
-        _ = await SendAndConvertAsync(connection, "FUNCTION LOAD", LoadCommand(library.Source, library.Replace),
-            static (FunctionCommands _, in RespValue value) => ResponseReader.String(in value), cancellationToken).ConfigureAwait(false);
+        return libraries.Any(item => item.Name == library.Name && item.Code == library.Source);
     }
 }
 
