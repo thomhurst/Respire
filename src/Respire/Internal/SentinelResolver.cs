@@ -50,6 +50,7 @@ internal static class SentinelResolver
                         sentinelOptions,
                         logger,
                         discoveryTimeoutSource.Token,
+                        cancellationToken,
                         index < initialCount ? AddPeer : null)
                     .ConfigureAwait(false);
                 var primaryOptions = options with
@@ -125,6 +126,7 @@ internal static class SentinelResolver
         RespireConnectionOptions options,
         ILogger? logger,
         CancellationToken cancellationToken,
+        CancellationToken callerCancellationToken,
         Action<RespireEndpoint>? addPeer)
     {
         await using var connection = await RespireConnection.ConnectAsync(
@@ -143,7 +145,15 @@ internal static class SentinelResolver
             // Peers may rescue a stale or missing primary response. Only endpoints known at
             // the start of this attempt expand discovery, preventing recursive exploration.
             if (addPeer is not null)
-                await DiscoverPeersAsync(connection, serviceName, addPeer, logger, cancellationToken).ConfigureAwait(false);
+            {
+                try { await DiscoverPeersAsync(connection, serviceName, addPeer, logger, cancellationToken).ConfigureAwait(false); }
+                catch (Exception error) when (!callerCancellationToken.IsCancellationRequested)
+                {
+                    // Keep the completed primary reply even if optional peer discovery times
+                    // out, drops the socket, or returns malformed RESP. Caller cancellation wins.
+                    logger?.LogDebug(error, "Optional Sentinel peer discovery failed at {Host}:{Port}", sentinel.Host, sentinel.Port);
+                }
+            }
             if (reply.IsError)
             {
                 throw new RespireServerException(reply.GetErrorMessage(), "SENTINEL GET-MASTER-ADDR-BY-NAME");
@@ -220,12 +230,20 @@ internal static class SentinelResolver
 
 // Reusable discovery state for runtime failover. Configured endpoints are never evicted;
 // learned peers are bounded, deduplicated by host/port, and copied before asynchronous work.
-internal sealed class SentinelDiscoveryState(IEnumerable<RespireEndpoint> configured)
+internal sealed class SentinelDiscoveryState
 {
     internal const int MaximumDiscoveredEndpoints = 64;
     private readonly object _gate = new();
-    private readonly List<RespireEndpoint> _endpoints = configured.DistinctBy(Key).ToList();
-    private int _discovered;
+    private readonly List<RespireEndpoint> _endpoints = [];
+    private readonly HashSet<RespireEndpoint> _known = new(EndpointComparer.Instance);
+    private readonly int _configuredCount;
+
+    internal SentinelDiscoveryState(IEnumerable<RespireEndpoint> configured)
+    {
+        foreach (var endpoint in configured)
+            if (_known.Add(endpoint)) _endpoints.Add(endpoint);
+        _configuredCount = _known.Count;
+    }
 
     internal RespireEndpoint[] Snapshot() { lock (_gate) return _endpoints.ToArray(); }
 
@@ -233,12 +251,18 @@ internal sealed class SentinelDiscoveryState(IEnumerable<RespireEndpoint> config
     {
         lock (_gate)
         {
-            if (_discovered == MaximumDiscoveredEndpoints || _endpoints.Any(value => Key(value) == Key(endpoint))) return false;
+            if (_known.Count - _configuredCount == MaximumDiscoveredEndpoints || !_known.Add(endpoint)) return false;
             _endpoints.Add(endpoint);
-            _discovered++;
             return true;
         }
     }
 
-    private static RespireEndpoint Key(RespireEndpoint endpoint) => endpoint with { Host = endpoint.Host.ToLowerInvariant() };
+    private sealed class EndpointComparer : IEqualityComparer<RespireEndpoint>
+    {
+        internal static readonly EndpointComparer Instance = new();
+        public bool Equals(RespireEndpoint x, RespireEndpoint y)
+            => x.Port == y.Port && StringComparer.OrdinalIgnoreCase.Equals(x.Host, y.Host);
+        public int GetHashCode(RespireEndpoint endpoint)
+            => HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(endpoint.Host), endpoint.Port);
+    }
 }

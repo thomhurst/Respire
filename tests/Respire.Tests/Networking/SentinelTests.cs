@@ -54,6 +54,55 @@ public class SentinelTests
         await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
     }
 
+    [Test]
+    [Arguments("timeout")]
+    [Arguments("disconnect")]
+    [Arguments("protocol")]
+    public async Task ConnectAsync_OptionalPeerFailurePreservesTheCompletedPrimaryReply(string failure)
+    {
+        await using var primary = new FakeRespServer(PrimaryRole, FakeRespServer.PongReply);
+        await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port), "?invalid RESP\r\n"u8.ToArray())
+        {
+            CloseConnectionAfterCommand = failure == "disconnect" ? 2 : null,
+            SuppressReply = command => failure == "timeout" && command == "SENTINEL SENTINELS mymaster",
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+            CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(2),
+        }).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await client.PingAsync();
+        await Assert.That(primary.ReceivedCommands).IsEquivalentTo(["ROLE", "PING"]);
+    }
+
+    [Test]
+    public async Task ConnectAsync_CallerCancellationDuringOptionalPeersIsNotSuppressed()
+    {
+        var peersRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var primary = new FakeRespServer(PrimaryRole);
+        await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port))
+        {
+            SuppressReply = command =>
+            {
+                if (command != "SENTINEL SENTINELS mymaster") return false;
+                peersRequested.TrySetResult();
+                return true;
+            },
+        };
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var pending = RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+            CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(10),
+        }, cancellation.Token).AsTask();
+        await peersRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+        var error = await Assert.That(async () => await pending).Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+        await sentinel.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(primary.ReceivedCommands).IsEmpty();
+    }
+
     private static byte[] PeersReply(int port)
         => Encoding.ASCII.GetBytes($"*1\r\n*4\r\n$2\r\nip\r\n$9\r\n127.0.0.1\r\n$4\r\nport\r\n${port.ToString().Length}\r\n{port}\r\n");
 

@@ -33,7 +33,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
     private int _disposed;
 
     public int Port { get; }
-    /// <summary>Completes when a client closes its socket cleanly, before server teardown.</summary>
+    /// <summary>Completes on peer EOF or reset, before server teardown.</summary>
     public Task PeerClosed => _peerClosed.Task;
     public int CommandsSeen => Volatile.Read(ref _commandsSeen);
 
@@ -160,7 +160,15 @@ internal sealed class FakeRespServer : IAsyncDisposable
 
             while (!_cts.IsCancellationRequested)
             {
-                var read = await socket.ReceiveAsync(buffer.AsMemory(end), SocketFlags.None, _cts.Token);
+                int read;
+                try { read = await socket.ReceiveAsync(buffer.AsMemory(end), SocketFlags.None, _cts.Token); }
+                catch (SocketException error) when (!_cts.IsCancellationRequested
+                    && error.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted)
+                {
+                    // Respire deliberately uses Close(0) for abortive disposal, which is RST on Linux.
+                    _peerClosed.TrySetResult();
+                    return;
+                }
                 if (read == 0)
                 {
                     _peerClosed.TrySetResult();
