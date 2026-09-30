@@ -87,6 +87,7 @@ public class StreamMetadataCommandTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
         var view = client.WithKeyPrefix("{tenant}:");

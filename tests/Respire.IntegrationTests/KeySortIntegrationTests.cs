@@ -17,7 +17,7 @@ public class KeySortIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, Mode.Transaction)]
     public async Task ArrowAcrossPrefixBoundaryBeforeWildcardRemainsPartOfKey(int protocol, Mode mode)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
         var view = client.WithKeyPrefix("tenant-");
         await view.Lists.RightPushAsync("items", "2", "1");
         await view.SetAsync(">weight:1", "1");
@@ -45,7 +45,7 @@ public class KeySortIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, Mode.Transaction, true)]
     public async Task Sort_OrdersSlicesAndPreservesExternalNulls(int protocol, Mode mode, bool readOnly)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
         var view = client.WithKeyPrefix("tenant:");
         await view.Lists.RightPushAsync("numbers", "10", "2", "1");
         var options = new RespireSortOptions { ReadOnly = readOnly };
@@ -84,7 +84,7 @@ public class KeySortIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, Mode.Transaction, true)]
     public async Task TypedSort_ReturnsOwnedBinaryAndNullableMembers(int protocol, Mode mode, bool readOnly)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
         var view = client.WithKeyPrefix("binary:");
         byte[] first = [0, 0xfe];
         byte[] second = [0xff, 0];
@@ -113,7 +113,7 @@ public class KeySortIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, Mode.Transaction)]
     public async Task StoreRandomAndMove_PreserveResultShapes(int protocol, Mode mode)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
         (await Random(client, mode)).Should().BeNull();
         RespireKey binaryKey = new byte[] { 0xff, 0, 0x42 };
         await client.SetAsync(binaryKey, "value");
@@ -158,7 +158,7 @@ public class KeySortIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, Mode.Transaction, true)]
     public async Task WrongTypeAndInvalidNumbers_RemainServerErrors(int protocol, Mode mode, bool readOnly)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
         await client.SetAsync("wrong", "string");
         Func<Task> wrong = async () => { await Sort(client, mode, "wrong", new RespireSortOptions { ReadOnly = readOnly }); };
         await wrong.Should().ThrowAsync<RespireServerException>().WithMessage("*WRONGTYPE*");

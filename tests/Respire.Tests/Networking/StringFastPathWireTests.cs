@@ -286,6 +286,7 @@ public class StringFastPathWireTests
         TimeSpan commandTimeout)
         => RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             CommandTimeout = commandTimeout

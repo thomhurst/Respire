@@ -75,6 +75,7 @@ public class TelemetryTests
         using var capture = new TelemetryCapture();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Database = 4,
         });
@@ -160,6 +161,7 @@ public class TelemetryTests
         using var capture = new TelemetryCapture();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -190,6 +192,7 @@ public class TelemetryTests
         using var capture = new TelemetryCapture();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -278,6 +281,7 @@ public class TelemetryTests
         using var capture = new TelemetryCapture();
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("empty-pipeline.example") },
         });
 
@@ -324,6 +328,7 @@ public class TelemetryTests
         using var capture = new TelemetryCapture();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             Serializer = new FailingDeserializer(),
@@ -345,6 +350,7 @@ public class TelemetryTests
         using var capture = new TelemetryCapture();
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("empty-transaction.example") },
         });
         await using var transaction = client.CreateTransaction();

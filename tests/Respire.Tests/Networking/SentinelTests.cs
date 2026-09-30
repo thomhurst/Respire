@@ -27,6 +27,7 @@ public class SentinelTests
         await using var seed = new FakeRespServer(PrimaryReply(stale.Port), PeersReply(peer.Port));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = [new("127.0.0.1", seed.Port)],
             SentinelPrimaryName = "mymaster",
             ConnectTimeout = TimeSpan.FromSeconds(5),
@@ -48,6 +49,7 @@ public class SentinelTests
         await using var seed = new FakeRespServer(PrimaryReply(primary.Port), "-NOPERM SENTINELS is denied\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = [new("127.0.0.1", seed.Port)], SentinelPrimaryName = "mymaster",
         });
         await client.PingAsync();
@@ -68,6 +70,7 @@ public class SentinelTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
             CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(2),
         }).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
@@ -92,6 +95,7 @@ public class SentinelTests
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var pending = RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
             CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(10),
         }, cancellation.Token).AsTask();
@@ -112,6 +116,7 @@ public class SentinelTests
         using var cancellation = new CancellationTokenSource();
         var options = new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
         };
         var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options, (_, _) =>
@@ -151,7 +156,7 @@ public class SentinelTests
         await using var seed = new FakeRespServer(PrimaryReply(6379), Encoding.ASCII.GetBytes(records));
         var endpoint = new RespireEndpoint("127.0.0.1", seed.Port);
         var state = new SentinelDiscoveryState([endpoint]);
-        var options = new RespireOptions { Endpoints = [endpoint], SentinelPrimaryName = "mymaster" };
+        var options = new RespireOptions { Protocol = RespProtocol.Resp2, Endpoints = [endpoint], SentinelPrimaryName = "mymaster" };
         var result = await SentinelResolver.ResolveAndConnectPrimaryAsync(options,
             static (primaryOptions, _) => ValueTask.FromResult(primaryOptions.PrimaryEndpoint), default, state);
         await Assert.That(result).IsEqualTo(new RespireEndpoint("127.0.0.1", 6379));
@@ -173,6 +178,7 @@ public class SentinelTests
         using var cancellation = new CancellationTokenSource();
         var pending = RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
             ConnectTimeout = TimeSpan.FromSeconds(10),
         }, cancellation.Token).AsTask();
@@ -192,6 +198,7 @@ public class SentinelTests
         await using var second = new FakeRespServer(PrimaryReply(primary.Port), "*0\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
             SentinelPrimaryName = "mymaster", CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(2),
         }).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
@@ -237,6 +244,7 @@ public class SentinelTests
 
         var options = SentinelResolver.CreateSentinelConnectionOptions(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseTls = false,
             TlsOptions = primaryTlsOptions,
             SentinelUseTls = true,
@@ -326,6 +334,7 @@ public class SentinelTests
 
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", sentinel.Port) },
             SentinelPrimaryName = "mymaster",
             ConnectTimeout = TimeSpan.FromSeconds(1),
@@ -351,6 +360,7 @@ public class SentinelTests
 
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", sentinel.Port) },
             SentinelPrimaryName = "mymaster",
             Username = "redis-user",
@@ -411,6 +421,7 @@ public class SentinelTests
 
         var options = new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints =
             {
                 new RespireEndpoint("127.0.0.1", invalidSentinel.Port),
@@ -422,7 +433,7 @@ public class SentinelTests
         if (useConnectionString)
         {
             options = RespireOptions.Parse(
-                $"127.0.0.1:{invalidSentinel.Port},127.0.0.1:{validSentinel.Port},serviceName=mymaster,connectTimeout=1000");
+                $"127.0.0.1:{invalidSentinel.Port},127.0.0.1:{validSentinel.Port},serviceName=mymaster,connectTimeout=1000,protocol=2");
         }
         await using var client = await RespireClient.ConnectAsync(options);
 
@@ -446,6 +457,7 @@ public class SentinelTests
 
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints =
             {
                 new RespireEndpoint("127.0.0.1", unresponsiveSentinel.Port),
@@ -480,6 +492,7 @@ public class SentinelTests
 
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", sentinel.Port) },
             SentinelPrimaryName = "mymaster",
             Password = "redis-secret",
@@ -514,6 +527,7 @@ public class SentinelTests
 
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints =
             {
                 new RespireEndpoint("127.0.0.1", staleSentinel.Port),
@@ -537,6 +551,7 @@ public class SentinelTests
     {
         var error = Assert.Throws<RespireConfigurationException>(() => RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", 26379) },
             SentinelPrimaryName = "mymaster",
         }));

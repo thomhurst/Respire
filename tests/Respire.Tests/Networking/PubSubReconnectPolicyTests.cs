@@ -22,6 +22,7 @@ public class PubSubReconnectPolicyTests
     };
     private static RespireOptions Options(int port, RespireReconnectPolicy? policy, int database = 0) => new()
     {
+        Protocol = RespProtocol.Resp2,
         Endpoints = { new RespireEndpoint("127.0.0.1", port) }, Connections = 1, Database = database,
         ReconnectPolicy = policy,
     };

@@ -32,7 +32,15 @@ public sealed class RedisTestContainer : IAsyncInitializer, IAsyncDisposable
         }
     }
 
-    public string ConnectionString => $"redis://{Host}:{Port}/{Database}";
+    // CI runs the shared typed scenarios with each protocol; explicit per-test choices still override it.
+    public string ConnectionString => $"redis://{Host}:{Port}/{Database}?protocol={TestProtocol}";
+    private static string TestProtocol => Environment.GetEnvironmentVariable("RESPIRE_TEST_PROTOCOL") switch
+    {
+        null or "" => "auto",
+        "2" => "2",
+        "3" => "3",
+        var value => throw new InvalidOperationException($"Invalid RESPIRE_TEST_PROTOCOL '{value}'; expected 2 or 3."),
+    };
     public string StackExchangeConnectionString => $"{Host}:{Port},defaultDatabase={Database},allowAdmin=true";
     public string Host => Container.Hostname;
     public int Port => Container.GetMappedPublicPort(RedisPort);

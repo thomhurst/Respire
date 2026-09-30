@@ -33,7 +33,7 @@ public class StreamTrimmingIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, 2, true, true)]
     public async Task ExactAndApproximateTrimmingRoundTrip(int protocol, int surface, bool minId, bool approximate)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
         var prefix = $"trim:{Guid.NewGuid():N}:";
         var view = client.WithKeyPrefix(prefix);
         var key = $"events:{minId}:{approximate}";

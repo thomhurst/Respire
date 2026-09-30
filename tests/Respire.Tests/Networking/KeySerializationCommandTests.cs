@@ -126,7 +126,7 @@ public class KeySerializationCommandTests
     [Test]
     public async Task InvalidRestoreDoesNotSelectTransactionSlot()
     {
-        await using var client = RespireClient.Create(new RespireOptions { UseCluster = true, Endpoints = { new RespireEndpoint("localhost") } });
+        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, UseCluster = true, Endpoints = { new RespireEndpoint("localhost") } });
         await using var transaction = client.WithKeyPrefix("tenant:").CreateTransaction();
         await Assert.That(() => transaction.Keys.Restore("{a}:key", default, RespireExpiry.Keep)).Throws<ArgumentException>();
         _ = transaction.Keys.Dump("{b}:key");

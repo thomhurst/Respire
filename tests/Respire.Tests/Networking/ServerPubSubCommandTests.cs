@@ -36,6 +36,7 @@ public class ServerPubSubCommandTests
             }
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
+                Protocol = RespProtocol.Resp2,
                 UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", servers[0].Port)],
             });
             using var cancellation = new CancellationTokenSource();
@@ -112,6 +113,7 @@ public class ServerPubSubCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)], LoggerFactory = logger,
         });
         var first = await client.Server.PubSubPatternCountOnAllNodesAsync();
@@ -148,6 +150,7 @@ public class ServerPubSubCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Connections = 1, Database = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
         var execution = client.Server.PubSubPatternCountOnAllNodesAsync().AsTask();
@@ -242,6 +245,7 @@ public class ServerPubSubCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
         var results = await client.Server.PubSubPatternCountOnAllNodesAsync();
@@ -290,7 +294,7 @@ public class ServerPubSubCommandTests
     public async Task CancellationBeforeDiscoveryDoesNotSend()
     {
         await using var server = new FakeRespServer();
-        await using var client = RespireClient.Create($"localhost:{server.Port}");
+        await using var client = RespireClient.Create($"localhost:{server.Port},protocol=2");
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         await Assert.That(async () => await client.Server.PubSubPatternCountOnAllNodesAsync(cancellation.Token))

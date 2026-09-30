@@ -15,6 +15,18 @@ Added binary-safe keyspace, keyevent, and Redis 8.8 subkey channel factories and
   projection must be covered. Reconnect restores tracking before admitting cached reads.
   See [broadcast configuration](../website/docs/fundamentals/client-side-caching.md#broadcast-tracking-and-physical-prefixes).
 
+### Breaking: RESP3 preferred by default
+
+- `RespireOptions.Protocol` and connection strings now default to `RespProtocol.Auto`.
+  Data connections negotiate RESP3, falling back to RESP2 only for explicit unsupported-HELLO
+  responses. Authentication, timeout, transport, and malformed-reply failures do not downgrade.
+  Use `RespProtocol.Resp2` or `protocol=2` to preserve the previous wire behavior; explicit
+  `RespProtocol.Resp3` remains strict. Client-side caching always requires RESP3.
+- Typed facets normalize RESP2/RESP3 reply shapes. Raw result consumers may observe maps,
+  sets, doubles, booleans, and native nulls by default. Authentication failures can surface
+  during connection setup instead of the first command. See
+  [protocol negotiation](../website/docs/fundamentals/connections.md#protocol-negotiation).
+
 ### Configurable pub/sub recovery
 
 - `RespireOptions.ReconnectPolicy` now controls pub/sub replacement and resubscription

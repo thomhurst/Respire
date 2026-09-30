@@ -45,6 +45,7 @@ public class ServerAclCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = true, ClientSideCache = new(),
         });
         var cache = client.Core.ClientCache!;
@@ -160,6 +161,7 @@ public class ServerAclCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true, AllowAdmin = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
         byte[] username = [255, 0];
@@ -202,7 +204,7 @@ public class ServerAclCommandTests
     }
 
     private static ValueTask<RespireClient> Connect(FakeRespServer server, bool admin)
-        => RespireClient.ConnectAsync(new RespireOptions { Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = admin });
+        => RespireClient.ConnectAsync(new RespireOptions { Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = admin });
     private static byte[] Bulk(byte[] value) => [.. Encoding.ASCII.GetBytes($"${value.Length}\r\n"), .. value, 13, 10];
     private static byte[] Slots(int port) => Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*3\r\n$9\r\n127.0.0.1\r\n:{port}\r\n$4\r\nself\r\n");
 }

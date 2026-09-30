@@ -75,7 +75,7 @@ public class LegacyStreamIdempotencyIntegrationTests(RedisTestContainer fixture)
     [Arguments(3)]
     public async Task OlderServersRejectWithoutWriteFallback(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
         var key = $"production-legacy:{Guid.NewGuid():N}";
         try
         {

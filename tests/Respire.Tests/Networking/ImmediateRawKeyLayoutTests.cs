@@ -33,6 +33,7 @@ public class ImmediateRawKeyLayoutTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true, Endpoints = [new("localhost", 1)], Connections = 1,
         });
         var args = CreateArguments(operation, "{a}:one", "{b}:two");
@@ -55,6 +56,7 @@ public class ImmediateRawKeyLayoutTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true, Endpoints = [new("localhost", 1)], Connections = 1,
         });
         var first = "{a}:key with spaces";
@@ -82,6 +84,7 @@ public class ImmediateRawKeyLayoutTests
         await using var seed = new FakeRespServer(topology, "-ERR wrong route\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -117,6 +120,7 @@ public class ImmediateRawKeyLayoutTests
         await using var server = new FakeRespServer("*0\r\n"u8.ToArray(), FakeRespServer.OkReply);
         await using var cluster = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
         using var unknown = await cluster.ExecuteAsync("VENDOR.UNKNOWN", "{a}:one", "{b}:two");
@@ -131,6 +135,7 @@ public class ImmediateRawKeyLayoutTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true, Endpoints = [new("localhost", 1)], Connections = 1,
         });
         foreach (var args in new RespireValue[][] { ["script", -1], ["script", long.MaxValue], ["script", 2, "one"] })

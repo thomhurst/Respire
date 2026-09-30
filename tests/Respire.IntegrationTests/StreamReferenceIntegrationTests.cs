@@ -179,7 +179,7 @@ public class LegacyStreamReferenceIntegrationTests(RedisTestContainer fixture)
     [Arguments(3)]
     public async Task UnsupportedOptionsDoNotSilentlyFallBackOrReplay(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
         var key = $"legacy-references:{Guid.NewGuid():N}";
         try
         {

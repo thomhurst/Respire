@@ -15,7 +15,7 @@ public class StreamReadIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, 2)]
     public async Task ReadsOwnBinaryKeysAndValuesAcrossSurfaces(int protocol, int surface)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
         var view = client.WithKeyPrefix("租户:");
         RespireKey key = new byte[] { 0xff, 0, 0x42 };
         await view.Streams.AddAsync(key, new StreamAddOptions { Id = "1-0" }, ("字段", (RespireValue)new byte[] { 0xff, 0 }));
@@ -54,7 +54,7 @@ public class StreamReadIntegrationTests(RedisTestContainer fixture)
     public async Task BlockingReadLeavesOrdinaryTrafficResponsiveAndCancellationReleasesLease(int protocol)
     {
         var name = $"stream-block-{Guid.NewGuid():N}";
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}&connections=1&clientName={name}");
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}&connections=1&clientName={name}");
         await using var observer = await RespireClient.ConnectAsync(fixture.ConnectionString);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var cancel = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
@@ -79,7 +79,7 @@ public class StreamReadIntegrationTests(RedisTestContainer fixture)
     public async Task EnumerationResumesAfterKilledConnectionAndDisposesBetweenEntries(int protocol)
     {
         var name = $"stream-resume-{Guid.NewGuid():N}";
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}&clientName={name}");
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}&clientName={name}");
         await using var observer = await RespireClient.ConnectAsync(fixture.ConnectionString);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await client.Streams.AddAsync("events", new StreamAddOptions { Id = "1-0" }, ("value", "first"));

@@ -11,7 +11,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     [Arguments(3)]
     public async Task SortedSetSinglePop_RoundTripsImmediateBatchAndTransaction(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
         var key = $"sorted:single-pop:{Guid.NewGuid():N}";
         await client.SortedSets.AddAsync(key, 7, 1.5);
         await client.SortedSets.AddAsync(key, 9, 2.5);
@@ -42,7 +42,7 @@ public class TypedCommandIntegrationTests(RedisTestContainer fixture)
     [Arguments(3)]
     public async Task PopMany_RoundTripsImmediateBatchAndTransaction(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
         var setKey = $"set:many-pop:{Guid.NewGuid():N}";
         var sortedKey = $"sorted:many-pop:{Guid.NewGuid():N}";
         await client.Sets.AddAsync(setKey, "one", "two");

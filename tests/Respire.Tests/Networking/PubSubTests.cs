@@ -27,7 +27,7 @@ public class PubSubTests
         "*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$5\r\nhello\r\n"u8.ToArray();
 
     private static RespireClient CreateLazyClient(int port)
-        => RespireClient.Create(new RespireOptions { Endpoints = { new RespireEndpoint("127.0.0.1", port) } });
+        => RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, Endpoints = { new RespireEndpoint("127.0.0.1", port) } });
 
     [Test]
     public async Task MalformedLaterName_DoesNotRegisterEarlierRoute()
@@ -119,6 +119,7 @@ public class PubSubTests
         await using var server = new FakeRespServer(SubscribeConfirmation);
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             SubscriptionBufferSize = 1,
             SubscriptionOverflow = overflow,
@@ -160,6 +161,7 @@ public class PubSubTests
         await using var server = new FakeRespServer(SubscribeConfirmation);
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             SubscriptionBufferSize = 8,
             SubscriptionOverflow = SubscriptionOverflow.DropOldest,

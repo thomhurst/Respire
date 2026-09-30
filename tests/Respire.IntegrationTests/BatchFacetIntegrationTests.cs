@@ -18,7 +18,7 @@ public class BatchFacetIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, true)]
     public async Task Batch_FailureHandlingPreservesSuccessfulCommands(int protocol, bool inspect)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
         var key = $"batch:failure:{Guid.NewGuid():N}";
         await client.Hashes.SetAsync(key, "field", "value");
         using var batch = client.CreateBatch();

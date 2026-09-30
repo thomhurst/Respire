@@ -17,7 +17,7 @@ public class SortedSetQueryIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, QueryMode.Transaction)]
     public async Task RandomMembers_PreserveCountsScoresAndMissingResults(int protocol, QueryMode mode)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
         var view = client.WithKeyPrefix($"query:{Guid.NewGuid():N}:");
         await view.SortedSets.AddAsync("key", ("a", 1), ("b", 2));
         (await Run(view, mode, s => s.RandomMemberAsync("missing"), s => s.RandomMember("missing"))).Should().BeNull();
@@ -45,7 +45,7 @@ public class SortedSetQueryIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, QueryMode.Transaction)]
     public async Task TypedRandomMembers_PreserveBinaryMembersAndDeserializeValues(int protocol, QueryMode mode)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
         var view = client.WithKeyPrefix($"typed:{Guid.NewGuid():N}:");
         byte[] bytes = [0xff, 0, 0x80];
         await view.SortedSets.AddAsync("binary", (RespireValue)bytes, 1.5);
@@ -129,7 +129,7 @@ public class SortedSetQueryIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, QueryMode.Transaction)]
     public async Task WrongType_RemainsAServerError(int protocol, QueryMode mode)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
         var view = client.WithKeyPrefix($"wrong:{Guid.NewGuid():N}:");
         await view.SetAsync("key", "string");
         Func<Task>[] operations = [

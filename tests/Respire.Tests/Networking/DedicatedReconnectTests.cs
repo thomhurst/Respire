@@ -347,6 +347,7 @@ public class DedicatedReconnectTests
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply) { CloseConnectionAfterCommand = 2 };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) }, Connections = 1,
             Database = 1, ReconnectPolicy = Policy(milliseconds: 30_000),
         });

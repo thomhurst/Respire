@@ -317,6 +317,7 @@ public class ClusterDatabaseTests
 
     private static RespireOptions Options(int port) => new()
     {
+        Protocol = RespProtocol.Resp2,
         UseCluster = true, Database = 2, Connections = 1, Endpoints = { new RespireEndpoint("127.0.0.1", port) },
     };
 

@@ -18,6 +18,7 @@ public class ClusterNodeIdentityTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true, ClientSideCache = new(),
         });
         var core = client.Core;
@@ -73,6 +74,7 @@ public class ClusterNodeIdentityTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
         });
         var router = client.Core.Cluster!;
@@ -104,6 +106,7 @@ public class ClusterNodeIdentityTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
         });
         var router = client.Core.Cluster!;
@@ -201,6 +204,7 @@ public class ClusterNodeIdentityTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true, ClientSideCache = new(),
         });
         var router = client.Core.Cluster!;
@@ -239,6 +243,7 @@ public class ClusterNodeIdentityTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
         });
         var router = client.Core.Cluster!;
@@ -293,6 +298,7 @@ public class ClusterNodeIdentityTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true, ClientSideCache = new(),
         });
         var core = client.Core;
@@ -353,6 +359,7 @@ public class ClusterNodeIdentityTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true, ClientSideCache = new(),
         });
         var core = client.Core;
@@ -731,6 +738,7 @@ public class ClusterNodeIdentityTests
 
     private static RespireOptions Options(int seedPort) => new()
     {
+        Protocol = RespProtocol.Resp2,
         UseCluster = true,
         Endpoints = { new RespireEndpoint("127.0.0.1", seedPort) },
         Connections = 1,

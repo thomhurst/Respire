@@ -69,7 +69,7 @@ public class StreamTrimmingTests
     public async Task InvalidTrimmingFailsBeforeIoOrEnqueue()
     {
         await using var server = new FakeRespServer();
-        await using var client = RespireClient.Create(new RespireOptions { Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
+        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
         StreamTrimOptions[] invalid =
@@ -111,6 +111,7 @@ public class StreamTrimmingTests
         await using var server = new FakeRespServer();
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
         using var batch = client.CreateBatch();

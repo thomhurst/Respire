@@ -151,6 +151,7 @@ internal static class SentinelResolver
             ClientName = null,
             Database = 0,
             UseResp3 = false,
+            AllowResp2Fallback = false,
             UseTls = options.SentinelUseTls ?? options.UseTls,
             TlsOptions = options.SentinelTlsOptions ?? options.TlsOptions,
             PushHandler = null,

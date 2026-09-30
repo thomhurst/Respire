@@ -17,6 +17,7 @@ public class TransactionTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("localhost") },
         });
         RespireKey[]? watchKeys = null;

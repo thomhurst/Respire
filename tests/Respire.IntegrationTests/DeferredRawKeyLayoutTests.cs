@@ -11,7 +11,7 @@ public class DeferredRawKeyLayoutTests(RedisTestContainer fixture)
     [Arguments(3)]
     public async Task SupportedLayoutsMatchRedisKeyDiscovery(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
         using var catalog = await client.ExecuteAsync("COMMAND");
         var verified = new HashSet<string>(StringComparer.Ordinal);
         foreach (var metadata in Commands(catalog))

@@ -410,13 +410,32 @@ internal sealed class RespireConnection : IAsyncDisposable
     private async Task HandshakeAsync(RespireConnectionOptions options, CancellationToken cancellationToken,
         bool armCommandDeadline)
     {
+        // Automatic negotiation must finish before setup commands: an unsupported HELLO
+        // may require RESP2 AUTH before SELECT, SETNAME, or capability discovery can succeed.
+        var allowResp2Fallback = options.AllowResp2Fallback && !options.EnableClientTracking;
+        var negotiatedResp3 = false;
+        if (options.UseResp3 && allowResp2Fallback)
+        {
+            using var hello = await SendAsync(new Commands.HelloCommand(options.Username, options.Password),
+                cancellationToken, armCommandDeadline: armCommandDeadline).ConfigureAwait(false);
+            if (hello.IsError)
+            {
+                if (!IsUnsupportedHello(in hello)) throw CreateHandshakeException(in hello, "HELLO");
+            }
+            else
+            {
+                ValidateHelloProtocol(in hello);
+                negotiatedResp3 = true;
+            }
+        }
+
         List<(string Step, ValueTask<RespValue> Reply)>? pending = null;
-        if (options.UseResp3)
+        if (options.UseResp3 && !allowResp2Fallback)
         {
             (pending ??= new(3)).Add(("HELLO", SendAsync(
                 new Commands.HelloCommand(options.Username, options.Password), cancellationToken, armCommandDeadline: armCommandDeadline)));
         }
-        else if (options.Password is not null)
+        else if (!negotiatedResp3 && options.Password is not null)
         {
             (pending ??= new(3)).Add(("AUTH", SendAsync(
                 new Commands.AuthCommand(options.Username, options.Password), cancellationToken, armCommandDeadline: armCommandDeadline)));
@@ -547,6 +566,14 @@ internal sealed class RespireConnection : IAsyncDisposable
 
     private RespireConnectionException CreateHandshakeException(in RespValue reply, string step)
         => new($"{step} failed for {Host}:{Port}: {reply.GetErrorMessage()}", ResponseReader.ServerError(in reply, step));
+
+    private static bool IsUnsupportedHello(in RespValue reply)
+    {
+        var message = reply.GetErrorMessage().AsSpan();
+        return message.StartsWith("NOPROTO ", StringComparison.OrdinalIgnoreCase)
+            || message.StartsWith("ERR unknown command 'HELLO'", StringComparison.OrdinalIgnoreCase)
+            || message.StartsWith("ERR unknown command `HELLO`", StringComparison.OrdinalIgnoreCase);
+    }
 
     private void ValidateHelloProtocol(in RespValue reply)
     {
@@ -2433,6 +2460,9 @@ internal sealed record RespireConnectionOptions
 
     /// <summary>Negotiate RESP3 via HELLO 3 during the handshake. Requires Redis 6+.</summary>
     public bool UseResp3 { get; init; }
+
+    /// <summary>Permit RESP2 only after an explicit unsupported-HELLO response. Ignored when UseResp3 is false.</summary>
+    internal bool AllowResp2Fallback { get; init; }
 
     /// <summary>Initial size of the pooled parse buffer the receive loop reads into.</summary>
     public int ReceiveBufferSize { get; init; } = 64 * 1024;

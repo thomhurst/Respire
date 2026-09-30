@@ -42,7 +42,7 @@ public class ServerDiagnosticsCommandTests
     public async Task AdminValidationAndCancellationHappenBeforeIo()
     {
         await using var server = new FakeRespServer();
-        await using var client = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", server.Port)] });
+        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)] });
         await Assert.That(async () => await client.Server.PurgeMemoryAsync()).ThrowsExactly<NotSupportedException>();
         await Assert.That(async () => await client.Server.PurgeMemoryOnAllNodesAsync()).ThrowsExactly<NotSupportedException>();
         await Assert.That(async () => await client.Server.LatencyHistoryAsync(" ")).ThrowsExactly<ArgumentException>();
@@ -86,6 +86,7 @@ public class ServerDiagnosticsCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
         var original = await client.Core.Cluster!.GetConnectionAsync(42, default);
@@ -143,6 +144,7 @@ public class ServerDiagnosticsCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = true, ClientSideCache = new(),
         });
         var cache = client.Core.ClientCache!;
@@ -201,7 +203,7 @@ public class ServerDiagnosticsCommandTests
     }
 
     private static ValueTask<RespireClient> Connect(FakeRespServer server, bool admin)
-        => RespireClient.ConnectAsync(new RespireOptions { Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = admin });
+        => RespireClient.ConnectAsync(new RespireOptions { Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = admin });
     private static byte[] Bulk(string value) => Bulk(Encoding.UTF8.GetBytes(value));
     private static byte[] Bulk(byte[] value) => [.. Encoding.ASCII.GetBytes($"${value.Length}\r\n"), .. value, 13, 10];
     private static byte[] Integer(long value) => Encoding.ASCII.GetBytes($":{value}\r\n");

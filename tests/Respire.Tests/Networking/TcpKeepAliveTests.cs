@@ -100,6 +100,7 @@ public class TcpKeepAliveTests
     {
         var options = new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             TcpKeepAliveTime = TimeSpan.FromSeconds(60),
             TcpKeepAliveInterval = TimeSpan.FromSeconds(10),
             TcpKeepAliveRetryCount = 4,

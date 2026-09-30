@@ -333,6 +333,7 @@ public class LockCommandTests
             "$-1\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             CommandTimeout = null,
@@ -364,6 +365,7 @@ public class LockCommandTests
         server.CloseConnectionAfterCommand = 4;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             CommandTimeout = null,
@@ -416,6 +418,7 @@ public class LockCommandTests
         server.DelayReply(3, 500);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
         });

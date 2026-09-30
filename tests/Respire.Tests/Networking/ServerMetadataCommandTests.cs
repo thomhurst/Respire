@@ -58,7 +58,7 @@ public class ServerMetadataCommandTests
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         foreach (var operation in Mutations(client.Server))
             await Assert.That(operation).ThrowsExactly<NotSupportedException>();
-        await using var admin = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", server.Port)], AllowAdmin = true });
+        await using var admin = RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], AllowAdmin = true });
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         foreach (var operation in Mutations(admin.Server, cancellation.Token))
@@ -77,7 +77,7 @@ public class ServerMetadataCommandTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply, FakeRespServer.OkReply, FakeRespServer.OkReply,
             "+Background saving started\r\n"u8.ToArray(), "+Background saving scheduled\r\n"u8.ToArray(),
             "+Background append only file rewriting scheduled\r\n"u8.ToArray(), "-ERR Background save already in progress\r\n"u8.ToArray());
-        await using var client = await RespireClient.ConnectAsync(new RespireOptions { Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = true });
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions { Protocol = RespProtocol.Resp2, Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = true });
         await client.Server.ConfigRewriteAsync();
         await client.Server.ConfigResetStatisticsAsync();
         await client.Server.SaveAsync();
@@ -103,7 +103,7 @@ public class ServerMetadataCommandTests
             discovering.TrySetResult();
             return true;
         };
-        await using var client = await RespireClient.ConnectAsync(new RespireOptions { UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)] });
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions { Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)] });
         var task = client.WithKeyPrefix("ignored:").Server.CommandGetKeysOnAllNodesAsync("GET", [key]).AsTask();
         await discovering.Task.WaitAsync(TimeSpan.FromSeconds(5));
         key.AsSpan().Clear();
@@ -126,7 +126,7 @@ public class ServerMetadataCommandTests
         {
             SuppressReply = command => { if (command != "SAVE") return false; received.TrySetResult(); return true; },
         };
-        await using var client = await RespireClient.ConnectAsync(new RespireOptions { Connections = 1, AllowAdmin = true, Endpoints = [new("127.0.0.1", server.Port)] });
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions { Protocol = RespProtocol.Resp2, Connections = 1, AllowAdmin = true, Endpoints = [new("127.0.0.1", server.Port)] });
         using var cancellation = new CancellationTokenSource();
         var task = allNodes ? CheckAll() : client.Server.SaveAsync(cancellation.Token).AsTask();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -170,6 +170,7 @@ public class ServerMetadataCommandTests
             };
             await using var client = await RespireClient.ConnectAsync(new RespireOptions
             {
+                Protocol = RespProtocol.Resp2,
                 Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, AllowAdmin = true, ClientSideCache = new(),
             });
             var cache = client.Core.ClientCache!;
@@ -223,6 +224,7 @@ public class ServerMetadataCommandTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, ClientSideCache = new(),
         });
         var cache = client.Core.ClientCache!;

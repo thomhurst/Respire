@@ -30,6 +30,7 @@ public class ValueCodecCommandTests
             FakeRespServer.OkReply, FakeRespServer.OkReply, Bulk(frame), "$-1\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Serializer = serializer,
         });
         var prefixed = client.WithKeyPrefix("tenant:");
@@ -78,6 +79,7 @@ public class ValueCodecCommandTests
         await using var server = new FakeRespServer(replies);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, Serializer = serializer,
         });
         if (transaction)
