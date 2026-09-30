@@ -21,6 +21,9 @@ public class DeferredFacetParityTests
         // Multi-key scalar list pops are always blocking and cannot be queued.
         typeof(IListCommands).GetMethod(nameof(IListCommands.PopAsync),
             [typeof(ReadOnlySpan<RespireKey>), typeof(TimeSpan), typeof(ListSide), typeof(CancellationToken)])!,
+        // Both typed and string multi-key scalar sorted-set pops always block on a dedicated lease.
+        .. typeof(ISortedSetCommands).GetMethods().Where(method => method.Name == nameof(ISortedSetCommands.PopAsync)
+            && method.GetParameters().Any(parameter => parameter.ParameterType == typeof(TimeSpan))),
         // Leased replies require explicit pooled-buffer ownership outside deferred completion.
         typeof(IStringCommands).GetMethod(nameof(IStringCommands.GetLeaseAsync),
             [typeof(RespireKey), typeof(CancellationToken)])!,

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Sorted sets
+
+- Multi-key `PopManyAsync` adds ZMPOP and optional blocking BZMPOP; multi-key
+  `PopAsync` adds BZPOPMIN/BZPOPMAX. Results include the selected, owned binary key
+  with the view prefix removed, plus string or typed member/score entries.
+  Batches and transactions support nonblocking `PopMany`. Existing single-key
+  overloads keep their bindings. Implementers of `ISortedSetCommands` and
+  `IBatchSortedSetCommands` must implement the new members.
+  See the [sorted-set pop guide](SORTED_SET_POPS.md) for versions and wait semantics.
+
 ### Scripting
 
 - `RespireScript.Create(source, readOnly: true)` selects Redis 7+ read-only Lua commands.
