@@ -22,6 +22,8 @@ public interface IBatchStreamCommands
     RespirePending<long> Remove(RespireKey key, params ReadOnlySpan<RespireStreamId> ids);
     /// <summary>Trims by maximum length; returns the number removed. Redis: XTRIM MAXLEN.</summary>
     RespirePending<long> TrimByMaxLength(RespireKey key, long maxLength, bool approximate = false);
+    /// <summary>Trims by MAXLEN or MINID with optional approximate work limit. Redis: XTRIM.</summary>
+    RespirePending<long> Trim(RespireKey key, StreamTrimOptions options);
     /// <summary>Acknowledges pending group entries; returns the number newly acknowledged. Redis: XACK.</summary>
     /// <remarks>An empty id list is sent to Redis and surfaces as a server error on the pending result.</remarks>
     RespirePending<long> Acknowledge(RespireKey key, string group, params ReadOnlySpan<RespireStreamId> ids);
@@ -73,6 +75,10 @@ internal sealed class BatchStreamCommands(IPendingSink sink) : IBatchStreamComma
             : sink.Add<Cmd3, long>("XTRIM", new Cmd3(StreamCommands.XTrim, sink.Client.Key(SnapshotKey(key)), "MAXLEN", maxLength),
                 static (_, value) => ResponseReader.Integer(in value));
     }
+
+    public RespirePending<long> Trim(RespireKey key, StreamTrimOptions options)
+        => sink.Add<Cmd1N, long>("XTRIM", StreamCommands.BuildTrimCommand(sink.Client, SnapshotKey(key), options),
+            static (_, value) => ResponseReader.Integer(in value));
 
     public RespirePending<long> Acknowledge(RespireKey key, string group, params ReadOnlySpan<RespireStreamId> ids)
         => sink.Add<Cmd2N, long>("XACK", StreamCommands.BuildAcknowledgeCommand(sink.Client, SnapshotKey(key), group, ids),

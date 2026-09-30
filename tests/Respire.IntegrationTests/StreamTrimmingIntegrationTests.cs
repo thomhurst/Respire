@@ -1,0 +1,83 @@
+using FluentAssertions;
+using TUnit.Core;
+
+namespace Respire.IntegrationTests;
+
+[ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
+public class StreamTrimmingIntegrationTests(RedisTestContainer fixture)
+{
+    [Test]
+    [Arguments(2, 0)]
+    [Arguments(3, 0)]
+    [Arguments(2, 1)]
+    [Arguments(3, 1)]
+    [Arguments(2, 2)]
+    [Arguments(3, 2)]
+    public async Task ExactAndApproximateTrimmingRoundTrip(int protocol, int surface)
+    {
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        var prefix = $"trim:{Guid.NewGuid():N}:";
+        var view = client.WithKeyPrefix(prefix);
+        try
+        {
+            foreach (var minId in new[] { false, true })
+            foreach (var approximate in new[] { false, true })
+            {
+                var key = $"events:{minId}:{approximate}";
+                // More than one macro node makes approximate eviction observable without depending on its exact size.
+                using (var seed = view.CreateBatch())
+                {
+                    for (var id = 1; id <= 300; id++)
+                        _ = seed.Streams.Add(key, new StreamAddOptions { Id = $"{id}-0" }, ("value", id));
+                    await seed.ExecuteAsync();
+                }
+                var trim = new StreamTrimOptions { MaxLength = minId ? null : 150,
+                    MinId = minId ? new RespireStreamId("151-0") : (RespireStreamId?)null, Approximate = approximate,
+                    Limit = approximate ? 0 : null };
+                var add = new StreamAddOptions { Id = "301-0", MaxLength = minId ? null : 200,
+                    MinId = minId ? new RespireStreamId("101-0") : (RespireStreamId?)null, ApproximateTrim = approximate,
+                    Limit = approximate ? 1000 : null };
+                long removed;
+                if (surface == 0)
+                {
+                    (await view.Streams.AddAsync(key, add, ("value", 301))).Should().Be((RespireStreamId)"301-0");
+                    removed = await view.Streams.TrimAsync(key, trim);
+                }
+                else
+                {
+                    using var batch = surface == 1 ? view.CreateBatch() : null;
+                    await using var transaction = surface == 2 ? view.CreateTransaction() : null;
+                    IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
+                    var added = queue.Streams.Add(key, add, ("value", 301));
+                    var trimmed = queue.Streams.Trim(key, trim);
+                    if (transaction is not null) await transaction.CommitAsync();
+                    else await batch!.ExecuteAsync();
+                    added.Result.Should().Be((RespireStreamId)"301-0");
+                    removed = trimmed.Result;
+                }
+                var entries = await view.Streams.RangeAsync(key);
+                if (approximate)
+                {
+                    entries.Length.Should().BeInRange(minId ? 151 : 150, 301);
+                    // XADD has already removed at least one complete node.
+                    entries.Length.Should().BeLessThan(301);
+                    removed.Should().BeGreaterThanOrEqualTo(0);
+                }
+                else
+                {
+                    entries.Length.Should().Be(minId ? 151 : 150);
+                    entries[0].Id.Should().Be((RespireStreamId)(minId ? "151-0" : "152-0"));
+                    removed.Should().Be(50);
+                }
+                entries[^1].Id.Should().Be((RespireStreamId)"301-0");
+                (await client.Keys.ExistsAsync(prefix + key)).Should().BeTrue();
+                (await client.Keys.ExistsAsync(prefix + prefix + key)).Should().BeFalse();
+                await view.Keys.DeleteAsync(key);
+            }
+        }
+        finally
+        {
+            await view.Keys.DeleteAsync("events:False:False", "events:False:True", "events:True:False", "events:True:True");
+        }
+    }
+}

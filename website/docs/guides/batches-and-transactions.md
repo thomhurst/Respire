@@ -133,11 +133,13 @@ The raw `Execute` queue method supports known nonblocking command forms; see
 
 ## Deferred Streams
 
-Both queues expose `Streams.Add`, `Count`, `Range`, `Remove`, `TrimByMaxLength`, and
-`Acknowledge`, corresponding to XADD, XLEN, XRANGE/XREVRANGE, XDEL, XTRIM MAXLEN, and
+Both queues expose `Streams.Add`, `Count`, `Range`, `Remove`, `Trim`, `TrimByMaxLength`, and
+`Acknowledge`, corresponding to XADD, XLEN, XRANGE/XREVRANGE, XDEL, XTRIM, and
 XACK. Parameters mirror the immediate methods without cancellation tokens. `Add`
 accepts `StreamAddOptions`; that overload returns a nullable id when NOMKSTREAM skips
 an absent stream. `Range` supports inclusive bounds, count, and descending order.
+`Trim` accepts `StreamTrimOptions` for MAXLEN/MINID and approximate LIMIT; see
+[stream trimming](../commands/collections.md#trimming) for validation and defaults.
 
 ```csharp
 await using var transaction = redis.CreateTransaction();
