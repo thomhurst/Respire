@@ -409,9 +409,11 @@ public class ClientSideCacheCoalescingTests
     }
 
     [Test]
-    [Arguments(true, 1)]
-    [Arguments(false, 2)]
-    public async Task CoalescingIsExplicitlyEnabled(bool enabled, int requests)
+    [Arguments(true, 1, false)]
+    [Arguments(false, 2, false)]
+    [Arguments(true, 1, true)]
+    [Arguments(false, 2, true)]
+    public async Task CoalescingIsExplicitlyEnabled(bool enabled, int requests, bool many)
     {
         await using var server = CreateServer();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
@@ -420,13 +422,17 @@ public class ClientSideCacheCoalescingTests
             Connections = 1,
             ClientSideCache = enabled ? new() { CoalesceConcurrentMisses = true } : new(),
         });
-        var first = client.GetStringAsync("key").AsTask();
-        var second = client.GetStringAsync("key").AsTask();
+        async Task<string?> ReadAsync() => many
+            ? string.Join(",", await client.Strings.GetManyAsync("key", "missing", "key"))
+            : await client.GetStringAsync("key");
+        var first = ReadAsync();
+        var second = ReadAsync();
         await BarrierAsync(server, client, requests);
-        var frames = string.Concat(Enumerable.Repeat("+OK\r\n$1\r\nx\r\n", requests)) + "+PONG\r\n";
+        var reply = many ? "*3\r\n$1\r\nx\r\n$-1\r\n$1\r\nx\r\n" : "$1\r\nx\r\n";
+        var frames = string.Concat(Enumerable.Repeat("+OK\r\n" + reply, requests)) + "+PONG\r\n";
         await server.SendRawAsync(Encoding.ASCII.GetBytes(frames));
-        await Assert.That(await first.WaitAsync(Timeout)).IsEqualTo("x");
-        await Assert.That(await second.WaitAsync(Timeout)).IsEqualTo("x");
+        await Assert.That(await first.WaitAsync(Timeout)).IsEqualTo(many ? "x,,x" : "x");
+        await Assert.That(await second.WaitAsync(Timeout)).IsEqualTo(many ? "x,,x" : "x");
     }
 
     [Test]

@@ -63,6 +63,8 @@ internal sealed partial class ClientSideCacheCoordinator
             try
             {
                 using var response = await read(state, shared.Cancellation.Token).ConfigureAwait(false);
+                // ToOwned recursively allocates GC-owned arrays; it never rents buffers.
+                // If every waiter cancels, Completion and this value become collectible.
                 owned = response.ToOwned();
             }
             finally { FinishSharedRead(shared); }
@@ -88,6 +90,8 @@ internal sealed partial class ClientSideCacheCoordinator
             // Completion removes the joinable identity before waking callers. Earlier
             // callers finish copying before decrementing Waiters, so the last caller can
             // take the producer's owned value without sharing mutable arrays.
+            // Concurrent copiers can both miss the handoff. The unused original is GC-owned;
+            // decrementing before copying would let another caller mutate its source bytes.
             lock (_sharedReadLock)
             {
                 if (shared.Waiters == 1) return response;

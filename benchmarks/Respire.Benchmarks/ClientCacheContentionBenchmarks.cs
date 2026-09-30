@@ -16,7 +16,9 @@ public class ClientCacheContentionBenchmarks
 {
     private RespireClient _client = null!;
     private Task<string?>[] _pending = null!;
+    private Task<string?[]>[] _pendingMany = null!;
     private readonly string _key = $"respire:cache-contention:{Guid.NewGuid():N}";
+    private readonly string _secondKey = $"respire:cache-contention:{Guid.NewGuid():N}";
     private readonly string _hash = $"respire:cache-contention:hash:{Guid.NewGuid():N}";
     private readonly string _value = new('x', 256);
 
@@ -54,7 +56,9 @@ public class ClientCacheContentionBenchmarks
             ClientSideCache = cacheOptions,
         });
         _pending = new Task<string?>[Callers];
+        _pendingMany = new Task<string?[]>[Callers];
         await _client.SetAsync(_key, _value);
+        await _client.SetAsync(_secondKey, _value);
         await _client.Hashes.SetAsync(_hash, "field", _value);
         if (await _client.GetStringAsync(_key) != _value
             || await _client.Hashes.GetStringAsync(_hash, "field") != _value)
@@ -73,6 +77,17 @@ public class ClientCacheContentionBenchmarks
         for (var i = 0; i < _pending.Length; i++)
             _pending[i] = _client.GetStringAsync(_key).AsTask();
         return Task.WhenAll(_pending);
+    }
+
+    [Benchmark]
+    public Task<string?[][]> GetManyMissBurst()
+    {
+        _operation = nameof(GetManyMissBurst);
+        _operations++;
+        _client.ClientSideCache!.Clear();
+        for (var index = 0; index < _pendingMany.Length; index++)
+            _pendingMany[index] = _client.Strings.GetManyAsync(_key, _secondKey).AsTask();
+        return Task.WhenAll(_pendingMany);
     }
 
     [Benchmark]
@@ -106,6 +121,7 @@ public class ClientCacheContentionBenchmarks
             operations = _operations
         }));
         await _client.DeleteAsync(_key);
+        await _client.DeleteAsync(_secondKey);
         await _client.DeleteAsync(_hash);
         await _client.DisposeAsync();
         _process.Dispose();

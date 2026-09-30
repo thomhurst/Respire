@@ -70,10 +70,10 @@ clearing, or continuity loss. Normal completion and last-caller cancellation are
 Use this counter to assess how often churn prevents new callers from joining existing work.
 
 Sharing adds bookkeeping and owned-result copies on misses. Keep the default independent
-requests for workloads with little contention. The last remaining waiter receives the producer's
+requests for workloads with little contention. A sole remaining waiter can take the producer's
 owned result; other waiters receive separate copies. Cache hits retain their existing fast path. The CI contention benchmark
 compares default single-caller misses, opted-in single-caller misses, and opted-in 32-caller bursts
-for `GET` and `HGET`, plus hot `GET`, against both same-run baseline controls. Latency and allocations
+for `GET`, `MGET`, and `HGET`, plus hot `GET`, against both same-run baseline controls. Latency and allocations
 include one complete burst and its local cache eviction. Process CPU counters include benchmark
 warmup/calibration and background client work; they are diagnostic, not per-operation CPU samples.
 
