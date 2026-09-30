@@ -97,7 +97,7 @@ asynchronous miss is sent.
 
 ## RESP3 tracking protocol
 
-Every multiplexed command connection performs:
+By default, every multiplexed command connection performs:
 
 ```text
 HELLO 3
@@ -131,6 +131,20 @@ push handler and tracking handshake.
 `OPTIN` limits Redis tracking memory and push traffic to actual cache misses. RESP3 invalidations
 remain on the command connection that performed the read, preserving server wire order without a
 redirected invalidation connection.
+
+`RespireClientSideCacheOptions.TrackingMode = Broadcast` instead configures
+`CLIENT TRACKING ON BCAST [PREFIX ...]` on every cache-bearing connection. Its reads have no
+`CLIENT CACHING YES` prelude. The options snapshot owns nonoverlapping literal physical
+`BroadcastPrefixes`; an empty list covers all keys. Prefixes are not transformed by client
+key-prefix views. Per-key insertion requires that key to be covered, while a command projection
+requires every dependency to be covered. Uncovered reads still execute but cannot create cache
+entries. These insertion guards also cover mixed covered/uncovered MGET misses.
+
+Broadcast retains the same invalidation generations, query epochs, local mutation fences,
+response ownership, and continuity flushes. ASK retries remain conservatively uncached because
+the temporary owner is not an authoritative source of future invalidations. Every replacement
+and discovered command node retains its mode and prefixes. Dedicated operations, batches, and
+transactions retain their existing uncached behavior.
 
 ## Race correctness
 
@@ -169,7 +183,8 @@ The store is swapped and the epoch advanced whenever tracking continuity becomes
 
 `RespireConnectionMultiplexer` observes receive-loop completion immediately. It reports the lost
 slot and starts replacement even when every application read would otherwise be a local cache hit.
-The replacement repeats `HELLO 3` and `CLIENT TRACKING ON OPTIN` before publication.
+The replacement repeats `HELLO 3` and the configured OPTIN or BCAST/PREFIX tracking command
+before publication.
 
 Server-assisted caching cannot provide linearizability across an undetected network partition.
 Until the operating system detects a half-open socket, a previously cached value can be returned.
