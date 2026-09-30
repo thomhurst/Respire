@@ -49,7 +49,7 @@ jobs:
       - name: Validate then compare pinned builds on one runner
         shell: bash
         env:
-          # Preserve each process's compiled hit path alongside the exported disassembly.
+          # Keep native JIT output separate from managed benchmark stdout to prevent interleaving.
           DOTNET_JitDisasm: Hit CachedGetAsync
           DOTNET_JitDisasmDiffable: '1'
         run: |
@@ -59,6 +59,9 @@ jobs:
             source=baseline
             job=Medium
             export RESPIRE_BENCH_BASELINE=1
+            # CoreCLR appends to this file. Phases and BDN child processes run sequentially;
+            # retain every listing without mixing managed stdout into native instructions.
+            export DOTNET_JitStdOutFile="$GITHUB_WORKSPACE/cache-jit-$phase.log"
             if [ "$phase" = candidate ] || [ "$phase" = validation ]; then
               source=candidate
               export RESPIRE_BENCH_BASELINE=0
@@ -111,7 +114,7 @@ jobs:
               report = next(Path("cache-results", phase, "results").glob("*-report-full-compressed.json"))
               cases = json.loads(report.read_text())["Benchmarks"]
               phases[phase] = {(case["Method"], case["Parameters"]): case for case in cases}
-              assert "Assembly listing for method Respire.Benchmarks.ClientCacheTrackingBenchmarks:Hit" in Path(f"cache-{phase}.log").read_text(), phase
+              assert "Assembly listing for method Respire.Benchmarks.ClientCacheTrackingBenchmarks:Hit" in Path(f"cache-jit-{phase}.log").read_text(), phase
           common = phases["baseline-a"].keys() & phases["candidate"].keys() & phases["baseline-b"].keys()
           assert len(common) == 2, "Expected matching OPTIN hit and invalidation cases"
           lines = ["## Candidate versus both controls", "",
@@ -142,6 +145,41 @@ jobs:
           Path("cache-results/comparison.md").write_text(summary)
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
               output.write(summary)
+      - name: Summarize intact native cache listings
+        shell: python
+        run: |
+          import hashlib
+          import json
+          import re
+          from collections import Counter
+          from pathlib import Path
+          rows = []
+          for phase in ("baseline-a", "candidate", "baseline-b"):
+              native = Path(f"cache-jit-{phase}.log").read_text()
+              found = Counter()
+              for block in re.split(r"(?=; Assembly listing for method )", native):
+                  header = block.splitlines()[0] if block else ""
+                  if "(Tier1)" not in header:
+                      continue
+                  if "ClientCacheTrackingBenchmarks:Hit(" in header:
+                      method = "Hit"
+                  elif ":CachedGetAsync[" in header:
+                      method = "CachedGetAsync"
+                  else:
+                      continue
+                  end = re.search(r"; Total bytes of code (\d+)", block)
+                  assert end, f"Incomplete native listing: {phase}: {header}"
+                  listing = block[:end.end()]
+                  assert "WorkloadResult" not in listing and "// AfterAll" not in listing, phase
+                  normalized = re.sub(r"G_M\d+_", "G_M_", listing)
+                  rows.append({"phase": phase, "method": method, "bytes": int(end.group(1)),
+                               "sha256": hashlib.sha256(normalized.encode()).hexdigest()})
+                  found[method] += 1
+              assert found["Hit"] >= 2 and found["CachedGetAsync"] >= 2, (phase, found)
+          Path("cache-results/native-listings.json").write_text(json.dumps(rows, indent=2))
+          # Sequential child processes append their listings. This file retains every version;
+          # it does not assign a particular listing to a benchmark case or process launch.
+
       - name: Publish mode and build comparisons
         if: always()
         shell: bash

@@ -582,6 +582,7 @@ internal sealed class RespireConnection : IAsyncDisposable
         => new($"{step} failed for {Host}:{Port}: {reply.GetErrorMessage()}{hint}", ResponseReader.ServerError(in reply, step));
 
     private enum HelloErrorKind { Unsupported, Authentication, Other }
+    private static readonly string[] HelloCredentialWording = ["auth", "password", "credential", "permission", "ACL"];
 
     private static HelloErrorKind ClassifyHelloError(ReadOnlySpan<char> message)
     {
@@ -595,13 +596,10 @@ internal sealed class RespireConnection : IAsyncDisposable
         // ERR has no structured subcode. Suppress compatibility advice conservatively
         // for credential/ACL wording; these failures must never suggest a downgrade.
         if (message.StartsWith("WRONGPASS", StringComparison.OrdinalIgnoreCase)
-            || message.StartsWith("NOPERM", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("auth", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("password", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("credential", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("permission", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("ACL", StringComparison.OrdinalIgnoreCase))
+            || message.StartsWith("NOPERM", StringComparison.OrdinalIgnoreCase))
             return HelloErrorKind.Authentication;
+        foreach (var wording in HelloCredentialWording)
+            if (message.Contains(wording, StringComparison.OrdinalIgnoreCase)) return HelloErrorKind.Authentication;
         return HelloErrorKind.Other;
     }
 

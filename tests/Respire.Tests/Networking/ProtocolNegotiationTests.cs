@@ -43,6 +43,38 @@ public class ProtocolNegotiationTests
     }
 
     [Test]
+    public async Task MixedProtocolPoolPreservesRawShapesAndTypedHashResults()
+    {
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (connectionId, command) => command switch
+            {
+                "HELLO 3" => connectionId == 0 ? HelloReply : "-NOPROTO unsupported protocol version\r\n"u8.ToArray(),
+                "HGETALL hash" => connectionId == 0
+                    ? "%1\r\n$1\r\na\r\n$1\r\n1\r\n"u8.ToArray()
+                    : "*2\r\n$1\r\na\r\n$1\r\n1\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server) with { Connections = 2 });
+        var shapes = new HashSet<Respire.Protocol.RespDataType>();
+        for (var index = 0; index < 4; index++)
+        {
+            using var raw = await client.ExecuteAsync((RespireCommand)"HGETALL", ["hash"]);
+            shapes.Add(raw.Type);
+            await Assert.That(raw.Count).IsEqualTo(2);
+            await Assert.That(raw[0].AsString()).IsEqualTo("a");
+            await Assert.That(raw[1].AsString()).IsEqualTo("1");
+        }
+        await Assert.That(shapes).IsEquivalentTo([Respire.Protocol.RespDataType.Map, Respire.Protocol.RespDataType.Array]);
+        for (var index = 0; index < 4; index++)
+            await Assert.That(await client.Hashes.GetAllAsync("hash"))
+                .IsEquivalentTo(new Dictionary<string, string> { ["a"] = "1" });
+        await Assert.That(server.ReceivedCommands.Count(command => command == "HELLO 3")).IsEqualTo(2);
+        await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task SuccessfulInlineAuthenticationIsNotRepeated()
     {
         await using var server = new FakeRespServer(HelloReply, FakeRespServer.OkReply, FakeRespServer.PongReply);
@@ -80,6 +112,9 @@ public class ProtocolNegotiationTests
     [Arguments("ERR authentication failed", RespProtocol.Auto, false, false)]
     [Arguments("ERR invalid password", RespProtocol.Auto, false, false)]
     [Arguments("ERR ACL denied", RespProtocol.Auto, false, false)]
+    [Arguments("ERR invalid credential", RespProtocol.Auto, false, false)]
+    [Arguments("ERR permission denied", RespProtocol.Auto, false, false)]
+    [Arguments("ERR authoritative proxy rejected HELLO", RespProtocol.Auto, false, false)]
     [Arguments("WRONGPASS invalid username-password pair", RespProtocol.Auto, false, false)]
     [Arguments("NOAUTH Authentication required", RespProtocol.Auto, false, false)]
     [Arguments("NOPERM denied", RespProtocol.Auto, false, false)]
