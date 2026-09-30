@@ -3,7 +3,7 @@ name: Dedicated pool benchmarks
 on:
   pull_request:
     paths:
-      - 'src/Respire/Internal/DedicatedConnectionPool.cs'
+      - 'src/Respire/Internal/DedicatedConnectionPool*.cs'
       - 'benchmarks/Respire.Benchmarks/DedicatedPoolBenchmarks.cs'
       - '.github/workflows/benchmark-dedicated-pool.yml'
 

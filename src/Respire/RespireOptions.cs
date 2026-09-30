@@ -178,8 +178,8 @@ public sealed record RespireOptions
     /// <summary>Timeout for the initial TCP connect (per connection).</summary>
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(10);
 
-    /// <summary>Optional command-connection recovery backoff. Null preserves immediate, demand-driven replacement.</summary>
-    /// <remarks>Dedicated pools, pub/sub, and discovery retain their existing recovery behavior.</remarks>
+    /// <summary>Optional command and dedicated connection recovery backoff. Null preserves on-demand behavior.</summary>
+    /// <remarks>Dedicated rentals retry failed acquisition with independent budgets. Pub/sub and discovery retain their existing recovery behavior.</remarks>
     public RespireReconnectPolicy? ReconnectPolicy { get; init; }
 
     /// <summary>Use TLS. Enabled automatically for <c>rediss://</c> connection strings.</summary>

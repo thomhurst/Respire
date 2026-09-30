@@ -84,6 +84,8 @@ public class ReconnectPolicyTests
         for (var index = 0; index < 5; index++)
             await Assert.That(() => client.Core.Multiplexer.GetConnection()).ThrowsExactly<RespireReconnectLimitException>();
         var attempts = changes.Where(change => change.State == RespireConnectionState.Reconnecting).ToArray();
+        await Assert.That(attempts.All(change => change.ReconnectSource == RespireReconnectSource.Command
+            && change.SourceState == RespireConnectionState.Reconnecting)).IsTrue();
         await Assert.That(attempts.Select(change => change.ReconnectAttempt).ToArray()).IsEquivalentTo(new[] { 1, 2 }, CollectionOrdering.Matching);
         await Assert.That(attempts.Select(change => change.NextReconnectDelay).ToArray())
             .IsEquivalentTo(new TimeSpan?[] { TimeSpan.FromMilliseconds(50), TimeSpan.FromMilliseconds(100) }, CollectionOrdering.Matching);

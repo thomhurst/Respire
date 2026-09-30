@@ -79,6 +79,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     }
 
     internal event Action<RespireConnectionMultiplexer, int, RespireConnectionStateChange>? SlotStateChanged;
+    internal event Action<RespireConnectionStateChange>? DedicatedStateChanged;
     internal event Action<RespireConnectionMultiplexer>? NodeRetired;
 
     // ClientCore acquires its health gate first, then this gate, through membership checks
@@ -1271,7 +1272,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 node.Host,
                 node.Port,
                 _options.ToConnectionOptions(),
-                _options.CreateLogger($"Respire.Cluster.Blocking.{node.Host}:{node.Port}"));
+                _options.CreateLogger($"Respire.Cluster.Blocking.{node.Host}:{node.Port}"),
+                change => DedicatedStateChanged?.Invoke(change));
             _dedicatedPools.Add(node, pool);
             _ownedPools.Add(pool);
             return pool;

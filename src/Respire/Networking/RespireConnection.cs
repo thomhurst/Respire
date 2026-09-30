@@ -564,8 +564,10 @@ internal sealed class RespireConnection : IAsyncDisposable
             }
         }
 
-        throw new RespireConnectionException(
-            $"HELLO 3 failed for {Host}:{Port}: server did not confirm RESP3 (expected map field 'proto' = 3).");
+        var message = $"HELLO 3 failed for {Host}:{Port}: server did not confirm RESP3 (expected map field 'proto' = 3).";
+        // Preserve the connection exception contract while exposing the permanent protocol
+        // failure to acquisition retry classification.
+        throw new RespireConnectionException(message, new RespireProtocolException(message));
     }
 
     /// <summary>

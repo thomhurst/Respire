@@ -11,8 +11,9 @@ namespace Respire.Internal;
 /// demand and a few idle ones are kept for reuse. Rented connections are tracked so client
 /// disposal can abort a command blocked server-side (even a BLPOP with an infinite wait).
 /// </summary>
-internal sealed class DedicatedConnectionPool(
-    string host, int port, RespireConnectionOptions options, ILogger? logger) : IAsyncDisposable
+internal sealed partial class DedicatedConnectionPool(
+    string host, int port, RespireConnectionOptions options, ILogger? logger,
+    Action<RespireConnectionStateChange>? stateChanged = null) : IAsyncDisposable
 {
     private const int MaxIdle = 4;
 
@@ -91,8 +92,12 @@ internal sealed class DedicatedConnectionPool(
             RespireConnection connection;
             try
             {
-                connection = await RespireConnection.ConnectAsync(
-                    host, port, options, logger, connectCancellation.Token, armHandshakeDeadline).ConfigureAwait(false);
+                // Corrective fences own their retry/deadline rules and must not inherit an
+                // application acquisition limit. Healthy idle rentals never enter this path.
+                connection = options.ReconnectPolicy is { } policy && armHandshakeDeadline
+                    ? await ConnectWithRecoveryAsync(policy, connectCancellation.Token).ConfigureAwait(false)
+                    : await RespireConnection.ConnectAsync(
+                        host, port, options, logger, connectCancellation.Token, armHandshakeDeadline).ConfigureAwait(false);
             }
             catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
                 error, cancellationToken, connectCancellation.Token))

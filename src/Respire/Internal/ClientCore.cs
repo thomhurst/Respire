@@ -47,13 +47,14 @@ internal sealed class ClientCore : IAsyncDisposable
         Multiplexer = RespireConnectionMultiplexer.Create(
             endpoint.Host, endpoint.Port, options.Connections, connectionOptions, Logger);
         DedicatedPool = new DedicatedConnectionPool(
-            endpoint.Host, endpoint.Port, options.ToConnectionOptions(), Logger);
+            endpoint.Host, endpoint.Port, options.ToConnectionOptions(), Logger, NotifyDedicatedStateChanged);
         Cluster = options.UseCluster
             ? new ClusterRouter(options, Multiplexer, connectionOptions)
             : null;
         if (Cluster is { } cluster)
         {
             cluster.SlotStateChanged += NotifyCommandStateChanged;
+            cluster.DedicatedStateChanged += NotifyDedicatedStateChanged;
             cluster.NodeRetired += NotifyCommandNodeRetired;
         }
         else
@@ -70,6 +71,18 @@ internal sealed class ClientCore : IAsyncDisposable
             : Multiplexer.EnsureConnectedAsync(cancellationToken);
 
     public event Action<RespireConnectionStateChange>? ConnectionStateChanged;
+
+    internal void NotifyDedicatedStateChanged(RespireConnectionStateChange change)
+    {
+        lock (_stateGate)
+        {
+            if (Disposed) return;
+            // A transient dedicated rent is not a required command slot. Forward its
+            // source metadata without adding it to command/subscription health sets.
+            QueueEndpointStateLocked(change);
+        }
+        PublishQueuedStates();
+    }
 
     internal void NotifySubscriptionStateChanged(
         RespireConnectionState state,
@@ -271,6 +284,8 @@ internal sealed class ClientCore : IAsyncDisposable
                     return;
                 }
 
+                if (Disposed && change.ReconnectSource == RespireReconnectSource.Dedicated) continue;
+
                 handlers = ConnectionStateChanged;
             }
 
@@ -310,7 +325,8 @@ internal sealed class ClientCore : IAsyncDisposable
         lock (_hubGate)
         {
             ObjectDisposedException.ThrowIf(Disposed, this);
-            var pool = new DedicatedConnectionPool(endpoint.Host, endpoint.Port, Options.ToConnectionOptions(), Logger);
+            var pool = new DedicatedConnectionPool(endpoint.Host, endpoint.Port, Options.ToConnectionOptions(), Logger,
+                NotifyDedicatedStateChanged);
             (_serverPools ??= []).Add(pool);
             return pool;
         }
@@ -377,6 +393,7 @@ internal sealed class ClientCore : IAsyncDisposable
         if (Cluster is { } cluster)
         {
             cluster.SlotStateChanged -= NotifyCommandStateChanged;
+            cluster.DedicatedStateChanged -= NotifyDedicatedStateChanged;
             cluster.NodeRetired -= NotifyCommandNodeRetired;
             await cluster.DisposeAsync().ConfigureAwait(false);
         }

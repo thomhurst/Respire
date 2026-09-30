@@ -938,6 +938,8 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         var change = new RespireConnectionStateChange(
             new RespireEndpoint(Host, Port), notification.State, notification.Error)
         {
+            ReconnectSource = RespireReconnectSource.Command,
+            SourceState = notification.State,
             ReconnectAttempt = notification.Attempt,
             ConnectionSlot = notification.Slot,
             NextReconnectDelay = notification.Delay,

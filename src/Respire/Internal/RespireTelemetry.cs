@@ -39,22 +39,31 @@ internal static class RespireTelemetry
     public static readonly Histogram<long> ReconnectAttempts = Meter.CreateHistogram<long>(
         "respire.connection.reconnect.attempt", unit: "{attempt}", description: "One-based scheduled replacement attempt within a failed connection episode.");
     public static readonly Histogram<double> ReconnectDelays = Meter.CreateHistogram<double>(
-        "respire.connection.reconnect.delay", unit: "s", description: "Scheduled delay before a configured command-connection replacement attempt.");
+        "respire.connection.reconnect.delay", unit: "s", description: "Scheduled delay before a configured connection replacement attempt.");
 
     public static readonly Counter<long> ReconnectExhaustions = Meter.CreateCounter<long>(
         "respire.connection.reconnect.exhausted", unit: "{episode}", description: "Recovery episodes that reached the configured replacement attempt limit.");
 
-    internal static void RecordReconnectExhaustion(string host, int port)
+    internal static void RecordReconnectExhaustion(string host, int port, RespireReconnectSource source = RespireReconnectSource.Command)
         => ReconnectExhaustions.Add(1, new KeyValuePair<string, object?>("server.address", host),
-            new KeyValuePair<string, object?>("server.port", port));
+            new KeyValuePair<string, object?>("server.port", port),
+            new KeyValuePair<string, object?>("respire.connection.source", ReconnectSourceName(source)));
 
-    internal static void RecordReconnectAttempt(string host, int port, int attempt, TimeSpan delay)
+    internal static void RecordReconnectAttempt(string host, int port, int attempt, TimeSpan delay, RespireReconnectSource source = RespireReconnectSource.Command)
     {
         var address = new KeyValuePair<string, object?>("server.address", host);
         var endpointPort = new KeyValuePair<string, object?>("server.port", port);
-        ReconnectAttempts.Record(attempt, address, endpointPort);
-        ReconnectDelays.Record(delay.TotalSeconds, address, endpointPort);
+        var sourceTag = new KeyValuePair<string, object?>("respire.connection.source", ReconnectSourceName(source));
+        ReconnectAttempts.Record(attempt, address, endpointPort, sourceTag);
+        ReconnectDelays.Record(delay.TotalSeconds, address, endpointPort, sourceTag);
     }
+
+    private static string ReconnectSourceName(RespireReconnectSource source) => source switch
+    {
+        RespireReconnectSource.Command => "command",
+        RespireReconnectSource.Dedicated => "dedicated",
+        _ => "unspecified",
+    };
 
     public static readonly Histogram<double> OperationDuration = Meter.CreateHistogram<double>(
         "db.client.operation.duration",
