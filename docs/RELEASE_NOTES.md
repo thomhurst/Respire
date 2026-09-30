@@ -43,6 +43,12 @@
   Existing `SetManyAsync`/`SetMany` overloads retain their bindings and unconditional
   behavior. See the [bulk string guide](../website/docs/commands/strings-and-keys.md#bulk-operations).
 
+- `IRespireCommandQueue` adds `Streams`, exposing non-blocking stream operations on batches
+  and transactions. External queue implementations, decorators, and mocks must implement
+  or forward this property. The facet supports `Add`, `Count`, `Range`, `Remove`,
+  `TrimByMaxLength`, and `Acknowledge`; blocking reads and consumer loops remain client-only.
+  See the [batch and transaction guide](../website/docs/guides/batches-and-transactions.md).
+
 - `IKeyCommands` and `IBatchKeyCommands` add absolute expiration and OBJECT metadata
   members. External implementations, decorators, and mocks must implement or forward
   `ExpiryTimeAsync`/`ExpiryTime` (both overloads), `EncodingAsync`/`Encoding`,

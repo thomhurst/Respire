@@ -35,7 +35,7 @@ internal sealed class BatchStreamCommands(IPendingSink sink) : IBatchStreamComma
     public RespirePending<RespireStreamId?> Add(RespireKey key, StreamAddOptions options,
         params ReadOnlySpan<(string Field, RespireValue Value)> fields)
         => sink.Add<Cmd1N, RespireStreamId?>("XADD", StreamCommands.BuildAddCommand(sink.Client, key, options, fields),
-            static (_, value) => value.IsNull ? null : new RespireStreamId(ResponseReader.String(in value)));
+            static (_, value) => value.IsNull ? default(RespireStreamId?) : new RespireStreamId(ResponseReader.String(in value)));
 
     public RespirePending<long> Count(RespireKey key)
         => sink.Add<Cmd1, long>("XLEN", new Cmd1(Verbs.XLen, sink.Client.Key(in key)),
