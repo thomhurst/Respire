@@ -93,6 +93,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
                 if (Volatile.Read(ref reload.Generation) == generation)
                 {
                     await EnsureLibraryAsync(library, cancellationToken).ConfigureAwait(false);
+                    // Failed reloads leave the generation unchanged so the next waiter can try again.
                     Interlocked.Increment(ref reload.Generation);
                 }
             }
