@@ -82,6 +82,36 @@ public class DedicatedReconnectTests
     }
 
     [Test]
+    [Arguments("+OK\r\n", false)]
+    [Arguments("%1\r\n$5\r\nproto\r\n:2\r\n", false)]
+    [Arguments("%0\r\n", false)]
+    [Arguments("+OK\r\n", true)]
+    [Arguments("%1\r\n$5\r\nproto\r\n:2\r\n", true)]
+    [Arguments("%0\r\n", true)]
+    public async Task InvalidHelloResponseFailsWithoutRetrying(string reply, bool afterTransportFailure)
+    {
+        await using var server = new FakeRespServer(2, System.Text.Encoding.ASCII.GetBytes(reply))
+        {
+            CloseConnectionAfterCommand = afterTransportFailure ? 1 : null,
+        };
+        var terminal = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
+            new RespireConnectionOptions { UseResp3 = true, ReconnectPolicy = Policy() with { MaxAttempts = null } }, null,
+            change => { if (change.State == RespireConnectionState.Disconnected) terminal.TrySetResult(change); });
+        using var deadline = new CancellationTokenSource(Deadline);
+        var error = await Assert.That(async () => await pool.RentAsync(deadline.Token)).ThrowsExactly<RespireConnectionException>();
+        await Assert.That(error!.InnerException).IsTypeOf<RespireProtocolException>();
+        await Assert.That(error.Message).Contains("server did not confirm RESP3");
+        await Assert.That(server.CommandsSeen).IsEqualTo(afterTransportFailure ? 2 : 1);
+        if (afterTransportFailure)
+        {
+            var stopped = await terminal.Task.WaitAsync(deadline.Token);
+            await Assert.That(stopped.ReconnectExhausted).IsFalse();
+            await Assert.That(stopped.ReconnectAttempt).IsEqualTo(1);
+        }
+    }
+
+    [Test]
     public async Task PermanentRejectionAfterTransportFailureEndsEpisodeWithoutExhaustion()
     {
         await using var server = new FakeRespServer(2, "-WRONGPASS denied\r\n"u8.ToArray()) { CloseConnectionAfterCommand = 1 };

@@ -81,6 +81,9 @@ can connect concurrently; the policy is not an endpoint-wide rate limiter. Succe
 the episode. Exhaustion throws `RespireReconnectLimitException` with the last connection
 failure as its inner exception. It does not disable the pool: a later rent starts fresh.
 An unlimited policy can keep one rent pending until it connects or is cancelled.
+That rent retains its acquisition reservation through backoff and handshake cleanup.
+The pool limits retained idle connections, not concurrent acquisitions; callers should
+bound total waiting work with cancellation and their own concurrency limits.
 Connection failures, connection/handshake timeouts, and server errors classified by
 `RespireServerException.IsTransient` can retry. Permanent server handshake rejections
 (including `WRONGPASS`, `NOAUTH`, `NOPERM`, and ordinary `ERR`), TLS authentication failures,

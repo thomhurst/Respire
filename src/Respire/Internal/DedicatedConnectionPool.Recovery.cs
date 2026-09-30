@@ -65,6 +65,8 @@ internal sealed partial class DedicatedConnectionPool
         RespireConnectionException { InnerException: RespireServerException server } => server.IsTransient,
         RespireServerException server => server.IsTransient,
         RespireConnectionException { InnerException: { } cause } => IsRetryableAcquisitionFailure(cause),
+        // The catch guard excludes caller/pool shutdown. Independent per-attempt connect
+        // deadlines can still surface OperationCanceledException and are retryable here.
         SocketException or IOException or RespireConnectionException or RespireTimeoutException
             or OperationCanceledException or TimeoutException => true,
         _ => false,
@@ -112,9 +114,9 @@ internal sealed partial class DedicatedConnectionPool
             try
             {
                 if (change.NextReconnectDelay is { } delay)
-                    RespireTelemetry.RecordReconnectAttempt(host, port, change.ReconnectAttempt, delay, "dedicated");
+                    RespireTelemetry.RecordReconnectAttempt(host, port, change.ReconnectAttempt, delay, change.ReconnectSource);
                 if (change.ReconnectExhausted)
-                    RespireTelemetry.RecordReconnectExhaustion(host, port, "dedicated");
+                    RespireTelemetry.RecordReconnectExhaustion(host, port, change.ReconnectSource);
                 // Measurements describe already scheduled work and may finish after Stop.
                 // Skip queued lifecycle callbacks once stopping is observed; callbacks already
                 // in flight are deliberately not joined because they can dispose this pool.
