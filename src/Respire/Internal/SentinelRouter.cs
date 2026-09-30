@@ -87,14 +87,13 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 var old = Current;
                 Volatile.Write(ref _current, replacement);
                 unpublished = null;
-                QueueNotificationLocked(() =>
-                {
-                    core.NotifySentinelPrimaryChanged(old?.Multiplexer, replacement.Multiplexer);
-                    if (old is not null && old.Endpoint != replacement.Endpoint)
-                        RespireTelemetry.SentinelFailovers.Add(1,
-                            new KeyValuePair<string, object?>("server.address", replacement.Endpoint.Host),
-                            new KeyValuePair<string, object?>("server.port", replacement.Endpoint.Port));
-                });
+                // Publication owns this measurement even if disposal suppresses later health
+                // callbacks. Keep meter listeners outside discovery to permit observer disposal.
+                if (old is not null && old.Endpoint != replacement.Endpoint)
+                    QueueNotificationLocked(() => RespireTelemetry.SentinelFailovers.Add(1,
+                        new KeyValuePair<string, object?>("server.address", replacement.Endpoint.Host),
+                        new KeyValuePair<string, object?>("server.port", replacement.Endpoint.Port)), suppressAfterDisposal: false);
+                QueueNotificationLocked(() => core.NotifySentinelPrimaryChanged(old?.Multiplexer, replacement.Multiplexer));
             }
             return replacement;
         }
@@ -168,7 +167,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
 
     // Do not join this chain during disposal: an observer may synchronously dispose the
     // client itself. Queued callbacks are suppressed; an active callback may finish later.
-    private void QueueNotificationLocked(Action notification)
+    private void QueueNotificationLocked(Action notification, bool suppressAfterDisposal = true)
     {
         var previous = _notifications;
         _notifications = Task.Run(async () =>
@@ -176,7 +175,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             try
             {
                 await previous.ConfigureAwait(false);
-                if (!core.Disposed) notification();
+                if (!suppressAfterDisposal || !core.Disposed) notification();
             }
             catch (Exception error)
             {

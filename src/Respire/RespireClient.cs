@@ -2646,12 +2646,12 @@ public sealed partial class RespireClient : IRespireClient
                     .ConfigureAwait(false);
             }
 
-            var telemetry = RespireTelemetry.StartOperation(
+            var telemetry = core.Sentinel is null ? RespireTelemetry.StartOperation(
                 operation,
                 core.Multiplexer.Host,
                 core.Multiplexer.Port,
                 core.Options.Database,
-                storedProcedureName: storedProcedureName);
+                storedProcedureName: storedProcedureName) : default;
             RespireConnection? connection = null;
             DedicatedConnectionPool? pool = null;
             var returned = false;
@@ -2659,6 +2659,9 @@ public sealed partial class RespireClient : IRespireClient
             {
                 pool = await core.GetDedicatedPoolAsync(cancellationToken).ConfigureAwait(false);
                 connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
+                if (core.Sentinel is not null)
+                    telemetry = RespireTelemetry.StartOperation(operation, connection.Host, connection.Port,
+                        core.Options.Database, storedProcedureName: storedProcedureName);
                 var response = await connection.SendWithoutResponseTimeoutAsync(command, cancellationToken)
                     .ConfigureAwait(false);
                 pool.Return(connection);
@@ -2981,17 +2984,20 @@ public sealed partial class RespireClient : IRespireClient
             return new RespireResult(in clusterReply, _core.Options.Serializer);
         }
 
-        var telemetry = RespireTelemetry.StartOperation(
+        var telemetry = core.Sentinel is null ? RespireTelemetry.StartOperation(
             script.EvalShaOperation,
             core.Multiplexer.Host,
             core.Multiplexer.Port,
             core.Options.Database,
-            storedProcedureName: script.Sha1);
+            storedProcedureName: script.Sha1) : default;
         RespireConnection? connection = null;
         try
         {
             await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
             connection = core.Multiplexer.GetConnection();
+            if (core.Sentinel is not null)
+                telemetry = RespireTelemetry.StartOperation(script.EvalShaOperation, connection.Host, connection.Port,
+                    core.Options.Database, storedProcedureName: script.Sha1);
             var result = await ExecuteScriptOnConnectionCoreAsync(connection, script, tail, cancellationToken)
                 .ConfigureAwait(false);
             telemetry.Complete(core, script.EvalShaOperation, script.Sha1, connection: connection);

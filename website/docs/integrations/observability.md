@@ -141,7 +141,8 @@ requires a separate explicit contract.
 `ConnectionStateChanged` reports the retired endpoint and validated replacement for reactive
 Sentinel handoffs. Prefix views share these events. The `respire.sentinel.failover` counter
 records primary endpoint changes with `server.address` and `server.port` tags. Initial
-discovery and reconnection to the same endpoint do not increment it. Lifecycle observers run
+discovery and reconnection to the same endpoint do not increment it. Published failover
+measurements remain queued even when disposal suppresses lifecycle callbacks. Lifecycle observers run
 outside discovery and transport work; queued events are suppressed after client disposal.
 The process-wide `respire.sentinel.generations.retired` gauge reports retired generations
 still owned while accepted work or correction fences drain. Continued growth warrants

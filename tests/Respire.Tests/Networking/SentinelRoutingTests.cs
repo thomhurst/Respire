@@ -51,9 +51,12 @@ public class SentinelRoutingTests
         await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with { MaxInflightCommands = 4 });
         var original = client.Core.Multiplexer.GetConnection();
         var accepted = Enumerable.Range(0, 4).Select(_ => original.SendAsync(
-            new Respire.Commands.RawCommand(FakeRespServer.PingFrame), default).AsTask()).ToArray();
+            new Respire.Commands.RawCommand(FakeRespServer.PingFrame), default, armCommandDeadline: false).AsTask()).ToArray();
         await full.Task.WaitAsync(Limit);
-        var waiter = client.SetAsync("unaccepted", "value").AsTask();
+        // Pin this waiter to the full old connection before retirement. A public call can
+        // still be in async route acquisition and legitimately select the replacement.
+        var waiter = original.SendAsync(new Respire.Commands.Cmd2(Respire.Commands.Verbs.Set,
+            "unaccepted", "value"), default, armCommandDeadline: false).AsTask();
         await Assert.That(waiter.IsCompleted).IsFalse();
         Volatile.Write(ref primaryPort, promoted.Port);
         await oldPrimary.SendRawAsync("-READONLY replica\r\n"u8.ToArray());
@@ -267,7 +270,13 @@ public class SentinelRoutingTests
         await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
         await using var client = RespireClient.Create(Options(sentinel.Port));
         var events = new ConcurrentQueue<RespireConnectionStateChange>();
-        client.ConnectionStateChanged += events.Enqueue;
+        var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            events.Enqueue(change);
+            if (change.Endpoint.Port == promoted.Port && change.State == RespireConnectionState.Connected)
+                published.TrySetResult();
+        };
         var counted = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, meter) =>
@@ -287,6 +296,7 @@ public class SentinelRoutingTests
         await Assert.That(async () => await client.SetAsync("trigger", "value")).Throws<RespireServerException>();
         await client.SetAsync("next", "value").AsTask().WaitAsync(Limit);
         await Assert.That(await counted.Task.WaitAsync(Limit)).IsEqualTo(1);
+        await published.Task.WaitAsync(Limit);
         var ordered = events.ToArray();
         var disconnected = Array.FindIndex(ordered, change => change.Endpoint.Port == oldPrimary.Port
             && change.State == RespireConnectionState.Disconnected);
@@ -604,13 +614,17 @@ public class SentinelRoutingTests
     [Arguments("batch")]
     [Arguments("durability")]
     [Arguments("transaction")]
-    public async Task FirstLazyBatchIsSampledWithThePrimaryEndpoint(string kind)
+    [Arguments("blocking")]
+    [Arguments("script")]
+    public async Task FirstLazyOperationIsSampledWithThePrimaryEndpoint(string kind)
     {
         await using var primary = Primary((_, command) => command switch
         {
             "SET key value" when kind == "transaction" => "+QUEUED\r\n"u8.ToArray(),
             "EXEC" => "*1\r\n+OK\r\n"u8.ToArray(),
             "WAIT 1 1000" => ":1\r\n"u8.ToArray(),
+            "BLPOP key 0" => "*2\r\n$3\r\nkey\r\n$5\r\nvalue\r\n"u8.ToArray(),
+            _ when command.StartsWith("EVALSHA ") => ":1\r\n"u8.ToArray(),
             _ => null,
         });
         await using var sentinel = Sentinel(() => primary.Port);
@@ -621,12 +635,19 @@ public class SentinelRoutingTests
             ShouldListenTo = source => source.Name == "Respire",
             Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
             {
-                if (options.Name == "SET") samples.Enqueue(options.Tags!.ToDictionary(tag => tag.Key, tag => tag.Value));
+                if (options.Name == "SET" || options.Name == "BLPOP" || options.Name.StartsWith("EVALSHA")) samples.Enqueue(options.Tags!.ToDictionary(tag => tag.Key, tag => tag.Value));
                 return ActivitySamplingResult.AllDataAndRecorded;
             },
         };
         ActivitySource.AddActivityListener(listener);
-        if (kind == "transaction")
+        if (kind == "blocking")
+            await client.Lists.LeftPopAsync("key", waitFor: Timeout.InfiniteTimeSpan).AsTask().WaitAsync(Limit);
+        else if (kind == "script")
+        {
+            using var result = await client.Scripts.ExecuteAsync(RespireScript.Create("return 1"));
+            await Assert.That(result.AsInteger()).IsEqualTo(1);
+        }
+        else if (kind == "transaction")
         {
             await using var transaction = client.CreateTransaction();
             _ = transaction.Set("key", "value");
@@ -711,6 +732,49 @@ public class SentinelRoutingTests
         await Assert.That(original.CountedAsRetired).IsFalse();
         await Assert.That(replacement.CountedAsRetired).IsFalse();
         await Assert.That(third.ReceivedCommands.Any(command => command.StartsWith("BLPOP "))).IsFalse();
+    }
+
+    [Test]
+    public async Task DisposalDoesNotDropAnAlreadyPublishedFailoverMeasurement()
+    {
+        await using var primary = Primary((_, command) => command.StartsWith("SET retire")
+            ? "-READONLY replica\r\n"u8.ToArray() : null);
+        await using var promoted = Primary();
+        var port = primary.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = RespireClient.Create(Options(sentinel.Port));
+        var observerEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseObserver = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var measured = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, meter) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.sentinel.failover")
+                meter.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
+        {
+            foreach (var tag in tags)
+                if (tag.Key == "server.port" && Equals(tag.Value, promoted.Port)) measured.TrySetResult(value);
+        });
+        listener.Start();
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.Endpoint.Port != primary.Port || change.State != RespireConnectionState.Connected) return;
+            observerEntered.TrySetResult();
+            releaseObserver.Task.GetAwaiter().GetResult();
+        };
+        try
+        {
+            await client.SetAsync("first", "value");
+            await observerEntered.Task.WaitAsync(Limit);
+            Volatile.Write(ref port, promoted.Port);
+            await Assert.That(async () => await client.SetAsync("retire", "value")).Throws<RespireServerException>();
+            await client.SetAsync("promoted", "value");
+            await client.DisposeAsync().AsTask().WaitAsync(Limit);
+        }
+        finally { releaseObserver.TrySetResult(); }
+        await Assert.That(await measured.Task.WaitAsync(Limit)).IsEqualTo(1L);
     }
 
     private static async Task WaitForCommandAsync(FakeRespServer server, string prefix)
