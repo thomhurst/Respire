@@ -27,6 +27,7 @@ internal static class DeferredRawCommands
             tokens[words.Length + index] = args[index].Snapshot();
         }
 
+        // Prefixing only mutates this private snapshot. A failed slot check leaves the sink untouched.
         int? slot = null;
         for (var index = 0; index < layout.Count; index++)
             PrefixKey(layout.Start + index * layout.Stride);

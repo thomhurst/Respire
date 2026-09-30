@@ -82,7 +82,9 @@ and functions must access keys through the declared key arguments; source is not
 ## Cluster and queue restrictions
 
 Every key within one raw command must share a slot after prefixing. A mismatch throws
-`RespireServerException` with code `CROSSSLOT` locally, before enqueueing. Rejected
+`RespireServerException` with code `CROSSSLOT` locally, before enqueueing. This matches
+the existing typed multi-key command contract; the exception type does not imply a
+server round trip. Rejected
 commands do not pin a transaction to a slot. A Cluster transaction also requires all
 its commands to share one slot. Cluster batches group commands by slot; order is
 preserved within a group, while different groups may execute independently. Keyless
@@ -93,7 +95,7 @@ subscriptions, WATCH, transaction control, connection setup, CLIENT commands,
 WAIT/WAITAOF, and similar session operations. XREAD/XREADGROUP are currently rejected
 even without BLOCK because their layouts are not supported here. Administrative,
 unknown, and module forms are rejected rather than trusted to preserve queue state.
-SORT and GEORADIUS are also excluded because their optional external keys need their
+SORT and the GEORADIUS family are also excluded because their optional external keys need their
 own parsing rules; use the typed sorting/geospatial APIs where available.
 
 No per-command flags, fire-and-forget mode, or implicit cluster-wide administration
