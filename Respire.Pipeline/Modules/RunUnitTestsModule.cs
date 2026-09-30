@@ -29,7 +29,9 @@ public class RunUnitTestsModule : Module<CommandResult[]>
         .Build();
 
     internal static string[] CreateDiagnosticsArguments() =>
-        ["--hangdump", "--hangdump-timeout", HangDumpInactivityTimeout, "--hangdump-type", "Mini", "--report-trx"];
+        // Suspended async waits live on the managed heap. Mini dumps can name the running
+        // test but omit the state machines needed to inspect its outstanding operations.
+        ["--hangdump", "--hangdump-timeout", HangDumpInactivityTimeout, "--hangdump-type", "Heap", "--report-trx"];
 
     protected override async Task<CommandResult[]?> ExecuteAsync(IModuleContext context, CancellationToken cancellationToken)
     {
