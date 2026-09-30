@@ -28,7 +28,7 @@ public enum SetWhen
 /// String (plain value) commands. Unlike collection facets' <c>CountAsync</c>,
 /// <see cref="LengthAsync"/> returns a byte length.
 /// </summary>
-public interface IStringCommands
+public partial interface IStringCommands
 {
     /// <summary>Gets a key's value as a string, or null when missing. Redis: GET.</summary>
     ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken cancellationToken = default);
@@ -209,7 +209,7 @@ public interface IStringCommands
         RespireKey firstKey, RespireKey secondKey, CancellationToken cancellationToken = default);
 }
 
-internal sealed class StringCommands(RespireClient client) : IStringCommands
+internal sealed partial class StringCommands(RespireClient client) : IStringCommands
 {
     public ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.CachedGetAsync(

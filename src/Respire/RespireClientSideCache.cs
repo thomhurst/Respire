@@ -615,7 +615,7 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
 
     private static bool IsSingleKeyMutation(string operation)
         => operation is
-            "SET" or "RESTORE" or "GETDEL" or "GETEX" or "APPEND" or "SETRANGE" or
+            "SET" or "DELEX" or "DELIFEQ" or "RESTORE" or "GETDEL" or "GETEX" or "APPEND" or "SETRANGE" or
             "INCR" or "INCRBY" or "INCRBYFLOAT" or "DECR" or "DECRBY" or
             "PEXPIRE" or "PEXPIREAT" or "PERSIST" or
             "HSET" or "HSETNX" or "HDEL" or "HINCRBY" or "HINCRBYFLOAT" or

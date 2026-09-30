@@ -12,7 +12,7 @@ namespace Respire;
 /// and cancellation belongs to the execute/commit call. <c>GetLeaseAsync</c> has no deferred form —
 /// a lease borrows the reply's pooled memory, which is released once the batch completes.
 /// </summary>
-public interface IBatchStringCommands
+public partial interface IBatchStringCommands
 {
     /// <summary>Gets a key's value as a string, or null when missing. Redis: GET.</summary>
     RespirePending<string?> GetString(RespireKey key);
@@ -131,7 +131,7 @@ public interface IBatchStringCommands
     RespirePending<long> LcsLength(RespireKey firstKey, RespireKey secondKey);
 }
 
-internal sealed class BatchStringCommands(IPendingSink sink) : IBatchStringCommands
+internal sealed partial class BatchStringCommands(IPendingSink sink) : IBatchStringCommands
 {
     public RespirePending<string?> GetString(RespireKey key)
         => sink.Add<Cmd1, string?>(

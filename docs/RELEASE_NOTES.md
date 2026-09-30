@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### String comparisons
+
+- `Strings.SetConditionalAsync` and `GetAndSetConditionalAsync` add value/digest
+  comparisons without changing existing SET overload bindings. `DeleteConditionalAsync`
+  and `DigestAsync` expose Redis 8.4 DELEX/DIGEST; `DeleteIfEqualAsync` exposes Valkey 9.0
+  DELIFEQ. SET IFEQ also supports Valkey 8.1. All methods have batch/transaction mirrors.
+  External `IStringCommands` and `IBatchStringCommands` implementations, decorators,
+  and mocks must implement or forward the new members, including both generic SET forms.
+  See [string comparisons](../website/docs/commands/strings-and-keys.md#compare-values-before-writing-or-deleting)
+  for server versions, raw comparison operands, buffer ownership, and GET result semantics.
+
 ### Sorted sets
 
 - Multi-key `PopManyAsync` adds ZMPOP and optional blocking BZMPOP; multi-key
