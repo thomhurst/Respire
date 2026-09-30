@@ -41,14 +41,23 @@ public class DeferredRawKeyLayoutTests(RedisTestContainer fixture)
                 .Select(index => args[layout.Start + index * layout.Stride]).ToList();
             if (layout.Extra >= 0) selected.Add(args[layout.Extra]);
             RespireValue[] query = ["GETKEYS", .. words.Select(x => (RespireValue)x), .. args.Select(x => (RespireValue)x)];
-            using var keys = await client.ExecuteAsync("COMMAND", query);
+            using var keys = await DiscoverKeys(client, operation, query);
             var serverKeys = Enumerable.Range(0, keys.Count).Select(index => keys[index].AsString()).ToArray();
             selected.Should().BeEquivalentTo(serverKeys, $"{operation} must select exactly the keys Redis discovers");
         }
 
-        // All current allowlisted operations exist in Redis 7. Changes to the allowlist must
-        // update this count and supply a key-discovery fixture for any new argument grammar.
-        verified.Should().HaveCount(167);
+        // New allowlisted commands must have a server fixture; unsupported server versions
+        // cannot silently turn this check into partial coverage.
+        verified.Should().BeEquivalentTo(DeferredRawCommands.SupportedOperations);
+    }
+
+    private static async Task<RespireResult> DiscoverKeys(RespireClient client, string operation, RespireValue[] query)
+    {
+        try { return await client.ExecuteAsync("COMMAND", query); }
+        catch (RespireServerException error)
+        {
+            throw new InvalidOperationException($"COMMAND GETKEYS fixture failed for {operation}.", error);
+        }
     }
 
     private static IEnumerable<RespireResult> Commands(RespireResult commands)
@@ -72,6 +81,7 @@ public class DeferredRawKeyLayoutTests(RedisTestContainer fixture)
         "ZDIFF" or "ZINTER" or "ZUNION" => ["2", "key-a", "key-b", "WITHSCORES"],
         "ZDIFFSTORE" => ["destination", "2", "key-a", "key-b"],
         "ZINTERSTORE" or "ZUNIONSTORE" => ["destination", "2", "key-a", "key-b", "WEIGHTS", "2", "3"],
+        "PFMERGE" => ["destination", "key-a", "key-b"],
         "BITOP" => ["AND", "destination", "key-a", "key-b"],
         "MSET" or "MSETNX" => ["key-a", "value-a", "key-b", "value-b"],
         "COPY" => ["source", "destination", "DB", "1", "REPLACE"],

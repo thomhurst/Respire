@@ -145,6 +145,7 @@ public class DeferredRawCommandTests
         await using var transaction = client.CreateTransaction();
         await Assert.That(() => transaction.Execute("MGET", "{a}:one", "{b}:two")).Throws<RespireServerException>();
         await Assert.That(() => transaction.Execute("EVAL", "return 1", -1)).Throws<ArgumentException>();
+        await Assert.That(() => transaction.Execute("EVAL", "return 1", RespireValue.Null)).Throws<ArgumentNullException>();
         await Assert.That(() => transaction.Execute("EVAL", "return 1", long.MaxValue)).Throws<ArgumentException>();
         await Assert.That(() => transaction.Execute("EVAL", "return 1", 2, "only-one-key")).Throws<ArgumentException>();
         await Assert.That(() => transaction.Execute("ZINTERSTORE", "{a}:dest", 1, "{b}:source")).Throws<RespireServerException>();
@@ -169,7 +170,6 @@ public class DeferredRawCommandTests
             ("MSET", ["one", "{wrong}", "two", "value"], "MSET {tenant}:one {wrong} {tenant}:two value"),
             ("BITOP", ["AND", "dest", "one", "two"], "BITOP AND {tenant}:dest {tenant}:one {tenant}:two"),
             ("FCALL", ["name", 2, "one", "two", "{wrong}"], "FCALL name 2 {tenant}:one {tenant}:two {wrong}"),
-            ("EVAL", ["return ARGV[1]", 0, "{wrong}"], "EVAL return ARGV[1] 0 {wrong}"),
             ("LMPOP", [2, "one", "two", "LEFT"], "LMPOP 2 {tenant}:one {tenant}:two LEFT"),
             ("ZUNIONSTORE", ["dest", 2, "one", "two", "WEIGHTS", 1, 2], "ZUNIONSTORE {tenant}:dest 2 {tenant}:one {tenant}:two WEIGHTS 1 2"),
             (RespireCommands.Key.OBJECT_ENCODING, ["one"], "OBJECT ENCODING {tenant}:one"),
@@ -194,6 +194,25 @@ public class DeferredRawCommandTests
         await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
         await Assert.That(owner.ReceivedCommands.Where(c => c is not "MULTI" and not "EXEC"))
             .IsEquivalentTo(cases.Select(item => item.Wire), CollectionOrdering.Matching);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ZeroKeyScriptDoesNotPrefixArguments(bool transactional)
+    {
+        await using var server = new FakeRespServer(Replies(transactional, FakeRespServer.OkReply));
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        var view = client.WithKeyPrefix("tenant:");
+        using var batch = transactional ? null : view.CreateBatch();
+        await using var transaction = transactional ? view.CreateTransaction() : null;
+        IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
+        var pending = queue.Execute("EVAL", "return ARGV[1]", 0, "argument");
+        if (transaction is not null) await transaction.CommitAsync();
+        else await batch!.ExecuteAsync();
+        using var result = pending.Result;
+        await Assert.That(server.ReceivedCommands.Where(c => c is not "MULTI" and not "EXEC"))
+            .IsEquivalentTo(["EVAL return ARGV[1] 0 argument"]);
     }
 
     private static byte[][] Replies(bool transaction, params byte[][] replies)

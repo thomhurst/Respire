@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using Respire.Commands;
 
 namespace Respire;
@@ -17,8 +18,7 @@ internal static class DeferredRawCommands
             || RespireCommand.IsBlocking(root, behavior, args))
             throw new NotSupportedException($"{operation} cannot run in a deferred command queue.");
 
-        // Determine every key, never just guess that the first argument is the routing key.
-        var layout = GetLayout(operation, args);
+        // Validate nulls while snapshotting, before counted layouts read their arguments.
         var tokens = new RespireValue[checked(words.Length + args.Length)];
         for (var index = 0; index < words.Length; index++) tokens[index] = words[index];
         for (var index = 0; index < args.Length; index++)
@@ -26,6 +26,9 @@ internal static class DeferredRawCommands
             RespireValue.ThrowIfNull(args[index], nameof(args));
             tokens[words.Length + index] = args[index].Snapshot();
         }
+
+        // Determine every key, never just guess that the first argument is the routing key.
+        var layout = GetLayout(operation, tokens.AsSpan(words.Length));
 
         // Prefixing only mutates this private snapshot. A failed slot check leaves the sink untouched.
         int? slot = null;
@@ -47,8 +50,12 @@ internal static class DeferredRawCommands
             var key = tokens[words.Length + index].AsKey();
             var resolved = sink.Client.Key(in key);
             tokens[words.Length + index] = resolved;
-            if (sink.Client.Core.Cluster is null || !resolved.TryGetClusterSlot(out var current)) return;
+            if (sink.Client.Core.Cluster is null) return;
+            // AsKey produces text/bytes, and prefixing preserves that representation. Every key hashes.
+            if (!resolved.TryGetClusterSlot(out var current))
+                throw new InvalidOperationException("The deferred command key has no Cluster slot.");
             if (slot.HasValue && slot.Value != current)
+                // Match typed multi-key commands, including their locally detected CROSSSLOT contract.
                 throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", operation);
             slot = current;
         }
@@ -77,60 +84,90 @@ internal static class DeferredRawCommands
 
     internal readonly record struct KeyLayout(int Start, int Count, int Stride = 1, int Extra = -1);
 
+    private enum LayoutKind { None, First, FirstTwo, All, Pairs, BitOp, CountedAfterName, Counted, CountedWithDestination }
+
+    private static readonly FrozenDictionary<string, LayoutKind> Layouts = CreateLayouts();
+    internal static IEnumerable<string> SupportedOperations => Layouts.Keys;
+
+    private static FrozenDictionary<string, LayoutKind> CreateLayouts()
+    {
+        var layouts = new Dictionary<string, LayoutKind>(StringComparer.Ordinal);
+        Add(LayoutKind.None,
+            "PING", "ECHO", "TIME");
+        Add(LayoutKind.First,
+            "GET", "SET", "GETSET", "SETNX", "SETEX", "PSETEX", "GETDEL",
+            "GETEX", "APPEND", "STRLEN", "GETRANGE", "SETRANGE", "INCR", "INCRBY",
+            "INCRBYFLOAT", "DECR", "DECRBY", "TYPE", "TTL", "PTTL", "EXPIRE",
+            "PEXPIRE", "EXPIREAT", "PEXPIREAT", "EXPIRETIME", "PEXPIRETIME", "PERSIST", "DUMP",
+            "RESTORE", "HGET", "HSET", "HSETNX", "HMGET", "HMSET", "HGETALL",
+            "HDEL", "HEXISTS", "HLEN", "HKEYS", "HVALS", "HSTRLEN", "HINCRBY",
+            "HINCRBYFLOAT", "HRANDFIELD", "LPUSH", "RPUSH", "LPUSHX", "RPUSHX", "LPOP",
+            "RPOP", "LLEN", "LRANGE", "LINDEX", "LSET", "LINSERT", "LREM",
+            "LTRIM", "LPOS", "SADD", "SREM", "SCARD", "SMEMBERS", "SISMEMBER",
+            "SMISMEMBER", "SPOP", "SRANDMEMBER", "ZADD", "ZREM", "ZCARD", "ZSCORE",
+            "ZMSCORE", "ZINCRBY", "ZCOUNT", "ZLEXCOUNT", "ZRANGE", "ZREVRANGE", "ZRANGEBYSCORE",
+            "ZREVRANGEBYSCORE", "ZRANGEBYLEX", "ZREVRANGEBYLEX", "ZRANK", "ZREVRANK", "ZREMRANGEBYRANK", "ZREMRANGEBYSCORE",
+            "ZREMRANGEBYLEX", "ZPOPMIN", "ZPOPMAX", "ZRANDMEMBER", "GETBIT", "SETBIT", "BITCOUNT",
+            "BITPOS", "BITFIELD", "BITFIELD_RO", "PFADD", "GEOADD", "GEODIST", "GEOHASH",
+            "GEOPOS", "GEOSEARCH", "XADD", "XACK", "XDEL", "XTRIM", "XLEN",
+            "XRANGE", "XREVRANGE", "XPENDING", "XCLAIM", "XAUTOCLAIM", "OBJECT ENCODING", "OBJECT FREQ",
+            "OBJECT IDLETIME", "OBJECT REFCOUNT", "MEMORY USAGE", "XINFO STREAM", "XINFO GROUPS", "XINFO CONSUMERS", "XGROUP CREATE",
+            "XGROUP SETID", "XGROUP DESTROY", "XGROUP CREATECONSUMER", "XGROUP DELCONSUMER");
+        Add(LayoutKind.FirstTwo,
+            "RENAME", "RENAMENX", "COPY", "LCS", "SMOVE", "LMOVE", "RPOPLPUSH",
+            "ZRANGESTORE", "GEOSEARCHSTORE");
+        Add(LayoutKind.All,
+            "DEL", "UNLINK", "EXISTS", "TOUCH", "MGET", "SDIFF", "SINTER",
+            "SUNION", "SDIFFSTORE", "SINTERSTORE", "SUNIONSTORE", "PFCOUNT", "PFMERGE");
+        Add(LayoutKind.Pairs,
+            "MSET", "MSETNX");
+        Add(LayoutKind.BitOp,
+            "BITOP");
+        Add(LayoutKind.CountedAfterName,
+            "EVAL", "EVALSHA", "EVAL_RO", "EVALSHA_RO", "FCALL", "FCALL_RO");
+        Add(LayoutKind.Counted,
+            "LMPOP", "ZMPOP", "SINTERCARD", "ZDIFF", "ZINTER", "ZUNION", "ZINTERCARD");
+        Add(LayoutKind.CountedWithDestination,
+            "ZDIFFSTORE", "ZINTERSTORE", "ZUNIONSTORE");
+        return layouts.ToFrozenDictionary(StringComparer.Ordinal);
+
+        void Add(LayoutKind kind, params string[] operations)
+        {
+            foreach (var operation in operations) layouts.Add(operation, kind);
+        }
+    }
+
     internal static KeyLayout GetLayout(string operation, ReadOnlySpan<RespireValue> args)
     {
-        switch (operation)
+        if (!Layouts.TryGetValue(operation, out var kind))
+            throw new NotSupportedException($"{operation} has no supported deferred key layout. Use a typed facet or immediate execution; unknown and module commands are not guessed.");
+        switch (kind)
         {
-            case "PING": case "ECHO": case "TIME":
+            case LayoutKind.None:
                 return new(0, 0);
-            case "GET": case "SET": case "GETSET": case "SETNX": case "SETEX": case "PSETEX":
-            case "GETDEL": case "GETEX": case "APPEND": case "STRLEN": case "GETRANGE": case "SETRANGE":
-            case "INCR": case "INCRBY": case "INCRBYFLOAT": case "DECR": case "DECRBY":
-            case "TYPE": case "TTL": case "PTTL": case "EXPIRE": case "PEXPIRE": case "EXPIREAT":
-            case "PEXPIREAT": case "EXPIRETIME": case "PEXPIRETIME": case "PERSIST": case "DUMP": case "RESTORE":
-            case "HGET": case "HSET": case "HSETNX": case "HMGET": case "HMSET": case "HGETALL":
-            case "HDEL": case "HEXISTS": case "HLEN": case "HKEYS": case "HVALS": case "HSTRLEN":
-            case "HINCRBY": case "HINCRBYFLOAT": case "HRANDFIELD":
-            case "LPUSH": case "RPUSH": case "LPUSHX": case "RPUSHX": case "LPOP": case "RPOP":
-            case "LLEN": case "LRANGE": case "LINDEX": case "LSET": case "LINSERT": case "LREM": case "LTRIM": case "LPOS":
-            case "SADD": case "SREM": case "SCARD": case "SMEMBERS": case "SISMEMBER": case "SMISMEMBER":
-            case "SPOP": case "SRANDMEMBER":
-            case "ZADD": case "ZREM": case "ZCARD": case "ZSCORE": case "ZMSCORE": case "ZINCRBY":
-            case "ZCOUNT": case "ZLEXCOUNT": case "ZRANGE": case "ZREVRANGE": case "ZRANGEBYSCORE":
-            case "ZREVRANGEBYSCORE": case "ZRANGEBYLEX": case "ZREVRANGEBYLEX": case "ZRANK": case "ZREVRANK":
-            case "ZREMRANGEBYRANK": case "ZREMRANGEBYSCORE": case "ZREMRANGEBYLEX": case "ZPOPMIN": case "ZPOPMAX": case "ZRANDMEMBER":
-            case "GETBIT": case "SETBIT": case "BITCOUNT": case "BITPOS": case "BITFIELD": case "BITFIELD_RO":
-            case "PFADD": case "GEOADD": case "GEODIST": case "GEOHASH": case "GEOPOS": case "GEOSEARCH":
-            case "XADD": case "XACK": case "XDEL": case "XTRIM": case "XLEN": case "XRANGE": case "XREVRANGE":
-            case "XPENDING": case "XCLAIM": case "XAUTOCLAIM":
-            case "OBJECT ENCODING": case "OBJECT FREQ": case "OBJECT IDLETIME": case "OBJECT REFCOUNT":
-            case "MEMORY USAGE": case "XINFO STREAM": case "XINFO GROUPS": case "XINFO CONSUMERS":
-            case "XGROUP CREATE": case "XGROUP SETID": case "XGROUP DESTROY": case "XGROUP CREATECONSUMER": case "XGROUP DELCONSUMER":
+            case LayoutKind.First:
                 Require(args.Length >= 1);
                 return new(0, 1);
-            case "RENAME": case "RENAMENX": case "COPY": case "LCS": case "SMOVE": case "LMOVE":
-            case "RPOPLPUSH": case "ZRANGESTORE": case "GEOSEARCHSTORE":
+            case LayoutKind.FirstTwo:
                 Require(args.Length >= 2);
                 return new(0, 2);
-            case "DEL": case "UNLINK": case "EXISTS": case "TOUCH": case "MGET":
-            case "SDIFF": case "SINTER": case "SUNION": case "SDIFFSTORE": case "SINTERSTORE": case "SUNIONSTORE":
-            case "PFCOUNT": case "PFMERGE":
+            case LayoutKind.All:
                 Require(args.Length >= 1);
                 return new(0, args.Length);
-            case "MSET": case "MSETNX":
+            case LayoutKind.Pairs:
                 Require(args.Length >= 2 && args.Length % 2 == 0);
                 return new(0, args.Length / 2, 2);
-            case "BITOP":
+            case LayoutKind.BitOp:
                 Require(args.Length >= 3);
                 return new(1, args.Length - 1);
-            case "EVAL": case "EVALSHA": case "EVAL_RO": case "EVALSHA_RO": case "FCALL": case "FCALL_RO":
+            case LayoutKind.CountedAfterName:
                 return Counted(args, 1, allowZero: true);
-            case "LMPOP": case "ZMPOP": case "SINTERCARD": case "ZDIFF": case "ZINTER": case "ZUNION": case "ZINTERCARD":
+            case LayoutKind.Counted:
                 return Counted(args, 0);
-            case "ZDIFFSTORE": case "ZINTERSTORE": case "ZUNIONSTORE":
+            case LayoutKind.CountedWithDestination:
                 return Counted(args, 1) with { Extra = 0 };
             default:
-                throw new NotSupportedException($"{operation} has no supported deferred key layout. Use a typed facet or immediate execution; unknown and module commands are not guessed.");
+                throw new InvalidOperationException("Unknown deferred command key layout.");
         }
     }
 
