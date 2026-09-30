@@ -501,6 +501,89 @@ public class ClusterReconnectPolicyTests
         await Assert.That(second.CommandsSeen).IsEqualTo(0);
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ThrowingObserversAndLoggersDoNotStopLaterDiscoveryEvents(bool throwFromMeter)
+    {
+        await using var first = new FakeRespServer("-ERR unavailable\r\n"u8.ToArray());
+        await using var second = new FakeRespServer(FakeRespServer.OkReply, "-ERR no topology\r\n"u8.ToArray());
+        using var logger = new ThrowingWarningLogger();
+        await using var client = RespireClient.Create(Options(first.Port, second.Port) with { LoggerFactory = logger });
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, meter) =>
+        {
+            if (throwFromMeter && instrument.Name == "respire.connection.reconnect.attempt")
+                meter.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            if (DiscoveryMetrics.Matches(tags, second.Port)) throw new InvalidOperationException("Test meter failure.");
+        });
+        listener.Start();
+        var terminal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var events = 0;
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
+            Interlocked.Increment(ref events);
+            if (change.NextReconnectDelay is not null && !throwFromMeter)
+                throw new InvalidOperationException("Test observer failure.");
+            if (change.SourceState == RespireConnectionState.Connected) terminal.TrySetResult();
+        };
+        await client.Core.Cluster!.EnsureConnectedAsync(default);
+        await terminal.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(events).IsEqualTo(2);
+        await Assert.That(logger.Warnings).IsGreaterThan(0);
+    }
+
+    [Test]
+    public async Task ConcurrentFailedCallersOwnIndependentFallbackBudgets()
+    {
+        await using var first = new FakeRespServer(8, "-ERR unavailable\r\n"u8.ToArray());
+        await using var second = new FakeRespServer(8, "-ERR unavailable\r\n"u8.ToArray());
+        await using var unused = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = RespireClient.Create(Options(first.Port, second.Port, unused.Port));
+        var changes = new ConcurrentQueue<RespireConnectionStateChange>();
+        var complete = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var exhausted = 0;
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
+            changes.Enqueue(change);
+            if (change.ReconnectExhausted && Interlocked.Increment(ref exhausted) == 4) complete.TrySetResult();
+        };
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await Task.WhenAll(Enumerable.Range(0, 4).Select(async _ =>
+        {
+            await Assert.That(async () => await client.Core.Cluster!.EnsureConnectedAsync(timeout.Token))
+                .ThrowsExactly<RespireReconnectLimitException>();
+        }));
+        await complete.Task.WaitAsync(timeout.Token);
+        var attempts = changes.Where(change => change.NextReconnectDelay is not null).ToArray();
+        await Assert.That(attempts.Length).IsEqualTo(4);
+        await Assert.That(attempts.All(change => change.ReconnectAttempt == 1)).IsTrue();
+        await Assert.That(attempts.Select(change => change.ReconnectEpisodeId).Distinct().Count()).IsEqualTo(4);
+        await Assert.That(unused.CommandsSeen).IsEqualTo(0);
+    }
+
+    private sealed class ThrowingWarningLogger : Microsoft.Extensions.Logging.ILoggerFactory, Microsoft.Extensions.Logging.ILogger
+    {
+        internal int Warnings;
+        public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(Microsoft.Extensions.Logging.ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel level) => level == Microsoft.Extensions.Logging.LogLevel.Warning;
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel level, Microsoft.Extensions.Logging.EventId eventId,
+            TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (level != Microsoft.Extensions.Logging.LogLevel.Warning) return;
+            Interlocked.Increment(ref Warnings);
+            throw new InvalidOperationException("Test logger failure.");
+        }
+    }
+
     private sealed class DiscoveryMetrics : IDisposable
     {
         private readonly MeterListener _listener = new();
@@ -527,7 +610,7 @@ public class ClusterReconnectPolicyTests
             });
             _listener.Start();
         }
-        private static bool Matches(ReadOnlySpan<KeyValuePair<string, object?>> tags, int port)
+        internal static bool Matches(ReadOnlySpan<KeyValuePair<string, object?>> tags, int port)
         {
             var endpoint = false;
             var scope = false;

@@ -172,14 +172,24 @@ internal sealed partial class ClusterRouter
                     return;
                 }
             }
-            if (change.NextReconnectDelay is not null || change.ReconnectExhausted)
-                RespireTelemetry.RecordDiscoveryReconnect(change.Endpoint, "cluster-discovery",
-                    change.ReconnectAttempt, change.NextReconnectDelay, _logger);
+            try
+            {
+                if (change.NextReconnectDelay is not null || change.ReconnectExhausted)
+                    RespireTelemetry.RecordDiscoveryReconnect(change.Endpoint, "cluster-discovery",
+                        change.ReconnectAttempt, change.NextReconnectDelay, _logger);
+            }
+            catch (Exception error) { LogDiscoveryObserverFailure(error); }
             // Measurements describe already scheduled work. Observers may synchronously dispose
             // the client, so the dispatcher is independent of discovery and is never joined.
             if (Volatile.Read(ref _disposed) != 0) continue;
             try { DiscoveryStateChanged?.Invoke(change); }
-            catch (Exception error) { _logger?.LogWarning(error, "Cluster discovery observer threw"); }
+            catch (Exception error) { LogDiscoveryObserverFailure(error); }
         }
     }
+    private void LogDiscoveryObserverFailure(Exception error)
+    {
+        try { _logger?.LogWarning(error, "Cluster discovery observer threw"); }
+        catch (Exception) { /* A user logger must not terminate the notification dispatcher. */ }
+    }
+
 }
