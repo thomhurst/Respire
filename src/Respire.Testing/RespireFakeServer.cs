@@ -6,7 +6,7 @@ using Respire.Protocol;
 
 namespace Respire.Testing;
 
-/// <summary>An in-memory RESP server for the documented strings, keys, hashes, lists, sets, sorted sets, and pub/sub subset, using the real Respire client transport.</summary>
+/// <summary>An in-memory RESP server for the documented strings, keys, collections, pub/sub, and transactions subset, using the real Respire client transport.</summary>
 /// <remarks>No TCP socket or Docker daemon is used. Each server owns independent data and connection state.
 /// Unsupported commands fail explicitly. This is not a substitute for compatibility tests against Redis or Valkey.</remarks>
 public sealed partial class RespireFakeServer : IAsyncDisposable
@@ -189,7 +189,10 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         {
             if (!Commands.TryGetValue(command, out var handler))
                 return RejectCommand(connection, command, FakeReply.Error($"ERR Respire.Testing does not support command or arguments: {command}"));
-            if (args.Length < handler.MinimumArity || args.Length > handler.MaximumArity)
+            // Redis command-table arity is either exact or a minimum. Optional-argument
+            // upper bounds (PING, LPOP/RPOP) are checked by the handler, including in EXEC.
+            if (args.Length < handler.MinimumArity
+                || handler.MaximumArity == handler.MinimumArity && args.Length > handler.MaximumArity)
                 return RejectCommand(connection, command, WrongArity(command));
             if (connection.IsResp2Subscribed
                 && command is not ("SUBSCRIBE" or "UNSUBSCRIBE" or "PING"))
@@ -205,6 +208,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
             }
             if (connection.Transaction is not null && command is not ("MULTI" or "EXEC" or "DISCARD" or "WATCH"))
                 return QueueTransaction(connection, args);
+            if (args.Length > handler.MaximumArity) return WrongArity(command);
             return handler.Execute(this, connection, args);
         }
         catch (WrongTypeException) { return FakeReply.Error("WRONGTYPE Operation against a key holding the wrong kind of value"); }

@@ -1,6 +1,6 @@
 ---
 title: In-memory testing
-description: Exercise real Respire client code against a deterministic strings, keys, hashes, lists, sets, sorted sets, and pub/sub server without Docker.
+description: Exercise real Respire client code against a deterministic in-memory server with collections, pub/sub, and transactions, without Docker.
 ---
 
 # In-memory testing
@@ -62,6 +62,7 @@ An error consumes exactly one response slot, so later valid commands still work.
 | Keys | `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `PERSIST` |
 | Expiry | `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT` with `NX`, `XX`, `GT`, `LT`; `TTL`, `PTTL`, `EXPIRETIME`, `PEXPIRETIME` |
 | Connection | `HELLO 2/3` without authentication, `PING`, `ECHO`, `SELECT 0`, `CLIENT ID`, `CLIENT GETNAME`, `CLIENT SETNAME` |
+| Transactions | `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH` with connection-owned queues and optimistic concurrency |
 
 `GETEX` supports its expiry options and `PERSIST`. Binary keys and values are preserved,
 including empty values and embedded zero bytes. Multi-key mutations are atomic; integer
@@ -220,8 +221,59 @@ during a gap are lost; the fake does not retain or replay them. Caller cancellat
 does not undo an accepted subscription; release held replies or dispose the client to let
 its normal cleanup finish.
 
+## Transactions and WATCH
+
+Use `CreateTransaction()` or `CreateTransactionAsync(watchedKeys)` so the real client keeps
+all transaction commands on the same connection. The fake copies queued arguments and does
+not execute them until `EXEC`. The whole sequence runs atomically under the server lock and
+uses one expiry-clock sample. Results retain command order; execution errors occupy their
+own array elements and do not roll back successful commands.
+
+```csharp
+await using var server = new RespireFakeServer();
+await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+await using var other = await RespireClient.ConnectAsync(server.CreateOptions());
+await client.SetAsync("version", "1");
+await using var transaction = await client.CreateTransactionAsync(["version"]);
+var pending = transaction.Set("result", "committed");
+await other.SetAsync("version", "2");
+if (await transaction.CommitAsync())
+    throw new InvalidOperationException("WATCH should have aborted the transaction.");
+if (pending.Status != RespirePendingStatus.Aborted || await client.ExistsAsync("result"))
+    throw new InvalidOperationException("An aborted transaction must not mutate data.");
+```
+
+`WATCH` observes supported string, key, hash, list, and set mutations and expiry, including
+expiry detected at `EXEC` without an intervening read. Rejected conditional writes and true
+no-ops do not invalidate a watch. Redis treats some equal-value operations as writes: `SET`,
+`HSET`, `LSET`, and an unchanged `LTRIM` still invalidate watches. Watching an already expired
+key treats it as absent. `UNWATCH`, `DISCARD`, completed or aborted `EXEC`, and connection
+closure release watch state. `UNWATCH` inside `MULTI` is itself queued.
+
+Unknown commands and command-table arity errors invalidate the queue; `EXEC` then returns
+`EXECABORT`. Handler-level option/value errors remain queued and become individual EXEC
+errors. Nested `MULTI` and `WATCH` inside `MULTI` fail without invalidating the existing
+queue. A changed watch aborts with a RESP2 null array or RESP3 null, exposed as a false
+watched commit. Each connection may retain at most 16 MiB of estimated queued argument
+storage; exceeding that bound rejects the command and invalidates the queue.
+
+Protocol changes (`HELLO`) and subscription control (`SUBSCRIBE`, `UNSUBSCRIBE`) inside
+`MULTI` are explicitly unsupported and invalidate the queue. Unsupported command families
+remain errors in transactions too. Fault rules match received wire commands, including
+queue admission and `EXEC`; executing a queued handler does not match a second fault.
+A fault before `EXEC` can prevent all mutations; a disconnect after `EXEC` loses the reply
+after all mutations have run. The client never replays an ambiguously accepted transaction.
+Cancellation abandons the caller's wait, not an accepted transaction or its effects.
+Disposing a watched transaction closes its dedicated connection if it cannot safely return
+it to the pool; server disposal joins connection loops and clears queues and watches.
+
+These semantics follow [Redis transactions](https://redis.io/docs/latest/develop/using-commands/transactions/)
+and the [Redis transaction implementation](https://github.com/redis/redis/blob/7.2/src/multi.c).
+
+## Remaining limits
+
 Only database zero and standalone operation are supported. Authentication, TLS, Cluster,
-Sentinel, scripts/functions, client-side tracking, transactions,
+Sentinel, scripts/functions, client-side tracking,
 persistence and administrative diagnostics are not simulated. Unsupported handshake features
 fail initialization. Do not enable these modes and infer production behavior from the fake.
 Individual RESP requests are limited to 16 MiB; larger requests close their connection
@@ -266,8 +318,7 @@ Pub/sub framing and delivery follow [Redis Pub/Sub](https://redis.io/docs/latest
 [SUBSCRIBE](https://redis.io/docs/latest/commands/subscribe/), and
 [UNSUBSCRIBE](https://redis.io/docs/latest/commands/unsubscribe/).
 Run real-server integration tests for version compatibility, unsupported commands, and
-operational behavior. Remaining transaction support is tracked in
-[#589](https://github.com/thomhurst/Respire/issues/589) under
+operational behavior. Transaction and pub/sub work is tracked under
 [#541](https://github.com/thomhurst/Respire/issues/541).
 
 ## Controlled faults

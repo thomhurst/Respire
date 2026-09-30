@@ -54,6 +54,56 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
     [Arguments(false, 3)]
     [Arguments(true, 2)]
     [Arguments(true, 3)]
+    public async Task HandlerSyntaxErrorsAreQueuedAndDoNotAbortOtherCommands(bool useFake, int protocol)
+    {
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        await using var session = await TestRespSession.ConnectAsync(Options(fake, protocol));
+        string[][] invalid =
+        [
+            ["PING", "one", "two"], ["LPOP", "list", "1", "extra"],
+            ["RPOP", "list", "1", "extra"], ["MSET", "key", "value", "unpaired"],
+            ["HSET", "hash", "field", "value", "unpaired"], ["SINTERCARD", "0", "key"],
+            ["PEXPIRE", "key", "bad"], ["GETEX", "key", "bad"],
+            ["LSET", "missing-list", "0", "value"], ["CLIENT", "SETNAME", "invalid name"],
+        ];
+        await Text(session, "OK", "MULTI");
+        foreach (var arguments in invalid) await Text(session, "QUEUED", arguments);
+        await Text(session, "QUEUED", "PING");
+        using var executed = await session.CommandAsync("EXEC");
+        executed.AsArray().Length.Should().Be(invalid.Length + 1);
+        for (var index = 0; index < invalid.Length; index++)
+            executed.AsArray()[index].IsError.Should().BeTrue(string.Join(' ', invalid[index]));
+        executed.AsArray()[invalid.Length].AsString().Should().Be("PONG");
+    }
+
+    [Test]
+    [Arguments(false, 2)]
+    [Arguments(false, 3)]
+    [Arguments(true, 2)]
+    [Arguments(true, 3)]
+    public async Task ConcurrentWatchersHaveExactlyOneWinner(bool useFake, int protocol)
+    {
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = Options(fake, protocol);
+        await using var first = await RespireClient.ConnectAsync(options);
+        await using var second = await RespireClient.ConnectAsync(options);
+        await first.SetAsync("contended", "0");
+        await using var left = await first.CreateTransactionAsync(["contended"]);
+        await using var right = await second.CreateTransactionAsync(["contended"]);
+        var leftResult = left.Increment("contended");
+        var rightResult = right.Increment("contended");
+        var results = await Task.WhenAll(left.CommitAsync().AsTask(), right.CommitAsync().AsTask());
+        results.Count(committed => committed).Should().Be(1);
+        (results[0] ? leftResult : rightResult).Result.Should().Be(1);
+        (results[0] ? rightResult : leftResult).Status.Should().Be(RespirePendingStatus.Aborted);
+        (await first.GetStringAsync("contended")).Should().Be("1");
+    }
+
+    [Test]
+    [Arguments(false, 2)]
+    [Arguments(false, 3)]
+    [Arguments(true, 2)]
+    [Arguments(true, 3)]
     public async Task WatchTracksMutationsButNotRejectedOrNoOpWrites(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
@@ -93,6 +143,19 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
             new([ ["SADD", "key", "member"] ], ["SINTERSTORE", "key", "key"], true),
             new([], ["SINTERSTORE", "key", "missing"], false),
             new([ ["SET", "key", "value"] ], ["SINTERSTORE", "key", "missing"], true),
+            new([], ["LPUSH", "key", "value"], true),
+            new([], ["LPUSHX", "key", "value"], false),
+            new([ ["RPUSH", "key", "value"] ], ["RPUSHX", "key", "value"], true),
+            new([ ["RPUSH", "key", "value"] ], ["LPOP", "key", "0"], false),
+            new([ ["RPUSH", "key", "value"] ], ["RPOP", "key"], true),
+            new([ ["RPUSH", "key", "value"] ], ["LSET", "key", "0", "value"], true),
+            new([ ["RPUSH", "key", "value"] ], ["LSET", "key", "1", "value"], false, Error: true),
+            new([ ["RPUSH", "key", "value"] ], ["LTRIM", "key", "0", "-1"], true),
+            new([], ["LTRIM", "key", "0", "-1"], false),
+            new([ ["RPUSH", "key", "value"] ], ["LREM", "key", "0", "missing"], false),
+            new([ ["RPUSH", "key", "value"] ], ["LREM", "key", "0", "value"], true),
+            new([ ["RPUSH", "key", "value"] ], ["LINSERT", "key", "BEFORE", "missing", "new"], false),
+            new([ ["RPUSH", "key", "value"] ], ["LINSERT", "key", "BEFORE", "value", "new"], true),
         })
         {
             using (var cleared = await writer.CommandAsync("DEL", "key", "other", "marker")) { }

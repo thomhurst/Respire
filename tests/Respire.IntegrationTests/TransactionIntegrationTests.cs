@@ -136,10 +136,11 @@ public class TransactionIntegrationTests(RedisTestContainer fixture)
         await using var client = await RespireClient.ConnectAsync(options);
         await client.DeleteAsync("tx:concurrent:counter");
 
-        // Regular commands hammer the same multiplexer while the transaction executes; the
-        // atomic MULTI..EXEC append must keep them out of the transaction block.
+        await using var competitor = await RespireClient.ConnectAsync(options);
+        // Another connection increments the same key. Transaction results must be consecutive
+        // even when unrelated increments execute before or after the entire EXEC.
         var traffic = Enumerable.Range(0, 200)
-            .Select(i => client.SetAsync($"tx:noise:{i}", "x").AsTask())
+            .Select(_ => competitor.IncrementAsync("tx:concurrent:counter").AsTask())
             .ToArray();
 
         var transaction = client.CreateTransaction();
@@ -152,11 +153,10 @@ public class TransactionIntegrationTests(RedisTestContainer fixture)
         await transaction.CommitAsync();
         await Task.WhenAll(traffic);
 
-        // INCR replies inside the transaction must be strictly sequential 1..10 — proof that
-        // no interleaved command executed between them.
         var replies = pendings.Select(pending => pending.Result).ToArray();
-        replies.Should().BeEquivalentTo(Enumerable.Range(1, 10).Select(i => (long)i),
+        replies.Should().BeEquivalentTo(Enumerable.Range(0, 10).Select(i => replies[0] + i),
             options => options.WithStrictOrdering());
+        (await client.GetStringAsync("tx:concurrent:counter")).Should().Be("210");
     }
 
     [Test]
