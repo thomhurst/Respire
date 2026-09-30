@@ -7,8 +7,16 @@ public sealed partial class RespireFakeServer
         var entry = Find(args[1]);
         if (entry is null && onlyExisting) return FakeReply.Integer(0);
         var list = entry?.List ?? new List<byte[]>();
-        if (left) list.InsertRange(0, args.Skip(2).Reverse());
-        else list.AddRange(args.Skip(2));
+        if (left)
+        {
+            var values = new byte[args.Length - 2][];
+            for (var index = 0; index < values.Length; index++) values[index] = args[args.Length - index - 1];
+            list.InsertRange(0, values);
+        }
+        else
+        {
+            for (var index = 2; index < args.Length; index++) list.Add(args[index]);
+        }
         if (entry is null) _entries[args[1]] = new Entry(list);
         return FakeReply.Integer(list.Count);
     }
