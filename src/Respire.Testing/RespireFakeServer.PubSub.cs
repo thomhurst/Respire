@@ -7,6 +7,7 @@ public sealed partial class RespireFakeServer
 
     private static FakeReply Ping(Connection connection, byte[][] args)
     {
+        // Redis RESP2 subscribed mode uses the two-element pong frame, even without a payload.
         if (!connection.Resp3 && connection.Channels.Count != 0)
             return FakeReply.Array([FakeReply.Text("pong"), FakeReply.Bulk(args.Length == 1 ? [] : args[1])]);
         return args.Length == 1 ? FakeReply.Simple("PONG") : FakeReply.Bulk(args[1]);

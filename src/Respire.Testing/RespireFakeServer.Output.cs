@@ -56,6 +56,8 @@ public sealed partial class RespireFakeServer
         }
     }
 
+    // Called outside _gate after sending, or after the stop operation releases _gate.
+    // Keep byte accounting on the same gate as enqueue and the overflow decision.
     private void ReleaseOutput(Connection connection, Outbound output)
     {
         output.Flushed.TrySetCanceled(connection.Lifetime.Token);
