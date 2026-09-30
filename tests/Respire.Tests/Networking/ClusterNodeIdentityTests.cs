@@ -12,6 +12,147 @@ namespace Respire.Tests.Networking;
 public class ClusterNodeIdentityTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CacheMetricsRunOutsideMembershipAndHealthGates(bool retirement)
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true, ClientSideCache = new(),
+        });
+        var core = client.Core;
+        var router = core.Cluster!;
+        var original = core.Multiplexer;
+        router.SetSlotOwner(0, original);
+        var healthGate = typeof(ClientCore).GetField("_stateGate",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(core)!;
+        RespireKey key = "cached";
+        var token = core.ClientCache!.BeginRead(in key);
+        var value = RespValue.BulkString("value"u8.ToArray());
+        core.ClientCache.CompleteRead(in token, in value, allowInsert: true);
+        var callbackThread = Environment.CurrentManagedThreadId;
+        var measurements = 0;
+        var gateHeld = false;
+        using var listener = new System.Diagnostics.Metrics.MeterListener
+        {
+            InstrumentPublished = (instrument, current) =>
+            {
+                if (ReferenceEquals(instrument, RespireTelemetry.ClientCacheEvictions)
+                    || ReferenceEquals(instrument, RespireTelemetry.ClientCacheContinuityFlushes))
+                {
+                    current.EnableMeasurementEvents(instrument);
+                }
+            },
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
+        {
+            if (Environment.CurrentManagedThreadId != callbackThread) return;
+            measurements++;
+            gateHeld |= Monitor.IsEntered(healthGate) || Monitor.IsEntered(router.NodeStateGate);
+        });
+        listener.Start();
+        if (retirement)
+        {
+            router.SetSlotOwner(0, router.GetMultiplexer(new RespireEndpoint("replacement")));
+        }
+        else
+        {
+            core.NotifyCommandStateChanged(original, 0, RespireConnectionState.Reconnecting);
+        }
+        listener.Dispose();
+        await Assert.That(measurements).IsEqualTo(2);
+        await Assert.That(gateHeld).IsFalse();
+    }
+
+    [Test]
+    public async Task StaleSnapshotCannotReplaceCurrentIdentityOrSeed()
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true,
+        });
+        var router = client.Core.Cluster!;
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var apply = typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!;
+        var version = typeof(ClusterRouter).GetField("_topologyVersion", flags)!;
+        typeof(ClusterRouter).GetMethod("SetSeed", flags)!.Invoke(router, [client.Core.Multiplexer]);
+        var endpoint = new RespireEndpoint("localhost");
+        List<ClusterTopologyRange> original = [new(0, 16383, endpoint, "old-id", [])];
+        List<ClusterTopologyRange> replacement = [new(0, 16383, endpoint, "new-id", [])];
+        apply.Invoke(router, [original, 0L]);
+        var capturedVersion = (long)version.GetValue(router)!;
+        // Two discoveries begin together. The replacement reply publishes before the old one.
+        apply.Invoke(router, [replacement, capturedVersion]);
+        var current = router.GetMultiplexer(endpoint);
+        apply.Invoke(router, [original, capturedVersion]);
+        var slots = (RespireConnectionMultiplexer?[])typeof(ClusterRouter).GetField("_slots", flags)!.GetValue(router)!;
+        await Assert.That(ReferenceEquals(slots[0], current)).IsTrue();
+        await Assert.That(ReferenceEquals(router.GetMultiplexer(endpoint), current)).IsTrue();
+        await Assert.That(ReferenceEquals(typeof(ClusterRouter).GetField("_seed", flags)!.GetValue(router), current)).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false, RespireConnectionState.Reconnecting)]
+    [Arguments(false, RespireConnectionState.Disconnected)]
+    [Arguments(true, RespireConnectionState.Connected)]
+    public async Task CacheFlushWaitsForMembershipAndHealthCriticalSection(bool retirement, RespireConnectionState state)
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true, ClientSideCache = new(),
+        });
+        var core = client.Core;
+        var router = core.Cluster!;
+        var original = core.Multiplexer;
+        var replacement = router.GetMultiplexer(new RespireEndpoint("replacement"));
+        router.SetSlotOwner(0, original);
+        if (retirement) router.SetSlotOwner(0, replacement);
+        var cache = core.ClientCache!;
+        CacheValue();
+        var gate = typeof(ClientCore).GetField("_stateGate",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(core)!;
+        using var started = new ManualResetEventSlim();
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var callback = new Thread(() =>
+        {
+            started.Set();
+            try
+            {
+                if (retirement) core.NotifyCommandNodeRetired(original);
+                else core.NotifyCommandStateChanged(original, 0, state);
+                finished.SetResult();
+            }
+            catch (Exception exception) { finished.SetException(exception); }
+        }) { IsBackground = true };
+        int countWhileBlocked;
+        lock (gate)
+        {
+            callback.Start();
+            if (!started.Wait(TimeSpan.FromSeconds(5)) || !SpinWait.SpinUntil(
+                    () => (callback.ThreadState & System.Threading.ThreadState.WaitSleepJoin) != 0,
+                    TimeSpan.FromSeconds(5)))
+            {
+                throw new TimeoutException("The callback did not reach the held health gate.");
+            }
+            countWhileBlocked = cache.Count;
+            // Flip membership and repopulate before the delayed callback can enter the gate.
+            router.SetSlotOwner(0, retirement ? original : replacement);
+            CacheValue();
+        }
+        await finished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(countWhileBlocked).IsEqualTo(1);
+        await Assert.That(cache.Count).IsEqualTo(1);
+
+        void CacheValue()
+        {
+            RespireKey key = "cached";
+            var token = cache.BeginRead(in key);
+            var value = RespValue.BulkString("value"u8.ToArray());
+            cache.CompleteRead(in token, in value, allowInsert: true);
+        }
+    }
+
+    [Test]
     [Arguments(RespireConnectionState.Reconnecting)]
     [Arguments(RespireConnectionState.Disconnected)]
     public async Task StaleHealthCallbacksPreserveRepopulatedCache(RespireConnectionState state)

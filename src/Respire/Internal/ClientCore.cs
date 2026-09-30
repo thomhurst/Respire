@@ -125,26 +125,20 @@ internal sealed class ClientCore : IAsyncDisposable
         int slot,
         RespireConnectionStateChange change)
     {
-        if (Cluster is { } router && !router.IsNodeObserved(node))
-        {
-            return;
-        }
-
-        // Flush outside the health/router gates because metrics listeners can run user code.
-        // Membership is checked again under both gates before changing health state.
-        if (change.State != RespireConnectionState.Connected)
-        {
-            ClientCache?.FlushForContinuityLoss();
-        }
+        int? cacheEvictions = null;
 
         lock (_stateGate)
         {
-            // Keep observer membership stable until health mutation is complete.
+            // Keep observer membership stable through cache and health mutation.
             lock (Cluster?.NodeStateGate ?? _stateGate)
             {
                 if (Cluster is { } cluster && !cluster.IsNodeObserved(node))
                 {
                     return;
+                }
+                if (change.State != RespireConnectionState.Connected)
+                {
+                    cacheEvictions = ClientCache?.FlushForContinuityLossWithoutMetrics();
                 }
                 var commandSlot = (node, slot);
                 switch (change.State)
@@ -167,21 +161,21 @@ internal sealed class ClientCore : IAsyncDisposable
             }
         }
 
+        // Metrics listeners and health subscribers can run user code, outside both gates.
+        if (cacheEvictions is { } removed)
+        {
+            ClientSideCacheCoordinator.PublishContinuityFlushMetrics(removed);
+        }
         PublishQueuedStates();
     }
 
     internal void NotifyCommandNodeRetired(RespireConnectionMultiplexer node)
     {
-        if (Cluster?.IsNodeObserved(node) == true)
-        {
-            return;
-        }
-
-        ClientCache?.FlushForContinuityLoss();
+        int? cacheEvictions = null;
 
         lock (_stateGate)
         {
-            // Keep observer membership stable until health mutation is complete.
+            // Keep observer membership stable through cache and health mutation.
             lock (Cluster?.NodeStateGate ?? _stateGate)
             {
                 // Topology publication and callbacks are separate. A node reactivated before
@@ -190,6 +184,7 @@ internal sealed class ClientCore : IAsyncDisposable
                 {
                     return;
                 }
+                cacheEvictions = ClientCache?.FlushForContinuityLossWithoutMetrics();
                 _reconnectingCommandSlots.RemoveWhere(
                     commandSlot => ReferenceEquals(commandSlot.Node, node));
                 _disconnectedCommandSlots.RemoveWhere(
@@ -199,6 +194,11 @@ internal sealed class ClientCore : IAsyncDisposable
             }
         }
 
+        // Metrics listeners and health subscribers can run user code, outside both gates.
+        if (cacheEvictions is { } removed)
+        {
+            ClientSideCacheCoordinator.PublishContinuityFlushMetrics(removed);
+        }
         PublishQueuedStates();
     }
 

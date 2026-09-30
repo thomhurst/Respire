@@ -28,6 +28,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
     private RespireConnectionMultiplexer? _seed;
     private int _hasCompleteTopology;
     private long _topologyVersion;
+    private long _identitySnapshotVersion;
     // Per-slot versions reject stale discovery even when a route changes away and back
     // to the same transport (an owner-reference comparison cannot detect that ABA case).
     private readonly long[] _slotVersions = new long[ClusterHash.SlotCount];
@@ -782,6 +783,12 @@ internal sealed class ClusterRouter : IAsyncDisposable
         lock (_nodesGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            // Slot fences protect MOVED updates independently. A completed discovery also
+            // fences the identity index and seed against older in-flight discoveries.
+            if (_identitySnapshotVersion > expectedVersion)
+            {
+                return;
+            }
             var resolved = _identities.ApplySnapshot(ranges);
             var activeNodes = new HashSet<RespireConnectionMultiplexer>();
             var refreshedSlots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
@@ -800,6 +807,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 SetSeedLocked(seed);
             }
             retiredNodes = ReplaceSlotOwnersLocked(refreshedSlots, activeNodes, expectedVersion);
+            _identitySnapshotVersion = _topologyVersion;
         }
 
         if (retiredNodes is not null)
@@ -824,6 +832,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
     private void SetSeedLocked(RespireConnectionMultiplexer node)
         => Volatile.Write(ref _seed, _identities.GetCurrent(node));
 
+    // Called under _nodesGate: create a lazy transport without connecting or raising state events.
     private RespireConnectionMultiplexer CreateNode(RespireEndpoint endpoint)
         => RespireConnectionMultiplexer.Create(
             endpoint.Host, endpoint.Port, _options.Connections, _commandConnectionOptions,
