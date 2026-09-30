@@ -34,7 +34,11 @@ public class ServerAclCommandTests
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
         server.SuppressReply = command =>
         {
-            if (command == "HELLO 3") { _ = server.SendRawAsync("%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray()); return true; }
+            if (command == "HELLO 3")
+            {
+                _ = server.SendRawAsync("%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(), server.ReceivedConnectionIds[^1]);
+                return true;
+            }
             if (!command.StartsWith("ACL SETUSER ", StringComparison.Ordinal)) return false;
             received.TrySetResult(server.ReceivedConnectionIds[^1]);
             return true;

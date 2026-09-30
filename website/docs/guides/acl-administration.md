@@ -73,7 +73,7 @@ Standalone returns one result. Discovery requires permission to inspect `CLUSTER
 WHOAMI reports the identity authenticated on the connection used for that node.
 
 ```csharp
-var results = await client.Server.AclGetUserOnAllNodesAsync("reader");
+var results = await redis.Server.AclGetUserOnAllNodesAsync("reader");
 foreach (var result in results)
 {
     if (result.IsSuccess)

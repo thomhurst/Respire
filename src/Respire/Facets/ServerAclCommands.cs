@@ -91,12 +91,14 @@ internal sealed partial class ServerCommands
     private ValueTask<T> ExecuteAclAsync<T>(AclCall<T> call, CancellationToken cancellationToken)
     {
         if (call.RequiresAdmin) EnsureAdminAllowed(call.Operation);
+        cancellationToken.ThrowIfCancellationRequested();
         return ConvertAsync(call.Operation, call.Command, cancellationToken, call.Convert);
     }
 
     private async ValueTask<RespireServerResult<T>[]> ExecuteAclOnAllNodesAsync<T>(AclCall<T> call, CancellationToken cancellationToken)
     {
         if (call.RequiresAdmin) EnsureAdminAllowed(call.Operation);
+        cancellationToken.ThrowIfCancellationRequested();
         var cache = client.Core.ClientCache;
         var fence = cache is null ? default : cache.BeforeCommand(call.Operation, call.Command);
         try
