@@ -67,6 +67,9 @@ Conditional deletion returns `false` for missing keys or mismatches. A failed SE
 preserves both the value and expiry. Successful SET supports relative and absolute
 expiry or `RespireExpiry.Keep`; the default clears an existing expiry.
 `RespireExpiry.Persist` is not a SET option.
+Relative expiry truncates to whole milliseconds, matching ordinary SET. A positive
+duration below one millisecond becomes `PX 0`, which the server rejects without changing
+the stored value or expiry; Respire does not round it up silently.
 
 `GetAndSetConditionalAsync` uses `SET ... GET` and returns the old string even when
 the comparison fails. Null means the key was missing, so this result is **not a

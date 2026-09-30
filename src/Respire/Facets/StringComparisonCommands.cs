@@ -31,10 +31,11 @@ public partial interface IStringCommands
         RespireExpiry expiry = default, CancellationToken cancellationToken = default);
 
     /// <summary>Deletes a string only when the comparison succeeds. Returns false for missing keys or failed comparisons. Redis 8.4+: DELEX.</summary>
+    /// <remarks>For Valkey 9.0+ byte equality, use <see cref="DeleteIfEqualAsync"/>. The command is never substituted based on server capabilities.</remarks>
     ValueTask<bool> DeleteConditionalAsync(RespireKey key, RespireValueCondition condition, CancellationToken cancellationToken = default);
 
     /// <summary>Deletes a string only when its bytes equal the raw operand. Returns false for missing keys or mismatches. Valkey 9.0+: DELIFEQ.</summary>
-    /// <remarks>This explicitly uses DELIFEQ; use DeleteConditionalAsync with EqualTo for Redis DELEX. Binary operands are borrowed until completion.</remarks>
+    /// <remarks>This explicitly uses DELIFEQ; use <see cref="DeleteConditionalAsync"/> with <see cref="RespireValueCondition.EqualTo"/> for Redis DELEX. Binary operands are borrowed until completion.</remarks>
     ValueTask<bool> DeleteIfEqualAsync(RespireKey key, RespireValue value, CancellationToken cancellationToken = default);
 
     /// <summary>Returns the owned hexadecimal digest of a string, or null for a missing key. Redis 8.4+: DIGEST.</summary>

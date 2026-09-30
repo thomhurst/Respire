@@ -91,6 +91,10 @@ public class StringComparisonIntegrationTests
             await view.SetAsync(key, old);
             (await Set(view, mode, key, next, RespireValueCondition.EqualTo(old), TimeSpan.FromMinutes(5))).Should().BeTrue();
             (await view.Keys.ExpiryAsync(key)).TimeToLive.Should().BeGreaterThan(TimeSpan.FromMinutes(4));
+            // RespireExpiry truncates to milliseconds, matching ordinary SET. PX 0 remains a server error.
+            await ServerError(async () => { await Set(view, mode, key, old, RespireValueCondition.EqualTo(next), TimeSpan.FromTicks(1)); }, "*invalid expire time*");
+            (await view.GetAsync<byte[]>(key)).Should().Equal(next);
+            (await view.Keys.ExpiryAsync(key)).TimeToLive.Should().BeGreaterThan(TimeSpan.FromMinutes(4));
             if (redis)
             {
                 (await Digest(view, mode, "missing")).Should().BeNull();
