@@ -51,11 +51,11 @@ internal sealed partial class ListCommands
         CancellationToken cancellationToken = default)
     {
         _ = SideToken(side);
-        ValidateWait(waitFor);
+        MultiKeyPop.ValidateWait(waitFor);
         var operation = side == ListSide.Left ? "BLPOP" : "BRPOP";
         var arguments = new RespireValue[keys.Length + 1];
-        CopyPopKeys(client, keys, arguments, operation);
-        arguments[^1] = ToSeconds(waitFor);
+        MultiKeyPop.CopyPopKeys(client, keys, arguments, operation);
+        arguments[^1] = MultiKeyPop.ToSeconds(waitFor);
         return PopOneBlockingAsync(operation,
             new CmdN(side == ListSide.Left ? Verbs.BLPop : Verbs.BRPop, arguments), cancellationToken);
     }
@@ -80,7 +80,7 @@ internal sealed partial class ListCommands
         {
             throw new RespireProtocolException("Expected a selected list key and one popped value.");
         }
-        return new RespireListPopResult(ParsePoppedKey(in elements[0], client.KeyPrefixBytes), elements[1].AsString());
+        return new RespireListPopResult(MultiKeyPop.ParsePoppedKey(in elements[0], client.KeyPrefixBytes), elements[1].AsString());
     }
 
     internal static (string Operation, CmdN Command) PopManyCommand(
@@ -90,7 +90,7 @@ internal sealed partial class ListCommands
         var sideToken = SideToken(side);
         if (waitFor is { } wait)
         {
-            ValidateWait(wait);
+            MultiKeyPop.ValidateWait(wait);
         }
         var blocking = waitFor.HasValue;
         var operation = blocking ? "BLMPOP" : "LMPOP";
@@ -98,38 +98,15 @@ internal sealed partial class ListCommands
         var index = 0;
         if (waitFor is { } timeout)
         {
-            arguments[index++] = ToSeconds(timeout);
+            arguments[index++] = MultiKeyPop.ToSeconds(timeout);
         }
         arguments[index++] = keys.Length;
-        CopyPopKeys(client, keys, arguments.AsSpan(index, keys.Length), operation);
+        MultiKeyPop.CopyPopKeys(client, keys, arguments.AsSpan(index, keys.Length), operation);
         index += keys.Length;
         arguments[index++] = sideToken;
         arguments[index++] = "COUNT";
         arguments[index] = count;
         return (operation, new CmdN(blocking ? Verbs.BLMPop : Verbs.LMPop, arguments));
-    }
-
-    private static void CopyPopKeys(
-        RespireClient client, ReadOnlySpan<RespireKey> keys, Span<RespireValue> destination, string operation)
-    {
-        if (keys.IsEmpty)
-        {
-            throw new ArgumentException("At least one key is required.", nameof(keys));
-        }
-        int? slot = null;
-        for (var index = 0; index < keys.Length; index++)
-        {
-            var key = client.Key(in keys[index]);
-            if (client.Core.Cluster is not null && key.TryGetClusterSlot(out var keySlot))
-            {
-                if (slot is { } expected && keySlot != expected)
-                {
-                    throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", operation);
-                }
-                slot = keySlot;
-            }
-            destination[index] = key;
-        }
     }
 
     private static string SideToken(ListSide side) => side switch
@@ -138,14 +115,6 @@ internal sealed partial class ListCommands
         ListSide.Right => "RIGHT",
         _ => throw new ArgumentOutOfRangeException(nameof(side), side, null),
     };
-
-    private static void ValidateWait(TimeSpan waitFor)
-    {
-        if (waitFor < TimeSpan.Zero && waitFor != Timeout.InfiniteTimeSpan)
-        {
-            throw new ArgumentOutOfRangeException(nameof(waitFor), waitFor, "Wait must be nonnegative or Timeout.InfiniteTimeSpan.");
-        }
-    }
 
     internal static RespireListPopManyResult? ParsePopMany(in RespValue reply, ReadOnlySpan<byte> prefix)
     {
@@ -158,20 +127,7 @@ internal sealed partial class ListCommands
         {
             throw new RespireProtocolException("Expected a selected list key and an array of popped values.");
         }
-        return new RespireListPopManyResult(ParsePoppedKey(in elements[0], prefix), ResponseReader.StringArray(in elements[1]));
+        return new RespireListPopManyResult(MultiKeyPop.ParsePoppedKey(in elements[0], prefix), ResponseReader.StringArray(in elements[1]));
     }
 
-    private static RespireKey ParsePoppedKey(in RespValue value, ReadOnlySpan<byte> prefix)
-    {
-        var bytes = value.AsSpan();
-        if (!prefix.IsEmpty)
-        {
-            if (!bytes.StartsWith(prefix))
-            {
-                throw new RespireProtocolException("Returned list key does not start with the client key prefix.");
-            }
-            bytes = bytes[prefix.Length..];
-        }
-        return new RespireKey(bytes.ToArray());
-    }
 }
