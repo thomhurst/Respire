@@ -27,6 +27,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
     private readonly List<string> _receivedCommands = [];
     private readonly List<byte[][]> _receivedArguments = [];
     private readonly List<int> _receivedConnectionIds = [];
+    private readonly List<Socket> _clientSockets = [];
     private int _commandsSeen;
     private int _disposed;
 
@@ -115,6 +116,14 @@ internal sealed class FakeRespServer : IAsyncDisposable
         await socket.SendAsync(frame, SocketFlags.None);
     }
 
+    /// <summary>Injects a reply on a specific accepted connection, identified by ReceivedConnectionIds.</summary>
+    public async Task SendRawAsync(byte[] frame, int connectionId)
+    {
+        Socket socket;
+        lock (_receivedCommands) socket = _clientSockets[connectionId];
+        await socket.SendAsync(frame, SocketFlags.None);
+    }
+
     private async Task RunAsync(int maxConnections)
     {
         var connections = new List<Task>(maxConnections);
@@ -124,6 +133,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
             {
                 var socket = await _listener.AcceptSocketAsync(_cts.Token);
                 socket.NoDelay = true;
+                lock (_receivedCommands) _clientSockets.Add(socket);
                 _clientSocket.TrySetResult(socket);
                 connections.Add(HandleConnectionAsync(socket, i));
             }
