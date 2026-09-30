@@ -323,6 +323,12 @@ public class MultiItemCancellationOverloadTests
     /// <summary>Records which <c>DeleteAsync</c> overload the compiler picked.</summary>
     private sealed class RecordingKeyCommands : IKeyCommands
     {
+        public ValueTask<string?[]> SortAsync(RespireKey key, RespireSortOptions? options = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask<T?[]> SortAsync<T>(RespireKey key, RespireSortOptions? options = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask<long> SortStoreAsync(RespireKey key, RespireKey destination, RespireSortOptions? options = null, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask<RespireKey?> RandomAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask<bool> MoveAsync(RespireKey key, int database, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
         public Overload LastOverload { get; private set; }
 
         public int LastKeyCount { get; private set; }

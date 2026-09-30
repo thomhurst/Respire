@@ -1283,6 +1283,24 @@ public class ClientSideCacheTests
         await Assert.That(server.ReceivedCommands.Count).IsEqualTo(5);
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SortReadOnlyPreservesUnrelatedCachedValues(bool readOnly)
+    {
+        await using var server = new FakeRespServer(HelloReply, FakeRespServer.OkReply,
+            FakeRespServer.OkReply, "$5\r\nvalue\r\n"u8.ToArray(), "*0\r\n"u8.ToArray(),
+            FakeRespServer.OkReply, "$5\r\nvalue\r\n"u8.ToArray());
+        await using var client = await ConnectAsync(server);
+        await client.GetStringAsync("key");
+        // GET # prevents result caching, while SORT_RO must retain its read-only classification.
+        await client.Keys.SortAsync("items", new RespireSortOptions { ReadOnly = readOnly, Get = new RespireKey[] { "#" } });
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(readOnly ? 1 : 0);
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        await Assert.That(client.ClientSideCache.GetStatistics().Hits).IsEqualTo(readOnly ? 1 : 0);
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(readOnly ? 5 : 7);
+    }
+
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server)
         => RespireClient.ConnectAsync(new RespireOptions
         {

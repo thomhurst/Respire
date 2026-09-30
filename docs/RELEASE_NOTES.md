@@ -12,6 +12,15 @@
   `IBatchSortedSetCommands` must implement the new members.
   See the [sorted-set pop guide](SORTED_SET_POPS.md) for versions and wait semantics.
 
+### Key sorting and database helpers
+
+- `Keys.SortAsync` and `SortAsync<T>` support SORT/SORT_RO options, with `SortStoreAsync`
+  for STORE's count result. `RandomAsync` returns an owned binary key from an unprefixed
+  standalone database; `MoveAsync` moves a key between standalone databases. All have
+  batch/transaction counterparts. Custom key-facet implementations must add these
+  members. See [key sorting](KEY_SORTING.md) for prefix, Cluster, and version restrictions.
+
+
 ### Scripting
 
 - `RespireScript.Create(source, readOnly: true)` selects Redis 7+ read-only Lua commands.
