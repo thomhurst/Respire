@@ -4,7 +4,8 @@ namespace Respire.Commands;
 
 internal readonly struct StreamReadCommand(RespireValue[] keys, RespireStreamId[] ids, int? count, long? blockMilliseconds) : IRespCommand
 {
-    // Continuous readers update their private cursor array only after the preceding reply is owned.
+    // Sends are sequential. Cursors change only after a successful read's reply is fully owned;
+    // failed/cancelled sends retry unchanged cursors and never mutate a still-borrowed command.
     internal void SetAfter(int index, RespireStreamId id) => ids[index] = id;
 
     public bool TryGetPrimaryKey(out RespireValue key)

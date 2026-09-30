@@ -25,13 +25,15 @@ public partial interface IStreamCommands
 
     /// <summary>Continuously reads a stream, resuming after the last delivered id following transient connection failures.</summary>
     /// <remarks>$ is resolved once before reading. Failure to resolve the initial position is surfaced without retry.
+    /// Transient failures retry until cancellation/disposal, with backoff capped at 3.2 seconds.
     /// Trimming/deletion during an outage can remove entries. Disposal/cancellation ends the read.</remarks>
     IAsyncEnumerable<RespireStreamEntry> ReadAllAsync(RespireKey key, RespireStreamId after = default,
         int batchSize = 64, CancellationToken cancellationToken = default);
 
     /// <summary>Continuously reads same-slot streams with an independent last-delivered cursor for each stream.</summary>
     /// <remarks>Keys are copied when called. $ positions are resolved once per stream before reading; resolution failure
-    /// is surfaced without retry. Buffered entries are delivered before another read or reconnect attempt.</remarks>
+    /// is surfaced without retry. Buffered entries are delivered before another read or reconnect attempt.
+    /// Transient failures retry until cancellation/disposal, with backoff capped at 3.2 seconds.</remarks>
     IAsyncEnumerable<RespireStreamReadEntry> ReadAllAsync(ReadOnlySpan<(RespireKey Key, RespireStreamId After)> streams,
         int batchSize = 64, CancellationToken cancellationToken = default);
 }
@@ -98,10 +100,11 @@ internal sealed partial class StreamCommands
             var id = snapshot[i].After;
             if (id != RespireStreamId.New)
             {
+                if (id == RespireStreamId.Min || id == RespireStreamId.Max)
+                    throw new ArgumentException("XREAD requires a numeric start id or $.", nameof(streams));
                 try
                 {
-                    if (id == RespireStreamId.Min || id == RespireStreamId.Max || id.CompareTo(RespireStreamId.Beginning) < 0)
-                        throw new FormatException();
+                    _ = id.CompareTo(RespireStreamId.Beginning);
                 }
                 catch (FormatException error)
                 {

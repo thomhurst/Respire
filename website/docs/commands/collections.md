@@ -372,9 +372,11 @@ Batches and transactions expose only the nonblocking `Streams.Read` forms.
 
 `ReadAllAsync` keeps an independent last-delivered id for each stream. It drains each owned
 batch before reading again, using one-second blocking polls. Transient connection/server
-failures retry with delays from 100 ms to 3.2 seconds; authentication, ACL, configuration,
+failures retry indefinitely until cancellation/disposal, with delays from 100 ms to 3.2 seconds;
+authentication, ACL, configuration,
 and other non-transient errors terminate enumeration. Cancellation interrupts reads and retry
-delays; disposing an enumerator between entries releases its buffered batch.
+delays; disposing an enumerator between entries releases its buffered batch. Blocking polls
+are exempt from `CommandTimeout`; the caller's cancellation token bounds an active wait.
 
 For a one-shot read, `RespireStreamId.New` (`$`) uses Redis's current tail. For enumeration,
 each `$` is resolved once using `XREVRANGE ... COUNT 1` before the first `XREAD` (requiring

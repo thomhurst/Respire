@@ -114,6 +114,32 @@ public class StreamReadTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task BlockingReplyCanExceedCommandTimeoutWithoutRetry(bool enumerate)
+    {
+        await using var server = new FakeRespServer(Reply(false, ("events", ["1-0"])));
+        server.DelayReply(0, 150);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Connections = 1, Endpoints = [new("127.0.0.1", server.Port)], CommandTimeout = TimeSpan.FromMilliseconds(25),
+        });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        if (enumerate)
+        {
+            await using var reader = client.Streams.ReadAllAsync("events", cancellationToken: timeout.Token).GetAsyncEnumerator();
+            await Assert.That(await reader.MoveNextAsync()).IsTrue();
+            await Assert.That(reader.Current.Id).IsEqualTo((RespireStreamId)"1-0");
+        }
+        else
+        {
+            var entries = await client.Streams.ReadAsync("events", waitFor: TimeSpan.FromSeconds(1), cancellationToken: timeout.Token);
+            await Assert.That(entries[0].Id).IsEqualTo((RespireStreamId)"1-0");
+        }
+        await Assert.That(server.CommandsSeen).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task ReconnectKeepsIndependentCursorsAndDeliversBufferedEntriesFirst()
     {
         var reconnecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
