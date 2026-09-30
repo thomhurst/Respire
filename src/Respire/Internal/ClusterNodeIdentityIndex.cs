@@ -50,6 +50,8 @@ internal sealed class ClusterNodeIdentityIndex
         foreach (var seed in configuredSeeds)
             if (_nodes.TryGetValue(seed, out var node)) retained.Add(node);
 
+        // These snapshots scale with discovered endpoints/identities, once per topology refresh;
+        // they are not per-slot or per-command allocations.
         foreach (var (endpoint, node) in _nodes.ToArray())
             if (!retained.Contains(node)) _nodes.Remove(endpoint);
         foreach (var (id, node) in _nodesById.ToArray())

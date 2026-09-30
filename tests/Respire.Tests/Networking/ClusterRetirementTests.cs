@@ -121,6 +121,88 @@ public class ClusterRetirementTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RedirectRetriesGenerationRetiredDuringConnectionSetup(bool dedicated)
+    {
+        await using var sourceServer = new FakeRespServer(FakeRespServer.PongReply);
+        await using var source = await RespireConnection.ConnectAsync("127.0.0.1", sourceServer.Port);
+        using (var ready = await source.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
+            await Assert.That(ready.AsString()).IsEqualTo("PONG");
+        await using var target = new FakeRespServer(2, FakeRespServer.PongReply);
+        await using var client = CreateClient();
+        var router = client.Core.Cluster!;
+        var endpoint = new RespireEndpoint("127.0.0.1", target.Port);
+        Publish(router, endpoint, "old", 1);
+        var old = router.GetMultiplexer(endpoint);
+        var gate = (SemaphoreSlim)typeof(RespireConnectionMultiplexer).GetField("_connectGate", Private)!.GetValue(old)!;
+        using var timeout = new CancellationTokenSource(Limit);
+        await gate.WaitAsync(timeout.Token);
+        Task<RespireConnection>? connectionTask = null;
+        Task<DedicatedConnectionPool>? poolTask = null;
+        try
+        {
+            var moved = new RespireServerException($"MOVED 42 127.0.0.1:{target.Port}");
+            if (dedicated) poolTask = router.GetRedirectDedicatedPoolAsync(moved, source, timeout.Token).AsTask();
+            else connectionTask = router.GetRedirectConnectionAsync(moved, source, timeout.Token).AsTask();
+            // Redirect setup is parked inside the old generation's connection gate.
+            Publish(router, endpoint, "new", 2);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        var current = router.GetMultiplexer(endpoint);
+        await Assert.That(ReferenceEquals(old, current)).IsFalse();
+        await Assert.That(old.IsRetired).IsTrue();
+        DedicatedConnectionPool? pool = dedicated ? await poolTask!.WaitAsync(timeout.Token) : null;
+        var connection = pool is null ? await connectionTask!.WaitAsync(timeout.Token) : await pool.RentAsync(timeout.Token);
+        try
+        {
+            using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token);
+            await Assert.That(reply.AsString()).IsEqualTo("PONG");
+            await Assert.That(ReferenceEquals(current, router.GetMultiplexer(endpoint))).IsTrue();
+        }
+        finally
+        {
+            pool?.Return(connection);
+        }
+        await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
+    }
+
+    [Test]
+    public async Task FailedNodeCleanupBeforeDrainRemainsOwnedAndFaultsRetirement()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        using var logger = new FailingPoolDisconnectLogger(failNodeDisconnect: true);
+        await using var client = CreateClient(logger);
+        var router = client.Core.Cluster!;
+        var endpoint = new RespireEndpoint("127.0.0.1", server.Port);
+        Publish(router, endpoint, "old", 1);
+        var old = router.GetMultiplexer(endpoint);
+        await old.EnsureConnectedAsync();
+        using (var ready = await old.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
+            await Assert.That(ready.AsString()).IsEqualTo("PONG");
+        Publish(router, endpoint, "new", 2);
+        try
+        {
+            var error = await Assert.That(async () => await router.WaitForRetirementAsync().WaitAsync(Limit))
+                .ThrowsExactly<InvalidOperationException>();
+            await Assert.That(error).IsSameReferenceAs(logger.Failure);
+            await Assert.That(old.RetirementDrained).IsFalse();
+            await Assert.That(old.HasPendingCorrectionFences).IsFalse();
+            await Assert.That(Count(router, "_retiringNodes")).IsEqualTo(1);
+            await Assert.That(RetainedNodes(router)).IsEqualTo(3);
+        }
+        finally
+        {
+            await Assert.That(async () => await client.DisposeAsync().AsTask().WaitAsync(Limit))
+                .ThrowsExactly<InvalidOperationException>();
+        }
+    }
+
+    [Test]
     public async Task FailedDedicatedCleanupRemainsOwnedAndFaultsGenerationRetirement()
     {
         await using var server = new FakeRespServer(2, FakeRespServer.PongReply);
@@ -403,12 +485,13 @@ public class ClusterRetirementTests
         LoggerFactory = loggerFactory,
     });
 
-    private sealed class FailingPoolDisconnectLogger(bool failRetirementLog = false) : ILoggerFactory, ILogger
+    private sealed class FailingPoolDisconnectLogger(bool failRetirementLog = false, bool failNodeDisconnect = false) : ILoggerFactory, ILogger
     {
         internal readonly InvalidOperationException Failure = new("Test dedicated disconnect failure.");
         internal readonly InvalidOperationException RetirementFailure = new("Test retirement failure.");
         internal readonly TaskCompletionSource RetirementFailureSeen = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public ILogger CreateLogger(string categoryName) => categoryName.Contains(".Blocking.", StringComparison.Ordinal)
+            || (failNodeDisconnect && categoryName.StartsWith("Respire.Cluster.127.", StringComparison.Ordinal))
             || (failRetirementLog && categoryName == "Respire.Cluster") ? this : NullLogger.Instance;
         public void AddProvider(ILoggerProvider provider) { }
         public void Dispose() { }

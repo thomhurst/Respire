@@ -213,15 +213,21 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             throw error;
         }
 
-        var observe = error.Code != "ASK";
-        var node = GetOrCreateNode(endpoint, observe, redirect: true);
-        await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-        if (error.Code == RespireErrorCodes.Moved)
+        for (var attempt = 0; ; attempt++)
         {
-            SetSlotOwner(slot, node);
+            cancellationToken.ThrowIfCancellationRequested();
+            var node = GetOrCreateNode(endpoint, observe: error.Code != "ASK", redirect: true);
+            try
+            {
+                await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                if (error.Code == RespireErrorCodes.Moved) SetSlotOwner(slot, node);
+                return node.GetConnection(slot);
+            }
+            catch (Exception failure) when (CanRetryRetiredRedirect(failure, node, attempt, cancellationToken))
+            {
+                // No redirected command has been sent. Resolve the endpoint's current generation.
+            }
         }
-
-        return node.GetConnection(slot);
     }
 
     internal async ValueTask<RespireConnection> GetTrackedConnectionAsync(
@@ -300,15 +306,27 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             throw error;
         }
 
-        var node = GetOrCreateNode(endpoint, observe: error.Code != "ASK", redirect: true);
-        await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-        if (error.Code == RespireErrorCodes.Moved)
+        for (var attempt = 0; ; attempt++)
         {
-            SetSlotOwner(slot, node);
+            cancellationToken.ThrowIfCancellationRequested();
+            var node = GetOrCreateNode(endpoint, observe: error.Code != "ASK", redirect: true);
+            try
+            {
+                await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                if (error.Code == RespireErrorCodes.Moved) SetSlotOwner(slot, node);
+                return GetOrCreateDedicatedPool(endpoint);
+            }
+            catch (Exception failure) when (CanRetryRetiredRedirect(failure, node, attempt, cancellationToken))
+            {
+                // Pool acquisition has not begun, so retrying cannot replay an accepted command.
+            }
         }
-
-        return GetOrCreateDedicatedPool(endpoint);
     }
+
+    private static bool CanRetryRetiredRedirect(Exception error, RespireConnectionMultiplexer node,
+        int attempt, CancellationToken cancellationToken)
+        => attempt < MaxRedirects && !cancellationToken.IsCancellationRequested
+            && (error is RespireConnectionRetiredException || error is OperationCanceledException && node.IsRetired);
 
     internal DedicatedConnectionPool GetDedicatedPool(RespireEndpoint endpoint)
         => GetOrCreateDedicatedPool(endpoint);

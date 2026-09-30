@@ -63,19 +63,28 @@ and wait for borrowed operations to return. There is no implicit timeout that ab
 application commands. Failed tracked sockets retain their server-local client IDs and captured
 network peers until CLIENT KILL is acknowledged. Each control attempt is bounded by ConnectTimeout;
 the Cluster owner retries failed fences with exponential delays from one to 30 seconds, logs
-failed attempts at Debug level, and retains the generation until success or explicit client
+failed attempts at Debug level (Warning once the delay reaches 30 seconds, including the current
+retiring-generation count), and retains the generation until success or explicit client
 disposal. Client disposal aborts active and detached transports, borrowed connections, and control
 attempts before waiting for cleanup.
 An expired control-attempt deadline surfaces as `RespireTimeoutException` for `CLIENT KILL`;
 caller cancellation and explicit disposal retain their cancellation behavior. A failed pool
 drain faults generation retirement and retains ownership for disposal instead of reporting success.
 A permanently unreachable peer therefore keeps its generation alive until explicit client disposal.
+Failures before the multiplexer finishes drain and identity collection fault generation retirement;
+an empty set of pending fence IDs cannot make those failures successful. MOVED/ASK connection setup
+can re-resolve a generation retired by concurrent topology publication, with bounded retries and
+caller cancellation. This happens before sending the redirected command and never replays accepted work.
 
 The router's `_nodesGate` protects lookup and ownership changes. Snapshot the owned objects under
 that gate, then release it before renting, draining, disposing, awaiting, or invoking lifecycle
 callbacks. Node and pool lifecycle locks must be released before callbacks acquire `_nodesGate`.
 Observer installation and peer revalidation occur together under the router gate; they do not
 take a node or pool lifecycle lock.
+Routing and correction ownership intentionally share that gate so topology detachment, pool reservations,
+and identity publication remain atomic. `WaitForRetirementAsync` observes detached generation completion;
+late correction reservations have separate lifetimes. Explicit disposal snapshots every owned pool and
+awaits each pool's shared abortive cleanup, including pools already being retired in the background.
 
 Correction pools share live multiplexer/peer/TLS identities, including replacement sockets on the
 same peer. A changed peer gets a separate pool; obsolete entries detach from lookup. A correction
