@@ -12,6 +12,7 @@ public enum ExpiryTimePrecision
 
 /// <summary>
 /// An absolute expiration time, distinguishing a missing key or field from one without an expiry.
+/// The default value represents a missing key or field.
 /// </summary>
 public readonly struct RespireExpiryTime
 {
@@ -36,11 +37,25 @@ public readonly struct RespireExpiryTime
     /// <summary>Absolute expiration in UTC, or null when missing or persistent.</summary>
     /// <exception cref="ArgumentOutOfRangeException">
     /// The Redis timestamp exceeds the range of DateTimeOffset. Use UnixTimeMilliseconds to
-    /// inspect such timestamps without conversion.
+    /// inspect such timestamps without conversion, or TryGetExpiresAt for a nonthrowing conversion.
     /// </exception>
     public DateTimeOffset? ExpiresAt => UnixTimeMilliseconds is { } timestamp
         ? DateTimeOffset.FromUnixTimeMilliseconds(timestamp)
         : null;
+
+    /// <summary>Attempts to convert an expiry to a UTC instant without throwing.</summary>
+    /// <returns>False for missing/persistent values or timestamps outside DateTimeOffset's range.</returns>
+    public bool TryGetExpiresAt(out DateTimeOffset expiresAt)
+    {
+        if (UnixTimeMilliseconds is { } timestamp
+            && timestamp <= DateTimeOffset.MaxValue.ToUnixTimeMilliseconds())
+        {
+            expiresAt = DateTimeOffset.FromUnixTimeMilliseconds(timestamp);
+            return true;
+        }
+        expiresAt = default;
+        return false;
+    }
 
     internal static RespireExpiryTime FromRedis(long timestamp, ExpiryTimePrecision precision)
         => timestamp switch

@@ -1,4 +1,5 @@
 using Respire.Protocol;
+using Respire.Tests.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -7,6 +8,45 @@ namespace Respire.Tests;
 
 public class HashReadTests
 {
+    [Test]
+    [Arguments(-2L, false)]
+    [Arguments(-1L, false)]
+    [Arguments(0L, true)]
+    [Arguments(253402300799999L, true)]
+    [Arguments(253402300800000L, false)]
+    [Arguments(long.MaxValue, false)]
+    public async Task ExpiryTime_TryConversionPreservesStatesAndTimestamp(long timestamp, bool convertible)
+    {
+        var expiry = RespireExpiryTime.FromRedis(timestamp, ExpiryTimePrecision.Milliseconds);
+        await Assert.That(expiry.TryGetExpiresAt(out var instant)).IsEqualTo(convertible);
+        if (convertible)
+        {
+            await Assert.That(instant.ToUnixTimeMilliseconds()).IsEqualTo(timestamp);
+        }
+        else
+        {
+            await Assert.That(instant).IsEqualTo(default(DateTimeOffset));
+        }
+        await Assert.That(expiry.UnixTimeMilliseconds).IsEqualTo(timestamp < 0 ? null : (long?)timestamp);
+    }
+
+    [Test]
+    public async Task ExpiryTime_VariadicOverloadsSelectPrecisionAndPreserveFields()
+    {
+        await using var server = new FakeRespServer(
+            "*2\r\n:1000\r\n:-1\r\n"u8.ToArray(), "*1\r\n:1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        var milliseconds = await client.Hashes.ExpiryTimeAsync("hash", "a", "b");
+        var seconds = await client.Hashes.ExpiryTimeAsync("hash", ExpiryTimePrecision.Seconds, "a");
+
+        await Assert.That(milliseconds[0].UnixTimeMilliseconds).IsEqualTo(1000);
+        await Assert.That(seconds[0].UnixTimeMilliseconds).IsEqualTo(1000);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo([
+            "HPEXPIRETIME hash FIELDS 2 a b", "HEXPIRETIME hash FIELDS 1 a",
+        ]);
+    }
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]
