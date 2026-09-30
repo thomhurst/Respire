@@ -1202,6 +1202,43 @@ public class ClusterTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ScriptCacheFanOutObservesEveryPrimaryBeforeCompleting(bool firstFails)
+    {
+        var flags = "*1\r\n:1\r\n"u8.ToArray();
+        await using var firstNode = new FakeRespServer(flags) { SuppressReply = _ => true };
+        await using var secondNode = new FakeRespServer(flags) { SuppressReply = _ => true };
+        var topology = Encoding.ASCII.GetBytes(
+            $"*2\r\n" +
+            $"*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{firstNode.Port}\r\n" +
+            $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{secondNode.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+        var pending = client.Scripts.ExistsAsync("digest").AsTask();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (firstNode.CommandsSeen == 0 || secondNode.CommandsSeen == 0)
+        {
+            await Task.Delay(10, deadline.Token);
+        }
+        await firstNode.SendRawAsync(firstFails ? "-ERR rejected\r\n"u8.ToArray() : flags);
+        await Assert.That(pending.IsCompleted).IsFalse();
+        await secondNode.SendRawAsync(flags);
+        if (firstFails)
+        {
+            await Assert.That(async () => await pending).ThrowsExactly<RespireServerException>();
+        }
+        else
+        {
+            await Assert.That(await pending).IsEquivalentTo([true]);
+        }
+    }
+
+    [Test]
     public async Task ScriptCacheQueriesRequireEveryPrimaryAndFlushFansOut()
     {
         await using var firstNode = new FakeRespServer("*2\r\n:1\r\n:1\r\n"u8.ToArray(), FakeRespServer.OkReply);

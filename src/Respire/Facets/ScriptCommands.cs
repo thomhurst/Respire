@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Respire.Commands;
 using Respire.Internal;
+using Respire.Networking;
 using Respire.Protocol;
 using Respire.Serialization;
 
@@ -303,21 +304,17 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         _ => throw new ArgumentOutOfRangeException(nameof(mode)),
     };
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<bool[]> ExistsClusterAsync(
         ClusterRouter cluster, CmdN command, CancellationToken cancellationToken)
     {
-        var masters = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
-        bool[]? result = null;
-        foreach (var connection in masters)
+        var results = await SendToPrimariesAsync(cluster, "SCRIPT EXISTS", command,
+            static (ScriptCommands _, in RespValue value) => ResponseReader.FlagArray(in value), cancellationToken)
+            .ConfigureAwait(false);
+        var result = results[0];
+        for (var primary = 1; primary < results.Length; primary++)
         {
-            using var reply = await client.SendOnConnectionAsync(
-                "SCRIPT EXISTS", connection, command, cancellationToken).ConfigureAwait(false);
-            var exists = ResponseReader.FlagArray(in reply);
-            if (result is null)
-            {
-                result = exists;
-                continue;
-            }
+            var exists = results[primary];
             if (exists.Length != result.Length)
             {
                 throw new RespireProtocolException("SCRIPT EXISTS returned inconsistent result lengths.");
@@ -327,24 +324,15 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
                 result[i] &= exists[i];
             }
         }
-        return result ?? throw new RespireConnectionException("SCRIPT EXISTS did not reach any Redis Cluster primary.");
+        return result;
     }
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
     private async ValueTask FlushClusterAsync(
         ClusterRouter cluster, Cmd command, CancellationToken cancellationToken)
-    {
-        var masters = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
-        if (masters.Length == 0)
-        {
-            throw new RespireConnectionException("SCRIPT FLUSH did not reach any Redis Cluster primary.");
-        }
-        foreach (var connection in masters)
-        {
-            using var reply = await client.SendOnConnectionAsync(
-                "SCRIPT FLUSH", connection, command, cancellationToken).ConfigureAwait(false);
-            ResponseReader.ExpectOk(in reply);
-        }
-    }
+        => _ = await SendToPrimariesAsync(cluster, "SCRIPT FLUSH", command,
+            static (ScriptCommands _, in RespValue value) => ResponseReader.Ok(in value), cancellationToken)
+            .ConfigureAwait(false);
 
     public ValueTask<string> LoadAsync(RespireScript script, CancellationToken cancellationToken = default)
     {
@@ -370,25 +358,41 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         RespireScript script,
         CancellationToken cancellationToken)
     {
-        var masters = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
-        string? result = null;
-        foreach (var connection in masters)
-        {
-            var reply = await client.SendOnConnectionAsync(
-                    "SCRIPT LOAD", connection, new Cmd1(Verbs.ScriptLoad, script.Source), cancellationToken)
-                .ConfigureAwait(false);
-            try
-            {
-                var loadedSha1 = ResponseReader.String(in reply);
-                result ??= loadedSha1;
-            }
-            finally
-            {
-                reply.Dispose();
-            }
-        }
+        var results = await SendToPrimariesAsync(cluster, "SCRIPT LOAD", new Cmd1(Verbs.ScriptLoad, script.Source),
+            static (ScriptCommands _, in RespValue value) => ResponseReader.String(in value), cancellationToken)
+            .ConfigureAwait(false);
+        return results[0];
+    }
 
-        return result ?? throw new RespireConnectionException(
-            "SCRIPT LOAD did not reach any Redis Cluster master.");
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<TResult[]> SendToPrimariesAsync<TCommand, TResult>(
+        ClusterRouter cluster, string operation, TCommand command,
+        ResponseConverter<ScriptCommands, TResult> convert, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var masters = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
+        if (masters.Length == 0)
+        {
+            throw new RespireConnectionException($"{operation} did not reach any Redis Cluster primary.");
+        }
+        var responses = new Task<TResult>[masters.Length];
+        for (var i = 0; i < masters.Length; i++)
+        {
+            responses[i] = SendAndConvertAsync(operation, masters[i], command, convert, cancellationToken).AsTask();
+        }
+        // Observe every send, including failures, before returning. Each operation owns and
+        // disposes its reply independently, even when another primary fails or cancels.
+        return await Task.WhenAll(responses).ConfigureAwait(false);
+    }
+
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+    private async ValueTask<TResult> SendAndConvertAsync<TCommand, TResult>(
+        string operation, RespireConnection connection, TCommand command,
+        ResponseConverter<ScriptCommands, TResult> convert, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        using var reply = await client.SendOnConnectionAsync(operation, connection, command, cancellationToken)
+            .ConfigureAwait(false);
+        return convert(this, in reply);
     }
 }

@@ -12,7 +12,7 @@ public class ScriptCacheIntegrationTests
     public async Task ReadOnlyScriptsAndCacheCommandsRoundTrip(int protocol)
     {
         // SCRIPT FLUSH is server-wide, so these tests must not use the shared Redis fixture.
-        await using var server = new RedisBuilder().WithImage("redis:7.4-alpine").Build();
+        await using var server = new RedisBuilder("redis:7.4-alpine").Build();
         await server.StartAsync();
         await using var owner = await RespireClient.ConnectAsync(
             $"redis://{server.Hostname}:{server.GetMappedPublicPort(6379)}?protocol={protocol}");

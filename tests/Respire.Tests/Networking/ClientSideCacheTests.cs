@@ -1231,10 +1231,11 @@ public class ClientSideCacheTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task ScriptExistsPreservesCachedValues(bool deferred)
+    public async Task ScriptExistsRespectsHostCachePolicy(bool deferred)
     {
         await using var server = new FakeRespServer(HelloReply, FakeRespServer.OkReply,
-            FakeRespServer.OkReply, "$5\r\nvalue\r\n"u8.ToArray(), "*1\r\n:0\r\n"u8.ToArray());
+            FakeRespServer.OkReply, "$5\r\nvalue\r\n"u8.ToArray(), "*1\r\n:0\r\n"u8.ToArray(),
+            FakeRespServer.OkReply, "$5\r\nvalue\r\n"u8.ToArray());
         await using var client = await ConnectAsync(server);
         await client.GetStringAsync("key");
         if (deferred)
@@ -1248,10 +1249,11 @@ public class ClientSideCacheTests
         {
             await Assert.That(await client.Scripts.ExistsAsync("digest")).IsEquivalentTo([false]);
         }
-        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
+        // Batches retain their existing conservative whole-batch invalidation policy.
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(deferred ? 0 : 1);
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
-        await Assert.That(client.ClientSideCache.GetStatistics().Hits).IsEqualTo(1);
-        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(5);
+        await Assert.That(client.ClientSideCache.GetStatistics().Hits).IsEqualTo(deferred ? 0 : 1);
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(deferred ? 7 : 5);
     }
 
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server)
