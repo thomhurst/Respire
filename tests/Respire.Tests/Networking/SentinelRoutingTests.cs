@@ -367,6 +367,100 @@ public class SentinelRoutingTests
             .IsEqualTo("ROLE");
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task NewBatchUsesThePromotedGenerationAndDurabilityKeepsOneSocket(bool durability)
+    {
+        var rejectWrites = false;
+        await using var oldPrimary = Primary((_, command) => command.StartsWith("SET ") && Volatile.Read(ref rejectWrites)
+            ? "-READONLY replica\r\n"u8.ToArray() : null);
+        await using var promoted = Primary((_, command) => command.StartsWith("WAIT ") ? ":1\r\n"u8.ToArray() : null);
+        var primaryPort = oldPrimary.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        Volatile.Write(ref primaryPort, promoted.Port);
+        Volatile.Write(ref rejectWrites, true);
+        await Assert.That(async () => await client.SetAsync("trigger", "value")).Throws<RespireServerException>();
+        using var batch = client.CreateBatch();
+        var pending = batch.Set("batched", "value");
+        if (durability)
+            await Assert.That(await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1)).AsTask().WaitAsync(Limit))
+                .IsEqualTo(1);
+        else
+            await batch.ExecuteAsync().AsTask().WaitAsync(Limit);
+        await Assert.That(pending.Result).IsTrue();
+        await Assert.That(oldPrimary.ReceivedCommands.Any(command => command == "SET batched value")).IsFalse();
+        var index = promoted.ReceivedCommands.ToList().IndexOf("SET batched value");
+        await Assert.That(index).IsGreaterThanOrEqualTo(0);
+        var connection = promoted.ReceivedConnectionIds[index];
+        var frames = promoted.ReceivedCommands.Where((_, position) => promoted.ReceivedConnectionIds[position] == connection).ToArray();
+        await Assert.That(frames).IsEquivalentTo(durability
+            ? ["ROLE", "SET batched value", "WAIT 1 1000"] : ["ROLE", "SET batched value"]);
+    }
+
+    [Test]
+    public async Task TrackedCorrectionRetainsItsOriginalPeerAfterPromotion()
+    {
+        var rejectWrites = false;
+        static byte[]? ScriptReply(string command, int clientId)
+            => command == "CLIENT ID" ? Encoding.ASCII.GetBytes($":{clientId}\r\n")
+                : command.StartsWith("CLIENT KILL ") ? ":0\r\n"u8.ToArray()
+                : command.StartsWith("EVAL") ? ":1\r\n"u8.ToArray() : null;
+        await using var oldPrimary = Primary((_, command) => command.StartsWith("SET ") && Volatile.Read(ref rejectWrites)
+            ? "-READONLY replica\r\n"u8.ToArray() : ScriptReply(command, 41));
+        await using var promoted = Primary((_, command) => ScriptReply(command, 42));
+        var primaryPort = oldPrimary.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        var script = RespireScript.Create("return 1");
+        var execution = await client.StartTrackedScriptExecutionAsync(script, ["key"], [], default, true);
+        using (var reply = await execution.Response) await Assert.That(reply.AsInteger()).IsEqualTo(1);
+        var original = execution.ConnectionIdentity;
+        await Assert.That(original.ServerClientId).IsEqualTo(41);
+        Volatile.Write(ref primaryPort, promoted.Port);
+        Volatile.Write(ref rejectWrites, true);
+        await Assert.That(async () => await client.SetAsync("trigger", "value")).Throws<RespireServerException>();
+        await client.EnsureReliableCorrectionOrderingAsync().AsTask().WaitAsync(Limit);
+        var next = await client.StartTrackedScriptExecutionAsync(script, ["next"], [], default, true);
+        using (var reply = await next.Response) await Assert.That(reply.AsInteger()).IsEqualTo(1);
+        await Assert.That(next.ConnectionIdentity.ServerClientId).IsEqualTo(42);
+        await Assert.That(next.ConnectionIdentity.Endpoint.Port).IsEqualTo(promoted.Port);
+        await client.ExecuteOnAllConnectionsAsync(script, ["key"], [], original).AsTask().WaitAsync(Limit);
+        await Assert.That(oldPrimary.ReceivedCommands).Contains("EVAL return 1 1 key");
+        await Assert.That(promoted.ReceivedCommands.Any(command => command == "EVAL return 1 1 key")).IsFalse();
+    }
+
+    [Test]
+    public async Task CapturedServerPoolRemainsPinnedAfterPromotion()
+    {
+        var rejectWrites = false;
+        await using var oldPrimary = Primary((_, command) => command == "PING" ? FakeRespServer.PongReply
+            : command.StartsWith("SET ") && Volatile.Read(ref rejectWrites) ? "-READONLY replica\r\n"u8.ToArray() : null);
+        await using var promoted = Primary();
+        var primaryPort = oldPrimary.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        var pool = client.Core.CreateServerPool(client.Endpoint);
+        try
+        {
+            var connection = await pool.RentAsync(default);
+            try
+            {
+                Volatile.Write(ref primaryPort, promoted.Port);
+                Volatile.Write(ref rejectWrites, true);
+                await Assert.That(async () => await client.SetAsync("trigger", "value")).Throws<RespireServerException>();
+                await client.SetAsync("next", "value").AsTask().WaitAsync(Limit);
+                using var reply = await connection.SendAsync(new Respire.Commands.RawCommand(FakeRespServer.PingFrame));
+                await Assert.That(reply.AsString()).IsEqualTo("PONG");
+                await Assert.That(connection.Port).IsEqualTo(oldPrimary.Port);
+                await Assert.That(promoted.ReceivedCommands.Any(command => command == "PING")).IsFalse();
+            }
+            finally { pool.Return(connection); }
+        }
+        finally { await client.Core.ReleaseServerPoolAsync(pool); }
+    }
+
     private static async Task WaitForCommandAsync(FakeRespServer server, string prefix)
     {
         using var timeout = new CancellationTokenSource(Limit);
