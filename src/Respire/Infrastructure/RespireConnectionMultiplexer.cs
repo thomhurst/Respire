@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.Logging;
 using Respire.Commands;
+using Respire.Internal;
 using Respire.Networking;
 using Respire.Protocol;
 
@@ -164,7 +165,20 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
 
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopConnecting.Token);
-        cancellationToken = lifetime.Token;
+        try
+        {
+            await InitializeConnectionsAsync(lifetime.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
+            error, cancellationToken, lifetime.Token))
+        {
+            // Retirement cancellation keeps its own identity; caller/deadline cancellation crosses our link.
+            throw new OperationCanceledException(error.Message, error, cancellationToken);
+        }
+    }
+
+    private async ValueTask InitializeConnectionsAsync(CancellationToken cancellationToken)
+    {
         await _connectGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
