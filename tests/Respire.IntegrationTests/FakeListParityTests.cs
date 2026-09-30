@@ -6,6 +6,9 @@ namespace Respire.IntegrationTests;
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class FakeListParityTests(RedisTestContainer fixture)
 {
+    // ConnectionString selects TestContext.Current.Isolation.UniqueId as the Redis
+    // database for each invocation, including each protocol row. Raw ExecuteAsync
+    // deliberately uses an unprefixed client because prefixed views reject raw commands.
     [Test]
     [Arguments(false, 2)]
     [Arguments(false, 3)]

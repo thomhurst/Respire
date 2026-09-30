@@ -255,6 +255,7 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     public async Task ListCountPop_RoundTrip(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;
+        // The real fixture assigns a separate Redis database to each argument row.
         var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
         await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
 

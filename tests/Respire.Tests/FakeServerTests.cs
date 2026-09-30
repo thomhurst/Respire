@@ -357,6 +357,37 @@ public class FakeServerTests
                 await Assert.That(failure).IsSameReferenceAs(expected);
         }
     }
+
+    [Test]
+    public async Task ShutdownJoinsReadsAndBackpressuredWritesBeforeCompletingPipes()
+    {
+        for (var iteration = 0; iteration < 32; iteration++)
+        {
+            var server = new RespireFakeServer();
+            var options = server.CreateOptions();
+            await using var idle = await options.TestingStreamFactory!(options.Endpoints[0].Host, 6379, default);
+            await using var busy = await options.TestingStreamFactory!(options.Endpoints[0].Host, 6379, default);
+            // The reply exceeds the pipe pause threshold. Read only its first byte, so
+            // shutdown must cancel the pending flush as well as the idle read.
+            var payload = new string('x', 128 * 1024);
+            var request = System.Text.Encoding.ASCII.GetBytes($"*2\r\n$4\r\nECHO\r\n${payload.Length}\r\n{payload}\r\n");
+            try
+            {
+                await busy.WriteAsync(request).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+                var first = new byte[1];
+                await Assert.That(await busy.ReadAsync(first).AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(1);
+                await Assert.That(first[0]).IsEqualTo((byte)'$');
+                await Task.WhenAll(server.DisposeAsync().AsTask(), server.DisposeAsync().AsTask())
+                    .WaitAsync(TimeSpan.FromSeconds(5));
+                await Assert.That(await idle.ReadAsync(new byte[1]).AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(0);
+            }
+            finally
+            {
+                await server.DisposeAsync();
+            }
+        }
+    }
+
     private sealed class ThrowingClock(Exception error) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => throw error;

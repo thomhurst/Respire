@@ -269,12 +269,13 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
             try
             {
                 connection.Lifetime.Cancel();
-                connection.Stream.Dispose();
             }
             catch (Exception error) { (errors ??= []).Add(error); }
         }
-        // Abort connections before releasing rules, otherwise a held reply could escape
+        // Cancel I/O before releasing rules, otherwise a held reply could escape
         // while reset wakes its continuation and shutdown has not cancelled it yet.
+        // Each server loop disposes its stream after I/O unwinds. Completing its
+        // PipeReader here would race PipeReaderStream's final AdvanceTo call.
         ResetFaults();
         try { await Task.WhenAll(connections.Select(connection => connection.Completion)).ConfigureAwait(false); }
         catch (Exception error) { (errors ??= []).Add(error); }
