@@ -33,6 +33,8 @@ public sealed class RespireCacheOptions : IOptions<RespireCacheOptions>
     /// Captured when the cache is constructed; independent of the client's serializer.
     /// All readers and writers sharing a key namespace must use compatible codecs.
     /// Built-in codecs reject unframed legacy entries. Implementations must be thread-safe.
+    /// Built-in buffer decoders advance the destination only on success but may modify uncommitted memory.
+    /// Custom decoders control their own partial-output behavior; the cache cannot roll back writer changes.
     /// </remarks>
     public IRespireValueCodec? ValueCodec { get; set; }
 
