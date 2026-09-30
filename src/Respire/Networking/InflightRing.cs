@@ -38,6 +38,24 @@ internal sealed class InflightRing
 
     internal long CompletedWriteEnd => Volatile.Read(ref _completedWriteEnd);
 
+    /// <summary>Moves active command deadlines no later than one bounded maintenance extension.</summary>
+    public void ExtendDeadlines(long maximumDeadline)
+    {
+        var head = Volatile.Read(ref _head);
+        var tail = Volatile.Read(ref _tail);
+        for (var position = head; position < tail; position++)
+        {
+            var source = Volatile.Read(ref _slots[position & _mask].Source);
+            if (source is null || ReferenceEquals(source, DiscardSentinel)
+                || PendingResponse.IsCompleted(source.State))
+                continue;
+
+            var deadline = source.Deadline;
+            if (deadline != 0 && deadline < maximumDeadline)
+                source.Deadline = maximumDeadline;
+        }
+    }
+
     public int Count => (int)(Volatile.Read(ref _tail) - Volatile.Read(ref _head));
 
     /// <summary>Producer only (must be called under the connection's write gate).</summary>

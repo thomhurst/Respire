@@ -236,6 +236,13 @@ public sealed partial class RespireClient : IRespireClient
         remove => _core.ConnectionStateChanged -= value;
     }
 
+    /// <summary>Raised for each validated server maintenance notification, on a thread-pool thread.</summary>
+    public event Action<RespireMaintenanceNotification>? MaintenanceNotificationReceived
+    {
+        add => _core.MaintenanceNotificationReceived += value;
+        remove => _core.MaintenanceNotificationReceived -= value;
+    }
+
     /// <inheritdoc/>
     public IStringCommands Strings { get; }
     /// <inheritdoc/>

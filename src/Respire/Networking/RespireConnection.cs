@@ -56,6 +56,7 @@ internal sealed class RespireConnection : IAsyncDisposable
     private readonly ILogger? _logger;
     private readonly RespirePushHandler? _pushHandler;
     private readonly RespirePushHandler? _subscriptionConfirmationHandler;
+    private readonly Action<RespireMaintenanceNotification>? _maintenanceNotificationHandler;
     private readonly Task _receiveTask;
     private readonly Task _flushTask;
     private readonly Task? _watchdogTask;
@@ -67,6 +68,12 @@ internal sealed class RespireConnection : IAsyncDisposable
     // Sent/received counters and the deadline are one state transition: a reply must not clear
     // a deadline concurrently armed for a later batch.
     private readonly Lock _receiveDeadlineGate = new();
+    private readonly Lock _maintenanceGate = new();
+    private readonly Dictionary<long, long> _activeMaintenanceWindows = [];
+    private readonly Dictionary<long, byte> _recentMaintenanceSequences = [];
+    private readonly Queue<long> _maintenanceSequenceOrder = [];
+    private readonly long _maintenanceTimeoutExtensionMilliseconds;
+    private int _maintenanceNotificationsEnabled;
     private readonly AsyncFlushSignal _flushSignal = new();
     private readonly AsyncCapacitySignal _capacitySignal = new();
     private readonly CompletionScheduler _completions = new();
@@ -140,6 +147,7 @@ internal sealed class RespireConnection : IAsyncDisposable
         _logger = logger;
         _pushHandler = options.PushHandler;
         _subscriptionConfirmationHandler = options.SubscriptionConfirmationHandler;
+        _maintenanceNotificationHandler = options.MaintenanceNotificationHandler;
         _receiveBufferSize = options.ReceiveBufferSize;
         _inflight = new InflightRing(options.MaxInflightCommands);
         _sourcePool = new PendingResponsePool(options.CompletionSourcePoolSize);
@@ -147,6 +155,7 @@ internal sealed class RespireConnection : IAsyncDisposable
         _spareBuffer = new WriteBuffer(options.WriteBufferSize);
         _responseTimeout = options.ResponseTimeout;
         _commandTimeout = options.CommandTimeout;
+        _maintenanceTimeoutExtensionMilliseconds = (long)options.MaintenanceTimeoutExtension.TotalMilliseconds;
         if (_commandTimeout is { } commandTimeoutValue)
         {
             _commandTimeoutMilliseconds = Math.Max(1L, (long)commandTimeoutValue.TotalMilliseconds);
@@ -480,6 +489,22 @@ internal sealed class RespireConnection : IAsyncDisposable
                 new Commands.ClientTrackingCommand(options.ClientTrackingOptions), cancellationToken, armCommandDeadline: armCommandDeadline)));
         }
 
+        if (options.MaintenanceNotificationMode != RespireMaintenanceNotificationMode.Disabled)
+        {
+            if (negotiatedProtocol != RespProtocol.Resp3)
+            {
+                if (options.MaintenanceNotificationMode == RespireMaintenanceNotificationMode.Enabled)
+                    throw new RespireConfigurationException("Maintenance notifications require RESP3.");
+            }
+            else
+            {
+                Volatile.Write(ref _maintenanceNotificationsEnabled, 1);
+                (pending ??= new(4)).Add(("CLIENT MAINT_NOTIFICATIONS", SendAsync(
+                    new Commands.ClientMaintenanceNotificationsCommand(), cancellationToken,
+                    armCommandDeadline: armCommandDeadline)));
+            }
+        }
+
         if (pending is null)
         {
             return;
@@ -495,7 +520,23 @@ internal sealed class RespireConnection : IAsyncDisposable
                 {
                     if (failure is null && reply.IsError)
                     {
-                        failure = CreateHandshakeException(in reply, step);
+                        if (step == "CLIENT MAINT_NOTIFICATIONS"
+                            && options.MaintenanceNotificationMode == RespireMaintenanceNotificationMode.Auto)
+                        {
+                            Volatile.Write(ref _maintenanceNotificationsEnabled, 0);
+                            _logger?.LogDebug("{Step} is unsupported by {Host}:{Port}; continuing without maintenance notifications",
+                                step, Host, Port);
+                        }
+                        else
+                        {
+                            failure = CreateHandshakeException(in reply, step);
+                        }
+                    }
+                    else if (failure is null && step == "CLIENT MAINT_NOTIFICATIONS"
+                        && !reply.AsSpan().SequenceEqual("OK"u8))
+                    {
+                        failure = new RespireConnectionException(
+                            $"CLIENT MAINT_NOTIFICATIONS failed for {Host}:{Port}: expected OK.");
                     }
                     else if (failure is null && step == "HELLO")
                     {
@@ -1299,8 +1340,9 @@ internal sealed class RespireConnection : IAsyncDisposable
             return;
         }
 
+        var extension = IsMaintenanceActive() ? _maintenanceTimeoutExtensionMilliseconds : 0;
         source.Deadline = armCommandDeadline && _commandTimeoutMilliseconds != 0
-            ? Environment.TickCount64 + _commandTimeoutMilliseconds
+            ? Environment.TickCount64 + _commandTimeoutMilliseconds + extension
             : 0;
     }
 
@@ -2069,6 +2111,9 @@ internal sealed class RespireConnection : IAsyncDisposable
     {
         try
         {
+            if (Volatile.Read(ref _maintenanceNotificationsEnabled) != 0
+                && RespireMaintenanceNotification.TryCreate(in value, out var notification))
+                HandleMaintenanceNotification(notification!);
             _pushHandler?.Invoke(in value);
         }
         catch (Exception ex)
@@ -2080,6 +2125,118 @@ internal sealed class RespireConnection : IAsyncDisposable
             value.Dispose();
         }
     }
+
+    private void HandleMaintenanceNotification(RespireMaintenanceNotification notification)
+    {
+        var now = Environment.TickCount64;
+        var resetReceiveDeadline = false;
+        lock (_maintenanceGate)
+        {
+            PruneMaintenanceWindows(now);
+            var updateTimeouts = true;
+            if (_recentMaintenanceSequences.TryGetValue(notification.SequenceId, out var sequenceState))
+            {
+                if (notification.StartsMaintenance && sequenceState != 0)
+                    updateTimeouts = false;
+                if (notification.EndsMaintenance && sequenceState != 1)
+                    updateTimeouts = false;
+            }
+            else if (notification.SequenceId < _highestMaintenanceSequence)
+            {
+                updateTimeouts = false;
+            }
+
+            if (updateTimeouts)
+            {
+                _highestMaintenanceSequence = Math.Max(_highestMaintenanceSequence, notification.SequenceId);
+                TrackMaintenanceSequence(notification.SequenceId, notification.StartsMaintenance ? (byte)1 : (byte)2);
+                if (notification.StartsMaintenance)
+                {
+                    if (_activeMaintenanceWindows.Count < MaxActiveMaintenanceWindows)
+                    {
+                        _activeMaintenanceWindows[notification.SequenceId] = now + _maintenanceTimeoutExtensionMilliseconds;
+                        if (_commandTimeoutMilliseconds != 0)
+                            _inflight.ExtendDeadlines(now + _commandTimeoutMilliseconds + _maintenanceTimeoutExtensionMilliseconds);
+                        resetReceiveDeadline = true;
+                    }
+                }
+                else if (notification.EndsMaintenance)
+                {
+                    _activeMaintenanceWindows.Remove(notification.SequenceId);
+                    resetReceiveDeadline = true;
+                }
+            }
+        }
+
+        if (resetReceiveDeadline)
+            ResetReceiveDeadline();
+
+        try { _maintenanceNotificationHandler?.Invoke(notification); }
+        catch (Exception ex) { _logger?.LogWarning(ex, "Maintenance notification handler threw for {Host}:{Port}", Host, Port); }
+    }
+
+    private const int MaxActiveMaintenanceWindows = 64;
+    private const int MaxRecentMaintenanceSequences = 256;
+    private long _highestMaintenanceSequence = -1;
+
+    private void TrackMaintenanceSequence(long sequenceId, byte state)
+    {
+        if (!_recentMaintenanceSequences.ContainsKey(sequenceId))
+            _maintenanceSequenceOrder.Enqueue(sequenceId);
+        _recentMaintenanceSequences[sequenceId] = state;
+
+        while (_recentMaintenanceSequences.Count > MaxRecentMaintenanceSequences + _activeMaintenanceWindows.Count)
+        {
+            var oldest = _maintenanceSequenceOrder.Dequeue();
+            if (_activeMaintenanceWindows.ContainsKey(oldest))
+            {
+                _maintenanceSequenceOrder.Enqueue(oldest);
+                continue;
+            }
+
+            _recentMaintenanceSequences.Remove(oldest);
+        }
+    }
+
+    private void PruneMaintenanceWindows(long now)
+    {
+        while (true)
+        {
+            var foundExpired = false;
+            long expiredSequence = 0;
+            foreach (var (sequenceId, expiry) in _activeMaintenanceWindows)
+            {
+                if (expiry <= now)
+                {
+                    foundExpired = true;
+                    expiredSequence = sequenceId;
+                    break;
+                }
+            }
+
+            if (!foundExpired)
+                return;
+
+            _activeMaintenanceWindows.Remove(expiredSequence);
+            _recentMaintenanceSequences[expiredSequence] = 2;
+        }
+    }
+
+    private bool IsMaintenanceActive()
+    {
+        if (Volatile.Read(ref _maintenanceNotificationsEnabled) == 0)
+            return false;
+
+        lock (_maintenanceGate)
+        {
+            PruneMaintenanceWindows(Environment.TickCount64);
+            return _activeMaintenanceWindows.Count != 0;
+        }
+    }
+
+    private TimeSpan GetEffectiveResponseTimeout()
+        => IsMaintenanceActive() ? _responseTimeout!.Value + TimeSpan.FromMilliseconds(_maintenanceTimeoutExtensionMilliseconds)
+            : _responseTimeout!.Value;
 
     /// <summary>Writes MULTI + a pre-serialized command block + EXEC as one frame sequence.</summary>
     private readonly struct TransactionCommand(ReadOnlyMemory<byte> serializedCommands) : IRespCommand
@@ -2132,21 +2289,22 @@ internal sealed class RespireConnection : IAsyncDisposable
         {
             while (true)
             {
+                var effectiveTimeout = GetEffectiveResponseTimeout();
                 if (Volatile.Read(ref _responseTimeoutSuppressions) != 0)
                 {
-                    await DelayWatchdogAsync(timeout, cancellationToken).ConfigureAwait(false);
+                    await DelayWatchdogAsync(effectiveTimeout, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
                 var deadlineStart = Volatile.Read(ref _receiveDeadlineTimestamp);
                 if (deadlineStart == 0)
                 {
-                    await DelayWatchdogAsync(timeout, cancellationToken).ConfigureAwait(false);
+                    await DelayWatchdogAsync(effectiveTimeout, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
                 var elapsed = Stopwatch.GetElapsedTime(deadlineStart);
-                var delay = GetWatchdogDelay(timeout, elapsed);
+                var delay = GetWatchdogDelay(effectiveTimeout, elapsed);
                 if (delay > TimeSpan.Zero)
                 {
                     await DelayWatchdogAsync(delay, cancellationToken).ConfigureAwait(false);
@@ -2163,7 +2321,7 @@ internal sealed class RespireConnection : IAsyncDisposable
                     }
 
                     Abort(new RespireConnectionException(
-                        $"Connection to {Host}:{Port} received no data for {timeout} while responses were pending."));
+                        $"Connection to {Host}:{Port} received no data for {effectiveTimeout} while responses were pending."));
                 }
 
                 return;
@@ -2438,6 +2596,12 @@ internal sealed record RespireConnectionOptions
 
     /// <summary>Observes subscription acknowledgements before FIFO completion; must not dispose the frame.</summary>
     public RespirePushHandler? SubscriptionConfirmationHandler { get; init; }
+
+    public RespireMaintenanceNotificationMode MaintenanceNotificationMode { get; init; }
+
+    public TimeSpan MaintenanceTimeoutExtension { get; init; } = TimeSpan.FromSeconds(30);
+
+    public Action<RespireMaintenanceNotification>? MaintenanceNotificationHandler { get; init; }
 
     /// <summary>Enables CLIENT TRACKING before this connection is published.</summary>
     public bool EnableClientTracking { get; init; }

@@ -54,6 +54,18 @@ internal readonly struct ClientSetNameCommand(string name) : IRespCommand
     }
 }
 
+/// <summary>Enables RESP3 server maintenance notifications on a command connection.</summary>
+internal readonly struct ClientMaintenanceNotificationsCommand : IRespCommand
+{
+    public void Write(ref RespWriter writer)
+    {
+        writer.WriteArrayHeader(3);
+        writer.WriteBulkString("CLIENT"u8);
+        writer.WriteBulkString("MAINT_NOTIFICATIONS"u8);
+        writer.WriteBulkString("ON"u8);
+    }
+}
+
 /// <summary>Validated wire configuration; the default value preserves OPTIN.</summary>
 internal readonly record struct ClientTrackingConfiguration
 {

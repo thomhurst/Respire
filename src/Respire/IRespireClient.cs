@@ -21,6 +21,9 @@ public interface IRespireClient : IAsyncDisposable
     /// <summary>Raised when a command connection changes health.</summary>
     event Action<RespireConnectionStateChange>? ConnectionStateChanged;
 
+    /// <summary>Raised for each validated server maintenance notification on a thread-pool thread.</summary>
+    event Action<RespireMaintenanceNotification>? MaintenanceNotificationReceived;
+
     // Typed convenience facets, grouped by data type.
     /// <summary>String commands.</summary>
     IStringCommands Strings { get; }

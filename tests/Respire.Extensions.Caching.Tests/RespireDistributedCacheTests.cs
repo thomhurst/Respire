@@ -1398,6 +1398,12 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             remove => inner.ConnectionStateChanged -= value;
         }
 
+        public event Action<RespireMaintenanceNotification>? MaintenanceNotificationReceived
+        {
+            add => inner.MaintenanceNotificationReceived += value;
+            remove => inner.MaintenanceNotificationReceived -= value;
+        }
+
         public IStringCommands Strings => inner.Strings;
         public IKeyCommands Keys => keys ?? inner.Keys;
         public ILockCommands Locks => inner.Locks;

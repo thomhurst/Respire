@@ -92,6 +92,19 @@ public enum SubscriptionOverflow
     DropNewest,
 }
 
+/// <summary>Policy for negotiating Redis maintenance notifications on RESP3 command connections.</summary>
+public enum RespireMaintenanceNotificationMode
+{
+    /// <summary>Do not request maintenance notifications (default).</summary>
+    Disabled,
+
+    /// <summary>Request notifications and continue if the server reports that it does not support them.</summary>
+    Auto,
+
+    /// <summary>Require the server to accept maintenance notification negotiation.</summary>
+    Enabled,
+}
+
 /// <summary>
 /// Configuration for a <see cref="RespireClient"/>. Prefer
 /// <see cref="RespireClient.ConnectAsync(string, CancellationToken)"/> with a
@@ -239,6 +252,12 @@ public sealed record RespireOptions
     /// </summary>
     public RespireClientSideCacheOptions? ClientSideCache { get; init; }
 
+    /// <summary>Negotiates server maintenance notifications on RESP3 command connections. Defaults to disabled.</summary>
+    public RespireMaintenanceNotificationMode MaintenanceNotifications { get; init; }
+
+    /// <summary>Maximum time to extend command and receive timeouts for one maintenance event. Defaults to 30 seconds.</summary>
+    public TimeSpan MaintenanceTimeoutExtension { get; init; } = TimeSpan.FromSeconds(30);
+
     /// <summary>Optional factory for Respire diagnostic logs.</summary>
     public ILoggerFactory? LoggerFactory { get; init; }
 
@@ -298,6 +317,12 @@ public sealed record RespireOptions
         }
 
         Require(Protocol is RespProtocol.Auto or RespProtocol.Resp2 or RespProtocol.Resp3, nameof(Protocol), "must be Auto, Resp2, or Resp3");
+        Require(MaintenanceNotifications is RespireMaintenanceNotificationMode.Disabled
+            or RespireMaintenanceNotificationMode.Auto or RespireMaintenanceNotificationMode.Enabled,
+            nameof(MaintenanceNotifications), "must be Disabled, Auto, or Enabled");
+        Require(MaintenanceTimeoutExtension >= TimeSpan.FromMilliseconds(1)
+            && MaintenanceTimeoutExtension <= TimeSpan.FromMinutes(5),
+            nameof(MaintenanceTimeoutExtension), "must be between one millisecond and five minutes");
         Require(Connections >= 1, nameof(Connections), "must be at least one");
         Require(Database >= 0, nameof(Database), "cannot be negative");
         Require(ConnectTimeout > TimeSpan.Zero, nameof(ConnectTimeout), "must be positive");
@@ -381,7 +406,9 @@ public sealed record RespireOptions
 
     internal RespireConnectionOptions ToConnectionOptions(
         RespirePushHandler? pushHandler = null,
-        bool enableClientTracking = false)
+        bool enableClientTracking = false,
+        bool enableMaintenanceNotifications = false,
+        Action<RespireMaintenanceNotification>? maintenanceNotificationHandler = null)
         => new()
         {
             TestingStreamFactory = TestingStreamFactory,
@@ -407,6 +434,9 @@ public sealed record RespireOptions
             EnableClientTracking = enableClientTracking,
             ClientTrackingOptions = enableClientTracking && ClientSideCache is { } cache
                 ? new(cache.TrackingMode, cache.BroadcastPrefixes) : default,
+            MaintenanceNotificationMode = enableMaintenanceNotifications ? MaintenanceNotifications : RespireMaintenanceNotificationMode.Disabled,
+            MaintenanceTimeoutExtension = MaintenanceTimeoutExtension,
+            MaintenanceNotificationHandler = enableMaintenanceNotifications ? maintenanceNotificationHandler : null,
         };
 
     /// <summary>

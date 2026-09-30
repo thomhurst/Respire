@@ -43,7 +43,9 @@ internal sealed class ClientCore : IAsyncDisposable
         RespirePushHandler? pushHandler = ClientCache is null ? null : ClientCache.HandlePush;
         var connectionOptions = options.ToConnectionOptions(
             pushHandler,
-            enableClientTracking: ClientCache is not null);
+            enableClientTracking: ClientCache is not null,
+            enableMaintenanceNotifications: true,
+            maintenanceNotificationHandler: QueueMaintenanceNotification);
         Multiplexer = RespireConnectionMultiplexer.Create(
             endpoint.Host, endpoint.Port, options.Connections, connectionOptions, Logger);
         DedicatedPool = new DedicatedConnectionPool(
@@ -71,6 +73,34 @@ internal sealed class ClientCore : IAsyncDisposable
             : Multiplexer.EnsureConnectedAsync(cancellationToken);
 
     public event Action<RespireConnectionStateChange>? ConnectionStateChanged;
+    public event Action<RespireMaintenanceNotification>? MaintenanceNotificationReceived;
+
+    private readonly System.Collections.Concurrent.ConcurrentQueue<RespireMaintenanceNotification> _maintenanceNotifications = new();
+    private int _publishingMaintenanceNotifications;
+
+    private void QueueMaintenanceNotification(RespireMaintenanceNotification notification)
+    {
+        _maintenanceNotifications.Enqueue(notification);
+        if (Interlocked.CompareExchange(ref _publishingMaintenanceNotifications, 1, 0) == 0)
+            ThreadPool.UnsafeQueueUserWorkItem(static core => core.PublishMaintenanceNotifications(), this, preferLocal: false);
+    }
+
+    private void PublishMaintenanceNotifications()
+    {
+        while (true)
+        {
+            while (_maintenanceNotifications.TryDequeue(out var notification))
+            {
+                try { MaintenanceNotificationReceived?.Invoke(notification); }
+                catch (Exception ex) { Logger?.LogWarning(ex, "Maintenance notification handler threw"); }
+            }
+
+            Volatile.Write(ref _publishingMaintenanceNotifications, 0);
+            if (_maintenanceNotifications.IsEmpty
+                || Interlocked.CompareExchange(ref _publishingMaintenanceNotifications, 1, 0) != 0)
+                return;
+        }
+    }
 
     internal void NotifyDedicatedStateChanged(RespireConnectionStateChange change)
     {

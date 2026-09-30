@@ -28,6 +28,7 @@ const sidebars = {
         'guides/blocking-queues',
         'guides/vector-sets',
         'guides/reconnect-policy',
+        'guides/maintenance-notifications',
         'guides/pub-sub',
         'guides/keyspace-notifications',
         'guides/pub-sub-introspection',

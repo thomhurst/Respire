@@ -108,6 +108,9 @@ internal readonly struct RespValue : IEquatable<RespValue>, IDisposable
     public static RespValue Array(ReadOnlySpan<RespValue> values)
         => new(RespDataType.Array, elements: values.ToArray(), elementCount: values.Length);
 
+    internal static RespValue Push(ReadOnlySpan<RespValue> values)
+        => new(RespDataType.Push, elements: values.ToArray(), elementCount: values.Length);
+
     /// <summary>Wire-path factory: payload lives in an array rented from <see cref="RespirePools.ResponsePayloads"/>.</summary>
     internal static RespValue PooledString(RespDataType type, byte[] pooledArray, int length)
         => new(type, ValueFlags.PooledPayload, payload: new ReadOnlyMemory<byte>(pooledArray, 0, length));

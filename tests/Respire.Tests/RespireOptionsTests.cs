@@ -16,6 +16,8 @@ public class RespireOptionsTests
         await Assert.That(options.CommandTimeout).IsEqualTo(TimeSpan.FromSeconds(10));
         await Assert.That(options.Protocol).IsEqualTo(RespProtocol.Auto);
         await Assert.That(options.ClientSideCache).IsNull();
+        await Assert.That(options.MaintenanceNotifications).IsEqualTo(RespireMaintenanceNotificationMode.Disabled);
+        await Assert.That(options.MaintenanceTimeoutExtension).IsEqualTo(TimeSpan.FromSeconds(30));
     }
 
     [Test]
@@ -106,6 +108,8 @@ public class RespireOptionsTests
     [Arguments(nameof(RespireOptions.Database))]
     [Arguments(nameof(RespireOptions.ConnectTimeout))]
     [Arguments(nameof(RespireOptions.CommandTimeout))]
+    [Arguments(nameof(RespireOptions.MaintenanceTimeoutExtension))]
+    [Arguments(nameof(RespireOptions.MaintenanceNotifications))]
     [Arguments(nameof(RespireOptions.ConnectionIdleReadTimeout))]
     [Arguments(nameof(RespireOptions.ReceiveBufferSize))]
     [Arguments(nameof(RespireOptions.WriteBufferSize))]
@@ -121,6 +125,8 @@ public class RespireOptionsTests
             nameof(RespireOptions.Database) => ValidOptions() with { Database = -1 },
             nameof(RespireOptions.ConnectTimeout) => ValidOptions() with { ConnectTimeout = TimeSpan.Zero },
             nameof(RespireOptions.CommandTimeout) => ValidOptions() with { CommandTimeout = TimeSpan.Zero },
+            nameof(RespireOptions.MaintenanceTimeoutExtension) => ValidOptions() with { MaintenanceTimeoutExtension = TimeSpan.Zero },
+            nameof(RespireOptions.MaintenanceNotifications) => ValidOptions() with { MaintenanceNotifications = (RespireMaintenanceNotificationMode)99 },
             nameof(RespireOptions.ConnectionIdleReadTimeout) => ValidOptions() with
             {
                 ConnectionIdleReadTimeout = TimeSpan.Zero,
