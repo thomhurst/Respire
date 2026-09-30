@@ -73,6 +73,8 @@ commands use a uniform pair of overloads rather than a single optional-token spa
 one already exists, even if that key has another data type. New values have no expiry.
 At least one pair is required; empty keys and values are valid. Duplicate keys are sent in order:
 when the key was absent, the last value wins. Cluster keys must share a slot after prefixing.
+A slot mismatch is rejected locally, before I/O or enqueueing, with `RespireServerException`
+whose `Code` is `CROSSSLOT`.
 Values use raw `RespireValue` encoding, including binary values. Keep binary buffers unchanged
 until completion. Batches and transactions expose `Strings.SetManyIfNotExists(pairs)` with the
 same boolean result; cancellation is passed to batch execution or transaction commit.
