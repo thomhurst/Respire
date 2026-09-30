@@ -62,6 +62,8 @@ internal static class AclParser
 
     internal static RespireAclDryRunResult DryRun(in RespValue value)
     {
+        // Redis uses a bulk string for simulated denial and +OK for success. Actual command
+        // errors (including the caller's NOPERM) are thrown by the response pipeline.
         if (value.Type == RespDataType.BulkString) return new(false, value.AsString());
         Ok(in value);
         return new(true, null);

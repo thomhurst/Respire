@@ -88,7 +88,9 @@ public class ServerAclCommandTests
     }
 
     [Test]
-    public async Task TokensRemainBinarySafeAndUnprefixedAndDryRunExpandsCompoundCommand()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TokensRemainBinarySafeAndUnprefixedAndDryRunExpandsCompoundCommand(bool extraSpaces)
     {
         byte[] username = [255, 0, 13, 10];
         byte[] rule = [(byte)'>', 255, 0];
@@ -97,7 +99,8 @@ public class ServerAclCommandTests
         await using var client = await Connect(server, true);
         var facet = client.WithKeyPrefix("ignored:").Server;
         await facet.AclSetUserAsync(username, ["reset", rule, "(+get ~*)"]);
-        await Assert.That((await facet.AclDryRunAsync(username, RespireCommands.Connection.CLIENT_LIST, [argument])).IsAllowed).IsTrue();
+        RespireCommand command = extraSpaces ? " CLIENT  LIST " : RespireCommands.Connection.CLIENT_LIST;
+        await Assert.That((await facet.AclDryRunAsync(username, command, [argument])).IsAllowed).IsTrue();
         await Assert.That(await facet.AclDeleteUsersAsync([username, "other"])).IsEqualTo(2);
         var frames = server.ReceivedArguments;
         await Assert.That(frames[0][2]).IsEquivalentTo(username);
