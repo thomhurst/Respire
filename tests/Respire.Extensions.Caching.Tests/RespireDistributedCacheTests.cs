@@ -1615,6 +1615,13 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ValueTask<long> UnlinkAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
             => new(_unlink.Task);
 
+        public ValueTask<byte[]?> DumpAsync(RespireKey key, CancellationToken cancellationToken = default)
+            => inner.DumpAsync(key, cancellationToken);
+
+        public ValueTask<bool> RestoreAsync(RespireKey key, ReadOnlyMemory<byte> payload,
+            RespireExpiry expiry = default, RespireRestoreOptions options = default, CancellationToken cancellationToken = default)
+            => inner.RestoreAsync(key, payload, expiry, options, cancellationToken);
+
         public ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default)
             => inner.ExistsAsync(key, cancellationToken);
 

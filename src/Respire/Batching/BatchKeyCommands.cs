@@ -8,7 +8,7 @@ namespace Respire;
 /// <see cref="RespireTransaction"/>. Mirrors <see cref="IKeyCommands"/>, minus
 /// <c>ScanAsync</c> — a cursor walk is many round trips and cannot be deferred.
 /// </summary>
-public interface IBatchKeyCommands
+public partial interface IBatchKeyCommands
 {
     /// <summary>Deletes keys; returns how many existed. Redis: DEL.</summary>
     RespirePending<long> Delete(params ReadOnlySpan<RespireKey> keys);
@@ -44,7 +44,7 @@ public interface IBatchKeyCommands
     RespirePending<long> Touch(params ReadOnlySpan<RespireKey> keys);
 }
 
-internal sealed class BatchKeyCommands(IPendingSink sink) : IBatchKeyCommands
+internal sealed partial class BatchKeyCommands(IPendingSink sink) : IBatchKeyCommands
 {
     public RespirePending<long> Delete(params ReadOnlySpan<RespireKey> keys)
         => IntegerKeys("DEL", Verbs.Del, keys);
