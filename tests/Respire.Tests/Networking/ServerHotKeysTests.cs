@@ -142,6 +142,21 @@ public class ServerHotKeysTests
     }
 
     [Test]
+    public async Task DisconnectedTrackerDoesNotSwitchToReplacementConnection()
+    {
+        await using var server = new FakeRespServer(2, FakeRespServer.PongReply) { CloseConnectionAfterCommand = 1 };
+        await using var client = await RespireClient.ConnectAsync(Options(server.Port));
+        var tracker = await client.Server.GetHotKeysTrackerAsync();
+        await Assert.That(async () => await tracker.StartAsync(new())).Throws<RespireConnectionException>();
+        using var reconnected = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await client.Core.Multiplexer.GetHealthyConnectionAsync(reconnected.Token);
+        await client.PingAsync();
+        await Assert.That(tracker.IsConnected).IsFalse();
+        await Assert.That(async () => await tracker.GetAsync()).Throws<RespireConnectionException>();
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(["HOTKEYS START METRICS 2 CPU NET", "PING"], CollectionOrdering.Matching);
+    }
+
+    [Test]
     public async Task FanOutKeepsReplicaErrorsAndEndpointProvenance()
     {
         await using var replica = new FakeRespServer(4, "-NOPERM hotkeys denied\r\n"u8.ToArray());
