@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.Extensions.Logging;
 using Respire.Internal;
 using Respire.Commands;
 using TUnit.Assertions;
@@ -10,6 +11,40 @@ namespace Respire.Tests.Networking;
 
 public class BatchDurabilityTests
 {
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task CleanupFailurePreservesEarlierAcknowledgementError(bool aof, bool acknowledgementFails)
+    {
+        byte[] acknowledgement = acknowledgementFails ? "-ERR acknowledgement failed\r\n"u8.ToArray()
+            : aof ? "*2\r\n:1\r\n:1\r\n"u8.ToArray() : ":1\r\n"u8.ToArray();
+        await using var server = new FakeRespServer(FakeRespServer.OkReply, acknowledgement);
+        using var logger = new FailingDisconnectLogger();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Connections = 1, Endpoints = [new("127.0.0.1", server.Port)], LoggerFactory = logger,
+        });
+        using var batch = client.CreateBatch();
+        var write = batch.Set("key", "value");
+        if (acknowledgementFails)
+        {
+            var error = await Assert.That(async () => await Execute(batch, aof, 1, TimeSpan.Zero))
+                .ThrowsExactly<RespireServerException>();
+            await Assert.That(error!.Message).IsEqualTo("ERR acknowledgement failed");
+            await Assert.That(error.CommandName).IsEqualTo(aof ? "WAITAOF" : "WAIT");
+        }
+        else
+        {
+            var error = await Assert.That(async () => await Execute(batch, aof, 1, TimeSpan.Zero))
+                .ThrowsExactly<InvalidOperationException>();
+            await Assert.That(error).IsSameReferenceAs(logger.Failure);
+        }
+        await Assert.That(write.Result).IsTrue();
+        await logger.ReportedFailure.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]
@@ -320,6 +355,25 @@ public class BatchDurabilityTests
         var write = batch.Set("key", "value");
         await Assert.That(async () => await Execute(batch, aof, 1, TimeSpan.Zero)).Throws<RespireProtocolException>();
         await Assert.That(write.Result).IsTrue();
+    }
+
+    private sealed class FailingDisconnectLogger : ILoggerFactory, ILogger
+    {
+        internal readonly InvalidOperationException Failure = new("Test disconnect failure.");
+        internal readonly TaskCompletionSource ReportedFailure = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            // Inject failure after the connection has released its sockets and buffers.
+            if (logLevel == LogLevel.Debug && formatter(state, exception).StartsWith("Disconnected from", StringComparison.Ordinal))
+                throw Failure;
+            if (logLevel == LogLevel.Warning && ReferenceEquals(exception, Failure)) ReportedFailure.TrySetResult();
+        }
     }
 
     private static async Task<RespireAofAcknowledgement> Execute(RespireBatch batch, bool aof, int replicas, TimeSpan timeout, CancellationToken cancellationToken = default)

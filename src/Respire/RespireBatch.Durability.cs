@@ -55,10 +55,10 @@ public sealed partial class RespireBatch
             var counts = value.AsArray();
             if (counts.Length != 2) throw new RespireProtocolException("WAITAOF must return two acknowledgement counts.");
             var local = ResponseReader.Integer(in counts[0]);
-            var replicas = ResponseReader.Integer(in counts[1]);
-            if (local is < 0 or > 1 || replicas < 0)
+            var replicaCount = ResponseReader.Integer(in counts[1]);
+            if (local is < 0 or > 1 || replicaCount < 0)
                 throw new RespireProtocolException("WAITAOF returned invalid acknowledgement counts.");
-            return new RespireAofAcknowledgement(local, replicas);
+            return new RespireAofAcknowledgement(local, replicaCount);
         }, cancellationToken);
     }
 
@@ -119,8 +119,7 @@ public sealed partial class RespireBatch
 
             using var response = await connection.SendWithoutResponseTimeoutAsync(acknowledgement, cancellationToken).ConfigureAwait(false);
             if (response.IsError) throw ResponseReader.ServerError(in response, operation);
-            var result = convert(response);
-            return result;
+            return convert(response);
         }
         catch (Exception error)
         {
@@ -139,6 +138,15 @@ public sealed partial class RespireBatch
                     // Never lend this execution's replication offset to another borrower.
                     await pool!.DiscardAsync(connection).ConfigureAwait(false);
                 }
+            }
+            catch (Exception) when (operationError is not null)
+            {
+                // The pool reports cleanup failures. Preserve the original operation exception.
+            }
+            catch (Exception error)
+            {
+                operationError = error;
+                throw;
             }
             finally
             {
