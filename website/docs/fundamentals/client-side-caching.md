@@ -123,6 +123,80 @@ the default path also checked against two same-run baseline controls. Each measu
 priming happen outside the measured batch, so misses cannot turn into hits partway through
 an iteration. Process CPU diagnostics include that priming and benchmark warmup/calibration.
 
+## Populate missing values with a factory
+
+`GetOrSetAsync<T>(key, factory, ttl, cancellationToken)` combines a tracked read with a
+conditional cache-aside write. Enable `ClientSideCache`; Redis 7 or later is required for
+[`SET NX GET`](https://redis.io/docs/latest/commands/set/). Existing hits use normal local
+caching, serialization and key-prefix rules.
+
+<!-- doc-test-tail-declaration: split-before=public sealed record Product -->
+```csharp
+using Respire;
+
+await using var client = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = [new("localhost", 6379)],
+    ClientSideCache = new() { CoalesceConcurrentMisses = true },
+});
+
+var product = await client.GetOrSetAsync<Product>(
+    "product:42", LoadProductAsync, TimeSpan.FromMinutes(5));
+
+static ValueTask<Product?> LoadProductAsync(CancellationToken cancellationToken)
+{
+    cancellationToken.ThrowIfCancellationRequested();
+    return ValueTask.FromResult<Product?>(new Product(42, "Coffee"));
+}
+
+public sealed record Product(int Id, string Name);
+```
+
+On a miss, the factory runs once for that producer. `SET NX GET` atomically stores the
+computed value only if the key is still absent, or returns the current writer's value.
+It preserves an existing winner's TTL. It does not fence an intervening create/delete cycle:
+if the key is absent again when SET runs, the computed value can be installed. Results describe
+the read or atomic SET, and another writer can change the key immediately afterward.
+There is no distributed lock or exactly-once factory guarantee.
+
+The TTL must be at least one millisecond, is truncated to whole milliseconds, and begins at
+the successful server write. Hits and failed conditional writes do not extend expiry. Local
+cache lifetime is configured separately; server expiration is observed through normal tracking
+invalidation, subject to notification delivery and connection-failure detection.
+
+A factory returning `null` does not write or memoize its result. Later calls can run it again.
+An existing stored `0`, empty string, or serialized JSON null is present and does not run the
+factory. Mutable typed results are deserialized independently for each caller. The factory's
+object is never returned directly. Use the same serialization contract for every writer of a key.
+
+`CoalesceConcurrentMisses` also controls factory sharing. With it enabled, calls on the same
+client with the same physical key, generic type and millisecond TTL share the first factory.
+Different callbacks with that identity must be interchangeable. Prefix views share their root's
+coordinator; different clients do not. Invalidation retires joining, so a later caller can start
+another factory while an earlier one is still running. With coalescing disabled, each missed call
+can run its own factory. A factory must not recursively await the same shared identity.
+
+Each cancellation token bounds that caller's wait. With sharing enabled, one cancellation
+does not stop remaining callers; the last caller leaving or client disposal cancels the factory
+token cooperatively. Exceptions from shared-token cancellation callbacks can fault remaining
+waiters but do not interrupt client cleanup. Without sharing, the factory receives the caller's
+token. Factories must observe cancellation to stop promptly. A late result after cancellation or client disposal is
+not sent as a new write, but a write already accepted by Redis may still execute. `CommandTimeout`
+bounds Redis operations, not application factory work; supply a caller timeout when needed.
+Factory, serialization and Redis errors propagate without automatically retrying a factory or
+replaying an accepted write.
+
+Writes use the ordinary invalidation fences and invalidate other tracking clients. The SET
+result is deliberately not inserted directly into the local cache: it is not a tracked read.
+The next GET registers tracking and populates the cache. This also avoids caching a losing
+factory's value or a response made stale by a subsequent write.
+
+The cache-aside benchmark compares a hot hit and complete miss bursts against manual
+GET/SET NX GET composition on the same baseline/candidate/baseline runner. It measures default
+single callers, opted-in single callers and 32 callers with a simulated asynchronous loader.
+Reports retain allocations, factory invocation counts, latency and diagnostic process CPU;
+loader latency means these results are not raw Redis throughput measurements.
+
 ## Why this is different
 
 StackExchange.Redis 3.1.13 supports RESP3 and exposes keyspace notifications, but it does not

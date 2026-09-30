@@ -70,6 +70,29 @@ public interface IRespireClient : IAsyncDisposable
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     ValueTask<RespireGet<T>> TryGetAsync<T>(RespireKey key, CancellationToken cancellationToken = default);
 
+    /// <summary>Reads a tracked value, or computes and conditionally stores it with a server TTL. Requires Redis 7+ and ClientSideCache.</summary>
+    /// <remarks>
+    /// Uses GET then SET NX GET. A concurrent writer wins; its value and TTL are preserved.
+    /// A null factory result is returned without storing it. Stored default values do not call the factory.
+    /// TTL is positive, truncated to milliseconds, and starts at the successful SET; hits do not extend it.
+    /// With CoalesceConcurrentMisses enabled, equivalent physical key, T and TTL calls share the first
+    /// factory and receive independently deserialized results. Invalidation can retire joining, so
+    /// factories may overlap. Different clients never share factories; this is not distributed exactly-once execution.
+    /// Each caller cancels only its own wait; the last caller leaving cancels a shared factory cooperatively.
+    /// Throwing shared-token callbacks can fault remaining waiters but cannot interrupt client cleanup.
+    /// Without coalescing each call uses its own factory and cancellation. CommandTimeout bounds Redis
+    /// commands, not the factory. Do not recursively request the same shared identity from its factory.
+    /// Exceptions reach callers without automatic factory or accepted-write replay. A canceled accepted
+    /// write may still execute. Results describe the successful read or atomic SET, not future state.
+    /// Writes invalidate local entries; subsequent tracked reads repopulate them. Server expiry invalidates
+    /// through normal tracking delivery; the local cache TTL is configured separately.
+    /// </remarks>
+    [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
+    [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
+    ValueTask<T?> GetOrSetAsync<T>(RespireKey key, Func<CancellationToken, ValueTask<T?>> factory,
+        TimeSpan ttl, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("This client does not support tracking-aware cache-aside operations.");
+
     /// <summary>Gets raw bytes, or null when the key is absent. Redis: GET.</summary>
     ValueTask<byte[]?> GetBytesAsync(RespireKey key, CancellationToken cancellationToken = default);
 
