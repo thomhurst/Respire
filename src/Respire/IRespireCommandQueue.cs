@@ -44,6 +44,9 @@ public interface IRespireCommandQueue
     /// <summary>Lua script evaluation.</summary>
     IBatchScriptCommands Scripts { get; }
 
+    /// <summary>Redis Functions, without automatic reload or replay.</summary>
+    IBatchFunctionCommands Functions => throw new NotSupportedException("This queue does not support Redis Functions.");
+
     /// <inheritdoc cref="IBatchStringCommands.GetString"/>
     RespirePending<string?> GetString(RespireKey key);
 

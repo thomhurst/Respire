@@ -56,7 +56,7 @@ foreach (var failure in result.Failures)
 
 ## The same facets as the client
 
-Batches and transactions expose the client's facets — `Strings`, `Keys`, `Hashes`, `Lists`, `Sets`, `SortedSets`, `Bitmaps`, `HyperLogLog`, `Geo`, and `Scripts`. Except for `Scripts`, commands have matching names minus the `Async` suffix and the same parameter shapes. The missing suffix signals that each call only queues work. Deferred scripts use `Evaluate` rather than mirroring the client's `ExecuteAsync` variants. The return type is `RespirePending<T>` instead of `ValueTask<T>`, and there is no `CancellationToken` because `ExecuteAsync` / `CommitAsync` owns cancellation.
+Batches and transactions expose the client's facets — `Strings`, `Keys`, `Hashes`, `Lists`, `Sets`, `SortedSets`, `Bitmaps`, `HyperLogLog`, `Geo`, `Scripts`, and `Functions`. Except for `Scripts`, commands have matching names minus the `Async` suffix and the same parameter shapes. The missing suffix signals that each call only queues work. Deferred scripts use `Evaluate` rather than mirroring the client's `ExecuteAsync` variants. The return type is `RespirePending<T>` instead of `ValueTask<T>`, and there is no `CancellationToken` because `ExecuteAsync` / `CommitAsync` owns cancellation.
 
 ```csharp
 using var batch = redis.CreateBatch();
@@ -186,3 +186,16 @@ RespirePendingStatus.Aborted`; reading its result throws `RespireTransactionAbor
 Dispose that attempt, create a new watched transaction, re-read state, and retry with a bounded
 policy. For complex compare-and-set behavior, a Lua script often reduces round trips and makes
 atomic intent clearer.
+
+## Redis Functions
+
+`Functions.Execute` and its typed, string, integer, and span variants queue Redis 7+
+`FCALL` or `FCALL_RO`. Deferred results own managed storage, like deferred script results.
+Keep binary argument memory unchanged until execution completes.
+
+Load reusable `RespireFunctionLibrary` instances before queue execution. Deferred calls
+never automatically reload a missing function or replay a transaction. Successful commands
+remain applied when another command reports an error. `Functions.Load`, `List`, `Delete`,
+`Flush`, `Dump`, `Restore`, and `Stats` operate only on their execution node. A Cluster batch's
+keyless administration group can differ from a keyed function's group; immediate
+`redis.Functions.LoadAsync(library)` loads every discovered primary before queueing calls.

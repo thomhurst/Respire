@@ -39,6 +39,7 @@ public class DeferredFacetParityTests
     [Arguments("Bitmaps")]
     [Arguments("HyperLogLog")]
     [Arguments("Geo")]
+    [Arguments("Functions")]
     public async Task EveryQueueableClientOverloadHasMatchingDeferredShape(string facet)
     {
         var immediate = typeof(IRespireClient).GetProperty(facet)!.PropertyType;

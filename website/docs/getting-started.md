@@ -70,7 +70,7 @@ await redis.Sets.AddAsync("online", "ada", "grace");
 bool online = await redis.Sets.ContainsAsync("online", "ada");
 ```
 
-Root shortcuts cover frequent operations. Facets—`Strings`, `Keys`, `Hashes`, `Lists`, `Sets`, `SortedSets`, `Streams`, `Scripts`, and `Server`—keep IntelliSense focused.
+Root shortcuts cover frequent operations. Facets—`Strings`, `Keys`, `Hashes`, `Lists`, `Sets`, `SortedSets`, `Streams`, `Scripts`, `Functions`, and `Server`—keep IntelliSense focused.
 
 ## Connection URI
 

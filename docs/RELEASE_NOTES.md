@@ -14,6 +14,11 @@
 
 ### Scripting
 
+- `Functions` adds Redis 7+ function calls and library administration, with matching
+  batch/transaction methods. `RespireFunctionLibrary` supports bounded immediate reloads.
+  Existing client/queue implementers retain source compatibility through default facet
+  properties; decorators should forward `Functions`. See the [scripting guide](SCRIPTING.md#redis-functions).
+
 - `RespireScript.Create(source, readOnly: true)` selects Redis 7+ read-only Lua commands.
   Script cache management adds `ExistsAsync` and `FlushAsync`, with matching deferred
   operations and deferred `Load`. Existing external `IScriptCommands` and

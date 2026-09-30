@@ -1342,6 +1342,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public RespireExpiry LastSetExpiry { get; private set; }
 
         public IScriptCommands Scripts => new InterceptedScripts(this, inner.Scripts);
+        public IFunctionCommands Functions => inner.Functions;
 
         private sealed class InterceptedScripts(ScriptInterceptingClient owner, IScriptCommands inner) : IScriptCommands
         {

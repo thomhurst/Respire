@@ -38,6 +38,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
     private IBatchHyperLogLogCommands? _hyperLogLog;
     private IBatchGeoCommands? _geo;
     private IBatchScriptCommands? _scripts;
+    private IBatchFunctionCommands? _functions;
 
     internal RespireTransactionBase(RespireClient client, RespireConnection? watchConnection)
     {
@@ -80,6 +81,9 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
 
     /// <summary>Lua script evaluation. Redis: EVAL.</summary>
     public IBatchScriptCommands Scripts => _scripts ??= new BatchScriptCommands(this);
+
+    /// <summary>Redis Functions, without automatic reload or replay.</summary>
+    public IBatchFunctionCommands Functions => _functions ??= new BatchFunctionCommands(this);
 
     // Root shortcuts, mirroring the client's.
 

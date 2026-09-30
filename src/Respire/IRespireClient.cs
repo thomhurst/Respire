@@ -44,8 +44,11 @@ public interface IRespireClient : IAsyncDisposable
     IHyperLogLogCommands HyperLogLog { get; }
     /// <summary>Geospatial commands.</summary>
     IGeoCommands Geo { get; }
-    /// <summary>Lua script and function commands.</summary>
+    /// <summary>Lua script commands.</summary>
     IScriptCommands Scripts { get; }
+
+    /// <summary>Redis Functions (Redis 7+).</summary>
+    IFunctionCommands Functions => throw new NotSupportedException("This client does not support Redis Functions.");
     /// <summary>Server administration and introspection commands.</summary>
     IServerCommands Server { get; }
 
