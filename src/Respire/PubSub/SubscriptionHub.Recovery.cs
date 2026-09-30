@@ -6,6 +6,8 @@ namespace Respire.Internal;
 internal sealed partial class SubscriptionHub
 {
     private readonly CancellationTokenSource _lifetimeCancellation = new();
+    // All configured recovery state is guarded by _reconnectStateGate. _gate protects
+    // route membership separately; recovery holds _controlGate while restoring routes.
     private RespireConnection? _configuredConnection;
     private TaskCompletionSource? _configuredRecoveryDrained;
     private RespireReconnectLimitException? _recoveryExhaustion;
@@ -65,20 +67,7 @@ internal sealed partial class SubscriptionHub
                     // acknowledged. Failed resubscription consumes this same episode's budget.
                     replacement = await EnsureConnectionAsync(cancellationToken, watch: false).ConfigureAwait(false);
                     endpoint = new RespireEndpoint(replacement.Host, replacement.Port);
-                    (SubscriptionKind Kind, RespireChannel Name)[] routes;
-                    lock (_gate)
-                    {
-                        var snapshot = new List<(SubscriptionKind, RespireChannel)>();
-                        for (var i = 0; i < _routes.Length; i++)
-                            foreach (var name in _routes[i].Names) snapshot.Add(((SubscriptionKind)i, name));
-                        routes = [.. snapshot];
-                    }
-                    foreach (var (kind, name) in routes)
-                        await SendControlAsync(replacement, SubscribeVerb(kind), SubscribeOperation(kind), name,
-                            cancellationToken, instrument: false).ConfigureAwait(false);
-                    cancellationToken.ThrowIfCancellationRequested();
-                    if (!replacement.IsConnected)
-                        throw replacement.CloseError ?? new RespireConnectionException("Pub/sub replacement closed during resubscription.");
+                    await ResubscribeRoutesAsync(replacement, cancellationToken).ConfigureAwait(false);
                     restored = replacement;
                     return;
                 }
@@ -86,7 +75,16 @@ internal sealed partial class SubscriptionHub
                 {
                     failure = error;
                     if (replacement is not null && DetachConnection(replacement) is { } cleanup)
-                        await cleanup.ConfigureAwait(false);
+                    {
+                        try { await cleanup.ConfigureAwait(false); }
+                        catch (Exception cleanupError)
+                        {
+                            core.Logger?.LogWarning(cleanupError, "Failed to clean up a pub/sub replacement");
+                        }
+                    }
+                    // Disposal can win while cleanup is awaited. It owns terminal subscription
+                    // completion in that case, even if this was the last configured attempt.
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (policy.IsExhausted(attempt))
                     {
                         ExhaustConfiguredRecovery(endpoint, failure, attempt);
@@ -112,27 +110,52 @@ internal sealed partial class SubscriptionHub
                     QueueConfiguredState(endpoint, RespireConnectionState.Connected, null, attempt);
                 drained.TrySetResult();
             }
+            // Closed is a completion task: if the socket dies before this call, the watcher
+            // observes that completed task immediately and starts the next ordered episode.
             if (restored is not null) _ = WatchConnectionAsync(restored);
         }
+    }
+
+    private async Task ResubscribeRoutesAsync(RespireConnection replacement, CancellationToken cancellationToken)
+    {
+        (SubscriptionKind Kind, RespireChannel Name)[] routes;
+        lock (_gate)
+        {
+            var snapshot = new List<(SubscriptionKind, RespireChannel)>();
+            for (var i = 0; i < _routes.Length; i++)
+                foreach (var name in _routes[i].Names) snapshot.Add(((SubscriptionKind)i, name));
+            routes = [.. snapshot];
+        }
+        foreach (var (kind, name) in routes)
+            await SendControlAsync(replacement, SubscribeVerb(kind), SubscribeOperation(kind), name,
+                cancellationToken, instrument: false).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!replacement.IsConnected)
+            throw replacement.CloseError ?? new RespireConnectionException("Pub/sub replacement closed during resubscription.");
     }
 
     private void ExhaustConfiguredRecovery(RespireEndpoint endpoint, Exception failure, int attempt)
     {
         lock (_reconnectStateGate)
+        {
+            // Serialize exhaustion with disposal's _disposed publication, including the
+            // completion reason. Cancellation can happen even after the caller's token check.
+            if (_disposed) return;
             _recoveryExhaustion = new RespireReconnectLimitException(
                 $"Pub/sub recovery exhausted {attempt} replacement attempts. Recreate the client to subscribe again.");
-        HashSet<RespireSubscription> subscriptions = [];
-        lock (_gate)
-        {
-            foreach (var routes in _routes)
+            HashSet<RespireSubscription> subscriptions = [];
+            lock (_gate)
             {
-                foreach (var list in routes.Values) subscriptions.UnionWith(list);
-                routes.Clear();
+                foreach (var routes in _routes)
+                {
+                    foreach (var list in routes.Values) subscriptions.UnionWith(list);
+                    routes.Clear();
+                }
+                _interrupted.Clear();
             }
-            _interrupted.Clear();
+            foreach (var subscription in subscriptions) subscription.CompleteFromReconnectExhaustion();
+            QueueConfiguredState(endpoint, RespireConnectionState.Disconnected, failure, attempt, exhausted: true);
         }
-        foreach (var subscription in subscriptions) subscription.CompleteFromReconnectExhaustion();
-        QueueConfiguredState(endpoint, RespireConnectionState.Disconnected, failure, attempt, exhausted: true);
     }
 
     private void QueueConfiguredState(RespireEndpoint endpoint, RespireConnectionState state,

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Text;
+using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -204,6 +205,90 @@ public class PubSubReconnectPolicyTests
         await Assert.That(subscription.IsDisposed).IsFalse();
         await Assert.That(server.CommandsSeen).IsEqualTo(3);
         await client.DisposeAsync();
+    }
+
+    [Test]
+    public async Task FailedCleanupDoesNotStrandTheRecoveryEpisode()
+    {
+        var cleanupError = new IOException("Injected replacement cleanup failure");
+        using var logger = new CleanupLogger(() => throw cleanupError);
+        await using var server = new FakeRespServer(3, Confirmation) { CloseConnectionAfterCommand = 2 };
+        await using var client = RespireClient.Create(Options(server.Port, Policy()) with { LoggerFactory = logger });
+        await using var subscription = await client.SubscribeAsync("ch");
+        using var deadline = new CancellationTokenSource(Deadline);
+        try
+        {
+            server.SuppressReply = _ => true;
+            await Assert.That(async () => await client.SubscribeAsync("lost", deadline.Token)).Throws<RespireConnectionException>();
+            await logger.FirstCleanup.Task.WaitAsync(deadline.Token);
+            for (var count = 3; count <= 4; count++)
+            {
+                await WaitForCommandsAsync(server, count, deadline.Token);
+                await server.SendRawAsync(Rejection, server.ReceivedConnectionIds[^1]);
+            }
+            await Assert.That(await subscription.Completion.WaitAsync(deadline.Token))
+                .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
+            await Assert.That(logger.LoggedErrors.Contains(cleanupError)).IsTrue();
+            await subscription.DisposeAsync();
+            await Assert.That(await subscription.Completion).IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
+        }
+        finally { await client.DisposeAsync(); }
+    }
+
+    [Test]
+    public async Task DisposalDuringCleanupWinsOverAttemptExhaustion()
+    {
+        var cleaning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseCleanup = new ManualResetEventSlim();
+        using var logger = new CleanupLogger(() =>
+        {
+            cleaning.TrySetResult();
+            if (!releaseCleanup.Wait(Deadline)) throw new TimeoutException("Test did not release replacement cleanup.");
+        });
+        await using var server = new FakeRespServer(2, Confirmation) { CloseConnectionAfterCommand = 2 };
+        await using var client = RespireClient.Create(Options(server.Port, Policy(attempts: 1)) with { LoggerFactory = logger });
+        await using var subscription = await client.SubscribeAsync("ch");
+        using var deadline = new CancellationTokenSource(Deadline);
+        try
+        {
+            server.SuppressReply = _ => true;
+            await Assert.That(async () => await client.SubscribeAsync("lost", deadline.Token)).Throws<RespireConnectionException>();
+            await logger.FirstCleanup.Task.WaitAsync(deadline.Token);
+            await WaitForCommandsAsync(server, 3, deadline.Token);
+            await server.SendRawAsync(Rejection, server.ReceivedConnectionIds[^1]);
+            await cleaning.Task.WaitAsync(deadline.Token);
+            var disposal = client.DisposeAsync().AsTask();
+            await Assert.That(disposal.IsCompleted).IsFalse();
+            releaseCleanup.Set();
+            await disposal.WaitAsync(deadline.Token);
+            await Assert.That(await subscription.Completion).IsEqualTo(RespireSubscriptionEndReason.ClientDisposed);
+        }
+        finally
+        {
+            releaseCleanup.Set();
+            await client.DisposeAsync();
+        }
+    }
+
+    private sealed class CleanupLogger(Action onReplacementCleanup) : ILoggerFactory, ILogger
+    {
+        private int _cleanups;
+        internal readonly TaskCompletionSource FirstCleanup = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly ConcurrentQueue<Exception> LoggedErrors = new();
+        public ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (exception is not null) LoggedErrors.Enqueue(exception);
+            if (!formatter(state, exception).StartsWith("Disconnected from ", StringComparison.Ordinal)) return;
+            var count = Interlocked.Increment(ref _cleanups);
+            if (count == 1) FirstCleanup.TrySetResult();
+            if (count == 2) onReplacementCleanup();
+        }
     }
 
     [Test]
