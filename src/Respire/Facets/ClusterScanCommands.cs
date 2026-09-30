@@ -12,24 +12,36 @@ internal sealed partial class KeyCommands
         RespireClusterScanCursor cursor, string? match = null, RespireKeyType? type = null,
         int countHint = 250, CancellationToken cancellationToken = default)
     {
-        for (var attempt = 0; ; attempt++)
+        ClusterRouter.DiscoveryRound? discovery = null;
+        try
         {
-            try
+            for (var attempt = 0; ; attempt++)
             {
-                return await ScanClusterPageCoreAsync(cursor, match, type, countHint, cancellationToken).ConfigureAwait(false);
-            }
-            catch (RespireConnectionRetiredException) when (client.Core.Cluster is { } cluster
-                && cluster.CanRetryRetirement(attempt, cancellationToken))
-            {
-                // Rejected admission cannot transfer a node-local cursor. Rebuild the page
-                // from its immutable input and rediscover the current identities instead.
+                try
+                {
+                    return await ScanClusterPageCoreAsync(cursor, match, type, countHint, cancellationToken, discovery).ConfigureAwait(false);
+                }
+                catch (RespireConnectionRetiredException retirement) when (client.Core.Cluster is { } cluster
+                    && cluster.CanRetryRetirement(attempt, cancellationToken))
+                {
+                    // Rebuild from the immutable checkpoint, retaining the same fallback budget.
+                    cluster.RecordRejection(ref discovery, retirement.Endpoint, retirement);
+                }
             }
         }
+        catch (Exception error)
+        {
+            // Cancellation before the next selection still ends a pending recovery. Errors
+            // from INFO/SCAN after successful selection do not invalidate discovery telemetry.
+            if (discovery is not null) discovery.RecordCommandFailure(error, discovery.HasPendingFailure);
+            throw;
+        }
+        finally { discovery?.Finish(); }
     }
 
     private async ValueTask<RespireClusterScanPage> ScanClusterPageCoreAsync(
         RespireClusterScanCursor cursor, string? match, RespireKeyType? type,
-        int countHint, CancellationToken cancellationToken)
+        int countHint, CancellationToken cancellationToken, ClusterRouter.DiscoveryRound? discovery)
     {
         ArgumentNullException.ThrowIfNull(cursor);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(countHint);
@@ -44,7 +56,7 @@ internal sealed partial class KeyCommands
         if (cursor.IsComplete) return new(cursor, []);
         // Never mutate a published cursor. Failure/cancellation leaves the caller's checkpoint intact.
         var state = cursor.State?.Copy() ?? new ClusterScanState(effectiveMatch, typeToken, prefix);
-        var topology = await ReadScanTopologyAsync(cancellationToken).ConfigureAwait(false);
+        var topology = await ReadScanTopologyAsync(cancellationToken, discovery).ConfigureAwait(false);
         ReconcileScan(state, topology);
         var node = SelectScanNode(state, topology);
         if (node is null)
@@ -95,7 +107,7 @@ internal sealed partial class KeyCommands
         {
             // Validate the complete pass against fresh, primary-local ownership and migration
             // state. An in-progress migration is never certified as a completed slot scan.
-            var after = await ReadScanTopologyAsync(cancellationToken).ConfigureAwait(false);
+            var after = await ReadScanTopologyAsync(cancellationToken, discovery).ConfigureAwait(false);
             ReconcileScan(state, after);
             if (state.ActiveNode is { } active && after.Nodes.TryGetValue(active, out var current)
                 && state.Epoch == current.Metadata.ConfigurationEpoch
@@ -112,9 +124,19 @@ internal sealed partial class KeyCommands
     private sealed record ScanNode(RespireConnection Connection, RespireClusterNode Metadata);
     private sealed record ScanTopology(Dictionary<string, ScanNode> Nodes, string[] Owners, bool[] Moving);
 
-    private async ValueTask<ScanTopology> ReadScanTopologyAsync(CancellationToken cancellationToken)
+    private async ValueTask<ScanTopology> ReadScanTopologyAsync(
+        CancellationToken cancellationToken, ClusterRouter.DiscoveryRound? discovery)
     {
-        var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
+        RespireConnection[] connections;
+        try
+        {
+            connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken, discovery).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is not RespireConnectionRetiredException)
+        {
+            if (discovery is not null) discovery.TerminalError = error;
+            throw;
+        }
         var nodes = new Dictionary<string, ScanNode>(StringComparer.Ordinal);
         var owners = new string[ClusterHash.SlotCount];
         var moving = new bool[ClusterHash.SlotCount];

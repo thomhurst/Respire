@@ -4,4 +4,7 @@ namespace Respire.Networking;
 /// <remarks>Routers may retry this failure on a current generation. It never represents an
 /// accepted command, a server error, or an ambiguous connection failure.</remarks>
 internal sealed class RespireConnectionRetiredException(string host, int port)
-    : RespireException($"Connection to {host}:{port} is retired; the command was not accepted.");
+    : RespireException($"Connection to {host}:{port} is retired; the command was not accepted.")
+{
+    internal RespireEndpoint Endpoint { get; } = new(host, port);
+}

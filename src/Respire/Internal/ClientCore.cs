@@ -47,14 +47,15 @@ internal sealed class ClientCore : IAsyncDisposable
         Multiplexer = RespireConnectionMultiplexer.Create(
             endpoint.Host, endpoint.Port, options.Connections, connectionOptions, Logger);
         DedicatedPool = new DedicatedConnectionPool(
-            endpoint.Host, endpoint.Port, options.ToConnectionOptions(), Logger, NotifyDedicatedStateChanged);
+            endpoint.Host, endpoint.Port, options.ToConnectionOptions(), Logger, NotifyRecoveryStateChanged);
         Cluster = options.UseCluster
             ? new ClusterRouter(options, Multiplexer, connectionOptions)
             : null;
         if (Cluster is { } cluster)
         {
             cluster.SlotStateChanged += NotifyCommandStateChanged;
-            cluster.DedicatedStateChanged += NotifyDedicatedStateChanged;
+            cluster.DedicatedStateChanged += NotifyRecoveryStateChanged;
+            cluster.DiscoveryStateChanged += NotifyRecoveryStateChanged;
             cluster.NodeRetired += NotifyCommandNodeRetired;
         }
         else
@@ -67,18 +68,18 @@ internal sealed class ClientCore : IAsyncDisposable
 
     public ValueTask EnsureConnectedAsync(CancellationToken cancellationToken)
         => Cluster is { } cluster
-            ? cluster.EnsureConnectedAsync(cancellationToken)
+            ? cluster.EnsureConnectedAsync(cancellationToken, discovery: null)
             : Multiplexer.EnsureConnectedAsync(cancellationToken);
 
     public event Action<RespireConnectionStateChange>? ConnectionStateChanged;
 
-    internal void NotifyDedicatedStateChanged(RespireConnectionStateChange change)
+    internal void NotifyRecoveryStateChanged(RespireConnectionStateChange change)
     {
         lock (_stateGate)
         {
             if (Disposed) return;
-            // A transient dedicated rent is not a required command slot. Forward its
-            // source metadata without adding it to command/subscription health sets.
+            // Dedicated rents and discovery rounds are not required command slots. Forward
+            // source metadata without adding them to command/subscription health sets.
             QueueEndpointStateLocked(change);
         }
         PublishQueuedStates();
@@ -287,7 +288,8 @@ internal sealed class ClientCore : IAsyncDisposable
 
                 // Recovery can have been queued before disposal started while an earlier
                 // observer held the dispatcher. The terminal client event has no recovery source.
-                if (Disposed && change.ReconnectSource is RespireReconnectSource.Dedicated or RespireReconnectSource.PubSub) continue;
+                if (Disposed && change.ReconnectSource is RespireReconnectSource.Dedicated
+                    or RespireReconnectSource.PubSub or RespireReconnectSource.ClusterDiscovery) continue;
 
                 handlers = ConnectionStateChanged;
             }
@@ -298,7 +300,8 @@ internal sealed class ClientCore : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                Logger?.LogWarning(ex, "Connection state-change handler threw");
+                try { Logger?.LogWarning(ex, "Connection state-change handler threw"); }
+                catch (Exception) { /* A user logger must not strand queued connection events. */ }
             }
         }
     }
@@ -329,7 +332,7 @@ internal sealed class ClientCore : IAsyncDisposable
         {
             ObjectDisposedException.ThrowIf(Disposed, this);
             var pool = new DedicatedConnectionPool(endpoint.Host, endpoint.Port, Options.ToConnectionOptions(), Logger,
-                NotifyDedicatedStateChanged);
+                NotifyRecoveryStateChanged);
             (_serverPools ??= []).Add(pool);
             return pool;
         }
@@ -398,7 +401,8 @@ internal sealed class ClientCore : IAsyncDisposable
         if (Cluster is { } cluster)
         {
             cluster.SlotStateChanged -= NotifyCommandStateChanged;
-            cluster.DedicatedStateChanged -= NotifyDedicatedStateChanged;
+            cluster.DedicatedStateChanged -= NotifyRecoveryStateChanged;
+            cluster.DiscoveryStateChanged -= NotifyRecoveryStateChanged;
             cluster.NodeRetired -= NotifyCommandNodeRetired;
             await cluster.DisposeAsync().ConfigureAwait(false);
         }

@@ -390,61 +390,86 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
 
         async ValueTask<RespValue> SendAsync(CancellationToken token)
         {
-            var cluster = core.Cluster;
             var slot = _hasClusterSlot ? _clusterSlot : (int?)null;
-            for (var attempt = 0; ; attempt++)
+            ClusterRouter.DiscoveryRound? discovery = null;
+            var discoveryPending = false;
+            try
             {
-                connection ??= await _client.AcquireConnectionAsync(slot, token)
-                    .ConfigureAwait(false);
-                RespValue reply;
-                try
+                var cluster = core.Cluster;
+                for (var attempt = 0; ; attempt++)
                 {
-                    reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, token,
-                            core.Options.CommandTimeout, cancellationToken)
+                    connection ??= await _client.AcquireConnectionAsync(slot, token)
                         .ConfigureAwait(false);
-                }
-                catch (RespireConnectionRetiredException) when (_watchConnection is null
-                    && cluster is not null && cluster.CanRetryRetirement(attempt, token))
-                {
-                    // The transport rejects the complete MULTI/EXEC frame before accepting any part.
-                    connection = null;
-                    continue;
-                }
-                if (!reply.IsError || cluster is null || attempt >= ClusterRouter.RedirectLimit)
-                {
-                    return reply;
-                }
+                    RespValue reply;
+                    try
+                    {
+                        reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, token,
+                                core.Options.CommandTimeout, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    catch (RespireConnectionRetiredException retirement) when (_watchConnection is null
+                        && cluster is not null && cluster.CanRetryRetirement(attempt, token))
+                    {
+                        // The transport rejects the complete MULTI/EXEC frame before accepting any part.
+                        cluster.RecordRejection(ref discovery, connection, retirement);
+                        discoveryPending = true;
+                        connection = await cluster.GetReplacementConnectionAsync(null, slot, null, token, discovery)
+                            .ConfigureAwait(false);
+                        discoveryPending = false;
+                        continue;
+                    }
+                    if (!reply.IsError || cluster is null)
+                    {
+                        return reply;
+                    }
 
-                var redirect = ResponseReader.ServerError(in reply, "MULTI/EXEC");
-                // EXEC result arrays can contain partial success and are returned above.
-                if (!ClusterRouter.CanRecover(redirect, slot))
-                {
-                    return reply;
-                }
+                    var redirect = ResponseReader.ServerError(in reply, "MULTI/EXEC");
+                    // EXEC result arrays can contain partial success and are returned above.
+                    if (!ClusterRouter.CanRecover(redirect, slot))
+                    {
+                        return reply;
+                    }
 
-                reply.Dispose();
-                if (_watchConnection is not null)
-                {
-                    // Replaying on another connection would lose WATCH and could commit stale reads.
-                    cluster.LearnWatchedRoute(redirect, connection, slot);
-                    throw new RespireTransactionRetryException(redirect);
-                }
-                if (ClusterRouter.IsRedirect(redirect)
-                    && !ClusterRouter.TryParseRedirect(redirect, connection.Host, out _, out _))
-                {
-                    throw redirect;
-                }
+                    reply.Dispose();
+                    if (attempt >= ClusterRouter.RedirectLimit)
+                    {
+                        // Throw within the owning round so its outcome and queued operations
+                        // retain the same terminal routing rejection.
+                        throw redirect;
+                    }
+                    if (_watchConnection is not null)
+                    {
+                        // Replaying on another connection would lose WATCH and could commit stale reads.
+                        cluster.LearnWatchedRoute(redirect, connection, slot);
+                        throw new RespireTransactionRetryException(redirect);
+                    }
+                    if (ClusterRouter.IsRedirect(redirect)
+                        && !ClusterRouter.TryParseRedirect(redirect, connection.Host, out _, out _))
+                    {
+                        throw redirect;
+                    }
 
-                if (redirect.Code == RespireErrorCodes.Ask)
-                {
-                    throw new RespireConnectionException(
-                        "Redis Cluster transactions cannot follow ASK redirects during slot migration.",
-                        redirect);
-                }
+                    if (redirect.Code == RespireErrorCodes.Ask)
+                    {
+                        discovery?.RecordCommandFailure(redirect, discoveryPending: false, slot);
+                        throw new RespireConnectionException(
+                            "Redis Cluster transactions cannot follow ASK redirects during slot migration.",
+                            redirect);
+                    }
 
-                connection = await cluster.GetRedirectConnectionAsync(redirect, connection, token, slot)
-                    .ConfigureAwait(false);
+                    cluster.RecordRejection(ref discovery, connection, redirect);
+                    discoveryPending = true;
+                    connection = await cluster.GetRedirectConnectionAsync(redirect, connection, token, slot, discovery)
+                        .ConfigureAwait(false);
+                    discoveryPending = false;
+                }
             }
+            catch (Exception error)
+            {
+                discovery?.RecordCommandFailure(error, discoveryPending, slot);
+                throw;
+            }
+            finally { discovery?.Finish(); }
         }
     }
 

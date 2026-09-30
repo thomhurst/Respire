@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
-using System.Net.Sockets;
 using Respire.Commands;
 using TUnit.Assertions;
 using TUnit.Assertions.Enums;
@@ -190,27 +189,31 @@ public class ReconnectPolicyTests
     [Test]
     public async Task FailedFenceRetainsIdentityAfterCommandRecoveryExhaustion()
     {
-        await using var server = new FakeRespServer(":42\r\n"u8.ToArray(), ":0\r\n"u8.ToArray());
+        await using var server = new FakeRespServer(3, FakeRespServer.OkReply, ":42\r\n"u8.ToArray(), ":0\r\n"u8.ToArray())
+        {
+            // SETNAME, CLIENT ID, permission check, then an accepted PING with no reply.
+            CloseConnectionAfterCommand = 4,
+            ReplyOverride = (connection, command) => (connection, command) switch
+            {
+                (1, "CLIENT SETNAME policy-test") => "-ERR rejected replacement\r\n"u8.ToArray(),
+                (2, "CLIENT KILL ID 42") => "-ERR scripted fence rejection\r\n"u8.ToArray(),
+                _ => null,
+            },
+        };
         await using var client = await RespireClient.ConnectAsync(Options(server.Port,
-            new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 }));
+            new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 }) with
+            { Protocol = RespProtocol.Resp2, ClientName = "policy-test" });
         await client.Core.Multiplexer.EnsureReliableCorrectionOrderingAsync();
-        var original = client.Core.Multiplexer.GetConnection();
         // A command with an uncertain outcome keeps the server-side identity owed to the fence.
-        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        server.SuppressReply = _ => { received.TrySetResult(); return true; };
-        var pending = client.PingAsync().AsTask();
-        await received.Task.WaitAsync(TimeSpan.FromSeconds(3));
-        await server.DisposeAsync();
-        await Assert.That(async () => await pending).Throws<RespireConnectionException>();
-        await original.DisposeAsync();
+        await Assert.That(async () => await client.PingAsync()).Throws<RespireConnectionException>();
         await Assert.That(async () => await client.Core.Multiplexer.GetHealthyConnectionAsync(default)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(3))).ThrowsExactly<RespireReconnectLimitException>();
         // Fences use a fresh control connection to the captured peer, independently of
-        // ordinary slot recovery. The stopped peer refuses that connection.
+        // ordinary slot recovery. Keep the listener owned and reject that exact fence.
         var failure = await Assert.That(async () => await client.Core.Multiplexer.FenceRetiredConnectionsAsync()
-            .AsTask().WaitAsync(TimeSpan.FromSeconds(3))).Throws<Exception>();
-        // A closed listener may refuse immediately or reach ConnectTimeout, depending on the OS.
-        await Assert.That(failure is SocketException or RespireTimeoutException).IsTrue();
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(3))).ThrowsExactly<RespireServerException>();
+        await Assert.That(failure!.Message).IsEqualTo("ERR scripted fence rejection");
+        await Assert.That(server.ReceivedCommands.Count(command => command == "CLIENT KILL ID 42")).IsEqualTo(1);
         await Assert.That(client.Core.Multiplexer.HasPendingCorrectionFences).IsTrue();
     }
 

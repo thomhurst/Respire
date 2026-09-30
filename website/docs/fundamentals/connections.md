@@ -163,7 +163,9 @@ is distinct from either standalone fallback or Sentinel discovery.
 An optional [`ReconnectPolicy`](../guides/reconnect-policy.md#sentinel-discovery-fallback)
 bounds and delays Sentinel fallback candidates after the first. Configured seeds, learned
 peers, and failed primary ROLE validation share that resolution budget; it does not
-enable ongoing Sentinel failover.
+enable ongoing Sentinel failover. Cluster uses the same option for
+[node, topology, and seed fallback](../guides/reconnect-policy.md#cluster-discovery-fallback),
+with one shared budget per discovery round. Periodic Cluster refresh remains separate.
 
 Programmatic `RespireOptions.Endpoints` follows the same rule: standalone mode requires one
 endpoint. Lists that previously left extra standalone endpoints unused now fail validation.

@@ -1081,7 +1081,7 @@ public class ClusterTests
         core.ConnectionStateChanged += change => states.Add(change.State);
         core.NotifyCommandStateChanged(retiredMultiplexer, 0, RespireConnectionState.Reconnecting);
 
-        _ = await core.Cluster.GetMasterConnectionsAsync(CancellationToken.None);
+        _ = await core.Cluster.GetMasterConnectionsAsync(CancellationToken.None, discovery: null);
 
         await Assert.That(states).IsEquivalentTo(
             [RespireConnectionState.Reconnecting, RespireConnectionState.Connected]);

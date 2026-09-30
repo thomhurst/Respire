@@ -2,7 +2,7 @@
 
 `RespireOptions.ReconnectPolicy` configures replacement of failed multiplexed command
 connections, including connections owned by Redis Cluster nodes, dedicated connection acquisitions,
-and pub/sub recovery. It is null by default. For command connections,
+pub/sub recovery, and Cluster/Sentinel discovery fallback. It is null by default. For command connections,
 replacement starts immediately, and a failed replacement is retried on the next use.
 Setting a policy preserves that demand-driven scheduling while adding backoff and limits.
 It does not create a perpetual command retry loop or replay any accepted Redis command.
@@ -145,10 +145,10 @@ they describe already scheduled attempts or completed exhaustion. They may arriv
 | `ReconnectAttempt` | One-based configured attempt; zero for transitions without policy metadata |
 | `ConnectionSlot` | Source slot within this endpoint's multiplexer generation, including null-policy recovery; null for endpoint-wide transitions |
 | `NextReconnectDelay` | Actual scheduled delay before this attempt; null when no attempt is scheduled |
-| `ReconnectExhausted` | This slot, dedicated rent, or pub/sub episode reached its configured limit |
-| `ReconnectSource` | `Dedicated` for a dedicated rent, `Command` for a multiplexer event, `PubSub` for subscription recovery; `Unspecified` for other paths |
+| `ReconnectExhausted` | This slot, dedicated rent, pub/sub episode, or Cluster discovery round reached its configured limit |
+| `ReconnectSource` | `Dedicated` for a dedicated rent, `Command` for a multiplexer event, `PubSub` for subscription recovery, `ClusterDiscovery` for topology/endpoint fallback; `Unspecified` for other paths |
 | `SourceState` | Source connection state before endpoint health aggregation, when supplied |
-| `ReconnectEpisodeId` | Process-local identifier grouping one dedicated rent's retry events; null for other paths |
+| `ReconnectEpisodeId` | Process-local identifier grouping one dedicated rent or Cluster discovery round; null for other paths |
 
 Policy attempt events are delivered even if aggregate endpoint health has not changed.
 An endpoint can remain disconnected because another slot has failed while the source slot
@@ -216,10 +216,85 @@ Initial Sentinel resolution has no returned client for `ConnectionStateChanged`
 subscriptions; lifecycle events for ongoing failover belong to #396. This policy does
 not enable automatic failover or lazy Sentinel routing.
 
+## Cluster discovery fallback
+
+Each logical Cluster discovery round shares one policy budget across cached owners,
+known masters, topology queries, configured seeds, tracked connection selection, and
+dedicated pool selection. Pub/sub endpoint discovery and cluster-wide commands use the
+same contract. The first candidate is immediate. A discovery episode begins only when a fallback is scheduled;
+a failure with no scheduled fallback remains visible through physical connection health.
+After a candidate fails, choosing the
+next candidate consumes one attempt and waits the configured delay. A topology query and
+connection to its advertised owner share the candidate until one fails. Connecting other
+required masters after a successful topology query does not consume fallback attempts.
+
+For example, with `MaxAttempts = 1`, a failed cached owner may try one known master.
+If that master also fails, seed fallback cannot start a new budget. Exhaustion throws
+`RespireReconnectLimitException`; candidate depletion can instead end with the existing
+connection error. A later explicit discovery round starts fresh. Concurrent initial
+connection calls retain seed discovery coalescing: waiting callers reuse its successful
+result. Failed rounds do not permanently disable the router.
+
+MOVED, ASK, and READONLY are explicit server rejections. Their first replacement consumes
+attempt one. If recovery cannot establish a replacement, the original server exception
+is preserved. ASK keeps its temporary target; tracked identity setup and retirement
+reselection share the ongoing round. A command rejected before acceptance by topology
+retirement starts fallback at attempt one. Repeated retirement during that command,
+including an individual rejected batch entry or an unwatched transaction, retains the
+same budget until completion. A batch READONLY replacement and any later retirement use
+that same round. Blocking redirects retain it through the next dedicated connection rent,
+including retirement of the selected pool before the rent completes. Resumable Cluster scans keep that budget across retirement
+restarts of one page; rebuilding from the immutable cursor does not reset it. Accepted batch entries and watched transactions are never
+replayed. Dedicated physical connection retries retain their
+separate per-rent budget; node selection does not reset a discovery budget. Neither path
+replays a command after ambiguous acceptance or a lost reply.
+
+Null policy preserves existing immediate fallback and retirement limits. Unsupported or
+ACL-restricted `CLUSTER SLOTS` replies still allow an initial seed connection and learned
+redirect routing. A cluster-wide command still requires a complete topology. Configured
+policy limits fallback during that search; it does not turn unsupported topology into
+successful cluster-wide results.
+
+Caller cancellation and client disposal stop scheduled waits and connection work. Existing
+command deadlines remain shared. READONLY recovery retains its overall `ConnectTimeout`
+and the time reserved for configured seeds; policy waits consume that recovery time.
+Whichever is reached first ends recovery: the policy attempt limit, the existing recovery
+deadline, caller cancellation, or disposal. A delay cannot extend the READONLY deadline.
+Other discovery waits are bounded by caller cancellation, so supply a caller deadline to
+bound a whole round across multiple candidates and delays.
+
+Attempt/delay/exhaustion instruments use the candidate endpoint and
+`respire.reconnect.scope = cluster-discovery`. Exhaustion is attributed to the final
+failed candidate, only when another fallback would exceed the budget. Successful fallback
+at the limit and candidate depletion do not count as policy exhaustion. Lifecycle events
+use `ReconnectSource.ClusterDiscovery`, a process-local `ReconnectEpisodeId`, and a null
+`ConnectionSlot`. Episode IDs are scoped by `ReconnectSource`; include it when correlating
+events from different recovery paths. Cluster discovery IDs share one counter across clients in
+this process. `SourceState` describes discovery; `State` retains aggregate physical endpoint
+health. Discovery never inserts a synthetic failed command slot. Measurements
+and lifecycle callbacks run on an ordered asynchronous queue; keep observers short. Discovery
+ordering is independent of command-slot and dedicated recovery notification queues; events
+from different sources have no shared ordering guarantee and can arrive after the triggering
+operation completes. Configured-seed fallback skips multiplexer generations already rejected
+by owner or known-master discovery in that round. A replacement generation at the same address
+remains eligible; skipping a duplicate does not consume another policy attempt.
+A caller-cancelled round that started fallback emits a terminal `Disconnected` source event
+with the cancellation error and the same episode ID; cancellation is not policy exhaustion.
+A READONLY phase timeout is retryable while the overall recovery deadline remains active.
+If a later configured seed succeeds, that episode ends with `Connected`, without retaining
+the handled phase cancellation as a terminal error.
+Once replacement selection succeeds, later application errors (such as WRONGTYPE) or
+cancellation of an accepted command do not change that discovery outcome to Disconnected.
+The command still fails normally; physical connection health is reported independently.
+Scheduled measurements survive disposal, while pending lifecycle events are suppressed.
+The queue preserves every scheduled measurement and source transition and has no capacity
+limit, matching dedicated recovery notifications. Slow or blocked observers can accumulate
+notifications from concurrent or repeated rounds. `MaxAttempts` bounds one discovery round,
+not the notification queue; handlers should hand off expensive work and return promptly.
+
 ## Remaining recovery paths
 
-The policy covers command multiplexers, dedicated pools, pub/sub, and Sentinel fallback.
-Cluster discovery retains its current fallback behavior (#568 under #546).
-That native child extends the same policy contract under parent #401. Sentinel currently
-resolves at connection time; automatic Sentinel failover is tracked separately in #396,
-and periodic Cluster refresh in #397. Setting this option does not enable those features.
+The policy covers command multiplexers, dedicated pools, pub/sub, Cluster discovery, and
+Sentinel fallback. Automatic Sentinel failover remains #396, and periodic Cluster refresh
+remains #397. Setting this option does not enable either feature. Future periodic Cluster
+refresh must reuse this discovery budget instead of adding nested retry counters.

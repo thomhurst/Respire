@@ -292,6 +292,113 @@ public class ClusterScanTests
             .Throws<ArgumentOutOfRangeException>();
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RepeatedPageRetirementSharesOneDiscoveryBudget(bool configured)
+    {
+        await using var cluster = new ScanCluster();
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            UseCluster = true, Protocol = RespProtocol.Resp2, Connections = 1,
+            Endpoints = [new("127.0.0.1", cluster.First.Server.Port)],
+            ReconnectPolicy = configured ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 } : null,
+        });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var router = client.Core.Cluster!;
+        var retired = 0;
+        cluster.First.BeforeMetadata = () =>
+        {
+            if (++retired > 2) { cluster.First.BeforeMetadata = null; return; }
+            cluster.Second.Id = "replacement-" + retired;
+            cluster.Second.RunId = "replacement-run-" + retired;
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var version = (long)typeof(ClusterRouter).GetField("_topologyVersion", flags)!.GetValue(router)!;
+            var generationField = typeof(ClusterRouter).GetField("_nextDiscoveryGeneration", flags)!;
+            var generation = (long)generationField.GetValue(router)! + 1;
+            generationField.SetValue(router, generation);
+            List<ClusterTopologyRange> ranges =
+            [
+                new(0, 8191, new("127.0.0.1", cluster.First.Server.Port), "first", []),
+                new(8192, 16383, new("127.0.0.1", cluster.Second.Server.Port), cluster.Second.Id, []),
+            ];
+            typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!.Invoke(router, [ranges, version, generation]);
+        };
+        var cursor = RespireClusterScanCursor.Start;
+        if (configured)
+        {
+            await Assert.That(async () => await client.Keys.ScanClusterPageAsync(cursor, cancellationToken: timeout.Token))
+                .ThrowsExactly<RespireReconnectLimitException>();
+            await Assert.That(retired).IsEqualTo(2);
+            await Assert.That(cluster.First.Server.ReceivedCommands.Any(command => command.StartsWith("SCAN "))).IsFalse();
+        }
+        else
+        {
+            _ = await client.Keys.ScanClusterPageAsync(cursor, cancellationToken: timeout.Token);
+            await Assert.That(retired).IsEqualTo(3);
+            await Assert.That(cluster.First.Server.ReceivedCommands.Count(command => command.StartsWith("SCAN "))).IsEqualTo(1);
+        }
+        await Assert.That(cursor.IsComplete).IsFalse();
+        await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task PageRetirementAtRedirectLimitReportsFailedDiscovery(bool unlimited)
+    {
+        await using var cluster = new ScanCluster();
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            UseCluster = true, Protocol = RespProtocol.Resp2, Connections = 1,
+            Endpoints = [new("127.0.0.1", cluster.First.Server.Port)],
+            ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = unlimited ? null : 5 },
+        });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var router = client.Core.Cluster!;
+        var retired = 0;
+        cluster.First.BeforeMetadata = () =>
+        {
+            cluster.Second.Id = "replacement-" + ++retired;
+            cluster.Second.RunId = "replacement-run-" + retired;
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var version = (long)typeof(ClusterRouter).GetField("_topologyVersion", flags)!.GetValue(router)!;
+            var generationField = typeof(ClusterRouter).GetField("_nextDiscoveryGeneration", flags)!;
+            var generation = (long)generationField.GetValue(router)! + 1;
+            generationField.SetValue(router, generation);
+            List<ClusterTopologyRange> ranges =
+            [
+                new(0, 8191, new("127.0.0.1", cluster.First.Server.Port), "first", []),
+                new(8192, 16383, new("127.0.0.1", cluster.Second.Server.Port), cluster.Second.Id, []),
+            ];
+            typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!.Invoke(router, [ranges, version, generation]);
+        };
+        var changes = new System.Collections.Concurrent.ConcurrentQueue<RespireConnectionStateChange>();
+        var completed = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
+            changes.Enqueue(change);
+            if (change.NextReconnectDelay is null) completed.TrySetResult(change);
+        };
+        var cursor = RespireClusterScanCursor.Start;
+        var checkpoint = cursor.ToString();
+        var error = await Assert.That(async () => await client.Keys.ScanClusterPageAsync(cursor, cancellationToken: timeout.Token))
+            .Throws<Respire.Networking.RespireConnectionRetiredException>();
+        var terminal = await completed.Task.WaitAsync(timeout.Token);
+        await Assert.That(terminal.SourceState).IsEqualTo(RespireConnectionState.Disconnected);
+        await Assert.That(terminal.Error).IsSameReferenceAs(error);
+        await Assert.That(terminal.ReconnectAttempt).IsEqualTo(5);
+        await Assert.That(terminal.ReconnectExhausted).IsFalse();
+        await Assert.That(retired).IsEqualTo(6);
+        await Assert.That(changes.Count).IsEqualTo(6);
+        await Assert.That(changes.Select(change => change.ReconnectEpisodeId).Distinct().Count()).IsEqualTo(1);
+        await Assert.That(cursor.ToString()).IsEqualTo(checkpoint);
+        await Assert.That(cluster.First.Server.ReceivedCommands.Concat(cluster.Second.Server.ReceivedCommands)
+            .Any(command => command.StartsWith("SCAN "))).IsFalse();
+        await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
+    }
+
     internal static async Task AssertRetirementPreservesAcceptedPagesAsync()
     {
         await using var cluster = new ScanCluster();
@@ -301,7 +408,7 @@ public class ClusterScanTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var first = await client.Keys.ScanClusterPageAsync(RespireClusterScanCursor.Start, cancellationToken: timeout.Token);
         var router = client.Core.Cluster!;
-        var old = await router.GetConnectionAsync(8192, timeout.Token);
+        var old = await router.GetConnectionAsync(8192, timeout.Token, discovery: null);
         var full = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var pings = 0;
         cluster.Second.Server.SuppressReply = command =>

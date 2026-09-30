@@ -183,9 +183,9 @@ public sealed record RespireOptions
     /// <summary>Timeout for the initial TCP connect (per connection).</summary>
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(10);
 
-    /// <summary>Optional command, dedicated, and pub/sub recovery backoff and Sentinel fallback policy. Null preserves existing scheduling.</summary>
+    /// <summary>Optional command, dedicated, and pub/sub recovery backoff and Cluster/Sentinel discovery policy. Null preserves existing scheduling.</summary>
     /// <remarks>Dedicated rentals retry failed acquisition with independent budgets. Sentinel fallback shares one budget per resolution.
-    /// Cluster discovery retains its existing recovery behavior.</remarks>
+    /// Cluster discovery shares one fallback budget across nested node and seed selection per round.</remarks>
     public RespireReconnectPolicy? ReconnectPolicy { get; init; }
 
     /// <summary>Use TLS. Enabled automatically for <c>rediss://</c> connection strings.</summary>

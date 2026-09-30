@@ -378,7 +378,7 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         ResponseConverter<ScriptCommands, TResult> convert, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
-        var masters = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
+        var masters = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
         if (masters.Length == 0)
         {
             throw new RespireConnectionException($"{operation} did not reach any Redis Cluster primary.");
