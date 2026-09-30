@@ -131,12 +131,17 @@ fields, and `As<T>()` throws because there is no published value.
 ```csharp
 await foreach (var message in subscription.WithCancellation(stoppingToken))
 {
-    if (message.Kind == RespireMessageKind.Gap)
+    switch (message.Kind)
     {
-        await ReloadStateFromSourceAsync(stoppingToken);
-        continue;
+        case RespireMessageKind.Gap:
+            await ReloadStateFromSourceAsync(stoppingToken);
+            break;
+        case RespireMessageKind.Message:
+            await ApplyMessageAsync(message, stoppingToken);
+            break;
+        default:
+            throw new InvalidOperationException($"Unknown subscription item: {message.Kind}");
     }
-    await ApplyMessageAsync(message, stoppingToken);
 }
 ```
 

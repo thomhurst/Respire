@@ -73,8 +73,9 @@ public class PubSubGapTests
         var gapIndex = overflow == SubscriptionOverflow.DropOldest ? 0 : 2;
         await Assert.That(items[gapIndex].Kind).IsEqualTo(RespireMessageKind.Gap);
         await Assert.That(items[gapIndex].Gap!.DroppedMessages).IsEqualTo(2);
+        string[] expected = overflow == SubscriptionOverflow.DropOldest ? ["c", "d"] : ["a", "b"];
         await Assert.That(items.Where(item => item.Kind == RespireMessageKind.Message).Select(item => item.Text))
-            .IsEquivalentTo(overflow == SubscriptionOverflow.DropOldest ? ["c", "d"] : ["a", "b"]);
+            .IsEquivalentTo(expected);
     }
 
     [Test]
@@ -140,6 +141,84 @@ public class PubSubGapTests
         await Assert.That(next.Current.Text).IsEqualTo("retained");
         await Assert.That(await next.MoveNextAsync()).IsFalse();
     }
+
+    [Test]
+    [Arguments(1, SubscriptionOverflow.DropOldest)]
+    [Arguments(3, SubscriptionOverflow.DropOldest)]
+    [Arguments(1, SubscriptionOverflow.DropNewest)]
+    [Arguments(3, SubscriptionOverflow.DropNewest)]
+    public async Task ConcurrentBufferPreservesOrderAndAccountsForEveryMessage(int capacity, SubscriptionOverflow overflow)
+    {
+        const int produced = 10_000;
+        var buffer = new SubscriptionBuffer(capacity, overflow);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var producer = Task.Run(async () =>
+        {
+            try
+            {
+                for (var i = 0; i < produced; i++)
+                {
+                    buffer.Write(Message(i.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+                    if (i % 11 == 0) await Task.Yield();
+                }
+            }
+            finally { buffer.Complete(); }
+        });
+        var previous = -1;
+        var consumed = 0;
+        long discarded = 0;
+        var ordered = true;
+        await foreach (var message in buffer.ReadAllAsync(deadline.Token))
+        {
+            if (message.Gap is { } gap) discarded += gap.DroppedMessages;
+            else
+            {
+                var current = int.Parse(message.Text, System.Globalization.CultureInfo.InvariantCulture);
+                ordered &= current > previous;
+                previous = current;
+                consumed++;
+            }
+        }
+        await producer;
+        await Assert.That(ordered).IsTrue();
+        await Assert.That(discarded + consumed).IsEqualTo(produced);
+    }
+
+    [Test]
+    public async Task RoutingRejectsSupersededEpochAndInvokesObserversOutsideGates()
+    {
+        await using var server = new FakeRespServer("*3\r\n$9\r\nsubscribe\r\n$2\r\nch\r\n:1\r\n"u8.ToArray());
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+        });
+        await using var subscription = await client.SubscribeAsync("ch", new RespireSubscriptionOptions(BufferSize: 1), CancellationToken.None);
+        var hub = client.Core.Hub;
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var epochField = typeof(SubscriptionHub).GetField("_connectionEpoch", flags)!;
+        var gate = typeof(SubscriptionHub).GetField("_gate", flags)!.GetValue(hub)!;
+        var deliver = typeof(SubscriptionHub).GetMethod("Deliver", flags)!.CreateDelegate<DeliverFrame>(hub);
+        var epoch = (long)epochField.GetValue(hub)!;
+        lock (gate) epochField.SetValue(hub, epoch + 1);
+        var now = DateTimeOffset.UtcNow;
+        subscription.Buffer.WriteGap(new(RespireSubscriptionGapReason.Reconnect, now, now));
+        // Represents an old callback that already passed OnPush's optimistic epoch check.
+        deliver(epoch, SubscriptionKind.Channel, "ch"u8, "ch"u8, false, "stale"u8);
+        deliver(epoch + 1, SubscriptionKind.Channel, "ch"u8, "ch"u8, false, "current"u8);
+        var outsideGate = false;
+        subscription.DeliveryGap += _ => outsideGate = !Monitor.IsEntered(gate);
+        deliver(epoch + 1, SubscriptionKind.Channel, "ch"u8, "ch"u8, false, "latest"u8);
+        subscription.Buffer.Complete();
+        var items = new List<RespireMessage>();
+        await foreach (var item in subscription) items.Add(item);
+        await Assert.That(items.Count).IsEqualTo(2);
+        await Assert.That(items[0].Gap!.DroppedMessages).IsEqualTo(1);
+        await Assert.That(items[1].Text).IsEqualTo("latest");
+        await Assert.That(outsideGate).IsTrue();
+    }
+
+    private delegate void DeliverFrame(long epoch, SubscriptionKind kind, ReadOnlySpan<byte> route,
+        ReadOnlySpan<byte> channel, bool isPattern, ReadOnlySpan<byte> payload);
 
     private static RespireMessage Message(string text)
         => new("ch", null, Encoding.UTF8.GetBytes(text), new SystemTextJsonSerializer());

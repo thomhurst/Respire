@@ -229,6 +229,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             if (!ReferenceEquals(_connection, connection)) return null;
             MarkInterruptedLocked();
             _connection = null;
+            ++_connectionEpoch;
         }
         return connection.DisposeAsync().AsTask();
     }
@@ -237,22 +238,18 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
     {
         if (_disposed) return;
         var now = DateTimeOffset.UtcNow;
+        HashSet<RespireSubscription> affected = [];
         foreach (var routes in _routes)
         {
-            foreach (var subscriptions in routes.Values)
+            foreach (var subscriptions in routes.Values) affected.UnionWith(subscriptions);
+        }
+        foreach (var subscription in affected)
+        {
+            if (!_interrupted.TryGetValue(subscription, out var targets))
             {
-                foreach (var subscription in subscriptions)
-                {
-                    if (!_interrupted.TryGetValue(subscription, out var targets))
-                    {
-                        _interrupted.Add(subscription, targets = []);
-                    }
-                    foreach (var name in subscription.Names)
-                    {
-                        targets.TryAdd(name, now);
-                    }
-                }
+                _interrupted.Add(subscription, targets = []);
             }
+            foreach (var name in subscription.Names) targets.TryAdd(name, now);
         }
     }
 
@@ -561,14 +558,15 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                 {
                     var ended = DateTimeOffset.UtcNow;
                     if (ended < started) ended = started;
-                    (gaps ??= []).Add((subscription, new(RespireSubscriptionGapReason.Reconnect, started, ended)));
+                    var gap = new RespireSubscriptionGap(RespireSubscriptionGapReason.Reconnect, started, ended);
+                    if (subscription.Buffer.WriteGap(gap)) (gaps ??= []).Add((subscription, gap));
                     if (targets.Count == 0) _interrupted.Remove(subscription);
                 }
             }
         }
         if (gaps is not null)
         {
-            foreach (var (subscription, gap) in gaps) subscription.DeliverGap(gap);
+            foreach (var (subscription, gap) in gaps) subscription.NotifyGap(gap);
         }
     }
 
@@ -585,51 +583,48 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         var frameKind = elements[0].AsSpan();
         if (frameKind.SequenceEqual("message"u8))
         {
-            Deliver(SubscriptionKind.Channel, elements[1].AsSpan(), elements[1].AsSpan(),
+            Deliver(epoch, SubscriptionKind.Channel, elements[1].AsSpan(), elements[1].AsSpan(),
                 isPattern: false, elements[2].AsSpan());
         }
         else if (frameKind.SequenceEqual("smessage"u8))
         {
-            Deliver(SubscriptionKind.Sharded, elements[1].AsSpan(), elements[1].AsSpan(),
+            Deliver(epoch, SubscriptionKind.Sharded, elements[1].AsSpan(), elements[1].AsSpan(),
                 isPattern: false, elements[2].AsSpan());
         }
         else if (frameKind.SequenceEqual("pmessage"u8) && elements.Length >= 4)
         {
-            Deliver(SubscriptionKind.Pattern, elements[1].AsSpan(), elements[2].AsSpan(),
+            Deliver(epoch, SubscriptionKind.Pattern, elements[1].AsSpan(), elements[2].AsSpan(),
                 isPattern: true, elements[3].AsSpan());
         }
     }
 
     private void Deliver(
+        long epoch,
         SubscriptionKind kind,
         ReadOnlySpan<byte> routeName,
         ReadOnlySpan<byte> channel,
         bool isPattern,
         ReadOnlySpan<byte> payload)
     {
-        RespireSubscription[] targets;
-        RespireChannel cachedRouteName;
+        List<(RespireSubscription Subscription, RespireSubscriptionGap Gap)>? drops = null;
         lock (_gate)
         {
-            if (!Routes(kind).TryGetValue(routeName, out cachedRouteName, out var list))
+            // Validate and enqueue under the same gate that advances epochs and publishes
+            // reconnect markers. A route snapshot alone would leave a stale-writer window.
+            if (_disposed || epoch != _connectionEpoch
+                || !Routes(kind).TryGetValue(routeName, out var cachedRouteName, out var targets)) return;
+            var channelName = isPattern ? RespireChannel.FromOwnedBytes(channel.ToArray()) : cachedRouteName;
+            var message = new RespireMessage(channelName,
+                isPattern ? cachedRouteName : (RespireChannel?)null, payload.ToArray(), core.Options.Serializer);
+            foreach (var target in targets)
             {
-                return;
+                if (target.Buffer.Write(message) is { } gap) (drops ??= []).Add((target, gap));
             }
-
-            targets = [.. list];
         }
-
-        var channelName = isPattern
-            ? RespireChannel.FromOwnedBytes(channel.ToArray())
-            : cachedRouteName;
-        var message = new RespireMessage(
-            channelName,
-            isPattern ? cachedRouteName : (RespireChannel?)null,
-            payload.ToArray(),
-            core.Options.Serializer);
-        foreach (var target in targets)
+        // User handlers and metric callbacks never run under the routing/buffer gates.
+        if (drops is not null)
         {
-            target.Deliver(message);
+            foreach (var (subscription, gap) in drops) subscription.NotifyDrop(gap);
         }
     }
 

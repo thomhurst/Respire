@@ -116,20 +116,14 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
     /// Handler exceptions are logged and do not stop delivery. Stream markers can coalesce adjacent events.</remarks>
     public event Action<RespireSubscriptionGap>? DeliveryGap;
 
-    internal void Deliver(RespireMessage message)
+    internal void NotifyDrop(RespireSubscriptionGap gap)
     {
-        if (Buffer.Write(message) is not { } gap) return;
         Interlocked.Increment(ref _droppedMessages);
         RespireTelemetry.RecordSubscriptionMessageDropped(Kind, _overflow);
         NotifyGap(gap);
     }
 
-    internal void DeliverGap(RespireSubscriptionGap gap)
-    {
-        if (Buffer.WriteGap(gap)) NotifyGap(gap);
-    }
-
-    private void NotifyGap(RespireSubscriptionGap gap)
+    internal void NotifyGap(RespireSubscriptionGap gap)
     {
         RespireTelemetry.RecordSubscriptionGap(Kind, gap.Reason);
         var handlers = DeliveryGap;
