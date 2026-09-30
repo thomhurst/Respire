@@ -12,7 +12,7 @@ namespace Respire;
 /// cardinality uses <see cref="Count"/> and score-range cardinality uses
 /// <see cref="CountByScore(RespireKey, double, double)"/>.
 /// </summary>
-public interface IBatchSortedSetCommands
+public partial interface IBatchSortedSetCommands
 {
     /// <summary>Adds or updates one member. True when the member was new. Redis: ZADD.</summary>
     RespirePending<bool> Add(RespireKey key, RespireValue member, double score);
@@ -177,7 +177,7 @@ public interface IBatchSortedSetCommands
         long offset = 0, long? count = null, bool descending = false);
 }
 
-internal sealed class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSetCommands
+internal sealed partial class BatchSortedSetCommands(IPendingSink sink) : IBatchSortedSetCommands
 {
     public RespirePending<bool> Add(RespireKey key, RespireValue member, double score)
         => sink.Add<Cmd3, bool>(

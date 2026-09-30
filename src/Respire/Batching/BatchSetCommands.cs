@@ -125,7 +125,7 @@ internal sealed class BatchSetCommands(IPendingSink sink) : IBatchSetCommands
 
     public RespirePending<long> IntersectCount(long limit, params ReadOnlySpan<RespireKey> keys)
         => sink.Add<CmdN, long>("SINTERCARD",
-            new CmdN(Verbs.SInterCard, SetCommands.IntersectCountArguments(sink.Client, keys, limit)),
+            new CmdN(Verbs.SInterCard, CountedKeyArguments.Create(sink.Client, keys, limit)),
             keys, static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<long> Count(RespireKey key)

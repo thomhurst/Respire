@@ -170,6 +170,32 @@ are removed; rename those calls without changing their arguments.
 
 ## Sorted sets
 
+`RandomMemberAsync(key)` returns one member or `null`; `RandomMembersAsync(key, count)`
+and `RandomMembersWithScoresAsync(key, count)` return owned arrays (Redis 6.2+). Positive
+counts select distinct members up to the set size; negative counts allow duplicates and
+return exactly the absolute count for nonempty sets. Zero returns empty. `long.MinValue`
+is rejected because its absolute value cannot fit in a signed 64-bit integer. Sampling
+never removes members. Generic variants deserialize members, including binary-safe `byte[]`.
+A missing scalar generic result is `default(T)`; counted missing results are empty arrays.
+
+`CountByLexAsync` and `RemoveRangeByLexAsync` accept `RespireLexRange`, with inclusive,
+exclusive, or infinite bounds. Lexicographical operations require all members to have the
+same score. `IntersectCountAsync` (Redis 7+) returns only intersection cardinality; a
+nonnegative `limit` caps work and the returned count, while zero means unlimited. At least
+one key is required, and Cluster keys must share a slot after the client prefix is applied.
+
+```csharp
+SortedSetEntry[] sample = await redis.SortedSets.RandomMembersWithScoresAsync("scores", 3);
+long common = await redis.SortedSets.IntersectCountAsync(100, "{scores}:today", "{scores}:yesterday");
+var range = new RespireLexRange(RespireLexBound.Inclusive("a"), RespireLexBound.Exclusive("m"));
+long matches = await redis.SortedSets.CountByLexAsync("names", range);
+long removed = await redis.SortedSets.RemoveRangeByLexAsync("names", range);
+```
+
+Every method also has a batch/transaction mirror without `Async`. Deferred result arrays
+remain valid after response disposal. Key spans are snapshotted; referenced byte buffers
+must remain unchanged until execution completes, as with other deferred commands.
+
 ```csharp
 await redis.SortedSets.AddAsync("scores", "ada", 98.5);
 await redis.SortedSets.AddAsync("scores", ("grace", 97.5), ("linus", 96.0));

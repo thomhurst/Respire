@@ -184,7 +184,7 @@ internal sealed class SetCommands(RespireClient client) : ISetCommands
     public ValueTask<long> IntersectCountAsync(
         long limit, ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
         => client.IntegerAsync("SINTERCARD",
-            new CmdN(Verbs.SInterCard, IntersectCountArguments(client, keys, limit)), cancellationToken);
+            new CmdN(Verbs.SInterCard, CountedKeyArguments.Create(client, keys, limit)), cancellationToken);
 
     internal static void ValidateMembers(ReadOnlySpan<RespireValue> members)
     {
@@ -192,27 +192,6 @@ internal sealed class SetCommands(RespireClient client) : ISetCommands
         {
             throw new ArgumentException("At least one member is required.", nameof(members));
         }
-    }
-
-    internal static RespireValue[] IntersectCountArguments(RespireClient client, ReadOnlySpan<RespireKey> keys, long limit)
-    {
-        if (keys.IsEmpty)
-        {
-            throw new ArgumentException("At least one key is required.", nameof(keys));
-        }
-        ArgumentOutOfRangeException.ThrowIfNegative(limit);
-        var arguments = new RespireValue[keys.Length + (limit == 0 ? 1 : 3)];
-        arguments[0] = keys.Length;
-        for (var index = 0; index < keys.Length; index++)
-        {
-            arguments[index + 1] = client.Key(in keys[index]);
-        }
-        if (limit != 0)
-        {
-            arguments[^2] = "LIMIT";
-            arguments[^1] = limit;
-        }
-        return arguments;
     }
 
     public ValueTask<long> CountAsync(RespireKey key, CancellationToken cancellationToken = default)
