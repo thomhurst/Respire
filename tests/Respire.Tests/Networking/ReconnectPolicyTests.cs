@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
+using System.Net.Sockets;
 using TUnit.Assertions;
 using TUnit.Assertions.Enums;
 using TUnit.Assertions.Extensions;
@@ -148,7 +149,7 @@ public class ReconnectPolicyTests
     }
 
     [Test]
-    public async Task ExhaustedFenceRetainsTheFailedConnectionsIdentity()
+    public async Task FailedFenceRetainsIdentityAfterCommandRecoveryExhaustion()
     {
         await using var server = new FakeRespServer(":42\r\n"u8.ToArray(), ":0\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(Options(server.Port,
@@ -163,9 +164,47 @@ public class ReconnectPolicyTests
         await server.DisposeAsync();
         await Assert.That(async () => await pending).Throws<RespireConnectionException>();
         await original.DisposeAsync();
+        await Assert.That(async () => await client.Core.Multiplexer.GetHealthyConnectionAsync(default)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(3))).ThrowsExactly<RespireReconnectLimitException>();
+        // Fences use a fresh control connection to the captured peer, independently of
+        // ordinary slot recovery. The stopped peer refuses that connection.
         await Assert.That(async () => await client.Core.Multiplexer.FenceRetiredConnectionsAsync()
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(3))).ThrowsExactly<SocketException>();
+        await Assert.That(client.Core.Multiplexer.HasPendingCorrectionFences).IsTrue();
+    }
+
+    [Test]
+    public async Task FenceCanCompleteWithoutRevivingExhaustedCommandRecovery()
+    {
+        await using var server = new FakeRespServer(3, FakeRespServer.OkReply, ":42\r\n"u8.ToArray(), ":0\r\n"u8.ToArray());
+        server.CloseConnectionAfterCommand = 4; // SETNAME, CLIENT ID, permission check, uncertain PING.
+        var handshakes = 0;
+        server.SuppressReply = command =>
+        {
+            if (command == "CLIENT SETNAME policy-test" && Interlocked.Increment(ref handshakes) == 2)
+            {
+                server.SendRawAsync("-ERR rejected replacement\r\n"u8.ToArray(), 1).GetAwaiter().GetResult();
+                return true;
+            }
+            if (command != "CLIENT KILL ID 42") return false;
+            server.SendRawAsync(":1\r\n"u8.ToArray(), 2).GetAwaiter().GetResult();
+            return true;
+        };
+        await using var client = await RespireClient.ConnectAsync(Options(server.Port,
+            new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 }) with
+            { ClientName = "policy-test" });
+        await client.Core.Multiplexer.EnsureReliableCorrectionOrderingAsync();
+        await Assert.That(async () => await client.PingAsync()).Throws<RespireConnectionException>();
+        await Assert.That(async () => await client.Core.Multiplexer.GetHealthyConnectionAsync(default)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(3))).ThrowsExactly<RespireReconnectLimitException>();
         await Assert.That(client.Core.Multiplexer.HasPendingCorrectionFences).IsTrue();
+
+        await client.Core.Multiplexer.FenceRetiredConnectionsAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+
+        await Assert.That(client.Core.Multiplexer.HasPendingCorrectionFences).IsFalse();
+        await Assert.That(handshakes).IsEqualTo(3);
+        await Assert.That(() => client.Core.Multiplexer.GetConnection()).ThrowsExactly<RespireReconnectLimitException>();
+        await Assert.That(server.ReceivedCommands.Count(command => command == "CLIENT KILL ID 42")).IsEqualTo(1);
     }
 
     [Test]

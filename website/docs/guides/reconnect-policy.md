@@ -47,6 +47,11 @@ events retain the original connection error. Identity setup requires every slot,
 throws when any required slot is exhausted even if another slot can still serve ordinary
 commands. Failed correction fences retain their server-side identity obligations; a
 terminal recovery error does not mark an unacknowledged fence complete.
+Fences connect directly to the captured physical peer with their own ConnectTimeout;
+they do not acquire or revive an exhausted command slot. A fence may therefore succeed
+after command recovery is exhausted, or report its own connection/permission error
+while retaining the owed identity. The command reconnect limit does not cap attempts
+to discharge that separate correctness obligation.
 A command that notices a failed connection
 can still fail while replacement proceeds, as it did before configuring this policy.
 Each connection attempt retains `ConnectTimeout`; initial connection setup is not retried
