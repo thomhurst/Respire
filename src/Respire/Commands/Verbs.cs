@@ -138,6 +138,10 @@ internal static class Verbs
     public static readonly Verb Copy = new("COPY");
     public static readonly Verb Touch = new("TOUCH");
     public static readonly Verb Scan = new("SCAN");
+    public static readonly Verb Sort = new("SORT");
+    public static readonly Verb SortRo = new("SORT_RO");
+    public static readonly Verb RandomKey = new("RANDOMKEY");
+    public static readonly Verb Move = new("MOVE");
 
     // Hashes
     public static readonly Verb HSet = new("HSET");

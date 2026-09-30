@@ -1600,6 +1600,12 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
 
     private sealed class BlockingUnlinkKeyCommands(IKeyCommands inner) : IKeyCommands
     {
+        public ValueTask<string?[]> SortAsync(RespireKey key, RespireSortOptions? options = null, CancellationToken cancellationToken = default) => inner.SortAsync(key, options, cancellationToken);
+        public ValueTask<T?[]> SortAsync<T>(RespireKey key, RespireSortOptions? options = null, CancellationToken cancellationToken = default) => inner.SortAsync<T>(key, options, cancellationToken);
+        public ValueTask<long> SortStoreAsync(RespireKey key, RespireKey destination, RespireSortOptions? options = null, CancellationToken cancellationToken = default) => inner.SortStoreAsync(key, destination, options, cancellationToken);
+        public ValueTask<RespireKey?> RandomAsync(CancellationToken cancellationToken = default) => inner.RandomAsync(cancellationToken);
+        public ValueTask<bool> MoveAsync(RespireKey key, int database, CancellationToken cancellationToken = default) => inner.MoveAsync(key, database, cancellationToken);
+
         private readonly TaskCompletionSource<long> _unlink =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 

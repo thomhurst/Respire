@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using Respire.Internal;
 using TUnit.Assertions;
@@ -12,6 +14,7 @@ public class ClusterReadOnlyTests
     private static readonly byte[] ReadOnlyReply = "-READONLY You can't write against a read only replica.\r\n"u8.ToArray();
 
     [Test]
+    [NotInParallel] // Preserve the final-seed scheduling budget while other wire tests run.
     public async Task UnavailableLastSeedLeavesReservedTimeForLastUsableSeed()
     {
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
@@ -620,4 +623,21 @@ public class ClusterReadOnlyTests
 
     private static byte[] FullTopology(int port)
         => Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{port}\r\n");
+    [Test]
+    public async Task UnavailableEndpointRemainsReservedAndRefusesConnections()
+    {
+        using var unavailable = new ReservedUnavailablePort();
+        var port = unavailable.Port;
+        using var competing = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
+        {
+            ExclusiveAddressUse = true,
+        };
+        await Assert.That(() => competing.Bind(new IPEndPoint(IPAddress.Loopback, port))).Throws<SocketException>();
+        using var connection = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var error = await Assert.That(async () => await connection.ConnectAsync(
+            new IPEndPoint(IPAddress.Loopback, port), timeout.Token)).Throws<SocketException>();
+        await Assert.That(error!.SocketErrorCode).IsEqualTo(SocketError.ConnectionRefused);
+    }
+
 }
