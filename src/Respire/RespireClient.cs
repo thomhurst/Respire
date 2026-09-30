@@ -1394,7 +1394,7 @@ public sealed partial class RespireClient : IRespireClient
             missingCount = keys.Length;
             for (var i = 0; i < keys.Length; i++)
             {
-                missingKeys[i] = ResolveKey(keys[i]);
+                missingKeys[i] = keysResolved ? keys[i] : ResolveKey(keys[i]);
                 missingIndexes[i] = i;
             }
         }

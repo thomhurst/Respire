@@ -853,12 +853,15 @@ public class SentinelRoutingTests
     [Arguments("GET", true)]
     [Arguments("MGET", true)]
     [Arguments("HGET", true)]
+    [Arguments("RAW MGET", false)]
+    [Arguments("RAW MGET", true)]
     public async Task RetirementDuringCacheLookupRejectsTheOldValue(string operation, bool coalesce)
     {
         static byte[]? Reply(string command, string value) => command switch
         {
             "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
             "GET key" or "HGET key field" => Encoding.ASCII.GetBytes($"$3\r\n{value}\r\n"),
+            "MGET tenant:key" => "*1\r\n$3\r\nbad\r\n"u8.ToArray(),
             "MGET key" => Encoding.ASCII.GetBytes($"*1\r\n$3\r\n{value}\r\n"),
             _ => null,
         };
@@ -870,6 +873,7 @@ public class SentinelRoutingTests
         {
             Protocol = RespProtocol.Resp3, ClientSideCache = new() { CoalesceConcurrentMisses = coalesce },
         });
+        await using var prefixed = client.WithKeyPrefix("tenant:");
         await Assert.That(await ReadAsync()).IsEqualTo("old");
         var generation = client.Core.Sentinel!.Current!;
         var connection = generation.Multiplexer.GetConnection();
@@ -892,10 +896,22 @@ public class SentinelRoutingTests
         intercept.Value = true;
         await Assert.That(await ReadAsync().WaitAsync(Limit)).IsEqualTo("new");
         await Assert.That(generation.IsRetired).IsTrue();
-        await Assert.That(promoted.ReceivedCommands.Any(command => command.StartsWith(operation + " "))).IsTrue();
+        var wireOperation = operation == "RAW MGET" ? "MGET" : operation;
+        await Assert.That(promoted.ReceivedCommands.Any(command => command.StartsWith(wireOperation + " "))).IsTrue();
+        if (operation == "RAW MGET")
+        {
+            await Assert.That(primary.ReceivedCommands.Count(command => command == "MGET key")).IsEqualTo(1);
+            await Assert.That(promoted.ReceivedCommands.Count(command => command == "MGET key")).IsEqualTo(1);
+            await Assert.That(promoted.ReceivedCommands.Any(command => command == "MGET tenant:key")).IsFalse();
+        }
 
         async Task<string?> ReadAsync()
         {
+            if (operation == "RAW MGET")
+            {
+                using var raw = await prefixed.ExecuteAsync((RespireCommand)"MGET", ["key"]);
+                return raw[0].AsString();
+            }
             if (operation == "GET") return await client.GetStringAsync("key");
             if (operation == "MGET") return (await client.Strings.GetManyAsync(["key"]))[0];
             using var result = await client.ExecuteAsync((RespireCommand)"HGET", ["key", "field"]);
