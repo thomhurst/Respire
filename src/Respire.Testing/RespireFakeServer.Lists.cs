@@ -37,46 +37,67 @@ public sealed partial class RespireFakeServer
         return counted ? FakeReply.Array(values) : values[0];
     }
 
-    private FakeReply ListIndex(byte[][] args, bool replace)
+    private FakeReply ListIndex(byte[][] args)
     {
         // Redis checks existence/type before parsing the index for LINDEX and LSET.
         var list = Find(args[1])?.List;
-        if (list is null) return replace ? FakeReply.Error("ERR no such key") : FakeReply.Null;
-        var index = Integer(args[2]);
-        if (index < 0) index += list.Count;
-        if (index < 0 || index >= list.Count)
-            return replace ? FakeReply.Error("ERR index out of range") : FakeReply.Null;
-        // The bounds check keeps every cast within the managed list's int range.
-        if (!replace) return FakeReply.Bulk(list[(int)index]);
-        list[(int)index] = args[3];
+        if (list is null) return FakeReply.Null;
+        var index = NormalizeListIndex(Integer(args[2]), list.Count);
+        return index is { } position ? FakeReply.Bulk(list[position]) : FakeReply.Null;
+    }
+
+    private FakeReply ListSet(byte[][] args)
+    {
+        var list = Find(args[1])?.List;
+        if (list is null) return FakeReply.Error("ERR no such key");
+        var index = NormalizeListIndex(Integer(args[2]), list.Count);
+        if (index is not { } position) return FakeReply.Error("ERR index out of range");
+        list[position] = args[3];
         return FakeReply.Ok;
     }
 
-    private FakeReply ListRange(byte[][] args, bool trim)
+    private static int? NormalizeListIndex(long index, int count)
     {
+        if (index < 0) index += count;
+        // The bounds check keeps every cast within the managed list's int range.
+        return index < 0 || index >= count ? null : (int)index;
+    }
+
+    private FakeReply ListRange(byte[][] args)
+    {
+        var (list, start, count) = ReadListRange(args);
+        if (list is null) return FakeReply.Array([]);
+        var values = new FakeReply[count];
+        for (var index = 0; index < count; index++) values[index] = FakeReply.Bulk(list[start + index]);
+        return FakeReply.Array(values);
+    }
+
+    private FakeReply ListTrim(byte[][] args)
+    {
+        var (list, start, count) = ReadListRange(args);
+        if (list is null) return FakeReply.Ok;
+        if (count == 0) _entries.Remove(args[1]);
+        else
+        {
+            list.RemoveRange(start + count, list.Count - start - count);
+            list.RemoveRange(0, start);
+        }
+        return FakeReply.Ok;
+    }
+
+    private (List<byte[]>? List, int Start, int Count) ReadListRange(byte[][] args)
+    {
+        // LRANGE/LTRIM parse both indexes before checking existence and type.
         var start = Integer(args[2]);
         var stop = Integer(args[3]);
         var list = Find(args[1])?.List;
-        if (list is null) return trim ? FakeReply.Ok : FakeReply.Array([]);
+        if (list is null) return (null, 0, 0);
         if (start < 0) start += list.Count;
         if (stop < 0) stop += list.Count;
         start = Math.Max(0, start);
         stop = Math.Min(list.Count - 1, stop);
         // A nonempty range lies inside the int-sized list; empty ranges never cast start.
-        var count = stop < start ? 0 : (int)(stop - start + 1);
-        if (!trim)
-        {
-            var values = new FakeReply[count];
-            for (var index = 0; index < count; index++) values[index] = FakeReply.Bulk(list[(int)start + index]);
-            return FakeReply.Array(values);
-        }
-        if (count == 0) _entries.Remove(args[1]);
-        else
-        {
-            list.RemoveRange((int)start + count, list.Count - (int)start - count);
-            list.RemoveRange(0, (int)start);
-        }
-        return FakeReply.Ok;
+        return stop < start ? (list, 0, 0) : (list, (int)start, (int)(stop - start + 1));
     }
 
     private FakeReply ListRemove(byte[][] args)
@@ -115,6 +136,7 @@ public sealed partial class RespireFakeServer
     private FakeReply ListPosition(byte[][] args)
     {
         long rank = 1, count = -1, maxLength = 0;
+        // Validate each occurrence immediately: a later option cannot repair an invalid one.
         for (var index = 3; index < args.Length; index += 2)
         {
             if (index + 1 == args.Length) return Syntax("LPOS");
@@ -140,6 +162,7 @@ public sealed partial class RespireFakeServer
         List<FakeReply>? positions = count >= 0 ? new() : null;
         if (list is not null)
         {
+            // A linear scan models LPOS ordering and MAXLEN for bounded fake-server data.
             var matches = 0L;
             for (var scanned = 0; scanned < list.Count && (maxLength == 0 || scanned < maxLength); scanned++)
             {

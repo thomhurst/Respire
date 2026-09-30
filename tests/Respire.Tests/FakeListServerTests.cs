@@ -11,6 +11,24 @@ public class FakeListServerTests
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task PushOwnsTheRequestKeyAndElementBuffers(int protocol)
+    {
+        await using var server = new RespireFakeServer();
+        await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = (RespProtocol)protocol });
+        byte[] key = [255, 0, 1], first = [254, 0, 2], second = [253, 0, 3];
+        await Number(client, "LPUSH", key, first, second);
+        System.Array.Fill(key, (byte)0);
+        System.Array.Fill(first, (byte)0);
+        System.Array.Fill(second, (byte)0);
+        using var result = await client.ExecuteAsync("LRANGE", new byte[] { 255, 0, 1 }, 0, -1);
+        await Assert.That(result.Count).IsEqualTo(2);
+        await Assert.That(result[0].AsBytes()).IsEquivalentTo(new byte[] { 253, 0, 3 }, CollectionOrdering.Matching);
+        await Assert.That(result[1].AsBytes()).IsEquivalentTo(new byte[] { 254, 0, 2 }, CollectionOrdering.Matching);
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task MutationsPreserveExpiryAndEmptyListsLoseTheirKey(int protocol)
     {
         var clock = new RespireFakeClock();

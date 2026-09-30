@@ -118,6 +118,8 @@ Negative indexes count from the tail. `LRANGE`/`LTRIM` use inclusive end indexes
 `COUNT`, a missing match returns null; with it, the reply is an array. Count-pop returns
 null for a missing key and an empty array for count zero on an existing list.
 Ranks must be nonzero and have a magnitude no greater than `long.MaxValue`, matching Redis 7.2+.
+Repeated valid options use their final values, but every occurrence is validated immediately:
+`RANK 0 RANK 1`, `COUNT -1 COUNT 1`, and `MAXLEN -1 MAXLEN 0` still fail.
 Removing the final element deletes the key and its TTL. Wrong types and malformed options
 fail without changing data. Immediate commands and batches use the same handlers.
 
