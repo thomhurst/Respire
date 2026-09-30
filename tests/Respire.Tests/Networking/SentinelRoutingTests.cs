@@ -328,15 +328,23 @@ public class SentinelRoutingTests
     }
 
     [Test]
-    public async Task ConcurrentFirstWritesShareOneValidatedDiscovery()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ConcurrentFirstWritesAndRediscoveryShareOneValidatedDiscovery(bool rediscovery)
     {
         await using var primary = Primary();
         await using var sentinel = Sentinel(() => primary.Port);
         await using var client = RespireClient.Create(Options(sentinel.Port));
+        if (rediscovery)
+        {
+            await client.PingAsync();
+            var generation = client.Core.Sentinel!.Current!;
+            await generation.Multiplexer.GetConnection().DisposeAsync();
+        }
         await Task.WhenAll(Enumerable.Range(0, 16)
             .Select(index => client.SetAsync($"key:{index}", "value").AsTask())).WaitAsync(Limit);
-        await Assert.That(sentinel.ReceivedCommands.Count(command => command.StartsWith("SENTINEL GET-MASTER"))).IsEqualTo(1);
-        await Assert.That(primary.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(1);
+        await Assert.That(sentinel.ReceivedCommands.Count(command => command.StartsWith("SENTINEL GET-MASTER"))).IsEqualTo(rediscovery ? 2 : 1);
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "ROLE")).IsEqualTo(rediscovery ? 2 : 1);
         await Assert.That(primary.ReceivedCommands.Count(command => command.StartsWith("SET "))).IsEqualTo(16);
     }
 
@@ -1239,11 +1247,20 @@ public class SentinelRoutingTests
     [Arguments("blocking", true)]
     [Arguments("script", false)]
     [Arguments("script", true)]
+    [Arguments("batch", false)]
+    [Arguments("batch", true)]
+    [Arguments("durability", false)]
+    [Arguments("durability", true)]
+    [Arguments("transaction", false)]
+    [Arguments("transaction", true)]
     public async Task SuccessfulSentinelOperationIncludesDiscoveryInItsDuration(string kind, bool trace)
     {
-        var operation = kind == "blocking" ? "BLPOP" : "EVALSHA";
+        var operation = kind switch { "blocking" => "BLPOP", "script" => "EVALSHA", _ => "SET" };
         await using var primary = Primary((_, command) => command switch
         {
+            "SET key value" when kind == "transaction" => "+QUEUED\r\n"u8.ToArray(),
+            "EXEC" => "*1\r\n+OK\r\n"u8.ToArray(),
+            "WAIT 1 1000" => ":1\r\n"u8.ToArray(),
             "BLPOP key 0" => "*2\r\n$3\r\nkey\r\n$5\r\nvalue\r\n"u8.ToArray(),
             _ when command.StartsWith("EVALSHA ") => ":1\r\n"u8.ToArray(),
             _ => null,
@@ -1302,10 +1319,23 @@ public class SentinelRoutingTests
         async Task ExecuteAsync()
         {
             if (kind == "blocking") await client.Lists.LeftPopAsync("key", waitFor: Timeout.InfiniteTimeSpan);
-            else
+            else if (kind == "script")
             {
                 using var result = await client.Scripts.ExecuteAsync(RespireScript.Create("return 1"));
                 await Assert.That(result.AsInteger()).IsEqualTo(1);
+            }
+            else if (kind == "transaction")
+            {
+                await using var transaction = client.CreateTransaction();
+                _ = transaction.Set("key", "value");
+                await transaction.CommitAsync();
+            }
+            else
+            {
+                using var batch = client.CreateBatch();
+                _ = batch.Set("key", "value");
+                if (kind == "durability") await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1));
+                else await batch.ExecuteAsync();
             }
         }
     }
@@ -1596,6 +1626,131 @@ public class SentinelRoutingTests
             await Assert.That(generation.Retirement.IsCompleted).IsTrue();
             await Assert.That(generation.CountedAsRetired).IsFalse();
         }
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task BlockingDiscoveryTimeoutNeverNamesAnUnselectedPeer(bool rediscovery, bool cancelCaller)
+    {
+        await using var primary = Primary();
+        await using var sentinel = Sentinel(() => primary.Port);
+        await using var client = RespireClient.Create(Options(sentinel.Port));
+        if (rediscovery)
+        {
+            await client.PingAsync();
+            var generation = client.Core.Sentinel!.Current!;
+            using var error = Respire.Protocol.RespValue.Error("READONLY replica");
+            generation.ObserveResponse(generation.Multiplexer.GetConnection(), "SET", in error);
+        }
+        var queried = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        sentinel.SuppressReply = command =>
+        {
+            if (!command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")) return false;
+            queried.TrySetResult();
+            return true;
+        };
+        using var caller = new CancellationTokenSource();
+        using var deadline = Respire.Internal.CommandTimeoutCancellation.Create(caller.Token, Limit);
+        var pending = client.SendBlockingAsync("BLPOP", new Respire.Commands.Cmd1(Respire.Commands.Verbs.BLPop, "key"),
+            deadline.Token, cancellationTimeout: Limit, callerCancellationToken: caller.Token).AsTask();
+        await queried.Task.WaitAsync(Limit);
+        if (cancelCaller)
+        {
+            caller.Cancel();
+            await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<OperationCanceledException>();
+        }
+        else
+        {
+            deadline.Cancel();
+            var error = await Assert.That(async () => await pending.WaitAsync(Limit)).ThrowsExactly<RespireTimeoutException>();
+            await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
+            await Assert.That(error.Diagnostics.Endpoint).IsNull();
+            await Assert.That(error.Diagnostics.ConnectionId).IsNull();
+        }
+        await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("BLPOP "))).IsFalse();
+    }
+
+    [Test]
+    [Arguments(RespireClientTrackingMode.OptIn, false)]
+    [Arguments(RespireClientTrackingMode.OptIn, true)]
+    [Arguments(RespireClientTrackingMode.Broadcast, false)]
+    [Arguments(RespireClientTrackingMode.Broadcast, true)]
+    public async Task ContinuityObserverCanSynchronouslyReadFromPromotedPrimary(RespireClientTrackingMode mode, bool coalesce)
+    {
+        static byte[]? Reply(string command, string value) => command switch
+        {
+            "HELLO 3" => "%1\r\n+proto\r\n:3\r\n"u8.ToArray(),
+            "GET tenant:key" => Encoding.ASCII.GetBytes($"${value.Length}\r\n{value}\r\n"),
+            _ => null,
+        };
+        await using var first = Primary((_, command) => Reply(command, "old"));
+        await using var second = Primary((_, command) => Reply(command, "new"));
+        var port = first.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
+        {
+            Protocol = RespProtocol.Resp3,
+            ClientSideCache = new() { TrackingMode = mode, CoalesceConcurrentMisses = coalesce },
+        });
+        await using var view = client.WithKeyPrefix("tenant:");
+        await Assert.That(await view.GetStringAsync("key")).IsEqualTo("old");
+        await Assert.That(await view.GetStringAsync("key")).IsEqualTo("old");
+        var observed = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reading = 0;
+        using var subscription = client.ClientSideCache!.SubscribeInvalidations("tenant:key", change =>
+        {
+            if (!change.Reasons.HasFlag(RespireClientCacheInvalidationReason.ContinuityLost)
+                || Interlocked.CompareExchange(ref reading, 1, 0) != 0) return;
+            try { observed.TrySetResult(view.GetStringAsync("key").AsTask().WaitAsync(Limit).GetAwaiter().GetResult()); }
+            catch (Exception error) { observed.TrySetException(error); }
+        });
+        Volatile.Write(ref port, second.Port);
+        var generation = client.Core.Sentinel!.Current!;
+        using var rejection = Respire.Protocol.RespValue.Error("READONLY replica");
+        generation.ObserveResponse(generation.Multiplexer.GetConnection(), "SET", in rejection);
+        await Assert.That(await observed.Task.WaitAsync(Limit)).IsEqualTo("new");
+        await Assert.That(subscription.LastObserverException).IsNull();
+        await Assert.That(first.ReceivedCommands.Count(command => command == "GET tenant:key")).IsEqualTo(1);
+        await Assert.That(second.ReceivedCommands.Count(command => command == "GET tenant:key")).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments("transaction", false)]
+    [Arguments("transaction", true)]
+    [Arguments("identity", false)]
+    [Arguments("identity", true)]
+    public async Task OtherSentinelAcquisitionTimeoutsDoNotReportDiscoveryPeers(string kind, bool rediscovery)
+    {
+        await using var primary = Primary();
+        await using var sentinel = Sentinel(() => primary.Port);
+        await using var client = RespireClient.Create(Options(sentinel.Port) with { CommandTimeout = TimeSpan.FromSeconds(1) });
+        if (rediscovery)
+        {
+            await client.PingAsync();
+            var generation = client.Core.Sentinel!.Current!;
+            using var rejection = Respire.Protocol.RespValue.Error("READONLY replica");
+            generation.ObserveResponse(generation.Multiplexer.GetConnection(), "SET", in rejection);
+        }
+        var queried = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        sentinel.SuppressReply = command =>
+        {
+            if (!command.StartsWith("SENTINEL GET-MASTER-ADDR-BY-NAME ")) return false;
+            queried.TrySetResult();
+            return true;
+        };
+        await using var transaction = client.CreateTransaction();
+        _ = transaction.Set("key", "value");
+        var pending = kind == "transaction" ? transaction.CommitAsync().AsTask()
+            : (Task)client.EnsureReliableCorrectionOrderingAsync().AsTask();
+        await queried.Task.WaitAsync(Limit);
+        var error = await Assert.That(async () => await pending.WaitAsync(Limit)).ThrowsExactly<RespireTimeoutException>();
+        await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
+        await Assert.That(error.Diagnostics.Endpoint).IsNull();
+        await Assert.That(error.Diagnostics.ConnectionId).IsNull();
+        await Assert.That(primary.ReceivedCommands.Any(command => command is "CLIENT ID" or "MULTI")).IsFalse();
     }
 
     private sealed class FenceClock : TimeProvider

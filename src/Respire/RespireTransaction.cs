@@ -284,9 +284,12 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                     }
                     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                     {
-                        throw new RespireTimeoutException("MULTI/EXEC", timeout, null,
-                            core.Cluster is null ? core.Multiplexer.CaptureConnectionWait()
-                                : RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
+                        var diagnostics = core.Cluster is null && core.Sentinel is null
+                            ? core.Multiplexer.CaptureConnectionWait()
+                            : RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting);
+                        if (core.Sentinel is not null && connection is not null)
+                            diagnostics = connection.CaptureTimeoutDiagnostics();
+                        throw new RespireTimeoutException("MULTI/EXEC", timeout, null, diagnostics);
                     }
                 }
                 else
@@ -407,7 +410,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                     if (core.Sentinel is not null)
                         telemetry = RespireTelemetry.StartBatchOperation(
                             "MULTI", _ops, static op => op.Operation,
-                            connection.Host, connection.Port, core.Options.Database, out telemetryOperation);
+                            connection.Host, connection.Port, core.Options.Database, out telemetryOperation, sentinelStarted);
                     RespValue reply;
                     try
                     {

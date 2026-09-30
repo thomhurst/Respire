@@ -83,8 +83,9 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             acquired = true;
             lock (_gate) ObjectDisposedException.ThrowIf(_disposed, this);
             // Another discovery owner may have published while this caller awaited the gate.
-            if (Current is { IsRetired: false } existing && existing.Multiplexer.IsConnected) return existing;
-            if (Current is { } previous) Invalidate(previous);
+            var previous = Current;
+            if (previous is { IsRetired: false } && previous.Multiplexer.IsConnected) return previous;
+            if (previous is not null) Invalidate(previous);
             var replacement = await SentinelResolver.ResolveAndConnectPrimaryAsync(
                 core.Options, ConnectGenerationAsync, linked.Token, _discovery).ConfigureAwait(false);
             unpublished = replacement;
@@ -209,6 +210,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 catch (Exception) { /* Diagnostics must not abandon correction-fence cleanup. */ }
             }
             var delay = 1;
+            long? lastWarning = null;
             while (generation.Multiplexer.HasPendingCorrectionFences && !_lifetime.IsCancellationRequested)
             {
                 try
@@ -217,7 +219,13 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 }
                 catch (Exception error) when (!_lifetime.IsCancellationRequested)
                 {
-                    core.Logger?.LogWarning(error, "Sentinel generation at {Endpoint} retains an unacknowledged correction fence", generation.Endpoint);
+                    var now = Clock.GetTimestamp();
+                    if (lastWarning is null || Clock.GetElapsedTime(lastWarning.Value, now) >= TimeSpan.FromMinutes(5))
+                    {
+                        lastWarning = now;
+                        try { core.Logger?.LogWarning(error, "Sentinel generation at {Endpoint} retains an unacknowledged correction fence", generation.Endpoint); }
+                        catch (Exception) { /* Logging must not abandon an owed fence. */ }
+                    }
                     await Task.Delay(TimeSpan.FromSeconds(delay), Clock, _lifetime.Token).ConfigureAwait(false);
                     delay = Math.Min(delay * 2, 30);
                 }
@@ -231,7 +239,10 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             try { await Task.WhenAll(poolDrain, connectionsDrained).ConfigureAwait(false); }
             catch (Exception poolError) { error = new AggregateException(error, poolError); }
             if (!_lifetime.IsCancellationRequested)
-                core.Logger?.LogWarning(error, "Sentinel generation cleanup remains owned at {Endpoint}", generation.Endpoint);
+            {
+                try { core.Logger?.LogWarning(error, "Sentinel generation cleanup failed at {Endpoint}; retained until client disposal", generation.Endpoint); }
+                catch (Exception) { /* Ownership remains available to disposal even when logging fails. */ }
+            }
         }
     }
 

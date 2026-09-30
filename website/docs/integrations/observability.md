@@ -141,8 +141,11 @@ requires a separate explicit contract.
 Sentinel batch, durability-batch, and transaction acquisition failures still emit an error
 activity and `db.client.operation.duration`, including time spent discovering or connecting.
 Those failure records omit `server.address` and `server.port` because no data connection was
-acquired. Successful acquisition retains the selected primary's endpoint on the operation;
-the Sentinel seed is never substituted as the executing Redis server.
+acquired. Successful batch, durability, transaction, blocking, and script durations also
+include discovery/acquisition time while retaining the selected primary's endpoint on the operation;
+the Sentinel seed is never substituted as the executing Redis server. Blocking, transaction,
+and correction-identity timeouts before data-peer selection likewise carry endpoint-less
+connecting diagnostics; a selected physical connection retains its own diagnostic identity.
 
 `ConnectionStateChanged` reports the retired endpoint and validated replacement for reactive
 Sentinel handoffs. Prefix views share these events. The `respire.sentinel.failover` counter
@@ -154,6 +157,9 @@ The process-wide `respire.sentinel.generations.retired` gauge reports retired ge
 still owned while accepted work or correction fences drain. Continued growth warrants
 investigation. A persistently nonzero value after normal commands and borrowed leases have
 finished can indicate an unreachable correction peer or failed cleanup; inspect the warning
-logs. Retention has no deadline that abandons an unacknowledged fence. Client disposal aborts
+logs. Fence retries retain their one-to-30-second backoff, but warnings are limited to one
+per retired generation every five minutes. An unexpected terminal cleanup failure logs that
+the generation remains retained until disposal; the gauge deliberately continues counting
+that ownership. Retention has no deadline that abandons an unacknowledged fence. Client disposal aborts
 and joins retained connection work.
 See [Sentinel connections](../fundamentals/connections.md#redis-sentinel) for drain and no-replay behavior.

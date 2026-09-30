@@ -118,7 +118,7 @@ public sealed partial class RespireBatch
             if (core.Sentinel is not null)
                 telemetry = RespireTelemetry.StartBatchOperation(
                     operation, _ops, static op => op.Operation,
-                    connection.Host, connection.Port, core.Options.Database, out telemetryOperation);
+                    connection.Host, connection.Port, core.Options.Database, out telemetryOperation, sentinelStarted);
             cancellationToken.ThrowIfCancellationRequested();
             var writes = new Task<Exception?>[_ops.Count];
             for (var index = 0; index < _ops.Count; index++)

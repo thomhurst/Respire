@@ -283,7 +283,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
             if (core.Sentinel is not null)
                 telemetry = RespireTelemetry.StartBatchOperation(
                     "PIPELINE", _ops, static op => op.Operation,
-                    connection.Host, connection.Port, core.Options.Database, out telemetryOperation);
+                    connection.Host, connection.Port, core.Options.Database, out telemetryOperation, sentinelStarted);
         }
         catch (Exception ex)
         {

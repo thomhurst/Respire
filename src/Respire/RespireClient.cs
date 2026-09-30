@@ -2692,7 +2692,7 @@ public sealed partial class RespireClient : IRespireClient
                     ? new RespireTimeoutException(operation, timeout, cancelled,
                         connection?.CaptureDedicatedTimeoutDiagnostics()
                         ?? RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting,
-                            core.Endpoint))
+                            core.Sentinel is null ? core.Endpoint : null))
                     : null;
                 if (connection is null)
                     RespireTelemetry.RecordUnroutedFailure(operation, core.Options.Database,
@@ -2905,18 +2905,22 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
+        Infrastructure.RespireConnectionMultiplexer? selected = null;
         try
         {
             if (core.Sentinel is not null)
                 await core.EnsureConnectedAsync(timeoutSource.Token).ConfigureAwait(false);
-            await core.Multiplexer.EnsureReliableCorrectionOrderingAsync(timeoutSource.Token).ConfigureAwait(false);
+            selected = core.Multiplexer;
+            await selected.EnsureReliableCorrectionOrderingAsync(timeoutSource.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             // No cache command is sent until identity setup completes, so timing this stage out
             // leaves no cache mutation to correct.
             throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, null,
-                core.Multiplexer.CaptureConnectionWait());
+                selected?.CaptureConnectionWait() ?? (core.Sentinel is null
+                    ? core.Multiplexer.CaptureConnectionWait()
+                    : RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting)));
         }
         catch (RespireTimeoutException ex)
         {

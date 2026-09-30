@@ -257,7 +257,8 @@ internal static class RespireTelemetry
         string host,
         int port,
         int database,
-        out string operation)
+        out string operation,
+        long started = 0)
     {
         if (!IsEnabled)
         {
@@ -271,7 +272,8 @@ internal static class RespireTelemetry
             host,
             port,
             database,
-            batchSize: operations.Count == 1 ? null : operations.Count);
+            batchSize: operations.Count == 1 ? null : operations.Count,
+            started: started);
     }
 
     private static string BatchOperationName<T>(
@@ -309,6 +311,7 @@ internal static class RespireTelemetry
             RespireConnection? connection = null,
             int? batchSize = null)
         {
+            if (activity is null && startTimestamp == 0) return;
             var endpoint = connection is null ? core.Endpoint : new RespireEndpoint(connection.Host, connection.Port);
             Complete(operation, endpoint.Host, endpoint.Port, core.Options.Database,
                 storedProcedureName, error, connection, batchSize);
