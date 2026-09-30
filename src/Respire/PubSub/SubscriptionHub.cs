@@ -277,7 +277,8 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         }
         catch (Exception ex)
         {
-            core.Logger?.LogDebug(ex, "Closing a failed subscription connection failed");
+            try { core.Logger?.LogDebug(ex, "Closing a failed subscription connection failed"); }
+            catch { /* Cleanup remains observed even when a user logger throws. */ }
         }
     }
 

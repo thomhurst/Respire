@@ -294,6 +294,13 @@ internal sealed partial class SubscriptionHub
         }
         catch (Exception error) when (error is RespireException or OperationCanceledException)
         {
+            try
+            {
+                core.Logger?.LogDebug(error,
+                    "Closing sharded subscription connection {Host}:{Port} after SUNSUBSCRIBE failed",
+                    primary.Owner.Host, primary.Owner.Port);
+            }
+            catch { /* A user logger must not prevent uncertain socket cleanup. */ }
             await ClosePrimaryAsync(primary).ConfigureAwait(false);
         }
         finally
@@ -445,7 +452,11 @@ internal sealed partial class SubscriptionHub
                         }
                     }
                     if (failure is null) attempt = 0;
-                    else core.Logger?.LogWarning(failure, "Sharded pub/sub recovery attempt {Attempt} failed", attempt);
+                    else
+                    {
+                        try { core.Logger?.LogWarning(failure, "Sharded pub/sub recovery attempt {Attempt} failed", attempt); }
+                        catch { /* A user logger must not terminate the detached recovery loop. */ }
+                    }
                 }
                 finally { _controlGate.Release(); }
             }

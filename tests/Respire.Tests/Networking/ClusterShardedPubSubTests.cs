@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.Extensions.Logging;
 using Respire.Internal;
 using Respire.Commands;
 using Respire.Networking;
@@ -133,14 +134,17 @@ public class ClusterShardedPubSubTests
     }
 
     [Test]
-    public async Task ConfiguredExhaustionCompletesShardedSubscriptionsAndLeavesRegularSubscriptionsUsable()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ConfiguredExhaustionCompletesShardedSubscriptionsAndLeavesRegularSubscriptionsUsable(bool throwingLogger)
     {
         await using var cluster = new Cluster(2);
+        using var logger = new ThrowingRecoveryLogger();
         await using var client = cluster.CreateClient(new()
         {
             InitialDelay = TimeSpan.FromMilliseconds(10), MaxDelay = TimeSpan.FromMilliseconds(10),
             JitterRatio = 0, MaxAttempts = 2,
-        });
+        }, throwingLogger ? logger : null);
         await using var subscription = await client.SubscribeShardedAsync("bar");
         cluster.FirstOverride = (_, command) => command == "SSUBSCRIBE bar" ? "-ERR denied\r\n"u8.ToArray() : null;
         await cluster.First.SendRawAsync(cluster.Confirmation("sunsubscribe", "bar"), ControlIds(cluster.First).Last());
@@ -149,6 +153,7 @@ public class ClusterShardedPubSubTests
         await Assert.That(async () => await client.SubscribeShardedAsync("foo")).Throws<RespireReconnectLimitException>();
         await using var regular = await client.SubscribeAsync("regular");
         await Assert.That(regular.IsDisposed).IsFalse();
+        await Assert.That(logger.Failures).IsEqualTo(throwingLogger ? 1 : 0);
     }
 
     [Test]
@@ -420,6 +425,23 @@ public class ClusterShardedPubSubTests
         while (!predicate()) await Task.Delay(5, deadline.Token);
     }
 
+    private sealed class ThrowingRecoveryLogger : ILoggerFactory, ILogger
+    {
+        internal int Failures;
+        public ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (!formatter(state, exception).StartsWith("Sharded pub/sub recovery attempt", StringComparison.Ordinal)) return;
+            Interlocked.Increment(ref Failures);
+            throw new InvalidOperationException("Test logger failure");
+        }
+    }
+
     private sealed class Cluster : IAsyncDisposable
     {
         private readonly int _protocol;
@@ -434,9 +456,10 @@ public class ClusterShardedPubSubTests
             First.ReplyOverride = (id, command) => FirstOverride?.Invoke(id, command) ?? Reply(command);
             Second.ReplyOverride = (id, command) => SecondOverride?.Invoke(id, command) ?? Reply(command);
         }
-        internal RespireClient CreateClient(RespireReconnectPolicy? policy = null) => RespireClient.Create(new RespireOptions
+        internal RespireClient CreateClient(RespireReconnectPolicy? policy = null, ILoggerFactory? logger = null) => RespireClient.Create(new RespireOptions
         {
             UseCluster = true, Protocol = (RespProtocol)_protocol, Connections = 1, ReconnectPolicy = policy,
+            LoggerFactory = logger,
             Endpoints = { new RespireEndpoint("127.0.0.1", First.Port) }, ConnectTimeout = TimeSpan.FromSeconds(1),
         });
         private byte[] Reply(string command)

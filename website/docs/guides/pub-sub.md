@@ -111,6 +111,10 @@ affected endpoints; exhaustion marks them disconnected. Topology-driven recovery
 subscription owners rather than an unrelated configured seed. New sharded subscriptions
 fail while an episode is active, with or without a configured `ReconnectPolicy`; subscribe
 again after recovery completes. Existing subscriptions keep their buffers and routes.
+With a null policy, recovery retries indefinitely: the first attempt is immediate, then
+exponential waits begin at 250 ms and stop growing at five seconds. New subscriptions do
+not wait for that episode; during a prolonged outage they continue to fail promptly.
+Configure `ReconnectPolicy.MaxAttempts` to bound recovery.
 
 The sharded recovery budget is
 separate from regular channel and pattern subscriptions. Exhausting that budget completes all
