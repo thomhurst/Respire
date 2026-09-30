@@ -8,6 +8,7 @@ namespace Respire.Internal;
 
 internal static class SentinelResolver
 {
+    private const string ReconnectScope = "sentinel-discovery";
     private static readonly Verb SentinelPeers = new(-1, "SENTINEL", "SENTINELS");
     public static async ValueTask<TResult> ResolveAndConnectPrimaryAsync<TResult>(
         RespireOptions options,
@@ -45,7 +46,7 @@ internal static class SentinelResolver
             if (index > 0 && options.ReconnectPolicy is { } policy)
             {
                 var delay = policy.GetDelay(++fallbackAttempts);
-                RespireTelemetry.RecordDiscoveryReconnect(endpoint, "sentinel-discovery", fallbackAttempts, delay, logger);
+                RespireTelemetry.RecordDiscoveryReconnect(endpoint, ReconnectScope, fallbackAttempts, delay, logger);
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
             using var discoveryTimeoutSource = CommandTimeoutCancellation.Create(
@@ -103,7 +104,7 @@ internal static class SentinelResolver
                     // Exhaustion means the policy prevented trying a remaining candidate.
                     // Reaching the same count on the final candidate is ordinary depletion.
                     if (index + 1 < sentinelEndpoints.Count)
-                        RespireTelemetry.RecordDiscoveryReconnect(endpoint, "sentinel-discovery", fallbackAttempts, null, logger);
+                        RespireTelemetry.RecordDiscoveryReconnect(endpoint, ReconnectScope, fallbackAttempts, null, logger);
                     break;
                 }
             }
