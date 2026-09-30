@@ -74,7 +74,11 @@ internal sealed class RespireConnection : IAsyncDisposable
     private WriteBuffer _spareBuffer;
     private int _activeReplyCount;
     private bool _dead;
-    private int _disposed;
+    private bool _retired;
+    private bool _sending;
+    private TaskCompletionSource? _retirementCompletion;
+    private TaskCompletionSource? _disposeCompletion;
+    private bool _drainedSuccessfully;
     private long _serverClientId;
     private static long _nextDiagnosticId;
     private readonly long _diagnosticId = Interlocked.Increment(ref _nextDiagnosticId);
@@ -94,6 +98,8 @@ internal sealed class RespireConnection : IAsyncDisposable
     public string Host { get; }
     public int Port { get; }
     public bool IsConnected => !Volatile.Read(ref _dead);
+    internal bool IsAcceptingCommands => IsConnected && !Volatile.Read(ref _retired);
+    internal bool DrainedSuccessfully => Volatile.Read(ref _drainedSuccessfully);
     internal string? NetworkPeerAddress => _networkPeerAddress;
     internal int? NetworkPeerPort => _networkPeerPort;
 
@@ -897,6 +903,7 @@ internal sealed class RespireConnection : IAsyncDisposable
         startedBatch = false;
         writeTask = null;
 
+        ThrowIfRetired();
         // Racy pre-check; the authoritative one runs under the gate below. This keeps the
         // ring-full retry loop from re-serializing the frame on every attempt.
         if (_inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
@@ -928,6 +935,7 @@ internal sealed class RespireConnection : IAsyncDisposable
 
             lock (_writeGate)
             {
+                ThrowIfRetired();
                 if (_dead)
                 {
                     throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
@@ -998,6 +1006,7 @@ internal sealed class RespireConnection : IAsyncDisposable
         writeTask = null;
         lock (_writeGate)
         {
+            ThrowIfRetired();
             if (_dead)
             {
                 throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
@@ -1394,6 +1403,7 @@ internal sealed class RespireConnection : IAsyncDisposable
                             break;
                         }
 
+                        Volatile.Write(ref _sending, true);
                         sending = _activeBuffer;
                         _activeBuffer = _spareBuffer;
                         _spareBuffer = sending;
@@ -1440,6 +1450,8 @@ internal sealed class RespireConnection : IAsyncDisposable
                     sending.CompleteWrite();
                     sending.Reset();
                     sending = null;
+                    Volatile.Write(ref _sending, false);
+                    if (Volatile.Read(ref _retired)) _capacitySignal.Signal();
 
                     if (++synchronousBatches >= MaxSynchronousBatchesBeforeYield)
                     {
@@ -2126,36 +2138,98 @@ internal sealed class RespireConnection : IAsyncDisposable
         }
     }
 
-    public async ValueTask DisposeAsync()
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void ThrowIfRetired()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-        {
-            return;
-        }
+        if (Volatile.Read(ref _retired))
+            throw new RespireConnectionRetiredException(Host, Port);
+    }
 
-        Abort();
-        await _receiveTask.ConfigureAwait(false);
-        await _flushTask.ConfigureAwait(false);
-        if (_watchdogTask is not null)
-        {
-            await _watchdogTask.ConfigureAwait(false);
-        }
-
-        if (_deadlineSweepTask is not null)
-        {
-            await _deadlineSweepTask.ConfigureAwait(false);
-        }
-
+    /// <summary>Stops acceptance atomically with enqueue, then drains accepted frames and replies.</summary>
+    internal Task RetireAsync()
+    {
+        TaskCompletionSource completion;
         lock (_writeGate)
         {
-            _activeBuffer.Release();
-            _spareBuffer.Release();
+            if (_retirementCompletion is not null) return _retirementCompletion.Task;
+            completion = _retirementCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            Volatile.Write(ref _retired, true);
         }
+        _capacitySignal.Signal(); // Unaccepted full-ring waiters must fail immediately.
+        _ = DrainAndDisposeAsync(completion);
+        return completion.Task;
+    }
 
-        _tlsStream?.Dispose();
-        _socket.Dispose();
-        _watchdogCancellation?.Dispose();
-        _logger?.LogDebug("Disconnected from {Host}:{Port}", Host, Port);
+    private async Task DrainAndDisposeAsync(TaskCompletionSource completion)
+    {
+        try
+        {
+            while (true)
+            {
+                var progress = _capacitySignal.WaitAsync(CancellationToken.None);
+                lock (_writeGate)
+                {
+                    if (_dead) break;
+                    if (_inflight.Count == 0 && _activeBuffer.Count == 0 && !Volatile.Read(ref _sending))
+                    {
+                        Volatile.Write(ref _drainedSuccessfully, true);
+                        break;
+                    }
+                }
+                ScheduleFlush(startedBatch: false);
+                await Task.WhenAny(progress, _receiveTask).ConfigureAwait(false);
+            }
+            await DisposeAsync().ConfigureAwait(false);
+            // The receive loop has published its final batch. Preserve successful replies
+            // already dequeued from the ring before announcing retirement completion.
+            await _completions.WaitForIdleAsync().ConfigureAwait(false);
+            completion.TrySetResult();
+        }
+        catch (Exception ex)
+        {
+            completion.TrySetException(ex);
+        }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        TaskCompletionSource completion;
+        lock (_writeGate)
+        {
+            if (_disposeCompletion is not null) return new ValueTask(_disposeCompletion.Task);
+            completion = _disposeCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+        Abort();
+        _ = DisposeCoreAsync(completion);
+        return new ValueTask(completion.Task);
+    }
+
+    private async Task DisposeCoreAsync(TaskCompletionSource completion)
+    {
+        try
+        {
+            await _receiveTask.ConfigureAwait(false);
+            await _flushTask.ConfigureAwait(false);
+            if (_watchdogTask is not null)
+                await _watchdogTask.ConfigureAwait(false);
+            if (_deadlineSweepTask is not null)
+                await _deadlineSweepTask.ConfigureAwait(false);
+
+            lock (_writeGate)
+            {
+                _activeBuffer.Release();
+                _spareBuffer.Release();
+            }
+            _tlsStream?.Dispose();
+            _socket.Dispose();
+            _watchdogCancellation?.Dispose();
+            _logger?.LogDebug("Disconnected from {Host}:{Port}", Host, Port);
+            completion.TrySetResult();
+        }
+        catch (Exception ex)
+        {
+            completion.TrySetException(ex);
+        }
     }
 }
 

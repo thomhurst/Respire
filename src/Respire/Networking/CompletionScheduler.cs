@@ -36,6 +36,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     private Entry[]?[] _spares = new Entry[]?[4];
     private int _spareCount;
     private bool _running;
+    private TaskCompletionSource? _idleWaiter;
 
     private struct Entry
     {
@@ -118,6 +119,8 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
                 if (_pendingCount == 0)
                 {
                     _running = false;
+                    _idleWaiter?.TrySetResult();
+                    _idleWaiter = null;
                     return;
                 }
 
@@ -151,6 +154,17 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
                     _spares[_spareCount++] = items;
                 }
             }
+        }
+    }
+
+    /// <summary>Called after the receive producer exits and flushes its final batch.</summary>
+    internal Task WaitForIdleAsync()
+    {
+        lock (_gate)
+        {
+            return _running
+                ? (_idleWaiter ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task
+                : Task.CompletedTask;
         }
     }
 
