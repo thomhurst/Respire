@@ -103,6 +103,29 @@ public class SentinelTests
         await Assert.That(primary.ReceivedCommands).IsEmpty();
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Discovery_CallerCancellationWinsOverConcurrentConnectionFailure(bool protocolFailure)
+    {
+        await using var sentinel = new FakeRespServer(PrimaryReply(6379), "*0\r\n"u8.ToArray());
+        using var cancellation = new CancellationTokenSource();
+        var options = new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", sentinel.Port)], SentinelPrimaryName = "mymaster",
+        };
+        var pending = SentinelResolver.ResolveAndConnectPrimaryAsync<int>(options, (_, _) =>
+        {
+            cancellation.Cancel();
+            return ValueTask.FromException<int>(protocolFailure
+                ? new RespireProtocolException("Malformed response during cancellation.")
+                : new RespireConnectionException("Connection lost during cancellation."));
+        }, cancellation.Token).AsTask();
+        var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
+    }
+
     private static byte[] PeersReply(int port)
         => Encoding.ASCII.GetBytes($"*1\r\n*4\r\n$2\r\nip\r\n$9\r\n127.0.0.1\r\n$4\r\nport\r\n${port.ToString().Length}\r\n{port}\r\n");
 

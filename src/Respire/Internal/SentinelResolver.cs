@@ -82,6 +82,7 @@ internal static class SentinelResolver
             }
             catch (Exception ex)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 lastError = ex;
                 logger?.LogWarning(
                     ex,
@@ -147,8 +148,9 @@ internal static class SentinelResolver
             if (addPeer is not null)
             {
                 try { await DiscoverPeersAsync(connection, serviceName, addPeer, logger, cancellationToken).ConfigureAwait(false); }
-                catch (Exception error) when (!callerCancellationToken.IsCancellationRequested)
+                catch (Exception error)
                 {
+                    callerCancellationToken.ThrowIfCancellationRequested();
                     // Keep the completed primary reply even if optional peer discovery times
                     // out, drops the socket, or returns malformed RESP. Caller cancellation wins.
                     logger?.LogDebug(error, "Optional Sentinel peer discovery failed at {Host}:{Port}", sentinel.Host, sentinel.Port);
