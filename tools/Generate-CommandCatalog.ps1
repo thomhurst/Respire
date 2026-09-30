@@ -23,6 +23,8 @@ function Read-CoreCommands([string] $Path, [string] $Provider) {
             Name = $name.ToUpperInvariant()
             Group = [string] $definition.group
             Provider = $Provider
+            ReadOnlyMetadata = $true
+            IsReadOnly = @($definition.command_flags) -ccontains 'READONLY'
         }
     }
 }
@@ -119,10 +121,13 @@ $merged = $commands |
     Group-Object Name |
     ForEach-Object {
         $providers = @($_.Group.Provider | Sort-Object -Unique)
+        $coreMetadata = @($_.Group | Where-Object ReadOnlyMetadata)
         [pscustomobject]@{
             Name = $_.Name
             Group = [string] ($_.Group | Select-Object -First 1).Group
             Providers = $providers
+            IsReadOnly = $coreMetadata.Count -gt 0 -and
+                @($coreMetadata | Where-Object { -not $_.IsReadOnly }).Count -eq 0
         }
     } |
     Sort-Object Group, Name
@@ -146,7 +151,7 @@ foreach ($group in ($merged | Group-Object Group | Sort-Object { Get-ClassName $
         $identifier = Get-Identifier $command.Name
         $sources = ($command.Providers | ForEach-Object { "RespireCommandSource.$_" }) -join ' | '
         [void] $builder.AppendLine("        /// <summary><c>$($command.Name)</c>.</summary>")
-        [void] $builder.AppendLine("        public static readonly RespireCommand $identifier = new(`"$($command.Name)`", $sources);")
+        [void] $builder.AppendLine("        public static readonly RespireCommand $identifier = new(`"$($command.Name)`", $sources, $($command.IsReadOnly.ToString().ToLowerInvariant()));")
         [void] $builder.AppendLine()
         $allReferences.Add("$className.$identifier")
     }

@@ -30,6 +30,25 @@ public class CommandCatalogTests
     }
 
     [Test]
+    public async Task Catalog_ExposesOnlyAuthoritativeReadOnlyFlags()
+    {
+        await Assert.That(RespireCommands.String.GET.IsReadOnly).IsTrue();
+        await Assert.That(RespireCommands.Hash.HGET.IsReadOnly).IsTrue();
+        await Assert.That(RespireCommands.Scripting.EVAL_RO.IsReadOnly).IsTrue();
+        await Assert.That(RespireCommands.Scripting.EVALSHA_RO.IsReadOnly).IsTrue();
+        await Assert.That(RespireCommands.Scripting.FCALL_RO.IsReadOnly).IsTrue();
+
+        await Assert.That(RespireCommands.String.SET.IsReadOnly).IsFalse();
+        await Assert.That(RespireCommands.String.GETEX.IsReadOnly).IsFalse();
+        await Assert.That(RespireCommands.Scripting.EVAL.IsReadOnly).IsFalse();
+        await Assert.That(RespireCommands.Scripting.EVALSHA.IsReadOnly).IsFalse();
+        await Assert.That(RespireCommands.Scripting.FCALL.IsReadOnly).IsFalse();
+
+        RespireCommand unknown = "FUTURE.READ";
+        await Assert.That(unknown.IsReadOnly).IsFalse();
+    }
+
+    [Test]
     public async Task CompatibleServerExtensionsHaveExactNamesAndProvenance()
     {
         var commands = RespireCommands.All.ToArray();

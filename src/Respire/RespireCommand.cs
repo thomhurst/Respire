@@ -9,12 +9,15 @@ namespace Respire;
 /// </summary>
 public readonly struct RespireCommand
 {
-    private readonly Verb _verb;
+    private const int ReadOnlyMetadataMask = int.MinValue;
 
-    internal RespireCommand(string name, RespireCommandSource sources)
+    private readonly Verb _verb;
+    private readonly int _sourceMetadata;
+
+    internal RespireCommand(string name, RespireCommandSource sources, bool isReadOnly)
     {
         Name = name;
-        Sources = sources;
+        _sourceMetadata = (int)sources | (isReadOnly ? ReadOnlyMetadataMask : 0);
         _verb = new Verb(name);
         Behavior = Classify(name);
     }
@@ -23,7 +26,7 @@ public readonly struct RespireCommand
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         Name = name;
-        Sources = RespireCommandSource.None;
+        _sourceMetadata = (int)RespireCommandSource.None;
         _verb = default;
         Behavior = default;
     }
@@ -32,7 +35,15 @@ public readonly struct RespireCommand
     public string Name { get; }
 
     /// <summary>Command references in which this command was found.</summary>
-    public RespireCommandSource Sources { get; }
+    public RespireCommandSource Sources => (RespireCommandSource)(_sourceMetadata & ~ReadOnlyMetadataMask);
+
+    /// <summary>
+    /// Whether every pinned core command reference that defines this command marks it read-only.
+    /// </summary>
+    /// <remarks>
+    /// Unknown commands and commands without authoritative core flag metadata return <see langword="false"/>.
+    /// </remarks>
+    public bool IsReadOnly => (_sourceMetadata & ReadOnlyMetadataMask) != 0;
 
     internal Verb Verb => _verb;
 

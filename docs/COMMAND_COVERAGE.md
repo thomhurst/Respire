@@ -22,6 +22,13 @@ records provenance; it is not a runtime feature-negotiation guarantee. Server ed
 configuration, loaded modules, permissions, and version still determine whether execution is
 accepted.
 
+`RespireCommand.IsReadOnly` is true only when every pinned Redis or Valkey core metadata entry
+that defines the command includes the authoritative `READONLY` command flag. Missing flags or
+conflicting provider declarations resolve to false. Commands supplied only by the audited
+KeyDB, Dragonfly, or module extension lists remain false because those lists do not include
+authoritative read-only flags. Caller-supplied commands also remain false. This metadata does
+not change command routing or imply that a deployment supports a command.
+
 The compatible-server audit uses [KeyDB's 6.3.4 command table](https://github.com/Snapchat/KeyDB/blob/v6.3.4/src/server.cpp),
 the [KeyDB command reference](https://docs.keydb.dev/docs/commands/),
 [Dragonfly documentation at 31881bce](https://github.com/dragonflydb/documentation/tree/31881bce033d4cec47cb2e85865d46745760e499/docs/command-reference),
@@ -70,3 +77,6 @@ upgrading the pinned versions.
 behavior, argument boundaries, and the serialized command words of every descriptor. Typed facet
 tests additionally cover every convenience command, option form, response parser, and invalid
 shape introduced with the catalog.
+
+Run `pwsh tests/Test-CommandCatalogGenerator.ps1` to check read-only flag aggregation against
+small Redis and Valkey metadata fixtures, including missing and conflicting flags.
