@@ -1,10 +1,11 @@
 # Release notes
 
-## Typed key notifications
+## Unreleased
+
+### Typed key notifications
 
 Added binary-safe keyspace, keyevent, and Redis 8.8 subkey channel factories and allocation-free notification parsing. Explicit physical-key prefixes, database scopes, unknown events, and malformed-frame handling are documented. Notification descriptors are server-owned and cannot be published. Cluster delivery remains #298; subscriptions never change server configuration.
 
-## Unreleased
 
 ### Configurable pub/sub recovery
 

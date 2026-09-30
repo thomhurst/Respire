@@ -118,6 +118,50 @@ public class KeyNotificationIntegrationTests(KeyNotificationRedisContainer fixtu
     }
 
     [Test]
+    [MatrixDataSource]
+    public async Task EverySubKeyLayoutReceivesDeleteAndFieldLifetimeEvents(
+        [Matrix(2, 3)] int protocol, [Matrix(0, 1, 2, 3)] int layout)
+    {
+        var options = fixture.Options(protocol);
+        await using var client = await RespireClient.ConnectAsync(options);
+        var key = Encoding.UTF8.GetBytes($"lifetime:{Guid.NewGuid():N}");
+        foreach (var type in new[] { RespireKeyNotificationType.HDel, RespireKeyNotificationType.HExpire,
+            RespireKeyNotificationType.HPersist, RespireKeyNotificationType.HExpired })
+        {
+            using (var reply = await client.ExecuteAsync("DEL", key)) { }
+            using (var reply = await client.ExecuteAsync("HSET", key, "a", "1", "b", "2")) { }
+            if (type == RespireKeyNotificationType.HPersist)
+                using (var reply = await client.ExecuteAsync("HPEXPIRE", key, "60000", "FIELDS", "2", "a", "b")) { }
+            var descriptor = layout switch
+            {
+                0 => RespireChannel.SubKeySpaceSingleKey(key, options.Database),
+                1 => RespireChannel.SubKeyEvent(type, options.Database),
+                2 => RespireChannel.SubKeySpaceItem(key, "a", options.Database),
+                _ => RespireChannel.SubKeySpaceEvent(type, key, options.Database),
+            };
+            await using var subscription = await client.SubscribeAsync(descriptor);
+            switch (type)
+            {
+                case RespireKeyNotificationType.HDel:
+                    using (var reply = await client.ExecuteAsync("HDEL", key, "a", "b")) { }
+                    break;
+                case RespireKeyNotificationType.HPersist:
+                    using (var reply = await client.ExecuteAsync("HPERSIST", key, "FIELDS", "2", "a", "b")) { }
+                    break;
+                case RespireKeyNotificationType.HExpired:
+                    using (var reply = await client.ExecuteAsync("HPEXPIRE", key, "10", "FIELDS", "1", "a")) { }
+                    break;
+                default:
+                    using (var reply = await client.ExecuteAsync("HPEXPIRE", key, "60000", "FIELDS", "2", "a", "b")) { }
+                    break;
+            }
+            var notification = await ReadMatchingAsync(subscription, key, type);
+            notification.GetSubKeys().Count.Should().Be(layout == 2 || type == RespireKeyNotificationType.HExpired ? 1 : 2);
+            notification.GetSubKeys().FirstOrDefault().Span.SequenceEqual("a"u8).Should().BeTrue();
+        }
+    }
+
+    [Test]
     [Arguments(2)]
     [Arguments(3)]
     public async Task StandardMutationFamiliesAndExpiryAreParsed(int protocol)
@@ -181,5 +225,43 @@ public class KeyNotificationIntegrationTests(KeyNotificationRedisContainer fixtu
                 && notification.KeyBytes.Span.SequenceEqual(key)) return notification;
         }
         throw new InvalidOperationException($"Subscription ended before {type} was delivered.");
+    }
+}
+
+public sealed class KeyNotificationLegacyRedisContainer : IAsyncInitializer, IAsyncDisposable
+{
+    private readonly RedisContainer _container = new RedisBuilder("redis:7.0.15")
+        .WithCommand("redis-server", "--notify-keyspace-events", "KEA").Build();
+    public string ConnectionString => $"redis://{_container.Hostname}:{_container.GetMappedPublicPort(6379)}";
+    public Task InitializeAsync() => _container.StartAsync();
+    public ValueTask DisposeAsync() => _container.DisposeAsync();
+}
+
+[ClassDataSource<KeyNotificationLegacyRedisContainer>(Shared = SharedType.PerTestSession)]
+public class KeyNotificationLegacyIntegrationTests(KeyNotificationLegacyRedisContainer fixture)
+{
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task OlderServerAcknowledgesSubKeyChannelsWithoutEmittingSubKeyEvents(int protocol)
+    {
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        var key = $"legacy:{Guid.NewGuid():N}";
+        var descriptor = RespireChannel.SubKeySpaceSingleKey(key, 0);
+        await using var subkeys = await client.SubscribeAsync(descriptor);
+        await using var keys = await client.SubscribeAsync(RespireChannel.KeySpaceSingleKey(key, 0));
+        using (var reply = await client.ExecuteAsync("HSET", key, "field", "value")) { }
+        // The subsequent ordinary publish is an ordered barrier on the same Pub/Sub
+        // connection. No timeout-based absence assertion or retry is needed.
+        (await client.PublishAsync(new RespireChannel(descriptor.Bytes), "barrier")).Should().Be(1);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var keyReader = keys.GetAsyncEnumerator(timeout.Token);
+        (await keyReader.MoveNextAsync()).Should().BeTrue();
+        keyReader.Current.TryParseKeyNotification(out var notification).Should().BeTrue();
+        notification.Type.Should().Be(RespireKeyNotificationType.HSet);
+        await using var subkeyReader = subkeys.GetAsyncEnumerator(timeout.Token);
+        (await subkeyReader.MoveNextAsync()).Should().BeTrue();
+        subkeyReader.Current.Text.Should().Be("barrier");
+        subkeyReader.Current.TryParseKeyNotification(out _).Should().BeFalse();
     }
 }

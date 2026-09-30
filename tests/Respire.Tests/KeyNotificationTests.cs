@@ -133,6 +133,30 @@ public class KeyNotificationTests
     }
 
     [Test]
+    public async Task AllBinaryLayoutsAndFactoryStorageRemainOwned()
+    {
+        byte[] key = [255, 0, (byte)':', (byte)',', (byte)'|'];
+        byte[] field = [128, (byte)'\n', (byte)',', (byte)':', (byte)'|', 0];
+        var expectedKey = key.ToArray();
+        var expectedField = field.ToArray();
+        var exact = RespireChannel.SubKeySpaceSingleKey(key, 0);
+        var item = RespireChannel.SubKeySpaceItem(key, field, 0);
+        var eventKey = RespireChannel.SubKeySpaceEvent(RespireKeyNotificationType.HSet, key, 0);
+        Array.Fill(key, (byte)'x');
+        Array.Fill(field, (byte)'x');
+        foreach (var descriptor in new[] { exact, item, eventKey })
+        {
+            byte[] payload = descriptor == item ? "hset"u8.ToArray()
+                : descriptor == exact ? [.. "hset|6:"u8, .. expectedField] : [.. "6:"u8, .. expectedField];
+            var message = new RespireMessage(descriptor, null, payload, Serializer);
+            await Assert.That(message.TryParseKeyNotification(out var notification)).IsTrue();
+            await Assert.That(notification.KeyBytes.Span.SequenceEqual(expectedKey)).IsTrue();
+            await Assert.That(notification.GetSubKeys().FirstOrDefault().Span.SequenceEqual(expectedField)).IsTrue();
+            await Assert.That(notification.Type).IsEqualTo(RespireKeyNotificationType.HSet);
+        }
+    }
+
+    [Test]
     public async Task FactoriesRetainKindDatabaseAndPhysicalSlot()
     {
         var exact = RespireChannel.KeySpaceSingleKey("tenant:{tag}:key", 12);
