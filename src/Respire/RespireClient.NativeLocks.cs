@@ -89,37 +89,48 @@ public sealed partial class RespireClient
         RespireValue token, long? milliseconds, int? slot, bool requireIdentity,
         CancellationToken cancellationToken)
     {
-        var sendAsking = false;
-        for (var attempt = 0; ; attempt++)
+        ClusterRouter.DiscoveryRound? discovery = null;
+        try
         {
-            try
+            var sendAsking = false;
+            for (var attempt = 0; ; attempt++)
             {
-                return await ExecuteCompatibleLockAsync(connection, key, token, milliseconds, sendAsking, cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            catch (RespireConnectionRetiredException) when (
-                _core.Cluster is { } cluster && cluster.CanRetryRetirement(attempt, cancellationToken))
-            {
-                connection = requireIdentity
-                    ? await GetTrackedReplacementConnectionAsync(
-                        cluster, sendAsking ? connection : null, slot, true, cancellationToken).ConfigureAwait(false)
-                    : await cluster.GetReplacementConnectionAsync(
-                        sendAsking ? connection : null, slot, null, cancellationToken).ConfigureAwait(false);
-                execution.ConnectionIdentity = GetTrackedConnectionIdentity(connection, requireIdentity, sendAsking);
-            }
-            catch (RespireServerException error) when (
-                _core.Cluster is not null && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
-            {
-                connection = requireIdentity
-                    ? await GetTrackedRedirectConnectionAsync(
-                            _core.Cluster, error, connection, true, cancellationToken, slot).ConfigureAwait(false)
-                    : await _core.Cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot)
+                try
+                {
+                    return await ExecuteCompatibleLockAsync(connection, key, token, milliseconds, sendAsking, cancellationToken)
                         .ConfigureAwait(false);
-                sendAsking = error.Code == RespireErrorCodes.Ask;
-                // Publish the identity before any write on the redirected connection can be sent.
-                execution.ConnectionIdentity = GetTrackedConnectionIdentity(connection, requireIdentity, sendAsking);
+                }
+                catch (RespireConnectionRetiredException error) when (
+                    _core.Cluster is { } cluster && cluster.CanRetryRetirement(attempt, cancellationToken))
+                {
+                    cluster.RecordRetirement(ref discovery, connection, error);
+                    connection = requireIdentity
+                        ? await GetTrackedReplacementConnectionAsync(
+                            cluster, sendAsking ? connection : null, slot, true, cancellationToken, discovery).ConfigureAwait(false)
+                        : await cluster.GetReplacementConnectionAsync(
+                            sendAsking ? connection : null, slot, null, cancellationToken, discovery).ConfigureAwait(false);
+                    execution.ConnectionIdentity = GetTrackedConnectionIdentity(connection, requireIdentity, sendAsking);
+                }
+                catch (RespireServerException error) when (
+                    _core.Cluster is not null && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
+                {
+                    connection = requireIdentity
+                        ? await GetTrackedRedirectConnectionAsync(
+                                _core.Cluster, error, connection, true, cancellationToken, slot, discovery).ConfigureAwait(false)
+                        : await _core.Cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery)
+                            .ConfigureAwait(false);
+                    sendAsking = error.Code == RespireErrorCodes.Ask;
+                    // Publish the identity before any write on the redirected connection can be sent.
+                    execution.ConnectionIdentity = GetTrackedConnectionIdentity(connection, requireIdentity, sendAsking);
+                }
             }
         }
+        catch (Exception error)
+        {
+            if (discovery is not null) discovery.TerminalError = error;
+            throw;
+        }
+        finally { discovery?.Finish(); }
     }
 
     private async ValueTask<bool> ExecuteCompatibleLockAsync(

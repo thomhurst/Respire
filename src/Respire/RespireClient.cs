@@ -1122,7 +1122,7 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(_core.Disposed, this);
         var cluster = _core.Cluster;
         var pool = cluster is null ? _core.DedicatedPool
-            : await cluster.GetDedicatedPoolAsync(slot, cancellationToken).ConfigureAwait(false);
+            : await cluster.GetDedicatedPoolAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
         // The owning pool must follow the lease through commit/disposal, even if topology changes.
         RespireConnection connection;
         if (cluster is null)
@@ -1688,7 +1688,7 @@ public sealed partial class RespireClient : IRespireClient
         try
         {
             var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
-            var connection = await cluster.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
+            var connection = await cluster.GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
             var sendAsking = false;
             for (var attempt = 0; ; attempt++)
             {
@@ -2062,7 +2062,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var cluster = _core.Cluster!;
         _core.ClientCache?.FlushForContinuityLoss();
-        var replacement = await cluster.GetRedirectConnectionAsync(error, source, cancellationToken, slot)
+        var replacement = await cluster.GetRedirectConnectionAsync(error, source, cancellationToken, slot, discovery: null)
             .ConfigureAwait(false);
         // The pipelined send already consumed one attempt from the shared retry budget.
         return await SendClusterAsync(operation, cluster, command, cancellationToken,
@@ -2090,7 +2090,7 @@ public sealed partial class RespireClient : IRespireClient
         {
             var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
             var connection = initialConnection
-                ?? await cluster.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
+                ?? await cluster.GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
             if (initialRetirement is not null)
             {
                 cluster.RecordRetirement(ref discovery, connection, initialRetirement);
@@ -2148,7 +2148,7 @@ public sealed partial class RespireClient : IRespireClient
             var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
             try
             {
-                var connections = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
+                var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
                 var retainedReply = default(RespValue);
                 var hasRetainedReply = false;
                 try
@@ -2391,7 +2391,7 @@ public sealed partial class RespireClient : IRespireClient
             if (RespireCommand.MayCloseWithoutReply(operation))
             {
                 var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
-                var connection = await cluster.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
+                var connection = await cluster.GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
                 for (var attempt = 0; ; attempt++)
                 {
                     try
@@ -2445,7 +2445,7 @@ public sealed partial class RespireClient : IRespireClient
             var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
             try
             {
-                var connections = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
+                var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
                 List<Exception>? failures = null;
                 foreach (var connection in connections)
                 {
@@ -2697,7 +2697,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var core = _core;
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
-        var pool = await cluster.GetDedicatedPoolAsync(slot, cancellationToken).ConfigureAwait(false);
+        var pool = await cluster.GetDedicatedPoolAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
         RespireTelemetry.OperationScope telemetry = default;
         var telemetryStarted = false;
         var sendAsking = false;
@@ -2740,7 +2740,7 @@ public sealed partial class RespireClient : IRespireClient
                         // The source reply completed; no redirected command has been accepted yet.
                         acquiringRedirectPool = true;
                         var redirectedPool = await cluster.GetRedirectDedicatedPoolAsync(
-                                error, connection, cancellationToken, slot)
+                                error, connection, cancellationToken, slot, discovery: null)
                             .ConfigureAwait(false);
                         acquiringRedirectPool = false;
                         pool.Return(connection);
@@ -2792,7 +2792,7 @@ public sealed partial class RespireClient : IRespireClient
         ObjectDisposedException.ThrowIf(_core.Disposed, this);
         if (_core.Cluster is { } cluster)
         {
-            return await cluster.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
+            return await cluster.GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
         }
 
         await _core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);

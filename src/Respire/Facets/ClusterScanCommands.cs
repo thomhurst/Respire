@@ -114,7 +114,7 @@ internal sealed partial class KeyCommands
 
     private async ValueTask<ScanTopology> ReadScanTopologyAsync(CancellationToken cancellationToken)
     {
-        var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
+        var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
         var nodes = new Dictionary<string, ScanNode>(StringComparer.Ordinal);
         var owners = new string[ClusterHash.SlotCount];
         var moving = new bool[ClusterHash.SlotCount];

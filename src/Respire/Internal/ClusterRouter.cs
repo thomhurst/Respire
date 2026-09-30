@@ -116,7 +116,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         }
     }
 
-    internal async ValueTask EnsureConnectedAsync(CancellationToken cancellationToken, DiscoveryRound? discovery = null)
+    internal async ValueTask EnsureConnectedAsync(CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
         if (Volatile.Read(ref _seed) is { IsConnected: true })
         {
@@ -167,7 +167,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     }
 
     internal ValueTask<RespireConnection> GetConnectionAsync(
-        int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery = null)
+        int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -280,7 +280,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private static RespireEndpoint Endpoint(RespireConnectionMultiplexer node) => new(node.Host, node.Port);
 
     private static async ValueTask EnsureRouteNodeConnectedAsync(
-        RespireConnectionMultiplexer node, CancellationToken cancellationToken, DiscoveryRound? discovery = null)
+        RespireConnectionMultiplexer node, CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
         if (discovery is not null) await discovery.BeforeCandidateAsync(Endpoint(node), cancellationToken).ConfigureAwait(false);
         try { await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false); }
@@ -302,7 +302,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireServerException error,
         RespireConnection source,
         CancellationToken cancellationToken,
-        int? commandSlot = null, DiscoveryRound? discovery = null)
+        int? commandSlot, DiscoveryRound? discovery)
     {
         using var scope = BeginDiscovery(discovery);
         discovery = scope.Round;
@@ -358,8 +358,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     }
 
     internal ValueTask<RespireConnection> GetTrackedConnectionAsync(
-        int? slot, bool requireIdentity, CancellationToken cancellationToken)
-        => GetReplacementConnectionAsync(null, slot, requireIdentity, cancellationToken);
+        int? slot, bool requireIdentity, CancellationToken cancellationToken, DiscoveryRound? discovery)
+        => GetReplacementConnectionAsync(null, slot, requireIdentity, cancellationToken, discovery);
 
     internal bool CanRetryRetirement(int attempt, CancellationToken cancellationToken)
         => attempt < MaxRedirects && !cancellationToken.IsCancellationRequested && Volatile.Read(ref _disposed) == 0;
@@ -368,7 +368,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     // Callers may retry only commands rejected before acceptance, never ambiguous I/O failures.
     internal ValueTask<RespireConnection> GetReplacementConnectionAsync(
         RespireConnection? endpointSource, int? slot, bool? requireIdentity, CancellationToken cancellationToken,
-        DiscoveryRound? discovery = null)
+        DiscoveryRound? discovery)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -421,7 +421,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireConnection source,
         bool requireIdentity,
         CancellationToken cancellationToken,
-        int? commandSlot = null, DiscoveryRound? discovery = null)
+        int? commandSlot, DiscoveryRound? discovery)
     {
         using var scope = BeginDiscovery(discovery);
         discovery = scope.Round;
@@ -459,7 +459,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             && (IsDiscoveryFailure(failure) || failure is RespireConnectionRetiredException);
 
     internal ValueTask<DedicatedConnectionPool> GetDedicatedPoolAsync(
-        int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery = null)
+        int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -526,7 +526,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireServerException error,
         RespireConnection source,
         CancellationToken cancellationToken,
-        int? commandSlot = null, DiscoveryRound? discovery = null)
+        int? commandSlot, DiscoveryRound? discovery)
     {
         using var scope = BeginDiscovery(discovery);
         discovery = scope.Round;
@@ -910,7 +910,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             Asking, command, throwOnError: false, cancellationToken);
 
     internal async ValueTask<RespireConnection[]> GetMasterConnectionsAsync(
-        CancellationToken cancellationToken, DiscoveryRound? discovery = null)
+        CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
         using var scope = BeginDiscovery(discovery);
         discovery = scope.Round;
@@ -940,8 +940,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         AddKnownMasters(masters);
 
         var refreshed = false;
+        RespireConnectionMultiplexer? attemptedSeed = null;
         if (Volatile.Read(ref _seed) is { IsConnected: true, IsRetired: false } seed)
         {
+            attemptedSeed = seed;
             refreshed = await TryRefreshTopologyAsync(seed, cancellationToken, discovery).ConfigureAwait(false);
         }
 
@@ -949,6 +951,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         {
             foreach (var master in masters)
             {
+                // The connected seed is also a known master. Its failed query has already
+                // seeded the round; reserve the fallback budget for a different candidate.
+                if (ReferenceEquals(master, attemptedSeed)) continue;
                 if (await TryRefreshTopologyAsync(master, cancellationToken, discovery).ConfigureAwait(false))
                 {
                     SetSeed(master);
@@ -993,7 +998,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     }
 
     internal ValueTask<RespireConnectionMultiplexer[]> GetKnownMastersAsync(
-        CancellationToken cancellationToken, DiscoveryRound? discovery = null)
+        CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
         if (!HasCompleteTopology())
         {
@@ -1044,7 +1049,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     private async ValueTask<bool> TryRefreshTopologyAsync(
         RespireConnectionMultiplexer node,
-        CancellationToken cancellationToken, DiscoveryRound? discovery = null)
+        CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
         try
         {
@@ -1062,7 +1067,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     private async ValueTask<RespireConnectionMultiplexer?> TryRefreshSlotThroughKnownMastersAsync(
         int slot,
-        CancellationToken cancellationToken, DiscoveryRound? discovery = null)
+        CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
         foreach (var master in Volatile.Read(ref _masters))
         {

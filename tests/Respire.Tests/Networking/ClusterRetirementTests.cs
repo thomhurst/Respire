@@ -59,8 +59,8 @@ public class ClusterRetirementTests
         Task<DedicatedConnectionPool>? poolTask = null;
         try
         {
-            if (path == "dedicated") poolTask = router.GetDedicatedPoolAsync(42, timeout.Token).AsTask();
-            else connectionTask = router.GetConnectionAsync(path == "keyed" ? 42 : null, timeout.Token).AsTask();
+            if (path == "dedicated") poolTask = router.GetDedicatedPoolAsync(42, timeout.Token, discovery: null).AsTask();
+            else connectionTask = router.GetConnectionAsync(path == "keyed" ? 42 : null, timeout.Token, discovery: null).AsTask();
             // The old node has not created a socket or accepted any application command.
             Publish(router, endpoint, "new", 2);
         }
@@ -140,7 +140,7 @@ public class ClusterRetirementTests
         using var timeout = new CancellationTokenSource(Limit);
         var router = client.Core.Cluster!;
         PublishTargets("old", 1);
-        var old = await router.GetConnectionAsync(9000, timeout.Token);
+        var old = await router.GetConnectionAsync(9000, timeout.Token, discovery: null);
         var accepted = Enumerable.Range(0, 4)
             .Select(_ => old.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token).AsTask()).ToArray();
         await secondFull.Task.WaitAsync(timeout.Token);
@@ -223,7 +223,7 @@ public class ClusterRetirementTests
         using var timeout = new CancellationTokenSource(Limit);
         var router = client.Core.Cluster!;
         Publish(router, new("127.0.0.1", first.Port), "first", 1);
-        var original = await router.GetConnectionAsync(42, timeout.Token);
+        var original = await router.GetConnectionAsync(42, timeout.Token, discovery: null);
         var accepted = Enumerable.Range(0, 4)
             .Select(_ => original.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token).AsTask()).ToArray();
         await full.Task.WaitAsync(timeout.Token);
@@ -322,7 +322,7 @@ public class ClusterRetirementTests
         var router = client.Core.Cluster!;
         var endpoint = new RespireEndpoint("127.0.0.1", server.Port);
         Publish(router, endpoint, "old", 1);
-        var old = await router.GetConnectionAsync(42, timeout.Token);
+        var old = await router.GetConnectionAsync(42, timeout.Token, discovery: null);
         var accepted = Enumerable.Range(0, 4)
             .Select(_ => old.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token).AsTask()).ToArray();
         await full.Task.WaitAsync(timeout.Token);
@@ -417,14 +417,14 @@ public class ClusterRetirementTests
         var router = client.Core.Cluster!;
         var oldEndpoint = new RespireEndpoint("127.0.0.1", oldServer.Port);
         Publish(router, oldEndpoint, "old", 1);
-        var source = await router.GetConnectionAsync(42, timeout.Token);
+        var source = await router.GetConnectionAsync(42, timeout.Token, discovery: null);
         using (var ready = await source.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token))
             await Assert.That(ready.AsString()).IsEqualTo("PONG");
-        var selected = await router.GetDedicatedPoolAsync(42, timeout.Token);
+        var selected = await router.GetDedicatedPoolAsync(42, timeout.Token, discovery: null);
         Publish(router, new("127.0.0.1", newServer.Port), "new", 2);
         await Assert.That(selected.IsStopping).IsTrue();
         // The ASK error originates at the slot owner, not at the temporary target.
-        var redirectSource = await router.GetConnectionAsync(42, timeout.Token);
+        var redirectSource = await router.GetConnectionAsync(42, timeout.Token, discovery: null);
         var (pool, connection) = await router.RentDedicatedConnectionAsync(
             selected, 42, timeout.Token, reuseIdle,
             asking ? new RespireServerException($"ASK 42 127.0.0.1:{oldServer.Port}") : null, redirectSource);
@@ -434,7 +434,7 @@ public class ClusterRetirementTests
             await Assert.That(connection.Port).IsEqualTo(asking ? oldServer.Port : newServer.Port);
             using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token);
             await Assert.That(reply.AsString()).IsEqualTo("PONG");
-            var owner = await router.GetConnectionAsync(42, timeout.Token);
+            var owner = await router.GetConnectionAsync(42, timeout.Token, discovery: null);
             await Assert.That(owner.Port).IsEqualTo(newServer.Port);
         }
         catch (OperationCanceledException error)
@@ -471,7 +471,7 @@ public class ClusterRetirementTests
         var router = client.Core.Cluster!;
         var sourceEndpoint = new RespireEndpoint("127.0.0.1", source.Port);
         Publish(router, sourceEndpoint, "source", 1);
-        _ = await router.GetConnectionAsync(slot, timeout.Token);
+        _ = await router.GetConnectionAsync(slot, timeout.Token, discovery: null);
         var oldTarget = router.GetMultiplexer(new("127.0.0.1", target.Port));
         await oldTarget.EnsureConnectedAsync(timeout.Token);
         var old = oldTarget.GetConnection();
@@ -503,7 +503,7 @@ public class ClusterRetirementTests
         await Assert.That(oldTarget.IsRetired).IsTrue();
         await Assert.That(target.ReceivedCommands.Skip(4)).IsEquivalentTo(["ASKING", "SET key value"]);
         await Assert.That(source.ReceivedCommands.Count(value => value == "SET key value")).IsEqualTo(1);
-        await Assert.That((await router.GetConnectionAsync(slot, timeout.Token)).Port).IsEqualTo(source.Port);
+        await Assert.That((await router.GetConnectionAsync(slot, timeout.Token, discovery: null)).Port).IsEqualTo(source.Port);
         if (tracked) await Assert.That(rebased).IsEquivalentTo([false, false]);
         await target.SendRawAsync("+PONG\r\n+PONG\r\n+PONG\r\n+PONG\r\n"u8.ToArray(), 0);
         foreach (var task in accepted) { using var reply = await task.WaitAsync(timeout.Token); }
@@ -555,9 +555,11 @@ public class ClusterRetirementTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task RejectedTrackedExecutionPublishesNewIdentityBeforeWriting(bool script)
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task RejectedTrackedExecutionPublishesNewIdentityBeforeWriting(bool script, bool configuredPolicy)
     {
         var full = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var pings = 0;
@@ -581,11 +583,18 @@ public class ClusterRetirementTests
                 return false;
             },
         };
-        await using var client = CreateClient(maxInflightCommands: 4);
+        await using var client = CreateClient(maxInflightCommands: 4, reconnectPolicy: configuredPolicy
+            ? new() { InitialDelay = TimeSpan.FromMilliseconds(10), JitterRatio = 0, MaxAttempts = 1 } : null);
+        var scheduled = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.ReconnectSource == RespireReconnectSource.ClusterDiscovery && change.NextReconnectDelay is not null)
+                scheduled.TrySetResult(change);
+        };
         using var timeout = new CancellationTokenSource(Limit);
         var router = client.Core.Cluster!;
         Publish(router, new("127.0.0.1", oldServer.Port), "old", 1);
-        var old = await router.GetTrackedConnectionAsync(42, true, timeout.Token);
+        var old = await router.GetTrackedConnectionAsync(42, true, timeout.Token, discovery: null);
         var accepted = Enumerable.Range(0, 4)
             .Select(_ => old.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token).AsTask()).ToArray();
         await full.Task.WaitAsync(timeout.Token);
@@ -606,6 +615,13 @@ public class ClusterRetirementTests
         await Assert.That(operation.IsCompleted).IsFalse();
         Publish(router, new("127.0.0.1", newServer.Port), "new", 2);
         await operation.WaitAsync(timeout.Token);
+        if (configuredPolicy)
+        {
+            var change = await scheduled.Task.WaitAsync(timeout.Token);
+            await Assert.That(change.ReconnectAttempt).IsEqualTo(1);
+            await Assert.That(change.NextReconnectDelay).IsEqualTo(TimeSpan.FromMilliseconds(10));
+            await Assert.That(change.Error).IsTypeOf<RespireConnectionRetiredException>();
+        }
         await Assert.That(identityAtWrite.HasValue).IsTrue();
         await Assert.That(identityAtWrite!.Value.ServerClientId).IsEqualTo(42);
         await Assert.That(identityAtWrite.Value.Endpoint.Port).IsEqualTo(newServer.Port);
@@ -763,8 +779,8 @@ public class ClusterRetirementTests
         try
         {
             var moved = new RespireServerException($"MOVED 42 127.0.0.1:{target.Port}");
-            if (dedicated) poolTask = router.GetRedirectDedicatedPoolAsync(moved, source, timeout.Token).AsTask();
-            else connectionTask = router.GetRedirectConnectionAsync(moved, source, timeout.Token).AsTask();
+            if (dedicated) poolTask = router.GetRedirectDedicatedPoolAsync(moved, source, timeout.Token, commandSlot: null, discovery: null).AsTask();
+            else connectionTask = router.GetRedirectConnectionAsync(moved, source, timeout.Token, commandSlot: null, discovery: null).AsTask();
             // Redirect setup is parked inside the old generation's connection gate.
             Publish(router, endpoint, "new", 2);
         }

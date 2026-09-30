@@ -21,7 +21,7 @@ public class ClusterReconnectPolicyTests
             "-ERR topology unavailable\r\n"u8.ToArray(), FakeRespServer.PongReply);
         var options = new RespireOptions
         {
-            UseCluster = true, Connections = 1, Password = "test",
+            UseCluster = true, Protocol = RespProtocol.Resp2, Connections = 1, Password = "test",
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port), new("127.0.0.1", last.Port)],
             ConnectTimeout = TimeSpan.FromSeconds(5), CommandTimeout = null,
             ReconnectPolicy = configured ? new()
@@ -57,7 +57,7 @@ public class ClusterReconnectPolicyTests
             "-ERR topology unavailable\r\n"u8.ToArray(), FakeRespServer.PongReply);
         await using var client = RespireClient.Create(new RespireOptions
         {
-            UseCluster = true, Connections = 1, Password = "test", CommandTimeout = null,
+            UseCluster = true, Protocol = RespProtocol.Resp2, Connections = 1, Password = "test", CommandTimeout = null,
             Endpoints = [new("127.0.0.1", first.Port), new("127.0.0.1", second.Port)],
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
                 JitterRatio = 0, MaxAttempts = 1 },
@@ -116,11 +116,11 @@ public class ClusterReconnectPolicyTests
         {
             switch (path)
             {
-                case "command": await router.GetConnectionAsync(42, default); break;
-                case "tracked": await router.GetTrackedConnectionAsync(42, true, default); break;
-                case "dedicated": await router.GetDedicatedPoolAsync(42, default); break;
-                case "masters": await router.GetMasterConnectionsAsync(default); break;
-                case "known-masters": await router.GetKnownMastersAsync(default); break;
+                case "command": await router.GetConnectionAsync(42, default, discovery: null); break;
+                case "tracked": await router.GetTrackedConnectionAsync(42, true, default, discovery: null); break;
+                case "dedicated": await router.GetDedicatedPoolAsync(42, default, discovery: null); break;
+                case "masters": await router.GetMasterConnectionsAsync(default, discovery: null); break;
+                case "known-masters": await router.GetKnownMastersAsync(default, discovery: null); break;
                 case "pubsub": await router.GetPubSubEndpointAsync(default); break;
                 default: throw new ArgumentOutOfRangeException(nameof(path));
             }
@@ -149,7 +149,7 @@ public class ClusterReconnectPolicyTests
             if (change.SourceState == RespireConnectionState.Connected) recovered.TrySetResult();
         };
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var callers = Enumerable.Range(0, 8).Select(_ => client.Core.Cluster!.EnsureConnectedAsync(timeout.Token).AsTask()).ToArray();
+        var callers = Enumerable.Range(0, 8).Select(_ => client.Core.Cluster!.EnsureConnectedAsync(timeout.Token, discovery: null).AsTask()).ToArray();
         await received.Task.WaitAsync(timeout.Token);
         await first.SendRawAsync("-ERR unavailable\r\n"u8.ToArray());
         await Task.WhenAll(callers).WaitAsync(timeout.Token);
@@ -179,16 +179,16 @@ public class ClusterReconnectPolicyTests
         await using var seed = new FakeRespServer(FakeRespServer.OkReply, "-ERR unsupported topology\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(Options(seed.Port, target.Port));
         var router = client.Core.Cluster!;
-        var source = await router.GetConnectionAsync(null, default);
+        var source = await router.GetConnectionAsync(null, default, discovery: null);
         var original = new RespireServerException(code == "READONLY" ? "READONLY demoted"
             : $"{code} 42 127.0.0.1:{target.Port}");
         var failure = await Assert.That(async () =>
         {
             switch (path)
             {
-                case "command": await router.GetRedirectConnectionAsync(original, source, default, 42); break;
-                case "tracked": await router.GetTrackedRedirectConnectionAsync(original, source, true, default, 42); break;
-                case "dedicated": await router.GetRedirectDedicatedPoolAsync(original, source, default, 42); break;
+                case "command": await router.GetRedirectConnectionAsync(original, source, default, 42, discovery: null); break;
+                case "tracked": await router.GetTrackedRedirectConnectionAsync(original, source, true, default, 42, discovery: null); break;
+                case "dedicated": await router.GetRedirectDedicatedPoolAsync(original, source, default, 42, discovery: null); break;
                 default: throw new ArgumentOutOfRangeException(nameof(path));
             }
         }).ThrowsExactly<RespireServerException>();
@@ -229,9 +229,9 @@ public class ClusterReconnectPolicyTests
         {
             switch (path)
             {
-                case "command": await router.GetConnectionAsync(42, default); break;
-                case "tracked": await router.GetTrackedConnectionAsync(42, true, default); break;
-                case "dedicated": await router.GetDedicatedPoolAsync(42, default); break;
+                case "command": await router.GetConnectionAsync(42, default, discovery: null); break;
+                case "tracked": await router.GetTrackedConnectionAsync(42, true, default, discovery: null); break;
+                case "dedicated": await router.GetDedicatedPoolAsync(42, default, discovery: null); break;
                 case "pubsub": await router.GetPubSubEndpointAsync(default); break;
                 default: throw new ArgumentOutOfRangeException(nameof(path));
             }
@@ -263,7 +263,7 @@ public class ClusterReconnectPolicyTests
             if (change.SourceState == RespireConnectionState.Connected) recovered.TrySetResult();
         };
         router.SetSlotOwner(42, router.GetMultiplexer(new("127.0.0.1", unavailable.Port)));
-        var connection = await router.GetConnectionAsync(42, default);
+        var connection = await router.GetConnectionAsync(42, default, discovery: null);
         await recovered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(connection.Port).IsEqualTo(seed.Port);
         var events = changes.ToArray();
@@ -304,7 +304,7 @@ public class ClusterReconnectPolicyTests
             changes.Enqueue(change);
             if (change.SourceState == RespireConnectionState.Connected) recovered.TrySetResult();
         };
-        await client.Core.Cluster!.EnsureConnectedAsync(default);
+        await client.Core.Cluster!.EnsureConnectedAsync(default, discovery: null);
         await recovered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(firstMetrics.Attempts.ToArray()).IsEquivalentTo([1L]);
         await Assert.That(lastMetrics.Attempts.ToArray()).IsEquivalentTo([2L]);
@@ -340,7 +340,7 @@ public class ClusterReconnectPolicyTests
             if (change.ReconnectSource == RespireReconnectSource.ClusterDiscovery
                 && change.SourceState == RespireConnectionState.Disconnected) ended.TrySetResult(change);
         };
-        var command = client.Core.Cluster!.EnsureConnectedAsync(caller.Token).AsTask();
+        var command = client.Core.Cluster!.EnsureConnectedAsync(caller.Token, discovery: null).AsTask();
         try
         {
             await connecting.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -404,9 +404,9 @@ public class ClusterReconnectPolicyTests
                 MaxAttempts = 1, JitterRatio = 0 },
         });
         var router = client.Core.Cluster!;
-        var source = await router.GetConnectionAsync(null, default);
+        var source = await router.GetConnectionAsync(null, default, discovery: null);
         var original = new RespireServerException("READONLY demoted");
-        var error = await Assert.That(async () => await router.GetRedirectConnectionAsync(original, source, default, 42)
+        var error = await Assert.That(async () => await router.GetRedirectConnectionAsync(original, source, default, 42, discovery: null)
             .AsTask().WaitAsync(TimeSpan.FromSeconds(5))).ThrowsExactly<RespireServerException>();
         await Assert.That(ReferenceEquals(error, original)).IsTrue();
         await Assert.That(target.CommandsSeen).IsEqualTo(0);
@@ -435,7 +435,7 @@ public class ClusterReconnectPolicyTests
         };
         for (var round = 0; round < 2; round++)
         {
-            var error = await Assert.That(async () => await client.Core.Cluster!.EnsureConnectedAsync(default))
+            var error = await Assert.That(async () => await client.Core.Cluster!.EnsureConnectedAsync(default, discovery: null))
                 .Throws<RespireConnectionException>();
             await Assert.That(error is RespireReconnectLimitException).IsEqualTo(remainingCandidate);
         }
@@ -446,6 +446,72 @@ public class ClusterReconnectPolicyTests
         await Assert.That(metrics.Attempts.ToArray()).IsEquivalentTo([1L, 1L]);
         await Assert.That(metrics.Exhaustions).IsEqualTo(remainingCandidate ? 2L : 0L);
         await Assert.That(episodes.Distinct().Count()).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FailedSeedRefreshUsesNextDistinctMaster(bool configured)
+    {
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        await using var healthy = new FakeRespServer(FakeRespServer.OkReply);
+        var topology = Encoding.ASCII.GetBytes("*2\r\n" + Range(0, 8191, seed.Port) + Range(8192, 16383, healthy.Port));
+        var seedQueries = 0;
+        seed.ReplyOverride = (_, command) =>
+        {
+            if (command != "CLUSTER SLOTS") return null;
+            return Interlocked.Increment(ref seedQueries) == 1 ? topology : "-ERR seed topology unavailable\r\n"u8.ToArray();
+        };
+        healthy.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : null;
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with
+        {
+            ReconnectPolicy = configured ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 } : null,
+        });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(timeout.Token, discovery: null);
+        await Assert.That(connections.Select(connection => connection.Port)).IsEquivalentTo([seed.Port, healthy.Port]);
+        await Assert.That(seedQueries).IsEqualTo(2);
+        await Assert.That(healthy.ReceivedCommands).IsEquivalentTo(["AUTH test", "CLUSTER SLOTS"]);
+
+        static string Range(int start, int end, int port)
+            => $"*3\r\n:{start}\r\n:{end}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{port}\r\n";
+    }
+
+    [Test]
+    public async Task DiscoveryRoundRejectsConcurrentMutationAndReleasesGuardAfterCancellation()
+    {
+        await using var client = RespireClient.Create(Options(1));
+        var round = new ClusterRouter.DiscoveryRound(client.Core.Cluster!, new()
+        {
+            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+        });
+        var endpoint = new RespireEndpoint("unused.invalid");
+        // Even with a long configured delay, the initial candidate completes synchronously.
+        var initial = round.BeforeCandidateAsync(endpoint, default);
+        await Assert.That(initial.IsCompletedSuccessfully).IsTrue();
+        await initial;
+        round.Failed(endpoint, new IOException("first candidate failed"));
+        using var cancellation = new CancellationTokenSource();
+        var pending = round.BeforeCandidateAsync(endpoint, cancellation.Token).AsTask();
+        try
+        {
+            await Assert.That(pending.IsCompleted).IsFalse();
+            await Assert.That(async () => await round.BeforeCandidateAsync(endpoint, default))
+                .ThrowsExactly<InvalidOperationException>();
+            await Assert.That(() => round.Failed(new IOException())).ThrowsExactly<InvalidOperationException>();
+            await Assert.That(() => round.Failed(endpoint, new IOException())).ThrowsExactly<InvalidOperationException>();
+            await Assert.That(() => round.TerminalError = new IOException()).ThrowsExactly<InvalidOperationException>();
+            await Assert.That(() => round.Finish()).ThrowsExactly<InvalidOperationException>();
+        }
+        finally
+        {
+            cancellation.Cancel();
+            try { await pending.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (OperationCanceledException) { }
+        }
+        // Cancellation releases the guard, allowing the owner to report its terminal outcome.
+        round.TerminalError = new OperationCanceledException(cancellation.Token);
+        round.Finish();
     }
 
     [Test]
@@ -462,7 +528,7 @@ public class ClusterReconnectPolicyTests
             ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? topology : null,
         };
         await using var client = RespireClient.Create(Options(unavailable.Port, seed.Port));
-        var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(default);
+        var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(default, discovery: null);
         await Assert.That(connections.Select(connection => connection.Port).ToArray())
             .IsEquivalentTo([first.Port, second.Port, third.Port]);
         await Assert.That(unavailable.ReceivedCommands).IsEquivalentTo(["AUTH test"]);
@@ -495,7 +561,7 @@ public class ClusterReconnectPolicyTests
             }
             catch (Exception error) { disposed.TrySetException(error); }
         };
-        var operation = client.Core.Cluster!.EnsureConnectedAsync(default).AsTask();
+        var operation = client.Core.Cluster!.EnsureConnectedAsync(default, discovery: null).AsTask();
         await disposed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(async () => await operation.WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
         await Assert.That(second.CommandsSeen).IsEqualTo(0);
@@ -531,7 +597,7 @@ public class ClusterReconnectPolicyTests
                 throw new InvalidOperationException("Test observer failure.");
             if (change.SourceState == RespireConnectionState.Connected) terminal.TrySetResult();
         };
-        await client.Core.Cluster!.EnsureConnectedAsync(default);
+        await client.Core.Cluster!.EnsureConnectedAsync(default, discovery: null);
         await terminal.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(events).IsEqualTo(2);
         await Assert.That(logger.Warnings).IsGreaterThan(0);
@@ -556,7 +622,7 @@ public class ClusterReconnectPolicyTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await Task.WhenAll(Enumerable.Range(0, 4).Select(async _ =>
         {
-            await Assert.That(async () => await client.Core.Cluster!.EnsureConnectedAsync(timeout.Token))
+            await Assert.That(async () => await client.Core.Cluster!.EnsureConnectedAsync(timeout.Token, discovery: null))
                 .ThrowsExactly<RespireReconnectLimitException>();
         }));
         await complete.Task.WaitAsync(timeout.Token);
@@ -626,7 +692,7 @@ public class ClusterReconnectPolicyTests
 
     private static RespireOptions Options(params int[] ports) => new()
     {
-        UseCluster = true, Connections = 1, Password = "test", CommandTimeout = null,
+        UseCluster = true, Protocol = RespProtocol.Resp2, Connections = 1, Password = "test", CommandTimeout = null,
         ConnectTimeout = TimeSpan.FromSeconds(5),
         Endpoints = ports.Select(port => new RespireEndpoint("127.0.0.1", port)).ToArray(),
         ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 1 },

@@ -42,6 +42,7 @@ public readonly record struct RespireConnectionStateChange(
     /// <summary>The source's state before aggregation into endpoint health, when supplied.</summary>
     public RespireConnectionState? SourceState { get; init; }
     /// <summary>Process-local dedicated rent or Cluster discovery identifier; null for other transitions.</summary>
+    /// <remarks>Identifiers are scoped by ReconnectSource. Include that source when correlating episodes.</remarks>
     public long? ReconnectEpisodeId { get; init; }
     /// <summary>One-based configured replacement attempt; zero for transitions without policy metadata.</summary>
     public int ReconnectAttempt { get; init; }

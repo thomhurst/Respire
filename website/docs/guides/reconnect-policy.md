@@ -261,7 +261,8 @@ Attempt/delay/exhaustion instruments use the candidate endpoint and
 failed candidate, only when another fallback would exceed the budget. Successful fallback
 at the limit and candidate depletion do not count as policy exhaustion. Lifecycle events
 use `ReconnectSource.ClusterDiscovery`, a process-local `ReconnectEpisodeId`, and a null
-`ConnectionSlot`. `SourceState` describes discovery; `State` retains aggregate physical
+`ConnectionSlot`. Episode IDs are scoped by `ReconnectSource`; include it when correlating
+events from different recovery paths. `SourceState` describes discovery; `State` retains aggregate physical
 endpoint health. Discovery never inserts a synthetic failed command slot. Measurements
 and lifecycle callbacks run on an ordered asynchronous queue; keep observers short.
 A caller-cancelled round that started fallback emits a terminal `Disconnected` source event

@@ -89,7 +89,7 @@ public class ServerDiagnosticsCommandTests
             Protocol = RespProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
-        var original = await client.Core.Cluster!.GetConnectionAsync(42, default);
+        var original = await client.Core.Cluster!.GetConnectionAsync(42, default, discovery: null);
         string[] commands = ["get", "config|get"];
         var execution = client.Server.LatencyHistogramsOnAllNodesAsync(commands).AsTask();
         await discovering.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -100,7 +100,7 @@ public class ServerDiagnosticsCommandTests
         var results = await execution.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(results.Single(item => item.Endpoint.Port == seed.Port).Value).IsEmpty();
         await Assert.That(results.Single(item => item.Endpoint.Port == replica.Port).Error).IsTypeOf<RespireServerException>();
-        await Assert.That(ReferenceEquals(original, await client.Core.Cluster.GetConnectionAsync(42, default))).IsTrue();
+        await Assert.That(ReferenceEquals(original, await client.Core.Cluster.GetConnectionAsync(42, default, discovery: null))).IsTrue();
         foreach (var node in new[] { seed, replica })
             await Assert.That(node.ReceivedCommands).Contains("LATENCY HISTOGRAM get config|get");
     }

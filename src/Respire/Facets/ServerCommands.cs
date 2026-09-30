@@ -295,7 +295,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
 
     private async ValueTask<long> DatabaseSizeClusterAsync(CancellationToken cancellationToken)
     {
-        var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
+        var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
         long total = 0;
         foreach (var connection in connections)
         {
@@ -324,7 +324,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
         var mutationFence = cache is null ? default : cache.BeginUnknownMutation();
         try
         {
-            var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken)
+            var connections = await client.Core.Cluster!.GetMasterConnectionsAsync(cancellationToken, discovery: null)
                 .ConfigureAwait(false);
             foreach (var connection in connections)
             {

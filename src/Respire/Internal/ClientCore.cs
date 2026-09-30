@@ -68,7 +68,7 @@ internal sealed class ClientCore : IAsyncDisposable
 
     public ValueTask EnsureConnectedAsync(CancellationToken cancellationToken)
         => Cluster is { } cluster
-            ? cluster.EnsureConnectedAsync(cancellationToken)
+            ? cluster.EnsureConnectedAsync(cancellationToken, discovery: null)
             : Multiplexer.EnsureConnectedAsync(cancellationToken);
 
     public event Action<RespireConnectionStateChange>? ConnectionStateChanged;

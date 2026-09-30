@@ -194,7 +194,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
     {
         if (client.Core.Cluster is not { } cluster)
             return await client.ConvertResponseAsync(operation, command, cancellationToken, this, convert).ConfigureAwait(false);
-        var connections = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
+        var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
         if (connections.Length == 0) throw new RespireConnectionException($"{operation} did not reach any Redis Cluster primary.");
         var tasks = new Task<T>[connections.Length];
         for (var i = 0; i < tasks.Length; i++) tasks[i] = SendAndConvertAsync(connections[i], operation, command, convert, cancellationToken).AsTask();
@@ -213,7 +213,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
     {
         if (client.Core.Cluster is { } cluster)
         {
-            var connections = await cluster.GetMasterConnectionsAsync(cancellationToken).ConfigureAwait(false);
+            var connections = await cluster.GetMasterConnectionsAsync(cancellationToken, discovery: null).ConfigureAwait(false);
             if (connections.Length == 0) throw new RespireConnectionException("Library reload did not reach any Redis Cluster primary.");
             await Task.WhenAll(connections.Select(connection => EnsureOnConnectionAsync(connection, library, cancellationToken).AsTask())).ConfigureAwait(false);
         }

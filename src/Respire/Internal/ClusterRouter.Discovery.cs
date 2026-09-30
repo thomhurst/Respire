@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Respire.Networking;
 
@@ -23,6 +22,8 @@ internal sealed partial class ClusterRouter
     private readonly struct DiscoveryScope(DiscoveryRound? round, bool ownsRound) : IDisposable
     {
         internal DiscoveryRound? Round => round;
+        // Retirement wrappers preserve the endpoint selected by the last BeforeCandidateAsync.
+        // Repeated reports replace the pending failure; only scheduling another candidate consumes it.
         internal void Failed(Exception error)
         {
             if (ownsRound && round is not null) round.TerminalError = error;
@@ -47,93 +48,108 @@ internal sealed partial class ClusterRouter
     // separate rounds, even when the seed gate coalesces their physical connection work.
     // Failed records a rejected candidate; BeforeCandidateAsync consumes that failure once.
     // Success alone does not consume another attempt (for example, required master fan-out).
+    // Every router entry requires an explicit round argument; null deliberately starts a new round.
+    // Runtime guards reject overlapping state transitions, including mutations during a backoff wait.
     internal sealed class DiscoveryRound(ClusterRouter owner, RespireReconnectPolicy policy)
     {
-#if DEBUG
-        private int _waiting;
-#endif
-        [Conditional("DEBUG")]
-        private void AssertSequential()
+        private int _inUse;
+        private void Enter()
         {
-#if DEBUG
-            Debug.Assert(Volatile.Read(ref _waiting) == 0, "DiscoveryRound must have only one sequential consumer.");
-#endif
+            if (Interlocked.CompareExchange(ref _inUse, 1, 0) != 0)
+                throw new InvalidOperationException("DiscoveryRound must have only one sequential consumer.");
         }
+        private void Exit() => Volatile.Write(ref _inUse, 0);
 
         private Exception? _failure;
         private RespireEndpoint _endpoint;
         private int _attempts;
         private long _episode;
         internal RespireReconnectLimitException? Exhaustion { get; private set; }
-        internal Exception? TerminalError { get; set; }
+        private Exception? _terminalError;
+        internal Exception? TerminalError
+        {
+            get => _terminalError;
+            set
+            {
+                Enter();
+                try { _terminalError = value; }
+                finally { Exit(); }
+            }
+        }
         internal bool HasPendingFailure => _failure is not null;
 
+        // Retirement wrappers preserve the endpoint selected by the last BeforeCandidateAsync.
+        // Repeated reports replace the pending failure; only scheduling another candidate consumes it.
         internal void Failed(Exception error)
         {
-            AssertSequential();
-            _failure = error;
+            Enter();
+            try { _failure = error; }
+            finally { Exit(); }
         }
 
         internal void Failed(RespireEndpoint endpoint, Exception error)
         {
-            AssertSequential();
-            _endpoint = endpoint;
-            _failure = error;
-        }
-
-        internal ValueTask BeforeCandidateAsync(RespireEndpoint endpoint, CancellationToken cancellationToken)
-        {
-            AssertSequential();
-            cancellationToken.ThrowIfCancellationRequested();
-            ObjectDisposedException.ThrowIf(Volatile.Read(ref owner._disposed) != 0, owner);
-            if (Exhaustion is { } exhausted) throw exhausted;
-            if (_failure is null)
+            Enter();
+            try
             {
                 _endpoint = endpoint;
-                return default;
+                _failure = error;
             }
-            if (policy.IsExhausted(_attempts))
+            finally { Exit(); }
+        }
+
+        internal async ValueTask BeforeCandidateAsync(RespireEndpoint endpoint, CancellationToken cancellationToken)
+        {
+            Enter();
+            try
             {
-                Exhaustion = new RespireReconnectLimitException(
-                    $"Redis Cluster discovery exhausted {_attempts} fallback attempts.", _failure);
-                Publish(RespireConnectionState.Disconnected, _failure, exhausted: true);
-                throw Exhaustion;
+                cancellationToken.ThrowIfCancellationRequested();
+                ObjectDisposedException.ThrowIf(Volatile.Read(ref owner._disposed) != 0, owner);
+                if (Exhaustion is { } exhausted) throw exhausted;
+                if (_failure is null)
+                {
+                    _endpoint = endpoint;
+                    return;
+                }
+                if (policy.IsExhausted(_attempts))
+                {
+                    Exhaustion = new RespireReconnectLimitException(
+                        $"Redis Cluster discovery exhausted {_attempts} fallback attempts.", _failure);
+                    Publish(RespireConnectionState.Disconnected, _failure, exhausted: true);
+                    throw Exhaustion;
+                }
+                var failure = _failure;
+                _failure = null;
+                _endpoint = endpoint;
+                // Unlimited policies must not wrap the backoff index during long-lived recovery.
+                if (_attempts < int.MaxValue) _attempts++;
+                if (_episode == 0) _episode = Interlocked.Increment(ref _nextDiscoveryEpisode);
+                var delay = policy.GetDelay(_attempts);
+                Publish(RespireConnectionState.Reconnecting, failure, delay);
+                await WaitAsync(delay, cancellationToken).ConfigureAwait(false);
             }
-            var failure = _failure;
-            _failure = null;
-            _endpoint = endpoint;
-            // Unlimited policies must not wrap the backoff index during long-lived recovery.
-            if (_attempts < int.MaxValue) _attempts++;
-            if (_episode == 0) _episode = Interlocked.Increment(ref _nextDiscoveryEpisode);
-            var delay = policy.GetDelay(_attempts);
-            Publish(RespireConnectionState.Reconnecting, failure, delay);
-            return WaitAsync(delay, cancellationToken);
+            finally { Exit(); }
         }
 
         private async ValueTask WaitAsync(TimeSpan delay, CancellationToken callerToken)
         {
-#if DEBUG
-            Debug.Assert(Interlocked.Exchange(ref _waiting, 1) == 0);
-#endif
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(callerToken, owner._stopDiscovery.Token);
             try { await Task.Delay(delay, linked.Token).ConfigureAwait(false); }
             catch (OperationCanceledException error) when (callerToken.IsCancellationRequested)
             {
                 throw new OperationCanceledException(error.Message, error, callerToken);
             }
-            finally
-            {
-#if DEBUG
-                Volatile.Write(ref _waiting, 0);
-#endif
-            }
         }
 
         internal void Finish()
         {
-            AssertSequential();
-            if (_attempts == 0 || Exhaustion is not null || Volatile.Read(ref owner._disposed) != 0) return;
-            Publish(TerminalError is null ? RespireConnectionState.Connected : RespireConnectionState.Disconnected, TerminalError);
+            Enter();
+            try
+            {
+                if (_attempts == 0 || Exhaustion is not null || Volatile.Read(ref owner._disposed) != 0) return;
+                Publish(TerminalError is null ? RespireConnectionState.Connected : RespireConnectionState.Disconnected, TerminalError);
+            }
+            finally { Exit(); }
         }
 
         private void Publish(RespireConnectionState state, Exception? error, TimeSpan? delay = null, bool exhausted = false)
