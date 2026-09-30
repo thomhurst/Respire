@@ -32,6 +32,10 @@ before connection I/O. Policies are immutable records and can be shared across c
 Attempts count separately for each slot in a multiplexer generation. Concurrent callers
 share an in-progress replacement; they do not each create another attempt. A successful
 replacement, including its handshake and required connection identity, resets the count.
+The counter tracks consecutive replacement failures, not connections that fail after
+a successful handshake. A peer that repeatedly accepts and then drops connections
+therefore starts a new episode each time, with the initial delay. There is no healthy
+duration window or first-command condition for reset.
 `MaxAttempts = null` permits unlimited attempts. Exhaustion remains in effect for that
 failed slot; repeatedly submitting commands does not reset it. Recreate the client to
 begin a new episode after exhaustion. A newly discovered Cluster generation has its own

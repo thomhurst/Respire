@@ -803,6 +803,8 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             {
                 if (_options.ReconnectPolicy?.IsExhausted(attempt) == true)
                     _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} exhausted its {Attempts} attempts", Host, Port, attempt);
+                else if (_options.ReconnectPolicy is not null)
+                    _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; next use will schedule another attempt with configured backoff", Host, Port);
                 else
                     _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; will retry on next use", Host, Port);
                 publish = EnqueueReconnectFailure(slot, ex, attempt);
