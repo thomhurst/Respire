@@ -65,7 +65,9 @@ public class ServerClientIntegrationTests
             RespireServerClientInfo? waiting;
             do
             {
-                waiting = (await client.Server.ClientsAsync(deadline.Token)).SingleOrDefault(row => row.Name == "blocked-test" && row.Command == "blpop");
+                // cmd retains the previous BLPOP after UNBLOCK; wait for this iteration to block.
+                waiting = (await client.Server.ClientsAsync(deadline.Token)).SingleOrDefault(row =>
+                    row.Name == "blocked-test" && row.Command == "blpop" && row.Flags.Contains('b'));
                 if (waiting is null) await Task.Delay(10, deadline.Token);
             } while (waiting is null);
             (await first.UnblockClientAsync(waiting.Id, mode, deadline.Token)).Should().BeTrue();
