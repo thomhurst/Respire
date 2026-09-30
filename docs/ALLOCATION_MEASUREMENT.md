@@ -1,4 +1,4 @@
-# Raw key-layout allocation regression
+# Allocation measurement boundaries
 
 `KnownLayoutValidationAllocatesNothingAfterInitialization` requires exactly zero
 managed bytes for 1,000 initialized `KEYDB.MEXISTS` validations. Its production
@@ -80,3 +80,37 @@ A separate mutation check inserts an escaping allocation directly into
 `RawCommandKeyLayouts.ValidateClusterKeys`, verifies that the covered regression
 fails, then restores production source. The committed positive control retains
 ongoing protection against a measurement boundary that stops observing allocations.
+
+## Ring accounting regression
+
+Issue [#554](https://github.com/thomhurst/Respire/issues/554) records a covered net8.0
+failure in `SuccessfulRingAccounting_DoesNotAllocatePerCommand`: 992 bytes instead
+of zero for 1,000 successful enqueue/dequeue pairs. The
+[failed job](https://github.com/thomhurst/Respire/actions/runs/36692788631/job/109813627808)
+ran on diagnostic PR #553, whose changes do not modify ring production code.
+The measured path updates an existing slot and volatile counters; source inspection
+does not prove the origin of the observed 992 bytes.
+
+The ring test now uses the same no-GC boundary as the raw-layout regression, extracted
+into `AllocationMeasurement.WithoutConcurrentGc`. Both tests remain unkeyed
+`NotInParallel` tests. Their warmed, synchronous no-inline methods keep counters and
+work together; assertions and delegate construction stay outside the measured interval.
+The ring requires zero bytes for all 1,000 operations, verifies every enqueue/dequeue
+succeeds with the same response source, and retains the final write-offset assertion.
+A second ring executes the same loop with an escaping 37-byte allocation on each
+iteration and must report at least 37,000 bytes. No positive sample is discarded and
+no nonzero tolerance is introduced.
+
+The existing controlled reproduction above justifies excluding concurrent GC; it does
+not establish the exact source of this new CI delta. No new local reproduction or
+mutation experiment has run for #554 because another worker holds the mandatory shared
+performance reservation. Fresh CI on both frameworks, including coverage, must validate
+the change. Production ring behavior is unchanged.
+
+If a nonzero sample recurs, retain the failing run and capture generation 0/1/2
+`GC.CollectionCount` deltas around the counter interval, outside the counted work.
+Use an allocation-stack trace to distinguish actual managed allocations from counter
+behavior. Do not rerun until green or weaken the zero-byte assertion. Unkeyed
+`NotInParallel` excludes other TUnit tests; unrelated runtime/background activity
+can still consume the process-wide reservation and causes an explicit failure if
+the no-GC region cannot be retained.

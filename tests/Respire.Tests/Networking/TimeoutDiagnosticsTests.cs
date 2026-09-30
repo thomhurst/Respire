@@ -3,6 +3,7 @@ using Respire.Networking;
 using Respire.Infrastructure;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -704,22 +705,41 @@ public class TimeoutDiagnosticsTests
     }
 
     [Test]
+    [NotInParallel] // The no-GC measurement boundary is process-wide.
     public async Task SuccessfulRingAccounting_DoesNotAllocatePerCommand()
     {
+        _ = MeasureRingAllocations(new InflightRing(1), allocate: false, iterations: 100);
+        _ = MeasureRingAllocations(new InflightRing(1), allocate: true, iterations: 100);
+        // Separate warm-up rings keep write offsets monotonic on every instance.
         var ring = new InflightRing(1);
-        var source = InflightRing.DiscardSentinel;
-        ring.TryEnqueue(source, 10);
-        ring.TryDequeue(out _);
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var i = 1; i <= 1000; i++)
-        {
-            ring.TryEnqueue(source, 10 + i);
-            ring.TryDequeue(out _);
-        }
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        var controlRing = new InflightRing(1);
+        // Isolate the counter from concurrent GC without changing the exact-zero
+        // contract. See docs/ALLOCATION_MEASUREMENT.md for evidence and limitations.
+        var (allocated, control) = AllocationMeasurement.WithoutConcurrentGc(() =>
+            (MeasureRingAllocations(ring, allocate: false, iterations: 1000),
+                MeasureRingAllocations(controlRing, allocate: true, iterations: 1000)));
         await Assert.That(allocated).IsEqualTo(0);
+        await Assert.That(control).IsGreaterThanOrEqualTo(1000 * 37);
         await Assert.That(ring.CompletedWriteEnd).IsEqualTo(1010);
     }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasureRingAllocations(InflightRing ring, bool allocate, int iterations)
+    {
+        var source = InflightRing.DiscardSentinel;
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 1; i <= iterations; i++)
+        {
+            if (!ring.TryEnqueue(source, 10 + i) || !ring.TryDequeue(out var returned)
+                || !ReferenceEquals(source, returned))
+                throw new InvalidOperationException("The allocation measurement must exercise a successful ring round trip.");
+            if (allocate) GC.KeepAlive(AllocateRingControl());
+        }
+        return GC.GetAllocatedBytesForCurrentThread() - before;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static object AllocateRingControl() => new byte[37];
 
     [Test]
     public async Task ReusedResponseSourceReceivesNewCommandOffsets()
