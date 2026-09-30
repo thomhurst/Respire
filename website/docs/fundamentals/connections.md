@@ -74,7 +74,11 @@ Connection URI query parameters cover common options:
 redis://localhost:6379/0?clientName=checkout-api&connections=4&allowAdmin=false
 ```
 
-Supported query parameters are `clientName`, `connections`, `connectTimeoutMs`, `commandTimeoutMs`, `responseTimeoutMs`, `protocol` (`2` or `3`), `db`, `cluster`, and `allowAdmin`.
+Supported query parameters are `clientName`, `connections`, `connectTimeoutMs`, `commandTimeoutMs`, `responseTimeoutMs`, `protocol` (`2`/`resp2` or `3`/`resp3`, case-insensitive), `db`, `cluster`, and `allowAdmin`.
+
+Unsupported protocol values and malformed or overflowing integer options throw `ArgumentException`
+with the option name and `ParamName == "connectionString"`. This applies to URI and comma-delimited
+connection strings. Existing option range checks still apply after parsing.
 
 ## StackExchange.Redis connection strings
 
