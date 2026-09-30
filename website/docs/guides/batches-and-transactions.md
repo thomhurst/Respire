@@ -7,6 +7,10 @@ description: Flush commands together and execute atomic Redis transactions.
 
 Respire pipelines concurrent commands automatically. Explicit batches help sequential code queue several commands before one flush; transactions add Redis atomicity.
 
+For WAIT or WAITAOF acknowledgements of a batch's writes, use
+[`ExecuteAndWaitForReplicationAsync` or `ExecuteAndWaitForAofAsync`](durability-acknowledgements.md).
+These methods keep the writes and acknowledgement on one dedicated connection.
+
 ## Batch one flush
 
 ```csharp

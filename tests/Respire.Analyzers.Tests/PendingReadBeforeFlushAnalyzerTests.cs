@@ -6,9 +6,11 @@ namespace Respire.Analyzers.Tests;
 public class PendingReadBeforeFlushAnalyzerTests
 {
     [Test]
-    [Arguments("ExecuteAsync")]
-    [Arguments("TryExecuteAsync")]
-    public async Task ExecuteThenRead_IsNotFlagged(string method) => await Verify.VerifyAsync(
+    [Arguments("ExecuteAsync", "")]
+    [Arguments("TryExecuteAsync", "")]
+    [Arguments("ExecuteAndWaitForReplicationAsync", "1, TimeSpan.Zero")]
+    [Arguments("ExecuteAndWaitForAofAsync", "true, 1, TimeSpan.Zero")]
+    public async Task ExecuteThenRead_IsNotFlagged(string method, string arguments) => await Verify.VerifyAsync(
         $$$"""
         using System;
         using System.Threading.Tasks;
@@ -20,16 +22,18 @@ public class PendingReadBeforeFlushAnalyzerTests
             {
                 var batch = client.CreateBatch();
                 var pending = batch.GetStringAsync("key");
-                var summary = await batch.{{{method}}}().ConfigureAwait(false);
+                var summary = await batch.{{{method}}}({{{arguments}}}).ConfigureAwait(false);
                 Console.WriteLine(pending.Result);
             }
         }
         """);
 
     [Test]
-    [Arguments("ExecuteAsync")]
-    [Arguments("TryExecuteAsync")]
-    public async Task StoredExecuteThenRead_IsNotFlagged(string method) => await Verify.VerifyAsync(
+    [Arguments("ExecuteAsync", "")]
+    [Arguments("TryExecuteAsync", "")]
+    [Arguments("ExecuteAndWaitForReplicationAsync", "1, TimeSpan.Zero")]
+    [Arguments("ExecuteAndWaitForAofAsync", "true, 1, TimeSpan.Zero")]
+    public async Task StoredExecuteThenRead_IsNotFlagged(string method, string arguments) => await Verify.VerifyAsync(
         $$$"""
         using System;
         using System.Threading.Tasks;
@@ -41,7 +45,7 @@ public class PendingReadBeforeFlushAnalyzerTests
             {
                 var batch = client.CreateBatch();
                 var pending = batch.GetStringAsync("key");
-                var flush = batch.{{{method}}}();
+                var flush = batch.{{{method}}}({{{arguments}}});
                 await flush;
                 Console.WriteLine(pending.Result);
             }
@@ -49,9 +53,11 @@ public class PendingReadBeforeFlushAnalyzerTests
         """);
 
     [Test]
-    [Arguments("ExecuteAsync")]
-    [Arguments("TryExecuteAsync")]
-    public async Task UnawaitedExecuteThenRead_IsFlagged(string method) => await Verify.VerifyAsync(
+    [Arguments("ExecuteAsync", "")]
+    [Arguments("TryExecuteAsync", "")]
+    [Arguments("ExecuteAndWaitForReplicationAsync", "1, TimeSpan.Zero")]
+    [Arguments("ExecuteAndWaitForAofAsync", "true, 1, TimeSpan.Zero")]
+    public async Task UnawaitedExecuteThenRead_IsFlagged(string method, string arguments) => await Verify.VerifyAsync(
         $$$"""
         using System;
         using Respire;
@@ -62,7 +68,7 @@ public class PendingReadBeforeFlushAnalyzerTests
             {
                 var batch = client.CreateBatch();
                 var pending = batch.GetStringAsync("key");
-                var flush = batch.{{{method}}}();
+                var flush = batch.{{{method}}}({{{arguments}}});
                 Console.WriteLine({|RESP002:pending.Result|});
             }
         }
@@ -71,6 +77,8 @@ public class PendingReadBeforeFlushAnalyzerTests
     [Test]
     [Arguments("ExecuteAsync")]
     [Arguments("TryExecuteAsync")]
+    [Arguments("ExecuteAndWaitForReplicationAsync")]
+    [Arguments("ExecuteAndWaitForAofAsync")]
     public async Task SameNamedExecuteExtension_IsFlagged(string method) => await Verify.VerifyAsync(
         $$$"""
         using System;

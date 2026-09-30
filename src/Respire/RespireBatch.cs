@@ -29,7 +29,7 @@ namespace Respire;
 /// locks remain client-only because their blocking, streaming, connection-scoped, or managed-lifetime
 /// semantics do not fit a deferred single-flush command queue.
 /// </remarks>
-public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSink
+public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSink
 {
     private readonly RespireClient _client;
     private readonly List<Op> _ops = [];
@@ -51,7 +51,7 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
 
     internal RespireBatch(RespireClient client) => _client = client;
 
-    /// <summary>Gets whether <see cref="ExecuteAsync"/> or <see cref="TryExecuteAsync"/> has started.</summary>
+    /// <summary>Gets whether any batch execution method has started sending this batch.</summary>
     public bool IsSent => _sent;
 
     /// <summary>Gets the number of queued commands.</summary>
@@ -442,6 +442,8 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
 
         public abstract Exception? Error { get; }
 
+        public abstract bool IsCompleted { get; }
+
         public abstract Task<Exception?> RunAsync(
             RespireClient client, RespireConnection connection, CancellationToken cancellationToken);
 
@@ -469,6 +471,8 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
         where TCommand : struct, IRespCommand
     {
         public override Exception? Error => pending.Error;
+
+        public override bool IsCompleted => pending.IsCompleted;
 
         public override void Fail(Exception error) => pending.Fail(error);
 

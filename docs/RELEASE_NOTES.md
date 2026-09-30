@@ -20,6 +20,16 @@
   unsupported layouts fail before enqueueing. Custom `IRespireCommandQueue` implementations
   must implement the new member. See the [deferred raw guide](../website/docs/guides/deferred-raw-commands.md).
 
+### Durability acknowledgements
+
+- `RespireBatch.ExecuteAndWaitForReplicationAsync` and `ExecuteAndWaitForAofAsync`
+  execute queued writes and WAIT/WAITAOF on one fresh exclusive physical connection,
+  closed after execution so replication history cannot leak between batches.
+  Returned counts can be below the requested level; writes are not rolled back or
+  replayed. Cluster execution requires one routing slot and surfaces redirects.
+  These methods are not available inside transactions. See
+  [durability acknowledgements](../website/docs/guides/durability-acknowledgements.md)
+  for server versions, AOF configuration, partial failures, and timeout semantics.
 
 ### Sorted sets
 
