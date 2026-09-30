@@ -15,6 +15,42 @@ bool fieldExists = await redis.Hashes.ExistsAsync("user:42", "name");
 bool containsMember = await redis.Sets.ContainsAsync("team:red", "ada");
 ```
 
+## Binary key serialization
+
+`Keys.DumpAsync(key)` returns an owned `byte[]`, or `null` when the key is missing.
+The bytes are Redis's serialized representation, not a Respire serializer payload, and
+remain valid after reply or batch disposal. [DUMP](https://redis.io/docs/latest/commands/dump/)
+does not include expiry; read `Keys.ExpiryAsync` separately when needed.
+
+```csharp
+byte[]? payload = await redis.Keys.DumpAsync("source");
+if (payload is not null)
+{
+    await redis.Keys.RestoreAsync("copy", payload,
+        expiry: TimeSpan.FromMinutes(5),
+        options: new RespireRestoreOptions { Replace = true });
+}
+```
+
+`RestoreAsync` returns true on `OK`. The default expiry and `RespireExpiry.Persist`
+create a persistent key, including when replacing an expiring key. A relative expiry must
+remain positive after millisecond truncation; an absolute `DateTimeOffset` must be after
+the Unix epoch and uses `ABSTTL`. Past positive timestamps expire immediately.
+`RespireExpiry.Keep`, nonpositive relative milliseconds, and nonpositive absolute Unix
+milliseconds are rejected before sending or enqueueing. This avoids Redis's special zero
+TTL silently making an intended expiry persistent.
+
+`RespireRestoreOptions` supports `Replace`, nonnegative `IdleTimeSeconds`, and byte-valued
+`Frequency` (0–255). Idle time and frequency are mutually exclusive and apply to LRU and
+LFU eviction respectively. [RESTORE](https://redis.io/docs/latest/commands/restore/) requires
+Redis 2.6+, `REPLACE` requires 3.0+, and `ABSTTL`/`IDLETIME`/`FREQ` require 5.0+.
+Payload checksum/version/format errors and existing-key errors remain Redis server errors.
+
+Batch and transaction facets expose `Keys.Dump` and `Keys.Restore` with the same options.
+RESTORE borrows its input memory: keep its bytes unchanged until execution completes.
+Typed commands apply the view's key prefix. DUMP does not invalidate cached data;
+RESTORE invalidates its target key through the existing mutation handling.
+
 ## Hashes
 
 ```csharp

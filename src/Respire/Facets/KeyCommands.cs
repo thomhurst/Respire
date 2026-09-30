@@ -56,7 +56,7 @@ public enum RespireKeyType
 }
 
 /// <summary>Generic key management commands.</summary>
-public interface IKeyCommands
+public partial interface IKeyCommands
 {
     /// <summary>Deletes keys; returns how many existed. Redis: DEL.</summary>
     ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys);
@@ -143,7 +143,7 @@ public interface IKeyCommands
         CancellationToken cancellationToken = default);
 }
 
-internal sealed class KeyCommands(RespireClient client) : IKeyCommands
+internal sealed partial class KeyCommands(RespireClient client) : IKeyCommands
 {
     public ValueTask<long> DeleteAsync(params ReadOnlySpan<RespireKey> keys)
         => client.IntegerKeysAsync("DEL", Verbs.Del, keys, CancellationToken.None);

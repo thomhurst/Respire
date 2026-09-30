@@ -353,6 +353,13 @@ public class MultiItemCancellationOverloadTests
         public ValueTask<long> TouchAsync(ReadOnlySpan<RespireKey> keys, CancellationToken cancellationToken)
             => throw new NotSupportedException();
 
+        public ValueTask<byte[]?> DumpAsync(RespireKey key, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask<bool> RestoreAsync(RespireKey key, ReadOnlyMemory<byte> payload,
+            RespireExpiry expiry = default, RespireRestoreOptions options = default, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
         public ValueTask<bool> ExistsAsync(RespireKey key, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
