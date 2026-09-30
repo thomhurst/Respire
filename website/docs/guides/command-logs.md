@@ -24,8 +24,10 @@ foreach (var entry in entries)
 
 Each owned entry includes its type, ID, Unix timestamp in seconds, raw metric, binary
 arguments, and binary client address/name. `DurationMicroseconds`, `RequestBytes`, and
-`ReplyBytes` expose only the applicable measurement; the others are null. Unknown
-trailing fields remain in recursively copied `AdditionalValues`. Those GC-owned
+`ReplyBytes` expose only the applicable measurement; the others are null. Select
+log-specific measurements by `Type`; the nullable views make units
+explicit at the cost of a null check, while `MetricValue` remains available for generic tooling.
+Unknown trailing fields remain in recursively copied `AdditionalValues`. Those GC-owned
 `RespireResult` values need no disposal; explicitly disposing one invalidates its views.
 Replies remain usable after the client is disposed.
 

@@ -102,6 +102,12 @@ public class ServerCommandLogTests
         await Assert.That(async () => await client.Server.CommandLogOnAllNodesAsync(RespireCommandLogType.Slow, -2)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Server.CommandLogLengthAsync((RespireCommandLogType)99)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(async () => await client.Server.CommandLogLengthOnAllNodesAsync((RespireCommandLogType)99)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.Server.CommandLogAsync((RespireCommandLogType)99)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await client.Server.CommandLogOnAllNodesAsync((RespireCommandLogType)99)).Throws<ArgumentOutOfRangeException>();
+        await using var admin = RespireClient.Create(new RespireOptions
+            { Connections = 1, Endpoints = [new("127.0.0.1", server.Port)], AllowAdmin = true });
+        await Assert.That(async () => await admin.Server.ResetCommandLogAsync((RespireCommandLogType)99)).Throws<ArgumentOutOfRangeException>();
+        await Assert.That(async () => await admin.Server.ResetCommandLogOnAllNodesAsync((RespireCommandLogType)99)).Throws<ArgumentOutOfRangeException>();
         using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
         await Assert.That(async () => await client.Server.CommandLogAsync(RespireCommandLogType.Slow, cancellationToken: cancellation.Token)).Throws<OperationCanceledException>();
         await Assert.That(async () => await client.Server.CommandLogOnAllNodesAsync(RespireCommandLogType.Slow, cancellationToken: cancellation.Token)).Throws<OperationCanceledException>();
