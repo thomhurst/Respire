@@ -83,6 +83,6 @@ internal sealed partial class ClientSideCacheCoordinator
         }
         if (observers is null) return;
         foreach (var entry in observers)
-            foreach (var subscription in entry.Value) subscription.Dispose();
+            foreach (var subscription in entry.Value) subscription.DisposeFromOwner();
     }
 }

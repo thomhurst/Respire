@@ -255,6 +255,8 @@ recover events lost during a disconnect. No server notification is promised for 
 flags. Local mutations can invalidate before dispatch and after completion, including when
 the value did not change. Redis-wide invalidations, `Clear()`, unknown mutations, and continuity
 loss wake every subscription. TTL expiry and capacity eviction do not produce notifications.
+`LocalMutation` also covers conservative whole-cache flushes for unknown commands; it does
+not identify which observed key, if any, changed on the server.
 Cache eviction and stale-read rejection happen before notifications are scheduled.
 
 Each subscription serializes callbacks on the ThreadPool without flowing the registration's
@@ -273,6 +275,8 @@ that snapshot without taking the registration gate or allocating a lookup snapsh
 or removing an observer costs O(observed keys + subscribers for that key); use long-lived
 subscriptions rather than registering on every request. A global flush
 still does work proportional to the subscriber count on its caller, which can hold other cache gates.
+Client disposal detaches the entire registry once and stops subscriptions without copying it
+or reacquiring the registration gate for each subscription.
 There is no additional global subscription limit. Bound the number of live subscriptions in
 your application; the one-pending limit applies separately to each subscription. Only the most
 recent callback exception is retained. Catch and log inside your callback if every failure must

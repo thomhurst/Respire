@@ -113,10 +113,15 @@ internal sealed class RespireClientCacheInvalidationSubscription : IRespireClien
     }
 
     /// <summary>Stops observation and discards pending notifications without waiting for an active callback.</summary>
-    public void Dispose()
+    public void Dispose() => DisposeCore(removeFromOwner: true);
+
+    // The owner already detached the whole registry before stopping subscriptions.
+    internal void DisposeFromOwner() => DisposeCore(removeFromOwner: false);
+
+    private void DisposeCore(bool removeFromOwner)
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        _owner.RemoveInvalidationObserver(this);
+        if (removeFromOwner) _owner.RemoveInvalidationObserver(this);
         CancellationTokenRegistration registration;
         lock (_gate)
         {
