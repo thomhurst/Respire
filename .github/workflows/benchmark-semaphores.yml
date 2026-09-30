@@ -1,0 +1,112 @@
+name: Semaphore benchmarks
+
+on:
+  pull_request:
+    paths:
+      - 'src/Respire.Extensions.Coordination/**'
+      - 'benchmarks/Respire.Benchmarks/SemaphoreBenchmarks.cs'
+      - '.github/workflows/benchmark-semaphores.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  semaphores:
+    name: Compare semaphores (informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      redis:
+        image: redis:8.10@sha256:6f81e8915c60b065a524e6967e0ad1c639ba6efa84d669f823683ea04d9150ee
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+    steps:
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: baseline
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+      - name: Run pinned baseline, candidate, baseline sequentially
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp candidate/benchmarks/Respire.Benchmarks/SemaphoreBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
+          cp candidate/src/Respire.Extensions.Coordination/RespireSemaphore.cs baseline/src/Respire.Extensions.Coordination/
+          for phase in validation baseline-a candidate baseline-b; do
+            source=baseline
+            job=Medium
+            export RESPIRE_BENCH_BASELINE=1
+            if [ "$phase" = candidate ] || [ "$phase" = validation ]; then
+              source=candidate
+              export RESPIRE_BENCH_BASELINE=0
+            fi
+            if [ "$phase" = validation ]; then job=Dry; fi
+            (
+              cd "$source"
+              git rev-parse HEAD
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
+                --filter '*SemaphoreBenchmarks*' --job "$job" --exporters json markdown \
+                --artifacts "$GITHUB_WORKSPACE/results/$phase"
+            ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
+          done
+      - name: Verify and summarize results
+        shell: python
+        run: |
+          import json, os
+          from pathlib import Path
+          phases = {}
+          for phase in ('validation', 'baseline-a', 'candidate', 'baseline-b'):
+              reports = list(Path('results', phase, 'results').glob('*-report-full-compressed.json'))
+              assert len(reports) == 1, f'Missing report: {phase}'
+              cases = json.loads(reports[0].read_text())['Benchmarks']
+              expected = 2 if phase in ('validation', 'candidate') else 1
+              assert len(cases) == expected, f'Unexpected cases: {phase}'
+              phases[phase] = {case['Parameters']: case for case in cases}
+              assert all(case.get('Statistics') and case['Statistics']['Mean'] > 0 for case in cases)
+          lines = ['## Acquire and release one uncontended permit', '',
+                   'Standard leases are compared across pinned A/B/A builds. Semaphore permits are reported separately.', '',
+                   '| Phase | Mode | Mean ns | Operations/s | Allocated B |', '| --- | --- | ---: | ---: | ---: |']
+          metrics = []
+          for phase in ('baseline-a', 'candidate', 'baseline-b'):
+              for mode, case in phases[phase].items():
+                  mean = case['Statistics']['Mean']
+                  allocation = case['Memory']['BytesAllocatedPerOperation']
+                  lines.append(f'| {phase} | {mode} | {mean:.3f} | {1e9/mean:.3f} | {allocation} |')
+              records = [json.loads(line.split(' ', 1)[1]) for line in Path(f'{phase}.log').read_text().splitlines()
+                         if line.startswith('SEMAPHORE_PROCESS_METRICS ')]
+              expected_modes = {False, True} if phase == 'candidate' else {False}
+              assert {record['Semaphore'] for record in records} == expected_modes
+              assert all(record['operations'] > 0 and record['cpuMilliseconds'] >= 0 for record in records)
+              metrics.extend(dict(record, phase=phase) for record in records)
+          standard = 'Semaphore=False'
+          a, candidate, b = [phases[phase][standard] for phase in ('baseline-a', 'candidate', 'baseline-b')]
+          am, cm, bm = [case['Statistics']['Mean'] for case in (a, candidate, b)]
+          lines += ['', f'Standard lease deltas: candidate/A {(cm/am-1)*100:+.2f}%; candidate/B {(cm/bm-1)*100:+.2f}%; control drift {(bm/am-1)*100:+.2f}%.',
+                    '', 'Process CPU includes warmup, calibration and background work. Raw launch measurements remain in the JSON artifacts.']
+          report = '\n'.join(lines) + '\n'
+          Path('results/comparison.md').write_text(report)
+          Path('results/process-metrics.json').write_text(json.dumps(metrics, indent=2))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output: output.write(report)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: semaphore-comparison
+          path: |
+            results/
+            *.log

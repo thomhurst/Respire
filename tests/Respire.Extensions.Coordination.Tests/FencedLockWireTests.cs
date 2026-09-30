@@ -10,6 +10,35 @@ public class FencedLockWireTests
 {
     [Test]
     [NotInParallel]
+    public async Task CancellationAfterSuccessfulSemaphoreReplyReleasesUnreturnedPermit()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var cancellation = new CancellationTokenSource();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStopped = activity =>
+            {
+                if (activity.GetTagItem("db.operation.name") is "EVALSHA"
+                    && activity.GetTagItem("server.port") is int port && port == server.Port)
+                    cancellation.Cancel();
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        var semaphore = new RespireSemaphore(client, "{job}:semaphore", capacity: 1);
+        await Assert.That(async () => await semaphore.TryAcquireAsync(cancellationToken: cancellation.Token)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
+        var commands = server.ReceivedCommands;
+        await Assert.That(commands.Count).IsEqualTo(2);
+        await Assert.That(commands.All(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(server.ReceivedArguments[1][4].SequenceEqual(server.ReceivedArguments[0][5])).IsTrue();
+    }
+
+    [Test]
+    [NotInParallel]
     public async Task CancellationAfterSuccessfulReadWriteReplyReleasesUnreturnedLease()
     {
         var evalCount = 0;

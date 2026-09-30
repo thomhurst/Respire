@@ -421,3 +421,29 @@ The count and generation live in Redis and follow its persistence and failover g
 Asynchronous failover or restore can roll back acknowledged signals or resets. Use suitable
 Redis durability for the work being coordinated; this latch does not provide consensus across
 independent Redis histories.
+## Distributed semaphores
+
+Use `RespireSemaphore` for immediate permit acquisition:
+
+```csharp
+var semaphore = new RespireSemaphore(client, "{batch:42}:permits", capacity: 4);
+await using var attempt = await semaphore.TryAcquireAsync(TimeSpan.FromSeconds(30));
+if (!attempt.Acquired) return;
+// Run work while holding attempt.Permit.
+```
+
+Each permit has unique ownership. Release it with `ReleaseAsync` or `DisposeAsync`, verify it
+with `VerifyStillHeldAsync`, or renew/change expiry with `ResetExpiryAsync`. Pass `null` at
+acquisition or renewal for a permit that expires only when its owner releases it. Expiring
+permits use whole-millisecond durations, Redis server time, and are pruned atomically on the
+next operation. Optional expiry removes abandoned capacity usage without a cleanup worker.
+
+Every contender must use the same positive capacity. Capacity changes fail while any permit
+is active; release or expiry of every permit allows a new capacity. A lower capacity never
+revokes existing permits. Acquisition does not queue, poll or promise fairness; callers choose
+retry behavior. Use a dedicated key. Binary keys and client prefixes work, and one-key Lua
+scripts need no Cluster hash-tag coordination. Redis asynchronous failover can roll back permit
+state. After an uncertain acquisition, Respire attempts owner-token cleanup; finite expiry is
+the fallback if the reply and cleanup are both lost. An uncertain non-expiring permit can
+consume capacity indefinitely if cleanup cannot reach Redis; use finite expiry when clients
+may lose connectivity.
