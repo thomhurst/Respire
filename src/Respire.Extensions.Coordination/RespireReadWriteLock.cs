@@ -30,20 +30,20 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
     private readonly RespireLockToken _owner;
     private readonly bool _isWriter;
     private readonly SemaphoreSlim _operationGate = new(1, 1);
-    private long _validUntil;
+    private long _renewedTimestamp;
     private long _durationTicks;
     private int _released;
 
     internal RespireReadWriteLock(
         IRespireClient client, RespireKey key, RespireLockToken owner,
-        bool isWriter, TimeSpan duration, TimeSpan validity, long completed)
+        bool isWriter, TimeSpan duration, long startedTimestamp)
     {
         _client = client;
         Key = key;
         _owner = owner;
         _isWriter = isWriter;
         _durationTicks = duration.Ticks;
-        _validUntil = AddTimestampDuration(completed, validity);
+        _renewedTimestamp = startedTimestamp;
     }
 
     /// <summary>The lock key before the client's configured prefix.</summary>
@@ -61,7 +61,9 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
         get
         {
             if (Volatile.Read(ref _released) != 0) return TimeSpan.Zero;
-            var remaining = Stopwatch.GetElapsedTime(Stopwatch.GetTimestamp(), Interlocked.Read(ref _validUntil));
+            // Measured from before the acquiring or renewing command was sent. Subtracting elapsed
+            // time from the duration cannot overflow, unlike adding a long duration to a timestamp.
+            var remaining = Duration - Stopwatch.GetElapsedTime(Interlocked.Read(ref _renewedTimestamp));
             return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
         }
     }
@@ -108,7 +110,7 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
                 if (response.AsInteger() == 1 && validity > TimeSpan.Zero)
                 {
                     Interlocked.Exchange(ref _durationTicks, milliseconds * TimeSpan.TicksPerMillisecond);
-                    Interlocked.Exchange(ref _validUntil, AddTimestampDuration(completed, validity));
+                    Interlocked.Exchange(ref _renewedTimestamp, started);
                     return true;
                 }
             }
@@ -165,7 +167,4 @@ public sealed class RespireReadWriteLock : IAsyncDisposable
         }
         catch (Exception) { }
     }
-
-    private static long AddTimestampDuration(long timestamp, TimeSpan duration)
-        => checked(timestamp + (long)((decimal)duration.Ticks * Stopwatch.Frequency / TimeSpan.TicksPerSecond));
 }

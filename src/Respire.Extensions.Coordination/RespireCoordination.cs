@@ -150,9 +150,10 @@ public sealed class RespireCoordination
         local role = ARGV[3]
         if role == 'W:' and redis.call('ZCARD', KEYS[1]) ~= 0 then return 0 end
         if role == 'R:' then
-            for _, member in ipairs(redis.call('ZRANGE', KEYS[1], 0, -1)) do
-                if string.sub(member, 1, 2) == 'W:' then return 0 end
-            end
+            -- Writers are only admitted into an empty set and readers never join a writer, so a
+            -- live writer is always the sole member. One member decides without an O(n) scan.
+            local first = redis.call('ZRANGE', KEYS[1], 0, 0)[1]
+            if first and string.sub(first, 1, 2) == 'W:' then return 0 end
         end
         local member = role .. ARGV[1]
         local added = redis.call('ZADD', KEYS[1], 'NX', now + tonumber(ARGV[2]), member)
@@ -317,7 +318,7 @@ public sealed class RespireCoordination
             return default;
         }
         var lease = new RespireReadWriteLock(_client, key, owner, isWriter,
-            TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond), validity, completed);
+            TimeSpan.FromTicks(milliseconds * TimeSpan.TicksPerMillisecond), started);
         try
         {
             cancellationToken.ThrowIfCancellationRequested();

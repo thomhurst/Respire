@@ -36,6 +36,20 @@ public class FencedLockWireTests
     }
 
     [Test]
+    public async Task MaximumReadWriteLeaseDurationDoesNotOverflowLocalEstimate()
+    {
+        await using var server = new FakeRespServer(":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray(), ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        await using var attempt = await new RespireCoordination(client).TryAcquireWriteLockAsync("{job}:rw", TimeSpan.MaxValue)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(attempt.Acquired).IsTrue();
+        await Assert.That(attempt.Lock.RemainingEstimate > TimeSpan.FromDays(365 * 1000)).IsTrue();
+        await Assert.That(await attempt.Lock.ResetExpiryAsync(TimeSpan.MaxValue)).IsTrue();
+        await Assert.That(attempt.Lock.IsReleased).IsFalse();
+        await Assert.That(await attempt.Lock.ReleaseAsync()).IsTrue();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task AcceptedAcquisitionIsNotReplayedAfterCancellationOrDisconnect(bool disconnect)
