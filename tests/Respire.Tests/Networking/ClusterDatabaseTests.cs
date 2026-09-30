@@ -188,6 +188,91 @@ public class ClusterDatabaseTests
     }
 
     [Test]
+    [Arguments(0)]
+    [Arguments(1)]
+    [Arguments(2)]
+    public async Task IncompatibleDiscoveredOwnerSurfacesWithoutFallback(int path)
+    {
+        await using var owner = new FakeRespServer(Info("8.1.0"));
+        await using var seed = new FakeRespServer(Info(), FakeRespServer.OkReply, Topology(owner.Port));
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await Assert.That(async () =>
+        {
+            if (path == 0) await client.SetAsync("key", "value", cancellationToken: deadline.Token);
+            else if (path == 1)
+                await client.Core.Cluster!.GetDedicatedPoolAsync(ClusterHash.GetSlot("key"), deadline.Token);
+            else await client.SubscribeAsync("ch", deadline.Token);
+        }).ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(owner.ReceivedCommands).IsEquivalentTo(["INFO SERVER"]);
+        await Assert.That(seed.ReceivedCommands).IsEquivalentTo(["INFO SERVER", "SELECT 2", "CLUSTER SLOTS"]);
+    }
+
+    [Test]
+    public async Task IncompatibleDedicatedSocketSurfacesConfigurationError()
+    {
+        await using var server = new FakeRespServer(Info("8.1.0"));
+        await using var client = RespireClient.Create(Options(server.Port));
+        await Assert.That(async () => await client.Core.DedicatedPool.RentAsync(CancellationToken.None))
+            .ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(["INFO SERVER"]);
+    }
+
+    [Test]
+    public async Task IncompatiblePubSubSocketDoesNotInheritCommandSocketCapability()
+    {
+        var info = Info();
+        var requests = 0;
+        await using var owner = new FakeRespServer(2, info, FakeRespServer.OkReply)
+        {
+            SuppressReply = command =>
+            {
+                if (command == "INFO SERVER" && Interlocked.Increment(ref requests) == 2)
+                    Info("8.0.0").CopyTo(info, 0);
+                return false;
+            },
+        };
+        await using var seed = new FakeRespServer(Info(), FakeRespServer.OkReply, Topology(owner.Port));
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+        await Assert.That(async () => await client.SubscribeAsync("ch").AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
+            .ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(owner.ReceivedCommands).IsEquivalentTo(["INFO SERVER", "SELECT 2", "INFO SERVER"]);
+    }
+
+    [Test]
+    public async Task BackgroundReconnectReportsIncompatibleReplacement()
+    {
+        var info = Info();
+        await using var server = new FakeRespServer(2, info, FakeRespServer.OkReply);
+        await using var multiplexer = Respire.Infrastructure.RespireConnectionMultiplexer.Create(
+            "127.0.0.1", server.Port, 1, Options(server.Port).ToConnectionOptions(), null);
+        await multiplexer.EnsureConnectedAsync();
+        var failure = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        multiplexer.StateChanged += change =>
+        {
+            if (change.Error is RespireConfigurationException) failure.TrySetResult(change);
+        };
+        // The next physical socket sees a downgraded server at the same endpoint.
+        Info("8.0.0").CopyTo(info, 0);
+        await multiplexer.GetConnection().DisposeAsync();
+        await Assert.That(() => multiplexer.GetConnection()).Throws<RespireConnectionException>();
+        var observed = await failure.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(observed.State).IsEqualTo(RespireConnectionState.Disconnected);
+        await Assert.That(observed.Error).IsTypeOf<RespireConfigurationException>();
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(["INFO SERVER", "SELECT 2", "INFO SERVER"]);
+        await Assert.That(multiplexer.IsConnected).IsFalse();
+    }
+
+    [Test]
+    public async Task ServerIdentityAndModeAreCaseInsensitive()
+    {
+        await using var server = new FakeRespServer(Info(server: "VALKEY", mode: "CLUSTER"), FakeRespServer.OkReply);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            Options(server.Port).ToConnectionOptions());
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(["INFO SERVER", "SELECT 2"]);
+    }
+
+    [Test]
     public async Task ReconnectRepeatsCapabilityCheckAndSelect()
     {
         await using var server = new FakeRespServer(2, Info(), FakeRespServer.OkReply);

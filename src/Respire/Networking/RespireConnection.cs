@@ -486,7 +486,7 @@ internal sealed class RespireConnection : IAsyncDisposable
         var separator = majorText.IndexOfAny('.', '-');
         if (separator >= 0) majorText = majorText[..separator];
         if (string.Equals(server, "valkey", StringComparison.OrdinalIgnoreCase)
-            && mode == "cluster"
+            && string.Equals(mode, "cluster", StringComparison.OrdinalIgnoreCase)
             && int.TryParse(majorText, NumberStyles.None, CultureInfo.InvariantCulture, out var major) && major >= 9)
         {
             return;

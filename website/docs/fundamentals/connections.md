@@ -335,6 +335,14 @@ not hide a mixed-version or incorrectly configured endpoint behind another seed.
 connection failures still allow the next seed to be tried. Capability errors include the
 observed server name, Valkey version, and mode to help identify the incompatible endpoint.
 
+The same configuration failure propagates from discovered-node selection, redirect targets,
+dedicated connection acquisition, and initial subscription setup. It is not treated as a
+transient discovery failure. Background recovery retains the existing reconnect policy:
+command-socket replacement reports the error through `ConnectionStateChanged` and logging;
+pub/sub recovery logs failed attempts and continues its backoff while subscriptions wait.
+Configure logging to observe subscription recovery failures. No incompatible replacement
+receives `SELECT` or application commands, and every later attempt validates again.
+
 Database `0` and standalone connections retain their existing handshake and need no new discovery
 permission. Redis Cluster and Valkey before version 9 still support only database `0`.
 Hash slots depend on key bytes, not the selected database; multi-key and transaction slot rules
