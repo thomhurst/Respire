@@ -123,6 +123,73 @@ public class ClusterShardedPubSubTests
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task AskSubscriptionWorksWithSingleInflightCommand(int protocol)
+    {
+        await using var cluster = new Cluster(protocol);
+        cluster.SecondOverride = (_, command) => command == "SSUBSCRIBE foo"
+            ? Encoding.ASCII.GetBytes($"-ASK {ClusterHash.GetSlot("foo")} 127.0.0.1:{cluster.First.Port}\r\n") : null;
+        await using var client = cluster.CreateClient(maxInflightCommands: 1);
+        await using var subscription = await client.SubscribeShardedAsync("foo").AsTask().WaitAsync(Deadline);
+        var commands = cluster.First.ReceivedCommands.ToList();
+        var asking = commands.IndexOf("ASKING");
+        await Assert.That(asking).IsGreaterThanOrEqualTo(0);
+        await Assert.That(commands.IndexOf("SSUBSCRIBE foo")).IsGreaterThan(asking);
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task AskRouteIgnoresUnrelatedTopologyChangesUntilItsSlotMovesElsewhere(int protocol)
+    {
+        await using var cluster = new Cluster(protocol);
+        cluster.SecondOverride = (_, command) => command == "SSUBSCRIBE foo"
+            ? Encoding.ASCII.GetBytes($"-ASK {ClusterHash.GetSlot("foo")} 127.0.0.1:{cluster.First.Port}\r\n") : null;
+        await using var client = cluster.CreateClient(new()
+        {
+            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+        });
+        var clock = new RecoveryClock();
+        await using var hub = new SubscriptionHub(client.Core, clock);
+        await using var redirected = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["foo"], new(), CancellationToken.None);
+        var router = client.Core.Cluster!;
+        var first = router.GetMultiplexer(new("127.0.0.1", cluster.First.Port));
+        var second = router.GetMultiplexer(new("127.0.0.1", cluster.Second.Port));
+
+        // The router still names the migration source for foo. An unrelated slot change must
+        // not treat that intentional mismatch as a moved subscription.
+        router.SetSlotOwner(ClusterHash.GetSlot("baz"), second);
+        await using var added = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None)
+            .AsTask().WaitAsync(Deadline);
+        // A duplicate subscription keeps the confirmed ASK route instead of repeating ASK.
+        await using var duplicate = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["foo"], new(), CancellationToken.None)
+            .AsTask().WaitAsync(Deadline);
+        // Migration completing makes the ASK target the known owner; still no recovery.
+        router.SetSlotOwner(ClusterHash.GetSlot("foo"), first);
+        await using var afterMigration = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None)
+            .AsTask().WaitAsync(Deadline);
+        await Assert.That(cluster.First.ReceivedCommands.Count(command => command == "ASKING")).IsEqualTo(1);
+        await Assert.That(cluster.First.ReceivedCommands.Count(command => command == "SSUBSCRIBE foo")).IsEqualTo(1);
+        await Assert.That(cluster.First.ReceivedCommands.Any(command => command == "SUNSUBSCRIBE foo")).IsFalse();
+        await Assert.That(cluster.Second.ReceivedCommands.Count(command => command == "SSUBSCRIBE foo")).IsEqualTo(1);
+
+        // Once migrated, moving the slot back to the former source is a real owner change.
+        cluster.SecondOverride = null;
+        var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.ReconnectSource == RespireReconnectSource.PubSub && change.SourceState == RespireConnectionState.Connected)
+                recovered.TrySetResult();
+        };
+        router.SetSlotOwner(ClusterHash.GetSlot("foo"), second);
+        var retry = await clock.NextAsync();
+        retry.Fire();
+        await recovered.Task.WaitAsync(Deadline);
+        await Assert.That(cluster.Second.ReceivedCommands.Count(command => command == "SSUBSCRIBE foo")).IsEqualTo(2);
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task TopologyMoveResubscribesAndPublishesGapBeforeSameReadMessage(int protocol)
     {
         await using var cluster = new Cluster(protocol);
@@ -583,10 +650,12 @@ public class ClusterShardedPubSubTests
             First.ReplyOverride = (id, command) => FirstOverride?.Invoke(id, command) ?? Reply(command);
             Second.ReplyOverride = (id, command) => SecondOverride?.Invoke(id, command) ?? Reply(command);
         }
-        internal RespireClient CreateClient(RespireReconnectPolicy? policy = null, ILoggerFactory? logger = null) => RespireClient.Create(new RespireOptions
+        internal RespireClient CreateClient(
+            RespireReconnectPolicy? policy = null, ILoggerFactory? logger = null, int maxInflightCommands = 16 * 1024)
+            => RespireClient.Create(new RespireOptions
         {
             UseCluster = true, Protocol = (RespProtocol)_protocol, Connections = 1, ReconnectPolicy = policy,
-            LoggerFactory = logger,
+            LoggerFactory = logger, MaxInflightCommands = maxInflightCommands,
             Endpoints = { new RespireEndpoint("127.0.0.1", First.Port) }, ConnectTimeout = TimeSpan.FromSeconds(1),
         });
         private byte[] Reply(string command)

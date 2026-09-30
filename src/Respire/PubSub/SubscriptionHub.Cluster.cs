@@ -20,10 +20,13 @@ internal sealed partial class SubscriptionHub
     private bool _observingClusterTopology;
     private RespireReconnectLimitException? _shardedExhaustion;
 
-    private sealed class PrimarySubscriptionConnection(RespireConnectionMultiplexer owner, bool isAskConnection = false)
+    private sealed class PrimarySubscriptionConnection(RespireConnectionMultiplexer owner, RespireConnectionMultiplexer? askSource = null)
     {
         internal readonly RespireConnectionMultiplexer Owner = owner;
-        internal readonly bool IsAskConnection = isAskConnection;
+        internal readonly bool IsAskConnection = askSource is not null;
+        // While a slot migrates, the router intentionally keeps the source as the slot owner.
+        // Cleared under _gate once the router observes this target as the owner.
+        internal RespireConnectionMultiplexer? AskSource = askSource;
         internal RespireConnection? Connection;
         internal readonly HashSet<RespireChannel> Confirmed = [];
         internal RespireChannel? ExpectedUnsubscribe;
@@ -114,13 +117,22 @@ internal sealed partial class SubscriptionHub
     {
         var slot = ClusterHash.GetSlot(name.Span);
         var commandConnection = await core.Cluster!.GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
-        var ask = false;
+        lock (_gate)
+        {
+            // A confirmed ASK route stays valid while the router still names its migration
+            // source (or, after migration, its target) as owner. Keep it instead of repeating
+            // ASK on every recovery pass or duplicate subscription for the same channel.
+            if (_shardedOwners.TryGetValue(name, out var existing) && existing.IsAskConnection
+                && existing.Confirmed.Contains(name) && existing.Connection is { IsConnected: true }
+                && IsRouteOwnerCurrentLocked(existing, commandConnection.Multiplexer)) return;
+        }
+        RespireConnectionMultiplexer? askSource = null;
         try
         {
             for (var redirect = 0; ; redirect++)
             {
-                var primary = ask
-                    ? await CreatePrimaryConnectionAsync(commandConnection.Multiplexer!, isAskConnection: true, cancellationToken).ConfigureAwait(false)
+                var primary = askSource is not null
+                    ? await CreatePrimaryConnectionAsync(commandConnection.Multiplexer!, askSource, cancellationToken).ConfigureAwait(false)
                     : await GetPrimaryConnectionAsync(commandConnection.Multiplexer!, cancellationToken).ConfigureAwait(false);
                 PrimarySubscriptionConnection? previous;
                 lock (_gate)
@@ -143,7 +155,7 @@ internal sealed partial class SubscriptionHub
                 try
                 {
                     await SendControlAsync(primary.Connection!, SubscribeVerb(SubscriptionKind.Sharded), "SSUBSCRIBE",
-                        name, cancellationToken, instrument: !recovering, ask).ConfigureAwait(false);
+                        name, cancellationToken, instrument: !recovering, primary.IsAskConnection).ConfigureAwait(false);
                     lock (_gate)
                     {
                         // SUNSUBSCRIBE may follow the acknowledgement in the same socket read.
@@ -159,7 +171,7 @@ internal sealed partial class SubscriptionHub
                         .ConfigureAwait(false);
                     if (primary.IsAskConnection)
                         await ClosePrimaryAsync(primary).ConfigureAwait(false);
-                    ask = error.Code == RespireErrorCodes.Ask;
+                    askSource = error.Code == RespireErrorCodes.Ask ? primary.AskSource ?? primary.Owner : null;
                 }
                 catch (RespireServerException)
                 {
@@ -197,23 +209,27 @@ internal sealed partial class SubscriptionHub
             if (previous?.Connection is { IsConnected: true }) return previous;
         }
         if (previous is not null) await ClosePrimaryAsync(previous).ConfigureAwait(false);
-        return await CreatePrimaryConnectionAsync(owner, isAskConnection: false, cancellationToken).ConfigureAwait(false);
+        return await CreatePrimaryConnectionAsync(owner, askSource: null, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask<PrimarySubscriptionConnection> CreatePrimaryConnectionAsync(
-        RespireConnectionMultiplexer owner, bool isAskConnection, CancellationToken cancellationToken)
+        RespireConnectionMultiplexer owner, RespireConnectionMultiplexer? askSource, CancellationToken cancellationToken)
     {
-        var primary = new PrimarySubscriptionConnection(owner, isAskConnection);
-        var options = core.Options.ToConnectionOptions((in RespValue value) => OnPrimaryPush(primary, in value)) with
+        var primary = new PrimarySubscriptionConnection(owner, askSource);
+        var options = core.Options.ToConnectionOptions((in RespValue value) => OnPrimaryPush(primary, in value));
+        options = options with
         {
             SubscriptionConfirmationHandler = (in RespValue value) => OnSubscriptionConfirmation(0, in value, primary),
             SubscriptionPushFilter = (in RespValue value, bool hasPendingResponse) => FilterPrimaryConfirmation(primary, in value, hasPendingResponse),
+            // ASKING and SSUBSCRIBE occupy two FIFO slots on this dedicated connection, even
+            // when the client allows only one in-flight command on its shared connections.
+            MaxInflightCommands = primary.IsAskConnection ? Math.Max(2, options.MaxInflightCommands) : options.MaxInflightCommands,
         };
         primary.Connection = await RespireConnection.ConnectAsync(owner.Host, owner.Port, options, core.Logger, cancellationToken)
             .ConfigureAwait(false);
         lock (_gate)
         {
-            if (isAskConnection) _askConnections.Add(primary);
+            if (primary.IsAskConnection) _askConnections.Add(primary);
             else _primaryConnections.Add(owner, primary);
         }
         _ = WatchPrimaryAsync(primary);
@@ -408,10 +424,23 @@ internal sealed partial class SubscriptionHub
             {
                 if (_shardedOwners.TryGetValue(name, out var primary)
                     && primary.Confirmed.Contains(name)
-                    && !ReferenceEquals(primary.Owner, core.Cluster!.GetKnownSlotOwner(ClusterHash.GetSlot(name.Span))))
+                    && !IsRouteOwnerCurrentLocked(primary, core.Cluster!.GetKnownSlotOwner(ClusterHash.GetSlot(name.Span))))
                     RequestShardedRecoveryLocked(primary);
             }
         }
+    }
+
+    // An ASK route intentionally differs from the router's slot owner until migration
+    // completes, so its migration source also counts as current. Once the router names the
+    // target, forget the source so a later move back to it starts recovery.
+    private static bool IsRouteOwnerCurrentLocked(PrimarySubscriptionConnection primary, RespireConnectionMultiplexer? knownOwner)
+    {
+        if (ReferenceEquals(primary.Owner, knownOwner))
+        {
+            primary.AskSource = null;
+            return true;
+        }
+        return primary.AskSource is { } source && ReferenceEquals(source, knownOwner);
     }
 
     private void RequestShardedRecoveryLocked(PrimarySubscriptionConnection primary)
