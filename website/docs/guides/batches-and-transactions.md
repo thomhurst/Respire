@@ -124,6 +124,9 @@ Execution remains specific to the concrete type: batches call `ExecuteAsync`; tr
 
 Blocking variants (a `waitFor` argument, i.e. `BLPOP` / `BLMOVE`) and streaming operations (`Keys.ScanAsync`, `Strings.GetLeaseAsync`) have no deferred form — a queue cannot block, and a lease borrows reply memory that is released once the batch completes. `Server` and `Locks` remain client-only. Streams expose the non-blocking subset below; blocking reads, consumer loops, and group administration remain immediate operations.
 
+The raw `Execute` queue method supports known nonblocking command forms; see
+[deferred raw commands](./deferred-raw-commands.md).
+
 ## Deferred Streams
 
 Both queues expose `Streams.Add`, `Count`, `Range`, `Remove`, `TrimByMaxLength`, and

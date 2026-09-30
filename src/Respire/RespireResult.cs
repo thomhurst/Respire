@@ -13,7 +13,7 @@ namespace Respire;
 /// typed command surface returns plain .NET types instead. Immediate command results are leases over
 /// pooled memory — dispose them when done; disposal is idempotent across struct copies. Nested
 /// results obtained via the indexer are views into the root and must not outlive it.
-/// Deferred script results from <see cref="IBatchScriptCommands.Evaluate"/> use GC-owned storage
+/// Deferred raw, script, and function results use GC-owned storage
 /// instead: disposal is optional, but still invalidates the result and its nested views.
 /// </summary>
 public readonly struct RespireResult : IDisposable, IReadOnlyList<RespireResult>

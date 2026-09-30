@@ -410,6 +410,14 @@ One method, one mental model. This is a headline capability — spec it early, m
 
 ## 10. Raw commands and the interpolated escape hatch
 
+Deferred queues expose `Execute(RespireCommand, params RespireValue[])`, returning
+`RespirePending<RespireResult>`. Supported key layouts are prefixed, snapshotted, and
+validated before enqueueing. Results own GC-managed storage, like deferred scripts.
+Unknown/module layouts and connection-affine or blocking commands are rejected.
+See [deferred raw commands](../website/docs/guides/deferred-raw-commands.md) for supported
+forms, Cluster restrictions, and the differences from immediate execution.
+
+
 ```csharp
 RespireKey key = "user:1";
 // Complete generated catalog — discoverable and pre-encoded

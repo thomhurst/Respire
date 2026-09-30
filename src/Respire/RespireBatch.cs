@@ -23,6 +23,7 @@ namespace Respire;
 /// non-blocking form, without the client's <c>waitFor</c> argument. Streaming and leased reads
 /// (<c>ScanAsync</c>, <c>GetLeaseAsync</c>) have no deferred form. Script commands use
 /// <c>Evaluate</c> rather than the client's <c>ExecuteAsync</c> name and return owned results.
+/// Raw Execute supports known nonblocking key layouts and owned results. Unknown layouts are rejected.
 /// Stream append, range, count, remove, trim, and acknowledge commands support deferred execution.
 /// Blocking stream reads, consumer loops, group administration, server administration, and distributed
 /// locks remain client-only because their blocking, streaming, connection-scoped, or managed-lifetime
@@ -141,6 +142,10 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
     public RespirePending<bool> Expire(
         RespireKey key, RespireExpiry expiry, ExpireWhen when = ExpireWhen.Always)
         => Keys.Expire(key, expiry, when);
+
+    /// <inheritdoc cref="IRespireCommandQueue.Execute"/>
+    public RespirePending<RespireResult> Execute(RespireCommand command, params RespireValue[] args)
+        => DeferredRawCommands.Enqueue(this, command, args);
 
     RespireClient IPendingSink.Client => _client;
 
