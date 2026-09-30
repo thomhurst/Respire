@@ -614,6 +614,60 @@ public class ClusterReconnectPolicyTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReadOnlyCandidatesSkipEveryRejectedOwnerGeneration(bool configured)
+    {
+        await using var sourceServer = new FakeRespServer(FakeRespServer.OkReply);
+        await using var originalOwner = new FakeRespServer(3, "-ERR original owner unavailable\r\n"u8.ToArray());
+        await using var nextOwner = new FakeRespServer("-ERR discovered owner unavailable\r\n"u8.ToArray());
+        await using var probe = new FakeRespServer(FakeRespServer.OkReply);
+        await using var healthy = new FakeRespServer(FakeRespServer.OkReply);
+        // Keep the rejected original generation in the refreshed topology so an address-level
+        // replacement does not accidentally make the duplicate candidate a distinct generation.
+        probe.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? Encoding.ASCII.GetBytes("*2\r\n" + Range(0, 41, originalOwner.Port) + Range(42, 16383, nextOwner.Port)) : null;
+        healthy.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? Encoding.ASCII.GetBytes("*1\r\n" + Range(0, 16383, healthy.Port)) : null;
+        await using var client = RespireClient.Create(Options(probe.Port, originalOwner.Port, healthy.Port) with
+        {
+            ReconnectPolicy = configured ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 3 } : null,
+        });
+        await using var source = await Respire.Networking.RespireConnection.ConnectAsync("127.0.0.1", sourceServer.Port);
+        var router = client.Core.Cluster!;
+        var originalNode = router.GetMultiplexer(new("127.0.0.1", originalOwner.Port));
+        router.SetSlotOwner(42, originalNode);
+        router.SetSlotOwner(43, originalNode);
+        var changes = new ConcurrentQueue<RespireConnectionStateChange>();
+        var completed = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.DiscoveryStateChanged += change =>
+        {
+            changes.Enqueue(change);
+            if (change.NextReconnectDelay is null) completed.TrySetResult(change);
+        };
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var recovered = await router.GetRedirectConnectionAsync(new("READONLY demoted"), source, timeout.Token, 42, discovery: null);
+        await Assert.That(recovered.Port).IsEqualTo(healthy.Port);
+        await Assert.That(originalOwner.ReceivedCommands.Count).IsEqualTo(configured ? 1 : 2);
+        await Assert.That(nextOwner.ReceivedCommands).IsEquivalentTo(["AUTH test"]);
+        await Assert.That(probe.ReceivedCommands).IsEquivalentTo(["AUTH test", "CLUSTER SLOTS"]);
+        await Assert.That(healthy.ReceivedCommands).IsEquivalentTo(["AUTH test", "CLUSTER SLOTS"]);
+        if (configured)
+        {
+            var terminal = await completed.Task.WaitAsync(timeout.Token);
+            await Assert.That(terminal.SourceState).IsEqualTo(RespireConnectionState.Connected);
+            await Assert.That(terminal.Error).IsNull();
+            await Assert.That(terminal.ReconnectAttempt).IsEqualTo(3);
+            await Assert.That(changes.Any(change => change.ReconnectExhausted)).IsFalse();
+            await Assert.That(changes.Where(change => change.NextReconnectDelay is not null).Select(change => change.Endpoint.Port))
+                .IsEquivalentTo([originalOwner.Port, probe.Port, healthy.Port]);
+        }
+
+        static string Range(int start, int end, int port)
+            => $"*3\r\n:{start}\r\n:{end}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{port}\r\n";
+    }
+
+    [Test]
     public async Task RejectedSeedDepletionPreservesOriginalFailure()
     {
         await using var failed = new FakeRespServer(2, "-ERR owner unavailable\r\n"u8.ToArray());
@@ -912,9 +966,9 @@ public class ClusterReconnectPolicyTests
         await Assert.That(ended.ReconnectExhausted).IsFalse();
         round.Finish();
         round.Finish();
-        var original = new IOException("late failure after finish");
-        var late = await Assert.That(() => round.Failed(original)).ThrowsExactly<IOException>();
-        await Assert.That(late).IsSameReferenceAs(original);
+        var lateFailure = new IOException("late failure after finish");
+        var late = await Assert.That(() => round.Failed(lateFailure)).ThrowsExactly<IOException>();
+        await Assert.That(late).IsSameReferenceAs(lateFailure);
 
         // An independently queued episode is a FIFO barrier for duplicate terminal events.
         var next = new ClusterRouter.DiscoveryRound(router, new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 });

@@ -716,16 +716,17 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 break;
             }
             var candidate = candidates[index];
-            if (ReferenceEquals(candidate, unavailableOwner))
+            if (ReferenceEquals(candidate, unavailableOwner) || discovery?.HasRejected(candidate) == true)
             {
                 continue;
             }
             budget.Token.ThrowIfCancellationRequested();
-            // Reserve the remainder for the final usable seed, excluding an owner that
-            // already failed connection. The demoted source is only a best-effort fallback.
+            // Reserve the remainder for the final usable seed, excluding every generation
+            // already rejected in this round. The demoted source is only a best-effort fallback.
             var lastUsableSeed = candidates.Count - 1;
             while (lastUsableSeed >= 0
                 && (ReferenceEquals(candidates[lastUsableSeed], unavailableOwner)
+                    || discovery?.HasRejected(candidates[lastUsableSeed]) == true
                     || IsSameEndpoint(candidates[lastUsableSeed], source)))
             {
                 lastUsableSeed--;
