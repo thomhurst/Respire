@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory)] [string] $ValkeyCommandPath,
     [string] $RedisVersion = '8.10.0',
     [string] $ValkeyVersion = '9.1.1',
-    [string] $OutputPath = (Join-Path $PSScriptRoot '..\src\Respire\RespireCommands.g.cs')
+    [string] $OutputPath = [System.IO.Path]::GetFullPath(
+        [System.IO.Path]::Combine($PSScriptRoot, '..', 'src', 'Respire', 'RespireCommands.g.cs'))
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,6 +24,8 @@ function Read-CoreCommands([string] $Path, [string] $Provider) {
             Name = $name.ToUpperInvariant()
             Group = [string] $definition.group
             Provider = $Provider
+            IsReadOnly = $definition.command_flags -contains 'READONLY' -and
+                $definition.command_flags -notcontains 'WRITE'
         }
     }
 }
@@ -37,6 +40,7 @@ function Add-Commands(
             Name = $name.Trim()
             Group = $Group
             Provider = $Provider
+            IsReadOnly = $null
         })
     }
 }
@@ -119,10 +123,21 @@ $merged = $commands |
     Group-Object Name |
     ForEach-Object {
         $providers = @($_.Group.Provider | Sort-Object -Unique)
+        # Manual reference entries have no flag audit. A provider needs authoritative
+        # metadata, and every authoritative entry for that provider must agree.
+        $isReadOnly = $true
+        foreach ($provider in ($_.Group | Group-Object Provider)) {
+            $metadata = @($provider.Group | Where-Object { $null -ne $_.IsReadOnly })
+            if ($metadata.Count -eq 0 -or ($metadata | Where-Object { -not $_.IsReadOnly })) {
+                $isReadOnly = $false
+                break
+            }
+        }
         [pscustomobject]@{
             Name = $_.Name
             Group = [string] ($_.Group | Select-Object -First 1).Group
             Providers = $providers
+            IsReadOnly = $isReadOnly
         }
     } |
     Sort-Object Group, Name
@@ -145,8 +160,9 @@ foreach ($group in ($merged | Group-Object Group | Sort-Object { Get-ClassName $
     foreach ($command in ($group.Group | Sort-Object Name)) {
         $identifier = Get-Identifier $command.Name
         $sources = ($command.Providers | ForEach-Object { "RespireCommandSource.$_" }) -join ' | '
+        $readOnlyArgument = if ($command.IsReadOnly) { ', isReadOnly: true' } else { '' }
         [void] $builder.AppendLine("        /// <summary><c>$($command.Name)</c>.</summary>")
-        [void] $builder.AppendLine("        public static readonly RespireCommand $identifier = new(`"$($command.Name)`", $sources);")
+        [void] $builder.AppendLine("        public static readonly RespireCommand $identifier = new(`"$($command.Name)`", $sources$readOnlyArgument);")
         [void] $builder.AppendLine()
         $allReferences.Add("$className.$identifier")
     }
