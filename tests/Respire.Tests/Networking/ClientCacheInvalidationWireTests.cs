@@ -10,6 +10,45 @@ public class ClientCacheInvalidationWireTests
     private static readonly byte[] Invalidation = ">2\r\n+invalidate\r\n*1\r\n$10\r\ntenant:key\r\n"u8.ToArray();
 
     [Test]
+    [Arguments(RespireClientTrackingMode.OptIn, false)]
+    [Arguments(RespireClientTrackingMode.OptIn, true)]
+    [Arguments(RespireClientTrackingMode.Broadcast, false)]
+    [Arguments(RespireClientTrackingMode.Broadcast, true)]
+    public async Task ObserverCanReadFreshHashFieldsAfterInvalidation(RespireClientTrackingMode mode, bool coalesce)
+    {
+        var updated = 0;
+        await using var server = CreateServer();
+        var originalReply = server.ReplyOverride!;
+        server.ReplyOverride = (connection, command) => command == "HMGET tenant:key a b"
+            ? Volatile.Read(ref updated) == 0
+                ? "*2\r\n$3\r\nold\r\n$-1\r\n"u8.ToArray()
+                : "*2\r\n$3\r\nnew\r\n$1\r\nB\r\n"u8.ToArray()
+            : originalReply(connection, command);
+        await using var client = await ConnectAsync(server, mode, coalesce, reuseHashFields: true);
+        var view = client.WithKeyPrefix("tenant:");
+        var observed = new TaskCompletionSource<string?[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var subscription = client.ClientSideCache!.SubscribeInvalidations("tenant:key", _ =>
+        {
+            try
+            {
+                observed.TrySetResult(view.Hashes.GetManyAsync("key", "a", "b").AsTask()
+                    .WaitAsync(Limit).GetAwaiter().GetResult());
+            }
+            catch (Exception error) { observed.TrySetException(error); }
+        });
+        await Assert.That(await view.Hashes.GetManyAsync("key", "a", "b"))
+            .IsEquivalentTo(new string?[] { "old", null });
+        Volatile.Write(ref updated, 1);
+        await Assert.That(await view.Hashes.GetManyAsync("key", "a", "b"))
+            .IsEquivalentTo(new string?[] { "old", null });
+        await server.SendRawAsync(Invalidation);
+        await Assert.That(await observed.Task.WaitAsync(Limit))
+            .IsEquivalentTo(new string?[] { "new", "B" });
+        await Assert.That(server.ReceivedCommands.Count(command => command == "HMGET tenant:key a b"))
+            .IsEqualTo(2);
+    }
+
+    [Test]
     [Arguments(RespireClientTrackingMode.OptIn)]
     [Arguments(RespireClientTrackingMode.Broadcast)]
     public async Task SlowObserverDoesNotBlockEvictionOrSocketReplies(RespireClientTrackingMode mode)
@@ -125,7 +164,8 @@ public class ClientCacheInvalidationWireTests
         },
     };
 
-    private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server, RespireClientTrackingMode mode, bool coalesce = false)
+    private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server, RespireClientTrackingMode mode,
+        bool coalesce = false, bool reuseHashFields = false)
         => RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = [new("127.0.0.1", server.Port)],
@@ -133,6 +173,7 @@ public class ClientCacheInvalidationWireTests
             ClientSideCache = new()
             {
                 CoalesceConcurrentMisses = coalesce,
+                ReuseHashFields = reuseHashFields,
                 TrackingMode = mode,
                 BroadcastPrefixes = mode == RespireClientTrackingMode.Broadcast ? ["tenant:"] : [],
             },
