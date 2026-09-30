@@ -71,6 +71,20 @@ public class RespireOptionsTests
     }
 
     [Test]
+    public async Task ClusterOptInCache_RequiresThreeInflightSlotsForAskRedirects()
+    {
+        var options = ValidOptions() with
+        {
+            UseCluster = true,
+            MaxInflightCommands = 2,
+            ClientSideCache = new(),
+        };
+
+        await Assert.That(() => RespireClient.Create(options))
+            .ThrowsExactly<RespireConfigurationException>();
+    }
+
+    [Test]
     public async Task CompatibilityAliases_AreAbsent()
     {
         var properties = typeof(RespireOptions).GetProperties().Select(static property => property.Name);
