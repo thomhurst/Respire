@@ -142,7 +142,10 @@ public sealed class RespireContainerFixture : IAsyncDisposable
                 await StartServerAsync(index, config, sentinel: true, cancellationToken).ConfigureAwait(false);
             }
             foreach (var port in _ports.Skip(2))
+            {
                 await WaitForAsync(port, ["SENTINEL", "CKQUORUM", SentinelServiceName], text => text.StartsWith("OK", StringComparison.Ordinal), cancellationToken).ConfigureAwait(false);
+                await WaitForAsync(port, ["SENTINEL", "REPLICAS", SentinelServiceName], ReplicaIsReady, cancellationToken).ConfigureAwait(false);
+            }
         }
         var host = _options.Topology == RespireContainerTopology.Standalone ? _container.Hostname : "127.0.0.1";
         var endpoints = _ports.Select(port => new RespireEndpoint(host, _container.GetMappedPublicPort(port))).ToArray();
@@ -165,6 +168,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
     private async Task WaitForAsync(int port, string[] command, Func<string, bool> ready, CancellationToken cancellationToken)
     {
         _startupStep = $"{_cli} {string.Join(' ', command)} on port {port}";
+        var delayMilliseconds = 100;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -172,8 +176,28 @@ public sealed class RespireContainerFixture : IAsyncDisposable
             var result = await _container.ExecAsync([_cli, "--raw", "-p", Number(port), .. command], cancellationToken).ConfigureAwait(false);
             _lastReadinessResponse = result.Stdout + result.Stderr;
             if (result.ExitCode == 0 && ready(result.Stdout)) return;
-            await Task.Delay(100, cancellationToken).ConfigureAwait(false);
+            await Task.Delay(delayMilliseconds, cancellationToken).ConfigureAwait(false);
+            delayMilliseconds = Math.Min(delayMilliseconds * 2, 1000);
         }
+    }
+
+    private bool ReplicaIsReady(string response)
+    {
+        // This topology has exactly one replica. --raw flattens its field/value pairs.
+        var fields = response.Split('\n', StringSplitOptions.TrimEntries);
+        var expectedIp = false;
+        var expectedPort = false;
+        var healthy = false;
+        for (var index = 0; index + 1 < fields.Length; index += 2)
+        {
+            switch (fields[index])
+            {
+                case "ip": expectedIp = fields[index + 1] == "127.0.0.1"; break;
+                case "port": expectedPort = fields[index + 1] == Number(_ports[1]); break;
+                case "flags": healthy = fields[index + 1] == "slave"; break;
+            }
+        }
+        return expectedIp && expectedPort && healthy;
     }
 
     private Task<string> CliAsync(int port, string[] command, CancellationToken cancellationToken)

@@ -77,7 +77,8 @@ network-partition, durability, or realistic high-availability testing. The Clust
 no replicas. These are unauthenticated development servers; do not put sensitive data in them.
 
 Startup waits for PING, complete Cluster membership/slot coverage, or replication plus Sentinel
-quorum. `StartupTimeout` includes image pull and readiness. Caller cancellation is preserved;
+quorum and discovery of the healthy replica by every Sentinel. Readiness polling backs off
+from 100 ms to one second. `StartupTimeout` includes image pull and readiness. Caller cancellation is preserved;
 an elapsed startup deadline reports the stage and latest readiness reply. Cleanup is awaited
 even after the startup deadline expires.
 

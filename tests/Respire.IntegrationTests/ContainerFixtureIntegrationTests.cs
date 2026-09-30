@@ -32,6 +32,23 @@ public class ContainerFixtureIntegrationTests
         });
         fixture.SentinelEndpoints.Should().HaveCount(topology == RespireContainerTopology.Sentinel ? 3 : 0);
         fixture.ContainerId.Should().NotBeNullOrWhiteSpace();
+        foreach (var endpoint in fixture.SentinelEndpoints)
+        {
+            // Assert readiness immediately: no test-side polling can hide early return.
+            await using var sentinel = await RespireClient.ConnectAsync(new RespireOptions
+            {
+                Endpoints = [endpoint], Protocol = RespProtocol.Resp2, AllowAdmin = true,
+            });
+            using var replicas = await sentinel.ExecuteAsync(RespireCommands.Sentinel.SENTINEL_REPLICAS,
+                RespireContainerFixture.SentinelServiceName);
+            replicas.Count.Should().Be(1);
+            var fields = new Dictionary<string, string>();
+            for (var index = 0; index < replicas[0].Count; index += 2)
+                fields.Add(replicas[0][index].AsString(), replicas[0][index + 1].AsString());
+            fields["ip"].Should().Be("127.0.0.1");
+            fields["port"].Should().Be(fixture.DataEndpoints[1].Port.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            fields["flags"].Should().Be("slave");
+        }
         await using (var client = await RespireClient.ConnectAsync(options with { Protocol = RespProtocol.Resp3 }))
         {
             // These hash tags cover all three primary slot ranges in the Cluster fixture.
