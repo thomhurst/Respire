@@ -62,6 +62,8 @@ public class ClusterReconnectPolicyTests
             ReconnectPolicy = new() { InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30),
                 JitterRatio = 0, MaxAttempts = 1 },
         });
+        var clock = new GatedDiscoveryClock();
+        client.Core.Cluster!.DiscoveryClock = clock;
         using var caller = new CancellationTokenSource();
         var scheduled = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         var ended = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -75,6 +77,7 @@ public class ClusterReconnectPolicyTests
         try
         {
             await scheduled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await clock.Created.Task.WaitAsync(TimeSpan.FromSeconds(5));
             if (disposeClient) await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
             else caller.Cancel();
             var error = await Assert.That(async () => await command.WaitAsync(TimeSpan.FromSeconds(5)))
@@ -525,7 +528,9 @@ public class ClusterReconnectPolicyTests
     public async Task DiscoveryRoundRejectsConcurrentMutationAndReleasesGuardAfterCancellation()
     {
         await using var client = RespireClient.Create(Options(1));
-        var round = new ClusterRouter.DiscoveryRound(client.Core.Cluster!, new()
+        var clock = new GatedDiscoveryClock();
+        client.Core.Cluster!.DiscoveryClock = clock;
+        var round = new ClusterRouter.DiscoveryRound(client.Core.Cluster, new()
         {
             InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
         });
@@ -545,7 +550,6 @@ public class ClusterReconnectPolicyTests
             await Assert.That(() => round.Failed(new IOException())).ThrowsExactly<InvalidOperationException>();
             await Assert.That(() => round.Failed(endpoint, new IOException())).ThrowsExactly<InvalidOperationException>();
             await Assert.That(() => round.TerminalError = new IOException()).ThrowsExactly<InvalidOperationException>();
-            await Assert.That(() => round.Finish()).ThrowsExactly<InvalidOperationException>();
         }
         finally
         {
@@ -675,6 +679,98 @@ public class ClusterReconnectPolicyTests
         await Assert.That(attempts.All(change => change.ReconnectAttempt == 1)).IsTrue();
         await Assert.That(attempts.Select(change => change.ReconnectEpisodeId).Distinct().Count()).IsEqualTo(4);
         await Assert.That(unused.CommandsSeen).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FinishDuringBackoffPreservesExceptionAndPublishesTerminalOnce(bool cancel)
+    {
+        await using var client = RespireClient.Create(Options(1));
+        var router = client.Core.Cluster!;
+        var clock = new GatedDiscoveryClock();
+        router.DiscoveryClock = clock;
+        var endpoint = new RespireEndpoint("unused.invalid");
+        var terminal = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var barrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstEpisode = 0L;
+        var terminalCount = 0;
+        router.DiscoveryStateChanged += change =>
+        {
+            if (change.NextReconnectDelay is not null)
+                Interlocked.CompareExchange(ref firstEpisode, change.ReconnectEpisodeId!.Value, 0);
+            else if (change.ReconnectEpisodeId == Volatile.Read(ref firstEpisode))
+            {
+                Interlocked.Increment(ref terminalCount);
+                terminal.TrySetResult(change);
+            }
+            else barrier.TrySetResult();
+        };
+        var round = new ClusterRouter.DiscoveryRound(router, new()
+        {
+            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+        });
+        round.Failed(endpoint, new IOException("initial failure"));
+        using var cancellation = new CancellationTokenSource();
+        var pending = round.BeforeCandidateAsync(endpoint, cancellation.Token).AsTask();
+        var timer = await clock.Created.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var original = new IOException("original exception must survive finally");
+        var propagated = await Assert.That(() =>
+        {
+            try { throw original; }
+            finally { round.Finish(); round.Finish(); }
+        }).ThrowsExactly<IOException>();
+        await Assert.That(propagated).IsSameReferenceAs(original);
+        OperationCanceledException? failure = null;
+        if (cancel)
+        {
+            cancellation.Cancel();
+            failure = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+        }
+        else
+        {
+            timer.Fire();
+            await pending.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        var ended = await terminal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(ended.SourceState).IsEqualTo(cancel ? RespireConnectionState.Disconnected : RespireConnectionState.Connected);
+        await Assert.That(ended.Error).IsSameReferenceAs(failure);
+        await Assert.That(ended.ReconnectExhausted).IsFalse();
+        round.Finish();
+        round.Finish();
+        await Assert.That(() => round.Failed(new IOException())).ThrowsExactly<InvalidOperationException>();
+
+        // An independently queued episode is a FIFO barrier for duplicate terminal events.
+        var next = new ClusterRouter.DiscoveryRound(router, new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 });
+        next.Failed(endpoint, new IOException());
+        await next.BeforeCandidateAsync(endpoint, default);
+        next.Finish();
+        await barrier.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(terminalCount).IsEqualTo(1);
+    }
+
+    private sealed class GatedDiscoveryClock : TimeProvider
+    {
+        internal TaskCompletionSource<GatedTimer> Created { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new GatedTimer(callback, state);
+            Created.TrySetResult(timer);
+            return timer;
+        }
+    }
+
+    private sealed class GatedTimer(TimerCallback callback, object? state) : ITimer
+    {
+        private int _finished;
+        internal void Fire()
+        {
+            if (Interlocked.Exchange(ref _finished, 1) == 0) callback(state);
+        }
+        public bool Change(TimeSpan dueTime, TimeSpan period) => Volatile.Read(ref _finished) == 0;
+        public void Dispose() => Interlocked.Exchange(ref _finished, 1);
+        public ValueTask DisposeAsync() { Dispose(); return default; }
     }
 
     private sealed class ThrowingWarningLogger : Microsoft.Extensions.Logging.ILoggerFactory, Microsoft.Extensions.Logging.ILogger

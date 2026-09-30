@@ -10,6 +10,7 @@ internal sealed partial class ClusterRouter
     private Queue<RespireConnectionStateChange>? _discoveryNotifications;
     private bool _publishingDiscovery;
     private static long _nextDiscoveryEpisode;
+    internal TimeProvider DiscoveryClock { get; set; } = TimeProvider.System;
 
     internal event Action<RespireConnectionStateChange>? DiscoveryStateChanged;
 
@@ -52,15 +53,22 @@ internal sealed partial class ClusterRouter
     // Success alone does not consume another attempt (for example, required master fan-out).
     // Every router entry requires an explicit round argument; null deliberately starts a new round.
     // Runtime guards reject overlapping state transitions, including mutations during a backoff wait.
+    // Finish is non-throwing and idempotent; an outstanding transition publishes the deferred finish.
     internal sealed class DiscoveryRound(ClusterRouter owner, RespireReconnectPolicy policy)
     {
-        private int _inUse;
+        private const int Active = 1;
+        private const int FinishRequested = 2;
+        private const int Finished = 4;
+        private int _state;
         private void Enter()
         {
-            if (Interlocked.CompareExchange(ref _inUse, 1, 0) != 0)
-                throw new InvalidOperationException("DiscoveryRound must have only one sequential consumer.");
+            if (Interlocked.CompareExchange(ref _state, Active, 0) != 0)
+                throw new InvalidOperationException("DiscoveryRound must have only one sequential consumer and cannot be reused after finishing.");
         }
-        private void Exit() => Volatile.Write(ref _inUse, 0);
+        private void Exit()
+        {
+            if ((Interlocked.And(ref _state, ~Active) & FinishRequested) != 0) CompleteFinish();
+        }
 
         private Exception? _failure;
         private RespireEndpoint _endpoint;
@@ -130,13 +138,20 @@ internal sealed partial class ClusterRouter
                 Publish(RespireConnectionState.Reconnecting, failure, delay);
                 await WaitAsync(delay, cancellationToken).ConfigureAwait(false);
             }
+            catch (Exception error)
+            {
+                // Cancellation, disposal and exhaustion terminate candidate scheduling.
+                // Record the error before Exit so a racing Finish cannot publish success.
+                _terminalError ??= error;
+                throw;
+            }
             finally { Exit(); }
         }
 
         private async ValueTask WaitAsync(TimeSpan delay, CancellationToken callerToken)
         {
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(callerToken, owner._stopDiscovery.Token);
-            try { await Task.Delay(delay, linked.Token).ConfigureAwait(false); }
+            try { await Task.Delay(delay, owner.DiscoveryClock, linked.Token).ConfigureAwait(false); }
             catch (OperationCanceledException error) when (callerToken.IsCancellationRequested)
             {
                 throw new OperationCanceledException(error.Message, error, callerToken);
@@ -145,15 +160,18 @@ internal sealed partial class ClusterRouter
 
         internal void Finish()
         {
-            Enter();
-            try
-            {
-                // No scheduled fallback means no discovery episode was started; physical
-                // connection health still reports the initial candidate's failure.
-                if (_attempts == 0 || Exhaustion is not null || Volatile.Read(ref owner._disposed) != 0) return;
-                Publish(TerminalError is null ? RespireConnectionState.Connected : RespireConnectionState.Disconnected, TerminalError);
-            }
-            finally { Exit(); }
+            // Request ownership without throwing from a finally/Dispose path. Either this
+            // caller or the active transition's Exit completes the round, never both.
+            if (Interlocked.Or(ref _state, FinishRequested) == 0) CompleteFinish();
+        }
+
+        private void CompleteFinish()
+        {
+            if (Interlocked.CompareExchange(ref _state, Finished, FinishRequested) != FinishRequested) return;
+            // No scheduled fallback means no discovery episode was started; physical
+            // connection health still reports the initial candidate's failure.
+            if (_attempts == 0 || Exhaustion is not null || Volatile.Read(ref owner._disposed) != 0) return;
+            Publish(TerminalError is null ? RespireConnectionState.Connected : RespireConnectionState.Disconnected, TerminalError);
         }
 
         private void Publish(RespireConnectionState state, Exception? error, TimeSpan? delay = null, bool exhausted = false)
