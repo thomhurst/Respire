@@ -5,6 +5,9 @@ for compatible-server extensions. Execute them with the normal catalog API and d
 each `RespireResult`. These are protocol-shaped results; no vendor package is required.
 
 ```csharp
+await using var dragonfly = RespireClient.Create("redis://dragonfly:6379");
+await using var keydb = RespireClient.Create("redis://keydb:6379");
+
 using RespireResult rate = await dragonfly.ExecuteAsync(
     RespireCommands.Dragonfly.CL_THROTTLE, "user:42", 20, 120, 60, 1);
 bool limited = rate[0].AsInteger() != 0;

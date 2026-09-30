@@ -549,6 +549,7 @@ internal static class DynamicCommandRouting
             'L' => operation.StartsWith("LATENCY ", StringComparison.Ordinal),
             'M' => operation.StartsWith("MODULE ", StringComparison.Ordinal),
             'P' => operation.StartsWith("PUBSUB ", StringComparison.Ordinal),
+            // Includes vendor SCRIPT LIST/LATENCY, which also have no key arguments.
             'S' => operation.StartsWith("SCRIPT ", StringComparison.Ordinal)
                    || operation.StartsWith("SLOWLOG ", StringComparison.Ordinal),
             _ => false,

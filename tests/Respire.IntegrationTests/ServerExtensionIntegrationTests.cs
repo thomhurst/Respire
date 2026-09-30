@@ -46,6 +46,7 @@ public class ServerExtensionIntegrationTests
     [Arguments(3)]
     public async Task KeyDbMemberExpiryAndHashRenameUseCatalogDescriptors(int protocol)
     {
+        // This pinned image targets the Linux x64 CI runner; ARM hosts require x64 emulation.
         await using var container = new ContainerBuilder("eqalpha/keydb:x86_64_v6.3.4")
             .WithCommand("keydb-server", "--server-threads", "1", "--save", "", "--appendonly", "no")
             .WithPortBinding(6379, true)
@@ -59,6 +60,8 @@ public class ServerExtensionIntegrationTests
         expires.AsInteger().Should().Be(1);
         using var expiresAt = await client.ExecuteAsync(RespireCommands.KeyDb.PEXPIREMEMBERAT,
             "members", member, DateTimeOffset.UtcNow.AddMinutes(2).ToUnixTimeMilliseconds());
+        expiresAt.AsInteger().Should().Be(1);
+        // KeyDB extends PTTL with a subkey argument; the wire verb uses the shared descriptor.
         using var ttl = await client.ExecuteAsync(RespireCommands.Key.PTTL, "members", member);
         ttl.AsInteger().Should().BeInRange(1, 120000);
         using var hash = await client.ExecuteAsync(RespireCommands.Hash.HSET, "hash", "old", member);
