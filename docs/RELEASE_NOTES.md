@@ -20,6 +20,14 @@
   See [client administration](../website/docs/guides/client-administration.md) for versions,
   ownership, cancellation, and multiplexed-connection semantics.
 
+### Compatible-server command catalog
+
+- The Dragonfly catalog adds rate limiting, member/field expiry, script and memory
+  diagnostics, and Cluster administration descriptors. KeyDB adds millisecond member
+  expiry and hash/key extensions. Existing descriptors remain unchanged. See the
+  [compatible-server guide](../website/docs/guides/server-extensions.md) for the audited
+  sources, exact names, server/version constraints, and protocol-shaped examples.
+
 ### Distributed locks
 
 - Distributed locks use native conditional renewal/deletion on supported Redis and Valkey versions, with per-connection Lua fallback on older servers and preserved managed cancellation fencing.

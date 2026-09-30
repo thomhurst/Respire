@@ -3,6 +3,7 @@ using Respire.Commands;
 using Respire.Networking;
 using Respire.Protocol;
 using TUnit.Assertions;
+using TUnit.Assertions.Enums;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 
@@ -15,13 +16,92 @@ public class CommandCatalogTests
     {
         var commands = RespireCommands.All.ToArray();
 
-        await Assert.That(commands.Length).IsEqualTo(623);
+        await Assert.That(commands.Length).IsEqualTo(645);
         await Assert.That(commands.Select(static command => command.Name).Distinct(StringComparer.Ordinal).Count())
             .IsEqualTo(commands.Length);
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.Redis)))
             .IsEqualTo(598);
         await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.Valkey)))
             .IsEqualTo(464);
+        await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.KeyDb)))
+            .IsEqualTo(9);
+        await Assert.That(commands.Count(static command => command.Sources.HasFlag(RespireCommandSource.Dragonfly)))
+            .IsEqualTo(18);
+    }
+
+    [Test]
+    public async Task CompatibleServerExtensionsHaveExactNamesAndProvenance()
+    {
+        var commands = RespireCommands.All.ToArray();
+        await Assert.That(commands.Where(command => command.Sources == RespireCommandSource.Dragonfly)
+            .Select(command => command.Name)).IsEquivalentTo(new[]
+        {
+            "STICK", "CL.THROTTLE", "SADDEX", "FIELDEXPIRE", "FIELDTTL", "RM",
+            "SCRIPT LATENCY", "SCRIPT LIST", "DFLYCLUSTER CONFIG", "DFLYCLUSTER FLUSHSLOTS",
+            "DFLYCLUSTER GETSLOTINFO", "DFLYCLUSTER SLOT-MIGRATION-STATUS", "MEMORY ARENA",
+            "MEMORY DECOMMIT", "MEMORY DEFRAGMENT", "CF.COMPACT", "JSON.DEBUG FIELDS", "JSON.DEBUG HELP",
+        });
+        await Assert.That(commands.Where(command => command.Sources == RespireCommandSource.KeyDb)
+            .Select(command => command.Name)).IsEquivalentTo(new[]
+        {
+            "EXPIREMEMBER", "EXPIREMEMBERAT", "PEXPIREMEMBERAT", "KEYDB.CRON", "KEYDB.HRENAME",
+            "KEYDB.MEXISTS", "KEYDB.NHGET", "KEYDB.NHSET", "REPLPING",
+        });
+    }
+
+    [Test]
+    public async Task CompatibleServerCatalogPreservesBinaryArgumentsAndReplyShapes()
+    {
+        await using var server = new FakeRespServer("*5\r\n:0\r\n:1\r\n:0\r\n:-1\r\n:10\r\n"u8.ToArray(),
+            ":1\r\n"u8.ToArray(), FakeRespServer.OkReply, "*0\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var throttle = await client.ExecuteAsync(RespireCommands.Dragonfly.CL_THROTTLE, "user 42", 0, 1, 10, 1);
+        await Assert.That(throttle[0].AsInteger()).IsEqualTo(0);
+        await Assert.That(throttle[3].AsInteger()).IsEqualTo(-1);
+        byte[] member = [0xff, 0, 0x80];
+        using var added = await client.ExecuteAsync(RespireCommands.Dragonfly.SADDEX, "set", 30, member);
+        await Assert.That(added.AsInteger()).IsEqualTo(1);
+        using var expires = await client.ExecuteAsync(RespireCommands.KeyDb.PEXPIREMEMBERAT, "set", member, 2000000000000L);
+        await Assert.That(expires.AsString()).IsEqualTo("OK");
+        using var migration = await client.ExecuteAsync(RespireCommands.Dragonfly.DFLYCLUSTER_SLOT_MIGRATION_STATUS);
+        await Assert.That(server.ReceivedArguments[0][1]).IsEquivalentTo("user 42"u8.ToArray(), CollectionOrdering.Matching);
+        await Assert.That(server.ReceivedArguments[1][3]).IsEquivalentTo(member, CollectionOrdering.Matching);
+        await Assert.That(server.ReceivedArguments[2][2]).IsEquivalentTo(member, CollectionOrdering.Matching);
+        await Assert.That(server.ReceivedCommands[^1]).IsEqualTo("DFLYCLUSTER SLOT-MIGRATION-STATUS");
+    }
+
+    [Test]
+    public async Task VendorAdministrationDoesNotRouteConfigurationOrCursorsAsKeys()
+    {
+        RespireCommand[] unkeyed =
+        [
+            RespireCommands.Dragonfly.DFLYCLUSTER_CONFIG, RespireCommands.Dragonfly.DFLYCLUSTER_FLUSHSLOTS,
+            RespireCommands.Dragonfly.DFLYCLUSTER_GETSLOTINFO, RespireCommands.Dragonfly.DFLYCLUSTER_SLOT_MIGRATION_STATUS,
+            RespireCommands.Dragonfly.MEMORY_ARENA, RespireCommands.Dragonfly.MEMORY_DECOMMIT,
+            RespireCommands.Dragonfly.MEMORY_DEFRAGMENT, RespireCommands.Dragonfly.RM,
+            RespireCommands.Dragonfly.SCRIPT_LIST, RespireCommands.Dragonfly.SCRIPT_LATENCY,
+            RespireCommands.Dragonfly.JSON_DEBUG_HELP,
+        ];
+        foreach (var descriptor in unkeyed)
+        {
+            var command = new CatalogCommand(descriptor, ["not-a-key"]);
+            await Assert.That(command.TryGetPrimaryKey(out _)).IsFalse();
+            await Assert.That(command.TryGetClusterSlot(out _)).IsFalse();
+        }
+        RespireCommand[] keyed =
+        [
+            RespireCommands.Dragonfly.CL_THROTTLE, RespireCommands.Dragonfly.SADDEX,
+            RespireCommands.Dragonfly.FIELDEXPIRE, RespireCommands.Dragonfly.FIELDTTL,
+            RespireCommands.Dragonfly.CF_COMPACT, RespireCommands.Dragonfly.JSON_DEBUG_FIELDS,
+            RespireCommands.KeyDb.PEXPIREMEMBERAT, RespireCommands.KeyDb.KEYDB_HRENAME,
+            RespireCommands.KeyDb.KEYDB_MEXISTS, RespireCommands.KeyDb.KEYDB_NHGET, RespireCommands.KeyDb.KEYDB_NHSET,
+        ];
+        foreach (var descriptor in keyed)
+        {
+            var command = new CatalogCommand(descriptor, ["{key}:data", "value"]);
+            await Assert.That(command.TryGetClusterSlot(out var slot)).IsTrue();
+            await Assert.That(slot).IsEqualTo(new RespireKey("{key}:data").ClusterSlot);
+        }
     }
 
     [Test]

@@ -412,6 +412,57 @@ public static class RespireCommands
     /// <summary>Pre-encoded Dragonfly command descriptors.</summary>
     public static class Dragonfly
     {
+        /// <summary><c>CF.COMPACT</c>.</summary>
+        public static readonly RespireCommand CF_COMPACT = new("CF.COMPACT", RespireCommandSource.Dragonfly);
+
+        /// <summary><c>CL.THROTTLE</c>.</summary>
+        public static readonly RespireCommand CL_THROTTLE = new("CL.THROTTLE", RespireCommandSource.Dragonfly);
+
+        /// <summary><c>DFLYCLUSTER CONFIG</c>.</summary>
+        public static readonly RespireCommand DFLYCLUSTER_CONFIG = new("DFLYCLUSTER CONFIG", RespireCommandSource.Dragonfly);
+
+        /// <summary><c>DFLYCLUSTER FLUSHSLOTS</c>.</summary>
+        public static readonly RespireCommand DFLYCLUSTER_FLUSHSLOTS = new("DFLYCLUSTER FLUSHSLOTS", RespireCommandSource.Dragonfly);
+
+        /// <summary><c>DFLYCLUSTER GETSLOTINFO</c>.</summary>
+        public static readonly RespireCommand DFLYCLUSTER_GETSLOTINFO = new("DFLYCLUSTER GETSLOTINFO", RespireCommandSource.Dragonfly);
+
+        /// <summary><c>DFLYCLUSTER SLOT-MIGRATION-STATUS</c>.</summary>
+        public static readonly RespireCommand DFLYCLUSTER_SLOT_MIGRATION_STATUS = new("DFLYCLUSTER SLOT-MIGRATION-STATUS", RespireCommandSource.Dragonfly);
+
+        /// <summary><c>FIELDEXPIRE</c>.</summary>
+        public static readonly RespireCommand FIELDEXPIRE = new("FIELDEXPIRE", RespireCommandSource.Dragonfly);
+
+        /// <summary><c>FIELDTTL</c>.</summary>
+        public static readonly RespireCommand FIELDTTL = new("FIELDTTL", RespireCommandSource.Dragonfly);
+
+        /// <summary><c>JSON.DEBUG FIELDS</c>.</summary>
+        public static readonly RespireCommand JSON_DEBUG_FIELDS = new("JSON.DEBUG FIELDS", RespireCommandSource.Dragonfly);
+
+        /// <summary><c>JSON.DEBUG HELP</c>.</summary>
+        public static readonly RespireCommand JSON_DEBUG_HELP = new("JSON.DEBUG HELP", RespireCommandSource.Dragonfly);
+
+        /// <summary><c>MEMORY ARENA</c>.</summary>
+        public static readonly RespireCommand MEMORY_ARENA = new("MEMORY ARENA", RespireCommandSource.Dragonfly);
+
+        /// <summary><c>MEMORY DECOMMIT</c>.</summary>
+        public static readonly RespireCommand MEMORY_DECOMMIT = new("MEMORY DECOMMIT", RespireCommandSource.Dragonfly);
+
+        /// <summary><c>MEMORY DEFRAGMENT</c>.</summary>
+        public static readonly RespireCommand MEMORY_DEFRAGMENT = new("MEMORY DEFRAGMENT", RespireCommandSource.Dragonfly);
+
+        /// <summary><c>RM</c>.</summary>
+        public static readonly RespireCommand RM = new("RM", RespireCommandSource.Dragonfly);
+
+        /// <summary><c>SADDEX</c>.</summary>
+        public static readonly RespireCommand SADDEX = new("SADDEX", RespireCommandSource.Dragonfly);
+
+        /// <summary><c>SCRIPT LATENCY</c>.</summary>
+        public static readonly RespireCommand SCRIPT_LATENCY = new("SCRIPT LATENCY", RespireCommandSource.Dragonfly);
+
+        /// <summary><c>SCRIPT LIST</c>.</summary>
+        public static readonly RespireCommand SCRIPT_LIST = new("SCRIPT LIST", RespireCommandSource.Dragonfly);
+
         /// <summary><c>STICK</c>.</summary>
         public static readonly RespireCommand STICK = new("STICK", RespireCommandSource.Dragonfly);
 
@@ -777,6 +828,21 @@ public static class RespireCommands
 
         /// <summary><c>KEYDB.CRON</c>.</summary>
         public static readonly RespireCommand KEYDB_CRON = new("KEYDB.CRON", RespireCommandSource.KeyDb);
+
+        /// <summary><c>KEYDB.HRENAME</c>.</summary>
+        public static readonly RespireCommand KEYDB_HRENAME = new("KEYDB.HRENAME", RespireCommandSource.KeyDb);
+
+        /// <summary><c>KEYDB.MEXISTS</c>.</summary>
+        public static readonly RespireCommand KEYDB_MEXISTS = new("KEYDB.MEXISTS", RespireCommandSource.KeyDb);
+
+        /// <summary><c>KEYDB.NHGET</c>.</summary>
+        public static readonly RespireCommand KEYDB_NHGET = new("KEYDB.NHGET", RespireCommandSource.KeyDb);
+
+        /// <summary><c>KEYDB.NHSET</c>.</summary>
+        public static readonly RespireCommand KEYDB_NHSET = new("KEYDB.NHSET", RespireCommandSource.KeyDb);
+
+        /// <summary><c>PEXPIREMEMBERAT</c>.</summary>
+        public static readonly RespireCommand PEXPIREMEMBERAT = new("PEXPIREMEMBERAT", RespireCommandSource.KeyDb);
 
         /// <summary><c>REPLPING</c>.</summary>
         public static readonly RespireCommand REPLPING = new("REPLPING", RespireCommandSource.KeyDb);
@@ -2144,6 +2210,23 @@ public static class RespireCommands
         Cuckoo.CF_MEXISTS,
         Cuckoo.CF_RESERVE,
         Cuckoo.CF_SCANDUMP,
+        Dragonfly.CF_COMPACT,
+        Dragonfly.CL_THROTTLE,
+        Dragonfly.DFLYCLUSTER_CONFIG,
+        Dragonfly.DFLYCLUSTER_FLUSHSLOTS,
+        Dragonfly.DFLYCLUSTER_GETSLOTINFO,
+        Dragonfly.DFLYCLUSTER_SLOT_MIGRATION_STATUS,
+        Dragonfly.FIELDEXPIRE,
+        Dragonfly.FIELDTTL,
+        Dragonfly.JSON_DEBUG_FIELDS,
+        Dragonfly.JSON_DEBUG_HELP,
+        Dragonfly.MEMORY_ARENA,
+        Dragonfly.MEMORY_DECOMMIT,
+        Dragonfly.MEMORY_DEFRAGMENT,
+        Dragonfly.RM,
+        Dragonfly.SADDEX,
+        Dragonfly.SCRIPT_LATENCY,
+        Dragonfly.SCRIPT_LIST,
         Dragonfly.STICK,
         Geo.GEOADD,
         Geo.GEODIST,
@@ -2256,6 +2339,11 @@ public static class RespireCommands
         KeyDb.EXPIREMEMBER,
         KeyDb.EXPIREMEMBERAT,
         KeyDb.KEYDB_CRON,
+        KeyDb.KEYDB_HRENAME,
+        KeyDb.KEYDB_MEXISTS,
+        KeyDb.KEYDB_NHGET,
+        KeyDb.KEYDB_NHSET,
+        KeyDb.PEXPIREMEMBERAT,
         KeyDb.REPLPING,
         List.BLMOVE,
         List.BLMOVEM,

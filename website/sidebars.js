@@ -29,6 +29,7 @@ const sidebars = {
         'guides/batches-and-transactions',
         'guides/durability-acknowledgements',
         'guides/raw-commands',
+        'guides/server-extensions',
         'guides/deferred-raw-commands',
       ],
     },
