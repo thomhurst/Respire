@@ -157,7 +157,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         }
         catch (Exception error)
         {
-            scope.Failed(error);
+            scope.SetTerminalError(error);
             throw;
         }
         finally
@@ -217,7 +217,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         }
         catch (Exception error)
         {
-            scope.Failed(error);
+            scope.SetTerminalError(error);
             throw;
         }
     }
@@ -352,7 +352,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         }
         catch (Exception failure)
         {
-            scope.Failed(failure);
+            scope.SetTerminalError(failure);
             if (ShouldPreserveRejection(failure, cancellationToken, discovery))
                 ExceptionDispatchInfo.Capture(error).Throw();
             throw;
@@ -415,7 +415,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 }
             }
         }
-        catch (Exception error) { scope.Failed(error); throw; }
+        catch (Exception error) { scope.SetTerminalError(error); throw; }
     }
 
     internal async ValueTask<RespireConnection> GetTrackedRedirectConnectionAsync(
@@ -449,7 +449,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         }
         catch (Exception failure)
         {
-            scope.Failed(failure);
+            scope.SetTerminalError(failure);
             if (ShouldPreserveRejection(failure, cancellationToken, discovery)) ExceptionDispatchInfo.Capture(error).Throw();
             throw;
         }
@@ -490,7 +490,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 }
             }
         }
-        catch (Exception error) { scope.Failed(error); throw; }
+        catch (Exception error) { scope.SetTerminalError(error); throw; }
     }
 
     private async ValueTask<DedicatedConnectionPool> GetDedicatedPoolCoreAsync(int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery)
@@ -573,7 +573,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         }
         catch (Exception failure)
         {
-            scope.Failed(failure);
+            scope.SetTerminalError(failure);
             if (ShouldPreserveRejection(failure, cancellationToken, discovery))
                 ExceptionDispatchInfo.Capture(error).Throw();
             throw;
@@ -589,13 +589,12 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         => GetOrCreateDedicatedPool(endpoint);
 
     internal async ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
-        DedicatedConnectionPool pool, int? slot, CancellationToken cancellationToken,
+        DedicatedConnectionPool pool, int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery,
         bool reuseIdle = true, RespireServerException? askRedirect = null, RespireConnection? redirectSource = null)
     {
         // Ordinary rents need no discovery scope. Create one only after topology retirement
         // invalidates the selected pool, then share it across every subsequent reselection.
         DiscoveryScope scope = default;
-        DiscoveryRound? discovery = null;
         try
         {
             for (var attempt = 0; ; attempt++)
@@ -610,7 +609,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 {
                     if (attempt == 0)
                     {
-                        scope = BeginDiscovery(null);
+                        scope = BeginDiscovery(discovery);
                         discovery = scope.Round;
                     }
                     discovery?.Failed(error);
@@ -622,7 +621,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 }
             }
         }
-        catch (Exception error) { scope.Failed(error); throw; }
+        catch (Exception error) { scope.SetTerminalError(error); throw; }
         finally { scope.Dispose(); }
     }
 
@@ -933,7 +932,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         }
         catch (Exception error)
         {
-            scope.Failed(error);
+            scope.SetTerminalError(error);
             throw;
         }
     }
@@ -1039,9 +1038,9 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         catch (Exception error) when (CanRetryDiscoveryFailure(error, cancellationToken, discovery))
         {
             try { return await RefreshKnownMastersAsync(cancellationToken, discovery).ConfigureAwait(false); }
-            catch (Exception failure) { scope.Failed(failure); throw; }
+            catch (Exception failure) { scope.SetTerminalError(failure); throw; }
         }
-        catch (Exception error) { scope.Failed(error); throw; }
+        catch (Exception error) { scope.SetTerminalError(error); throw; }
     }
 
     private async ValueTask<RespireConnectionMultiplexer[]> RefreshKnownMastersAsync(
@@ -1134,7 +1133,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         }
         catch (Exception error)
         {
-            scope.Failed(error);
+            scope.SetTerminalError(error);
             throw;
         }
     }

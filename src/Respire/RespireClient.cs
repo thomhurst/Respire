@@ -1128,7 +1128,7 @@ public sealed partial class RespireClient : IRespireClient
         if (cluster is null)
             connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
         else
-            (pool, connection) = await cluster.RentDedicatedConnectionAsync(pool, slot, cancellationToken).ConfigureAwait(false);
+            (pool, connection) = await cluster.RentDedicatedConnectionAsync(pool, slot, cancellationToken, discovery: null).ConfigureAwait(false);
         try
         {
             var command = new CmdN(Verbs.Watch, watchKeys);
@@ -1702,7 +1702,7 @@ public sealed partial class RespireClient : IRespireClient
                 }
                 catch (RespireConnectionRetiredException retirement) when (cluster.CanRetryRetirement(attempt, cancellationToken))
                 {
-                    cluster.RecordRetirement(ref discovery, connection, retirement);
+                    cluster.RecordRejection(ref discovery, connection, retirement);
                     _core.ClientCache?.FlushForContinuityLoss();
                     discoveryPending = true;
                     connection = await cluster.GetReplacementConnectionAsync(
@@ -1725,6 +1725,7 @@ public sealed partial class RespireClient : IRespireClient
                 }
 
                 _core.ClientCache?.FlushForContinuityLoss();
+                cluster.RecordRejection(ref discovery, connection, error);
                 discoveryPending = true;
                 connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery)
                     .ConfigureAwait(false);
@@ -2058,23 +2059,12 @@ public sealed partial class RespireClient : IRespireClient
         => SendClusterAsync(operation, _core.Cluster!, command, cancellationToken,
             initialConnection: source, firstAttempt: 1, initialRetirement: error);
 
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    internal async ValueTask<RespValue> ResumeReadOnlyClusterSendAsync<TCommand>(
+    internal ValueTask<RespValue> ResumeRejectedClusterSendAsync<TCommand>(
         string operation, TCommand command, RespireConnection source,
-        RespireServerException error, int slot, CancellationToken cancellationToken)
+        RespireServerException error, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
-    {
-        var cluster = _core.Cluster!;
-        _core.ClientCache?.FlushForContinuityLoss();
-        var replacement = await cluster.GetRedirectConnectionAsync(error, source, cancellationToken, slot, discovery: null)
-            .ConfigureAwait(false);
-        // The pipelined send already consumed one attempt from the shared retry budget.
-        return await SendClusterAsync(operation, cluster, command, cancellationToken,
-                initialConnection: replacement, firstAttempt: 1)
-            .ConfigureAwait(false);
-    }
+        => SendClusterAsync(operation, _core.Cluster!, command, cancellationToken,
+            initialConnection: source, firstAttempt: 1, initialRejection: error);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -2088,7 +2078,8 @@ public sealed partial class RespireClient : IRespireClient
         bool noRedirect = false,
         RespireConnection? initialConnection = null,
         int firstAttempt = 0,
-        RespireConnectionRetiredException? initialRetirement = null)
+        RespireConnectionRetiredException? initialRetirement = null,
+        RespireServerException? initialRejection = null)
         where TCommand : struct, IRespCommand
     {
         ClusterRouter.DiscoveryRound? discovery = null;
@@ -2100,13 +2091,22 @@ public sealed partial class RespireClient : IRespireClient
                 ?? await cluster.GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
             if (initialRetirement is not null)
             {
-                cluster.RecordRetirement(ref discovery, connection, initialRetirement);
+                cluster.RecordRejection(ref discovery, connection, initialRetirement);
                 discoveryPending = true;
                 connection = await cluster.GetReplacementConnectionAsync(null, slot, null, cancellationToken, discovery)
                     .ConfigureAwait(false);
                 discoveryPending = false;
             }
-            var sendAsking = false;
+            if (initialRejection is not null)
+            {
+                cluster.RecordRejection(ref discovery, connection, initialRejection);
+                _core.ClientCache?.FlushForContinuityLoss();
+                discoveryPending = true;
+                connection = await cluster.GetRedirectConnectionAsync(
+                    initialRejection, connection, cancellationToken, slot, discovery).ConfigureAwait(false);
+                discoveryPending = false;
+            }
+            var sendAsking = initialRejection?.Code == RespireErrorCodes.Ask;
             for (var attempt = firstAttempt; ; attempt++)
             {
                 try
@@ -2117,7 +2117,7 @@ public sealed partial class RespireClient : IRespireClient
                 }
                 catch (RespireConnectionRetiredException retirement) when (cluster.CanRetryRetirement(attempt, cancellationToken))
                 {
-                    cluster.RecordRetirement(ref discovery, connection, retirement);
+                    cluster.RecordRejection(ref discovery, connection, retirement);
                     _core.ClientCache?.FlushForContinuityLoss();
                     discoveryPending = true;
                     connection = await cluster.GetReplacementConnectionAsync(
@@ -2128,6 +2128,7 @@ public sealed partial class RespireClient : IRespireClient
                     when (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
                 {
                     _core.ClientCache?.FlushForContinuityLoss();
+                    cluster.RecordRejection(ref discovery, connection, error);
                     discoveryPending = true;
                     connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery)
                         .ConfigureAwait(false);
@@ -2181,7 +2182,7 @@ public sealed partial class RespireClient : IRespireClient
                             }
                             catch (RespireConnectionRetiredException retirement) when (cluster.CanRetryRetirement(attempt, cancellationToken))
                             {
-                                cluster.RecordRetirement(ref discovery, target, retirement);
+                                cluster.RecordRejection(ref discovery, target, retirement);
                                 // Keep this snapshot endpoint; earlier targets have already accepted the mutation.
                                 discoveryPending = true;
                                 target = await cluster.GetReplacementConnectionAsync(connection, null, null, cancellationToken, discovery)
@@ -2420,7 +2421,7 @@ public sealed partial class RespireClient : IRespireClient
                     }
                     catch (RespireConnectionRetiredException retirement) when (cluster.CanRetryRetirement(attempt, cancellationToken))
                     {
-                        cluster.RecordRetirement(ref discovery, connection, retirement);
+                        cluster.RecordRejection(ref discovery, connection, retirement);
                         discoveryPending = true;
                         connection = await cluster.GetReplacementConnectionAsync(null, slot, null, cancellationToken, discovery)
                             .ConfigureAwait(false);
@@ -2484,7 +2485,7 @@ public sealed partial class RespireClient : IRespireClient
                             }
                             catch (RespireConnectionRetiredException retirement) when (cluster.CanRetryRetirement(attempt, cancellationToken))
                             {
-                                cluster.RecordRetirement(ref discovery, target, retirement);
+                                cluster.RecordRejection(ref discovery, target, retirement);
                                 // Retry only this rejected target, never a previously accepted send.
                                 discoveryPending = true;
                                 target = await cluster.GetReplacementConnectionAsync(connection, null, null, cancellationToken, discovery)
@@ -2557,7 +2558,7 @@ public sealed partial class RespireClient : IRespireClient
                 }
                 catch (RespireConnectionRetiredException retirement) when (cluster is not null && cluster.CanRetryRetirement(attempt, cancellationToken))
                 {
-                    cluster.RecordRetirement(ref discovery, connection, retirement);
+                    cluster.RecordRejection(ref discovery, connection, retirement);
                     discoveryPending = true;
                     connection = await cluster.GetReplacementConnectionAsync(connection, null, null, cancellationToken, discovery).ConfigureAwait(false);
                     discoveryPending = false;
@@ -2733,83 +2734,91 @@ public sealed partial class RespireClient : IRespireClient
         RespireConnection? askingSource = null;
         RespireServerException? askRedirect = null;
 
-        for (var attempt = 0; ; attempt++)
+        ClusterRouter.DiscoveryRound? discovery = null;
+        try
         {
-            RespireConnection? connection = null;
-            var returned = false;
-            var acquiringRedirectPool = false;
-            try
+            for (var attempt = 0; ; attempt++)
             {
-                (pool, connection) = await cluster.RentDedicatedConnectionAsync(
-                    pool, slot, cancellationToken, askRedirect: askRedirect, redirectSource: askingSource).ConfigureAwait(false);
-                if (!telemetryStarted)
+                RespireConnection? connection = null;
+                var returned = false;
+                var acquiringRedirectPool = false;
+                try
                 {
-                    telemetry = RespireTelemetry.StartOperation(
-                        operation,
-                        connection.Host,
-                        connection.Port,
-                        core.Options.Database,
-                        storedProcedureName: storedProcedureName);
-                    telemetryStarted = true;
-                }
-
-                var response = await (sendAsking
-                        ? ClusterRouter.SendBlockingAskingUncheckedAsync(
-                            connection, in command, cancellationToken)
-                        : connection.SendWithoutResponseTimeoutAsync(command, cancellationToken))
-                    .ConfigureAwait(false);
-                sendAsking = false;
-                if (response.IsError)
-                {
-                    var error = ResponseReader.ServerError(in response, operation);
-                    response.Dispose();
-                    if (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
+                    (pool, connection) = await cluster.RentDedicatedConnectionAsync(
+                        pool, slot, cancellationToken, discovery, askRedirect: askRedirect, redirectSource: askingSource).ConfigureAwait(false);
+                    if (!telemetryStarted)
                     {
-                        core.ClientCache?.FlushForContinuityLoss();
-                        // The source reply completed; no redirected command has been accepted yet.
-                        acquiringRedirectPool = true;
-                        var redirectedPool = await cluster.GetRedirectDedicatedPoolAsync(
-                                error, connection, cancellationToken, slot, discovery: null)
-                            .ConfigureAwait(false);
-                        acquiringRedirectPool = false;
+                        telemetry = RespireTelemetry.StartOperation(
+                            operation,
+                            connection.Host,
+                            connection.Port,
+                            core.Options.Database,
+                            storedProcedureName: storedProcedureName);
+                        telemetryStarted = true;
+                    }
+
+                    var response = await (sendAsking
+                            ? ClusterRouter.SendBlockingAskingUncheckedAsync(
+                                connection, in command, cancellationToken)
+                            : connection.SendWithoutResponseTimeoutAsync(command, cancellationToken))
+                        .ConfigureAwait(false);
+                    sendAsking = false;
+                    if (response.IsError)
+                    {
+                        var error = ResponseReader.ServerError(in response, operation);
+                        response.Dispose();
+                        if (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
+                        {
+                            core.ClientCache?.FlushForContinuityLoss();
+                            // The source reply completed; no redirected command has been accepted yet.
+                            cluster.RecordRejection(ref discovery, connection, error);
+                            acquiringRedirectPool = true;
+                            var redirectedPool = await cluster.GetRedirectDedicatedPoolAsync(
+                                    error, connection, cancellationToken, slot, discovery)
+                                .ConfigureAwait(false);
+                            acquiringRedirectPool = false;
+                            pool.Return(connection);
+                            returned = true;
+                            pool = redirectedPool;
+                            sendAsking = error.Code == RespireErrorCodes.Ask;
+                            askingSource = sendAsking ? connection : null;
+                            askRedirect = sendAsking ? error : null;
+                            continue;
+                        }
+
                         pool.Return(connection);
                         returned = true;
-                        pool = redirectedPool;
-                        sendAsking = error.Code == RespireErrorCodes.Ask;
-                        askingSource = sendAsking ? connection : null;
-                        askRedirect = sendAsking ? error : null;
-                        continue;
+                        throw error;
                     }
 
                     pool.Return(connection);
                     returned = true;
-                    throw error;
+                    telemetry.Complete(core, operation, storedProcedureName, connection: connection);
+                    return response;
                 }
-
-                pool.Return(connection);
-                returned = true;
-                telemetry.Complete(core, operation, storedProcedureName, connection: connection);
-                return response;
-            }
-            catch (Exception ex)
-            {
-                var timeoutError = cancellationTimeout is { } timeout && ex is OperationCanceledException cancelled
-                    && RespireConnection.IsDeadlineCancellation(cancelled, cancellationToken, callerCancellationToken)
-                    ? new RespireTimeoutException(operation, timeout, cancelled,
-                        acquiringRedirectPool || connection is null
-                            ? RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting)
-                            : connection.CaptureDedicatedTimeoutDiagnostics())
-                    : null;
-                telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
-                if (connection is not null && !returned)
+                catch (Exception ex)
                 {
-                    await pool.DiscardAsync(connection).ConfigureAwait(false);
-                }
+                    var timeoutError = cancellationTimeout is { } timeout && ex is OperationCanceledException cancelled
+                        && RespireConnection.IsDeadlineCancellation(cancelled, cancellationToken, callerCancellationToken)
+                        ? new RespireTimeoutException(operation, timeout, cancelled,
+                            acquiringRedirectPool || connection is null
+                                ? RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting)
+                                : connection.CaptureDedicatedTimeoutDiagnostics())
+                        : null;
+                    if ((acquiringRedirectPool || connection is null) && discovery is not null)
+                        discovery.TerminalError = timeoutError ?? ex;
+                    telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
+                    if (connection is not null && !returned)
+                    {
+                        await pool.DiscardAsync(connection).ConfigureAwait(false);
+                    }
 
-                if (timeoutError is not null) throw timeoutError;
-                throw;
+                    if (timeoutError is not null) throw timeoutError;
+                    throw;
+                }
             }
         }
+        finally { discovery?.Finish(); }
     }
 
     internal ValueTask<RespireConnection> AcquireConnectionAsync(CancellationToken cancellationToken)
@@ -3233,7 +3242,7 @@ public sealed partial class RespireClient : IRespireClient
                 }
                 catch (RespireConnectionRetiredException retirement) when (cluster.CanRetryRetirement(attempt, cancellationToken))
                 {
-                    cluster.RecordRetirement(ref discovery, connection, retirement);
+                    cluster.RecordRejection(ref discovery, connection, retirement);
                     discoveryPending = true;
                     connection = await GetTrackedReplacementConnectionAsync(
                         cluster, sendAsking ? connection : null, slot, requiresIdentity, cancellationToken, discovery).ConfigureAwait(false);
@@ -3245,6 +3254,7 @@ public sealed partial class RespireClient : IRespireClient
                 catch (RespireServerException error)
                     when (attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
                 {
+                    cluster.RecordRejection(ref discovery, connection, error);
                     discoveryPending = true;
                     connection = await GetTrackedRedirectConnectionAsync(
                             cluster, error, connection, requiresIdentity, cancellationToken, slot, discovery)

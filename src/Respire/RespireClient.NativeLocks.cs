@@ -104,7 +104,7 @@ public sealed partial class RespireClient
                 catch (RespireConnectionRetiredException error) when (
                     _core.Cluster is { } cluster && cluster.CanRetryRetirement(attempt, cancellationToken))
                 {
-                    cluster.RecordRetirement(ref discovery, connection, error);
+                    cluster.RecordRejection(ref discovery, connection, error);
                     discoveryPending = true;
                     connection = requireIdentity
                         ? await GetTrackedReplacementConnectionAsync(
@@ -115,8 +115,9 @@ public sealed partial class RespireClient
                     execution.ConnectionIdentity = GetTrackedConnectionIdentity(connection, requireIdentity, sendAsking);
                 }
                 catch (RespireServerException error) when (
-                    _core.Cluster is not null && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
+                    _core.Cluster is { } cluster && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
                 {
+                    cluster.RecordRejection(ref discovery, connection, error);
                     discoveryPending = true;
                     connection = requireIdentity
                         ? await GetTrackedRedirectConnectionAsync(

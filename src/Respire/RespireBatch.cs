@@ -510,16 +510,9 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                 catch (RespireServerException error) when (
                     ClusterRouter.CanRecover(error, command.TryGetClusterSlot(out var slot) ? slot : null))
                 {
-                    if (error.Code == RespireErrorCodes.ReadOnly)
-                    {
-                        value = await client.ResumeReadOnlyClusterSendAsync(
-                                Operation, command, connection, error, slot, cancellationToken)
-                            .ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        value = await client.SendAsync(Operation, command, cancellationToken).ConfigureAwait(false);
-                    }
+                    value = await client.ResumeRejectedClusterSendAsync(
+                            Operation, command, connection, error, cancellationToken)
+                        .ConfigureAwait(false);
                 }
 
                 return Complete(client, value);

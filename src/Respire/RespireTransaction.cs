@@ -411,7 +411,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                         && cluster is not null && cluster.CanRetryRetirement(attempt, token))
                     {
                         // The transport rejects the complete MULTI/EXEC frame before accepting any part.
-                        cluster.RecordRetirement(ref discovery, connection, retirement);
+                        cluster.RecordRejection(ref discovery, connection, retirement);
                         discoveryPending = true;
                         connection = await cluster.GetReplacementConnectionAsync(null, slot, null, token, discovery)
                             .ConfigureAwait(false);
@@ -450,6 +450,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                             redirect);
                     }
 
+                    cluster.RecordRejection(ref discovery, connection, redirect);
                     discoveryPending = true;
                     connection = await cluster.GetRedirectConnectionAsync(redirect, connection, token, slot, discovery)
                         .ConfigureAwait(false);

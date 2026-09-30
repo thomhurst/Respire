@@ -221,7 +221,9 @@ not enable automatic failover or lazy Sentinel routing.
 Each logical Cluster discovery round shares one policy budget across cached owners,
 known masters, topology queries, configured seeds, tracked connection selection, and
 dedicated pool selection. Pub/sub endpoint discovery and cluster-wide commands use the
-same contract. The first candidate is immediate. After a candidate fails, choosing the
+same contract. The first candidate is immediate. A discovery episode begins only when a fallback is scheduled;
+a failure with no scheduled fallback remains visible through physical connection health.
+After a candidate fails, choosing the
 next candidate consumes one attempt and waits the configured delay. A topology query and
 connection to its advertised owner share the candidate until one fails. Connecting other
 required masters after a successful topology query does not consume fallback attempts.
@@ -239,7 +241,9 @@ is preserved. ASK keeps its temporary target; tracked identity setup and retirem
 reselection share the ongoing round. A command rejected before acceptance by topology
 retirement starts fallback at attempt one. Repeated retirement during that command,
 including an individual rejected batch entry or an unwatched transaction, retains the
-same budget until completion. Resumable Cluster scans keep that budget across retirement
+same budget until completion. A batch READONLY replacement and any later retirement use
+that same round. Blocking redirects retain it through the next dedicated connection rent,
+including retirement of the selected pool before the rent completes. Resumable Cluster scans keep that budget across retirement
 restarts of one page; rebuilding from the immutable cursor does not reset it. Accepted batch entries and watched transactions are never
 replayed. Dedicated physical connection retries retain their
 separate per-rent budget; node selection does not reset a discovery budget. Neither path

@@ -22,9 +22,8 @@ internal sealed partial class ClusterRouter
     private readonly struct DiscoveryScope(DiscoveryRound? round, bool ownsRound) : IDisposable
     {
         internal DiscoveryRound? Round => round;
-        // Retirement wrappers preserve the endpoint selected by the last BeforeCandidateAsync.
-        // Repeated reports replace the pending failure; only scheduling another candidate consumes it.
-        internal void Failed(Exception error)
+        // An owning scope reports only discovery failures, not subsequent application errors.
+        internal void SetTerminalError(Exception error)
         {
             if (ownsRound && round is not null) round.TerminalError = error;
         }
@@ -34,12 +33,12 @@ internal sealed partial class ClusterRouter
         }
     }
 
-    // A command creates a round only after a send is rejected before acceptance. Keeping
-    // this round in the command loop prevents each retired generation starting a new budget.
-    internal void RecordRetirement(ref DiscoveryRound? round, RespireConnection source, Exception error)
-        => RecordRetirement(ref round, new RespireEndpoint(source.Host, source.Port), error);
+    // A command creates a round only after retirement or an explicit server rejection.
+    // Keep it through redirects and later retirement so neither starts a fresh retry budget.
+    internal void RecordRejection(ref DiscoveryRound? round, RespireConnection source, Exception error)
+        => RecordRejection(ref round, new RespireEndpoint(source.Host, source.Port), error);
 
-    internal void RecordRetirement(ref DiscoveryRound? round, RespireEndpoint endpoint, Exception error)
+    internal void RecordRejection(ref DiscoveryRound? round, RespireEndpoint endpoint, Exception error)
     {
         if (_options.ReconnectPolicy is not { } policy) return;
         round ??= new DiscoveryRound(this, policy);
@@ -149,6 +148,8 @@ internal sealed partial class ClusterRouter
             Enter();
             try
             {
+                // No scheduled fallback means no discovery episode was started; physical
+                // connection health still reports the initial candidate's failure.
                 if (_attempts == 0 || Exhaustion is not null || Volatile.Read(ref owner._disposed) != 0) return;
                 Publish(TerminalError is null ? RespireConnectionState.Connected : RespireConnectionState.Disconnected, TerminalError);
             }
@@ -172,37 +173,55 @@ internal sealed partial class ClusterRouter
         lock (_discoveryNotificationsGate)
         {
             (_discoveryNotifications ??= new()).Enqueue(change);
-            if (_publishingDiscovery) return;
-            _publishingDiscovery = true;
-            ThreadPool.UnsafeQueueUserWorkItem(static router => router.PublishDiscoveryStates(), this, preferLocal: false);
+            StartDiscoveryPublisher();
         }
+    }
+
+    // Called only while holding _discoveryNotificationsGate.
+    private void StartDiscoveryPublisher()
+    {
+        if (_publishingDiscovery || _discoveryNotifications is not { Count: > 0 }) return;
+        _publishingDiscovery = true;
+        ThreadPool.UnsafeQueueUserWorkItem(static router => router.PublishDiscoveryStates(), this, preferLocal: false);
     }
 
     private void PublishDiscoveryStates()
     {
-        while (true)
+        try
         {
-            RespireConnectionStateChange change;
+            while (true)
+            {
+                RespireConnectionStateChange change;
+                lock (_discoveryNotificationsGate)
+                {
+                    if (!_discoveryNotifications!.TryDequeue(out change))
+                    {
+                        return;
+                    }
+                }
+                try
+                {
+                    if (change.NextReconnectDelay is not null || change.ReconnectExhausted)
+                        RespireTelemetry.RecordDiscoveryReconnect(change.Endpoint, "cluster-discovery",
+                            change.ReconnectAttempt, change.NextReconnectDelay, _logger);
+                }
+                catch (Exception error) { LogDiscoveryObserverFailure(error); }
+                // Measurements describe already scheduled work. Observers may synchronously dispose
+                // the client, so the dispatcher is independent of discovery and is never joined.
+                if (Volatile.Read(ref _disposed) != 0) continue;
+                try { DiscoveryStateChanged?.Invoke(change); }
+                catch (Exception error) { LogDiscoveryObserverFailure(error); }
+            }
+        }
+        finally
+        {
             lock (_discoveryNotificationsGate)
             {
-                if (!_discoveryNotifications!.TryDequeue(out change))
-                {
-                    _publishingDiscovery = false;
-                    return;
-                }
+                _publishingDiscovery = false;
+                // Enqueue can race the final empty check. Hand off any queued observations
+                // before relinquishing the gate, including after an unexpected drain failure.
+                StartDiscoveryPublisher();
             }
-            try
-            {
-                if (change.NextReconnectDelay is not null || change.ReconnectExhausted)
-                    RespireTelemetry.RecordDiscoveryReconnect(change.Endpoint, "cluster-discovery",
-                        change.ReconnectAttempt, change.NextReconnectDelay, _logger);
-            }
-            catch (Exception error) { LogDiscoveryObserverFailure(error); }
-            // Measurements describe already scheduled work. Observers may synchronously dispose
-            // the client, so the dispatcher is independent of discovery and is never joined.
-            if (Volatile.Read(ref _disposed) != 0) continue;
-            try { DiscoveryStateChanged?.Invoke(change); }
-            catch (Exception error) { LogDiscoveryObserverFailure(error); }
         }
     }
     private void LogDiscoveryObserverFailure(Exception error)

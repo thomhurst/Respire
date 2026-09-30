@@ -25,7 +25,7 @@ internal sealed partial class KeyCommands
                     && cluster.CanRetryRetirement(attempt, cancellationToken))
                 {
                     // Rebuild from the immutable checkpoint, retaining the same fallback budget.
-                    cluster.RecordRetirement(ref discovery, retirement.Endpoint, retirement);
+                    cluster.RecordRejection(ref discovery, retirement.Endpoint, retirement);
                 }
             }
         }
