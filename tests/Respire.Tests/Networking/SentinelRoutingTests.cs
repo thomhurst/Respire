@@ -395,8 +395,9 @@ public class SentinelRoutingTests
         await Assert.That(index).IsGreaterThanOrEqualTo(0);
         var connection = promoted.ReceivedConnectionIds[index];
         var frames = promoted.ReceivedCommands.Where((_, position) => promoted.ReceivedConnectionIds[position] == connection).ToArray();
-        await Assert.That(frames).IsEquivalentTo(durability
-            ? ["ROLE", "SET batched value", "WAIT 1 1000"] : ["ROLE", "SET batched value"]);
+        string[] expected = durability
+            ? ["ROLE", "SET batched value", "WAIT 1 1000"] : ["ROLE", "SET batched value"];
+        await Assert.That(frames).IsEquivalentTo(expected);
     }
 
     [Test]
@@ -459,6 +460,32 @@ public class SentinelRoutingTests
             finally { pool.Return(connection); }
         }
         finally { await client.Core.ReleaseServerPoolAsync(pool); }
+    }
+
+    [Test]
+    public async Task DisposalJoinsRetirementWithAnAcceptedBlockingCommand()
+    {
+        var rejectWrites = false;
+        await using var oldPrimary = Primary((_, command) => command.StartsWith("SET ") && Volatile.Read(ref rejectWrites)
+            ? "-READONLY replica\r\n"u8.ToArray() : null);
+        oldPrimary.SuppressReply = command => command.StartsWith("BLPOP ");
+        await using var promoted = Primary();
+        var primaryPort = oldPrimary.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        var original = client.Core.Sentinel!.Current!;
+        var blocking = client.Lists.LeftPopAsync("queue", waitFor: Timeout.InfiniteTimeSpan).AsTask();
+        await WaitForCommandAsync(oldPrimary, "BLPOP ");
+        Volatile.Write(ref primaryPort, promoted.Port);
+        Volatile.Write(ref rejectWrites, true);
+        await Assert.That(async () => await client.SetAsync("trigger", "value")).Throws<RespireServerException>();
+        await client.SetAsync("next", "value").AsTask().WaitAsync(Limit);
+        await Assert.That(original.Retirement.IsCompleted).IsFalse();
+        await client.DisposeAsync().AsTask().WaitAsync(Limit);
+        await Assert.That(async () => await blocking.WaitAsync(Limit)).Throws<Exception>();
+        await Assert.That(original.Retirement.IsCompleted).IsTrue();
+        await Assert.That(client.IsConnected).IsFalse();
+        await Assert.That(promoted.ReceivedCommands.Any(command => command.StartsWith("BLPOP "))).IsFalse();
     }
 
     private static async Task WaitForCommandAsync(FakeRespServer server, string prefix)

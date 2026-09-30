@@ -137,12 +137,14 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
 
     private void Invalidate(Generation generation)
     {
-        if (!generation.TryRetire()) return;
-        // The transport admission check sees retirement before any waiting caller resumes.
-        // Cache invalidation is synchronous; metrics and health callbacks run elsewhere.
-        var evictions = core.ClientCache?.FlushForContinuityLossWithoutMetrics();
         lock (_gate)
         {
+            // Retirement and its cleanup task become visible together to disposal. Once
+            // disposal owns the router, it aborts every generation itself.
+            if (!generation.TryRetire() || _disposed) return;
+            // The transport admission check sees retirement before any waiting caller resumes.
+            // Cache invalidation is synchronous; metrics and health callbacks run elsewhere.
+            var evictions = core.ClientCache?.FlushForContinuityLossWithoutMetrics();
             if (evictions is { } count)
                 QueueNotificationLocked(() => ClientSideCacheCoordinator.PublishContinuityFlushMetrics(count));
             if (ReferenceEquals(Current, generation))
@@ -161,7 +163,11 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 await previous.ConfigureAwait(false);
                 if (!core.Disposed) notification();
             }
-            catch (Exception error) { core.Logger?.LogWarning(error, "Sentinel state observer failed"); }
+            catch (Exception error)
+            {
+                try { core.Logger?.LogWarning(error, "Sentinel state observer failed"); }
+                catch (Exception) { /* Keep later notifications independent of a user logger failure. */ }
+            }
         });
     }
 
