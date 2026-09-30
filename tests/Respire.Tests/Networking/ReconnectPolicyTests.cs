@@ -40,9 +40,14 @@ public class ReconnectPolicyTests
     [Test]
     public async Task ConcurrentWaitersShareBoundedAttemptsAndExhaustionPersists()
     {
-        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        byte[] unavailable = "-TRYAGAIN controlled replacement failure\r\n"u8.ToArray();
+        await using var server = new FakeRespServer(3, FakeRespServer.OkReply)
+        {
+            ReplyOverride = (connectionId, _) => connectionId == 0 ? null : unavailable,
+        };
         await using var client = await RespireClient.ConnectAsync(Options(server.Port,
-            new() { InitialDelay = TimeSpan.FromMilliseconds(50), MaxDelay = TimeSpan.FromMilliseconds(100), JitterRatio = 0, MaxAttempts = 2 }));
+            new() { InitialDelay = TimeSpan.FromMilliseconds(50), MaxDelay = TimeSpan.FromMilliseconds(100), JitterRatio = 0, MaxAttempts = 2 })
+            with { Database = 1 });
         var changes = new ConcurrentQueue<RespireConnectionStateChange>();
         var exhausted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var exhaustionMeasured = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -69,7 +74,8 @@ public class ReconnectPolicyTests
             if (change.ReconnectExhausted) exhausted.TrySetResult();
         };
         var original = client.Core.Multiplexer.GetConnection();
-        await server.DisposeAsync();
+        // Keep the listener bound: releasing this port lets another parallel fixture
+        // accept a replacement. Each replacement instead fails its SELECT handshake.
         await original.DisposeAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var waiters = Enumerable.Range(0, 8).Select(async _ =>
@@ -90,6 +96,8 @@ public class ReconnectPolicyTests
         await Assert.That(attempts.Select(change => change.NextReconnectDelay).ToArray())
             .IsEquivalentTo(new TimeSpan?[] { TimeSpan.FromMilliseconds(50), TimeSpan.FromMilliseconds(100) }, CollectionOrdering.Matching);
         await Assert.That(changes.Last().ReconnectExhausted).IsTrue();
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "SELECT 1", "SELECT 1", "SELECT 1" }, CollectionOrdering.Matching);
+        await Assert.That(server.ReceivedConnectionIds).IsEquivalentTo(new[] { 0, 1, 2 }, CollectionOrdering.Matching);
     }
 
     [Test]

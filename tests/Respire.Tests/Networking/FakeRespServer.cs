@@ -51,6 +51,9 @@ internal sealed class FakeRespServer : IAsyncDisposable
     /// </summary>
     public Func<string, bool>? SuppressReply { get; set; }
 
+    /// <summary>Overrides a command's scripted reply by accepted connection ID; null keeps the script.</summary>
+    public Func<int, string, byte[]?>? ReplyOverride { get; set; }
+
     public IReadOnlyList<string> ReceivedCommands
     {
         get
@@ -172,7 +175,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
         using (socket)
         {
             var buffer = new byte[1 << 20];
-            var pendingReplies = new List<int>();
+            var pendingReplies = new List<byte[]>();
             var end = 0;
             var replyIndex = 0;
 
@@ -213,15 +216,17 @@ internal sealed class FakeRespServer : IAsyncDisposable
 
                     if (SuppressReply?.Invoke(commandText) != true)
                     {
-                        pendingReplies.Add(replyIndex++);
+                        var reply = ReplyOverride?.Invoke(connectionId, commandText)
+                            ?? _replies[Math.Min(replyIndex, _replies.Length - 1)];
+                        pendingReplies.Add(reply);
+                        replyIndex++;
                     }
                 }
 
                 if (pendingReplies.Count >= MinimumCommandsBeforeReply)
                 {
-                    foreach (var pendingReply in pendingReplies)
+                    foreach (var reply in pendingReplies)
                     {
-                        var reply = _replies[Math.Min(pendingReply, _replies.Length - 1)];
                         await socket.SendAsync(reply, SocketFlags.None, _cts.Token);
                     }
 
