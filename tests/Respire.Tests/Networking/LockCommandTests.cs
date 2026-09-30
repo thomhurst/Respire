@@ -779,19 +779,44 @@ public class LockCommandTests
     }
 
     [Test]
-    public async Task RespireLock_PollingAcquireRetriesUntilTheWaitBudgetIsSpent()
+    [Arguments(0)]
+    [Arguments(150)]
+    public async Task RespireLock_PollingAcquireReturnsUnacquiredAfterTheWaitBudgetIsSpent(int firstReplyDelay)
     {
         await using var server = new FakeRespServer("$-1\r\n"u8.ToArray());
+        server.DelayReply(0, firstReplyDelay);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
 
+        var wait = TimeSpan.FromMilliseconds(120);
+        var started = Stopwatch.GetTimestamp();
         var attempt = await client.Locks.AcquireAsync(
             "resource",
             TimeSpan.FromSeconds(30),
-            wait: TimeSpan.FromMilliseconds(120),
+            wait: wait,
             retryEvery: TimeSpan.FromMilliseconds(50));
 
         await Assert.That(attempt.Acquired).IsFalse();
-        await Assert.That(server.ReceivedCommands.Count).IsGreaterThan(1);
+        await Assert.That(Stopwatch.GetElapsedTime(started)).IsGreaterThanOrEqualTo(wait);
+        await Assert.That(server.ReceivedCommands.Count).IsGreaterThanOrEqualTo(1);
+        if (firstReplyDelay > wait.TotalMilliseconds)
+            await Assert.That(server.ReceivedCommands.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task RespireLock_PollingAcquireRetriesWithAnExplicitInterval()
+    {
+        // Prove retry separately: a loaded runner may spend the entire short wait budget
+        // on its first network response, which is a valid unsuccessful acquisition.
+        await using var server = new FakeRespServer("$-1\r\n"u8.ToArray(), FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        await using var attempt = await client.Locks.AcquireAsync(
+            "resource", TimeSpan.FromSeconds(30), wait: TimeSpan.FromSeconds(5),
+            retryEvery: TimeSpan.FromMilliseconds(50), cancellationToken: timeout.Token);
+
+        await Assert.That(attempt.Acquired).IsTrue();
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
     }
 
     [Test]

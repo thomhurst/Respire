@@ -16,6 +16,8 @@ internal sealed record FakeReply(byte Prefix, object? Value)
     internal static FakeReply Integer(long value) => new((byte)':', value);
     internal static FakeReply Double(double value) => new((byte)',', value);
     internal static FakeReply Array(FakeReply[] values) => new((byte)'*', values);
+    internal static FakeReply Push(FakeReply[] values) => new((byte)'>', values);
+    internal static FakeReply Sequence(FakeReply[] values) => new(0, values);
     internal static FakeReply Set(FakeReply[] values) => new((byte)'~', values);
     internal static FakeReply Map(FakeReply[] pairs) => new((byte)'%', pairs);
 
@@ -34,7 +36,9 @@ internal sealed record FakeReply(byte Prefix, object? Value)
         }
         else if (Value is FakeReply[] elements)
         {
-            Line(writer, Prefix == '~' && !resp3 ? (byte)'*' : Prefix, (elements.Length / (Prefix == '%' ? 2 : 1)).ToString(CultureInfo.InvariantCulture));
+            if (Prefix != 0)
+                Line(writer, !resp3 && (Prefix == '~' || Prefix == '>') ? (byte)'*' : Prefix,
+                    (elements.Length / (Prefix == '%' ? 2 : 1)).ToString(CultureInfo.InvariantCulture));
             foreach (var element in elements) element.Write(writer, resp3);
         }
         else if (Value is double score)

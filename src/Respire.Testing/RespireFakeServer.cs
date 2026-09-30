@@ -1,11 +1,12 @@
 using System.Globalization;
 using System.IO.Pipelines;
 using System.Text;
+using System.Threading.Channels;
 using Respire.Protocol;
 
 namespace Respire.Testing;
 
-/// <summary>An in-memory RESP server for the documented strings, keys, hashes, lists, sets, and sorted sets subset, using the real Respire client transport.</summary>
+/// <summary>An in-memory RESP server for the documented strings, keys, hashes, lists, sets, sorted sets, and pub/sub subset, using the real Respire client transport.</summary>
 /// <remarks>No TCP socket or Docker daemon is used. Each server owns independent data and connection state.
 /// Unsupported commands fail explicitly. This is not a substitute for compatibility tests against Redis or Valkey.</remarks>
 public sealed partial class RespireFakeServer : IAsyncDisposable
@@ -61,6 +62,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
 
     private async Task ServeAsync(Connection connection)
     {
+        var sender = SendRepliesAsync(connection);
         var buffer = new byte[4096];
         var length = 0;
         try
@@ -102,7 +104,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
                     finally { request.Dispose(); }
                     var reply = await ExecuteWithFaultAsync(connection, arguments).ConfigureAwait(false);
                     if (reply is null) return; // Disposal or an injected disconnect ends this connection.
-                    await connection.Stream.WriteAsync(reply, connection.Lifetime.Token).ConfigureAwait(false);
+                    await reply.Flushed.Task.WaitAsync(connection.Lifetime.Token).ConfigureAwait(false);
                 }
                 if (consumed > 0) buffer.AsSpan(consumed, length - consumed).CopyTo(buffer);
                 length -= consumed;
@@ -120,7 +122,18 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         }
         finally
         {
-            connection.Stream.Dispose();
+            lock (_gate) StopConnectionLocked(connection);
+            try
+            {
+                await sender.ConfigureAwait(false);
+                await connection.Stopping.ConfigureAwait(false);
+            }
+            catch (Exception error)
+            {
+                lock (_gate) _failures.Add(error);
+            }
+            try { connection.Stream.Dispose(); }
+            catch (Exception error) { lock (_gate) _failures.Add(error); }
             lock (_gate)
             {
                 _connections.Remove(connection);
@@ -143,17 +156,20 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         return arguments;
     }
 
-    private byte[]? ExecuteLocked(Connection connection, byte[][] arguments, RespireFakeFaultScope? scope)
+    private Outbound? ExecuteLocked(Connection connection, byte[][] arguments, RespireFakeFaultScope? scope)
     {
         // Keep synchronous state protection outside the async receive state machine,
         // including exceptional command execution and clock callbacks.
         lock (_gate)
         {
-            if (_disposed) return null;
+            if (_disposed || connection.Closed) return null;
             try
             {
                 scope?.ObserveExecution();
-                return Execute(connection, arguments).Encode(connection.Resp3);
+                var reply = Execute(connection, arguments).Encode(connection.Resp3);
+                // Enqueue before releasing state ownership: newly subscribed routes cannot
+                // receive a publication ahead of their acknowledgement, even behind a fault gate.
+                return QueueOutputLocked(connection, reply, push: false);
             }
             catch
             {
@@ -173,6 +189,9 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
                 return FakeReply.Error($"ERR Respire.Testing does not support command or arguments: {command}");
             if (args.Length < handler.MinimumArity || args.Length > handler.MaximumArity)
                 return WrongArity(command);
+            if (connection.IsResp2Subscribed
+                && command is not ("SUBSCRIBE" or "UNSUBSCRIBE" or "PING"))
+                return FakeReply.Error($"ERR Can't execute '{command.ToLowerInvariant()}': only SUBSCRIBE / UNSUBSCRIBE / PING are supported in this context");
             return handler.Execute(this, connection, args);
         }
         catch (WrongTypeException) { return FakeReply.Error("WRONGTYPE Operation against a key holding the wrong kind of value"); }
@@ -269,6 +288,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
             try
             {
                 connection.Lifetime.Cancel();
+                // The server loop joins its writer before disposing the shared stream.
             }
             catch (Exception error) { (errors ??= []).Add(error); }
         }
@@ -297,6 +317,16 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         internal bool Resp3 { get; set; }
         internal bool Failed { get; set; }
         internal Task Completion { get; set; } = Task.CompletedTask;
+        internal bool Closed { get; set; }
+        internal Task Stopping { get; set; } = Task.CompletedTask;
+        internal HashSet<byte[]> Channels { get; } = new(BinaryKeyComparer.Instance);
+        internal bool IsResp2Subscribed => !Resp3 && Channels.Count != 0;
+        internal Channel<Outbound> Output { get; } = Channel.CreateUnbounded<Outbound>(new()
+        {
+            SingleReader = true,
+            AllowSynchronousContinuations = false,
+        });
+        internal int PendingPushBytes;
     }
 
     private sealed class WrongTypeException : Exception { }
