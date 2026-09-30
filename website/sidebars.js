@@ -26,6 +26,7 @@ const sidebars = {
         'guides/pub-sub',
         'guides/pub-sub-introspection',
         'guides/client-administration',
+        'guides/acl-administration',
         'guides/batches-and-transactions',
         'guides/durability-acknowledgements',
         'guides/raw-commands',
