@@ -1,6 +1,6 @@
 ---
 title: In-memory testing
-description: Exercise real Respire client code against a deterministic strings and keys server without Docker.
+description: Exercise real Respire client code against a deterministic strings, keys, and hashes server without Docker.
 ---
 
 # In-memory testing
@@ -53,6 +53,7 @@ An error consumes exactly one response slot, so later valid commands still work.
 | --- | --- |
 | Strings | `GET`, `SET` with `NX`, `XX`, `GET`, `KEEPTTL`, `EX`, `PX`, `EXAT`, `PXAT`; `MGET`, `MSET`, `MSETNX`, `GETDEL`, `GETSET`, `GETEX`, `STRLEN`, `APPEND` |
 | Integer strings | `INCR`, `DECR`, `INCRBY`, `DECRBY`, with checked signed 64-bit arithmetic |
+| Hashes | `HSET`, `HSETNX`, `HMSET`, `HGET`, `HMGET`, `HGETALL`, `HDEL`, `HEXISTS`, `HLEN`, `HKEYS`, `HVALS`, `HSTRLEN`, `HINCRBY` |
 | Keys | `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `PERSIST` |
 | Expiry | `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT` with `NX`, `XX`, `GT`, `LT`; `TTL`, `PTTL`, `EXPIRETIME`, `PEXPIRETIME` |
 | Connection | `HELLO 2/3` without authentication, `PING`, `ECHO`, `SELECT 0`, `CLIENT ID`, `CLIENT GETNAME`, `CLIENT SETNAME` |
@@ -62,8 +63,29 @@ including empty values and embedded zero bytes. Multi-key mutations are atomic; 
 parsing and overflow errors leave the original value unchanged. `UNLINK` removes data
 synchronously because this fake does not model background memory reclamation.
 
+Hash fields and values preserve binary bytes. `HSET` counts newly added fields, including
+duplicate fields within one command only once; `HMGET` preserves requested field order and
+nulls. `HGETALL` emits a RESP2 array or RESP3 map. Hash enumeration order is unspecified.
+`HINCRBY` uses checked signed 64-bit arithmetic. Hash mutations retain key-level TTL; removing
+the last field deletes the key and its TTL. String operations reject hashes with `WRONGTYPE`,
+except `MGET` returns null for non-string keys and ordinary `SET`/`MSET` may replace their type.
+Failed operations preserve existing fields and TTL. Hash-field expiry, `HINCRBYFLOAT`,
+`HRANDFIELD`, and `HSCAN` are explicitly unsupported.
+
+```csharp
+using Respire.Testing;
+
+await using var server = new RespireFakeServer();
+await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+await client.Hashes.SetAsync("user:1", "name", "Ada");
+await client.Hashes.IncrementAsync("user:1", "visits");
+var fields = await client.Hashes.GetAllAsync("user:1");
+if (fields["name"] != "Ada" || fields["visits"] != "1")
+    throw new InvalidOperationException("Hash fields did not round-trip.");
+```
+
 Only database zero and standalone operation are supported. Authentication, TLS, Cluster,
-Sentinel, scripts/functions, client-side tracking, collection commands, pub/sub, transactions,
+Sentinel, scripts/functions, client-side tracking, lists, sets, sorted sets, pub/sub, transactions,
 persistence and administrative diagnostics are not simulated. Unsupported handshake features
 fail initialization. Do not enable these modes and infer production behavior from the fake.
 Individual RESP requests are limited to 16 MiB; larger requests close their connection
@@ -93,8 +115,11 @@ command accepted for sending. Do not infer from cancellation that a mutation was
 Supported option behavior follows [Redis SET](https://redis.io/docs/latest/commands/set/),
 [EXPIRE](https://redis.io/docs/latest/commands/expire/), and the
 [Redis 8.6 expiry implementation](https://github.com/redis/redis/blob/8.6.0/src/expire.c).
+Hash behavior follows [HSET](https://redis.io/docs/latest/commands/hset/),
+[HGETALL](https://redis.io/docs/latest/commands/hgetall/), and
+[HINCRBY](https://redis.io/docs/latest/commands/hincrby/).
 Run real-server integration tests for version compatibility, unsupported commands, and
-operational behavior. Collections, pub/sub/transactions, and deterministic fault injection
+operational behavior. Remaining collections, pub/sub/transactions, and deterministic fault injection
 remain tracked in [#540](https://github.com/thomhurst/Respire/issues/540),
 [#541](https://github.com/thomhurst/Respire/issues/541), and
 [#542](https://github.com/thomhurst/Respire/issues/542).

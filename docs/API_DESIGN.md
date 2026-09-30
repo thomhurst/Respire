@@ -588,7 +588,7 @@ public sealed class CartService([FromKeyedServices("cache")] IRespireClient redi
 - All facets and the client are interfaces (`IRespireClient`, `IHashCommands`, …);
   implementations sealed. Mocking works with any framework.
 - `Respire.Testing` connects the real client to an in-memory RESP server for a documented
-  strings/keys subset and controllable expiry. It does not mock `IRespireClient`; collections,
+  strings/keys/hashes subset and controllable expiry. It does not mock `IRespireClient`; remaining collections,
   sessions and injected faults remain separate roadmap items. See the
   [in-memory testing guide](../website/docs/guides/in-memory-testing.md).
   Compatibility integration tests keep using real Redis via Testcontainers.

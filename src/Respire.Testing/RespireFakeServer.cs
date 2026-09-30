@@ -5,7 +5,7 @@ using Respire.Protocol;
 
 namespace Respire.Testing;
 
-/// <summary>An in-memory RESP server for the documented strings/keys subset, using the real Respire client transport.</summary>
+/// <summary>An in-memory RESP server for the documented strings, keys, and hashes subset, using the real Respire client transport.</summary>
 /// <remarks>No TCP socket or Docker daemon is used. Each server owns independent data and connection state.
 /// Unsupported commands fail explicitly. This is not a substitute for compatibility tests against Redis or Valkey.</remarks>
 public sealed partial class RespireFakeServer : IAsyncDisposable
@@ -163,6 +163,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
                 return WrongArity(command);
             return handler.Execute(this, connection, args);
         }
+        catch (WrongTypeException) { return FakeReply.Error("WRONGTYPE Operation against a key holding the wrong kind of value"); }
         catch (FormatException) { return FakeReply.Error("ERR value is not an integer or out of range"); }
         catch (OverflowException) { return FakeReply.Error("ERR increment or expiry would overflow"); }
     }
@@ -277,9 +278,19 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         internal Task Completion { get; set; } = Task.CompletedTask;
     }
 
-    private sealed class Entry(byte[] value, long? expiresAt = null)
+    private sealed class WrongTypeException : Exception { }
+
+    private sealed class Entry(object data, long? expiresAt = null)
     {
-        internal byte[] Value { get; set; } = value;
+        internal object Data { get; } = data;
+        internal byte[] Value => Data as byte[] ?? throw new WrongTypeException();
+        internal Dictionary<byte[], byte[]> Hash => Data as Dictionary<byte[], byte[]> ?? throw new WrongTypeException();
+        internal string Type => Data switch
+        {
+            byte[] => "string",
+            Dictionary<byte[], byte[]> => "hash",
+            _ => throw new InvalidOperationException("Unknown fake entry type."),
+        };
         internal long? ExpiresAt { get; set; } = expiresAt;
     }
 }
