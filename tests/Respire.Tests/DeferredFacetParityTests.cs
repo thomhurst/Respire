@@ -66,6 +66,7 @@ public class DeferredFacetParityTests
             nameof(IStreamCommands.ClaimAsync), nameof(IStreamCommands.ClaimPendingAsync),
             nameof(IStreamCommands.InfoAsync), nameof(IStreamCommands.GroupInfoAsync),
             nameof(IStreamCommands.ConsumerInfoAsync), nameof(IStreamCommands.ReadGroupAsync),
+            nameof(IStreamCommands.ReadAllAsync),
         ];
         var immediate = typeof(IStreamCommands).GetMethods();
         await Assert.That(clientOnly.Except(immediate.Select(method => method.Name)).ToArray()).IsEmpty();

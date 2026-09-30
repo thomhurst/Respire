@@ -504,7 +504,7 @@ internal sealed class RespireConnection : IAsyncDisposable
     }
 
     private RespireConnectionException CreateHandshakeException(in RespValue reply, string step)
-        => new($"{step} failed for {Host}:{Port}: {reply.GetErrorMessage()}");
+        => new($"{step} failed for {Host}:{Port}: {reply.GetErrorMessage()}", ResponseReader.ServerError(in reply, step));
 
     private void ValidateHelloProtocol(in RespValue reply)
     {

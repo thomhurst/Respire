@@ -298,7 +298,7 @@ public readonly record struct StreamAddOptions
 /// Stream commands. Collection cardinality uses <see cref="CountAsync"/>. Group reading is
 /// exposed as an endless async stream of entries.
 /// </summary>
-public interface IStreamCommands
+public partial interface IStreamCommands
 {
     /// <summary>Appends an entry (id auto-generated) and returns its id. Redis: XADD.</summary>
     ValueTask<RespireStreamId> AddAsync(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
@@ -497,7 +497,7 @@ public interface IStreamCommands
         int batchSize = 64, CancellationToken cancellationToken = default);
 }
 
-internal sealed class StreamCommands(RespireClient client) : IStreamCommands
+internal sealed partial class StreamCommands(RespireClient client) : IStreamCommands
 {
     private static readonly TimeSpan BlockInterval = TimeSpan.FromSeconds(5);
     private static readonly Verb XDel = new("XDEL");

@@ -6,7 +6,7 @@ namespace Respire;
 /// <summary>Non-blocking stream commands queued by batches and transactions.</summary>
 /// <remarks>Mirrors append, count, range, remove, trim, and acknowledge operations from
 /// IStreamCommands. Blocking reads, consumer loops, and group administration remain client-only.</remarks>
-public interface IBatchStreamCommands
+public partial interface IBatchStreamCommands
 {
     /// <summary>Appends fields with an auto-generated id. Redis: XADD.</summary>
     RespirePending<RespireStreamId> Add(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
@@ -29,7 +29,7 @@ public interface IBatchStreamCommands
     RespirePending<long> Acknowledge(RespireKey key, string group, params ReadOnlySpan<RespireStreamId> ids);
 }
 
-internal sealed class BatchStreamCommands(IPendingSink sink) : IBatchStreamCommands
+internal sealed partial class BatchStreamCommands(IPendingSink sink) : IBatchStreamCommands
 {
     public RespirePending<RespireStreamId> Add(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
         => sink.Add<Cmd1N, RespireStreamId>("XADD",

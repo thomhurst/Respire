@@ -133,6 +133,10 @@ The raw `Execute` queue method supports known nonblocking command forms; see
 
 ## Deferred Streams
 
+Both queues also expose nonblocking `Streams.Read` for one or multiple same-slot streams,
+with owned results and optional per-stream count. Blocking waits and continuous enumeration
+remain immediate-client operations. See [stream reads](../commands/collections.md#reading-without-consumer-groups).
+
 Both queues expose `Streams.Add`, `Count`, `Range`, `Remove`, `Trim`, `TrimByMaxLength`, and
 `Acknowledge`, corresponding to XADD, XLEN, XRANGE/XREVRANGE, XDEL, XTRIM, and
 XACK. Parameters mirror the immediate methods without cancellation tokens. `Add`
