@@ -55,7 +55,7 @@ public class ServerMetadataCommandTests
         await using var server = new FakeRespServer(FakeRespServer.OkReply);
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
         foreach (var operation in Mutations(client.Server))
-            await Assert.That(operation).ThrowsExactly<InvalidOperationException>();
+            await Assert.That(operation).ThrowsExactly<NotSupportedException>();
         await using var admin = RespireClient.Create(new RespireOptions { Endpoints = [new("127.0.0.1", server.Port)], AllowAdmin = true });
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();

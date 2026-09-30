@@ -57,16 +57,17 @@ public partial interface IServerCommands
 
 internal sealed partial class ServerCommands
 {
-    private readonly record struct MetadataCall<T>(string Operation, CmdN Command, ResponseConverter<ServerCommands, T> Convert, bool RequiresAdmin = false);
+    // Every call must explicitly choose its admin policy; new mutations cannot inherit a permissive default.
+    private readonly record struct MetadataCall<T>(string Operation, CmdN Command, ResponseConverter<ServerCommands, T> Convert, bool RequiresAdmin);
     private static readonly Verb MetadataInfoVerb = new(-1, "COMMAND", "INFO");
     private static readonly Verb MetadataDocsVerb = new(-1, "COMMAND", "DOCS");
     private static readonly Verb MetadataKeysVerb = new(-1, "COMMAND", "GETKEYS");
     private static readonly Verb MetadataBackgroundSaveVerb = new(-1, "BGSAVE");
-    private static readonly MetadataCall<RespireModuleInfo[]> ModulesCall = new("MODULE LIST", new(new Verb(-1, "MODULE", "LIST"), []), static (ServerCommands _, in RespValue value) => CommandMetadataParser.Modules(in value));
+    private static readonly MetadataCall<RespireModuleInfo[]> ModulesCall = new("MODULE LIST", new(new Verb(-1, "MODULE", "LIST"), []), static (ServerCommands _, in RespValue value) => CommandMetadataParser.Modules(in value), RequiresAdmin: false);
     private static readonly MetadataCall<bool> RewriteConfigurationCall = MetadataOkCall("CONFIG REWRITE", new(-1, "CONFIG", "REWRITE"));
     private static readonly MetadataCall<bool> ResetStatisticsCall = MetadataOkCall("CONFIG RESETSTAT", new(-1, "CONFIG", "RESETSTAT"));
     private static readonly MetadataCall<bool> SaveSnapshotCall = MetadataOkCall("SAVE", new(-1, "SAVE"));
-    private static readonly MetadataCall<RespireBackgroundPersistenceResult> RewriteAofCall = new("BGREWRITEAOF", new(new Verb(-1, "BGREWRITEAOF"), []), static (ServerCommands _, in RespValue value) => CommandMetadataParser.Background(in value), true);
+    private static readonly MetadataCall<RespireBackgroundPersistenceResult> RewriteAofCall = new("BGREWRITEAOF", new(new Verb(-1, "BGREWRITEAOF"), []), static (ServerCommands _, in RespValue value) => CommandMetadataParser.Background(in value), RequiresAdmin: true);
 
     public ValueTask<RespireCommandInfo?[]> CommandInfoAsync(ReadOnlySpan<RespireCommand> commands = default, CancellationToken cancellationToken = default) => ExecuteMetadataAsync(CommandInfoCall(commands), cancellationToken);
     public ValueTask<RespireCommandDocumentation[]> CommandDocsAsync(ReadOnlySpan<RespireCommand> commands = default, CancellationToken cancellationToken = default) => ExecuteMetadataAsync(CommandDocsCall(commands), cancellationToken);
@@ -100,6 +101,8 @@ internal sealed partial class ServerCommands
         if (call.RequiresAdmin) EnsureAdminAllowed(call.Operation);
         cancellationToken.ThrowIfCancellationRequested();
         var cache = client.Core.ClientCache;
+        // Use the same operation classifier as single-node and raw execution. Read-only calls
+        // produce a no-op fence; RequiresAdmin controls authorization, not cache semantics.
         var fence = cache is null ? default : cache.BeforeCommand(call.Operation, call.Command);
         try
         {
@@ -114,32 +117,34 @@ internal sealed partial class ServerCommands
     private static async ValueTask DiscardMetadataOkAsync(ValueTask<bool> operation) => _ = await operation.ConfigureAwait(false);
 
     private static MetadataCall<bool> MetadataOkCall(string operation, Verb verb)
-        => new(operation, new(verb, []), static (ServerCommands _, in RespValue value) => CommandMetadataParser.Ok(in value), true);
+        => new(operation, new(verb, []), static (ServerCommands _, in RespValue value) => CommandMetadataParser.Ok(in value), RequiresAdmin: true);
 
     private static MetadataCall<RespireBackgroundPersistenceResult> SaveBackgroundCall(bool schedule)
-        => new("BGSAVE", new(MetadataBackgroundSaveVerb, schedule ? ["SCHEDULE"] : []), static (ServerCommands _, in RespValue value) => CommandMetadataParser.Background(in value), true);
+        => new("BGSAVE", new(MetadataBackgroundSaveVerb, schedule ? ["SCHEDULE"] : []), static (ServerCommands _, in RespValue value) => CommandMetadataParser.Background(in value), RequiresAdmin: true);
 
     private static MetadataCall<RespireCommandInfo?[]> CommandInfoCall(ReadOnlySpan<RespireCommand> commands)
-        => new("COMMAND INFO", new(MetadataInfoVerb, MetadataNames(commands)), static (ServerCommands _, in RespValue value) => CommandMetadataParser.Info(in value));
+        => new("COMMAND INFO", new(MetadataInfoVerb, MetadataNames(commands)), static (ServerCommands _, in RespValue value) => CommandMetadataParser.Info(in value), RequiresAdmin: false);
 
     private static MetadataCall<RespireCommandDocumentation[]> CommandDocsCall(ReadOnlySpan<RespireCommand> commands)
-        => new("COMMAND DOCS", new(MetadataDocsVerb, MetadataNames(commands)), static (ServerCommands _, in RespValue value) => CommandMetadataParser.Docs(in value));
+        => new("COMMAND DOCS", new(MetadataDocsVerb, MetadataNames(commands)), static (ServerCommands _, in RespValue value) => CommandMetadataParser.Docs(in value), RequiresAdmin: false);
 
     private static RespireValue[] MetadataNames(ReadOnlySpan<RespireCommand> commands)
     {
         var names = new RespireValue[commands.Length];
         for (var index = 0; index < commands.Length; index++)
-        {
-            ArgumentException.ThrowIfNullOrWhiteSpace(commands[index].Name, nameof(commands));
-            names[index] = string.Join('|', commands[index].Name.Split(' ', StringSplitOptions.RemoveEmptyEntries));
-        }
+            names[index] = string.Join('|', MetadataCommandWords(commands[index]));
         return names;
+    }
+
+    private static string[] MetadataCommandWords(RespireCommand command)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(command.Name, nameof(command));
+        return command.Name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
     }
 
     private static MetadataCall<byte[][]> CommandKeysCall(RespireCommand command, ReadOnlySpan<RespireValue> arguments)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(command.Name, nameof(command));
-        var words = command.Name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var words = MetadataCommandWords(command);
         var tokens = new RespireValue[words.Length + arguments.Length];
         for (var index = 0; index < words.Length; index++) tokens[index] = words[index];
         for (var index = 0; index < arguments.Length; index++)
@@ -147,6 +152,6 @@ internal sealed partial class ServerCommands
             RespireValue.ThrowIfNull(arguments[index], nameof(arguments));
             tokens[words.Length + index] = arguments[index].Snapshot();
         }
-        return new("COMMAND GETKEYS", new(MetadataKeysVerb, tokens), static (ServerCommands _, in RespValue value) => CommandMetadataParser.Keys(in value));
+        return new("COMMAND GETKEYS", new(MetadataKeysVerb, tokens), static (ServerCommands _, in RespValue value) => CommandMetadataParser.Keys(in value), RequiresAdmin: false);
     }
 }
