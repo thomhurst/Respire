@@ -380,7 +380,7 @@ public sealed record RespireOptions
     /// <c>syncTimeout</c>, <c>protocol</c>, <c>allowAdmin</c>, and Sentinel credentials/TLS.
     /// Recognized URI query parameters:
     /// <c>clientName</c>, <c>connections</c>, <c>connectTimeoutMs</c>, <c>commandTimeoutMs</c>,
-    /// <c>connectionIdleReadTimeoutMs</c>, <c>protocol</c> (2 or 3), <c>db</c>,
+    /// <c>connectionIdleReadTimeoutMs</c>, <c>protocol</c> (2/resp2 or 3/resp3), <c>db</c>,
     /// <c>useCluster</c> (true or false), <c>sentinelPrimaryName</c>, <c>sentinelUser</c>,
     /// <c>sentinelPassword</c>, <c>sentinelTls</c> (true or false), and
     /// <c>allowAdmin</c> (true or false).
@@ -439,9 +439,9 @@ public sealed record RespireOptions
 
         var database = 0;
         var path = uri.AbsolutePath.Trim('/');
-        if (path.Length > 0 && !int.TryParse(path, out database))
+        if (path.Length > 0)
         {
-            throw new ArgumentException($"Invalid database index '{path}' in connection string.", nameof(connectionString));
+            database = ParseIntegerOption("database", path);
         }
 
         string? clientName = null;
@@ -469,7 +469,7 @@ public sealed record RespireOptions
                     clientName = value;
                     break;
                 case "connections":
-                    connections = int.Parse(value, CultureInfo.InvariantCulture);
+                    connections = ParseIntegerOption(name, value);
                     if (connections < 1)
                     {
                         throw new ArgumentOutOfRangeException(
@@ -478,20 +478,20 @@ public sealed record RespireOptions
 
                     break;
                 case "connecttimeoutms":
-                    connectTimeout = TimeSpan.FromMilliseconds(int.Parse(value, CultureInfo.InvariantCulture));
+                    connectTimeout = TimeSpan.FromMilliseconds(ParseIntegerOption(name, value));
                     break;
                 case "commandtimeoutms":
-                    commandTimeout = TimeSpan.FromMilliseconds(int.Parse(value, CultureInfo.InvariantCulture));
+                    commandTimeout = TimeSpan.FromMilliseconds(ParseIntegerOption(name, value));
                     break;
                 case "responsetimeoutms":
                 case "connectionidlereadtimeoutms":
-                    responseTimeout = TimeSpan.FromMilliseconds(int.Parse(value, CultureInfo.InvariantCulture));
+                    responseTimeout = TimeSpan.FromMilliseconds(ParseIntegerOption(name, value));
                     break;
                 case "protocol":
-                    protocol = value == "3" ? RespProtocol.Resp3 : RespProtocol.Resp2;
+                    protocol = ParseProtocolOption(name, value);
                     break;
                 case "db":
-                    database = int.Parse(value, CultureInfo.InvariantCulture);
+                    database = ParseIntegerOption(name, value);
                     break;
                 case "allowadmin":
                     allowAdmin = ParseBooleanOption(name, value);
@@ -591,6 +591,25 @@ public sealed record RespireOptions
         return result;
     }
 
+    private static int ParseIntegerOption(string name, string value)
+    {
+        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var result))
+        {
+            throw new ArgumentException($"Option '{name}' requires a 32-bit integer.", ConnectionStringParameterName);
+        }
+
+        return result;
+    }
+
+    private static RespProtocol ParseProtocolOption(string name, string value)
+        => value.ToLowerInvariant() switch
+        {
+            "2" or "resp2" => RespProtocol.Resp2,
+            "3" or "resp3" => RespProtocol.Resp3,
+            _ => throw new ArgumentException(
+                $"Option '{name}' requires '2', 'resp2', '3', or 'resp3'.", ConnectionStringParameterName),
+        };
+
     private static readonly SslProtocols[] DefinedSslProtocols = Enum.GetValues<SslProtocols>();
 
     private static bool IsCompleteSslProtocolMask(SslProtocols protocols)
@@ -676,25 +695,19 @@ public sealed record RespireOptions
                     break;
                 case "defaultdatabase":
                 case "db":
-                    database = int.Parse(value, CultureInfo.InvariantCulture);
+                    database = ParseIntegerOption(name, value);
                     break;
                 case "connecttimeout":
-                    connectTimeout = TimeSpan.FromMilliseconds(int.Parse(value, CultureInfo.InvariantCulture));
+                    connectTimeout = TimeSpan.FromMilliseconds(ParseIntegerOption(name, value));
                     break;
                 case "asynctimeout":
-                    asyncTimeout = TimeSpan.FromMilliseconds(int.Parse(value, CultureInfo.InvariantCulture));
+                    asyncTimeout = TimeSpan.FromMilliseconds(ParseIntegerOption(name, value));
                     break;
                 case "synctimeout":
-                    syncTimeout = TimeSpan.FromMilliseconds(int.Parse(value, CultureInfo.InvariantCulture));
+                    syncTimeout = TimeSpan.FromMilliseconds(ParseIntegerOption(name, value));
                     break;
                 case "protocol":
-                    protocol = value.ToLowerInvariant() switch
-                    {
-                        "2" or "resp2" => RespProtocol.Resp2,
-                        "3" or "resp3" => RespProtocol.Resp3,
-                        _ => throw new ArgumentException(
-                            $"Unsupported protocol '{value}' in connection string.", nameof(connectionString)),
-                    };
+                    protocol = ParseProtocolOption(name, value);
                     break;
                 case "sslhost":
                     RequireOptionValue(name, value);
