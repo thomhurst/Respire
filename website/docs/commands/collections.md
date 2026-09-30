@@ -33,6 +33,36 @@ Pre-release migration: replace `Hashes.DeleteAsync` and `Streams.DeleteAsync` wi
 use `Remove` and `GetAndRemove`. Whole-key deletion and stream group/consumer lifecycle methods
 keep their `Delete` names.
 
+`LengthAsync(key, field)` returns the value's byte length (`HSTRLEN`), including zero for
+an empty or missing field. `RandomFieldAsync` returns one field or null for a missing hash.
+`RandomFieldsAsync` and `RandomFieldsWithValuesAsync` accept a count: positive counts return
+up to that many distinct fields, negative counts allow repeats, and zero returns an empty
+array. The field/value result is an array of pairs so repeated fields are preserved.
+These random selection methods require Redis 6.2 or later.
+
+```csharp
+long nameBytes = await redis.Hashes.LengthAsync("user:42", "name");
+string? randomField = await redis.Hashes.RandomFieldAsync("user:42");
+string[] randomFields = await redis.Hashes.RandomFieldsAsync("user:42", count: 2);
+KeyValuePair<string, string>[] samples =
+    await redis.Hashes.RandomFieldsWithValuesAsync("user:42", count: -5);
+
+RespireExpiryTime[] expiryTimes = await redis.Hashes.ExpiryTimeAsync("user:42", "name", "role");
+RespireExpiryTime[] secondResolution = await redis.Hashes.ExpiryTimeAsync(
+    "user:42", ExpiryTimePrecision.Seconds, "name", "role");
+```
+
+`ExpiryTimeAsync` requires Redis 7.4 or later. It uses `HPEXPIRETIME` by default; request
+`ExpiryTimePrecision.Seconds` to use `HEXPIRETIME`, which rounds fractional seconds up.
+Results follow input order, including
+repeated fields. `Exists` distinguishes missing fields from persistent fields; `HasExpiry`
+indicates an expiration is set. `UnixTimeMilliseconds` always uses milliseconds, including
+when requesting whole-second resolution, and is null when missing or persistent. The numeric
+timestamp preserves Redis values beyond the range of `DateTimeOffset`. Use `ExpiresAt` for a
+nullable UTC `DateTimeOffset`; that conversion throws if a timestamp exceeds its supported range.
+
+All these methods also exist on batch and transaction hash facets without the `Async` suffix.
+
 ## Lists
 
 ```csharp
