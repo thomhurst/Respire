@@ -197,6 +197,16 @@ public sealed record RespireOptions
     /// </summary>
     public TimeSpan? CommandTimeout { get; init; } = DefaultCommandTimeout;
 
+    /// <summary>Enables the shared process-wide thread-pool scheduling probe. Defaults to true.</summary>
+    /// <remarks>One background thread samples once per second while enabled clients exist. Disabling this
+    /// client removes its warning subscription; other clients may still provide process-wide timeout samples.</remarks>
+    public bool ThreadPoolMonitoring { get; init; } = true;
+
+    /// <summary>Scheduling delay that triggers a diagnostic warning. Defaults to 500 milliseconds.</summary>
+    /// <remarks>Must be positive. Warnings are limited to one per client per 30 seconds.
+    /// This is a diagnostic threshold; no thread-pool settings are changed.</remarks>
+    public TimeSpan ThreadPoolWarningThreshold { get; init; } = TimeSpan.FromMilliseconds(500);
+
     /// <summary>
     /// Multiplexed connections to open. Defaults to one. A single connection maximizes command
     /// coalescing per syscall and is fastest for typical workloads; under a 50-worker stress test,
@@ -276,6 +286,7 @@ public sealed record RespireOptions
         Require(Connections >= 1, nameof(Connections), "must be at least one");
         Require(Database >= 0, nameof(Database), "cannot be negative");
         Require(ConnectTimeout > TimeSpan.Zero, nameof(ConnectTimeout), "must be positive");
+        Require(ThreadPoolWarningThreshold > TimeSpan.Zero, nameof(ThreadPoolWarningThreshold), "must be positive");
         Require(
             CommandTimeout is null || CommandTimeout >= TimeSpan.FromMilliseconds(1),
             nameof(CommandTimeout),

@@ -66,6 +66,10 @@ public sealed class RespireTimeoutDiagnostics
     public int? MinIoThreads { get; private init; }
     /// <summary>Queued thread-pool work items at capture time.</summary>
     public long? PendingWorkItems { get; private init; }
+    /// <summary>The latest immutable process-wide scheduling probe, or null before a sample is available.</summary>
+    /// <remarks>CapturedAt identifies sample age. IsPending means the delay is a lower bound.
+    /// Other clients can supply this process-wide observation when this client opts out of monitoring.</remarks>
+    public RespireThreadPoolSnapshot? ThreadPoolProbe { get; private init; }
     /// <summary>A heuristic: work is queued and busy workers have reached the configured minimum.</summary>
     /// <remarks>Returns false when any required observation is unavailable.</remarks>
     public bool PossibleThreadPoolStarvation => PendingWorkItems > 0 && BusyWorkerThreads >= MinWorkerThreads;
@@ -108,7 +112,8 @@ public sealed class RespireTimeoutDiagnostics
             IsConnected = isConnected, IsReconnecting = isReconnecting,
             BusyWorkerThreads = Math.Max(0, maxWorkers - availableWorkers), MinWorkerThreads = minWorkers,
             BusyIoThreads = Math.Max(0, maxIo - availableIo), MinIoThreads = minIo,
-            PendingWorkItems = ThreadPool.PendingWorkItemCount
+            PendingWorkItems = ThreadPool.PendingWorkItemCount,
+            ThreadPoolProbe = Internal.ThreadPoolMonitor.Latest,
         };
     }
 
@@ -141,5 +146,6 @@ public sealed class RespireTimeoutDiagnostics
            $"in-flight={Display(InflightCount)}; in-flight bytes={Display(InflightBytes)}; pending write bytes={Display(PendingWriteBytes)}; " +
            $"last read={Display(TimeSinceLastRead)}; last write={Display(TimeSinceLastWrite)}; reconnecting={Display(IsReconnecting)}; " +
            $"workers busy/min={Display(BusyWorkerThreads)}/{Display(MinWorkerThreads)}; IO busy/min={Display(BusyIoThreads)}/{Display(MinIoThreads)}; " +
-           $"pending work={Display(PendingWorkItems)}. {Hint}";
+           $"pending work={Display(PendingWorkItems)}; probe delay={Display(ThreadPoolProbe?.SchedulingDelay)}; " +
+           $"probe pending={Display(ThreadPoolProbe?.IsPending)}; probe sampled at={Display(ThreadPoolProbe?.CapturedAt)}. {Hint}";
 }
