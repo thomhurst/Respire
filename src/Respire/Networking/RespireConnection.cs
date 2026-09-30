@@ -2156,6 +2156,7 @@ internal sealed class RespireConnection : IAsyncDisposable
             Volatile.Write(ref _retired, true);
         }
         _capacitySignal.Signal(); // Unaccepted full-ring waiters must fail immediately.
+        // The drain catches every failure and transfers it to the shared completion task.
         _ = DrainAndDisposeAsync(completion);
         return completion.Task;
     }
@@ -2166,6 +2167,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         {
             while (true)
             {
+                // All current waiters share this pulse; a producer cannot consume the drain wakeup.
+                // Subscribe before checking state so the last send/reply cannot race past the wait.
                 var progress = _capacitySignal.WaitAsync(CancellationToken.None);
                 lock (_writeGate)
                 {
