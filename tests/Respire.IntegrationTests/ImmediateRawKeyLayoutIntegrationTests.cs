@@ -12,7 +12,8 @@ public class ImmediateRawKeyLayoutIntegrationTests(ModernRedisTestContainer fixt
     [Arguments(3)]
     public async Task ImmediateLayoutsMatchServerKeyDiscovery(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         (string Name, RespireValue[] Args)[] cases =
         [
             ("BLPOP", ["first", "second", 1]),

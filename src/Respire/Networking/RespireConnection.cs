@@ -421,11 +421,13 @@ internal sealed class RespireConnection : IAsyncDisposable
             if (hello.IsError)
             {
                 if (!IsUnsupportedHello(in hello)) throw CreateHandshakeException(in hello, "HELLO");
+                _logger?.LogDebug("HELLO 3 is unsupported by {Host}:{Port}; using RESP2 on this connection", Host, Port);
             }
             else
             {
                 ValidateHelloProtocol(in hello);
                 negotiatedResp3 = true;
+                _logger?.LogDebug("Negotiated RESP3 with {Host}:{Port}", Host, Port);
             }
         }
 
@@ -570,7 +572,9 @@ internal sealed class RespireConnection : IAsyncDisposable
     private static bool IsUnsupportedHello(in RespValue reply)
     {
         var message = reply.GetErrorMessage().AsSpan();
-        return message.StartsWith("NOPROTO ", StringComparison.OrdinalIgnoreCase)
+        return message.Equals("NOPROTO", StringComparison.OrdinalIgnoreCase)
+            || message.StartsWith("NOPROTO ", StringComparison.OrdinalIgnoreCase)
+            || message.StartsWith("ERR unknown command \"HELLO\"", StringComparison.OrdinalIgnoreCase)
             || message.StartsWith("ERR unknown command 'HELLO'", StringComparison.OrdinalIgnoreCase)
             || message.StartsWith("ERR unknown command `HELLO`", StringComparison.OrdinalIgnoreCase);
     }

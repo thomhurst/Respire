@@ -396,7 +396,7 @@ public class SentinelTests
         await using var sentinel = new FakeRespServer(PrimaryReply(primary.Port));
 
         await using var client = await RespireClient.ConnectAsync(
-            $"redis://:redis-secret@127.0.0.1:{sentinel.Port}?serviceName=mymaster&sentinelPassword=");
+            $"redis://:redis-secret@127.0.0.1:{sentinel.Port}?serviceName=mymaster&sentinelPassword=&protocol=2");
 
         _ = await client.PingAsync();
 

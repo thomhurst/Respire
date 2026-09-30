@@ -24,7 +24,8 @@ public class StreamNackIntegrationTests(StreamNackRedisContainer fixture)
     public async Task ModesReleaseOwnershipAndPreservePerIdPelState([Matrix(2, 3)] int protocol,
         [Matrix(0, 1, 2)] int surface, [Matrix(StreamNackMode.Silent, StreamNackMode.Fail, StreamNackMode.Fatal)] StreamNackMode mode)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var view = client.WithKeyPrefix($"nack:{Guid.NewGuid():N}:");
         try
         {
@@ -68,7 +69,8 @@ public class StreamNackIntegrationTests(StreamNackRedisContainer fixture)
     public async Task ForceAndRetryCountOverrideEachMode([Matrix(2, 3)] int protocol,
         [Matrix(StreamNackMode.Silent, StreamNackMode.Fail, StreamNackMode.Fatal)] StreamNackMode mode)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var view = client.WithKeyPrefix($"nack-force:{Guid.NewGuid():N}:");
         try
         {
@@ -93,7 +95,8 @@ public class StreamNackIntegrationTests(StreamNackRedisContainer fixture)
     [Arguments(3)]
     public async Task BinaryGroupNamesRemainUnmodified(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var key = $"binary-nack:{Guid.NewGuid():N}";
         byte[] group = [255, 0, 32];
         try

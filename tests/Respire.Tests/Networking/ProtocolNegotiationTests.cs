@@ -23,6 +23,9 @@ public class ProtocolNegotiationTests
     [Test]
     [Arguments("-ERR unknown command 'HELLO', with args beginning with: '3'\r\n")]
     [Arguments("-ERR unknown command `HELLO`\r\n")]
+    [Arguments("-ERR unknown command 'hello', with args beginning with: '3'\r\n")]
+    [Arguments("-ERR unknown command \"hello\"\r\n")]
+    [Arguments("-NOPROTO\r\n")]
     [Arguments("-NOPROTO unsupported protocol version\r\n")]
     public async Task UnsupportedHelloFallsBackBeforeAuthenticationAndSetup(string rejection)
     {
@@ -54,6 +57,8 @@ public class ProtocolNegotiationTests
     [Arguments("-NOAUTH Authentication required.\r\n")]
     [Arguments("-NOPERM this user has no permissions to run the 'hello' command\r\n")]
     [Arguments("-ERR syntax error\r\n")]
+    [Arguments("-ERR unknown command 'other', with args beginning with: 'hello'\r\n")]
+    [Arguments("-ERR unknown command 'HELLOOTHER'\r\n")]
     [Arguments("-LOADING Redis is loading the dataset in memory\r\n")]
     [Arguments("%1\r\n$5\r\nproto\r\n:2\r\n")]
     [Arguments("+OK\r\n")]
@@ -89,6 +94,18 @@ public class ProtocolNegotiationTests
             Protocol = caching ? RespProtocol.Auto : RespProtocol.Resp3,
             ClientSideCache = caching ? new() : null,
         })).Throws<RespireConnectionException>();
+        await Assert.That(server.ReceivedCommands[0]).IsEqualTo("HELLO 3");
+        await Assert.That(server.ReceivedCommands.All(command => !command.StartsWith("AUTH"))).IsTrue();
+    }
+
+    [Test]
+    public async Task TrackingHandshakeRemainsStrictWithFallbackRequested()
+    {
+        await using var server = new FakeRespServer("-NOPROTO unsupported protocol version\r\n"u8.ToArray(),
+            FakeRespServer.OkReply);
+        await Assert.That(async () => await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new RespireConnectionOptions { UseResp3 = true, AllowResp2Fallback = true, EnableClientTracking = true }))
+            .Throws<RespireConnectionException>();
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("HELLO 3");
         await Assert.That(server.ReceivedCommands.All(command => !command.StartsWith("AUTH"))).IsTrue();
     }

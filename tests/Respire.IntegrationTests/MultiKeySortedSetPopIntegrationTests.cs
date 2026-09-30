@@ -27,7 +27,8 @@ public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, PopMode.Blocking, true)]
     public async Task PopMany_SelectsFirstNonemptyKeyAndPreservesOrder(int protocol, PopMode mode, bool descending)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var view = client.WithKeyPrefix("Ã§Â§Å¸Ã¦Ë†Â·:");
         RespireKey selected = new byte[] { 0xff, 0, 0x42 };
         for (var i = 0; i < 4; i++)
@@ -52,7 +53,8 @@ public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, true)]
     public async Task PopOne_ReturnsSelectedBinaryKeyAndTimeout(int protocol, bool descending)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var view = client.WithKeyPrefix("tenant:");
         RespireKey selected = new byte[] { 0xff, 0, 0x42 };
         await view.SortedSets.AddAsync(selected, "a", 1);
@@ -88,7 +90,8 @@ public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, PopMode.Blocking, true)]
     public async Task WrongType_IsPreserved(int protocol, PopMode mode, bool descending)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         await client.SetAsync("wrong", "text");
         Func<Task> many = async () => { await PopMany(client, mode, ["missing", "wrong"], 1, descending); };
         await many.Should().ThrowAsync<RespireServerException>().WithMessage("*WRONGTYPE*");
@@ -118,7 +121,8 @@ public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, PopMode.Blocking, true)]
     public async Task TypedPops_PreserveMembersScoresAndNull(int protocol, PopMode mode, bool descending)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var view = client.WithKeyPrefix("typed:");
         await view.SortedSets.AddAsync<int>("scores", 7, double.NegativeInfinity);
         await view.SortedSets.AddAsync<int>("scores", 9, double.PositiveInfinity);
@@ -146,7 +150,8 @@ public class MultiKeySortedSetPopIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, true, true)]
     public async Task BlockingCancellation_PreservesOtherTraffic(int protocol, bool many, bool descending)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
         Task pending = many
             ? client.SortedSets.PopManyAsync(["missing"], descending: descending,

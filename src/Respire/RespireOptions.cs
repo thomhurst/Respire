@@ -397,7 +397,7 @@ public sealed record RespireOptions
             Database = Database,
             RequireClusterDatabaseSupport = UseCluster && Database != 0,
             UseResp3 = Protocol != RespProtocol.Resp2,
-            AllowResp2Fallback = Protocol == RespProtocol.Auto && !enableClientTracking,
+            AllowResp2Fallback = Protocol == RespProtocol.Auto,
             TcpKeepAliveTime = TcpKeepAliveTime,
             TcpKeepAliveInterval = TcpKeepAliveInterval,
             TcpKeepAliveRetryCount = TcpKeepAliveRetryCount,

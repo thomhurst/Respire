@@ -27,7 +27,8 @@ public class MultiKeyListPopIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, PopMode.Blocking, ListSide.Right)]
     public async Task PopMany_SelectsFirstNonemptyKeyAndPreservesOrder(int protocol, PopMode mode, ListSide side)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var view = client.WithKeyPrefix("租户:");
         RespireKey selected = new byte[] { 0xff, 0, 0x42 };
         await view.Lists.RightPushAsync(selected, "a", "b", "c", "d");
@@ -51,7 +52,8 @@ public class MultiKeyListPopIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, ListSide.Right)]
     public async Task PopOne_ReturnsSelectedBinaryKeyAndTimeout(int protocol, ListSide side)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var view = client.WithKeyPrefix("tenant:");
         RespireKey selected = new byte[] { 0xff, 0, 0x42 };
         await view.Lists.RightPushAsync(selected, "a", "b");
@@ -86,7 +88,8 @@ public class MultiKeyListPopIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, PopMode.Blocking, ListSide.Right)]
     public async Task WrongType_IsPreserved(int protocol, PopMode mode, ListSide side)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}&protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         await client.SetAsync("wrong", "text");
         Func<Task> many = async () => { await PopMany(client, mode, ["missing", "wrong"], 1, side); };
         await many.Should().ThrowAsync<RespireServerException>().WithMessage("*WRONGTYPE*");

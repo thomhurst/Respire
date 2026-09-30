@@ -24,6 +24,12 @@ AUTH, client naming, and database selection before any application command runs.
 Authentication/ACL errors, malformed replies, disconnects, and timeouts do not trigger fallback.
 No application command is replayed during negotiation.
 
+Automatic negotiation adds one serialized HELLO round trip before the remaining setup
+commands on each new physical connection. It adds no round trip to ordinary commands.
+Debug logs identify successful RESP3 negotiation or unsupported-HELLO fallback to RESP2,
+without logging credentials. Different unknown-command wording is not treated as proof
+that HELLO is unsupported; configure RESP2 explicitly for such a proxy.
+
 Choose `Protocol = RespProtocol.Resp2` or `protocol=2` to skip HELLO and keep the earlier
 RESP2 behavior. Choose `RespProtocol.Resp3` or `protocol=3` to require RESP3 and reject
 unsupported servers. `protocol=auto` explicitly selects the default policy.
