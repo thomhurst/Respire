@@ -180,6 +180,10 @@ Omitting `Connections` uses one multiplexed connection, the default. The value m
 
 `AllowAdmin = false` is the default safety setting. Set it to `true` only for callers that are allowed to run high-risk server administration commands such as `FLUSHDB`, `FLUSHALL`, and `CONFIG SET`.
 
+For expiring passwords or access tokens, use a caller-owned
+[`IRespireCredentialProvider`](../guides/renewable-credentials.md). It supplies current credentials
+for new connections and renews expiring credentials on live connections through AUTH.
+
 ## URI query options
 
 Connection URI query parameters cover common options:

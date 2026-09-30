@@ -5,6 +5,7 @@ on:
     paths:
       - 'src/Respire/Networking/InflightRing.cs'
       - 'src/Respire/Networking/RespireConnection.cs'
+      - 'src/Respire/Networking/RespireConnection.Credentials.cs'
       - 'src/Respire/Networking/PendingResponseSource.cs'
       - 'src/Respire/RespireTransaction.cs'
       - 'benchmarks/Respire.Benchmarks/InflightRingBenchmarks.cs'

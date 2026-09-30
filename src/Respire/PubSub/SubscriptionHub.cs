@@ -403,6 +403,8 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
                 SubscriptionConfirmationHandler = (in RespValue value) => OnSubscriptionConfirmation(epoch, in value),
                 Generation = sentinelGeneration,
             };
+            if (options.CredentialProvider is not null && !options.UseResp3)
+                throw new RespireConfigurationException("Renewable Pub/Sub credentials require Protocol = RespProtocol.Resp3; Redis forbids AUTH while subscribed in RESP2.");
             using var connectCancellation = CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken, _lifetimeCancellation.Token);
             RespireConnection connection;

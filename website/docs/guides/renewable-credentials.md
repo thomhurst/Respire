@@ -1,0 +1,117 @@
+---
+title: Renewable credentials
+description: Rotate Redis credentials on live connections with a caller-owned provider.
+---
+
+# Renewable credentials
+
+Set `RespireOptions.CredentialProvider` to an `IRespireCredentialProvider`. It takes precedence
+over static `Username` and `Password`. Every new physical connection, including reconnects,
+Cluster nodes, dedicated blocking connections, and subscriptions, obtains current credentials.
+Static credentials retain their existing behavior and create no refresh worker.
+
+This example reads a password and its absolute expiry from reloadable configuration. Your
+configuration source must update both values together before expiry. A provider can instead
+call a token service asynchronously; cache and synchronize that acquisition inside the provider.
+
+<!-- doc-test-tail-declaration: split-before=public sealed class ConfigurationCredentials -->
+```csharp
+await using var client = await RespireClient.ConnectAsync(new RespireOptions
+{
+    Endpoints = { new RespireEndpoint("redis.internal", 6380) },
+    UseTls = true,
+    Protocol = RespProtocol.Resp3,
+    CredentialProvider = new ConfigurationCredentials(configuration),
+    CredentialRefreshBeforeExpiry = TimeSpan.FromMinutes(5),
+    CredentialRefreshRetryDelay = TimeSpan.FromSeconds(5),
+});
+
+public sealed class ConfigurationCredentials(
+    Microsoft.Extensions.Configuration.IConfiguration configuration) : IRespireCredentialProvider
+{
+    public ValueTask<RespireCredentials> GetCredentialsAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var password = configuration["Redis:Password"]
+            ?? throw new InvalidOperationException("Redis password is missing.");
+        var expiry = DateTimeOffset.Parse(configuration["Redis:ExpiresAt"]!,
+            System.Globalization.CultureInfo.InvariantCulture);
+        return ValueTask.FromResult(new RespireCredentials(
+            configuration["Redis:Username"], password, expiry));
+    }
+}
+```
+
+Use an ISO 8601 timestamp with a UTC offset for `Redis:ExpiresAt`. A null username selects
+Redis's `default` user. A null `ExpiresAt` disables proactive renewal for that connection;
+new connections still query the provider. Azure and AWS adapters are tracked separately in
+[#613](https://github.com/thomhurst/Respire/issues/613) and
+[#614](https://github.com/thomhurst/Respire/issues/614).
+
+## Ownership and identity
+
+The application owns the provider and keeps it alive until every client using it is disposed.
+Respire never disposes the provider. Calls may overlap across physical connections. Honor
+cancellation, avoid blocking before returning a `ValueTask`, and keep cancellation callbacks
+short. Client disposal cancels outstanding acquisition and joins its refresh workers.
+
+Return the same ACL user across all calls for a client's lifetime. Live renewal rejects a
+changed username; use a new client to change identity. A provider is responsible for returning
+a consistent identity across new connections too. `RespireCredentials.ToString()` redacts
+credentials. Do not log its `Password` property, provider exceptions containing tokens, or
+raw configuration.
+
+## Renewal and failure behavior
+
+Each expiring connection starts renewal at `ExpiresAt - CredentialRefreshBeforeExpiry`.
+The lead time and retry delay must each be at least one millisecond. Acquisition is bounded
+by `ConnectTimeout`; renewal is also bounded by the current credentials' remaining lifetime.
+Null or already expired credentials fail acquisition with `RespireAuthenticationException`.
+Initial AUTH rejection and failed live re-authentication also expose this exception type.
+Caller cancellation retains the caller's token.
+
+If acquisition fails while existing credentials remain valid, the connection stays open and
+retries after `CredentialRefreshRetryDelay`. Returning the same username, password, and expiry
+also schedules a retry rather than spinning. At expiry, or if Redis rejects AUTH, the connection
+closes. Its normal reconnect policy determines replacement attempts, which acquire credentials
+again. A provider failure does not silently stop renewal. A successful replacement without an
+expiry ends proactive renewal on that connection.
+
+AUTH uses the ordinary connection FIFO and write gate. In-flight replies retain their order,
+and AUTH cannot split an atomic MULTI/EXEC frame. Client-side cache state is flushed before and
+after re-authentication, preventing replies from an earlier cache epoch from being retained.
+
+A server-blocking command such as BLPOP prevents Redis from processing a later AUTH until the
+command completes. Keep blocking durations and token acquisition latency within the renewal
+window. AUTH must finish before either the old or replacement credentials expire, and within
+the connection timeout remaining for that attempt. An indefinite block can therefore fail
+when renewal reaches its deadline. The refresh worker does not replay that command.
+
+## Pub/Sub and Sentinel
+
+Use `Protocol = RespProtocol.Resp3` for provider-backed subscriptions. Redis allows AUTH while
+subscribed in RESP3, preserving the existing socket and subscriptions. Respire rejects
+provider-backed RESP2 subscriptions because Redis [forbids AUTH in that subscribed state](https://redis.io/docs/latest/commands/subscribe/).
+It does not silently change an explicit protocol selection or promise lossless reconnects.
+
+`SentinelCredentialProvider` supplies independent discovery credentials. When it is null,
+explicit `SentinelUsername` or `SentinelPassword` uses static Sentinel authentication instead
+of inheriting the data provider. With neither override, discovery inherits `CredentialProvider`.
+An empty `SentinelPassword` explicitly disables Sentinel authentication, including providers.
+These rules keep discovery and data identities separate.
+
+## Diagnostics and dependency injection
+
+The `Respire` meter publishes `respire.authentication.refresh`, tagged with `server.address`,
+`server.port`, `respire.authentication.stage` (`provider`, `reauthenticate`, `expired`, or `worker`),
+and `respire.authentication.outcome` (`success` or `failure`). Successful AUTH records success;
+failed acquisition, rejected/unfinished AUTH, expiry, and unexpected worker failure record
+failure. Unchanged credentials are a retry, not an authentication attempt. Warnings use
+`CredentialRefreshFailed` (event ID 4001). Neither telemetry nor these warnings includes
+credential values or provider exception text. Exceptions thrown by listeners or loggers do
+not terminate renewal; callbacks must still return promptly.
+
+The dependency-injection `RespireOptionsBuilder` exposes `CredentialProvider`,
+`SentinelCredentialProvider`, `CredentialRefreshBeforeExpiry`, and `CredentialRefreshRetryDelay`.
+Assign an application-owned provider when configuring `AddRespire`. Ensure its lifetime covers
+the registered client; Respire does not assume disposal ownership when passed through options.

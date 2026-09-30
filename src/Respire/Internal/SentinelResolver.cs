@@ -148,6 +148,8 @@ internal static class SentinelResolver
         {
             Username = authenticationDisabled ? null : options.SentinelUsername ?? options.Username,
             Password = authenticationDisabled ? null : options.SentinelPassword ?? options.Password,
+            CredentialProvider = authenticationDisabled ? null : options.SentinelCredentialProvider
+                ?? (options.SentinelPassword is null && options.SentinelUsername is null ? options.CredentialProvider : null),
             ClientName = null,
             Database = 0,
             Protocol = RespProtocol.Resp2,

@@ -9,6 +9,7 @@ on:
       - 'src/Respire/RespireKey.cs'
       - 'src/Respire/Commands/HandshakeCommands.cs'
       - 'src/Respire/Networking/RespireConnection.cs'
+      - 'src/Respire/Networking/RespireConnection.Credentials.cs'
       - 'benchmarks/Respire.Benchmarks/ClientCacheTrackingBenchmarks.cs'
       - '.github/workflows/benchmark-client-cache.yml'
 
