@@ -506,6 +506,115 @@ public class MaintenanceNotificationTests
         }
     }
 
+    [Test]
+    public async Task FailingActivityListenerDoesNotSuppressMetricOrLog()
+    {
+        var host = $"maintenance-isolation-{Guid.NewGuid():N}";
+        var counted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var activities = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == RespireTelemetry.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStarted = activity =>
+            {
+                if (Equals(activity.GetTagItem("server.address"), host))
+                    throw new InvalidOperationException("Listener failure.");
+            },
+        };
+        ActivitySource.AddActivityListener(activities);
+        using var meters = MeterFor("respire.maintenance.notifications", (value, tags) =>
+        {
+            if (HasTag(tags, "server.address", host)) counted.TrySetResult();
+        });
+        var logger = new RecordingLogger();
+
+        new MaintenanceTelemetry(host, 6379, 0, logger).Publish(new("MIGRATING", 1, 5));
+
+        await counted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await logger.Informed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(logger.Warned).IsTrue();
+    }
+
+    [Test]
+    [NotInParallel] // The dropped counter is untagged, so measure it without other publishers.
+    public async Task OverflowDropsAreReportedOnceDeliveryResumes()
+    {
+        var host = $"maintenance-overflow-{Guid.NewGuid():N}";
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var blocked = 0;
+        using var activities = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == RespireTelemetry.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStarted = activity =>
+            {
+                if (!Equals(activity.GetTagItem("server.address"), host) || Interlocked.Exchange(ref blocked, 1) != 0) return;
+                entered.Set();
+                release.Wait(TimeSpan.FromSeconds(10));
+            },
+        };
+        ActivitySource.AddActivityListener(activities);
+        long delivered = 0, dropped = 0;
+        var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var notifications = MeterFor("respire.maintenance.notifications", (value, tags) =>
+        {
+            if (HasTag(tags, "server.address", host) && Interlocked.Add(ref delivered, value) == 257) drained.TrySetResult();
+        });
+        using var drops = MeterFor("respire.maintenance.notifications.dropped", (value, _) => Interlocked.Add(ref dropped, value));
+        var telemetry = new MaintenanceTelemetry(host, 6379, 0, null);
+
+        telemetry.Publish(new("MIGRATING", 0, 5));
+        await Task.Run(() => entered.Wait(TimeSpan.FromSeconds(5)));
+        await Assert.That(entered.IsSet).IsTrue();
+        // The first event is in flight; 258 more overflow the 256-entry queue by two.
+        for (var i = 1; i <= 258; i++) telemetry.Publish(new("MIGRATING", i, 5));
+        release.Set();
+
+        await drained.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(Interlocked.Read(ref dropped)).IsEqualTo(2L);
+    }
+
+    private static System.Diagnostics.Metrics.MeterListener MeterFor(string name,
+        MeasurementCallback onMeasurement)
+    {
+        var listener = new System.Diagnostics.Metrics.MeterListener
+        {
+            InstrumentPublished = (instrument, meterListener) =>
+            {
+                if (instrument.Meter.Name == RespireTelemetry.SourceName && instrument.Name == name)
+                    meterListener.EnableMeasurementEvents(instrument);
+            },
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, tags, _) => onMeasurement(value, tags));
+        listener.Start();
+        return listener;
+    }
+
+    private delegate void MeasurementCallback(long value, ReadOnlySpan<KeyValuePair<string, object?>> tags);
+
+    private static bool HasTag(ReadOnlySpan<KeyValuePair<string, object?>> tags, string key, string value)
+    {
+        foreach (var tag in tags)
+            if (tag.Key == key && Equals(tag.Value, value)) return true;
+        return false;
+    }
+
+    private sealed class RecordingLogger : Microsoft.Extensions.Logging.ILogger
+    {
+        internal readonly TaskCompletionSource Informed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal volatile bool Warned;
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+            TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            // The warning for the failed activity sink precedes the information log.
+            if (logLevel == Microsoft.Extensions.Logging.LogLevel.Warning && exception is InvalidOperationException) Warned = true;
+            if (logLevel == Microsoft.Extensions.Logging.LogLevel.Information) Informed.TrySetResult();
+        }
+    }
+
     private static MaintenanceNotification? Parse(string wire)
     {
         var position = 0;
