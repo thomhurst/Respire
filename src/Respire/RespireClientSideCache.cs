@@ -422,7 +422,8 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             "COMMAND COUNT" or "COMMAND LIST" or "CLIENT LIST" or "MEMORY STATS" or
             "PUBSUB" or "PUBSUB CHANNELS" or "PUBSUB NUMPAT" or "PUBSUB NUMSUB" or "PUBSUB SHARDCHANNELS" or
             "PUBSUB SHARDNUMSUB" or "ROLE" or "SLOWLOG GET" or "LATENCY LATEST" or "CONFIG GET" or
-            "ACL WHOAMI" or "ACL LIST" or "ACL GETUSER" or "ACL CAT" or "ACL LOG" or "ACL DRYRUN";
+            "ACL WHOAMI" or "ACL LIST" or "ACL GETUSER" or "ACL CAT" or "ACL LOG" or "ACL DRYRUN" or
+            "COMMAND INFO" or "COMMAND DOCS" or "COMMAND GETKEYS" or "MODULE LIST";
 
     private static bool DisruptsClientCacheTracking<TCommand>(string operation, in TCommand command)
         where TCommand : struct, IRespCommand

@@ -12,6 +12,16 @@
   [stream guide](../website/docs/commands/collections.md#idempotent-production-redis-86)
   for deduplication limits, PEL effects, version requirements, and cancellation.
 
+### Server metadata and persistence
+
+- Server APIs add owned COMMAND INFO/DOCS, binary-safe COMMAND GETKEYS, MODULE LIST,
+  CONFIG REWRITE/RESETSTAT, SAVE, BGSAVE, and BGREWRITEAOF, with explicit per-node
+  variants. Configuration and persistence require AllowAdmin; background replies
+  report acceptance rather than completion. Custom `IServerCommands` implementations
+  must add 18 methods as part of the pre-release interface policy. See the
+  [metadata and persistence guide](../website/docs/guides/server-metadata-and-persistence.md)
+  for server versions, ownership, blocking behavior, and cancellation limitations.
+
 ### Stream reference policies
 
 - Redis 8.2+ stream removal adds XDELEX and XACKDEL through `RemoveAsync(key, policy, ids)`
