@@ -8,6 +8,39 @@ namespace Respire.Tests.Networking;
 public class BinaryPubSubTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task IdenticalLiteralAndPatternBytesKeepIndependentSubscriptions(bool push)
+    {
+        byte[] bytes = [0xff, 0, (byte)'x'];
+        await using var server = new FakeRespServer(
+            Confirmation("subscribe", bytes), Confirmation("psubscribe", bytes),
+            Confirmation("unsubscribe", bytes), Confirmation("punsubscribe", bytes));
+        await using var client = CreateClient(server.Port);
+        await using var literal = await client.SubscribeAsync(RespireChannel.Literal(bytes));
+        await using var pattern = await client.SubscribeAsync(RespireChannel.Pattern(bytes));
+        await using var literalReader = literal.GetAsyncEnumerator();
+        await using var patternReader = pattern.GetAsyncEnumerator();
+
+        await server.SendRawAsync(Frame(push, "message"u8.ToArray(), bytes, "literal"u8.ToArray()));
+        await server.SendRawAsync(Frame(push, "pmessage"u8.ToArray(), bytes, bytes, "pattern"u8.ToArray()));
+        await Assert.That(await literalReader.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        await Assert.That(await patternReader.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        await Assert.That(literalReader.Current.Text).IsEqualTo("literal");
+        await Assert.That(literalReader.Current.Pattern).IsNull();
+        await Assert.That(patternReader.Current.Text).IsEqualTo("pattern");
+        await Assert.That(patternReader.Current.Pattern!.Value.Bytes.Span.SequenceEqual(bytes)).IsTrue();
+
+        await literal.DisposeAsync();
+        await server.SendRawAsync(Frame(push, "pmessage"u8.ToArray(), bytes, bytes, "retained"u8.ToArray()));
+        await Assert.That(await patternReader.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        await Assert.That(patternReader.Current.Text).IsEqualTo("retained");
+        await pattern.DisposeAsync();
+        await Assert.That(server.ReceivedArguments.Select(arguments => Encoding.ASCII.GetString(arguments[0])))
+            .IsEquivalentTo(["SUBSCRIBE", "PSUBSCRIBE", "UNSUBSCRIBE", "PUNSUBSCRIBE"]);
+    }
+
+    [Test]
     public async Task CancelledActivationReconnectsExistingBinaryRoutes()
     {
         byte[] bytes = [0xff, 0, (byte)'x'];

@@ -49,9 +49,12 @@ public readonly struct RespireChannel : IEquatable<RespireChannel>
     public static RespireChannel Sharded(RespireChannel value) => value.WithKind(SubscriptionKind.Sharded);
 
     /// <summary>Encodes valid UTF-16 text as an owned UTF-8 channel.</summary>
+    /// <exception cref="ArgumentNullException">The text is null.</exception>
+    /// <exception cref="ArgumentException">The text contains an unpaired surrogate.</exception>
     public static implicit operator RespireChannel(string value) => new(value);
 
     /// <summary>Copies a byte array into an owned channel.</summary>
+    /// <exception cref="ArgumentNullException">The byte array is null.</exception>
     public static implicit operator RespireChannel(byte[] value)
     {
         ArgumentNullException.ThrowIfNull(value);
