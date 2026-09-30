@@ -43,7 +43,7 @@ public partial interface IServerCommands
     ValueTask<RespireServerResult<RespireCommandLogEntry[]>[]> CommandLogOnAllNodesAsync(RespireCommandLogType type, long count = 10, CancellationToken cancellationToken = default);
     /// <summary>Returns each discovered node's log length. Failures remain endpoint-associated results.</summary>
     ValueTask<RespireServerResult<long>[]> CommandLogLengthOnAllNodesAsync(RespireCommandLogType type, CancellationToken cancellationToken = default);
-    /// <summary>Explicitly clears each discovered node's selected log. Requires AllowAdmin; true means OK on that node.</summary>
+    /// <summary>Explicitly clears every discovered node's selected log, including replicas and slotless members. Requires AllowAdmin; true means OK on that node.</summary>
     /// <remarks>Partial success is possible; resets are neither replicated nor rolled back across nodes.</remarks>
     ValueTask<RespireServerResult<bool>[]> ResetCommandLogOnAllNodesAsync(RespireCommandLogType type, CancellationToken cancellationToken = default);
 }
