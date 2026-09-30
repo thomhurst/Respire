@@ -2466,7 +2466,8 @@ public sealed partial class RespireClient : IRespireClient
         {
             // No cache command is sent until identity setup completes, so timing this stage out
             // leaves no cache mutation to correct.
-            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout);
+            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, null,
+                core.Multiplexer.CaptureConnectionWait());
         }
         catch (RespireTimeoutException ex)
         {
@@ -2651,7 +2652,8 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout);
+            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, null,
+                multiplexer.CaptureConnectionWait());
         }
         catch (RespireTimeoutException ex)
         {
@@ -2679,7 +2681,8 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout);
+            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, null,
+                RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
         }
         catch (RespireTimeoutException ex)
         {
@@ -2711,7 +2714,8 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout);
+            throw new RespireTimeoutException("CLIENT ID / CLIENT KILL", timeout, null,
+                RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
         }
         catch (RespireTimeoutException ex)
         {

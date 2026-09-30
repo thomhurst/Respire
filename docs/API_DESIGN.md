@@ -477,8 +477,9 @@ concatenates). Client-side caching is configured through `RespireOptions.ClientS
   [#401](https://github.com/thomhurst/Respire/issues/401).
 - **Timeouts**: `CommandTimeout` is the client default; each call accepts a `CancellationToken`
   for tighter control. `RespireTimeoutException` names the operation and explains that a sent
-  command may still execute. A queue/inflight diagnostic snapshot is planned in
-  [#404](https://github.com/thomhurst/Respire/issues/404), not part of the current exception.
+  command may still execute. `Diagnostics` captures command stage, connection identity,
+  in-flight counts/bytes, pending write bytes, read/write age, and thread-pool state only
+  on failure. Missing connection fields are null; cause hints are heuristic.
 - **No general automatic replay after connection failure.** Retrying non-idempotent commands
   can duplicate effects. Redis Cluster MOVED/ASK routing and script NOSCRIPT recovery are
   targeted protocol recovery paths; they are separate from a general application retry policy.
@@ -507,7 +508,7 @@ RespireException
 ├── RespireConnectionException     // can't connect / connection lost mid-command
 ├── RespireConfigurationException  // valid input cannot configure the requested API
 ├── RespireProtocolException       // malformed or invalid RESP data
-├── RespireTimeoutException        // command name and elapsed timeout
+├── RespireTimeoutException        // command name, elapsed timeout, and diagnostic snapshot
 └── RespireServerException         // .Code, .CommandName, and .IsTransient
 ```
 

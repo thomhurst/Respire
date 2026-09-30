@@ -54,6 +54,22 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     public event Action<RespireConnectionStateChange>? StateChanged;
     internal event Action<int, RespireConnectionStateChange>? SlotStateChanged;
 
+    internal bool IsReconnecting
+    {
+        get
+        {
+            for (var i = 0; i < _reconnecting.Length; i++)
+            {
+                if (Volatile.Read(ref _reconnecting[i]) != 0) return true;
+            }
+            return false;
+        }
+    }
+
+    internal RespireTimeoutDiagnostics CaptureConnectionWait()
+        => RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting,
+            new RespireEndpoint(Host, Port), isConnected: IsConnected, isReconnecting: IsReconnecting);
+
     public bool IsConnected
     {
         get

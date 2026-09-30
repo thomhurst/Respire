@@ -22,6 +22,8 @@ internal sealed class InflightRing
 
     private readonly PendingResponse?[] _slots;
     private readonly int _mask;
+    private readonly long[] _writeEnds;
+    private long _completedWriteEnd;
     private long _head;
     private long _tail;
 
@@ -30,16 +32,19 @@ internal sealed class InflightRing
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
         capacity = (int)BitOperations.RoundUpToPowerOf2((uint)capacity);
         _slots = new PendingResponse?[capacity];
+        _writeEnds = new long[capacity];
         _mask = capacity - 1;
     }
 
     public int Capacity => _slots.Length;
 
+    internal long CompletedWriteEnd => Volatile.Read(ref _completedWriteEnd);
+
     public int Count => (int)(Volatile.Read(ref _tail) - Volatile.Read(ref _head));
 
     /// <summary>Producer only (must be called under the connection's write gate).</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool TryEnqueue(PendingResponse source)
+    public bool TryEnqueue(PendingResponse source, long writeEnd = 0)
     {
         var tail = _tail;
         if (tail - Volatile.Read(ref _head) >= _slots.Length)
@@ -48,6 +53,7 @@ internal sealed class InflightRing
         }
 
         _slots[tail & _mask] = source;
+        _writeEnds[tail & _mask] = writeEnd;
         Volatile.Write(ref _tail, tail + 1);
         return true;
     }
@@ -79,7 +85,7 @@ internal sealed class InflightRing
     /// skipped; a source recycled after its state was captured is rejected by the epoch CAS
     /// inside <see cref="PendingResponse.TrySetTimedOut"/>.
     /// </summary>
-    public long SweepExpired(long nowMilliseconds, TimeSpan timeout)
+    public long SweepExpired(long nowMilliseconds, TimeSpan timeout, RespireConnection? connection = null)
     {
         var head = Volatile.Read(ref _head);
         var tail = Volatile.Read(ref _tail);
@@ -119,7 +125,7 @@ internal sealed class InflightRing
                 continue;
             }
 
-            source.TrySetTimedOut(state, timeout);
+            source.TrySetTimedOut(state, timeout, connection);
         }
 
         return next;
@@ -138,6 +144,7 @@ internal sealed class InflightRing
 
         var index = head & _mask;
         source = _slots[index]!;
+        Volatile.Write(ref _completedWriteEnd, _writeEnds[index]);
         _slots[index] = null;
         Volatile.Write(ref _head, head + 1);
         return true;

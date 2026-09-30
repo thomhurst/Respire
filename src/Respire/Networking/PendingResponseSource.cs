@@ -31,6 +31,8 @@ internal abstract class PendingResponse
     /// none. Written before the ring slot is published, read afterwards by the deadline sweep.
     /// </summary>
     internal long Deadline;
+    internal long WriteStart;
+    internal long WriteEnd;
 
     /// <summary>Command label used in timeout errors; null when the source carries none.</summary>
     internal virtual string? CommandName => null;
@@ -81,14 +83,15 @@ internal abstract class PendingResponse
     /// sweep read this source from its ring slot; the CAS fails if the source completed or
     /// was recycled since, so a stale peek can never time out a different command.
     /// </summary>
-    internal bool TrySetTimedOut(long observedState, TimeSpan timeout)
+    internal bool TrySetTimedOut(long observedState, TimeSpan timeout, RespireConnection? connection = null)
     {
         if (Interlocked.CompareExchange(ref _state, observedState | 1, observedState) != observedState)
         {
             return false;
         }
 
-        DispatchException(new RespireTimeoutException(CommandName ?? "(command)", timeout));
+        DispatchException(new RespireTimeoutException(CommandName ?? "(command)", timeout, null,
+            connection?.CaptureTimeoutDiagnostics(WriteStart, WriteEnd) ?? RespireTimeoutDiagnostics.Capture()));
         return true;
     }
 

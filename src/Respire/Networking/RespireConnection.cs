@@ -76,6 +76,12 @@ internal sealed class RespireConnection : IAsyncDisposable
     private bool _dead;
     private int _disposed;
     private long _serverClientId;
+    private static long _nextDiagnosticId;
+    private readonly long _diagnosticId = Interlocked.Increment(ref _nextDiagnosticId);
+    private long _enqueuedBytes;
+    private long _sentBytes;
+    private long _lastReadTimestamp;
+    private long _lastWriteTimestamp;
     private long _sentReplyCount;
     private long _receivedReplyCount;
     private long _receiveDeadlineTimestamp;
@@ -620,7 +626,8 @@ internal sealed class RespireConnection : IAsyncDisposable
     /// Redis Cluster can report MOVED/ASK there and then return only EXECABORT from EXEC.
     /// </summary>
     public ValueTask<RespValue> SendTransactionAsync(
-        ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken = default)
+        ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken = default,
+        TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(commandCount);
 
@@ -637,7 +644,7 @@ internal sealed class RespireConnection : IAsyncDisposable
 
         return SendMultiReplyCoreAsync(
             new TransactionCommand(serializedCommands), repliesBeforeFinal: commandCount + 1,
-            firstQueueReply: 1, cancellationToken, commandName: "MULTI/EXEC");
+            firstQueueReply: 1, cancellationToken, commandName: "MULTI/EXEC", cancellationTimeout, callerCancellationToken);
     }
 
     /// <summary>
@@ -710,7 +717,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         int repliesBeforeFinal,
         int firstQueueReply,
         CancellationToken cancellationToken,
-        string commandName)
+        string commandName,
+        TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default)
         where TCommand : struct, IRespCommand
     {
         var replyCount = repliesBeforeFinal + 1;
@@ -732,12 +740,35 @@ internal sealed class RespireConnection : IAsyncDisposable
         if (!enqueued)
         {
             return SendMultiReplySlowAsync(
-                command, source, repliesBeforeFinal, replyCount, cancellationToken);
+                command, source, repliesBeforeFinal, replyCount, cancellationToken, cancellationTimeout, callerCancellationToken);
         }
 
         source.RegisterCancellation(cancellationToken);
         ScheduleFlush(startedBatch);
-        return source.Task;
+        return AwaitMultiReplyAsync(source, cancellationTimeout, callerCancellationToken);
+    }
+
+    private ValueTask<RespValue> AwaitMultiReplyAsync(MultiReplyPendingResponseSource source,
+        TimeSpan? cancellationTimeout, CancellationToken callerCancellationToken)
+        => cancellationTimeout is { } timeout
+            ? AwaitTimedMultiReplyAsync(source.Task, source.WriteStart, source.WriteEnd, timeout, callerCancellationToken)
+            : source.Task;
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<RespValue> AwaitTimedMultiReplyAsync(ValueTask<RespValue> reply,
+        long writeStart, long writeEnd, TimeSpan timeout, CancellationToken callerCancellationToken)
+    {
+        try
+        {
+            return await reply.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException ex) when (!callerCancellationToken.IsCancellationRequested)
+        {
+            throw new RespireTimeoutException("MULTI/EXEC", timeout, ex,
+                CaptureTimeoutDiagnostics(writeStart, writeEnd));
+        }
     }
 
     private ValueTask<RespValue> SendCoreAsync<TCommand>(
@@ -925,13 +956,14 @@ internal sealed class RespireConnection : IAsyncDisposable
                     _activeReplyCount += discardRepliesBefore + 1;
                 }
 
+                var writeStart = StampWritePosition(source, frame.Length);
                 StampDeadline(source, armCommandDeadline);
                 for (var i = 0; i < discardRepliesBefore; i++)
                 {
-                    _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel);
+                    _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel, writeStart);
                 }
 
-                _inflight.TryEnqueue(source);
+                _inflight.TryEnqueue(source, _enqueuedBytes);
                 if (trackWrite)
                 {
                     writeTask = _activeBuffer.WriteCompletion;
@@ -1006,13 +1038,14 @@ internal sealed class RespireConnection : IAsyncDisposable
                 _activeReplyCount += discardRepliesBefore + 1;
             }
 
+            var writeStart = StampWritePosition(source, _activeBuffer.Count - mark);
             StampDeadline(source, armCommandDeadline);
             for (var i = 0; i < discardRepliesBefore; i++)
             {
-                _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel);
+                _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel, writeStart);
             }
 
-            _inflight.TryEnqueue(source);
+            _inflight.TryEnqueue(source, _enqueuedBytes);
             if (trackWrite)
             {
                 writeTask = _activeBuffer.WriteCompletion;
@@ -1022,8 +1055,54 @@ internal sealed class RespireConnection : IAsyncDisposable
         }
     }
 
+    // Stamp byte offsets under the write gate before publishing reply slots.
+    private long StampWritePosition(PendingResponse source, int length)
+    {
+        var start = _enqueuedBytes;
+        Volatile.Write(ref _enqueuedBytes, start + length);
+        if (!ReferenceEquals(source, InflightRing.DiscardSentinel))
+        {
+            source.WriteStart = start;
+            source.WriteEnd = start + length;
+        }
+        return start;
+    }
+
+    private void RecordWrite(int bytes)
+    {
+        Volatile.Write(ref _sentBytes, _sentBytes + bytes); // One persistent sender.
+        Volatile.Write(ref _lastWriteTimestamp, Stopwatch.GetTimestamp());
+    }
+
+    internal RespireTimeoutDiagnostics CaptureTimeoutDiagnostics(
+        long writeStart = 0, long writeEnd = 0, RespireCommandStage stage = RespireCommandStage.Unknown)
+    {
+        var sent = Volatile.Read(ref _sentBytes);
+        var enqueued = Volatile.Read(ref _enqueuedBytes);
+        if (writeEnd > 0)
+        {
+            stage = RespireCommandStage.Buffered;
+            if (sent >= writeEnd)
+            {
+                stage = RespireCommandStage.AwaitingReply;
+            }
+            else if (sent > writeStart)
+            {
+                stage = RespireCommandStage.Writing;
+            }
+        }
+        var read = Volatile.Read(ref _lastReadTimestamp);
+        var write = Volatile.Read(ref _lastWriteTimestamp);
+        var serverId = ServerClientId;
+        return RespireTimeoutDiagnostics.Capture(stage, new RespireEndpoint(Host, Port), _diagnosticId,
+            serverId == 0 ? null : serverId, Math.Max(0, _inflight.Count),
+            Math.Max(0, enqueued - _inflight.CompletedWriteEnd), Math.Max(0, enqueued - sent),
+            read == 0 ? null : Stopwatch.GetElapsedTime(read), write == 0 ? null : Stopwatch.GetElapsedTime(write),
+            IsConnected, Multiplexer?.IsReconnecting ?? false);
+    }
+
     /// <summary>
-    /// Stamps (or clears â€” pooled sources carry the previous command's value) the command
+    /// Stamps (or clears — pooled sources carry the previous command's value) the command
     /// deadline before the source is published to the ring. The shared discard sentinel is
     /// never written: it sits in many slots at once and the sweep skips it by reference.
     /// </summary>
@@ -1066,7 +1145,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         MultiReplyPendingResponseSource source,
         int repliesBeforeFinal,
         int replyCount,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeSpan? cancellationTimeout, CancellationToken callerCancellationToken)
         where TCommand : struct, IRespCommand
     {
         bool startedBatch;
@@ -1091,6 +1171,12 @@ internal sealed class RespireConnection : IAsyncDisposable
                     .ConfigureAwait(false);
             }
         }
+        catch (OperationCanceledException ex) when (cancellationTimeout is not null && !callerCancellationToken.IsCancellationRequested)
+        {
+            ReclaimUnpublished(source, replyCount + 1);
+            throw new RespireTimeoutException("MULTI/EXEC", cancellationTimeout.Value, ex,
+                CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
+        }
         catch
         {
             ReclaimUnpublished(source, replyCount + 1);
@@ -1099,7 +1185,7 @@ internal sealed class RespireConnection : IAsyncDisposable
 
         source.RegisterCancellation(cancellationToken);
         ScheduleFlush(startedBatch);
-        return await source.Task.ConfigureAwait(false);
+        return await AwaitMultiReplyAsync(source, cancellationTimeout, callerCancellationToken).ConfigureAwait(false);
     }
 
 #if NET
@@ -1219,7 +1305,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         var remaining = deadline - Environment.TickCount64;
         if (remaining <= 0)
         {
-            throw new RespireTimeoutException(commandName ?? "(command)", _commandTimeout!.Value);
+            throw new RespireTimeoutException(commandName ?? "(command)", _commandTimeout!.Value, null,
+                CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
         }
 
         try
@@ -1230,7 +1317,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         }
         catch (TimeoutException)
         {
-            throw new RespireTimeoutException(commandName ?? "(command)", _commandTimeout!.Value);
+            throw new RespireTimeoutException(commandName ?? "(command)", _commandTimeout!.Value, null,
+                CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
         }
     }
 
@@ -1327,6 +1415,7 @@ internal sealed class RespireConnection : IAsyncDisposable
                                 sent = await pending.ConfigureAwait(false);
                             }
 
+                            RecordWrite(sent);
                             memory = memory[sent..];
                         }
                     }
@@ -1339,6 +1428,7 @@ internal sealed class RespireConnection : IAsyncDisposable
                         }
 
                         await pending.ConfigureAwait(false);
+                        RecordWrite(memory.Length);
                     }
 
                     MarkRepliesSent(sendingReplyCount);
@@ -1910,7 +2000,7 @@ internal sealed class RespireConnection : IAsyncDisposable
         {
             while (true)
             {
-                var next = _inflight.SweepExpired(Environment.TickCount64, timeout);
+                var next = _inflight.SweepExpired(Environment.TickCount64, timeout, this);
                 var delay = next < 0 || next > granularityMilliseconds
                     ? granularity
                     : TimeSpan.FromMilliseconds(next);
@@ -1932,6 +2022,7 @@ internal sealed class RespireConnection : IAsyncDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void ResetReceiveDeadline()
     {
+        Volatile.Write(ref _lastReadTimestamp, Stopwatch.GetTimestamp());
         if (_responseTimeout is null)
         {
             return;
