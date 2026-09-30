@@ -8,7 +8,6 @@ namespace Respire.Internal;
 
 internal static class SentinelResolver
 {
-    private const string ReconnectScope = "sentinel-discovery";
     private static readonly Verb SentinelPeers = new(-1, "SENTINEL", "SENTINELS");
     public static async ValueTask<TResult> ResolveAndConnectPrimaryAsync<TResult>(
         RespireOptions options,
@@ -35,18 +34,14 @@ internal static class SentinelResolver
         var sentinelOptions = CreateSentinelConnectionOptions(options);
         var logger = options.CreateLogger("Respire.Sentinel");
         Exception? lastError = null;
-        var fallbackAttempts = 0;
+        var fallbackBudget = new SentinelFallbackBudget(options.ReconnectPolicy, logger);
 
         for (var index = 0; index < sentinelEndpoints.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var endpoint = sentinelEndpoints[index];
-            // The first candidate is initial setup. All later configured/learned peers share
-            // one replacement budget, including candidates rejected by primary ROLE validation.
-            if (index > 0 && options.ReconnectPolicy is { } policy)
+            if (fallbackBudget.Schedule(index, endpoint) is { } delay)
             {
-                var delay = policy.GetDelay(++fallbackAttempts);
-                RespireTelemetry.RecordDiscoveryReconnect(endpoint, ReconnectScope, fallbackAttempts, delay, logger);
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
             using var discoveryTimeoutSource = CommandTimeoutCancellation.Create(
@@ -99,12 +94,8 @@ internal static class SentinelResolver
                     "Redis Sentinel discovery or primary connection failed through {Host}:{Port}",
                     endpoint.Host,
                     endpoint.Port);
-                if (fallbackAttempts > 0 && options.ReconnectPolicy?.IsExhausted(fallbackAttempts) == true)
+                if (fallbackBudget.StopAfterFailure(endpoint, index + 1 < sentinelEndpoints.Count))
                 {
-                    // Exhaustion means the policy prevented trying a remaining candidate.
-                    // Reaching the same count on the final candidate is ordinary depletion.
-                    if (index + 1 < sentinelEndpoints.Count)
-                        RespireTelemetry.RecordDiscoveryReconnect(endpoint, ReconnectScope, fallbackAttempts, null, logger);
                     break;
                 }
             }
@@ -121,6 +112,32 @@ internal static class SentinelResolver
         void AddPeer(RespireEndpoint endpoint)
         {
             if (discoveryState.TryAdd(endpoint)) sentinelEndpoints.Add(endpoint);
+        }
+    }
+
+    private struct SentinelFallbackBudget(RespireReconnectPolicy? policy, ILogger? logger)
+    {
+        private const string ReconnectScope = "sentinel-discovery";
+        private int _attempts;
+
+        internal TimeSpan? Schedule(int candidateIndex, RespireEndpoint endpoint)
+        {
+            // Initial setup is immediate. Configured/learned peers and ROLE rejection
+            // share one replacement budget for this resolution.
+            if (candidateIndex == 0 || policy is null) return null;
+            var delay = policy.GetDelay(++_attempts);
+            RespireTelemetry.RecordDiscoveryReconnect(endpoint, ReconnectScope, _attempts, delay, logger);
+            return delay;
+        }
+
+        internal readonly bool StopAfterFailure(RespireEndpoint endpoint, bool hasRemainingCandidate)
+        {
+            if (_attempts == 0 || policy?.IsExhausted(_attempts) != true) return false;
+            // Exhaustion means the policy prevented trying a remaining candidate.
+            // Reaching the same count on the final candidate is ordinary depletion.
+            if (hasRemainingCandidate)
+                RespireTelemetry.RecordDiscoveryReconnect(endpoint, ReconnectScope, _attempts, null, logger);
+            return true;
         }
     }
 
