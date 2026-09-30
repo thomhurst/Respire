@@ -1452,18 +1452,30 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken,
         ResponseConverter<RespireClient, TResult> converter)
     {
-        var identity = new ClientCacheCommandKey("GET", resolvedKey.AsValue());
-        using var response = await cache.CoalesceReadAsync(
-            identity, (Client: this, Key: resolvedKey, Cache: cache),
-            static (state, token) => state.Client.FetchGetAndCacheAsync(state.Key, state.Cache, token),
-            cancellationToken).ConfigureAwait(false);
+        ValueTask<RespValue> pending;
+        if (cache.CoalesceConcurrentMisses)
+        {
+            var identity = new ClientCacheCommandKey("GET", resolvedKey.AsValue());
+            pending = cache.CoalesceReadAsync(
+                identity, (Client: this, Key: resolvedKey, Cache: cache),
+                static (state, token) => state.Client.FetchGetAndCacheAsync(state.Key, state.Cache, token),
+                cancellationToken);
+        }
+        else
+        {
+            pending = FetchGetAndCacheAsync(resolvedKey, cache, cancellationToken);
+        }
+        using var response = await pending.ConfigureAwait(false);
         return converter(this, in response);
     }
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<RespValue> FetchGetAndCacheAsync(
         RespireKey resolvedKey, ClientSideCacheCoordinator cache, CancellationToken cancellationToken)
     {
-        if (cache.TryPeek(in resolvedKey, out var cached)) return cached;
+        if (cache.CoalesceConcurrentMisses && cache.TryPeek(in resolvedKey, out var cached)) return cached;
         var token = cache.BeginRead(in resolvedKey);
         var command = new Cmd1(Verbs.Get, token.State.Key.AsValue());
         var response = default(RespValue);
@@ -1511,13 +1523,22 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken,
         ResponseConverter<RespireClient, TResult> converter)
     {
-        var identityArguments = new RespireValue[missingCount];
-        for (var i = 0; i < missingCount; i++) identityArguments[i] = missingKeys[i].AsValue();
-        var identity = new ClientCacheCommandKey("MGET", identityArguments);
-        using var response = await cache.CoalesceReadAsync(
-            identity, (Client: this, Keys: missingKeys, Count: missingCount, Cache: cache),
-            static (state, token) => state.Client.FetchManyAndCacheAsync(
-                state.Keys, state.Count, state.Cache, token), cancellationToken).ConfigureAwait(false);
+        ValueTask<RespValue> pending;
+        if (cache.CoalesceConcurrentMisses)
+        {
+            var identityArguments = new RespireValue[missingCount];
+            for (var i = 0; i < missingCount; i++) identityArguments[i] = missingKeys[i].AsValue();
+            var identity = new ClientCacheCommandKey("MGET", identityArguments);
+            pending = cache.CoalesceReadAsync(
+                identity, (Client: this, Keys: missingKeys, Count: missingCount, Cache: cache),
+                static (state, token) => state.Client.FetchManyAndCacheAsync(
+                    state.Keys, state.Count, state.Cache, token), cancellationToken);
+        }
+        else
+        {
+            pending = FetchManyAndCacheAsync(missingKeys, missingCount, cache, cancellationToken);
+        }
+        using var response = await pending.ConfigureAwait(false);
         var values = response.AsArray();
         if (values.Length != missingCount)
             throw new RespireProtocolException($"MGET returned {values.Length} values for {missingCount} keys.");
@@ -1526,11 +1547,14 @@ public sealed partial class RespireClient : IRespireClient
         return result;
     }
 
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
     private async ValueTask<RespValue> FetchManyAndCacheAsync(
         RespireKey[] missingKeys, int missingCount, ClientSideCacheCoordinator cache,
         CancellationToken cancellationToken)
     {
-        if (cache.TryPeek(in missingKeys[0], out var firstCached))
+        if (cache.CoalesceConcurrentMisses && cache.TryPeek(in missingKeys[0], out var firstCached))
         {
             var cachedValues = new RespValue[missingCount];
             cachedValues[0] = firstCached;
@@ -1813,10 +1837,12 @@ public sealed partial class RespireClient : IRespireClient
         string operation, TCommand command, ClientSideCacheCoordinator cache,
         ClientSideCacheCoordinator.QueryRequest request, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
-        => cache.CoalesceReadAsync(
-            request.Query, (Client: this, Operation: operation, Command: command, Cache: cache, Request: request),
-            static (state, token) => state.Client.FetchQueryAndCacheAsync(
-                state.Operation, state.Command, state.Cache, state.Request, token), cancellationToken);
+        => !cache.CoalesceConcurrentMisses
+            ? FetchQueryAndCacheAsync(operation, command, cache, request, cancellationToken)
+            : cache.CoalesceReadAsync(
+                request.Query, (Client: this, Operation: operation, Command: command, Cache: cache, Request: request),
+                static (state, token) => state.Client.FetchQueryAndCacheAsync(
+                    state.Operation, state.Command, state.Cache, state.Request, token), cancellationToken);
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
@@ -1829,7 +1855,7 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
-        if (cache.TryPeek(in request, out var cached)) return cached;
+        if (cache.CoalesceConcurrentMisses && cache.TryPeek(in request, out var cached)) return cached;
         var snapshot = SnapshotCommand.Create(in command);
         var token = cache.BeginRead(operation, in request);
         var completed = false;

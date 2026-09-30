@@ -48,6 +48,8 @@ and partially overlapping `MGET` lists are not split into individual `GET` reque
 Canceling one caller does not cancel callers still waiting for the shared request. When the last
 caller cancels, Respire retires and cancels that request. An already accepted command may still
 execute on Redis; its reply is drained in protocol order. The next caller can start a new request.
+Each caller's cancellation token bounds only that caller's wait. The physical request keeps its
+original `CommandTimeout` deadline; joining an existing request does not restart that deadline.
 Client disposal cancels all shared work, including reads retired by an earlier invalidation.
 Server and transport failures reach every remaining caller, retire the shared request, and allow
 a later call to retry. Sharing never replays an accepted command after a transport failure.

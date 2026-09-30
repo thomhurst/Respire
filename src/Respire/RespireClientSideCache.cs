@@ -52,6 +52,9 @@ public sealed record RespireClientSideCacheOptions
     /// Shares concurrent equivalent cache misses within this client. Each caller can cancel
     /// independently; the shared request is canceled when its last caller leaves. Defaults to false.
     /// </summary>
+    /// <remarks>Each caller's cancellation token bounds only its own wait. The physical request
+    /// retains its original <see cref="RespireOptions.CommandTimeout"/> deadline; joining later
+    /// does not restart that deadline.</remarks>
     public bool CoalesceConcurrentMisses { get; init; }
 }
 

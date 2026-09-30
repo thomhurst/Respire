@@ -60,7 +60,7 @@ public class ClientSideCacheCoalescingTests
         using var right = await second.WaitAsync(Timeout);
         // Mutate the actual owned payload, not a conversion copy. Each waiter and the
         // resident cache must remain independent even when the last waiter takes ownership.
-        System.Runtime.InteropServices.MemoryMarshal.AsMemory(left[1].AsMemory()).Span[0] = (byte)'z';
+        System.Runtime.InteropServices.MemoryMarshal.GetReference(left[1].AsSpan()) = (byte)'z';
         left.Dispose();
         await Assert.That(right[1].AsString()).IsEqualTo("b");
         using var cached = await client.ExecuteAsync("HGETALL", "hash");

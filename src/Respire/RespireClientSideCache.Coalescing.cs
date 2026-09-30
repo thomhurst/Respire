@@ -5,6 +5,8 @@ namespace Respire;
 
 internal sealed partial class ClientSideCacheCoordinator
 {
+    internal bool CoalesceConcurrentMisses => _options.CoalesceConcurrentMisses;
+
     private static long _sharedReadRetirements;
     internal static long SharedReadRetirements => Interlocked.Read(ref _sharedReadRetirements);
 
@@ -151,6 +153,7 @@ internal sealed partial class ClientSideCacheCoordinator
     // Conservatively retire all identities: an invalidation of any dependency ends joining.
     private void RetireSharedReads()
     {
+        if (!_options.CoalesceConcurrentMisses) return;
         lock (_sharedReadLock)
         {
             // Observable measurement keeps user meter callbacks outside cache gates.
@@ -161,6 +164,7 @@ internal sealed partial class ClientSideCacheCoordinator
 
     internal void StopSharedReads()
     {
+        if (!_options.CoalesceConcurrentMisses) return;
         SharedRead[] cancel;
         lock (_sharedReadLock)
         {
