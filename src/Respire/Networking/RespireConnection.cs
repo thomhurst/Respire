@@ -403,6 +403,22 @@ internal sealed class RespireConnection : IAsyncDisposable
         }
     }
 
+    private async ValueTask<RespProtocol> NegotiatePreferredProtocolAsync(RespireConnectionOptions options,
+        CancellationToken cancellationToken, bool armCommandDeadline)
+    {
+        using var hello = await SendAsync(new Commands.HelloCommand(options.Username, options.Password),
+            cancellationToken, armCommandDeadline: armCommandDeadline).ConfigureAwait(false);
+        if (hello.IsError)
+        {
+            if (!IsUnsupportedHello(in hello)) throw CreateHandshakeException(in hello, "HELLO");
+            _logger?.LogDebug("HELLO 3 is unsupported by {Host}:{Port}; using RESP2 on this connection", Host, Port);
+            return RespProtocol.Resp2;
+        }
+        ValidateHelloProtocol(in hello);
+        _logger?.LogDebug("Negotiated RESP3 with {Host}:{Port}", Host, Port);
+        return RespProtocol.Resp3;
+    }
+
     /// <summary>
     /// Runs HELLO/AUTH/CLIENT SETNAME through the normal send path before the connection is
     /// handed out, so every later command runs on an authenticated, protocol-negotiated stream.
@@ -413,23 +429,9 @@ internal sealed class RespireConnection : IAsyncDisposable
         // Automatic negotiation must finish before setup commands: an unsupported HELLO
         // may require RESP2 AUTH before SELECT, SETNAME, or capability discovery can succeed.
         var allowResp2Fallback = options.AllowResp2Fallback && !options.EnableClientTracking;
-        var negotiatedResp3 = false;
-        if (options.UseResp3 && allowResp2Fallback)
-        {
-            using var hello = await SendAsync(new Commands.HelloCommand(options.Username, options.Password),
-                cancellationToken, armCommandDeadline: armCommandDeadline).ConfigureAwait(false);
-            if (hello.IsError)
-            {
-                if (!IsUnsupportedHello(in hello)) throw CreateHandshakeException(in hello, "HELLO");
-                _logger?.LogDebug("HELLO 3 is unsupported by {Host}:{Port}; using RESP2 on this connection", Host, Port);
-            }
-            else
-            {
-                ValidateHelloProtocol(in hello);
-                negotiatedResp3 = true;
-                _logger?.LogDebug("Negotiated RESP3 with {Host}:{Port}", Host, Port);
-            }
-        }
+        var negotiatedProtocol = options.UseResp3 && allowResp2Fallback
+            ? await NegotiatePreferredProtocolAsync(options, cancellationToken, armCommandDeadline).ConfigureAwait(false)
+            : RespProtocol.Resp2;
 
         List<(string Step, ValueTask<RespValue> Reply)>? pending = null;
         if (options.UseResp3 && !allowResp2Fallback)
@@ -437,7 +439,7 @@ internal sealed class RespireConnection : IAsyncDisposable
             (pending ??= new(3)).Add(("HELLO", SendAsync(
                 new Commands.HelloCommand(options.Username, options.Password), cancellationToken, armCommandDeadline: armCommandDeadline)));
         }
-        else if (!negotiatedResp3 && options.Password is not null)
+        else if (negotiatedProtocol == RespProtocol.Resp2 && options.Password is not null)
         {
             (pending ??= new(3)).Add(("AUTH", SendAsync(
                 new Commands.AuthCommand(options.Username, options.Password), cancellationToken, armCommandDeadline: armCommandDeadline)));

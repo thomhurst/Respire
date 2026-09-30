@@ -22,6 +22,10 @@ Added binary-safe keyspace, keyevent, and Redis 8.8 subkey channel factories and
   responses. Authentication, timeout, transport, and malformed-reply failures do not downgrade.
   Use `RespProtocol.Resp2` or `protocol=2` to preserve the previous wire behavior; explicit
   `RespProtocol.Resp3` remains strict. Client-side caching always requires RESP3.
+- Auto negotiation adds one serialized HELLO round trip before the remaining setup, including
+  pool warm-up and reconnects; established command paths add no round trip. Unsupported-HELLO
+  replies use bounded matching. Configure `Resp2` explicitly for proxies with unrecognized
+  error wording rather than silently downgrading on ambiguous server failures.
 - Typed facets normalize RESP2/RESP3 reply shapes. Raw result consumers may observe maps,
   sets, doubles, booleans, and native nulls by default. Authentication failures can surface
   during connection setup instead of the first command. See
