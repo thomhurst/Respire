@@ -1450,6 +1450,7 @@ internal sealed class RespireConnection : IAsyncDisposable
                     sending.CompleteWrite();
                     sending.Reset();
                     sending = null;
+                    // Publish the completed send before waking the drain; receive completion also pulses capacity.
                     Volatile.Write(ref _sending, false);
                     if (Volatile.Read(ref _retired)) _capacitySignal.Signal();
 

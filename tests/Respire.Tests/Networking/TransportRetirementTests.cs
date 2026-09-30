@@ -13,6 +13,111 @@ namespace Respire.Tests.Networking;
 public class TransportRetirementTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RetirementWaitsForLateIdentityPublication(bool disposeBeforeRetire)
+    {
+        var pingSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(2, ":42\r\n"u8.ToArray())
+        {
+            SuppressReply = command =>
+            {
+                if (command != "PING") return false;
+                pingSeen.TrySetResult();
+                return true;
+            },
+        };
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", server.Port);
+        var connection = multiplexer.GetConnection();
+        var gate = (SemaphoreSlim)typeof(RespireConnectionMultiplexer)
+            .GetField("_correctionIdentityGate", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(multiplexer)!;
+        await gate.WaitAsync();
+        Task? disposal = null;
+        Task? retirement = null;
+        try
+        {
+            // Model the bootstrap's exact publication boundary without starving the global thread pool:
+            // Redis has replied, but the gate-owning continuation has not published _serverClientId yet.
+            using var identity = await connection.SendAsync(new Respire.Commands.ClientIdCommand());
+            var id = identity.AsInteger();
+            var accepted = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+            await pingSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            if (disposeBeforeRetire) disposal = multiplexer.DisposeAsync().AsTask();
+            retirement = multiplexer.RetireAsync();
+            await connection.DisposeAsync();
+            await connection.RetireAsync();
+            await Assert.That(async () => await accepted).ThrowsExactly<RespireConnectionException>();
+            await Task.WhenAny(retirement, Task.Delay(100));
+            await Assert.That(retirement.IsCompleted).IsFalse();
+            if (disposal is not null) await Assert.That(disposal.IsCompleted).IsFalse();
+            typeof(RespireConnection)
+                .GetField("_serverClientId", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(connection, id);
+        }
+        finally { gate.Release(); }
+        if (disposeBeforeRetire)
+        {
+            await disposal!.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(async () => await retirement!.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+            await Assert.That(multiplexer.HasPendingCorrectionFences).IsTrue();
+        }
+        else
+        {
+            await retirement!.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(server.ReceivedCommands).Contains("CLIENT KILL ID 42");
+            await Assert.That(multiplexer.HasPendingCorrectionFences).IsFalse();
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task RetirementCancellationEscalatesAndPreservesFenceObligations(bool tracked)
+    {
+        var seen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(":42\r\n"u8.ToArray())
+        {
+            SuppressReply = command =>
+            {
+                if (command != "PING") return false;
+                seen.TrySetResult();
+                return true;
+            },
+        };
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", server.Port);
+        var connection = multiplexer.GetConnection();
+        if (tracked) await connection.EnsureServerClientIdAsync();
+        var accepted = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        await seen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        using var abort = new CancellationTokenSource();
+        var bounded = multiplexer.RetireAsync(abort.Token);
+        var sharedRetirement = multiplexer.RetireAsync();
+        await Assert.That(sharedRetirement.IsCompleted).IsFalse();
+        abort.Cancel();
+        await Assert.That(async () => await bounded.WaitAsync(TimeSpan.FromSeconds(5))).Throws<OperationCanceledException>();
+        await Assert.That(async () => await accepted).ThrowsExactly<RespireConnectionException>();
+        await Assert.That(connection.IsConnected).IsFalse();
+        await Assert.That(multiplexer.HasPendingCorrectionFences).IsEqualTo(tracked);
+        await Assert.That(multiplexer.RetireAsync()).IsSameReferenceAs(sharedRetirement);
+    }
+
+    [Test]
+    public async Task RetirementCancellationOverloadAllowsSuccessfulDrain()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", server.Port);
+        var connection = multiplexer.GetConnection();
+        var accepted = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+        using var grace = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await multiplexer.RetireAsync(grace.Token);
+        using var reply = await accepted;
+        await Assert.That(reply.AsString()).IsEqualTo("PONG");
+        await Assert.That(connection.DrainedSuccessfully).IsTrue();
+    }
+
+    [Test]
     public async Task AcceptedReplyDrainsWhileNewAndCapacityWaitingCommandsAreRejected()
     {
         var seen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

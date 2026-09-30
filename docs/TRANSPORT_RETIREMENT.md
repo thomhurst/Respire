@@ -8,6 +8,13 @@ finished the command. Retirement therefore still waits for its reply. There is n
 timeout: an owner can bound its wait and explicitly dispose to abort a silent peer. A configured
 connection response watchdog still aborts the socket according to its existing policy.
 
+Owners that explicitly choose abortive escalation can call the multiplexer overload
+`RetireAsync(abortOnCancellation)`, passing a token with their chosen grace deadline. It awaits
+graceful retirement normally; cancellation triggers `DisposeAsync`, awaits cleanup, and throws
+`OperationCanceledException`. The parameterless primitive retains its graceful-only contract.
+Cancellation is not proof of successful drain or correction safety: retained fence IDs must still
+be reconciled by their owner, and the disposed multiplexer cannot perform a later fence retry.
+
 `RespireConnectionMultiplexer.RetireAsync()` stops connection selection and background reconnects, cancels pending handshakes, and prevents initialization or reconnect publication after retirement. It retires existing transports immediately, waits for unpublished connection cleanup, and then awaits their drain tasks. Lifecycle notifications are queued in transition order and delivered outside lifecycle locks.
 
 ## Retry boundary
@@ -16,7 +23,9 @@ connection response watchdog still aborts the socket according to its existing p
 
 ## Correction ownership
 
-Successful drains need no server-side kill: all accepted replies have been consumed. Failed transports with a known Redis client ID retain their `CLIENT KILL` obligation, including identities obtained during interrupted correction bootstrap. Multiplexer retirement fences these IDs through an unpooled control connection with the original endpoint and authentication settings. This connection is never published as a replacement and does not enable client tracking.
+Successful drains need no server-side kill: all accepted replies have been consumed. Failed transports with a known Redis client ID retain their `CLIENT KILL` obligation, including identities obtained during interrupted correction bootstrap. Retirement and disposal wait for an in-progress CLIENT ID bootstrap to publish before completing
+identity ownership; a reply dequeued before retirement cannot publish an untracked ID afterward.
+Multiplexer retirement fences these IDs through an unpooled control connection with the original endpoint and authentication settings. This connection is never published as a replacement and does not enable client tracking.
 
 A fence failure faults the retirement task and preserves unresolved IDs. Owners must retain the generation while `HasPendingCorrectionFences` is true and retry `FenceRetiredConnectionsAsync()` before releasing its correction ownership. A successful explicit retry clears the obligations; the original retirement task retains its failure. Never treat a faulted retirement task as proof that pending server commands are harmless.
 

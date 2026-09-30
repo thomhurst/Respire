@@ -304,6 +304,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         await _correctionIdentityGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            ThrowIfUnavailable();
             if (_correctionOrderingReady)
             {
                 return;
@@ -944,6 +945,30 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         return completion.Task;
     }
 
+    /// <summary>Retires gracefully unless the owner explicitly cancels, then completes abortive cleanup.</summary>
+    /// <remarks>Cancellation does not prove correction ordering. Pending fence IDs remain observable.</remarks>
+    internal async Task RetireAsync(CancellationToken abortOnCancellation)
+    {
+        var retirement = RetireAsync();
+        try
+        {
+            await retirement.WaitAsync(abortOnCancellation).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (abortOnCancellation.IsCancellationRequested)
+        {
+            await DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private async Task WaitForCorrectionIdentityAsync()
+    {
+        // A dequeued CLIENT ID can still be awaiting its continuation. No new bootstrap can
+        // enter after retirement; wait for the existing owner to publish before collecting IDs.
+        await _correctionIdentityGate.WaitAsync().ConfigureAwait(false);
+        _correctionIdentityGate.Release();
+    }
+
     private async Task WaitForPublicationAsync()
     {
         await _connectGate.WaitAsync().ConfigureAwait(false);
@@ -964,6 +989,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             await WaitForPublicationAsync().ConfigureAwait(false);
             await Task.WhenAll(_connections.OfType<RespireConnection>().Select(connection => connection.RetireAsync()))
                 .ConfigureAwait(false);
+            await WaitForCorrectionIdentityAsync().ConfigureAwait(false);
             foreach (var connection in _connections) RetireConnection(connection);
             if (Volatile.Read(ref _disposed) == 0)
                 await FenceRetiredConnectionsAsync(_abortCancellation.Token).ConfigureAwait(false);
@@ -1006,6 +1032,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             await WaitForPublicationAsync().ConfigureAwait(false);
             await Task.WhenAll(_connections.OfType<RespireConnection>().Select(connection => connection.DisposeAsync().AsTask()))
                 .ConfigureAwait(false);
+            await WaitForCorrectionIdentityAsync().ConfigureAwait(false);
             if (_retirementCompletion is { } retirement)
             {
                 // Disposal escalates a drain and cancels control fencing. A failed fence is
