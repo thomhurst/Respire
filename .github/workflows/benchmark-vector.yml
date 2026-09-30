@@ -5,7 +5,10 @@ on:
     paths:
       - 'src/Respire/Commands/VectorCommand.cs'
       - 'src/Respire/Protocol/RespWriter.cs'
+      - 'src/Respire/Networking/WriteBuffer.cs'
       - 'benchmarks/Respire.Benchmarks/VectorEncodingBenchmarks.cs'
+      - 'benchmarks/Respire.Benchmarks/Respire.Benchmarks.csproj'
+      - '.github/scripts/vector_encoding_report.py'
       - '.github/workflows/benchmark-vector.yml'
 
 permissions:
@@ -35,6 +38,8 @@ jobs:
         run: |
           set -euo pipefail
           # Coverage and parameters must be identical in both pinned checkouts.
+          # This requires compatible VectorCommand, WriteBuffer, Cmd1N and RespParser
+          # internal APIs on the base revision; API changes need a compatible harness.
           cp candidate/benchmarks/Respire.Benchmarks/VectorEncodingBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
           for phase in validation baseline-a candidate baseline-b; do
             source=baseline
@@ -48,34 +53,10 @@ jobs:
                 --filter '*VectorEncodingBenchmarks*' --job "$job" --exporters fulljson markdown \
                 --artifacts "$GITHUB_WORKSPACE/results/$phase"
             ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
+            # Check Dry shape/sizes before spending time on Default measurement phases.
+            python3 candidate/.github/scripts/vector_encoding_report.py --root "$GITHUB_WORKSPACE" --phase "$phase"
           done
-      - name: Require complete measurements and size evidence
-        shell: python
-        run: |
-          import json
-          from pathlib import Path
-          expected_methods = {"DirectFp32", "IntermediateArrayFp32", "Values"}
-          expected_sizes = None
-          for phase in ("validation", "baseline-a", "candidate", "baseline-b"):
-              reports = list(Path("results", phase, "results").glob("*-report*.json"))
-              assert len(reports) == 1, f"Expected one focused report: {phase}"
-              benchmarks = json.loads(reports[0].read_text())["Benchmarks"]
-              assert len(benchmarks) == 6, f"Expected six focused cases: {phase}"
-              assert {b["Method"] for b in benchmarks} == expected_methods
-              for benchmark in benchmarks:
-                  statistics = benchmark.get("Statistics")
-                  assert statistics and statistics["Mean"] > 0, f"Failed case: {phase}/{benchmark['Method']}"
-                  assert benchmark.get("Memory") is not None, f"Missing allocations: {phase}"
-              sizes = [json.loads(line.split("VECTOR_ENCODING_SIZE ", 1)[1])
-                       for line in Path(f"{phase}.log").read_text().splitlines()
-                       if line.startswith("VECTOR_ENCODING_SIZE ")]
-              distinct_sizes = {(s["Dimensions"], s["Fp32Bytes"], s["ValuesBytes"]) for s in sizes}
-              assert {s[0] for s in distinct_sizes} == {16, 1536}, f"Missing sizes: {phase}"
-              assert len(distinct_sizes) == 2, f"Inconsistent encoded sizes: {phase}"
-              if expected_sizes is None: expected_sizes = distinct_sizes
-              assert distinct_sizes == expected_sizes, f"Encoded sizes changed: {phase}"
       - name: Publish comparison reports
-        if: always()
         shell: bash
         run: |
           echo 'Focused VADD encoding only; no network or server work. Compare methods within each phase and use A/B/A to observe runner drift.' >> "$GITHUB_STEP_SUMMARY"
@@ -85,7 +66,11 @@ jobs:
             grep '^VECTOR_ENCODING_SIZE ' "$GITHUB_WORKSPACE/$phase.log" | sort -u >> "$GITHUB_STEP_SUMMARY" || true
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             for report in "$GITHUB_WORKSPACE/results/$phase/results/"*-report-default.md; do
-              if [ -f "$report" ]; then cat "$report" >> "$GITHUB_STEP_SUMMARY"; fi
+              if [ ! -f "$report" ]; then
+                echo "::error::Missing Markdown report for $phase"
+                exit 1
+              fi
+              cat "$report" >> "$GITHUB_STEP_SUMMARY"
             done
           done
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
