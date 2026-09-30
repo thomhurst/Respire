@@ -81,6 +81,7 @@ public class ClusterRetirementTests
             await Assert.That(Count(router, "_nodeStateHandlers")).IsEqualTo(1);
             await Assert.That(Count(router, "_dedicatedPools")).IsEqualTo(1);
             await Assert.That(Count(router, "_correctionPools")).IsEqualTo(1);
+            await Assert.That(Count(router, "_correctionStateHandlers")).IsEqualTo(1);
             await Assert.That(Count(router, "_ownedPools")).IsEqualTo(2);
             var identities = Identities(router);
             await Assert.That(identities.NodeIdCount).IsEqualTo(1);
@@ -197,6 +198,11 @@ public class ClusterRetirementTests
         await using var replacement = await RespireConnection.ConnectAsync("127.0.0.1", secondServer.Port);
         await replacement.EnsureServerClientIdAsync();
         InstallPhysicalConnection(node, replacement);
+        var handlers = (Action<int, RespireConnectionStateChange>?)typeof(RespireConnectionMultiplexer)
+            .GetField("SlotStateChanged", Private)!.GetValue(node);
+        handlers?.Invoke(0, new(endpoint, RespireConnectionState.Connected, null));
+        await Assert.That(Count(router, "_correctionPools")).IsEqualTo(0);
+        await Assert.That(Count(router, "_correctionStateHandlers")).IsEqualTo(0);
         await using (var newPeer = router.GetCorrectionLease(replacement))
             await Assert.That(ReferenceEquals(newPeer.Pool, firstPool)).IsFalse();
         // Await the already-started cleanup rather than depending on background timing.

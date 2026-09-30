@@ -1252,10 +1252,11 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         lock (_nodesGate)
         {
             nodes = _identities.All.ToArray();
-            stateHandlers = _nodeStateHandlers.ToArray();
+            stateHandlers = [.. _nodeStateHandlers, .. _correctionStateHandlers];
             dedicatedPools = _ownedPools.ToArray();
             retirements = Task.WhenAll(_retiringNodes.Values.Select(entry => entry.Completion.Task));
             _nodeStateHandlers.Clear();
+            _correctionStateHandlers.Clear();
             _dedicatedPools.Clear();
             _correctionPools.Clear();
         }

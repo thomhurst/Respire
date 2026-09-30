@@ -5,6 +5,8 @@ namespace Respire.Internal;
 
 internal sealed partial class ClusterRouter
 {
+    private readonly Dictionary<RespireConnectionMultiplexer, Action<int, RespireConnectionStateChange>> _correctionStateHandlers = [];
+
     private readonly record struct CorrectionPoolIdentity(
         RespireConnectionMultiplexer? Multiplexer, string PeerAddress, int PeerPort, string TlsHost);
 
@@ -29,21 +31,12 @@ internal sealed partial class ClusterRouter
     {
         var identity = new CorrectionPoolIdentity(original.Multiplexer,
             original.NetworkPeerAddress ?? original.Host, original.NetworkPeerPort ?? original.Port, original.Host);
-        List<DedicatedConnectionPool> unused = [];
+        List<DedicatedConnectionPool> unused;
         CorrectionPoolEntry entry;
         lock (_nodesGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            foreach (var (key, candidate) in _correctionPools.ToArray())
-            {
-                if (ReferenceEquals(key.Multiplexer, identity.Multiplexer)
-                    && key.Multiplexer?.HasCurrentPeer(key.PeerAddress, key.PeerPort) != true)
-                {
-                    _correctionPools.Remove(key);
-                    candidate.Detached = true;
-                    if (candidate.Users == 0) unused.Add(candidate.Pool);
-                }
-            }
+            unused = PruneCorrectionPeersLocked(identity.Multiplexer);
             if (!_correctionPools.TryGetValue(identity, out entry!))
             {
                 var options = (original.Multiplexer?.Options ?? _options.ToConnectionOptions()) with
@@ -58,7 +51,10 @@ internal sealed partial class ClusterRouter
                 _ownedPools.Add(pool);
                 if (identity.Multiplexer is { } node && _identities.IsActive(node)
                     && !_retiringNodes.ContainsKey(node) && node.HasCurrentPeer(identity.PeerAddress, identity.PeerPort))
+                {
                     _correctionPools.Add(identity, entry);
+                    ObserveCorrectionPeersLocked(node);
+                }
                 else
                     entry.Detached = true;
             }
@@ -87,6 +83,44 @@ internal sealed partial class ClusterRouter
             entry.Detached = true;
             if (entry.Users == 0) unused.Add(entry.Pool);
         }
+        RemoveCorrectionObserverLocked(node);
         return unused;
+    }
+
+    private List<DedicatedConnectionPool> PruneCorrectionPeersLocked(RespireConnectionMultiplexer? node)
+    {
+        List<DedicatedConnectionPool> unused = [];
+        foreach (var (identity, entry) in _correctionPools.ToArray())
+        {
+            if (!ReferenceEquals(identity.Multiplexer, node)
+                || node?.HasCurrentPeer(identity.PeerAddress, identity.PeerPort) == true) continue;
+            _correctionPools.Remove(identity);
+            entry.Detached = true;
+            if (entry.Users == 0) unused.Add(entry.Pool);
+        }
+        if (node is not null && !_correctionPools.Keys.Any(identity => ReferenceEquals(identity.Multiplexer, node)))
+            RemoveCorrectionObserverLocked(node);
+        return unused;
+    }
+
+    private void ObserveCorrectionPeersLocked(RespireConnectionMultiplexer node)
+    {
+        if (_correctionStateHandlers.ContainsKey(node)) return;
+        Action<int, RespireConnectionStateChange> handler = (slot, change) =>
+        {
+            // Keep the pool through a reconnect to the same peer. Only publication of a
+            // replacement reveals whether DNS actually changed its physical destination.
+            if (change.State != RespireConnectionState.Connected) return;
+            List<DedicatedConnectionPool> unused;
+            lock (_nodesGate) unused = PruneCorrectionPeersLocked(node);
+            foreach (var pool in unused) _ = RetirePoolAsync(pool);
+        };
+        _correctionStateHandlers.Add(node, handler);
+        node.SlotStateChanged += handler;
+    }
+
+    private void RemoveCorrectionObserverLocked(RespireConnectionMultiplexer node)
+    {
+        if (_correctionStateHandlers.Remove(node, out var handler)) node.SlotStateChanged -= handler;
     }
 }
