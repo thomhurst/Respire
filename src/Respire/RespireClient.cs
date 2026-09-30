@@ -1425,9 +1425,12 @@ public sealed partial class RespireClient : IRespireClient
                 generation);
     }
 
+    // Retirement is read last: Invalidate retires the still-current generation before it
+    // flushes the cache, so a retirement racing the identity/connectivity reads is still seen.
     private bool IsCacheGenerationCurrent(SentinelRouter.Generation? generation)
-        => _core.Sentinel is null || generation is { IsRetired: false }
-            && ReferenceEquals(generation, _core.Sentinel.Current) && generation.Multiplexer.IsConnected;
+        => _core.Sentinel is null || generation is not null
+            && ReferenceEquals(generation, _core.Sentinel.Current) && generation.Multiplexer.IsConnected
+            && !generation.IsRetired;
 
     private void ValidateMGetClusterSlot(in RespireKey key, ref int? clusterSlot)
     {

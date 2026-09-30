@@ -267,6 +267,8 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             _discoveryGate.Release();
             Generation[] owned;
             DedicatedConnectionPool[] corrections;
+            // Safe after releasing the discovery gate: ConnectGenerationAsync rechecks _disposed
+            // under _gate before adding, so no generation can join _owned after this snapshot.
             lock (_gate)
             {
                 owned = _owned.ToArray();
