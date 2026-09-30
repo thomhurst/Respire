@@ -1289,7 +1289,8 @@ public sealed partial class RespireClient : IRespireClient
             return ConvertResponseAsync("GET", command, cancellationToken, this, converter);
         }
 
-        if (cache.TryGet(in resolvedKey, out var cached))
+        var generation = _core.Sentinel?.Current;
+        if (cache.TryGet(in resolvedKey, out var cached) && IsCacheGenerationCurrent(generation))
         {
             return new ValueTask<TResult>(converter(this, in cached));
         }
@@ -1358,6 +1359,7 @@ public sealed partial class RespireClient : IRespireClient
         int[]? missingIndexes = null;
         var missingCount = 0;
         int? cachedClusterSlot = null;
+        var generation = _core.Sentinel?.Current;
         for (var i = 0; i < keys.Length; i++)
         {
             var resolvedKey = keysResolved ? keys[i] : ResolveKey(keys[i]);
@@ -1379,6 +1381,20 @@ public sealed partial class RespireClient : IRespireClient
             }
         }
 
+        // All cached elements must belong to the same live Sentinel generation. If it
+        // retired during lookup/conversion, discard the entire mixed result and read again.
+        if (!IsCacheGenerationCurrent(generation))
+        {
+            missingKeys ??= new RespireKey[keys.Length];
+            missingIndexes ??= new int[keys.Length];
+            missingCount = keys.Length;
+            for (var i = 0; i < keys.Length; i++)
+            {
+                missingKeys[i] = ResolveKey(keys[i]);
+                missingIndexes[i] = i;
+            }
+        }
+
         return missingCount == 0
             ? new ValueTask<TResult[]>(result)
             : GetManyAndCacheAsync(
@@ -1390,6 +1406,10 @@ public sealed partial class RespireClient : IRespireClient
                 cancellationToken,
                 converter);
     }
+
+    private bool IsCacheGenerationCurrent(SentinelRouter.Generation? generation)
+        => _core.Sentinel is null || generation is { IsRetired: false }
+            && ReferenceEquals(generation, _core.Sentinel.Current) && generation.Multiplexer.IsConnected;
 
     private void ValidateMGetClusterSlot(in RespireKey key, ref int? clusterSlot)
     {
@@ -1816,7 +1836,8 @@ public sealed partial class RespireClient : IRespireClient
             if (cache.ReuseHashFields && operation == "HMGET" && query.Query.ArgumentCount >= 2
                 && cache.CanTrack(query.PrimaryKey))
                 return CachedHashGetManyAsync(cache, query, cancellationToken);
-            if ((core.Sentinel is null || core.Sentinel.IsConnected) && cache.TryGet(in query, out var cached))
+            var generation = core.Sentinel?.Current;
+            if (cache.TryGet(in query, out var cached) && IsCacheGenerationCurrent(generation))
             {
                 return new ValueTask<RespValue>(cached);
             }

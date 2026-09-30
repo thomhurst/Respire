@@ -301,7 +301,9 @@ Explicit server connections remain pinned to the endpoint selected by the applic
 Correction operations retain their original physical peer rather than following a new
 primary. `ConnectionStateChanged` reports endpoint changes, and the `Respire` meter records
 `respire.sentinel.failover` for validated primary endpoint changes, tagged with `server.address`
-and `server.port`.
+and `server.port`. State observers may dispose the client synchronously. Disposal suppresses
+queued notifications but does not wait for an observer already running; that callback may
+finish after disposal returns.
 
 This is reactive discovery. Sentinel event subscriptions and the real-server failover matrix
 remain tracked by [#549](https://github.com/thomhurst/Respire/issues/549). No background Sentinel

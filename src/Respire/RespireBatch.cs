@@ -214,14 +214,15 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
         _sent = true;
         var core = _client.Core;
-        var telemetry = RespireTelemetry.StartBatchOperation(
+        var telemetryOperation = "PIPELINE";
+        var telemetry = core.Sentinel is null ? RespireTelemetry.StartBatchOperation(
             "PIPELINE",
             _ops,
             static op => op.Operation,
             core.Multiplexer.Host,
             core.Multiplexer.Port,
             core.Options.Database,
-            out var telemetryOperation);
+            out telemetryOperation) : default;
         if (_ops.Count == 0)
         {
             telemetry.Complete(core, telemetryOperation, batchSize: 0);
@@ -279,6 +280,10 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         try
         {
             connection = await _client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
+            if (core.Sentinel is not null)
+                telemetry = RespireTelemetry.StartBatchOperation(
+                    "PIPELINE", _ops, static op => op.Operation,
+                    connection.Host, connection.Port, core.Options.Database, out telemetryOperation);
         }
         catch (Exception ex)
         {

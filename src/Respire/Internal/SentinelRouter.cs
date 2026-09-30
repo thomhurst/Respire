@@ -141,18 +141,21 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         {
             // Retirement and its cleanup task become visible together to disposal. Once
             // disposal owns the router, it aborts every generation itself.
-            if (!generation.TryRetire() || _disposed) return;
+            if (!generation.TryRetire() || _disposed || !ReferenceEquals(Current, generation)) return;
+            // Unpublished candidates are disposed by their discovery owner. Only the current
+            // published generation can lose client continuity or need background draining.
             // The transport admission check sees retirement before any waiting caller resumes.
             // Cache invalidation is synchronous; metrics and health callbacks run elsewhere.
             var evictions = core.ClientCache?.FlushForContinuityLossWithoutMetrics();
             if (evictions is { } count)
                 QueueNotificationLocked(() => ClientSideCacheCoordinator.PublishContinuityFlushMetrics(count));
-            if (ReferenceEquals(Current, generation))
-                QueueNotificationLocked(() => core.NotifySentinelDisconnected(generation.Multiplexer));
+            QueueNotificationLocked(() => core.NotifySentinelDisconnected(generation.Multiplexer));
             generation.Retirement = Task.Run(() => DrainAsync(generation));
         }
     }
 
+    // Do not join this chain during disposal: an observer may synchronously dispose the
+    // client itself. Queued callbacks are suppressed; an active callback may finish later.
     private void QueueNotificationLocked(Action notification)
     {
         var previous = _notifications;
@@ -299,7 +302,12 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
 
         public void ObserveResponse(RespireConnection connection, string? operation, in RespValue response)
         {
-            if (ContainsReadOnly(in response) || operation == "ROLE" && !response.IsError && !IsPrimary(in response))
+            // Ordinary collection reads cannot carry per-command errors. Avoid walking
+            // their arrays again on the receive loop; only heterogeneous aggregates need it.
+            var readOnly = response.IsError && ContainsReadOnly(in response);
+            if (!readOnly && operation is "MULTI/EXEC" or "EXEC" or "EVAL" or "EVALSHA" or "EVAL_RO" or "EVALSHA_RO" or "FCALL" or "FCALL_RO")
+                readOnly = ContainsReadOnly(in response);
+            if (readOnly || operation == "ROLE" && !response.IsError && !IsPrimary(in response))
                 _owner.Invalidate(this);
         }
 

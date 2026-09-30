@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Text;
 using TUnit.Assertions;
@@ -486,6 +487,183 @@ public class SentinelRoutingTests
         await Assert.That(original.Retirement.IsCompleted).IsTrue();
         await Assert.That(client.IsConnected).IsFalse();
         await Assert.That(promoted.ReceivedCommands.Any(command => command.StartsWith("BLPOP "))).IsFalse();
+    }
+
+    [Test]
+    public async Task FailedUnpublishedCandidateDoesNotFlushThePublishedCache()
+    {
+        static byte[]? Hello(string command) => command == "HELLO 3"
+            ? "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray() : null;
+        await using var primary = Primary((_, command) => command == "GET key"
+            ? "$5\r\nvalue\r\n"u8.ToArray() : Hello(command));
+        await using var replica = Primary((_, command) => command == "ROLE"
+            ? "*1\r\n$5\r\nslave\r\n"u8.ToArray() : Hello(command));
+        await using var sentinel = Sentinel(() => primary.Port);
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
+        {
+            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+        });
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        await Assert.That(client.ClientSideCache!.Count).IsEqualTo(1);
+        var current = client.Core.Sentinel!.Current;
+        // Exercise an unpublished candidate while the published generation remains healthy.
+        // The discovery owner disposes this candidate after ROLE rejects it.
+        await using var candidate = new Respire.Internal.SentinelRouter.Generation(client.Core.Sentinel, client.Core,
+            Options(sentinel.Port) with { Endpoints = [new("127.0.0.1", replica.Port)], SentinelPrimaryName = null,
+                Protocol = RespProtocol.Resp3 });
+        await Assert.That(async () => await candidate.Multiplexer.EnsureConnectedAsync(default))
+            .Throws<RespireConnectionException>();
+        await Assert.That(candidate.IsRetired).IsTrue();
+        await Assert.That(candidate.Retirement).IsSameReferenceAs(Task.CompletedTask);
+        await Assert.That(client.Core.Sentinel.Current).IsSameReferenceAs(current);
+        await Assert.That(client.IsConnected).IsTrue();
+        await Assert.That(client.ClientSideCache.Count).IsEqualTo(1);
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("value");
+        await Assert.That(primary.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments("EXEC")]
+    [Arguments("EVAL")]
+    [Arguments("EVALSHA")]
+    [Arguments("EVAL_RO")]
+    [Arguments("EVALSHA_RO")]
+    [Arguments("FCALL")]
+    [Arguments("FCALL_RO")]
+    public async Task NestedReadOnlyInHeterogeneousRepliesRetiresTheGeneration(string operation)
+    {
+        await using var primary = Primary((_, command) => command == operation
+            ? "*1\r\n*1\r\n-READONLY replica\r\n"u8.ToArray() : null);
+        await using var promoted = Primary();
+        var primaryPort = primary.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref primaryPort));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        Volatile.Write(ref primaryPort, promoted.Port);
+        using (var response = await client.ExecuteAsync((RespireCommand)operation, []))
+            await Assert.That(response[0][0].IsError).IsTrue();
+        await Assert.That(client.IsConnected).IsFalse();
+        await client.SetAsync("next", "value").AsTask().WaitAsync(Limit);
+        await Assert.That(promoted.ReceivedCommands).IsEquivalentTo(["ROLE", "SET next value"]);
+    }
+
+    [Test]
+    [Arguments("GET")]
+    [Arguments("MGET")]
+    [Arguments("HGET")]
+    public async Task RetirementDuringCacheLookupRejectsTheOldValue(string operation)
+    {
+        static byte[]? Reply(string command, string value) => command switch
+        {
+            "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+            "GET key" or "HGET key field" => Encoding.ASCII.GetBytes($"$3\r\n{value}\r\n"),
+            "MGET key" => Encoding.ASCII.GetBytes($"*1\r\n$3\r\n{value}\r\n"),
+            _ => null,
+        };
+        await using var primary = Primary((_, command) => Reply(command, "old"));
+        await using var promoted = Primary((_, command) => Reply(command, "new"));
+        var port = primary.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
+        {
+            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+        });
+        await Assert.That(await ReadAsync()).IsEqualTo("old");
+        var generation = client.Core.Sentinel!.Current!;
+        var connection = generation.Multiplexer.GetConnection();
+        var intercept = new AsyncLocal<bool>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, meter) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.client_cache.hits")
+                meter.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
+        {
+            if (!intercept.Value) return;
+            intercept.Value = false;
+            Volatile.Write(ref port, promoted.Port);
+            using var error = Protocol.RespValue.Error("READONLY replica");
+            generation.ObserveResponse(connection, "SET", in error);
+        });
+        listener.Start();
+        intercept.Value = true;
+        await Assert.That(await ReadAsync().WaitAsync(Limit)).IsEqualTo("new");
+        await Assert.That(generation.IsRetired).IsTrue();
+        await Assert.That(promoted.ReceivedCommands.Any(command => command.StartsWith(operation + " "))).IsTrue();
+
+        async Task<string?> ReadAsync()
+        {
+            if (operation == "GET") return await client.GetStringAsync("key");
+            if (operation == "MGET") return (await client.Strings.GetManyAsync(["key"]))[0];
+            using var result = await client.ExecuteAsync((RespireCommand)"HGET", ["key", "field"]);
+            return result.AsString();
+        }
+    }
+
+    [Test]
+    [Arguments("batch")]
+    [Arguments("durability")]
+    [Arguments("transaction")]
+    public async Task FirstLazyBatchIsSampledWithThePrimaryEndpoint(string kind)
+    {
+        await using var primary = Primary((_, command) => command switch
+        {
+            "SET key value" when kind == "transaction" => "+QUEUED\r\n"u8.ToArray(),
+            "EXEC" => "*1\r\n+OK\r\n"u8.ToArray(),
+            "WAIT 1 1000" => ":1\r\n"u8.ToArray(),
+            _ => null,
+        });
+        await using var sentinel = Sentinel(() => primary.Port);
+        await using var client = RespireClient.Create(Options(sentinel.Port));
+        var samples = new ConcurrentQueue<Dictionary<string, object?>>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
+            {
+                if (options.Name == "SET") samples.Enqueue(options.Tags!.ToDictionary(tag => tag.Key, tag => tag.Value));
+                return ActivitySamplingResult.AllDataAndRecorded;
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+        if (kind == "transaction")
+        {
+            await using var transaction = client.CreateTransaction();
+            _ = transaction.Set("key", "value");
+            await transaction.CommitAsync();
+        }
+        else
+        {
+            using var batch = client.CreateBatch();
+            _ = batch.Set("key", "value");
+            if (kind == "durability") await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1));
+            else await batch.ExecuteAsync();
+        }
+        await Assert.That(samples.Any(tags => Equals(tags["server.port"], primary.Port))).IsTrue();
+        await Assert.That(samples.Any(tags => Equals(tags["server.port"], sentinel.Port))).IsFalse();
+    }
+
+    [Test]
+    public async Task StateObserverCanSynchronouslyDisposeTheClient()
+    {
+        await using var primary = Primary();
+        await using var sentinel = Sentinel(() => primary.Port);
+        await using var client = RespireClient.Create(Options(sentinel.Port));
+        var disposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.State != RespireConnectionState.Connected) return;
+            try
+            {
+                client.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                disposed.TrySetResult();
+            }
+            catch (Exception error) { disposed.TrySetException(error); }
+        };
+        try { await client.SetAsync("key", "value"); }
+        catch (Exception) when (client.Core.Disposed) { }
+        await disposed.Task.WaitAsync(Limit);
+        await Assert.That(client.IsConnected).IsFalse();
     }
 
     private static async Task WaitForCommandAsync(FakeRespServer server, string prefix)

@@ -246,14 +246,15 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         ThrowIfCompleted();
         _completed = true;
         var core = _client.Core;
-        var telemetry = RespireTelemetry.StartBatchOperation(
+        var telemetryOperation = "MULTI";
+        var telemetry = core.Sentinel is null ? RespireTelemetry.StartBatchOperation(
             "MULTI",
             _ops,
             static op => op.Operation,
             core.Multiplexer.Host,
             core.Multiplexer.Port,
             core.Options.Database,
-            out var telemetryOperation);
+            out telemetryOperation) : default;
         RespireConnection? connection = _watchConnection;
         Exception? operationError = null;
         var returnWatchConnection = false;
@@ -400,6 +401,10 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                 {
                     connection ??= await _client.AcquireConnectionAsync(slot, token)
                         .ConfigureAwait(false);
+                    if (core.Sentinel is not null)
+                        telemetry = RespireTelemetry.StartBatchOperation(
+                            "MULTI", _ops, static op => op.Operation,
+                            connection.Host, connection.Port, core.Options.Database, out telemetryOperation);
                     RespValue reply;
                     try
                     {

@@ -95,9 +95,10 @@ public sealed partial class RespireBatch
         }
 
         _sent = true;
-        var telemetry = RespireTelemetry.StartBatchOperation(
+        var telemetryOperation = operation;
+        var telemetry = core.Sentinel is null ? RespireTelemetry.StartBatchOperation(
             operation, _ops, static op => op.Operation,
-            core.Multiplexer.Host, core.Multiplexer.Port, core.Options.Database, out var telemetryOperation);
+            core.Multiplexer.Host, core.Multiplexer.Port, core.Options.Database, out telemetryOperation) : default;
         DedicatedConnectionPool? pool = null;
         RespireConnection? connection = null;
         Exception? operationError = null;
@@ -113,6 +114,10 @@ public sealed partial class RespireBatch
                     pool, slot, cancellationToken, discovery: null, reuseIdle: false).ConfigureAwait(false);
             else
                 connection = await pool.RentAsync(cancellationToken, reuseIdle: false).ConfigureAwait(false);
+            if (core.Sentinel is not null)
+                telemetry = RespireTelemetry.StartBatchOperation(
+                    operation, _ops, static op => op.Operation,
+                    connection.Host, connection.Port, core.Options.Database, out telemetryOperation);
             cancellationToken.ThrowIfCancellationRequested();
             var writes = new Task<Exception?>[_ops.Count];
             for (var index = 0; index < _ops.Count; index++)
