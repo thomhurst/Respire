@@ -116,6 +116,7 @@ internal sealed partial class ServerCommands
         _ => throw new ArgumentOutOfRangeException(nameof(type)),
     };
 
+    // Static delegates retain each log type without allocating a capturing closure.
     private static ResponseConverter<ServerCommands, RespireCommandLogEntry[]> CommandLogConverter(RespireCommandLogType type) => type switch
     {
         RespireCommandLogType.Slow => static (ServerCommands _, in RespValue value) => CommandLogParser.Parse(in value, RespireCommandLogType.Slow),
