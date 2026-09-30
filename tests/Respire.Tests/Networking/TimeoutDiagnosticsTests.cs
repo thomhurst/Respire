@@ -130,11 +130,14 @@ public class TimeoutDiagnosticsTests
     public async Task GuardedRemovalHandshakePreservesDeadlineAndLeaseSafety(bool cancelCaller)
     {
         var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        long leasePlaced = 0;
         var selects = 0;
         await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
         {
             SuppressReply = command =>
             {
+                if (command.StartsWith("SET ", StringComparison.Ordinal))
+                    Volatile.Write(ref leasePlaced, System.Diagnostics.Stopwatch.GetTimestamp());
                 if (command != "SELECT 1" || Interlocked.Increment(ref selects) != 2) return false;
                 handshake.TrySetResult();
                 return true;
@@ -148,7 +151,6 @@ public class TimeoutDiagnosticsTests
         // Use the guarded removal's fallback deadline without arming a competing SELECT deadline.
         client.RemovalLeaseTtl = TimeSpan.FromSeconds(1);
         using var caller = new CancellationTokenSource();
-        var started = System.Diagnostics.Stopwatch.GetTimestamp();
         var pending = client.UnlinkGuardedAsync("private-key", caller.Token).AsTask();
         await handshake.Task.WaitAsync(TimeSpan.FromSeconds(5));
         if (cancelCaller)
@@ -165,11 +167,78 @@ public class TimeoutDiagnosticsTests
             await Assert.That(error.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
             await Assert.That(error.Diagnostics.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", server.Port));
         }
-        if (cancelCaller)
-            await Assert.That(server.ReceivedCommands).Contains(command => command.StartsWith("UNLINK "));
+        var lease = SingleCommand(server, "SET")[1];
+        var revocations = CommandsNamed(server, "UNLINK");
+        if (revocations.Length != 0)
+        {
+            // The fake server acknowledges revocation. The fallback timer can fire just before
+            // the Stopwatch lease boundary, leaving enough time to revoke instead of outwait it.
+            foreach (var revocation in revocations)
+                await Assert.That(revocation[1]).IsEquivalentTo(lease);
+        }
         else
-            await Assert.That(System.Diagnostics.Stopwatch.GetElapsedTime(started)).IsGreaterThanOrEqualTo(client.RemovalLeaseTtl);
+        {
+            // Without revocation, cleanup waits for the TTL plus its one-second safety margin.
+            // Check the server lease lifetime, not an exact CancelAfter/Stopwatch timer boundary.
+            await Assert.That(System.Diagnostics.Stopwatch.GetElapsedTime(Volatile.Read(ref leasePlaced)))
+                .IsGreaterThanOrEqualTo(client.RemovalLeaseTtl);
+        }
         await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("EVAL "))).IsFalse();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task GuardedRemovalOutwaitsLeaseWhenRevocationIsNotAcknowledged(bool cancelCaller)
+    {
+        var scriptSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        long leasePlaced = 0;
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            SuppressReply = command =>
+            {
+                if (command.StartsWith("SET ", StringComparison.Ordinal))
+                    Volatile.Write(ref leasePlaced, System.Diagnostics.Stopwatch.GetTimestamp());
+                if (command.StartsWith("EVAL ", StringComparison.Ordinal))
+                {
+                    scriptSeen.TrySetResult();
+                    return true;
+                }
+                // Model an unresponsive revocation: no acknowledgement may prove safety.
+                return command.StartsWith("UNLINK ", StringComparison.Ordinal);
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", server.Port)], Connections = 1, CommandTimeout = null,
+        });
+        client.RemovalLeaseTtl = TimeSpan.FromSeconds(1);
+        using var caller = new CancellationTokenSource();
+        // RespireClient.LeaseExpiryMargin adds one second; the remaining three allow scheduling.
+        var completionTimeout = client.RemovalLeaseTtl + TimeSpan.FromSeconds(4);
+        var removal = client.UnlinkGuardedAsync("private-key", caller.Token).AsTask();
+        await scriptSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (cancelCaller)
+        {
+            caller.Cancel();
+            var error = await Assert.That(async () => await removal.WaitAsync(completionTimeout))
+                .ThrowsExactly<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken.IsCancellationRequested).IsTrue();
+        }
+        else
+        {
+            var error = await Assert.That(async () => await removal.WaitAsync(completionTimeout))
+                .ThrowsExactly<RespireTimeoutException>();
+            await Assert.That(error!.CommandName).IsEqualTo("UNLINK");
+            await Assert.That(error.Diagnostics.Stage).IsEqualTo(RespireCommandStage.AwaitingReply);
+        }
+        // Production waits TTL + margin, so this checks authority expiry with a full margin
+        // between the assertion boundary and its timer. No exact timer-resolution comparison.
+        await Assert.That(System.Diagnostics.Stopwatch.GetElapsedTime(Volatile.Read(ref leasePlaced)))
+            .IsGreaterThanOrEqualTo(client.RemovalLeaseTtl);
+        var placedLease = SingleCommand(server, "SET")[1];
+        var script = SingleCommand(server, "EVAL");
+        await Assert.That(script[4]).IsEquivalentTo(placedLease);
     }
 
     [Test]
@@ -342,14 +411,27 @@ public class TimeoutDiagnosticsTests
     public async Task GuardedRemovalPreservesTimeoutSnapshotAndCallerCancellation(bool cluster, bool cancelCaller)
     {
         var scriptSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var target = new FakeRespServer(2, FakeRespServer.OkReply)
+        var revocationSeen = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var target = new FakeRespServer(2, FakeRespServer.OkReply);
+        target.SuppressReply = command =>
         {
-            SuppressReply = command =>
+            if (command.StartsWith("EVAL ", StringComparison.Ordinal))
             {
-                if (!command.StartsWith("EVAL ", StringComparison.Ordinal)) return false;
                 scriptSeen.TrySetResult();
                 return true;
             }
+            if (command.StartsWith("UNLINK ", StringComparison.Ordinal))
+            {
+                // Recorded command indices remain stable if another connection appends a command.
+                // Select the first revocation here; SingleCommand below reports duplicates outside
+                // the server callback, where an exception cannot strand the test awaiting a reply.
+                var commands = target.ReceivedArguments;
+                var index = Enumerable.Range(0, commands.Count)
+                    .First(i => commands[i][0].AsSpan().SequenceEqual("UNLINK"u8));
+                revocationSeen.TrySetResult(target.ReceivedConnectionIds[index]);
+                return true;
+            }
+            return false;
         };
         var topology = System.Text.Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
@@ -363,14 +445,24 @@ public class TimeoutDiagnosticsTests
         using var caller = new CancellationTokenSource();
         var removal = client.UnlinkGuardedAsync("private-key", caller.Token).AsTask();
         await scriptSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (cancelCaller) caller.Cancel();
+        var revocationConnection = await revocationSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // Both cancellation paths must keep the failure hidden until the revocation reply.
+        // The 30-second lease remains live throughout this controlled exchange.
+        await Assert.That(removal.IsCompleted).IsFalse();
+        var lease = SingleCommand(target, "SET")[1];
+        var revoke = SingleCommand(target, "UNLINK");
+        await Assert.That(revoke[1]).IsEquivalentTo(lease);
+        await target.SendRawAsync(":1\r\n"u8.ToArray(), revocationConnection);
         if (cancelCaller)
         {
-            caller.Cancel();
-            await Assert.That(async () => await removal).ThrowsExactly<OperationCanceledException>();
+            var error = await Assert.That(async () => await removal.WaitAsync(TimeSpan.FromSeconds(5)))
+                .ThrowsExactly<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken.IsCancellationRequested).IsTrue();
         }
         else
         {
-            var error = await Assert.That(async () => await removal).ThrowsExactly<RespireTimeoutException>();
+            var error = await Assert.That(async () => await removal.WaitAsync(TimeSpan.FromSeconds(5))).ThrowsExactly<RespireTimeoutException>();
             await Assert.That(error!.CommandName).IsEqualTo("UNLINK");
             await Assert.That(error.Diagnostics.Stage).IsEqualTo(RespireCommandStage.AwaitingReply);
             await Assert.That(error.Diagnostics.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", target.Port));
@@ -397,6 +489,16 @@ public class TimeoutDiagnosticsTests
         await Assert.That(source.Captured).IsTrue();
         var failure = await source.Failure.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(failure is OperationCanceledException).IsTrue();
+    }
+
+    private static byte[][][] CommandsNamed(FakeRespServer server, string name)
+        => server.ReceivedArguments.Where(arguments => System.Text.Encoding.ASCII.GetString(arguments[0]) == name).ToArray();
+
+    private static byte[][] SingleCommand(FakeRespServer server, string name)
+    {
+        var commands = CommandsNamed(server, name);
+        return commands.Length == 1 ? commands[0]
+            : throw new InvalidOperationException($"Expected one {name} command, received {commands.Length}.");
     }
 
     private sealed class ObservingPendingResponse : PendingResponse
