@@ -151,19 +151,20 @@ Multiple endpoints require an explicit deployment mode:
 | Configuration | Meaning |
 | --- | --- |
 | `cache-a,cache-b,cluster=true` | Redis Cluster seeds, tried during connection setup; discovered slot owners and redirects route later commands. |
-| `sentinel-a,sentinel-b,serviceName=mymaster` | Sentinel discovery endpoints, tried until a reachable primary is found at startup. |
+| `sentinel-a,sentinel-b,serviceName=mymaster` | Sentinel discovery endpoints used to select and validate the current primary. |
 | `cache-a,cache-b` | Rejected: the endpoints could belong to unrelated standalone deployments. |
 
 Use `ConnectAnyAsync` with separate `RespireOptions` candidates for connection-time fallback
 between independent deployments. It does not perform continuous geographic failover. Sentinel
-currently discovers the primary at startup; it does not automatically discover a replacement
-primary later. Ordinary reconnection targets the deployment already selected. Cluster routing
+discovers the primary on connection or first use, then discovers a replacement after a
+disconnect or READONLY rejection. Ordinary standalone reconnection targets the deployment already selected. Cluster routing
 is distinct from either standalone fallback or Sentinel discovery.
 
 An optional [`ReconnectPolicy`](../guides/reconnect-policy.md#sentinel-discovery-fallback)
 bounds and delays Sentinel fallback candidates after the first. Configured seeds, learned
-peers, and failed primary ROLE validation share that resolution budget; it does not
-enable ongoing Sentinel failover. Cluster uses the same option for
+peers, and failed primary ROLE validation share that resolution budget. Each new Sentinel
+resolution uses this policy; event-driven Sentinel monitoring is separate future work.
+Cluster uses the same option for
 [node, topology, and seed fallback](../guides/reconnect-policy.md#cluster-discovery-fallback),
 with one shared budget per discovery round. Periodic Cluster refresh remains separate.
 
@@ -264,7 +265,8 @@ explicitly disable Sentinel authentication while retaining authentication on the
 primary. When multiple Sentinel endpoints are configured, Respire also tries the next endpoint
 if discovery times out, returns invalid data, or reports a primary that cannot be reached during
 the initial connection. The candidate's data connection must return a valid primary `ROLE`
-before the client is returned. A reachable replica, malformed response, or denied `ROLE`
+before the generation is published. Every new data connection is validated, including
+dedicated and subscription connections. A reachable replica, malformed response, or denied `ROLE`
 is rejected and the candidate is disposed. Grant `ROLE` to the data-node credentials.
 
 Respire also requests `SENTINEL SENTINELS` and can try up to 64 learned peers after the
@@ -282,9 +284,53 @@ Sentinel and the primary use different TLS modes, and set `SentinelTlsOptions` w
 different certificate validation or a different `TargetHost`. In a URI, `sentinelTls=false`
 selects plaintext Sentinel discovery even when the `rediss://` primary uses TLS.
 
-Sentinel currently requires `ConnectAsync` because discovery is a network operation that must run
-before Redis connections exist. Lazy `Create` and automatic Sentinel re-discovery during failover
-are planned follow-up work.
+`RespireClient.Create(options)` performs no network I/O. Its first operation discovers and
+validates the primary; `ConnectAsync` performs the same work eagerly. Prefixed views keep
+sharing the same client core across primary changes.
+
+A disconnect, READONLY reply, or a ROLE response identifying a replica retires the affected
+generation. The next operation resolves Sentinel again and publishes a validated replacement,
+even when Sentinel returns the same endpoint after a brief disconnect. This deliberately
+revalidates the primary role before accepting new work; there is no reconnect grace period.
+EXEC and script array replies are scanned for nested READONLY errors in time proportional to
+their elements. Ordinary collection reads do not perform this additional scan.
+Fire-and-forget replies retain their operation identity for the same checks, while the call
+still completes after writing rather than waiting for a reply. This metadata uses a bounded
+array allocated on the connection's first fire-and-forget command; ordinary connections do
+not allocate that array.
+New commands cannot enter a retired generation. Already accepted commands and blocking
+operations drain on their original sockets; ambiguous writes and existing WATCH state are
+never replayed. Start a new watched transaction after a failover. Client disposal aborts
+outstanding work and joins owned connection cleanup.
+
+Client-side cached reads lose continuity on retirement. Cached MGET and opted-in partial HMGET
+reads discard all cached elements if the generation retires during lookup, then refetch the
+complete request from the validated primary. Subscriptions reconnect to the new
+primary and report their normal delivery gap; Redis cannot replay missed publications.
+Explicit server connections remain pinned to the endpoint selected by the application.
+Correction operations retain their original physical peer rather than following a new
+primary. `Endpoint` reads host and port from one generation snapshot; a later handoff can make
+that snapshot historical, but cannot combine fields from different primaries. Before a lazy
+Sentinel client has resolved and validated its first primary, `Endpoint` throws
+`InvalidOperationException`; it never returns a Sentinel discovery address as the data endpoint.
+Reading the property performs no I/O. Use `ConnectAsync`, or await the first command on a client
+created with `Create`, before reading it. Failed discovery leaves the endpoint unavailable.
+`ConnectionStateChanged` reports endpoint changes, and the `Respire` meter records
+`respire.sentinel.failover` for validated primary endpoint changes, tagged with `server.address`
+and `server.port`. State observers may dispose the client synchronously. Disposal suppresses
+queued notifications but does not wait for an observer already running; that callback may
+finish after disposal returns. The process-wide `respire.sentinel.generations.retired` gauge
+counts retired generations still owned while accepted commands, borrowed leases, or correction
+fences drain. A nonzero value can be expected during handoff; a value that keeps growing
+indicates retained work to investigate. There is no forced drain deadline that abandons
+accepted commands or an unacknowledged correction fence. Retention preserves ownership of
+that server-side ordering obligation; a time or attempt cap could discard it before the old
+server acknowledges the fence. Repeated failovers during an outage can therefore grow retained
+state until the fences succeed or client disposal aborts cleanup.
+
+This is reactive discovery. Sentinel event subscriptions and the real-server failover matrix
+remain tracked by [#549](https://github.com/thomhurst/Respire/issues/549). No background Sentinel
+monitor proactively moves an otherwise healthy connection before a failure is observed.
 
 ## Cancellation and timeouts
 

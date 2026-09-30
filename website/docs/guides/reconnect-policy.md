@@ -197,7 +197,7 @@ The existing finite traversal still stops when candidates run out, even with a n
 
 A successful validated primary ends the resolution. Exhaustion preserves the final
 `RespireConnectionException` and its underlying discovery or primary-validation error.
-A new explicit `ConnectAsync` call starts a fresh resolution budget. Null policy retains
+A new explicit `ConnectAsync` call or a new reactive resolution starts a fresh budget. Null policy retains
 immediate fallback across all available candidates. Caller cancellation bounds every
 wait, while each candidate retains its existing discovery and connection timeout.
 Policy delays sit outside those per-candidate timeouts. Supply a caller deadline to
@@ -212,9 +212,11 @@ uses the budget and at least one candidate remains untried. Successful fallback 
 out of candidates do not record exhaustion, even when the final candidate coincides with
 the attempt limit. Observe the returned connection exception to detect every terminal
 discovery failure.
-Initial Sentinel resolution has no returned client for `ConnectionStateChanged`
-subscriptions; lifecycle events for ongoing failover belong to #396. This policy does
-not enable automatic failover or lazy Sentinel routing.
+Lazy Sentinel clients can observe initial connection events through `ConnectionStateChanged`.
+Disconnects and READONLY replies retire the current generation; the next operation resolves
+Sentinel again with the same fallback policy. Validated endpoint changes also increment
+`respire.sentinel.failover`. Eager `ConnectAsync` performs initial discovery before returning
+the client. No accepted command or WATCH state is replayed during a primary handoff.
 
 ## Cluster discovery fallback
 
@@ -295,6 +297,7 @@ not the notification queue; handlers should hand off expensive work and return p
 ## Remaining recovery paths
 
 The policy covers command multiplexers, dedicated pools, pub/sub, Cluster discovery, and
-Sentinel fallback. Automatic Sentinel failover remains #396, and periodic Cluster refresh
-remains #397. Setting this option does not enable either feature. Future periodic Cluster
-refresh must reuse this discovery budget instead of adding nested retry counters.
+Sentinel fallback. Sentinel event monitoring is tracked separately in #549 under #396,
+and periodic Cluster refresh remains #397. Setting this option does not enable those features.
+Future periodic Cluster refresh must reuse this discovery budget instead of adding nested
+retry counters.

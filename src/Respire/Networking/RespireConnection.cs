@@ -92,6 +92,7 @@ internal sealed class RespireConnection : IAsyncDisposable
     private long _receiveDeadlineTimestamp;
     private int _responseTimeoutSuppressions;
     private Exception? _abortReason;
+    private readonly IConnectionGeneration? _generation;
 
     // Set by the multiplexer before publication; endpoint aliases may later change owners.
     internal Respire.Infrastructure.RespireConnectionMultiplexer? Multiplexer { get; set; }
@@ -99,7 +100,7 @@ internal sealed class RespireConnection : IAsyncDisposable
     public string Host { get; }
     public int Port { get; }
     public bool IsConnected => !Volatile.Read(ref _dead);
-    internal bool IsAcceptingCommands => IsConnected && !Volatile.Read(ref _retired);
+    internal bool IsAcceptingCommands => IsConnected && !Volatile.Read(ref _retired) && _generation?.IsRetired != true;
     internal bool DrainedSuccessfully => Volatile.Read(ref _drainedSuccessfully);
     internal string? NetworkPeerAddress => _networkPeerAddress;
     internal int? NetworkPeerPort => _networkPeerPort;
@@ -138,6 +139,7 @@ internal sealed class RespireConnection : IAsyncDisposable
         Host = host;
         Port = port;
         _logger = logger;
+        _generation = options.Generation;
         _pushHandler = options.PushHandler;
         _subscriptionConfirmationHandler = options.SubscriptionConfirmationHandler;
         _receiveBufferSize = options.ReceiveBufferSize;
@@ -260,6 +262,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         try
         {
             await connection.HandshakeAsync(options, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
+            if (options.Generation is { } generation)
+                await generation.ValidateAsync(connection, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -300,6 +304,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             await connection.HandshakeAsync(options, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
+            if (options.Generation is { } generation)
+                await generation.ValidateAsync(connection, cancellationToken).ConfigureAwait(false);
             return connection;
         }
         catch
@@ -982,17 +988,18 @@ internal sealed class RespireConnection : IAsyncDisposable
     /// Sends a command whose response is read from the wire but discarded. Completes once the
     /// command has been written to the socket.
     /// </summary>
-    public ValueTask SendFireAndForgetAsync<TCommand>(in TCommand command, CancellationToken cancellationToken = default)
+    public ValueTask SendFireAndForgetAsync<TCommand>(in TCommand command, CancellationToken cancellationToken = default,
+        string? commandName = null)
         where TCommand : struct, IRespCommand
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (TryEnqueueForWrite(in command, out var startedBatch, out var writeTask))
+        if (TryEnqueueForWrite(in command, commandName, out var startedBatch, out var writeTask))
         {
             ScheduleFlush(startedBatch);
             return WaitForWriteAsync(writeTask, cancellationToken);
         }
 
-        return SendFireAndForgetSlowAsync(command, cancellationToken);
+        return SendFireAndForgetSlowAsync(command, cancellationToken, commandName);
     }
 
     private static ValueTask WaitForWriteAsync(Task writeTask, CancellationToken cancellationToken)
@@ -1049,6 +1056,7 @@ internal sealed class RespireConnection : IAsyncDisposable
 
     private bool TryEnqueueForWrite<TCommand>(
         in TCommand command,
+        string? commandName,
         out bool startedBatch,
         out Task writeTask)
         where TCommand : struct, IRespCommand
@@ -1058,7 +1066,8 @@ internal sealed class RespireConnection : IAsyncDisposable
             InflightRing.DiscardSentinel,
             out startedBatch,
             out var trackedWrite,
-            trackWrite: true);
+            trackWrite: true,
+            discardedOperation: _generation is null ? null : commandName);
         writeTask = trackedWrite ?? Task.CompletedTask;
         return enqueued;
     }
@@ -1071,7 +1080,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         bool trackWrite,
         int discardRepliesBefore = 0,
         bool retainRepliesBefore = false,
-        bool armCommandDeadline = true)
+        bool armCommandDeadline = true,
+        string? discardedOperation = null)
         where TCommand : struct, IRespCommand
     {
         startedBatch = false;
@@ -1096,7 +1106,8 @@ internal sealed class RespireConnection : IAsyncDisposable
                 trackWrite,
                 discardRepliesBefore,
                 retainRepliesBefore,
-                armCommandDeadline);
+                armCommandDeadline,
+                discardedOperation);
         }
 
         var scratch = _serializeScratch ??= new WriteBuffer(ScratchInitialSize);
@@ -1138,7 +1149,8 @@ internal sealed class RespireConnection : IAsyncDisposable
                     _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel, writeStart);
                 }
 
-                _inflight.TryEnqueue(source, _enqueuedBytes);
+                if (discardedOperation is not null) _inflight.TryEnqueueDiscard(discardedOperation, _enqueuedBytes);
+                else _inflight.TryEnqueue(source, _enqueuedBytes);
                 if (trackWrite)
                 {
                     writeTask = _activeBuffer.WriteCompletion;
@@ -1173,7 +1185,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         bool trackWrite,
         int discardRepliesBefore,
         bool retainRepliesBefore,
-        bool armCommandDeadline)
+        bool armCommandDeadline,
+        string? discardedOperation)
         where TCommand : struct, IRespCommand
     {
         startedBatch = false;
@@ -1221,7 +1234,8 @@ internal sealed class RespireConnection : IAsyncDisposable
                 _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel, writeStart);
             }
 
-            _inflight.TryEnqueue(source, _enqueuedBytes);
+            if (discardedOperation is not null) _inflight.TryEnqueueDiscard(discardedOperation, _enqueuedBytes);
+            else _inflight.TryEnqueue(source, _enqueuedBytes);
             if (trackWrite)
             {
                 writeTask = _activeBuffer.WriteCompletion;
@@ -1393,7 +1407,8 @@ internal sealed class RespireConnection : IAsyncDisposable
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
 #endif
-    private async ValueTask SendFireAndForgetSlowAsync<TCommand>(TCommand command, CancellationToken cancellationToken)
+    private async ValueTask SendFireAndForgetSlowAsync<TCommand>(TCommand command, CancellationToken cancellationToken,
+        string? commandName)
         where TCommand : struct, IRespCommand
     {
         bool startedBatch;
@@ -1402,7 +1417,7 @@ internal sealed class RespireConnection : IAsyncDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             var capacityAvailable = _capacitySignal.WaitAsync(cancellationToken);
-            if (TryEnqueueForWrite(in command, out startedBatch, out writeTask))
+            if (TryEnqueueForWrite(in command, commandName, out startedBatch, out writeTask))
             {
                 break;
             }
@@ -1821,6 +1836,8 @@ internal sealed class RespireConnection : IAsyncDisposable
             Abort(closeError);
             try
             {
+                _generation?.ConnectionClosed(this,
+                    Volatile.Read(ref _disposeCompletion) is null && !Volatile.Read(ref _retired));
                 PendingCommandsFailing?.Invoke();
             }
             catch (Exception ex)
@@ -1915,13 +1932,20 @@ internal sealed class RespireConnection : IAsyncDisposable
             return;
         }
 
-        if (!_inflight.TryDequeue(out var source))
+        string? discardedOperation = null;
+        PendingResponse source;
+        var dequeued = _generation is null
+            ? _inflight.TryDequeue(out source)
+            : _inflight.TryDequeue(out source, out discardedOperation);
+        if (!dequeued)
         {
             value.Dispose();
             throw new RespireProtocolException($"Unsolicited response from {Host}:{Port} with no command in flight.");
         }
 
         MarkReplyReceived();
+
+        _generation?.ObserveResponse(this, discardedOperation ?? source.CommandName, in value);
 
         if (ReferenceEquals(source, InflightRing.DiscardSentinel))
         {
@@ -2316,7 +2340,7 @@ internal sealed class RespireConnection : IAsyncDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void ThrowIfRetired()
     {
-        if (Volatile.Read(ref _retired))
+        if (Volatile.Read(ref _retired) || _generation?.IsRetired == true)
             throw new RespireConnectionRetiredException(Host, Port);
     }
 
@@ -2425,6 +2449,8 @@ internal delegate void RespirePushHandler(in RespValue value);
 internal sealed record RespireConnectionOptions
 {
     public static readonly RespireConnectionOptions Default = new();
+
+    internal IConnectionGeneration? Generation { get; init; }
 
     internal Func<string, int, CancellationToken, ValueTask<Stream>>? TestingStreamFactory { get; init; }
 
