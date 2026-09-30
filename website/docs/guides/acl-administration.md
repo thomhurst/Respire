@@ -28,8 +28,9 @@ follow the existing read-only Server convention and do not require this client o
 The server still enforces the authenticated user's ACL permissions for every command.
 
 Rules are separate, ordered `RespireValue` arguments. Updates are additive unless a
-rule such as `reset` changes that behavior. An empty rule list is valid; an empty
-delete-user list is rejected. Usernames, rules, categories, and dry-run arguments are
+rule such as `reset` changes that behavior. Redis validates rule syntax; malformed or
+unsupported rules surface its server error without client-side rewriting. An empty rule list
+is valid; an empty delete-user list is rejected. Usernames, rules, categories, and dry-run arguments are
 snapshotted before asynchronous work. They are not routing keys and never receive a
 client key prefix. Byte inputs retain their bytes. Compound dry-run descriptors such
 as `"CLIENT LIST"` expand into command tokens; each supplied argument remains one token.
@@ -55,7 +56,8 @@ client is disposed.
 
 `AclCategoriesAsync()` lists categories; supplying a category lists its commands.
 `AclLogAsync()` uses the server's default count, and an explicit nonnegative count
-limits returned entries. Entries remain newest first. `AclLogResetAsync()` explicitly
+limits returned entries. Zero returns an empty result without resetting the log.
+Entries remain newest first. `AclLogResetAsync()` explicitly
 clears the log. Log object, username, and client-info fields retain bytes. Entry IDs
 and Unix millisecond timestamps are nullable because Redis added them in 7.2.
 Unknown reason/context values remain strings instead of being rejected by an enum.
