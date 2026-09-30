@@ -26,6 +26,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
     private Task _notifications = Task.CompletedTask;
 
     internal Generation? Current => Volatile.Read(ref _current);
+    internal TimeProvider Clock { get; set; } = TimeProvider.System;
     internal bool IsConnected => Current is { IsRetired: false } generation && generation.Multiplexer.IsConnected;
 
     internal sealed class CorrectionLease(SentinelRouter owner, DedicatedConnectionPool pool) : IAsyncDisposable
@@ -204,7 +205,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 catch (Exception error) when (!_lifetime.IsCancellationRequested)
                 {
                     core.Logger?.LogWarning(error, "Sentinel generation at {Endpoint} retains an unacknowledged correction fence", generation.Endpoint);
-                    await Task.Delay(TimeSpan.FromSeconds(delay), _lifetime.Token).ConfigureAwait(false);
+                    await Task.Delay(TimeSpan.FromSeconds(delay), Clock, _lifetime.Token).ConfigureAwait(false);
                     delay = Math.Min(delay * 2, 30);
                 }
             }
@@ -303,12 +304,12 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
             if (!IsPrimary(in reply))
             {
                 _owner.Invalidate(this);
-                throw new RespireConnectionException("Sentinel candidate did not confirm a valid primary ROLE.");
+                throw new RespireConnectionException($"Sentinel candidate at {Endpoint} did not confirm a valid primary ROLE.");
             }
             lock (_connectionsGate)
             {
                 if (IsRetired || !connection.IsConnected)
-                    throw new RespireConnectionException("Sentinel candidate closed before validation completed.");
+                    throw new RespireConnectionException($"Sentinel candidate at {Endpoint} closed before validation completed.");
                 _connections.Add(connection);
             }
         }
@@ -348,9 +349,10 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
         private static bool ContainsReadOnly(in RespValue reply)
         {
             if (reply.IsError) return IsReadOnlyError(in reply);
-            if (reply.Type != RespDataType.Array) return false;
+            if (reply.AsArray().IsEmpty) return false;
             // The parser accepts arbitrary nesting. Flat replies need no allocation;
-            // nested arrays retain only the parents with unvisited siblings.
+            // Every aggregate exposes elements through AsArray; maps include keys and values.
+            // Nested aggregates retain only the parents with unvisited siblings.
             Stack<(RespValue Parent, int NextIndex)>? parents = null;
             var current = reply;
             var index = 0;
@@ -365,7 +367,7 @@ internal sealed class SentinelRouter(ClientCore core) : IAsyncDisposable
                 }
                 var element = elements[index++];
                 if (element.IsError && IsReadOnlyError(in element)) return true;
-                if (element.Type != RespDataType.Array) continue;
+                if (element.AsArray().IsEmpty) continue;
                 if (index < elements.Length)
                     (parents ??= new()).Push((current, index));
                 current = element;

@@ -291,6 +291,9 @@ public sealed record RespireOptions
             throw new RespireConfigurationException("At least one Redis endpoint is required.");
         }
 
+        if (UseCluster && !string.IsNullOrWhiteSpace(SentinelPrimaryName))
+            throw new RespireConfigurationException("Cluster and Sentinel routing cannot be enabled together.");
+
         if (Endpoints.Count > 1 && !UseCluster && string.IsNullOrWhiteSpace(SentinelPrimaryName))
         {
             throw new RespireConfigurationException(

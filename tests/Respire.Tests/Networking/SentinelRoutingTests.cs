@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Text;
+using System.Threading.Channels;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -624,6 +625,25 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    [Arguments("%1\r\n+k\r\n-READONLY replica\r\n", true)]
+    [Arguments("~1\r\n-READONLY replica\r\n", true)]
+    [Arguments("*2\r\n:1\r\n%1\r\n+k\r\n~1\r\n-READONLY replica\r\n", true)]
+    [Arguments("%1\r\n+k\r\n~2\r\n:1\r\n:2\r\n", false)]
+    public async Task ReadOnlyTraversalIncludesResp3MapsAndSets(string reply, bool readOnly)
+    {
+        await using var primary = Primary((_, command) => command switch
+        {
+            "HELLO 3" => "%1\r\n+proto\r\n:3\r\n"u8.ToArray(),
+            "EVAL" => Encoding.ASCII.GetBytes(reply),
+            _ => null,
+        });
+        await using var sentinel = Sentinel(() => primary.Port);
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with { Protocol = RespProtocol.Resp3 });
+        using var response = await client.ExecuteAsync((RespireCommand)"EVAL", []);
+        await Assert.That(client.IsConnected).IsEqualTo(!readOnly);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task NestedReadOnlyScanResumesAfterDeepNonErrorArrays(bool readOnly)
@@ -749,6 +769,92 @@ public class SentinelRoutingTests
     }
 
     [Test]
+    [Arguments("batch")]
+    [Arguments("durability")]
+    [Arguments("transaction")]
+    public async Task BatchDurationKeepsTheAdmittedPrimaryAfterPromotion(string kind)
+    {
+        var admitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var primary = Primary((_, command) => command.StartsWith("SET delayed") && kind == "transaction"
+            ? "+QUEUED\r\n"u8.ToArray() : null);
+        primary.SuppressReply = command =>
+        {
+            var last = kind switch
+            {
+                "transaction" => command == "EXEC",
+                "durability" => command == "WAIT 1 1000",
+                _ => command == "SET delayed2 value",
+            };
+            if (last) admitted.TrySetResult();
+            return kind switch
+            {
+                "transaction" => command == "EXEC",
+                "durability" => command == "WAIT 1 1000",
+                _ => command.StartsWith("SET delayed"),
+            };
+        };
+        await using var promoted = Primary();
+        var port = primary.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        var original = client.Core.Sentinel!.Current!;
+        var samples = new ConcurrentQueue<Dictionary<string, object?>>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, meter) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "db.client.operation.duration")
+                meter.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<double>((_, _, tags, _) =>
+        {
+            var values = tags.ToArray().ToDictionary(tag => tag.Key, tag => tag.Value);
+            if (Equals(values.GetValueOrDefault("db.operation.batch.size"), 2)
+                && (Equals(values.GetValueOrDefault("server.port"), primary.Port)
+                    || Equals(values.GetValueOrDefault("server.port"), promoted.Port))) samples.Enqueue(values);
+        });
+        listener.Start();
+        var pending = ExecuteAsync();
+        await admitted.Task.WaitAsync(Limit);
+        Volatile.Write(ref port, promoted.Port);
+        using (var rejection = Respire.Protocol.RespValue.Error("READONLY replica"))
+            original.ObserveResponse(original.Multiplexer.GetConnection(), "SET", in rejection);
+        await client.SetAsync("next", "value").AsTask().WaitAsync(Limit);
+        await Assert.That(pending.IsCompleted).IsFalse();
+        var commandIndex = primary.ReceivedCommands.ToList().IndexOf("SET delayed1 value");
+        var connectionId = primary.ReceivedConnectionIds[commandIndex];
+        var response = kind switch
+        {
+            "transaction" => "*2\r\n+OK\r\n+OK\r\n",
+            "durability" => ":1\r\n",
+            _ => "+OK\r\n+OK\r\n",
+        };
+        await primary.SendRawAsync(Encoding.ASCII.GetBytes(response), connectionId);
+        await pending.WaitAsync(Limit);
+        await Assert.That(samples.Count).IsEqualTo(1);
+        await Assert.That(samples.Single()["server.port"]).IsEqualTo(primary.Port);
+        await Assert.That(samples.Single()["server.address"]).IsEqualTo("127.0.0.1");
+
+        async Task ExecuteAsync()
+        {
+            if (kind == "transaction")
+            {
+                await using var transaction = client.CreateTransaction();
+                _ = transaction.Set("delayed1", "value");
+                _ = transaction.Set("delayed2", "value");
+                await transaction.CommitAsync();
+            }
+            else
+            {
+                using var batch = client.CreateBatch();
+                _ = batch.Set("delayed1", "value");
+                _ = batch.Set("delayed2", "value");
+                if (kind == "durability") await batch.ExecuteAndWaitForReplicationAsync(1, TimeSpan.FromSeconds(1));
+                else await batch.ExecuteAsync();
+            }
+        }
+    }
+
+    [Test]
     public async Task StateObserverCanSynchronouslyDisposeTheClient()
     {
         await using var primary = Primary();
@@ -859,6 +965,65 @@ public class SentinelRoutingTests
         }
         finally { releaseObserver.TrySetResult(); }
         await Assert.That(await measured.Task.WaitAsync(Limit)).IsEqualTo(1L);
+    }
+
+    [Test]
+    public async Task PermanentlyFailingFenceBacksOffUntilDisposalCancelsTheDelay()
+    {
+        var rejectFences = false;
+        await using var primary = Primary((_, command) => command switch
+        {
+            "CLIENT ID" => ":41\r\n"u8.ToArray(),
+            _ when command.StartsWith("CLIENT KILL ") => Volatile.Read(ref rejectFences)
+                ? "-ERR fencing unavailable\r\n"u8.ToArray() : ":0\r\n"u8.ToArray(),
+            _ => null,
+        });
+        await using var sentinel = Sentinel(() => primary.Port);
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port));
+        await client.EnsureReliableCorrectionOrderingAsync().AsTask().WaitAsync(Limit);
+        var router = client.Core.Sentinel!;
+        var generation = router.Current!;
+        var clock = new FenceClock();
+        router.Clock = clock;
+        Volatile.Write(ref rejectFences, true);
+        // Lose an accepted command after capturing CLIENT ID, so retirement must fence it.
+        primary.CloseConnectionAfterCommand = primary.CommandsSeen + 1;
+        await Assert.That(async () => await client.SetAsync("lost", "value").AsTask().WaitAsync(Limit))
+            .Throws<RespireConnectionException>();
+        var first = await clock.Timers.Reader.ReadAsync().AsTask().WaitAsync(Limit);
+        await Assert.That(first.Delay).IsEqualTo(TimeSpan.FromSeconds(1));
+        await Assert.That(generation.Multiplexer.HasPendingCorrectionFences).IsTrue();
+        await Assert.That(generation.Retirement.IsCompleted).IsFalse();
+        first.Fire();
+        var second = await clock.Timers.Reader.ReadAsync().AsTask().WaitAsync(Limit);
+        await Assert.That(second.Delay).IsEqualTo(TimeSpan.FromSeconds(2));
+        await Assert.That(generation.CountedAsRetired).IsTrue();
+        await client.DisposeAsync().AsTask().WaitAsync(Limit);
+        await second.Disposed.Task.WaitAsync(Limit);
+        await Assert.That(generation.Retirement.IsCompleted).IsTrue();
+        await Assert.That(generation.CountedAsRetired).IsFalse();
+        await Assert.That(clock.Timers.Reader.TryRead(out _)).IsFalse();
+    }
+
+    private sealed class FenceClock : TimeProvider
+    {
+        internal Channel<FenceTimer> Timers { get; } = Channel.CreateUnbounded<FenceTimer>();
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new FenceTimer(callback, state, dueTime);
+            Timers.Writer.TryWrite(timer);
+            return timer;
+        }
+    }
+
+    private sealed class FenceTimer(TimerCallback callback, object? state, TimeSpan delay) : ITimer
+    {
+        internal TimeSpan Delay => delay;
+        internal TaskCompletionSource Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal void Fire() { if (!Disposed.Task.IsCompleted) callback(state); }
+        public bool Change(TimeSpan dueTime, TimeSpan period) => throw new NotSupportedException();
+        public void Dispose() => Disposed.TrySetResult();
+        public ValueTask DisposeAsync() { Dispose(); return default; }
     }
 
     private static async Task WaitForCommandAsync(FakeRespServer server, string prefix)

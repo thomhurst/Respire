@@ -275,8 +275,8 @@ internal static class RespireTelemetry
             int? batchSize = null)
             => Complete(
                 operation,
-                core.Multiplexer.Host,
-                core.Multiplexer.Port,
+                connection?.Host ?? core.Multiplexer.Host,
+                connection?.Port ?? core.Multiplexer.Port,
                 core.Options.Database,
                 storedProcedureName,
                 error,

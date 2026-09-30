@@ -7,6 +7,14 @@ namespace Respire.Tests;
 public class RespireOptionsTests
 {
     [Test]
+    public async Task StructuredOptionsRejectClusterAndSentinelBeforeConnecting()
+    {
+        var options = ValidOptions() with { UseCluster = true, SentinelPrimaryName = "mymaster" };
+        await Assert.That(() => RespireClient.Create(options)).ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(async () => await RespireClient.ConnectAsync(options)).ThrowsExactly<RespireConfigurationException>();
+    }
+
+    [Test]
     public async Task Defaults_AreExplicitAndBounded()
     {
         var options = new RespireOptions();
