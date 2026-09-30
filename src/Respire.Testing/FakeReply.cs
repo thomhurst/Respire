@@ -14,6 +14,7 @@ internal sealed record FakeReply(byte Prefix, object? Value)
     internal static FakeReply Error(string value) => new((byte)'-', value.Replace('\r', ' ').Replace('\n', ' '));
     internal static FakeReply Integer(long value) => new((byte)':', value);
     internal static FakeReply Array(FakeReply[] values) => new((byte)'*', values);
+    internal static FakeReply Set(FakeReply[] values) => new((byte)'~', values);
     internal static FakeReply Map(FakeReply[] pairs) => new((byte)'%', pairs);
 
     internal byte[] Encode(bool resp3)
@@ -27,7 +28,7 @@ internal sealed record FakeReply(byte Prefix, object? Value)
     {
         if (Value is FakeReply[] elements)
         {
-            Line(writer, Prefix, (elements.Length / (Prefix == '%' ? 2 : 1)).ToString(CultureInfo.InvariantCulture));
+            Line(writer, Prefix == '~' && !resp3 ? (byte)'*' : Prefix, (elements.Length / (Prefix == '%' ? 2 : 1)).ToString(CultureInfo.InvariantCulture));
             foreach (var element in elements) element.Write(writer, resp3);
         }
         else if (Prefix == '$')

@@ -1,6 +1,6 @@
 ---
 title: In-memory testing
-description: Exercise real Respire client code against a deterministic strings, keys, and hashes server without Docker.
+description: Exercise real Respire client code against a deterministic strings, keys, hashes, and sets server without Docker.
 ---
 
 # In-memory testing
@@ -54,6 +54,7 @@ An error consumes exactly one response slot, so later valid commands still work.
 | Strings | `GET`, `SET` with `NX`, `XX`, `GET`, `KEEPTTL`, `EX`, `PX`, `EXAT`, `PXAT`; `MGET`, `MSET`, `MSETNX`, `GETDEL`, `GETSET`, `GETEX`, `STRLEN`, `APPEND` |
 | Integer strings | `INCR`, `DECR`, `INCRBY`, `DECRBY`, with checked signed 64-bit arithmetic |
 | Hashes | `HSET`, `HSETNX`, `HMSET`, `HGET`, `HMGET`, `HGETALL`, `HDEL`, `HEXISTS`, `HLEN`, `HKEYS`, `HVALS`, `HSTRLEN`, `HINCRBY` |
+| Sets | `SADD`, `SREM`, `SMEMBERS`, `SCARD`, `SISMEMBER`, `SMISMEMBER`, `SMOVE`, `SINTER`, `SUNION`, `SDIFF`, their `STORE` forms, and `SINTERCARD` with `LIMIT` |
 | Keys | `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `PERSIST` |
 | Expiry | `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT` with `NX`, `XX`, `GT`, `LT`; `TTL`, `PTTL`, `EXPIRETIME`, `PEXPIRETIME` |
 | Connection | `HELLO 2/3` without authentication, `PING`, `ECHO`, `SELECT 0`, `CLIENT ID`, `CLIENT GETNAME`, `CLIENT SETNAME` |
@@ -67,7 +68,7 @@ Hash fields and values preserve binary bytes. `HSET` counts newly added fields, 
 duplicate fields within one command only once; `HMGET` preserves requested field order and
 nulls. `HGETALL` emits a RESP2 array or RESP3 map. Hash enumeration order is unspecified.
 `HINCRBY` uses checked signed 64-bit arithmetic. Hash mutations retain key-level TTL; removing
-the last field deletes the key and its TTL. String operations reject hashes with `WRONGTYPE`,
+the last field deletes the key and its TTL. String operations reject hashes and sets with `WRONGTYPE`,
 except `MGET` returns null for non-string keys and ordinary `SET`/`MSET` may replace their type.
 Failed operations preserve existing fields and TTL. Hash-field expiry, `HINCRBYFLOAT`,
 `HRANDFIELD`, and `HSCAN` are explicitly unsupported.
@@ -84,8 +85,33 @@ if (fields["name"] != "Ada" || fields["visits"] != "1")
     throw new InvalidOperationException("Hash fields did not round-trip.");
 ```
 
+Set members preserve binary bytes and uniqueness. `SMEMBERS` and set algebra return a
+RESP2 array or RESP3 set; enumeration order is unspecified. `SMISMEMBER` preserves input
+order and duplicates. `SMOVE` validates both existing types before mutation; moving within
+the same set only tests membership. A missing source returns zero even if the destination
+has another type. `SINTERCARD LIMIT 0` counts the complete intersection; a positive limit
+stops counting at that bound.
+
+Ordinary set mutations retain existing key TTLs. Removing or moving the last member deletes
+the source key. STORE commands calculate from all source sets before replacing the destination,
+so source/destination aliasing is supported. STORE replaces the destination type, clears its TTL,
+and deletes it when the result is empty. Wrong-type failures leave existing members and TTLs
+unchanged. Random sampling (`SPOP`, `SRANDMEMBER`) and `SSCAN` remain unsupported.
+
+```csharp
+using Respire.Testing;
+
+await using var server = new RespireFakeServer();
+await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+await client.Sets.AddAsync("online", "Ada", "Grace");
+await client.Sets.AddAsync("subscribers", "Grace", "Linus");
+var onlineSubscribers = await client.Sets.IntersectAsync("online", "subscribers");
+if (onlineSubscribers.Length != 1 || onlineSubscribers[0] != "Grace")
+    throw new InvalidOperationException("Set intersection did not match.");
+```
+
 Only database zero and standalone operation are supported. Authentication, TLS, Cluster,
-Sentinel, scripts/functions, client-side tracking, lists, sets, sorted sets, pub/sub, transactions,
+Sentinel, scripts/functions, client-side tracking, lists, sorted sets, pub/sub, transactions,
 persistence and administrative diagnostics are not simulated. Unsupported handshake features
 fail initialization. Do not enable these modes and infer production behavior from the fake.
 Individual RESP requests are limited to 16 MiB; larger requests close their connection
@@ -117,7 +143,10 @@ Supported option behavior follows [Redis SET](https://redis.io/docs/latest/comma
 [Redis 8.6 expiry implementation](https://github.com/redis/redis/blob/8.6.0/src/expire.c).
 Hash behavior follows [HSET](https://redis.io/docs/latest/commands/hset/),
 [HGETALL](https://redis.io/docs/latest/commands/hgetall/), and
-[HINCRBY](https://redis.io/docs/latest/commands/hincrby/).
+[HINCRBY](https://redis.io/docs/latest/commands/hincrby/). Set behavior follows
+[SMOVE](https://redis.io/docs/latest/commands/smove/),
+[SINTERSTORE](https://redis.io/docs/latest/commands/sinterstore/), and
+[SINTERCARD](https://redis.io/docs/latest/commands/sintercard/).
 Run real-server integration tests for version compatibility, unsupported commands, and
 operational behavior. Remaining collections and pub/sub/transactions remain tracked in
 [#540](https://github.com/thomhurst/Respire/issues/540) and
