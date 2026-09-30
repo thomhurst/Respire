@@ -237,6 +237,38 @@ public class TransportRetirementTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DisposalBeforeFencingCannotReportSuccessfulRetirement(bool retireAfterDisposal)
+    {
+        var commandSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(":42\r\n"u8.ToArray())
+        {
+            SuppressReply = command =>
+            {
+                if (command != "PING") return false;
+                commandSeen.TrySetResult();
+                return true;
+            }
+        };
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", server.Port);
+        await multiplexer.GetConnection().EnsureServerClientIdAsync();
+        var accepted = multiplexer.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        await commandSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var retirement = retireAfterDisposal ? null : multiplexer.RetireAsync();
+        if (retirement is not null) await Assert.That(retirement.IsCompleted).IsFalse();
+        await multiplexer.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        retirement ??= multiplexer.RetireAsync();
+        await Assert.That(async () => await retirement.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<OperationCanceledException>();
+        await Assert.That(multiplexer.RetireAsync()).IsSameReferenceAs(retirement);
+        await Assert.That(async () => await accepted).ThrowsExactly<RespireConnectionException>();
+        await Assert.That(multiplexer.HasPendingCorrectionFences).IsTrue();
+        await Assert.That(server.ReceivedCommands.Any(command => command.StartsWith("CLIENT KILL", StringComparison.Ordinal)))
+            .IsFalse();
+    }
+
+    [Test]
     public async Task ReconnectNotificationCanRetireBeforeTheConnectStarts()
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply);

@@ -680,12 +680,11 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     private void RetireConnection(RespireConnection? connection)
     {
-        var clientId = connection?.ServerClientId ?? 0;
         // An identity already obtained remains an obligation even if interrupted bootstrap
         // clears the flag that requests identities on future replacement connections.
-        if (clientId > 0 && !connection!.DrainedSuccessfully)
+        if (connection is { ServerClientId: > 0, DrainedSuccessfully: false })
         {
-            _retiredServerClientIds.TryAdd(clientId, 0);
+            _retiredServerClientIds.TryAdd(connection.ServerClientId, 0);
         }
     }
 
@@ -934,7 +933,6 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         lock (_lifecycleGate)
         {
             if (_retirementCompletion is not null) return _retirementCompletion.Task;
-            if (_disposeCompletion is not null) return _disposeCompletion.Task;
             completion = _retirementCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
             Volatile.Write(ref _retired, 1);
             publish = QueueLifecycleNotificationUnderLock(new StateNotification(null, RespireConnectionState.Disconnected, null));
@@ -969,6 +967,9 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             foreach (var connection in _connections) RetireConnection(connection);
             if (Volatile.Read(ref _disposed) == 0)
                 await FenceRetiredConnectionsAsync(_abortCancellation.Token).ConfigureAwait(false);
+            else if (HasPendingCorrectionFences)
+                throw new OperationCanceledException(
+                    "Disposal prevented retirement from fencing failed Redis connections.", _abortCancellation.Token);
             completion.TrySetResult();
         }
         catch (Exception ex)

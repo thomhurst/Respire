@@ -23,3 +23,11 @@ A fence failure faults the retirement task and preserves unresolved IDs. Owners 
 ## Explicit disposal
 
 `DisposeAsync()` remains abortive. It rejects selection, cancels initialization and fencing, closes accepted operations even when the peer never replies, and waits for owned transport cleanup. Concurrent disposal callers share cleanup completion. Calling disposal during retirement escalates that retirement; a cancelled fence remains observable to its retirement caller. Full client disposal does not wait indefinitely for graceful replies or an unavailable fencing peer.
+
+Disposal that prevents a required fence faults retirement with an `OperationCanceledException`,
+including when disposal happens before fencing starts or retirement is first requested after
+disposal. The unresolved client IDs remain visible through `HasPendingCorrectionFences`.
+Abortive cleanup alone is never proof of correction ordering. Since a disposed multiplexer
+cannot retry fencing, a generation owner that still needs correction guarantees must retain
+its ownership and complete fencing before disposal, or arrange that obligation outside the
+disposed transport. Retirement after disposal succeeds only when no fence obligations remain.
