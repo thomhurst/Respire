@@ -7,6 +7,12 @@ endpoint for new operations. Lower candidate priorities win. The group uses boun
 probes, opens a circuit after consecutive failures, and waits for a recovered higher-priority
 endpoint to remain healthy before failback.
 
+Health means the endpoint answers `PING` within `ProbeTimeout`. The group does not inspect
+application commands or infer that a primary role is writable. Redis errors such as `-LOADING`,
+`-READONLY`, or `OOM` do not affect endpoint health while `PING` succeeds. Detection can take
+approximately `FailureThreshold × (ProbeInterval + ProbeTimeout)` after an endpoint becomes
+unreachable. Choose these settings with that detection delay in mind.
+
 ```csharp
 await using var group = await RespireFailoverGroup.ConnectAsync(
 [

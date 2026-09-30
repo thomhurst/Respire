@@ -86,6 +86,9 @@ internal static class RespireTelemetry
     public static readonly Counter<long> FailoverSwitches = Meter.CreateCounter<long>(
         "respire.failover.endpoint.switches", unit: "{switch}", description: "Selected endpoint changes in standalone failover groups.");
 
+    public static readonly Counter<long> FailoverMonitorErrors = Meter.CreateCounter<long>(
+        "respire.failover.monitor.errors", unit: "{error}", description: "Unexpected errors while updating standalone failover health.");
+
     public static readonly Histogram<double> FailoverProbeDuration = Meter.CreateHistogram<double>(
         "respire.failover.probe.duration", unit: "s", description: "Standalone failover endpoint health probe duration.");
 
@@ -115,6 +118,12 @@ internal static class RespireTelemetry
                 new KeyValuePair<string, object?>("respire.failover.endpoint.current", current?.ToString()));
         }
         catch { /* Metrics listeners must not change health decisions. */ }
+    }
+
+    internal static void RecordFailoverMonitorError()
+    {
+        try { FailoverMonitorErrors.Add(1); }
+        catch { /* Metrics listeners must not stop health monitoring. */ }
     }
 
     internal static void RecordReconnectExhaustion(string host, int port, RespireReconnectSource source = RespireReconnectSource.Command)

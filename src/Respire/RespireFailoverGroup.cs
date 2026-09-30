@@ -164,11 +164,22 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         {
             while (await timer.WaitForNextTickAsync(_stop.Token).ConfigureAwait(false))
             {
-                var now = DateTimeOffset.UtcNow;
-                await Task.WhenAll(_candidates
-                    .Where(candidate => candidate.CircuitOpenUntil is null || candidate.CircuitOpenUntil <= now)
-                    .Select(candidate => ProbeAsync(candidate, _stop.Token))).ConfigureAwait(false);
-                await SelectActiveAsync(DateTimeOffset.UtcNow).ConfigureAwait(false);
+                try
+                {
+                    var now = DateTimeOffset.UtcNow;
+                    await Task.WhenAll(_candidates
+                        .Where(candidate => candidate.CircuitOpenUntil is null || candidate.CircuitOpenUntil <= now)
+                        .Select(candidate => ProbeAsync(candidate, _stop.Token))).ConfigureAwait(false);
+                    await SelectActiveAsync(DateTimeOffset.UtcNow).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (_stop.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch
+                {
+                    RespireTelemetry.RecordFailoverMonitorError();
+                }
             }
         }
         catch (OperationCanceledException) when (_stop.IsCancellationRequested)
@@ -262,7 +273,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                 foreach (Action<RespireFailoverSwitch> handler in handlers.GetInvocationList())
                 {
                     try { handler(switched); }
-                    catch { /* User callbacks cannot stop failover monitoring. */ }
+                    catch { RespireTelemetry.RecordFailoverMonitorError(); }
                 }
             }
         }
