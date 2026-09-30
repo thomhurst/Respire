@@ -108,3 +108,37 @@ does not replay that command after uncertain acceptance. It can leave a counter 
 an unreturned lease that expires after its server-side duration. A reply arriving after the
 local lease estimate elapses is not returned as acquired. There is no acquisition-owned
 keep-alive loop in this API; explicitly renew within a valid lease when needed.
+
+## Multi-node Redlock
+
+`RespireRedlockGroup` provides a quorum lease across an odd number of at least three independent
+standalone Redis deployments. Each supplied client must connect to a different deployment;
+the group never owns or disposes those clients. Acquisition runs against all nodes in parallel,
+uses one random ownership token, and returns only when a majority succeeds with positive
+validity after elapsed time and drift allowance. Failed attempts release that token on every
+reachable node. Node operations have a bounded timeout, configurable with `NodeTimeout`.
+
+```csharp
+using Respire.Extensions.Coordination;
+
+await using var first = await RespireClient.ConnectAsync("redis://node-a:6379");
+await using var second = await RespireClient.ConnectAsync("redis://node-b:6379");
+await using var third = await RespireClient.ConnectAsync("redis://node-c:6379");
+var group = new RespireRedlockGroup([first, second, third]);
+
+await using var attempt = await group.TryAcquireAsync("invoice:42", TimeSpan.FromSeconds(10));
+if (!attempt.Acquired) return;
+
+Console.WriteLine($"Estimated lease time: {attempt.Lock.RemainingEstimate}");
+// Complete protected work within the estimated validity.
+```
+
+Call `ResetExpiryAsync` before validity expires to renew on a quorum. Call `ReleaseAsync` to
+remove the token from all nodes. `RemainingEstimate` is local timing information; it cannot
+prove current ownership. Dispose the attempt to release best-effort. The clients remain owned
+by the caller.
+
+Redlock does not provide consensus or fencing tokens. Redis asynchronous replication, failover,
+partitions and clock drift can violate mutual exclusion. A node that cannot be reached during
+cleanup retains its lease until server-side expiry. Use a consensus-backed lock or a protected
+resource that enforces fencing tokens when stale owners must be rejected.
