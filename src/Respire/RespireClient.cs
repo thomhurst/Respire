@@ -20,12 +20,14 @@ public sealed partial class RespireClient : IRespireClient
 {
     private readonly ClientCore _core;
     private readonly string? _keyPrefix;
+    private readonly byte[]? _keyPrefixBytes;
     private readonly bool _ownsCore;
 
     private RespireClient(ClientCore core, string? keyPrefix, bool ownsCore)
     {
         _core = core;
         _keyPrefix = keyPrefix;
+        _keyPrefixBytes = keyPrefix is null ? null : System.Text.Encoding.UTF8.GetBytes(keyPrefix);
         _ownsCore = ownsCore;
         Strings = new StringCommands(this);
         Keys = new KeyCommands(this);
@@ -1084,6 +1086,7 @@ public sealed partial class RespireClient : IRespireClient
     internal ClientCore Core => _core;
 
     internal string? KeyPrefix => _keyPrefix;
+    internal ReadOnlySpan<byte> KeyPrefixBytes => _keyPrefixBytes;
 
     /// <inheritdoc/>
     public RespireKey ResolveKey(RespireKey key)

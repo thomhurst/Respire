@@ -312,19 +312,37 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
     }
 
     [Test]
-    public async Task RemoveAsync_WrappedClient_GrowsLeaseForSustainedLatency()
+    public async Task RemoveAsync_WrappedClient_GrowsLeaseAfterExpiredRemovalAttempt()
     {
         await Cache.SetAsync("slow-wrapped-remove", [1], new DistributedCacheEntryOptions());
-        var slowClient = new ScriptInterceptingClient(Client, async (_, send) =>
+        var observedLeases = new List<TimeSpan>();
+        ScriptInterceptingClient? slowClient = null;
+        slowClient = new ScriptInterceptingClient(Client, async (call, send) =>
         {
-            await Task.Delay(TimeSpan.FromMilliseconds(500));
+            observedLeases.Add(slowClient!.LastSetExpiry.TimeToLive!.Value);
+            if (call == 1)
+            {
+                // Expire the first lease explicitly. Fixed sleeps can overrun both the
+                // original lease and its replacement on a loaded CI runner.
+                await Client.ExpireAsync(slowClient.LastSetKey, TimeSpan.Zero);
+                var rejected = await send();
+                await Assert.That(rejected.AsInteger()).IsEqualTo(0);
+                await Assert.That(await Cache.GetAsync("slow-wrapped-remove")).IsNotNull();
+                return rejected;
+            }
             return await send();
         });
-        await using var cache = new RespireDistributedCache(slowClient);
+        await using var cache = new RespireDistributedCache(slowClient)
+        {
+            WrappedRemovalMinimumLeaseTtl = TimeSpan.FromSeconds(1),
+            WrappedRemovalMaximumLeaseTtl = TimeSpan.FromSeconds(4)
+        };
 
         await cache.RemoveAsync("slow-wrapped-remove").WaitAsync(TimeSpan.FromSeconds(5));
 
         await Assert.That(slowClient.ScriptCalls).IsEqualTo(2);
+        await Assert.That(observedLeases[1]).IsGreaterThan(observedLeases[0]);
+        await Assert.That(observedLeases[1]).IsLessThanOrEqualTo(TimeSpan.FromSeconds(4));
         await Assert.That(await Cache.GetAsync("slow-wrapped-remove")).IsNull();
     }
 
@@ -1328,6 +1346,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public int ScriptCalls => _scriptCalls;
         public int SetCalls => _setCalls;
         public RespireKey LastSetKey => _lastSetKey;
+        public RespireExpiry LastSetExpiry { get; private set; }
 
         public IScriptCommands Scripts => new InterceptedScripts(this, inner.Scripts);
 
@@ -1396,6 +1415,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             CancellationToken cancellationToken = default)
         {
             _lastSetKey = key;
+            LastSetExpiry = expiry;
             await DelaySetAsync(cancellationToken);
             return await inner.SetAsync(key, value, expiry, when, cancellationToken);
         }
@@ -1405,6 +1425,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
             CancellationToken cancellationToken = default)
         {
             _lastSetKey = key;
+            LastSetExpiry = expiry;
             await DelaySetAsync(cancellationToken);
             return await inner.SetAsync(key, value, expiry, when, cancellationToken);
         }

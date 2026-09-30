@@ -24,7 +24,7 @@ public enum ListSide
 /// dedicated pooled connection, so blocking never stalls multiplexed traffic — use
 /// <see cref="System.Threading.Timeout.InfiniteTimeSpan"/> to wait indefinitely.
 /// </summary>
-public interface IListCommands
+public partial interface IListCommands
 {
     /// <summary>First matching zero-based index, or null. Negative rank searches from the tail; maxLength 0 scans without a limit. Redis: LPOS.</summary>
     ValueTask<long?> PositionAsync(RespireKey key, RespireValue value, long rank = 1, long maxLength = 0, CancellationToken cancellationToken = default);
@@ -149,7 +149,7 @@ public interface IListCommands
     ValueTask<bool> TrimAsync(RespireKey key, long start, long stop, CancellationToken cancellationToken = default);
 }
 
-internal sealed class ListCommands(RespireClient client) : IListCommands
+internal sealed partial class ListCommands(RespireClient client) : IListCommands
 {
     public ValueTask<long?> PositionAsync(RespireKey key, RespireValue value, long rank = 1, long maxLength = 0, CancellationToken cancellationToken = default)
         => client.IntegerOrNullAsync("LPOS", new Cmd1N(RespireCommands.List.LPOS.Verb, client.Key(in key), PositionArguments(value, rank, null, maxLength)), cancellationToken);
