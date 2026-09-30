@@ -631,6 +631,8 @@ public sealed class CartService([FromKeyedServices("cache")] IRespireClient redi
 1. **Delivered — client-side caching**: RESP3 `CLIENT TRACKING` with bounded local storage and
    invalidation pushes for deterministic, explicitly keyed Redis reads. OPTIN is the default;
    optional BCAST uses literal physical prefixes and caches only covered dependencies.
+   Typed MGET retains per-key partial hits; immediate typed/raw HMGET shares HGET field entries
+   and fetches only missing fields.
    The implementation design, including why options-level
    ownership supersedes the earlier
    `WithLocalCache` sketch, lives in [CLIENT_SIDE_CACHING_DESIGN.md](CLIENT_SIDE_CACHING_DESIGN.md).

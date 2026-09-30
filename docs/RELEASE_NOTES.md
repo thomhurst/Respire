@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Partial cached hash reads
+
+Immediate HMGET reads reuse cached HGET fields and fetch remaining fields in one request,
+including typed and raw calls. Field order, duplicates, binary raw arguments, missing values,
+Cluster redirects, and hash-key invalidation retain their normal contracts. Malformed replies
+cannot publish partial field entries. Raw MGET keeps exact-query caching; typed MGET retains
+its existing per-key partial-hit behavior.
+
 ### Typed key notifications
 
 Added binary-safe keyspace, keyevent, and Redis 8.8 subkey channel factories and allocation-free notification parsing. Explicit physical-key prefixes, database scopes, unknown events, and malformed-frame handling are documented. Notification descriptors are server-owned and cannot be published. Cluster delivery remains #298; subscriptions never change server configuration.

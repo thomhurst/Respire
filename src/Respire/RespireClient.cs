@@ -1830,6 +1830,9 @@ public sealed partial class RespireClient : IRespireClient
                 if (operation == "MGET" && query.Query.ArgumentCount > 0)
                     return CachedRawGetManyAsync(query.Query, cancellationToken);
             }
+
+            if (operation == "HMGET" && query.Query.ArgumentCount >= 2)
+                return CachedHashGetManyAsync(cache, query, cancellationToken);
             if (cache.TryGet(in query, out var cached))
             {
                 return new ValueTask<RespValue>(cached);

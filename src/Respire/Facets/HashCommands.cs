@@ -82,9 +82,11 @@ public interface IHashCommands
     ValueTask<byte[]?> GetBytesAsync(RespireKey key, string field, CancellationToken cancellationToken = default);
 
     /// <summary>Gets many fields in one round trip; missing fields yield null. Redis: HMGET.</summary>
+    /// <remarks>With client-side caching, only uncached fields are fetched; hash invalidation evicts all fields.</remarks>
     ValueTask<string?[]> GetManyAsync(RespireKey key, params ReadOnlySpan<string> fields);
 
     /// <summary>Gets many fields in one round trip; missing fields yield null. Redis: HMGET.</summary>
+    /// <remarks>With client-side caching, only uncached fields are fetched; hash invalidation evicts all fields.</remarks>
     ValueTask<string?[]> GetManyAsync(
         RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
 

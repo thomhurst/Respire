@@ -113,12 +113,19 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
         await AssertAllAreCachedAsync(
             resources.Client,
             async () => _ = await resources.Client.Hashes.GetStringAsync(key, "first"),
-            async () => _ = await resources.Client.Hashes.GetManyAsync(key, "first", "missing"),
             async () => _ = await resources.Client.Hashes.GetAllAsync(key),
             async () => _ = await resources.Client.Hashes.ExistsAsync(key, "first"),
             async () => _ = await resources.Client.Hashes.CountAsync(key),
             async () => _ = await resources.Client.Hashes.FieldsAsync(key),
             async () => _ = await resources.Client.Hashes.ValuesAsync(key));
+
+        // HMGET records one lookup per field, and reuses the HGET entry above.
+        var hits = resources.Client.ClientSideCache!.GetStatistics().Hits;
+        await Assert.That(await resources.Client.Hashes.GetManyAsync(key, "first", "missing"))
+            .IsEquivalentTo(new string?[] { "one", null });
+        await Assert.That(await resources.Client.Hashes.GetManyAsync(key, "missing", "first"))
+            .IsEquivalentTo(new string?[] { null, "one" });
+        await Assert.That(resources.Client.ClientSideCache.GetStatistics().Hits - hits).IsEqualTo(3);
 
         await resources.Database.HashSetAsync(key, "first", "changed");
         await WaitForCacheEvictionAsync(resources.Client);
@@ -350,6 +357,68 @@ public class ClientSideCacheIntegrationTests(RedisTestContainer fixture)
 
         await Assert.That(cache.Count).IsEqualTo(0);
         await Assert.That(cache.SizeBytes).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task HashMultiReadsShareBinaryFieldsAndInvalidateOnExternalWrite()
+    {
+        await using var resources = await Resources.CreateAsync(fixture);
+        var key = $"cache:hash-partial:{Guid.NewGuid():N}";
+        byte[] binaryField = [0, 255, 1];
+        await resources.Database.HashSetAsync(key, [new HashEntry(binaryField, "binary"), new HashEntry("a", "A")]);
+        await Assert.That(await resources.Client.Hashes.GetManyAsync(key, "a", "missing"))
+            .IsEquivalentTo(new string?[] { "A", null });
+        using (var mixed = await resources.Client.ExecuteAsync("HMGET", key, "a", binaryField, "missing", binaryField))
+        {
+            await Assert.That(mixed.Select(value => value.IsNull ? null : value.AsString()).ToArray())
+                .IsEquivalentTo(new string?[] { "A", "binary", null, "binary" });
+        }
+        var hits = resources.Client.ClientSideCache!.GetStatistics().Hits;
+        using (var cached = await resources.Client.ExecuteAsync("HMGET", key, binaryField, "missing"))
+        {
+            await Assert.That(cached[0].AsString()).IsEqualTo("binary");
+            await Assert.That(cached[1].IsNull).IsTrue();
+        }
+        await Assert.That(resources.Client.ClientSideCache.GetStatistics().Hits - hits).IsEqualTo(2);
+        await resources.Database.HashSetAsync(key, binaryField, "changed");
+        await WaitForCacheEvictionAsync(resources.Client);
+        using var fresh = await resources.Client.ExecuteAsync("HMGET", key, binaryField, "a");
+        await Assert.That(fresh[0].AsString()).IsEqualTo("changed");
+        await Assert.That(fresh[1].AsString()).IsEqualTo("A");
+    }
+
+    [Test]
+    public async Task HashMultiReadsCacheAbsentHashesAndInvalidateOnCreation()
+    {
+        await using var resources = await Resources.CreateAsync(fixture);
+        var key = $"cache:hash-absent:{Guid.NewGuid():N}";
+        await Assert.That(await resources.Client.Hashes.GetManyAsync(key, "a", "b"))
+            .IsEquivalentTo(new string?[] { null, null });
+        var hits = resources.Client.ClientSideCache!.GetStatistics().Hits;
+        await Assert.That(await resources.Client.Hashes.GetManyAsync(key, "b", "a", "b"))
+            .IsEquivalentTo(new string?[] { null, null, null });
+        await Assert.That(resources.Client.ClientSideCache.GetStatistics().Hits - hits).IsEqualTo(3);
+        await resources.Database.HashSetAsync(key, "b", "created");
+        await WaitForCacheEvictionAsync(resources.Client);
+        await Assert.That(await resources.Client.Hashes.GetManyAsync(key, "a", "b"))
+            .IsEquivalentTo(new string?[] { null, "created" });
+    }
+
+    [Test]
+    public async Task HashMultiReadsDiscardFieldsAcrossReconnect()
+    {
+        var name = $"respire-hash-reconnect-{Guid.NewGuid():N}";
+        await using var resources = await Resources.CreateAsync(fixture, name);
+        var key = $"cache:hash-reconnect:{Guid.NewGuid():N}";
+        await resources.Database.HashSetAsync(key, [new HashEntry("a", "old"), new HashEntry("b", "B")]);
+        await resources.Client.Hashes.GetManyAsync(key, "a", "b");
+        var clientId = await FindClientIdAsync(resources.Database, name);
+        await resources.Database.ExecuteAsync("CLIENT", "KILL", "ID", clientId);
+        await WaitUntilAsync(() => resources.Client.ClientSideCache!.GetStatistics().ContinuityFlushes > 0
+            && resources.Client.IsConnected);
+        await resources.Database.HashSetAsync(key, "a", "new");
+        await Assert.That(await resources.Client.Hashes.GetManyAsync(key, "a", "b"))
+            .IsEquivalentTo(new string?[] { "new", "B" });
     }
 
     private static async Task<long> FindClientIdAsync(IDatabase database, string clientName)
