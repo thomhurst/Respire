@@ -260,6 +260,9 @@ public readonly record struct StreamAddOptions
     /// <summary>Limits approximate trimming work. Requires a threshold and Redis 6.2+; zero disables the limit.</summary>
     public long? Limit { get; init; }
 
+    /// <summary>Redis 8.2+ reference handling when trimming. Null preserves the legacy wire format.</summary>
+    public StreamReferencePolicy? ReferencePolicy { get; init; }
+
     /// <summary>Gets whether trimming may be approximate. Defaults to true.</summary>
     /// <remarks>Unlike XADD, <see cref="StreamTrimOptions.Approximate"/> defaults to false for XTRIM.</remarks>
     public bool ApproximateTrim
@@ -278,6 +281,7 @@ public readonly record struct StreamAddOptions
     internal StreamTrimOptions ToTrimOptions() => new()
     {
         MaxLength = MaxLength, MinId = MinId, Approximate = ApproximateTrim, Limit = Limit,
+        ReferencePolicy = ReferencePolicy,
     };
 
     /// <inheritdoc/>
@@ -286,19 +290,20 @@ public readonly record struct StreamAddOptions
            && MaxLength == other.MaxLength
            && MinId == other.MinId
            && Limit == other.Limit
+           && ReferencePolicy == other.ReferencePolicy
            && ApproximateTrim == other.ApproximateTrim
            && CreateStream == other.CreateStream;
 
     /// <inheritdoc/>
     public override int GetHashCode()
-        => HashCode.Combine(Id, MaxLength, MinId, Limit, ApproximateTrim, CreateStream);
+        => HashCode.Combine(Id, MaxLength, MinId, Limit, ReferencePolicy, ApproximateTrim, CreateStream);
 }
 
 /// <summary>
 /// Stream commands. Collection cardinality uses <see cref="CountAsync"/>. Group reading is
 /// exposed as an endless async stream of entries.
 /// </summary>
-public interface IStreamCommands
+public partial interface IStreamCommands
 {
     /// <summary>Appends an entry (id auto-generated) and returns its id. Redis: XADD.</summary>
     ValueTask<RespireStreamId> AddAsync(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields);
@@ -497,7 +502,7 @@ public interface IStreamCommands
         int batchSize = 64, CancellationToken cancellationToken = default);
 }
 
-internal sealed class StreamCommands(RespireClient client) : IStreamCommands
+internal sealed partial class StreamCommands(RespireClient client) : IStreamCommands
 {
     private static readonly TimeSpan BlockInterval = TimeSpan.FromSeconds(5);
     private static readonly Verb XDel = new("XDEL");
