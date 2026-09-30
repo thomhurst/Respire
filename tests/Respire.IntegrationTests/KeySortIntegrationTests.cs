@@ -9,6 +9,28 @@ public class KeySortIntegrationTests(RedisTestContainer fixture)
     public enum Mode { Immediate, Batch, Transaction }
 
     [Test]
+    [Arguments(2, Mode.Immediate)]
+    [Arguments(2, Mode.Batch)]
+    [Arguments(2, Mode.Transaction)]
+    [Arguments(3, Mode.Immediate)]
+    [Arguments(3, Mode.Batch)]
+    [Arguments(3, Mode.Transaction)]
+    public async Task ArrowAcrossPrefixBoundaryBeforeWildcardRemainsPartOfKey(int protocol, Mode mode)
+    {
+        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        var view = client.WithKeyPrefix("tenant-");
+        await view.Lists.RightPushAsync("items", "2", "1");
+        await view.SetAsync(">weight:1", "1");
+        await view.SetAsync(">weight:2", "2");
+        await view.Hashes.SetAsync(">object:1", "name", "one");
+        await view.Hashes.SetAsync(">object:2", "name", "two");
+        (await Sort(view, mode, "items", new RespireSortOptions
+        {
+            By = ">weight:*", Get = new RespireKey[] { ">object:*->name" },
+        })).Should().Equal("one", "two");
+    }
+
+    [Test]
     [Arguments(2, Mode.Immediate, false)]
     [Arguments(2, Mode.Immediate, true)]
     [Arguments(2, Mode.Batch, false)]

@@ -11,6 +11,37 @@ namespace Respire.Tests.Networking;
 public class KeySortCommandTests
 {
     [Test]
+    [Arguments("tenant:{sort}:weight:*", true)]
+    [Arguments("tenant->{sort}:weight:*->rank", true)]
+    [Arguments("tenant:{sort}:weight:*->", true)]
+    [Arguments("tenant:{{sort}:weight:*", true)]
+    [Arguments("tenant:{}:{sort}:weight:*", false)]
+    [Arguments("tenant:{sort:weight:*}", false)]
+    [Arguments("tenant:?{sort}:weight:*", false)]
+    [Arguments("tenant:[{sort}]:weight:*", false)]
+    public async Task FixedPatternSlotUsesFirstRedisHashTag(string pattern, bool expected)
+    {
+        var found = ClusterHash.TryGetFixedPatternSlot(Encoding.UTF8.GetBytes(pattern), out var slot);
+        await Assert.That(found).IsEqualTo(expected);
+        if (found) await Assert.That(slot).IsEqualTo(ClusterHash.GetSlot(pattern));
+    }
+
+    [Test]
+    [Arguments("tenant-", "{sort}:items", ">{sort}:weight:*")]
+    [Arguments("tenant:{", "sort}:items", "sort}:weight:*")]
+    public async Task ClusterPatternValidationUsesCompletePrefixJoin(string prefix, string key, string pattern)
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", 1)],
+        });
+        using var batch = client.WithKeyPrefix(prefix).CreateBatch();
+        _ = batch.Keys.Sort(key, new RespireSortOptions { By = pattern });
+        // Validation completes without opening the lazy client or contacting Redis.
+        await Assert.That(ClusterHash.GetSlot(prefix + pattern)).IsEqualTo(ClusterHash.GetSlot(prefix + key));
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task DeferredSort_SnapshotsBinaryPatternsAndOwnsResults(bool transactional)

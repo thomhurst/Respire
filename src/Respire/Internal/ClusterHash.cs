@@ -76,6 +76,26 @@ internal static class ClusterHash
         return GetCrcSlot(key);
     }
 
+    /// <summary>Finds a nonempty first hash tag before any pattern metacharacter.</summary>
+    internal static bool TryGetFixedPatternSlot(ReadOnlySpan<byte> pattern, out int slot)
+    {
+        slot = 0;
+        var open = -1;
+        for (var index = 0; index < pattern.Length; index++)
+        {
+            var value = pattern[index];
+            if (value is (byte)'*' or (byte)'?' or (byte)'[' or (byte)'\\') return false;
+            if (open < 0 && value == (byte)'{') open = index;
+            else if (open >= 0 && value == (byte)'}')
+            {
+                if (index == open + 1) return false; // Redis hashes the whole key after an empty first tag.
+                slot = GetCrcSlot(pattern[(open + 1)..index]);
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static int GetCrcSlot(ReadOnlySpan<byte> key)
     {
         ushort crc = 0;

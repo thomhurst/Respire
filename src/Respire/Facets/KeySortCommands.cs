@@ -90,36 +90,40 @@ internal sealed partial class KeyCommands
         }
         var operation = options?.ReadOnly == true ? "SORT_RO" : "SORT";
         var source = client.Key(in key);
-        var arguments = new List<RespireValue> { source };
+        var count = checked(2 + (options?.By is not null ? 2 : 0) + (options?.Limit is not null ? 3 : 0)
+            + (options?.Get.Length ?? 0) * 2 + (options?.Alpha == true ? 1 : 0) + (destination.HasValue ? 2 : 0));
+        var arguments = new RespireValue[count];
+        var index = 0;
+        arguments[index++] = source;
         if (options?.By is { } by)
         {
-            arguments.Add("BY");
-            arguments.Add(SortPattern(client, source, by, isGet: false));
+            arguments[index++] = "BY";
+            arguments[index++] = SortPattern(client, source, by, isGet: false);
         }
         if (options?.Limit is { } slice)
         {
-            arguments.Add("LIMIT");
-            arguments.Add(slice.Offset);
-            arguments.Add(slice.Count);
+            arguments[index++] = "LIMIT";
+            arguments[index++] = slice.Offset;
+            arguments[index++] = slice.Count;
         }
         if (options is not null)
         {
             foreach (var pattern in options.Get.Span)
             {
-                arguments.Add("GET");
-                arguments.Add(SortPattern(client, source, pattern, isGet: true));
+                arguments[index++] = "GET";
+                arguments[index++] = SortPattern(client, source, pattern, isGet: true);
             }
         }
-        arguments.Add(options?.Descending == true ? "DESC" : "ASC");
-        if (options?.Alpha == true) arguments.Add("ALPHA");
+        arguments[index++] = options?.Descending == true ? "DESC" : "ASC";
+        if (options?.Alpha == true) arguments[index++] = "ALPHA";
         if (destination is { } target)
         {
             var resolved = client.Key(in target);
             ValidateSortSlot(client, source, resolved);
-            arguments.Add("STORE");
-            arguments.Add(resolved);
+            arguments[index++] = "STORE";
+            arguments[index++] = resolved;
         }
-        return (operation, new CmdN(options?.ReadOnly == true ? Verbs.SortRo : Verbs.Sort, arguments.ToArray()));
+        return (operation, new CmdN(options?.ReadOnly == true ? Verbs.SortRo : Verbs.Sort, arguments));
     }
 
     private static RespireValue SortPattern(RespireClient client, RespireValue source, RespireKey pattern, bool isGet)
@@ -135,14 +139,12 @@ internal sealed partial class KeyCommands
         byte[] resolved = [.. prefix, .. bytes];
         if (client.Core.Cluster is not null)
         {
-            var keyEnd = resolved.AsSpan().IndexOf("->"u8);
-            var keyPattern = keyEnd < 0 ? resolved.AsSpan() : resolved.AsSpan(0, keyEnd);
-            var open = keyPattern.IndexOf((byte)'{');
-            var close = open < 0 ? -1 : keyPattern[(open + 1)..].IndexOf((byte)'}') + open + 1;
-            var wildcard = keyPattern.IndexOf((byte)'*');
-            if (open < 0 || close <= open + 1 || wildcard < 0 || close >= wildcard || keyPattern.Contains((byte)0))
+            // Redis interprets -> as a field separator only after the first wildcard.
+            // Hash-tag validation must therefore inspect the complete prefixed pattern.
+            if (resolved.Contains((byte)0) || !ClusterHash.TryGetFixedPatternSlot(resolved, out var slot))
                 throw new NotSupportedException("Cluster SORT external patterns require a fixed nonempty hash tag before the wildcard (Redis 7.4+).");
-            ValidateSortSlot(client, source, new RespireValue(keyPattern.ToArray()));
+            if (source.AsKey().ClusterSlot != slot)
+                throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", "SORT");
         }
         return resolved;
     }
