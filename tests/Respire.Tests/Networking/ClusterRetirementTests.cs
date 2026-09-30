@@ -19,7 +19,10 @@ public class ClusterRetirementTests
     [Test]
     public async Task RetirementSnapshotsAreOwnedAndRequireALiveClient()
     {
-        await using var standalone = RespireClient.Create(new RespireOptions());
+        await using var standalone = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = [new RespireEndpoint("seed.invalid")],
+        });
         await Assert.That(standalone.GetClusterRetirementSnapshot()).IsNull();
         await using var client = CreateClient();
         var snapshot = client.GetClusterRetirementSnapshot()!;

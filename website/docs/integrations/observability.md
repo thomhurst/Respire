@@ -116,6 +116,8 @@ same underlying router. Capture after root-client disposal begins throws
 `ObjectDisposedException`; a capture racing disposal may return its final observation.
 Already captured snapshots remain usable and contain no router, connection, pool, or
 exception references. No history is retained by the client for diagnostics.
+`CapturedAt` is UTC wall-clock metadata; retirement ages use monotonic timestamps and
+are not computed by subtracting wall-clock values.
 
 | Observation | Meaning |
 | --- | --- |

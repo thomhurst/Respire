@@ -9,6 +9,7 @@ internal sealed partial class ClusterRouter
         lock (_nodesGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            // Wall-clock capture metadata is independent of monotonic retirement ages.
             var capturedAt = DateTimeOffset.UtcNow;
             var now = Stopwatch.GetTimestamp();
             var oldest = TimeSpan.Zero;
@@ -25,7 +26,7 @@ internal sealed partial class ClusterRouter
                 fences += pendingFences;
                 if (!node.RetirementDrained) undrained++;
                 else if (pendingFences != 0) awaitingFence++;
-                var cleanupFailed = Volatile.Read(ref retirement.CleanupFailed);
+                var cleanupFailed = retirement.CleanupFailed;
                 if (retirement.DedicatedPool is { } pool)
                 {
                     var state = pool.CaptureRetirementState();
