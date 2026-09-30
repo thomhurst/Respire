@@ -67,20 +67,22 @@ public sealed class RespireTimeoutDiagnostics
     /// <summary>A heuristic: work is queued and busy workers have reached the configured minimum.</summary>
     public bool PossibleThreadPoolStarvation => PendingWorkItems > 0 && BusyWorkerThreads >= MinWorkerThreads;
     /// <summary>Suggested checks based on the observed stage and counters.</summary>
+    /// <remarks>Connection-specific observations take priority over the thread-pool heuristic.
+    /// The diagnostic wording may change; use the structured properties for programmatic decisions.</remarks>
     public string Hint
     {
         get
         {
             if (Stage == RespireCommandStage.Unknown && PendingWorkItems is null)
                 return "No timeout observations are available; inspect the original operation and its connection.";
-            if (PossibleThreadPoolStarvation)
-                return "Possible thread-pool starvation: inspect blocking work and worker availability.";
             if (Stage == RespireCommandStage.Connecting || IsReconnecting == true)
                 return "Connection initialization or reconnect is delayed; check endpoint availability, DNS, TLS, and authentication.";
             if (Stage is RespireCommandStage.Buffered or RespireCommandStage.Writing || PendingWriteBytes > 0)
                 return "Writes are queued: check large payloads ahead, socket backpressure, network throughput, and server reads.";
             if (Stage == RespireCommandStage.WaitingForCapacity)
                 return "The in-flight queue is full: check slow server commands, reply sizes, and network latency.";
+            if (PossibleThreadPoolStarvation)
+                return "Possible thread-pool starvation: inspect blocking work and worker availability.";
             return "Check slow server commands (SLOWLOG), large replies ahead, network latency, and thread-pool scheduling.";
         }
     }

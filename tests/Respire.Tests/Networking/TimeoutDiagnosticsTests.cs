@@ -12,6 +12,59 @@ namespace Respire.Tests.Networking;
 public class TimeoutDiagnosticsTests
 {
     [Test]
+    [Arguments(RespireCommandStage.Connecting, false, 0L, "Connection initialization")]
+    [Arguments(RespireCommandStage.AwaitingReply, true, 0L, "Connection initialization")]
+    [Arguments(RespireCommandStage.Buffered, false, 0L, "Writes are queued")]
+    [Arguments(RespireCommandStage.Writing, false, 0L, "Writes are queued")]
+    [Arguments(RespireCommandStage.AwaitingReply, false, 1L, "Writes are queued")]
+    [Arguments(RespireCommandStage.WaitingForCapacity, false, 0L, "The in-flight queue is full")]
+    [Arguments(RespireCommandStage.AwaitingReply, false, 0L, "Possible thread-pool starvation")]
+    public async Task ConnectionHintsTakePriorityOverThreadPoolHeuristic(
+        RespireCommandStage stage, bool reconnecting, long pendingBytes, string expectedHint)
+    {
+        var snapshot = RespireTimeoutDiagnostics.Capture(stage, pendingWriteBytes: pendingBytes,
+            isReconnecting: reconnecting);
+        // Fix the captured pool observation without changing the process-wide thread pool.
+        typeof(RespireTimeoutDiagnostics).GetProperty(nameof(snapshot.PendingWorkItems))!.SetValue(snapshot, 1L);
+        typeof(RespireTimeoutDiagnostics).GetProperty(nameof(snapshot.BusyWorkerThreads))!.SetValue(snapshot, 4);
+        typeof(RespireTimeoutDiagnostics).GetProperty(nameof(snapshot.MinWorkerThreads))!.SetValue(snapshot, 4);
+        await Assert.That(snapshot.PossibleThreadPoolStarvation).IsTrue();
+        await Assert.That(snapshot.Hint).StartsWith(expectedHint);
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    public async Task AcquisitionTimeoutReportsConnecting(bool cluster, bool correctionSetup)
+    {
+        await using var server = new FakeRespServer { SuppressReply = _ => true };
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
+            Connections = 1, UseCluster = cluster, Protocol = RespProtocol.Resp3,
+            CommandTimeout = TimeSpan.FromMilliseconds(200), ConnectTimeout = TimeSpan.FromSeconds(5)
+        });
+        RespireTimeoutException? error;
+        if (correctionSetup)
+        {
+            error = await Assert.That(async () => await client.EnsureReliableCorrectionOrderingAsync())
+                .ThrowsExactly<RespireTimeoutException>();
+        }
+        else
+        {
+            await using var transaction = client.CreateTransaction();
+            _ = transaction.GetString("key");
+            error = await Assert.That(async () => await transaction.CommitAsync())
+                .ThrowsExactly<RespireTimeoutException>();
+        }
+        await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
+        await Assert.That(error.Diagnostics.ConnectionId).IsNull();
+        await Assert.That(error.Diagnostics.Endpoint).IsEqualTo(cluster ? null : new RespireEndpoint("127.0.0.1", server.Port));
+        await Assert.That(error.Diagnostics.Hint).StartsWith("Connection initialization");
+    }
+
+    [Test]
     [Arguments(9L, RespireCommandStage.Buffered)]
     [Arguments(10L, RespireCommandStage.Buffered)]
     [Arguments(11L, RespireCommandStage.Writing)]
