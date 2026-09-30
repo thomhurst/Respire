@@ -354,6 +354,32 @@ public interface IStreamCommands
     /// <summary>Deletes a consumer group; returns false when it did not exist. Redis: XGROUP DESTROY.</summary>
     ValueTask<bool> DeleteGroupAsync(RespireKey key, string group, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Creates a consumer in an existing group; returns false when the consumer already exists.
+    /// Redis 6.2+: XGROUP CREATECONSUMER.
+    /// </summary>
+    /// <remarks>Immediate-only administration; not exposed by batches or transactions.</remarks>
+    ValueTask<bool> CreateConsumerAsync(
+        RespireKey key,
+        string group,
+        string consumer,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets an existing stream's last-generated id (Redis 5.0+: XSETID).
+    /// Optional entries-added and maximum-deleted-id metadata require Redis 7.0+.
+    /// This advanced restoration operation does not add entries or move consumer groups.
+    /// Redis validates ids and their consistency with the existing stream.
+    /// </summary>
+    /// <remarks>Redis defines XSETID as an internal replication command. Use it only for deliberate stream
+    /// restoration, not normal production. Immediate-only; not exposed by batches or transactions.</remarks>
+    ValueTask SetLastIdAsync(
+        RespireKey key,
+        RespireStreamId lastId,
+        long? entriesAdded = null,
+        RespireStreamId? maxDeletedId = null,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Deletes a consumer from a group; returns its pending entry count. Redis: XGROUP DELCONSUMER.</summary>
     ValueTask<long> DeleteConsumerAsync(
         RespireKey key,
@@ -461,6 +487,8 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
     internal static readonly Verb XTrim = new("XTRIM");
     private static readonly Verb XGroupDestroy = new("XGROUP DESTROY");
     private static readonly Verb XGroupDelConsumer = new("XGROUP DELCONSUMER");
+    private static readonly Verb XGroupCreateConsumer = new("XGROUP CREATECONSUMER");
+    private static readonly Verb XSetId = new("XSETID");
     private static readonly Verb XGroupSetId = new("XGROUP SETID");
     private static readonly Verb XPending = new("XPENDING");
     private static readonly Verb XClaim = new("XCLAIM");
@@ -636,6 +664,53 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
         CancellationToken cancellationToken = default)
         => client.FlagAsync(
             "XGROUP DESTROY", new Cmd2(XGroupDestroy, client.Key(in key), group), cancellationToken);
+
+    public ValueTask<bool> CreateConsumerAsync(
+        RespireKey key,
+        string group,
+        string consumer,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return client.FlagAsync(
+            "XGROUP CREATECONSUMER", new Cmd3(XGroupCreateConsumer, client.Key(in key), group, consumer),
+            cancellationToken);
+    }
+
+    public ValueTask SetLastIdAsync(
+        RespireKey key,
+        RespireStreamId lastId,
+        long? entriesAdded = null,
+        RespireStreamId? maxDeletedId = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (entriesAdded is < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(entriesAdded), "Entries added must be non-negative.");
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (entriesAdded is { } added && maxDeletedId is { } deleted)
+        {
+            return client.OkAsync("XSETID", new Cmd2N(XSetId, client.Key(in key), lastId.Value,
+                ["ENTRIESADDED", added, "MAXDELETEDID", deleted.Value]), cancellationToken);
+        }
+
+        if (entriesAdded is { } count)
+        {
+            return client.OkAsync("XSETID", new Cmd4(XSetId, client.Key(in key), lastId.Value,
+                "ENTRIESADDED", count), cancellationToken);
+        }
+
+        if (maxDeletedId is { } maximum)
+        {
+            return client.OkAsync("XSETID", new Cmd4(XSetId, client.Key(in key), lastId.Value,
+                "MAXDELETEDID", maximum.Value), cancellationToken);
+        }
+
+        return client.OkAsync("XSETID", new Cmd2(XSetId, client.Key(in key), lastId.Value), cancellationToken);
+    }
 
     public ValueTask<long> DeleteConsumerAsync(
         RespireKey key,

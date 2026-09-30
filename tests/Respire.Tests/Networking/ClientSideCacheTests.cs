@@ -1388,6 +1388,38 @@ public class ClientSideCacheTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task StreamMetadataMutationFencesOnlyItsTarget(bool setLastId)
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(HelloReply, FakeRespServer.OkReply)
+        {
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith(setLastId ? "XSETID " : "XGROUP CREATECONSUMER ", StringComparison.Ordinal)) return false;
+                received.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await ConnectAsync(server);
+        var view = client.WithKeyPrefix("tenant:");
+        var cache = client.Core.ClientCache!;
+        InsertCachedValue(cache, "tenant:key", "old");
+        InsertCachedValue(cache, "tenant:other", "untouched");
+        Task pending = setLastId
+            ? view.Streams.SetLastIdAsync("key", "1-0", entriesAdded: 1, maxDeletedId: "0-0").AsTask()
+            : view.Streams.CreateConsumerAsync("key", "workers", "consumer").AsTask();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(cache.Count).IsEqualTo(1);
+        InsertCachedValue(cache, "tenant:key", "racing");
+        await server.SendRawAsync(setLastId ? FakeRespServer.OkReply : ":1\r\n"u8.ToArray());
+        await pending;
+        await Assert.That(cache.Count).IsEqualTo(1);
+        await Assert.That(await view.GetStringAsync("other")).IsEqualTo("untouched");
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(true, false)]
     [Arguments(false, true)]

@@ -17,6 +17,15 @@
   implementations, decorators, and mocks must implement or forward all six new methods. See the
   [pub/sub introspection guide](../website/docs/guides/pub-sub-introspection.md).
 
+### Stream metadata
+
+- `Streams.CreateConsumerAsync` adds Redis 6.2+ XGROUP CREATECONSUMER.
+  `SetLastIdAsync` exposes Redis 5.0+ XSETID, including Redis 7.0+ ENTRIESADDED and
+  MAXDELETEDID metadata. Existing overloads retain their bindings. External
+  `IStreamCommands` implementations, decorators, and mocks must implement or forward
+  both new members. See the [stream metadata guide](../website/docs/commands/collections.md#stream-metadata)
+  for server constraints and the advanced restoration semantics of XSETID.
+
 ### String comparisons
 
 - `Strings.SetConditionalAsync` and `GetAndSetConditionalAsync` add value/digest
