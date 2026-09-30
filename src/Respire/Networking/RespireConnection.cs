@@ -2327,6 +2327,8 @@ internal sealed record RespireConnectionOptions
 {
     public static readonly RespireConnectionOptions Default = new();
 
+    internal RespireReconnectPolicy? ReconnectPolicy { get; init; }
+
     /// <summary>
     /// Receives out-of-band frames on connections built from these options (see
     /// <see cref="RespirePushHandler"/>). Set by the client's pub/sub hub.

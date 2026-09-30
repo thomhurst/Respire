@@ -510,9 +510,13 @@ concatenates). Client-side caching is configured through `RespireOptions.ClientS
 
 ## 13. Resilience
 
-- **Reconnect**: failed multiplexed connections are replaced automatically. Failed replacement attempts retry on the next use. Pub/sub uses its own reconnect/resubscribe loop. `ConnectionStateChanged` reports
-  transitions. There is no configurable `ReconnectPolicy` today; that is tracked in
-  [#401](https://github.com/thomhurst/Respire/issues/401).
+- **Reconnect**: failed multiplexed connections are replaced automatically, with failed attempts
+  retried on the next use. Optional `RespireOptions.ReconnectPolicy` adds per-slot exponential
+  backoff, bounded jitter, and persistent attempt limits; null preserves immediate replacement.
+  Successful replacement resets the count. `ConnectionStateChanged` and reconnect histograms
+  report scheduled attempts and delay. Dedicated pools, pub/sub, and discovery retain their
+  existing behavior pending the remaining [#401](https://github.com/thomhurst/Respire/issues/401)
+  children. See the [recovery guide](../website/docs/guides/reconnect-policy.md).
 - **Timeouts**: `CommandTimeout` is the client default; each call accepts a `CancellationToken`
   for tighter control. `RespireTimeoutException` names the operation and explains that a sent
   command may still execute. `Diagnostics` captures command stage, connection identity,

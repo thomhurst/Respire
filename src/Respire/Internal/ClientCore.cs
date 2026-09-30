@@ -207,7 +207,7 @@ internal sealed class ClientCore : IAsyncDisposable
         var publishedState = _publishedEndpointStates.GetValueOrDefault(
             source.Endpoint,
             RespireConnectionState.Connected);
-        if (state == publishedState)
+        if (state == publishedState && source.ReconnectAttempt == 0)
         {
             return;
         }

@@ -71,6 +71,9 @@ public sealed class RespireOptionsBuilder
     /// <inheritdoc cref="RespireOptions.ConnectTimeout"/>
     public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(10);
 
+    /// <inheritdoc cref="RespireOptions.ReconnectPolicy"/>
+    public RespireReconnectPolicy? ReconnectPolicy { get; set; }
+
     /// <inheritdoc cref="RespireOptions.UseTls"/>
     public bool UseTls { get; set; }
 
@@ -152,6 +155,7 @@ public sealed class RespireOptionsBuilder
         AllowAdmin = AllowAdmin,
         Protocol = Protocol,
         ConnectTimeout = ConnectTimeout,
+        ReconnectPolicy = ReconnectPolicy,
         UseTls = UseTls,
         TlsOptions = TlsOptions,
         ConnectionIdleReadTimeout = ConnectionIdleReadTimeout,
