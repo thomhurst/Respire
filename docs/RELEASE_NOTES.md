@@ -44,6 +44,14 @@
   both new members. See the [stream metadata guide](../website/docs/commands/collections.md#stream-metadata)
   for server constraints and the advanced restoration semantics of XSETID.
 
+### Valkey Cluster databases
+
+- `UseCluster` now supports non-zero `Database` values on Valkey 9+ with `cluster-databases`
+  configured. Each physical connection checks `INFO SERVER` and completes `SELECT` before use.
+  This feature needs INFO/SELECT permissions. Unsupported servers still reject the configuration,
+  now during connection setup rather than lazy client construction; database 0 and standalone
+  handshakes are unchanged. See the [connection guide](../website/docs/fundamentals/connections.md#non-zero-databases-in-valkey-cluster).
+
 ### String comparisons
 
 - `Strings.SetConditionalAsync` and `GetAndSetConditionalAsync` add value/digest

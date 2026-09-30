@@ -1627,16 +1627,14 @@ public class ClusterTests
     }
 
     [Test]
-    public async Task ClusterMode_RejectsNonZeroDatabase()
+    public async Task ClusterMode_NonZeroDatabaseDefersCapabilityValidationUntilConnection()
     {
-        var error = Assert.Throws<RespireConfigurationException>(() => RespireClient.Create(new RespireOptions
+        await using var client = RespireClient.Create(new RespireOptions
         {
-            UseCluster = true,
-            Database = 1,
-            Endpoints = { new RespireEndpoint("localhost") },
-        }));
-
-        await Assert.That(error.Message).Contains("database 0");
+            UseCluster = true, Database = 1, Endpoints = { new RespireEndpoint("localhost") },
+        });
+        await Assert.That(client.Core.Cluster!.IsConnected).IsFalse();
+        await Assert.That(client.Core.Options.Database).IsEqualTo(1);
     }
 
     [Test]

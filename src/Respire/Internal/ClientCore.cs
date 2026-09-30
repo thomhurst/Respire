@@ -33,11 +33,6 @@ internal sealed class ClientCore : IAsyncDisposable
 
     public ClientCore(RespireOptions options)
     {
-        if (options.UseCluster && options.Database != 0)
-        {
-            throw new RespireConfigurationException("Redis Cluster supports database 0 only.");
-        }
-
         Options = options;
         Logger = options.CreateLogger("Respire.RespireClient");
         var endpoint = options.PrimaryEndpoint;

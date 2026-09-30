@@ -143,7 +143,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
                     _ = await TryLoadSlotsAsync(node, cancellationToken).ConfigureAwait(false);
                     return;
                 }
-                catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+                catch (Exception ex) when (CanRetryConnectionFailure(ex, cancellationToken))
                 {
                     lastError = ex;
                 }
@@ -171,7 +171,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 await cachedNode.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
                 return cachedNode.GetConnection(cachedSlot);
             }
-            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            catch (Exception error) when (CanRetryConnectionFailure(error, cancellationToken))
             {
                 ClearSlotOwner(cachedSlot, cachedNode);
                 // Refresh through another discovered master before falling back to seeds.
@@ -258,7 +258,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 await cachedNode.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
                 return GetOrCreateDedicatedPool(new RespireEndpoint(cachedNode.Host, cachedNode.Port));
             }
-            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            catch (Exception error) when (CanRetryConnectionFailure(error, cancellationToken))
             {
                 ClearSlotOwner(cachedSlot, cachedNode);
                 // Refresh through another discovered master before falling back to seeds.
@@ -503,8 +503,13 @@ internal sealed class ClusterRouter : IAsyncDisposable
     private static bool IsSameEndpoint(RespireConnectionMultiplexer node, RespireConnection source)
         => node.Port == source.Port && string.Equals(node.Host, source.Host, StringComparison.OrdinalIgnoreCase);
 
+    // Configuration failures remain actionable; cancellation belongs to the caller.
+    private static bool CanRetryConnectionFailure(Exception error, CancellationToken cancellationToken)
+        => error is not RespireConfigurationException && !cancellationToken.IsCancellationRequested;
+
     private static bool IsDiscoveryFailure(Exception exception)
-        => exception is RespireException or IOException or System.Net.Sockets.SocketException
+        => exception is (RespireException and not RespireConfigurationException)
+            or IOException or System.Net.Sockets.SocketException
             or System.Security.Authentication.AuthenticationException or TimeoutException;
 
     internal static bool TryParseRedirect(
@@ -677,7 +682,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
             return masters;
         }
-        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception error) when (CanRetryConnectionFailure(error, cancellationToken))
         {
             return await RefreshKnownMastersAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -700,7 +705,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             return await TryLoadSlotsAsync(node, cancellationToken).ConfigureAwait(false)
                 && HasCompleteTopology();
         }
-        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception error) when (CanRetryConnectionFailure(error, cancellationToken))
         {
             return false;
         }
@@ -729,7 +734,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 SetSeed(master);
                 return owner;
             }
-            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            catch (Exception error) when (CanRetryConnectionFailure(error, cancellationToken))
             {
                 ClearSlotOwner(slot, owner);
             }
@@ -748,7 +753,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 await master.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
                 return new RespireEndpoint(master.Host, master.Port);
             }
-            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            catch (Exception error) when (CanRetryConnectionFailure(error, cancellationToken))
             {
                 // Try another discovered master before falling back to configured seeds.
             }
@@ -1242,10 +1247,11 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 reply.Dispose();
             }
         }
-        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception error) when (CanRetryConnectionFailure(error, cancellationToken))
         {
             // ACLs and Redis-compatible servers may hide CLUSTER SLOTS. MOVED/ASK learning
-            // remains sufficient for correctness, so topology discovery is opportunistic.
+            // remains sufficient for correctness, so topology discovery is opportunistic for
+            // connection/server failures. Incompatible configuration must still propagate.
             return false;
         }
     }
