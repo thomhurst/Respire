@@ -364,6 +364,10 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
             {
                 await ReleaseAsync(returnWatchConnection).ConfigureAwait(false);
             }
+            catch (Exception) when (operationError is not null)
+            {
+                // The pool reports cleanup failures. Preserve the original transaction failure.
+            }
             catch (Exception ex)
             {
                 operationError ??= ex;
@@ -407,7 +411,8 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                 if (_watchConnection is not null)
                 {
                     // Replaying on another connection would lose WATCH and could commit stale reads.
-                    throw cluster.LearnWatchedRouteAndCreateRetryException(redirect, connection, slot);
+                    cluster.LearnWatchedRoute(redirect, connection, slot);
+                    throw new RespireTransactionRetryException(redirect);
                 }
                 if (ClusterRouter.IsRedirect(redirect)
                     && !ClusterRouter.TryParseRedirect(redirect, connection.Host, out _, out _))
@@ -524,6 +529,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         }
     }
 
+    // Shared with RespireClient so WATCH and queued commands enforce the same slot contract.
     internal static void ValidateClusterSlot(int slot, ref int? candidate)
     {
         if (candidate is { } current && current != slot)

@@ -1083,11 +1083,19 @@ public sealed partial class RespireClient : IRespireClient
         catch (Exception error)
         {
             // Cancellation and I/O failures can leave WATCH state or unread replies on the lease.
-            await pool.DiscardAsync(connection).ConfigureAwait(false);
+            try
+            {
+                await pool.DiscardAsync(connection).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // The pool reports cleanup failures. Preserve the original WATCH failure.
+            }
             if (cluster is not null && error is RespireServerException rejection
                 && ClusterRouter.CanRecover(rejection, slot))
             {
-                throw cluster.LearnWatchedRouteAndCreateRetryException(rejection, connection, slot);
+                cluster.LearnWatchedRoute(rejection, connection, slot);
+                throw new RespireTransactionRetryException(rejection);
             }
             throw;
         }

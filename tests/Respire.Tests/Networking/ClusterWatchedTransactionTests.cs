@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.Extensions.Logging;
 using Respire.Internal;
 using Respire.Protocol;
 using TUnit.Assertions;
@@ -113,13 +114,19 @@ public class ClusterWatchedTransactionTests
     }
 
     [Test]
-    [Arguments("MOVED", false)]
-    [Arguments("ASK", false)]
-    [Arguments("READONLY", false)]
-    [Arguments("MOVED", true)]
-    [Arguments("ASK", true)]
-    [Arguments("READONLY", true)]
-    public async Task RejectionsRequireANewWatchAttemptWithoutReplay(string code, bool duringCommit)
+    [Arguments("MOVED", false, false)]
+    [Arguments("MOVED", false, true)]
+    [Arguments("ASK", false, false)]
+    [Arguments("ASK", false, true)]
+    [Arguments("READONLY", false, false)]
+    [Arguments("READONLY", false, true)]
+    [Arguments("MOVED", true, false)]
+    [Arguments("MOVED", true, true)]
+    [Arguments("ASK", true, false)]
+    [Arguments("ASK", true, true)]
+    [Arguments("READONLY", true, false)]
+    [Arguments("READONLY", true, true)]
+    public async Task RejectionsRequireANewWatchAttemptWithoutReplay(string code, bool duringCommit, bool failCleanup)
     {
         await using var replacement = new FakeRespServer(2, FakeRespServer.OkReply, FakeRespServer.OkReply, Queued, Committed);
         var slot = ClusterHash.GetSlot("{a}:watched");
@@ -130,7 +137,9 @@ public class ClusterWatchedTransactionTests
             : [rejection];
         await using var owner = new FakeRespServer(2, replies);
         await using var seed = new FakeRespServer(Topology(owner.Port));
-        await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+        using var logger = new FailingDisconnectLogger();
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port) with { LoggerFactory = logger });
+        logger.Armed = failCleanup;
         RespirePending<bool>? pending = null;
         var error = await Assert.That(async () =>
         {
@@ -138,6 +147,7 @@ public class ClusterWatchedTransactionTests
             pending = transaction.Set("{a}:watched", "value");
             await transaction.CommitAsync();
         }).ThrowsExactly<RespireTransactionRetryException>();
+        await Assert.That(logger.Failed).IsEqualTo(failCleanup);
         await Assert.That(error!.ServerError.Code).IsEqualTo(code);
         await Assert.That(error.InnerException).IsSameReferenceAs(error.ServerError);
         if (pending is not null) await Assert.That(pending.Error).IsSameReferenceAs(error);
@@ -239,6 +249,27 @@ public class ClusterWatchedTransactionTests
         await using var fresh = await client.CreateTransactionAsync(["{a}:watched"]);
         await Assert.That(owner.ReceivedCommands.Count(command => command == "WATCH {a}:watched")).IsEqualTo(2);
         await Assert.That(owner.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(2);
+    }
+
+    private sealed class FailingDisconnectLogger : ILoggerFactory, ILogger
+    {
+        internal bool Armed;
+        internal bool Failed;
+        public ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            // Fail once, after physical socket cleanup, without disrupting client disposal.
+            if (!Armed || logLevel != LogLevel.Debug
+                || !formatter(state, exception).StartsWith("Disconnected from", StringComparison.Ordinal)) return;
+            Armed = false;
+            Failed = true;
+            throw new InvalidOperationException("Injected cleanup failure.");
+        }
     }
 
     private static RespireOptions Options(int seedPort) => new()
