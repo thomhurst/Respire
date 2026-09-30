@@ -84,12 +84,12 @@ internal sealed partial class ClusterRouter
             }
         }
         catch (Exception error) when (_stopRetirement.IsCancellationRequested
-            && (error is OperationCanceledException || error is ObjectDisposedException && node.IsDisposed))
+            && error is (OperationCanceledException or RespireConnectionMultiplexer.CorrectionFenceDisposedException))
         {
             // Explicit disposal cancels retries and disposes owned nodes. Retirement can
             // race between its disposed check and entering the fence, so either shutdown
-            // signal from owned retirement/fence work is expected here. Pool drains are
-            // awaited outside this filter; live-router and other failures still propagate.
+            // signal is expected here. Only the fence-entry guard emits the dedicated
+            // disposal signal; generic disposal failures and pool failures still propagate.
         }
         catch (Exception error)
         {

@@ -52,7 +52,6 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     public string Host { get; }
     public int Port { get; }
     public int ConnectionCount => _connections.Length;
-    internal bool IsDisposed => Volatile.Read(ref _disposed) != 0;
     internal bool IsRetired => Volatile.Read(ref _retired) != 0;
     private bool IsOperational => !IsRetired && Volatile.Read(ref _disposed) == 0;
     internal bool HasPendingCorrectionFences => !_retiredServerClientIds.IsEmpty;
@@ -609,13 +608,20 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         return false;
     }
 
+    // Only these fence-entry guards produce this signal. Generic disposal failures from
+    // connection cleanup must remain failures even if node disposal starts afterwards.
+    internal sealed class CorrectionFenceDisposedException()
+        : ObjectDisposedException(typeof(RespireConnectionMultiplexer).FullName)
+    {
+    }
+
     internal async ValueTask FenceRetiredConnectionsAsync(CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (Volatile.Read(ref _disposed) != 0) throw new CorrectionFenceDisposedException();
         await _retiredFenceGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            if (Volatile.Read(ref _disposed) != 0) throw new CorrectionFenceDisposedException();
             foreach (var connection in _connections)
                 if (connection is not { IsConnected: true }) RetireConnection(connection);
 

@@ -793,7 +793,42 @@ public class ClusterRetirementTests
     }
 
     [Test]
-    public async Task ShutdownSignalDoesNotHideAnUndisposedNodeFailure()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DisposedFenceEntryHasDistinctSignal(bool waitForGate)
+    {
+        await using var node = RespireConnectionMultiplexer.Create("retired.invalid");
+        var gate = (SemaphoreSlim)typeof(RespireConnectionMultiplexer).GetField("_retiredFenceGate", Private)!.GetValue(node)!;
+        Task fencing;
+        Task disposal;
+        if (waitForGate)
+        {
+            await gate.WaitAsync();
+            try
+            {
+                fencing = node.FenceRetiredConnectionsAsync().AsTask();
+                disposal = node.DisposeAsync().AsTask();
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+        else
+        {
+            disposal = node.DisposeAsync().AsTask();
+            await disposal.WaitAsync(Limit);
+            fencing = node.FenceRetiredConnectionsAsync().AsTask();
+        }
+        await Assert.That(async () => await fencing.WaitAsync(Limit))
+            .ThrowsExactly<RespireConnectionMultiplexer.CorrectionFenceDisposedException>();
+        await disposal.WaitAsync(Limit);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ShutdownSignalDoesNotHideUnrelatedNodeFailure(bool disposeNode)
     {
         await using var client = CreateClient();
         var router = client.Core.Cluster!;
@@ -807,12 +842,15 @@ public class ClusterRetirementTests
         {
             Publish(router, endpoint, "new", 2);
             var retirement = router.WaitForRetirementAsync();
-            // Stop retries without disposing this node. Its ODE must remain unexpected.
+            // The unrelated failure stays unexpected even if node disposal wins before
+            // the asynchronous retirement continuation observes that failure.
             var stop = (CancellationTokenSource)typeof(ClusterRouter).GetField("_stopRetirement", Private)!.GetValue(router)!;
             stop.Cancel();
+            var disposal = disposeNode ? node.DisposeAsync().AsTask() : Task.CompletedTask;
             nodeRetirement.SetException(failure);
             var error = await Assert.That(async () => await retirement.WaitAsync(Limit)).ThrowsExactly<ObjectDisposedException>();
             await Assert.That(error).IsSameReferenceAs(failure);
+            await disposal.WaitAsync(Limit);
             await Assert.That(client.GetClusterRetirementSnapshot()!.CleanupFailedGenerationCount).IsEqualTo(1);
             await Assert.That(async () => await client.DisposeAsync().AsTask().WaitAsync(Limit)).ThrowsExactly<ObjectDisposedException>();
         }
@@ -840,7 +878,7 @@ public class ClusterRetirementTests
         var nodeRetirement = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         typeof(RespireConnectionMultiplexer).GetField("_retirementCompletion", Private)!.SetValue(node, nodeRetirement);
         Exception failure = unexpectedFailure ? new InvalidOperationException("Unexpected retirement failure")
-            : new ObjectDisposedException(typeof(RespireConnectionMultiplexer).FullName);
+            : new RespireConnectionMultiplexer.CorrectionFenceDisposedException();
         try
         {
             Publish(router, endpoint, "new", 2);
