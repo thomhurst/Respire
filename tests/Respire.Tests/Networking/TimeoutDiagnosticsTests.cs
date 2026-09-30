@@ -224,6 +224,91 @@ public class TimeoutDiagnosticsTests
     }
 
     [Test]
+    public async Task FailureObservationsAreCapturedBeforeTheCancellingCallReturns()
+    {
+        var source = new ObservingPendingResponse();
+        using var caller = new CancellationTokenSource();
+        caller.Cancel();
+        var cancellingThread = Environment.CurrentManagedThreadId;
+        source.TrySetCanceled(caller.Token);
+        await Assert.That(source.CaptureThread).IsEqualTo(cancellingThread);
+        await Assert.That(source.Captured).IsTrue();
+        var failure = await source.Failure.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(failure is OperationCanceledException).IsTrue();
+    }
+
+    private sealed class ObservingPendingResponse : PendingResponse
+    {
+        internal readonly TaskCompletionSource<Exception> Failure = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal bool Captured;
+        internal int CaptureThread;
+
+        protected override Exception PrepareException(Exception exception)
+        {
+            CaptureThread = Environment.CurrentManagedThreadId;
+            Captured = true;
+            return exception;
+        }
+        protected override void SetExceptionCore(Exception exception) => Failure.TrySetResult(exception);
+        protected override void SetResultCore(in Respire.Protocol.RespValue result) => throw new NotSupportedException();
+        protected override void ResetAndReturn() => throw new NotSupportedException();
+    }
+
+    [Test]
+    public async Task TransactionCancellationSnapshotPrecedesConnectionTeardown()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.OkReply);
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        using var deadline = new CancellationTokenSource();
+        deadline.Cancel();
+        var source = MultiReplyPendingResponseSource.Rent(1, 0, "MULTI/EXEC");
+        source.ConfigureTimeout(connection, TimeSpan.FromSeconds(1), default, deadline.Token);
+        var reply = source.Task;
+        source.TrySetCanceled(deadline.Token);
+        await connection.DisposeAsync();
+        try
+        {
+            var failure = await Assert.That(async () => await reply).ThrowsExactly<RespireTimeoutException>();
+            await Assert.That(failure!.Diagnostics.IsConnected).IsTrue();
+            await Assert.That(connection.IsConnected).IsFalse();
+        }
+        finally { source.ReleaseRef(); }
+    }
+
+    [Test]
+    public async Task DedicatedSnapshotRetainsTheWholeAskingFrameAfterThePreludeReply()
+    {
+        var commandSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            SuppressReply = command =>
+            {
+                if (command != "PING") return false;
+                commandSeen.TrySetResult();
+                return true;
+            }
+        };
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        using var cancellation = new CancellationTokenSource();
+        var ping = new RawCommand(FakeRespServer.PingFrame);
+        var response = Respire.Internal.ClusterRouter.SendBlockingAskingUncheckedAsync(connection, in ping, cancellation.Token);
+        await commandSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        RespireTimeoutDiagnostics snapshot;
+        do
+        {
+            deadline.Token.ThrowIfCancellationRequested();
+            snapshot = connection.CaptureDedicatedTimeoutDiagnostics();
+            if (snapshot.InflightCount == 1 && snapshot.Stage == RespireCommandStage.AwaitingReply) break;
+            await Task.Delay(1, deadline.Token);
+        } while (true);
+        await Assert.That(snapshot.Stage).IsEqualTo(RespireCommandStage.AwaitingReply);
+        await Assert.That(snapshot.InflightBytes).IsEqualTo((long)(FakeRespServer.PingFrame.Length + "*1\r\n$6\r\nASKING\r\n"u8.Length));
+        cancellation.Cancel();
+        await Assert.That(async () => await response).ThrowsExactly<OperationCanceledException>();
+    }
+
+    [Test]
     public async Task ImmediateTimeout_ReportsConnectionAndAwaitingReplyWithoutArguments()
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply)

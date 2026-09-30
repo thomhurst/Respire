@@ -112,10 +112,17 @@ internal abstract class PendingResponse
     /// hop to the pool themselves rather than run caller continuations where they stand.
     /// </summary>
     private void DispatchException(Exception exception)
-        => ThreadPool.UnsafeQueueUserWorkItem(
+    {
+        // Completion has been claimed, and the caller still owns a reference. Capture
+        // observations now: queue latency must not replace the timeout with recovered state.
+        exception = PrepareException(exception);
+        ThreadPool.UnsafeQueueUserWorkItem(
             static state => state.Self.SetExceptionCore(state.Exception),
             (Self: this, Exception: exception),
             preferLocal: false);
+    }
+
+    protected virtual Exception PrepareException(Exception exception) => exception;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void RegisterCancellation(CancellationToken cancellationToken)
@@ -256,18 +263,20 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
 
     protected override void SetResultCore(in RespValue result) => _core.SetResult(result);
 
-    protected override void SetExceptionCore(Exception exception)
+    protected override Exception PrepareException(Exception exception)
     {
-        // The caller still owns this source until GetResult. Capture its stamped offsets
-        // before publishing failure, without wrapping every successful transaction in an await.
+        // Called synchronously after winning completion, before dispatching to the pool.
+        // Successful transactions still return their original pooled ValueTask unchanged.
         if (_cancellationTimeout is { } timeout && exception is OperationCanceledException cancelled
             && RespireConnection.IsDeadlineCancellation(cancelled, _deadlineToken, _callerToken))
         {
             exception = new RespireTimeoutException(CommandName ?? "MULTI/EXEC", timeout, cancelled,
                 _timeoutConnection!.CaptureTimeoutDiagnostics(WriteStart, WriteEnd));
         }
-        _core.SetException(exception);
+        return exception;
     }
+
+    protected override void SetExceptionCore(Exception exception) => _core.SetException(exception);
 
     RespValue IValueTaskSource<RespValue>.GetResult(short token)
     {
