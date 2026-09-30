@@ -1685,6 +1685,8 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
     {
         ClusterRouter.DiscoveryRound? discovery = null;
+        // Keep the budget across sends, but classify only failures during reselection as discovery failures.
+        var discoveryPending = false;
         try
         {
             var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
@@ -1702,8 +1704,10 @@ public sealed partial class RespireClient : IRespireClient
                 {
                     cluster.RecordRetirement(ref discovery, connection, retirement);
                     _core.ClientCache?.FlushForContinuityLoss();
+                    discoveryPending = true;
                     connection = await cluster.GetReplacementConnectionAsync(
                         sendAsking ? connection : null, slot, null, cancellationToken, discovery).ConfigureAwait(false);
+                    discoveryPending = false;
                     onRedirect?.Invoke(!sendAsking);
                     continue;
                 }
@@ -1721,15 +1725,17 @@ public sealed partial class RespireClient : IRespireClient
                 }
 
                 _core.ClientCache?.FlushForContinuityLoss();
+                discoveryPending = true;
                 connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery)
                     .ConfigureAwait(false);
+                discoveryPending = false;
                 sendAsking = error.Code == RespireErrorCodes.Ask;
                 onRedirect?.Invoke(!sendAsking);
             }
         }
         catch (Exception error)
         {
-            if (discovery is not null) discovery.TerminalError = error;
+            if (discoveryPending && discovery is not null) discovery.TerminalError = error;
             throw;
         }
         finally { discovery?.Finish(); }
@@ -2086,6 +2092,7 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
     {
         ClusterRouter.DiscoveryRound? discovery = null;
+        var discoveryPending = false;
         try
         {
             var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
@@ -2094,8 +2101,10 @@ public sealed partial class RespireClient : IRespireClient
             if (initialRetirement is not null)
             {
                 cluster.RecordRetirement(ref discovery, connection, initialRetirement);
+                discoveryPending = true;
                 connection = await cluster.GetReplacementConnectionAsync(null, slot, null, cancellationToken, discovery)
                     .ConfigureAwait(false);
+                discoveryPending = false;
             }
             var sendAsking = false;
             for (var attempt = firstAttempt; ; attempt++)
@@ -2110,22 +2119,26 @@ public sealed partial class RespireClient : IRespireClient
                 {
                     cluster.RecordRetirement(ref discovery, connection, retirement);
                     _core.ClientCache?.FlushForContinuityLoss();
+                    discoveryPending = true;
                     connection = await cluster.GetReplacementConnectionAsync(
                         sendAsking ? connection : null, slot, null, cancellationToken, discovery).ConfigureAwait(false);
+                    discoveryPending = false;
                 }
                 catch (RespireServerException error)
                     when (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
                 {
                     _core.ClientCache?.FlushForContinuityLoss();
+                    discoveryPending = true;
                     connection = await cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery)
                         .ConfigureAwait(false);
+                    discoveryPending = false;
                     sendAsking = error.Code == RespireErrorCodes.Ask;
                 }
             }
         }
         catch (Exception error)
         {
-            if (discovery is not null) discovery.TerminalError = error;
+            if (discoveryPending && discovery is not null) discovery.TerminalError = error;
             throw;
         }
         finally { discovery?.Finish(); }
@@ -2142,6 +2155,7 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
     {
         ClusterRouter.DiscoveryRound? discovery = null;
+        var discoveryPending = false;
         try
         {
             var cache = _core.ClientCache;
@@ -2169,8 +2183,10 @@ public sealed partial class RespireClient : IRespireClient
                             {
                                 cluster.RecordRetirement(ref discovery, target, retirement);
                                 // Keep this snapshot endpoint; earlier targets have already accepted the mutation.
+                                discoveryPending = true;
                                 target = await cluster.GetReplacementConnectionAsync(connection, null, null, cancellationToken, discovery)
                                     .ConfigureAwait(false);
+                                discoveryPending = false;
                             }
                         }
                         if (!hasRetainedReply)
@@ -2209,7 +2225,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            if (discovery is not null) discovery.TerminalError = error;
+            if (discoveryPending && discovery is not null) discovery.TerminalError = error;
             throw;
         }
         finally { discovery?.Finish(); }
@@ -2386,6 +2402,7 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
     {
         ClusterRouter.DiscoveryRound? discovery = null;
+        var discoveryPending = false;
         try
         {
             if (RespireCommand.MayCloseWithoutReply(operation))
@@ -2404,8 +2421,10 @@ public sealed partial class RespireClient : IRespireClient
                     catch (RespireConnectionRetiredException retirement) when (cluster.CanRetryRetirement(attempt, cancellationToken))
                     {
                         cluster.RecordRetirement(ref discovery, connection, retirement);
+                        discoveryPending = true;
                         connection = await cluster.GetReplacementConnectionAsync(null, slot, null, cancellationToken, discovery)
                             .ConfigureAwait(false);
+                        discoveryPending = false;
                     }
                 }
             }
@@ -2424,7 +2443,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            if (discovery is not null) discovery.TerminalError = error;
+            if (discoveryPending && discovery is not null) discovery.TerminalError = error;
             throw;
         }
         finally { discovery?.Finish(); }
@@ -2439,6 +2458,7 @@ public sealed partial class RespireClient : IRespireClient
         where TCommand : struct, IRespCommand
     {
         ClusterRouter.DiscoveryRound? discovery = null;
+        var discoveryPending = false;
         try
         {
             var cache = _core.ClientCache;
@@ -2466,13 +2486,19 @@ public sealed partial class RespireClient : IRespireClient
                             {
                                 cluster.RecordRetirement(ref discovery, target, retirement);
                                 // Retry only this rejected target, never a previously accepted send.
+                                discoveryPending = true;
                                 target = await cluster.GetReplacementConnectionAsync(connection, null, null, cancellationToken, discovery)
                                     .ConfigureAwait(false);
+                                discoveryPending = false;
                             }
                         }
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
+                        // A later target may still succeed; retain this target's discovery
+                        // failure before continuing, without classifying application failures.
+                        if (discoveryPending && discovery is not null) discovery.TerminalError = ex;
+                        discoveryPending = false;
                         (failures ??= []).Add(ex);
                     }
                 }
@@ -2493,7 +2519,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            if (discovery is not null) discovery.TerminalError = error;
+            if (discoveryPending && discovery is not null) discovery.TerminalError = error;
             throw;
         }
         finally { discovery?.Finish(); }
@@ -2520,6 +2546,7 @@ public sealed partial class RespireClient : IRespireClient
     {
         var cluster = _core.Cluster;
         ClusterRouter.DiscoveryRound? discovery = null;
+        var discoveryPending = false;
         try
         {
             for (var attempt = 0; ; attempt++)
@@ -2531,13 +2558,15 @@ public sealed partial class RespireClient : IRespireClient
                 catch (RespireConnectionRetiredException retirement) when (cluster is not null && cluster.CanRetryRetirement(attempt, cancellationToken))
                 {
                     cluster.RecordRetirement(ref discovery, connection, retirement);
+                    discoveryPending = true;
                     connection = await cluster.GetReplacementConnectionAsync(connection, null, null, cancellationToken, discovery).ConfigureAwait(false);
+                    discoveryPending = false;
                 }
             }
         }
         catch (Exception error)
         {
-            if (discovery is not null) discovery.TerminalError = error;
+            if (discoveryPending && discovery is not null) discovery.TerminalError = error;
             throw;
         }
         finally { discovery?.Finish(); }
@@ -3185,6 +3214,7 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken)
     {
         ClusterRouter.DiscoveryRound? discovery = null;
+        var discoveryPending = false;
         try
         {
             var command = new Cmd2N(verb, body, tail[0], tail[1..]);
@@ -3204,8 +3234,10 @@ public sealed partial class RespireClient : IRespireClient
                 catch (RespireConnectionRetiredException retirement) when (cluster.CanRetryRetirement(attempt, cancellationToken))
                 {
                     cluster.RecordRetirement(ref discovery, connection, retirement);
+                    discoveryPending = true;
                     connection = await GetTrackedReplacementConnectionAsync(
                         cluster, sendAsking ? connection : null, slot, requiresIdentity, cancellationToken, discovery).ConfigureAwait(false);
+                    discoveryPending = false;
                     execution.Connection = connection;
                     execution.ConnectionIdentity = GetTrackedConnectionIdentity(
                         connection, cluster.HasReliableCorrectionOrdering(connection), sendAsking);
@@ -3213,9 +3245,11 @@ public sealed partial class RespireClient : IRespireClient
                 catch (RespireServerException error)
                     when (attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
                 {
+                    discoveryPending = true;
                     connection = await GetTrackedRedirectConnectionAsync(
                             cluster, error, connection, requiresIdentity, cancellationToken, slot, discovery)
                         .ConfigureAwait(false);
+                    discoveryPending = false;
                     sendAsking = error.Code == RespireErrorCodes.Ask;
                     execution.Connection = connection;
                     execution.ConnectionIdentity = GetTrackedConnectionIdentity(
@@ -3225,7 +3259,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            if (discovery is not null) discovery.TerminalError = error;
+            if (discoveryPending && discovery is not null) discovery.TerminalError = error;
             throw;
         }
         finally { discovery?.Finish(); }

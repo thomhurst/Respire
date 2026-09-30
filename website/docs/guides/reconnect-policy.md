@@ -239,7 +239,8 @@ is preserved. ASK keeps its temporary target; tracked identity setup and retirem
 reselection share the ongoing round. A command rejected before acceptance by topology
 retirement starts fallback at attempt one. Repeated retirement during that command,
 including an individual rejected batch entry or an unwatched transaction, retains the
-same budget until completion. Accepted batch entries and watched transactions are never
+same budget until completion. Resumable Cluster scans keep that budget across retirement
+restarts of one page; rebuilding from the immutable cursor does not reset it. Accepted batch entries and watched transactions are never
 replayed. Dedicated physical connection retries retain their
 separate per-rent budget; node selection does not reset a discovery budget. Neither path
 replays a command after ambiguous acceptance or a lost reply.
@@ -253,6 +254,8 @@ successful cluster-wide results.
 Caller cancellation and client disposal stop scheduled waits and connection work. Existing
 command deadlines remain shared. READONLY recovery retains its overall `ConnectTimeout`
 and the time reserved for configured seeds; policy waits consume that recovery time.
+Whichever is reached first ends recovery: the policy attempt limit, the existing recovery
+deadline, caller cancellation, or disposal. A delay cannot extend the READONLY deadline.
 Other discovery waits are bounded by caller cancellation, so supply a caller deadline to
 bound a whole round across multiple candidates and delays.
 
@@ -270,6 +273,9 @@ ordering is independent of command-slot and dedicated recovery notification queu
 from different sources have no shared ordering guarantee.
 A caller-cancelled round that started fallback emits a terminal `Disconnected` source event
 with the cancellation error and the same episode ID; cancellation is not policy exhaustion.
+Once replacement selection succeeds, later application errors (such as WRONGTYPE) or
+cancellation of an accepted command do not change that discovery outcome to Disconnected.
+The command still fails normally; physical connection health is reported independently.
 Scheduled measurements survive disposal, while pending lifecycle events are suppressed.
 The queue preserves every scheduled measurement and source transition and has no capacity
 limit, matching dedicated recovery notifications. Slow or blocked observers can accumulate

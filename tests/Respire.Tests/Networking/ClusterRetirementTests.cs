@@ -280,6 +280,117 @@ public class ClusterRetirementTests
     }
 
     [Test]
+    [Arguments("ordinary", "server-error")]
+    [Arguments("ordinary", "accepted-cancellation")]
+    [Arguments("no-redirect", "server-error")]
+    [Arguments("no-redirect", "accepted-cancellation")]
+    [Arguments("tracked", "server-error")]
+    [Arguments("tracked", "accepted-cancellation")]
+    [Arguments("pinned", "server-error")]
+    [Arguments("pinned", "accepted-cancellation")]
+    [Arguments("ordinary", "recovery-cancellation")]
+    public async Task ApplicationFailureAfterRetirementDoesNotFailDiscovery(string path, string outcome)
+    {
+        var cancelAfterAcceptance = outcome == "accepted-cancellation";
+        var cancelDuringRecovery = outcome == "recovery-cancellation";
+        var scheduled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var full = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var retried = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var terminal = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var acceptedCount = 0;
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            SuppressReply = command =>
+            {
+                if (command == "PING")
+                {
+                    if (Interlocked.Increment(ref acceptedCount) == 4) full.TrySetResult();
+                    return true;
+                }
+                if (command == "SET key value")
+                {
+                    retried.TrySetResult();
+                    return cancelAfterAcceptance;
+                }
+                return false;
+            },
+            ReplyOverride = (_, command) => command == "SET key value" ? "-WRONGTYPE test application error\r\n"u8.ToArray() : null,
+        };
+        await using var client = CreateClient(maxInflightCommands: 4,
+            reconnectPolicy: new() { InitialDelay = cancelDuringRecovery ? TimeSpan.FromSeconds(30) : TimeSpan.Zero,
+                MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0, MaxAttempts = 1 });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var caller = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
+        var router = client.Core.Cluster!;
+        var endpoint = new RespireEndpoint("127.0.0.1", server.Port);
+        Publish(router, endpoint, "old", 1);
+        var old = await router.GetConnectionAsync(42, timeout.Token, discovery: null);
+        var accepted = Enumerable.Range(0, 4)
+            .Select(_ => old.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token, armCommandDeadline: false).AsTask()).ToArray();
+        await full.Task.WaitAsync(timeout.Token);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
+            if (change.NextReconnectDelay is not null) scheduled.TrySetResult();
+            else terminal.TrySetResult(change);
+        };
+        var pending = SendAsync();
+        await Assert.That(pending.IsCompleted).IsFalse();
+        Publish(router, endpoint, "new", 2);
+        try
+        {
+            await (cancelDuringRecovery ? scheduled.Task : retried.Task).WaitAsync(timeout.Token);
+            OperationCanceledException? cancellationError = null;
+            if (cancelAfterAcceptance || cancelDuringRecovery)
+            {
+                caller.Cancel();
+                cancellationError = await Assert.That(async () => await pending.WaitAsync(timeout.Token)).Throws<OperationCanceledException>();
+                await Assert.That(cancellationError!.CancellationToken).IsEqualTo(caller.Token);
+            }
+            else
+            {
+                var error = await Assert.That(async () => await pending.WaitAsync(timeout.Token)).Throws<RespireServerException>();
+                await Assert.That(error!.Code).IsEqualTo("WRONGTYPE");
+            }
+            var recovered = await terminal.Task.WaitAsync(timeout.Token);
+            await Assert.That(recovered.SourceState).IsEqualTo(cancelDuringRecovery
+                ? RespireConnectionState.Disconnected : RespireConnectionState.Connected);
+            if (cancelDuringRecovery) await Assert.That(recovered.Error).IsSameReferenceAs(cancellationError);
+            else await Assert.That(recovered.Error).IsNull();
+            await Assert.That(recovered.ReconnectAttempt).IsEqualTo(1);
+            await Assert.That(recovered.ReconnectExhausted).IsFalse();
+            await Assert.That(server.ReceivedCommands.Count(command => command == "SET key value")).IsEqualTo(cancelDuringRecovery ? 0 : 1);
+            await Assert.That(accepted.All(task => !task.IsCompleted)).IsTrue();
+        }
+        finally
+        {
+            await server.SendRawAsync("+PONG\r\n+PONG\r\n+PONG\r\n+PONG\r\n"u8.ToArray(), 0);
+            foreach (var task in accepted) { using var reply = await task.WaitAsync(timeout.Token); }
+        }
+        await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
+
+        async Task SendAsync()
+        {
+            var command = new Cmd2(RespireCommands.String.SET.Verb, "key", "value");
+            if (path == "pinned")
+            {
+                using var reply = await client.SendToClusterTargetAsync("SET", old, command, caller.Token);
+            }
+            else if (path == "tracked")
+            {
+                var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
+                using var reply = await (ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
+                    ["SET", router, command, caller.Token, null])!;
+            }
+            else
+            {
+                using var reply = await client.ExecuteAsync(RespireCommands.String.SET, ["key", "value"],
+                    path == "no-redirect" ? RespireCommandFlags.NoRedirect : RespireCommandFlags.None, caller.Token);
+            }
+        }
+    }
+
+    [Test]
     [Arguments("ordinary", false)]
     [Arguments("ordinary", true)]
     [Arguments("no-redirect", false)]

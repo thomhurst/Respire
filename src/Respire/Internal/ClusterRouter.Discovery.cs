@@ -37,10 +37,13 @@ internal sealed partial class ClusterRouter
     // A command creates a round only after a send is rejected before acceptance. Keeping
     // this round in the command loop prevents each retired generation starting a new budget.
     internal void RecordRetirement(ref DiscoveryRound? round, RespireConnection source, Exception error)
+        => RecordRetirement(ref round, new RespireEndpoint(source.Host, source.Port), error);
+
+    internal void RecordRetirement(ref DiscoveryRound? round, RespireEndpoint endpoint, Exception error)
     {
         if (_options.ReconnectPolicy is not { } policy) return;
         round ??= new DiscoveryRound(this, policy);
-        round.Failed(new RespireEndpoint(source.Host, source.Port), error);
+        round.Failed(endpoint, error);
     }
 
     // One asynchronous control flow owns a round. Nested discovery helpers borrow it only

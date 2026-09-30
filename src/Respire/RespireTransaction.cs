@@ -391,6 +391,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
         async ValueTask<RespValue> SendAsync(CancellationToken token)
         {
             ClusterRouter.DiscoveryRound? discovery = null;
+            var discoveryPending = false;
             try
             {
                 var cluster = core.Cluster;
@@ -411,8 +412,10 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                     {
                         // The transport rejects the complete MULTI/EXEC frame before accepting any part.
                         cluster.RecordRetirement(ref discovery, connection, retirement);
+                        discoveryPending = true;
                         connection = await cluster.GetReplacementConnectionAsync(null, slot, null, token, discovery)
                             .ConfigureAwait(false);
+                        discoveryPending = false;
                         continue;
                     }
                     if (!reply.IsError || cluster is null || attempt >= ClusterRouter.RedirectLimit)
@@ -447,13 +450,15 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                             redirect);
                     }
 
+                    discoveryPending = true;
                     connection = await cluster.GetRedirectConnectionAsync(redirect, connection, token, slot, discovery)
                         .ConfigureAwait(false);
+                    discoveryPending = false;
                 }
             }
             catch (Exception error)
             {
-                if (discovery is not null) discovery.TerminalError = error;
+                if (discoveryPending && discovery is not null) discovery.TerminalError = error;
                 throw;
             }
             finally { discovery?.Finish(); }

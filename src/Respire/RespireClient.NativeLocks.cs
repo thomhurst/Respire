@@ -90,6 +90,7 @@ public sealed partial class RespireClient
         CancellationToken cancellationToken)
     {
         ClusterRouter.DiscoveryRound? discovery = null;
+        var discoveryPending = false;
         try
         {
             var sendAsking = false;
@@ -104,21 +105,25 @@ public sealed partial class RespireClient
                     _core.Cluster is { } cluster && cluster.CanRetryRetirement(attempt, cancellationToken))
                 {
                     cluster.RecordRetirement(ref discovery, connection, error);
+                    discoveryPending = true;
                     connection = requireIdentity
                         ? await GetTrackedReplacementConnectionAsync(
                             cluster, sendAsking ? connection : null, slot, true, cancellationToken, discovery).ConfigureAwait(false)
                         : await cluster.GetReplacementConnectionAsync(
                             sendAsking ? connection : null, slot, null, cancellationToken, discovery).ConfigureAwait(false);
+                    discoveryPending = false;
                     execution.ConnectionIdentity = GetTrackedConnectionIdentity(connection, requireIdentity, sendAsking);
                 }
                 catch (RespireServerException error) when (
                     _core.Cluster is not null && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
                 {
+                    discoveryPending = true;
                     connection = requireIdentity
                         ? await GetTrackedRedirectConnectionAsync(
                                 _core.Cluster, error, connection, true, cancellationToken, slot, discovery).ConfigureAwait(false)
                         : await _core.Cluster.GetRedirectConnectionAsync(error, connection, cancellationToken, slot, discovery)
                             .ConfigureAwait(false);
+                    discoveryPending = false;
                     sendAsking = error.Code == RespireErrorCodes.Ask;
                     // Publish the identity before any write on the redirected connection can be sent.
                     execution.ConnectionIdentity = GetTrackedConnectionIdentity(connection, requireIdentity, sendAsking);
@@ -127,7 +132,7 @@ public sealed partial class RespireClient
         }
         catch (Exception error)
         {
-            if (discovery is not null) discovery.TerminalError = error;
+            if (discoveryPending && discovery is not null) discovery.TerminalError = error;
             throw;
         }
         finally { discovery?.Finish(); }
