@@ -84,7 +84,7 @@ internal abstract class PendingResponse
     /// was recycled since, so a stale peek can never time out a different command.
     /// </summary>
     internal bool TrySetTimedOut(long observedState, TimeSpan timeout,
-        ref RespireTimeoutDiagnostics? diagnostics, RespireConnection? connection = null)
+        ref RespireTimeoutDiagnostics? diagnostics, RespireConnection? connection)
     {
         if (Interlocked.CompareExchange(ref _state, observedState | 1, observedState) != observedState)
         {

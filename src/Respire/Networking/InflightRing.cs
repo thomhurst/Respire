@@ -84,7 +84,7 @@ internal sealed class InflightRing
     /// skipped; a source recycled after its state was captured is rejected by the epoch CAS
     /// inside <see cref="PendingResponse.TrySetTimedOut"/>.
     /// </summary>
-    public long SweepExpired(long nowMilliseconds, TimeSpan timeout, RespireConnection? connection = null)
+    public long SweepExpired(long nowMilliseconds, TimeSpan timeout, RespireConnection? connection)
     {
         var head = Volatile.Read(ref _head);
         var tail = Volatile.Read(ref _tail);

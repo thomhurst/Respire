@@ -67,6 +67,23 @@ public class TimeoutDiagnosticsTests
         RespireEndpoint? expectedEndpoint = cluster ? (RespireEndpoint?)null : new RespireEndpoint("127.0.0.1", port);
         await Assert.That(error.Diagnostics.Endpoint).IsEqualTo(expectedEndpoint);
         await Assert.That(error.Diagnostics.Hint).StartsWith("Connection initialization");
+        await Assert.That(error.Message).Contains("had not been enqueued");
+        await Assert.That(error.Message.Contains("may still execute", StringComparison.Ordinal)).IsFalse();
+    }
+
+    [Test]
+    [Arguments(RespireCommandStage.Connecting, false)]
+    [Arguments(RespireCommandStage.WaitingForCapacity, false)]
+    [Arguments(RespireCommandStage.Buffered, true)]
+    [Arguments(RespireCommandStage.Writing, true)]
+    [Arguments(RespireCommandStage.AwaitingReply, true)]
+    [Arguments(RespireCommandStage.Unknown, true)]
+    public async Task TimeoutMessageDistinguishesCommandsNotEnqueued(RespireCommandStage stage, bool mayExecute)
+    {
+        var error = new RespireTimeoutException("GET", TimeSpan.FromSeconds(1), null,
+            RespireTimeoutDiagnostics.Capture(stage));
+        await Assert.That(error.Message.Contains("may still execute", StringComparison.Ordinal)).IsEqualTo(mayExecute);
+        await Assert.That(error.Message.Contains("had not been enqueued", StringComparison.Ordinal)).IsEqualTo(!mayExecute);
     }
 
     [Test]
@@ -392,7 +409,7 @@ public class TimeoutDiagnosticsTests
         ring.TryEnqueue(first);
         ring.TryEnqueue(second);
 
-        await Assert.That(ring.SweepExpired(2, TimeSpan.FromMilliseconds(1))).IsEqualTo(-1);
+        await Assert.That(ring.SweepExpired(2, TimeSpan.FromMilliseconds(1), connection: null)).IsEqualTo(-1);
         var firstError = await Assert.That(async () => await first.Task).ThrowsExactly<RespireTimeoutException>();
         var secondError = await Assert.That(async () => await second.Task).ThrowsExactly<RespireTimeoutException>();
         await Assert.That(firstError!.Diagnostics).IsSameReferenceAs(secondError!.Diagnostics);

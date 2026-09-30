@@ -1053,7 +1053,8 @@ internal sealed class RespireConnection : IAsyncDisposable
 
     private void RecordWrite(int bytes)
     {
-        Volatile.Write(ref _sentBytes, _sentBytes + bytes); // One persistent sender.
+        // Only the persistent FlushLoopAsync sender calls this method, including TLS writes.
+        Volatile.Write(ref _sentBytes, _sentBytes + bytes);
         Volatile.Write(ref _lastWriteTimestamp, Stopwatch.GetTimestamp());
     }
 

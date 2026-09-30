@@ -164,9 +164,9 @@ public static class RespireErrorCodes
 }
 
 /// <summary>
-/// A command's response did not arrive within <see cref="RespireOptions.CommandTimeout"/>. The
-/// timeout covers waiting for the response only — the command was already sent and may still
-/// execute on the server.
+/// A command did not complete within <see cref="RespireOptions.CommandTimeout"/>. Commands
+/// already enqueued may still execute on the server. Inspect <see cref="Diagnostics"/> for
+/// timeouts during connection acquisition or while waiting for queue capacity.
 /// </summary>
 public sealed class RespireTimeoutException : RespireException
 {
@@ -199,7 +199,7 @@ public sealed class RespireTimeoutException : RespireException
 
     private static string CreateMessage(string commandName, TimeSpan timeout, RespireTimeoutDiagnostics diagnostics)
         => $"{commandName} timed out after {timeout.TotalMilliseconds:0}ms. " +
-           (diagnostics.Stage == RespireCommandStage.WaitingForCapacity
+           (diagnostics.Stage is RespireCommandStage.Connecting or RespireCommandStage.WaitingForCapacity
                ? "The command had not been enqueued on the inspected connection. "
                : "The command may still execute on the server; only the wait was abandoned. ") +
            diagnostics.Describe() + " Review RespireOptions.CommandTimeout if the observed latency is expected.";
