@@ -21,6 +21,7 @@ internal static class RawCommandKeyLayouts
     private readonly record struct Definition(LayoutKind Kind, bool Deferred);
 
     private static readonly FrozenDictionary<string, Definition> Layouts = CreateLayouts();
+    // Test-only enumeration keeps COMMAND GETKEYS coverage aligned with the full deferred allowlist.
     internal static IEnumerable<string> DeferredOperations => Layouts.Where(pair => pair.Value.Deferred).Select(pair => pair.Key);
 
     private static FrozenDictionary<string, Definition> CreateLayouts()
