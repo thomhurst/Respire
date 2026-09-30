@@ -248,15 +248,47 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    public async Task ListCountPop_RoundTrip()
+    [Arguments(false, 2)]
+    [Arguments(false, 3)]
+    [Arguments(true, 2)]
+    [Arguments(true, 3)]
+    public async Task ListCountPop_RoundTrip(bool useFake, int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
 
         await client.Lists.RightPushAsync("typed:list:count", 1, 2, 3);
 
         (await client.Lists.LeftPopManyAsync<int>("typed:list:count", 2)).Should().Equal(1, 2);
         (await client.Lists.RightPopManyAsync<int>("typed:list:count", 2)).Should().Equal(3);
         (await client.Lists.LeftPopManyAsync<int>("typed:list:count", 1)).Should().BeEmpty();
+    }
+
+    [Test]
+    [Arguments(false, 2)]
+    [Arguments(false, 3)]
+    [Arguments(true, 2)]
+    [Arguments(true, 3)]
+    public async Task NonBlockingListTypedValuesRoundTripImmediatelyAndInBatch(bool useFake, int protocol)
+    {
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        var payload = new TypedPayload(3, "three");
+        await client.Lists.RightPushAsync("typed:list:json", JsonSerializer.Serialize(payload));
+        (await client.Lists.LeftPopAsync<TypedPayload>("typed:list:json")).Should().Be(payload);
+        (await client.Lists.LeftPopAsync<int>("missing")).Should().Be(0);
+        await client.Lists.RightPushAsync("typed:list", 41, 42, 43);
+        using var batch = client.CreateBatch();
+        var left = batch.Lists.LeftPop<int>("typed:list");
+        var right = batch.Lists.RightPopMany<int>("typed:list", 2);
+        await batch.ExecuteAsync();
+        left.Result.Should().Be(41);
+        right.Result.Should().Equal(43, 42);
+        await client.Lists.RightPushAsync("typed:list", "not-an-integer");
+        Func<Task> invalid = async () => { await client.Lists.LeftPopAsync<int>("typed:list"); };
+        await invalid.Should().ThrowAsync<FormatException>();
     }
 
     [Test]
