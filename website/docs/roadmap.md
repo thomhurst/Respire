@@ -23,6 +23,8 @@ Respire is pre-release. Its core RESP2 client, typed command surface, pipelining
 - TLS connections through `rediss://` or `RespireOptions.UseTls`
 - Bounded RESP3 server-assisted client-side caching for eligible Redis reads
 - Dependency injection, distributed caching, `HybridCache`, and OpenTelemetry
+- An in-memory testing server with controlled expiry/faults, Redis/Valkey container fixtures,
+  and a [shared test sample](guides/testing-sample.md) for both supported frameworks
 
 ## Not implemented yet
 

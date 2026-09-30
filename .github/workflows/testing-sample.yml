@@ -1,0 +1,74 @@
+name: Testing package sample
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'samples/Respire.Samples.Testing/**'
+      - 'src/**'
+      - 'Directory.*'
+      - 'global.json'
+      - '.github/workflows/testing-sample.yml'
+  pull_request:
+    paths:
+      - 'samples/Respire.Samples.Testing/**'
+      - 'src/**'
+      - 'Directory.*'
+      - 'global.json'
+      - '.github/workflows/testing-sample.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  sample:
+    name: Testing sample (${{ matrix.framework }}, ${{ matrix.suite }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net10.0]
+        suite: [FakeTests, ContainerTests]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - name: Check Docker for container scenarios
+        if: matrix.suite == 'ContainerTests'
+        run: docker info
+      - name: Run public API sample
+        run: >-
+          dotnet run --project samples/Respire.Samples.Testing -c Release
+          -f ${{ matrix.framework }} --
+          --treenode-filter '/*/*/${{ matrix.suite }}/*'
+          --results-directory '${{ github.workspace }}/SampleTestResults'
+          --report-trx
+          --report-trx-filename 'testing-sample.trx'
+      - name: Verify selected scenarios executed
+        if: always()
+        shell: python
+        env:
+          MIN_EXPECTED_TESTS: ${{ matrix.suite == 'FakeTests' && '8' || '4' }}
+        run: |
+          import os
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          report = Path("SampleTestResults/testing-sample.trx")
+          assert report.is_file(), f"Missing sample test report: {report}"
+          counters = ET.parse(report).getroot().find(".//{*}Counters")
+          assert counters is not None, "Sample test report has no counters"
+          executed = int(counters.attrib["executed"])
+          minimum = int(os.environ["MIN_EXPECTED_TESTS"])
+          assert executed >= minimum, f"Expected at least {minimum} executed scenarios; got {executed}"
+          print(f"Verified {executed} executed scenarios (minimum {minimum}).")
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: testing-sample-${{ matrix.framework }}-${{ matrix.suite }}
+          path: SampleTestResults/
+          if-no-files-found: error
