@@ -42,16 +42,16 @@ internal sealed partial class SubscriptionHub
 
     private async ValueTask ActivateShardedCoreAsync(RespireSubscription subscription, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        // Recovery can hold the control gate across an unanswered SSUBSCRIBE. New callers
+        // must fail before joining that queue; recheck after acquisition for a racing episode.
+        lock (_gate) ThrowIfShardedAdmissionUnavailableLocked();
         await _controlGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             lock (_gate)
             {
-                ObjectDisposedException.ThrowIf(_disposed, this);
-                if (_shardedExhaustion is { } exhausted) throw exhausted;
-                // Both configured and default recovery own the routes until their episode ends.
-                if (_shardedRecovery is { Task.IsCompleted: false })
-                    throw new RespireConnectionException("Sharded pub/sub recovery is in progress. Subscribe again after recovery completes.");
+                ThrowIfShardedAdmissionUnavailableLocked();
                 if (!_observingClusterTopology)
                 {
                     core.Cluster!.TopologyChanged += RequestShardedRecovery;
@@ -95,6 +95,15 @@ internal sealed partial class SubscriptionHub
             throw;
         }
         finally { _controlGate.Release(); }
+    }
+
+    private void ThrowIfShardedAdmissionUnavailableLocked()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_shardedExhaustion is { } exhausted) throw exhausted;
+        // Both configured and default recovery own the routes until their episode ends.
+        if (_shardedRecovery is { Task.IsCompleted: false })
+            throw new RespireConnectionException("Sharded pub/sub recovery is in progress. Subscribe again after recovery completes.");
     }
 
     // Caller owns _controlGate. Connections and acknowledgement state are published under
@@ -370,17 +379,21 @@ internal sealed partial class SubscriptionHub
     private void RequestShardedRecovery()
     {
         lock (_gate)
-            if (_shardedOwners.Names.Any()) RequestShardedRecoveryLocked();
+        {
+            if (_disposed) return;
+            foreach (var name in _shardedOwners.Names)
+            {
+                if (_shardedOwners.TryGetValue(name, out var primary)
+                    && !ReferenceEquals(primary.Owner, core.Cluster!.GetKnownSlotOwner(ClusterHash.GetSlot(name.Span))))
+                    RequestShardedRecoveryLocked(primary);
+            }
+        }
     }
 
-    private void RequestShardedRecoveryLocked(PrimarySubscriptionConnection? primary = null)
+    private void RequestShardedRecoveryLocked(PrimarySubscriptionConnection primary)
     {
         if (_disposed || _shardedExhaustion is not null || !Routes(SubscriptionKind.Sharded).Names.Any()) return;
-        if (primary is not null)
-            _shardedRecoveryEndpoints.Add(new(primary.Owner.Host, primary.Owner.Port));
-        else
-            foreach (var owner in _shardedOwners.Values)
-                _shardedRecoveryEndpoints.Add(new(owner.Owner.Host, owner.Owner.Port));
+        _shardedRecoveryEndpoints.Add(new(primary.Owner.Host, primary.Owner.Port));
         _shardedRecoveryRequested = true;
         if (_shardedRecovery is { Task.IsCompleted: false }) return;
         var drained = _shardedRecovery = new(TaskCreationOptions.RunContinuationsAsynchronously);

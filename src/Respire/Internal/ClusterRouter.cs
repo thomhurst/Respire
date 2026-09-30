@@ -84,6 +84,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     internal event Action? TopologyChanged;
 
+    // Read the published generation without connecting or taking _nodesGate. Subscription
+    // topology callbacks use this while holding their own route gate.
+    internal RespireConnectionMultiplexer? GetKnownSlotOwner(int slot) => Volatile.Read(ref _slots[slot]);
+
     // ClientCore acquires its health gate first, then this gate, through membership checks
     // and health mutation. Router callbacks must always run outside this gate.
     internal object NodeStateGate => _nodesGate;

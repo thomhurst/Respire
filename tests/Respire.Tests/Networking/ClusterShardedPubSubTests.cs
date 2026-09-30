@@ -262,6 +262,75 @@ public class ClusterShardedPubSubTests
     }
 
     [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task UnrelatedSlotChangesDoNotStartShardedRecovery(int protocol)
+    {
+        await using var cluster = new Cluster(protocol);
+        await using var client = cluster.CreateClient(new()
+        {
+            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+        });
+        var clock = new RecoveryClock();
+        await using var hub = new SubscriptionHub(client.Core, clock);
+        await using var subscription = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None);
+        var router = client.Core.Cluster!;
+        var first = router.GetMultiplexer(new("127.0.0.1", cluster.First.Port));
+        var second = router.GetMultiplexer(new("127.0.0.1", cluster.Second.Port));
+        // foo changes owner, but no subscription uses that slot. A nonzero recovery delay
+        // must not make the healthy bar route reject admission for another healthy channel.
+        router.SetSlotOwner(ClusterHash.GetSlot("foo"), first);
+        await using var added = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["baz"], new(), CancellationToken.None)
+            .AsTask().WaitAsync(Deadline);
+        await Assert.That(cluster.First.ReceivedCommands.Count(command => command == "SSUBSCRIBE bar")).IsEqualTo(1);
+        await Assert.That(cluster.First.ReceivedCommands.Count(command => command == "SSUBSCRIBE baz")).IsEqualTo(1);
+
+        var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.ReconnectSource == RespireReconnectSource.PubSub && change.SourceState == RespireConnectionState.Connected)
+                recovered.TrySetResult();
+        };
+        // A subscribed slot changing owner still starts recovery and migrates its route.
+        router.SetSlotOwner(ClusterHash.GetSlot("bar"), second);
+        var retry = await clock.NextAsync();
+        retry.Fire();
+        await recovered.Task.WaitAsync(Deadline);
+        await Assert.That(cluster.Second.ReceivedCommands.Count(command => command == "SSUBSCRIBE bar")).IsEqualTo(1);
+        await Assert.That(cluster.First.ReceivedCommands.Count(command => command == "SSUBSCRIBE baz")).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(2, false)]
+    [Arguments(2, true)]
+    [Arguments(3, false)]
+    [Arguments(3, true)]
+    public async Task RecoveryRejectsNewSubscriptionWhileControlReplyIsPending(int protocol, bool configured)
+    {
+        await using var cluster = new Cluster(protocol);
+        await using var client = cluster.CreateClient(configured
+            ? new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 3 } : null);
+        await using var hub = new SubscriptionHub(client.Core);
+        await using var subscription = await hub.SubscribeAsync(SubscriptionKind.Sharded, ["bar"], new(), CancellationToken.None);
+        cluster.First.SuppressReply = command => command == "SSUBSCRIBE bar";
+        try
+        {
+            await cluster.First.SendRawAsync(cluster.Confirmation("sunsubscribe", "bar"), ControlIds(cluster.First).Last());
+            await WaitAsync(() => cluster.First.ReceivedCommands.Count(command => command == "SSUBSCRIBE bar") == 2);
+            // Recovery now owns the control gate and is blocked on a real wire reply.
+            var pending = hub.SubscribeAsync(SubscriptionKind.Sharded, ["foo"], new(), CancellationToken.None).AsTask();
+            await Assert.That(pending.IsCompleted).IsTrue();
+            await Assert.That(async () => await pending).ThrowsExactly<RespireConnectionException>();
+            await Assert.That(cluster.Second.ReceivedCommands.Contains("SSUBSCRIBE foo")).IsFalse();
+        }
+        finally
+        {
+            // Interrupt the intentionally unanswered control operation before subscription disposal.
+            await hub.DisposeAsync().AsTask().WaitAsync(Deadline);
+        }
+    }
+
+    [Test]
     public async Task HubDisposalDetachesTopologyHandlerWhileRouterRemainsAlive()
     {
         await using var cluster = new Cluster(2);
