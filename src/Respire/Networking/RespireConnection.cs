@@ -276,14 +276,24 @@ internal sealed class RespireConnection : IAsyncDisposable
     {
         if (options.UseTls) throw new NotSupportedException("In-memory testing connections do not support TLS.");
         using var timeout = CommandTimeoutCancellation.Create(cancellationToken, options.ConnectTimeout);
-        Stream stream;
+        Stream? stream = null;
         try
         {
-            stream = await options.TestingStreamFactory!(host, port, timeout.Token).ConfigureAwait(false);
+            try
+            {
+                stream = await options.TestingStreamFactory!(host, port, timeout.Token).ConfigureAwait(false);
+                // A factory can return after cancellation instead of observing its token.
+                timeout.Token.ThrowIfCancellationRequested();
+            }
+            catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(error, cancellationToken, timeout.Token))
+            {
+                throw new OperationCanceledException(error.Message, error, cancellationToken);
+            }
         }
-        catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(error, cancellationToken, timeout.Token))
+        catch
         {
-            throw new OperationCanceledException(error.Message, error, cancellationToken);
+            stream?.Dispose();
+            throw;
         }
         var connection = new RespireConnection(null, stream, host, port, options, logger);
         try

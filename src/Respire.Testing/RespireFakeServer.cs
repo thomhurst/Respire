@@ -222,7 +222,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         public int GetHashCode(byte[] bytes)
         {
             var hash = new HashCode();
-            foreach (var value in bytes) hash.Add(value);
+            hash.AddBytes(bytes);
             return hash.ToHashCode();
         }
     }

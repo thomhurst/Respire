@@ -29,7 +29,8 @@ Each server has independent data. Multiple clients connected through its options
 that data and execute each command atomically. `CreateOptions()` returns fresh endpoint
 collections; clone options to select RESP2/RESP3, connection count, serializers, and client
 timeouts. Keep the original endpoint and options object lineage: a connection string cannot
-represent an in-memory server. Both eager `ConnectAsync` and lazy `Create` clients work.
+represent an in-memory server. Changing the endpoint causes `NotSupportedException` on connection.
+Both eager `ConnectAsync` and lazy `Create` clients work.
 
 Dispose clients before their server. Disposing one client leaves other clients and server
 data intact. Server disposal closes all owned pipe endpoints and joins server loops;
@@ -66,6 +67,8 @@ persistence and administrative diagnostics are not simulated. Unsupported handsh
 fail initialization. Do not enable these modes and infer production behavior from the fake.
 Individual RESP requests are limited to 16 MiB; larger requests close their connection
 and report the size-limit error when the server is disposed.
+Arguments are copied into owned arrays and commands execute under one server lock.
+This fixture is not a throughput benchmark tool.
 There is no eviction policy or total memory budget: keep test datasets bounded.
 
 ## Expiry and determinism
