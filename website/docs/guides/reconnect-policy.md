@@ -116,7 +116,8 @@ each route's acknowledgement. Redis cannot replay messages missed during an inte
 
 While configured recovery is active, new explicit subscriptions fail with
 `RespireConnectionException`; they do not open a competing connection or skip the delay.
-Retry the subscription after a `Connected` lifecycle event. Removing existing subscriptions
+Retry after a lifecycle event with `ReconnectSource = PubSub` and `SourceState = Connected`.
+Removing existing subscriptions
 is supported during backoff, and recovery snapshots the remaining routes under the control
 gate. A caller cancellation during an explicit subscription does not cancel shared recovery.
 

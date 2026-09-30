@@ -8,6 +8,7 @@ internal sealed partial class SubscriptionHub
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     // All configured recovery state is guarded by _reconnectStateGate. _gate protects
     // route membership separately; recovery holds _controlGate while restoring routes.
+    // When nested, acquire _reconnectStateGate before _gate, never the reverse.
     private RespireConnection? _configuredConnection;
     private TaskCompletionSource? _configuredRecoveryDrained;
     private RespireReconnectLimitException? _recoveryExhaustion;
@@ -15,17 +16,22 @@ internal sealed partial class SubscriptionHub
 
     private enum ConfiguredRecoveryPhase { Idle, Recovering, Exhausted }
 
-    private void ThrowIfConfiguredRecoveryRequired()
+    private RespireConnection? GetConnectionForCaller(bool watch)
     {
-        if (core.Options.ReconnectPolicy is null) return;
+        if (!watch || core.Options.ReconnectPolicy is null)
+            return _connection is { IsConnected: true } existing ? existing : null;
         lock (_reconnectStateGate)
         {
             if (_recoveryExhaustion is { } exhausted) throw exhausted;
             if (_configuredRecoveryPhase == ConfiguredRecoveryPhase.Recovering)
                 throw new RespireConnectionException("Pub/sub recovery is in progress. Subscribe again after recovery completes.");
-            if (_configuredConnection is { } connection
-                && (!ReferenceEquals(_connection, connection) || !connection.IsConnected))
+            if (_configuredConnection is not { } connection) return null;
+            if (!ReferenceEquals(_connection, connection) || !connection.IsConnected)
                 throw new RespireConnectionException("Pub/sub connection closed. Automatic recovery must complete before subscribing.");
+            // Return the same connection whose recovery ownership was checked. If it closes
+            // immediately afterward, the caller fails on that socket; only its watcher may
+            // replace it and restore existing routes with the configured delay and budget.
+            return connection;
         }
     }
 

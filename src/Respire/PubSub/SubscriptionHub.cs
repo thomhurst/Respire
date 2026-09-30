@@ -339,8 +339,7 @@ internal sealed partial class SubscriptionHub(ClientCore core) : IAsyncDisposabl
 
     private async ValueTask<RespireConnection> EnsureConnectionAsync(CancellationToken cancellationToken, bool watch = true)
     {
-        if (watch) ThrowIfConfiguredRecoveryRequired();
-        if (_connection is { IsConnected: true } existing)
+        if (GetConnectionForCaller(watch) is { } existing)
         {
             return existing;
         }
@@ -349,7 +348,7 @@ internal sealed partial class SubscriptionHub(ClientCore core) : IAsyncDisposabl
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_connection is { IsConnected: true } raced)
+            if (GetConnectionForCaller(watch) is { } raced)
             {
                 return raced;
             }
@@ -532,7 +531,11 @@ internal sealed partial class SubscriptionHub(ClientCore core) : IAsyncDisposabl
 
     private bool QueueReconnectStateLocked(RespireConnectionStateChange change)
     {
-        _pendingReconnectStates.Enqueue(change);
+        _pendingReconnectStates.Enqueue(change with
+        {
+            ReconnectSource = RespireReconnectSource.PubSub,
+            SourceState = change.State,
+        });
         if (_publishingReconnectState)
         {
             return false;

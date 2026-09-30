@@ -82,6 +82,8 @@ public class PubSubReconnectPolicyTests
         var states = changes.ToArray();
         await Assert.That(states.Length).IsEqualTo(3);
         await Assert.That(states[0].ReconnectAttempt).IsEqualTo(1);
+        await Assert.That(states[0].ReconnectSource).IsEqualTo(RespireReconnectSource.PubSub);
+        await Assert.That(states[0].SourceState).IsEqualTo(RespireConnectionState.Reconnecting);
         await Assert.That(states[0].NextReconnectDelay).IsEqualTo(TimeSpan.FromMilliseconds(25));
         await Assert.That(states[1].ReconnectAttempt).IsEqualTo(2);
         await Assert.That(states[1].NextReconnectDelay).IsEqualTo(TimeSpan.FromMilliseconds(50));
@@ -152,6 +154,48 @@ public class PubSubReconnectPolicyTests
         await Assert.That(await removed.Completion).IsEqualTo(RespireSubscriptionEndReason.Disposed);
         await Assert.That(retained.IsDisposed).IsFalse();
         await client.DisposeAsync();
+    }
+
+    [Test]
+    public async Task SocketClosureRacingSubscriptionsPreservesExistingRouteRecovery()
+    {
+        await using var server = new FakeRespServer(2, Confirmation);
+        await using var client = RespireClient.Create(Options(server.Port, Policy(milliseconds: 100, attempts: 1)));
+        await using var subscription = await client.SubscribeAsync("ch");
+        using var deadline = new CancellationTokenSource(Deadline);
+        await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var attempts = new ConcurrentQueue<int>();
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.NextReconnectDelay is not null) attempts.Enqueue(change.ReconnectAttempt);
+            if (change.SourceState == RespireConnectionState.Connected) recovered.TrySetResult();
+        };
+        var subscribers = Enumerable.Range(0, 32).Select(async _ =>
+        {
+            await start.Task;
+            try { await client.SubscribeAsync("ch", deadline.Token); }
+            catch (RespireConnectionException) { }
+            // A command already on the failed socket receives the injected protocol error.
+            catch (RespireProtocolException) { }
+        }).ToArray();
+        try
+        {
+            start.SetResult();
+            await server.SendRawAsync("?invalid\r\n"u8.ToArray(), server.ReceivedConnectionIds[0]);
+            await Task.WhenAll(subscribers).WaitAsync(deadline.Token);
+            await recovered.Task.WaitAsync(deadline.Token);
+            await Assert.That(attempts.ToArray()).IsEquivalentTo(new[] { 1 });
+            await Assert.That(subscription.Completion.IsCompleted).IsFalse();
+            await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(2);
+            await server.SendRawAsync("*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$5\r\nhello\r\n"u8.ToArray(), server.ReceivedConnectionIds[^1]);
+            await Assert.That(await reader.MoveNextAsync()).IsTrue();
+            await Assert.That(reader.Current.Kind).IsEqualTo(RespireMessageKind.Gap);
+            await Assert.That(await reader.MoveNextAsync()).IsTrue();
+            await Assert.That(reader.Current.Text).IsEqualTo("hello");
+        }
+        finally { await client.DisposeAsync(); }
     }
 
     [Test]
