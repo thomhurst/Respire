@@ -2,6 +2,7 @@ namespace Respire.Testing;
 
 public sealed partial class RespireFakeServer
 {
+    // This is a Respire.Testing resource limit, not a Redis transaction limit.
     private const long MaximumTransactionBytes = 16 * 1024 * 1024;
     private readonly Dictionary<byte[], HashSet<Connection>> _watchers = new(BinaryKeyComparer.Instance);
 
@@ -92,7 +93,7 @@ public sealed partial class RespireFakeServer
     {
         foreach (var key in connection.WatchedKeys)
         {
-            var watchers = _watchers[key];
+            if (!_watchers.TryGetValue(key, out var watchers)) continue;
             watchers.Remove(connection);
             if (watchers.Count == 0) _watchers.Remove(key);
         }

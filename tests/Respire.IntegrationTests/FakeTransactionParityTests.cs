@@ -110,7 +110,7 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
         var options = Options(fake, protocol);
         await using var session = await TestRespSession.ConnectAsync(options);
         await using var writer = await TestRespSession.ConnectAsync(options);
-        foreach (var scenario in new WatchCase[]
+        var scenarios = new WatchCase[]
         {
             new([ ["SET", "key", "value"] ], ["SET", "key", "value"], true),
             new([ ["SET", "key", "value"] ], ["SET", "key", "new", "NX"], false),
@@ -172,7 +172,29 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
             new([ ["ZADD", "key", "1", "member"] ], ["ZREMRANGEBYSCORE", "key", "2", "3"], false),
             new([ ["ZADD", "key", "1", "member"] ], ["ZREMRANGEBYSCORE", "key", "1", "1"], true),
             new([ ["ZADD", "key", "1", "member"] ], ["ZREMRANGEBYLEX", "key", "-", "+"], true),
-        })
+            new([], ["INCR", "key"], true),
+            new([], ["DECR", "key"], true),
+            new([], ["DECRBY", "key", "2"], true),
+            new([], ["GETSET", "key", "new"], true),
+            new([ ["SET", "key", "old"] ], ["DEL", "key"], true),
+            new([], ["MSETNX", "key", "new"], true),
+            new([ ["SET", "key", "old", "PX", "60000"] ], ["PERSIST", "key"], true),
+            new([ ["SET", "key", "old"] ], ["EXPIRE", "key", "60"], true),
+            new([ ["SET", "key", "old"] ], ["EXPIREAT", "key", "1"], true),
+            new([ ["SET", "key", "old"] ], ["PEXPIREAT", "key", "1"], true),
+            new([], ["HMSET", "key", "field", "new"], true),
+            new([], ["HSETNX", "key", "field", "new"], true),
+            new([ ["HSET", "key", "field", "old"] ], ["HDEL", "key", "field"], true),
+            new([ ["SADD", "key", "member"] ], ["SREM", "key", "member"], true),
+            new([ ["SADD", "other", "member"] ], ["SUNIONSTORE", "key", "other"], true),
+            new([ ["SADD", "other", "member"] ], ["SDIFFSTORE", "key", "other"], true),
+            new([], ["RPUSH", "key", "new"], true),
+            new([ ["LPUSH", "key", "old"] ], ["LPUSHX", "key", "new"], true),
+            new([ ["LPUSH", "key", "old"] ], ["LPOP", "key"], true),
+            new([ ["ZADD", "key", "1", "member"] ], ["ZPOPMIN", "key"], true),
+        };
+        if (useFake) AssertMutationCoverage(scenarios);
+        foreach (var scenario in scenarios)
         {
             using (var cleared = await writer.CommandAsync("DEL", "key", "other", "marker")) { }
             foreach (var setup in scenario.Setup) using (var reply = await writer.CommandAsync(setup)) reply.IsError.Should().BeFalse();
@@ -222,6 +244,29 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
             using var invalid = await session.CommandAsync(command);
             invalid.GetErrorMessage().Should().Be($"ERR {command} without MULTI");
         }
+    }
+
+    private static void AssertMutationCoverage(WatchCase[] scenarios)
+    {
+        // Every new fake command must be classified here or gain a successful WATCH
+        // invalidation case above. Real Redis runs the same vectors to check semantics.
+        string[] nonMutatingCommands =
+        [
+            "HELLO", "MULTI", "EXEC", "DISCARD", "WATCH", "UNWATCH", "PING", "ECHO",
+            "SELECT", "CLIENT", "GET", "MGET", "EXISTS", "TYPE", "STRLEN", "TTL",
+            "PTTL", "EXPIRETIME", "PEXPIRETIME", "HGET", "HMGET", "HGETALL", "HEXISTS", "HLEN",
+            "HKEYS", "HVALS", "HSTRLEN", "SMEMBERS", "SCARD", "SISMEMBER", "SMISMEMBER", "SINTER",
+            "SUNION", "SDIFF", "SINTERCARD", "LLEN", "LRANGE", "LINDEX", "LPOS", "ZCARD",
+            "ZSCORE", "ZMSCORE", "ZRANK", "ZREVRANK", "ZCOUNT", "ZLEXCOUNT", "ZRANGE", "ZREVRANGE",
+            "ZRANGEBYSCORE", "ZREVRANGEBYSCORE", "ZRANGEBYLEX", "ZREVRANGEBYLEX", "ZINTERCARD",
+        ];
+        var commands = (System.Collections.IDictionary)typeof(RespireFakeServer)
+            .GetField("Commands", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+            .GetValue(null)!;
+        var covered = scenarios.Where(scenario => scenario.Changes && !scenario.Error)
+            .Select(scenario => scenario.Mutation[0]).Distinct();
+        commands.Keys.Cast<string>().Except(nonMutatingCommands).Should().BeEquivalentTo(covered,
+            "every mutating fake command needs a successful WATCH invalidation parity case");
     }
 
     private sealed record WatchCase(string[][] Setup, string[] Mutation, bool Changes, bool Error = false);
