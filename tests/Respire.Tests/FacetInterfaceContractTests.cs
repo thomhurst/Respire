@@ -19,6 +19,7 @@ public class FacetInterfaceContractTests
     }
 
     [Test]
+    [Arguments(typeof(IServerCommands))]
     [Arguments(typeof(ISortedSetCommands))]
     [Arguments(typeof(IBatchSortedSetCommands))]
     [Arguments(typeof(IStreamCommands))]

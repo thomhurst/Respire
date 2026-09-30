@@ -8,6 +8,15 @@
   Update lock command ACL allowlists for native renewal (`SET`) and release (`DELEX` on Redis 8.4+
   or `DELIFEQ` on Valkey 9.0+). `NOPERM` is surfaced without Lua fallback.
 
+### Pub/sub introspection
+
+- Server pub/sub channel, subscriber, and unique-pattern inspection adds ordinary
+  and sharded command forms with owned binary channel results. Explicit
+  `OnAllNodesAsync` methods return endpoint-associated values or failures for all
+  discovered Cluster members, including replicas. External `IServerCommands`
+  implementations, decorators, and mocks must implement or forward all six new methods. See the
+  [pub/sub introspection guide](../website/docs/guides/pub-sub-introspection.md).
+
 ### String comparisons
 
 - `Strings.SetConditionalAsync` and `GetAndSetConditionalAsync` add value/digest
