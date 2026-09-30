@@ -88,6 +88,27 @@ public interface IKeyCommands
     /// </summary>
     ValueTask<RespireTtl> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default);
 
+    /// <summary>Absolute expiration, distinguishing missing and persistent keys. Redis 7+: PEXPIRETIME.</summary>
+    ValueTask<RespireExpiryTime> ExpiryTimeAsync(RespireKey key, CancellationToken cancellationToken = default);
+
+    /// <summary>Absolute expiration at the requested server precision. Redis 7+: EXPIRETIME/PEXPIRETIME.</summary>
+    ValueTask<RespireExpiryTime> ExpiryTimeAsync(
+        RespireKey key, ExpiryTimePrecision precision, CancellationToken cancellationToken = default);
+
+    /// <summary>The server's internal value encoding, or null for a missing key. Redis: OBJECT ENCODING.</summary>
+    ValueTask<string?> EncodingAsync(RespireKey key, CancellationToken cancellationToken = default);
+
+    /// <summary>Time since last access, with second resolution, or null for a missing key. Redis: OBJECT IDLETIME.</summary>
+    /// <remarks>Redis rejects this command under LFU eviction policies.</remarks>
+    ValueTask<TimeSpan?> IdleTimeAsync(RespireKey key, CancellationToken cancellationToken = default);
+
+    /// <summary>The logarithmic access frequency counter, or null for a missing key. Redis: OBJECT FREQ.</summary>
+    /// <remarks>Requires an LFU eviction policy; otherwise Redis returns an error. This is not an exact access count.</remarks>
+    ValueTask<long?> FrequencyAsync(RespireKey key, CancellationToken cancellationToken = default);
+
+    /// <summary>The server's internal value reference count, or null for a missing key. Redis: OBJECT REFCOUNT.</summary>
+    ValueTask<long?> ReferenceCountAsync(RespireKey key, CancellationToken cancellationToken = default);
+
     /// <summary>The data structure stored at a key, or <see cref="RespireKeyType.None"/>. Redis: TYPE.</summary>
     ValueTask<RespireKeyType> TypeAsync(RespireKey key, CancellationToken cancellationToken = default);
 
@@ -183,6 +204,41 @@ internal sealed class KeyCommands(RespireClient client) : IKeyCommands
             "PTTL", new Cmd1(Verbs.Pttl, client.Key(in key)), cancellationToken, this,
             static (KeyCommands _, in RespValue value) =>
                 RespireTtl.FromRedisMilliseconds(ResponseReader.Integer(in value)));
+
+    public ValueTask<RespireExpiryTime> ExpiryTimeAsync(RespireKey key, CancellationToken cancellationToken = default)
+        => ExpiryTimeAsync(key, ExpiryTimePrecision.Milliseconds, cancellationToken);
+
+    public ValueTask<RespireExpiryTime> ExpiryTimeAsync(
+        RespireKey key, ExpiryTimePrecision precision, CancellationToken cancellationToken = default)
+    {
+        var (operation, verb) = ExpiryTimeCommand(precision);
+        return client.ConvertResponseAsync(operation, new Cmd1(verb, client.Key(in key)), cancellationToken, precision,
+            static (ExpiryTimePrecision p, in RespValue value) => RespireExpiryTime.FromRedis(ResponseReader.Integer(in value), p));
+    }
+
+    public ValueTask<string?> EncodingAsync(RespireKey key, CancellationToken cancellationToken = default)
+        => client.StringOrNullAsync("OBJECT ENCODING", new Cmd1(RespireCommands.Key.OBJECT_ENCODING.Verb, client.Key(in key)), cancellationToken);
+
+    public ValueTask<TimeSpan?> IdleTimeAsync(RespireKey key, CancellationToken cancellationToken = default)
+        => client.ConvertResponseAsync("OBJECT IDLETIME", new Cmd1(RespireCommands.Key.OBJECT_IDLETIME.Verb, client.Key(in key)), cancellationToken, this,
+            static (KeyCommands _, in RespValue value) => ParseIdleTime(in value));
+
+    public ValueTask<long?> FrequencyAsync(RespireKey key, CancellationToken cancellationToken = default)
+        => client.IntegerOrNullAsync("OBJECT FREQ", new Cmd1(RespireCommands.Key.OBJECT_FREQ.Verb, client.Key(in key)), cancellationToken);
+
+    public ValueTask<long?> ReferenceCountAsync(RespireKey key, CancellationToken cancellationToken = default)
+        => client.IntegerOrNullAsync("OBJECT REFCOUNT", new Cmd1(RespireCommands.Key.OBJECT_REFCOUNT.Verb, client.Key(in key)), cancellationToken);
+
+    internal static TimeSpan? ParseIdleTime(in RespValue value)
+        => value.IsNull ? null : TimeSpan.FromSeconds(ResponseReader.Integer(in value));
+
+    internal static (string Operation, Verb Verb) ExpiryTimeCommand(ExpiryTimePrecision precision)
+        => precision switch
+        {
+            ExpiryTimePrecision.Milliseconds => ("PEXPIRETIME", RespireCommands.Key.PEXPIRETIME.Verb),
+            ExpiryTimePrecision.Seconds => ("EXPIRETIME", RespireCommands.Key.EXPIRETIME.Verb),
+            _ => throw new ArgumentOutOfRangeException(nameof(precision), precision, null),
+        };
 
     public ValueTask<RespireKeyType> TypeAsync(
         RespireKey key,

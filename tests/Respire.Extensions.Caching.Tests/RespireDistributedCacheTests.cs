@@ -1628,6 +1628,24 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public ValueTask<RespireTtl> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
             => inner.ExpiryAsync(key, cancellationToken);
 
+        public ValueTask<RespireExpiryTime> ExpiryTimeAsync(RespireKey key, CancellationToken cancellationToken = default)
+            => inner.ExpiryTimeAsync(key, cancellationToken);
+
+        public ValueTask<string?> EncodingAsync(RespireKey key, CancellationToken cancellationToken = default)
+            => inner.EncodingAsync(key, cancellationToken);
+
+        public ValueTask<TimeSpan?> IdleTimeAsync(RespireKey key, CancellationToken cancellationToken = default)
+            => inner.IdleTimeAsync(key, cancellationToken);
+
+        public ValueTask<long?> FrequencyAsync(RespireKey key, CancellationToken cancellationToken = default)
+            => inner.FrequencyAsync(key, cancellationToken);
+
+        public ValueTask<long?> ReferenceCountAsync(RespireKey key, CancellationToken cancellationToken = default)
+            => inner.ReferenceCountAsync(key, cancellationToken);
+
+        public ValueTask<RespireExpiryTime> ExpiryTimeAsync(RespireKey key, ExpiryTimePrecision precision, CancellationToken cancellationToken = default)
+            => inner.ExpiryTimeAsync(key, precision, cancellationToken);
+
         public ValueTask<RespireKeyType> TypeAsync(RespireKey key, CancellationToken cancellationToken = default)
             => inner.TypeAsync(key, cancellationToken);
 

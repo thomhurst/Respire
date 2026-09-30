@@ -366,6 +366,24 @@ public class MultiItemCancellationOverloadTests
         public ValueTask<RespireTtl> ExpiryAsync(RespireKey key, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
+        public ValueTask<RespireExpiryTime> ExpiryTimeAsync(RespireKey key, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask<string?> EncodingAsync(RespireKey key, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask<TimeSpan?> IdleTimeAsync(RespireKey key, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask<long?> FrequencyAsync(RespireKey key, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask<long?> ReferenceCountAsync(RespireKey key, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask<RespireExpiryTime> ExpiryTimeAsync(RespireKey key, ExpiryTimePrecision precision, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
         public ValueTask<RespireKeyType> TypeAsync(RespireKey key, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
