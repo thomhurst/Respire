@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace Respire;
 
 /// <summary>The result of releasing a managed distributed lock.</summary>
@@ -72,14 +70,18 @@ public sealed class RespireLock : IAsyncDisposable
         RespireKey key,
         RespireLockToken token,
         TimeSpan duration,
-        long acquiredTimestamp)
+        long acquiredTimestamp,
+        TimeProvider? timeProvider = null)
     {
+        Clock = timeProvider ?? TimeProvider.System;
         _locks = locks;
         Key = key.Snapshot();
         Token = token;
         _durationTicks = duration.Ticks;
         _renewedTimestamp = acquiredTimestamp;
     }
+
+    internal TimeProvider Clock { get; }
 
     /// <summary>The locked key, as passed to <c>AcquireAsync</c> (before any client key prefix).</summary>
     public RespireKey Key { get; }
@@ -110,13 +112,13 @@ public sealed class RespireLock : IAsyncDisposable
                 return TimeSpan.Zero;
             }
 
-            var remaining = Duration - Stopwatch.GetElapsedTime(Interlocked.Read(ref _renewedTimestamp));
+            var remaining = Duration - Clock.GetElapsedTime(Interlocked.Read(ref _renewedTimestamp));
             return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
         }
     }
 
     /// <summary>Best-effort wall-clock expiry instant derived from <see cref="RemainingEstimate"/>.</summary>
-    public DateTimeOffset ExpiresAtEstimate => DateTimeOffset.UtcNow + RemainingEstimate;
+    public DateTimeOffset ExpiresAtEstimate => Clock.GetUtcNow() + RemainingEstimate;
 
     /// <summary>Whether this handle no longer considers itself the lock owner.</summary>
     public bool IsReleased
@@ -177,7 +179,7 @@ public sealed class RespireLock : IAsyncDisposable
             }
 
             var effectiveExpiry = NormalizeDuration(expiry ?? Duration);
-            var renewedTimestamp = Stopwatch.GetTimestamp();
+            var renewedTimestamp = Clock.GetTimestamp();
             var extended = _locks is IManagedLockCommands managed
                 ? await managed.ExtendManagedAsync(
                         Key, Token, effectiveExpiry, onOutcomeUncertain, cancellationToken)
@@ -539,12 +541,12 @@ public sealed class RespireLockKeepAlive : IAsyncDisposable
         await renewalCancellation.CancelAsync().ConfigureAwait(false);
     }
 
-    private static async Task DelayInChunksAsync(TimeSpan delay, CancellationToken cancellationToken)
+    private async Task DelayInChunksAsync(TimeSpan delay, CancellationToken cancellationToken)
     {
         while (delay > TimeSpan.Zero)
         {
             var chunk = GetTimerDelayChunk(delay);
-            await Task.Delay(chunk, cancellationToken).ConfigureAwait(false);
+            await Task.Delay(chunk, _lock.Clock, cancellationToken).ConfigureAwait(false);
             delay -= chunk;
         }
     }

@@ -631,21 +631,32 @@ public class LockCommandTests
     public async Task RespireLock_UncertainRenewalCancelsProtectedWorkBeforeFenceCompletes()
     {
         var commands = new CoordinatedLockCommands(reportUncertain: true);
+        var clock = new GatedLockClock();
         var mutex = new RespireLock(
             commands,
             "resource",
             "owner",
             TimeSpan.FromMilliseconds(500),
-            Stopwatch.GetTimestamp());
+            clock.GetTimestamp(),
+            clock);
         var keepAlive = await mutex.KeepAliveAsync();
-
-        await commands.FenceStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.That(keepAlive.CancellationToken.IsCancellationRequested).IsTrue();
-        await Assert.That(keepAlive.OwnershipLost).IsTrue();
-        await Assert.That(commands.FenceCompleted.Task.IsCompleted).IsFalse();
-
-        commands.CompleteFence();
-        await keepAlive.DisposeAsync();
+        try
+        {
+            var renewal = await clock.Scheduled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(renewal.DueTime).IsEqualTo(TimeSpan.FromMilliseconds(250));
+            await Assert.That(commands.FenceStarted.Task.IsCompleted).IsFalse();
+            // Scheduling cannot consume the lease before this test releases the renewal timer.
+            renewal.Fire();
+            await commands.FenceStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(keepAlive.CancellationToken.IsCancellationRequested).IsTrue();
+            await Assert.That(keepAlive.OwnershipLost).IsTrue();
+            await Assert.That(commands.FenceCompleted.Task.IsCompleted).IsFalse();
+        }
+        finally
+        {
+            commands.CompleteFence();
+            await keepAlive.DisposeAsync();
+        }
         await Assert.That(keepAlive.Failure).IsTypeOf<RespireConnectionException>();
     }
 
@@ -878,6 +889,30 @@ public class LockCommandTests
         {
             await Task.Delay(10, timeout.Token);
         }
+    }
+
+    private sealed class GatedLockClock : TimeProvider
+    {
+        // This case tests uncertainty ordering, not elapsed-time expiry. Only explicit timer
+        // release advances the loop; a busy runner cannot expire the lease before renewal.
+        public override long GetTimestamp() => 0;
+        internal TaskCompletionSource<LockTimer> Scheduled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new LockTimer(callback, state, dueTime);
+            Scheduled.TrySetResult(timer);
+            return timer;
+        }
+    }
+
+    private sealed class LockTimer(TimerCallback callback, object? state, TimeSpan dueTime) : ITimer
+    {
+        private TimerCallback? _callback = callback;
+        internal TimeSpan DueTime => dueTime;
+        internal void Fire() => Interlocked.Exchange(ref _callback, null)?.Invoke(state);
+        public bool Change(TimeSpan dueTime, TimeSpan period) => throw new NotSupportedException("This test clock supports one-shot delays only.");
+        public void Dispose() => Interlocked.Exchange(ref _callback, null);
+        public ValueTask DisposeAsync() { Dispose(); return default; }
     }
 
     private sealed class CoordinatedLockCommands : ILockCommands, IManagedLockCommands
