@@ -89,6 +89,8 @@ Hash-field expiration requires Redis 7.4 or later. Older servers fail before the
 written, with an error that identifies the required Redis feature.
 
 ```csharp
+using Respire.Extensions.Coordination;
+
 await using var leaseClient = await RespireClient.ConnectAsync(new RespireOptions
 {
     Endpoints = ["localhost:6379"],
