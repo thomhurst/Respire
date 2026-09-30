@@ -40,6 +40,17 @@ public class ClusterImmediateRawIntegrationTests(ClusterTransactionTestContainer
             Func<Task> discarded = async () => await client.ExecuteFireAndForgetAsync(RespireCommands.String.MSET,
                 first, "changed", other, "bad");
             (await discarded.Should().ThrowAsync<RespireServerException>()).Which.Code.Should().Be("CROSSSLOT");
+            Func<Task> blocking = async () =>
+            {
+                using var ignored = await client.ExecuteAsync(RespireCommands.List.BLPOP, first, other, 0.01);
+            };
+            (await blocking.Should().ThrowAsync<RespireServerException>()).Which.Code.Should().Be("CROSSSLOT");
+            Func<Task> streams = async () =>
+            {
+                using var ignored = await client.ExecuteAsync(RespireCommands.Stream.XREAD,
+                    "COUNT", 1, "STREAMS", first, other, "0", "0");
+            };
+            (await streams.Should().ThrowAsync<RespireServerException>()).Which.Code.Should().Be("CROSSSLOT");
             (await client.GetStringAsync(first)).Should().Be("one");
             (await client.Keys.ExistsAsync(other)).Should().BeFalse();
         }

@@ -66,6 +66,7 @@ internal static class RawCommandKeyLayouts
             "ZDIFFSTORE", "ZINTERSTORE", "ZUNIONSTORE");
         // Immediate-only additions do not expand the conservative deferred allowlist.
         AddImmediate(LayoutKind.All, "KEYDB.MEXISTS");
+        // LMOVEM/BLMOVEM are Redis 8.10 commands, with source and destination in the first two positions.
         AddImmediate(LayoutKind.FirstTwo, "LMOVEM", "BLMOVE", "BLMOVEM", "BRPOPLPUSH");
         AddImmediate(LayoutKind.AllExceptLast, "BLPOP", "BRPOP", "BZPOPMIN", "BZPOPMAX", "JSON.MGET");
         AddImmediate(LayoutKind.CountedAfterTimeout, "BLMPOP", "BZMPOP");
