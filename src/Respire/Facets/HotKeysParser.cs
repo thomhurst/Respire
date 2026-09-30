@@ -1,3 +1,4 @@
+using Respire.Internal;
 using Respire.Protocol;
 
 namespace Respire;
@@ -97,7 +98,7 @@ internal static class HotKeysParser
             if (row.Length is not (1 or 2)) throw new RespireProtocolException("HOTKEYS slot range must have one or two slots.");
             var start = Number(in row[0]);
             var end = row.Length == 1 ? start : Number(in row[1]);
-            if (start > end || end >= 16384) throw new RespireProtocolException("HOTKEYS slot range is invalid.");
+            if (start > end || end >= ClusterHash.SlotCount) throw new RespireProtocolException("HOTKEYS slot range is invalid.");
             ranges[index] = new((int)start, (int)end);
         }
         return ranges;

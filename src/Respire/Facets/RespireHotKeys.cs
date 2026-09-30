@@ -1,4 +1,5 @@
 using Respire.Commands;
+using Respire.Internal;
 
 namespace Respire;
 
@@ -34,12 +35,12 @@ public sealed record RespireHotKeysOptions
         if (Count is < 1 or > 64) throw new ArgumentOutOfRangeException(nameof(Count));
         if (DurationSeconds is < 1 or > 1_000_000) throw new ArgumentOutOfRangeException(nameof(DurationSeconds));
         if (SampleRatio is < 1) throw new ArgumentOutOfRangeException(nameof(SampleRatio));
-        if (Slots.Length > 16384) throw new ArgumentOutOfRangeException(nameof(Slots));
+        if (Slots.Length > ClusterHash.SlotCount) throw new ArgumentOutOfRangeException(nameof(Slots));
         if (!Slots.IsEmpty)
         {
             var seen = new HashSet<int>();
             foreach (var slot in Slots.Span)
-                if ((uint)slot >= 16384 || !seen.Add(slot))
+                if ((uint)slot >= ClusterHash.SlotCount || !seen.Add(slot))
                     throw new ArgumentException("Slots must be distinct integers from 0 through 16383.", nameof(Slots));
         }
 

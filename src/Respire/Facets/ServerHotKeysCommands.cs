@@ -38,7 +38,9 @@ internal sealed partial class ServerCommands
     {
         EnsureAdminAllowed("HOTKEYS START");
         ArgumentNullException.ThrowIfNull(options);
-        return MutateHotKeysOnAllNodesAsync("HOTKEYS START", options.BuildCommand(), cancellationToken,
+        var command = options.BuildCommand();
+        cancellationToken.ThrowIfCancellationRequested();
+        return FanOutAsync("HOTKEYS START", command, cancellationToken,
             static (ServerCommands _, in RespValue value) => HotKeysParser.Ok(in value));
     }
 
