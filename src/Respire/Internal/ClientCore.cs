@@ -18,6 +18,7 @@ internal sealed class ClientCore : IAsyncDisposable
     private readonly HashSet<(RespireConnectionMultiplexer Node, int Slot)> _disconnectedCommandSlots = [];
     private readonly Dictionary<RespireEndpoint, RespireConnectionState> _publishedEndpointStates = [];
     private SubscriptionHub? _hub;
+    private HashSet<DedicatedConnectionPool>? _serverPools;
     private RespireEndpoint? _subscriptionEndpoint;
     private RespireConnectionState _subscriptionState = RespireConnectionState.Connected;
     private bool _publishingState;
@@ -306,6 +307,30 @@ internal sealed class ClientCore : IAsyncDisposable
         }
     }
 
+    internal DedicatedConnectionPool CreateServerPool(RespireEndpoint endpoint)
+    {
+        lock (_hubGate)
+        {
+            ObjectDisposedException.ThrowIf(Disposed, this);
+            var pool = new DedicatedConnectionPool(endpoint.Host, endpoint.Port, Options.ToConnectionOptions(), Logger);
+            (_serverPools ??= []).Add(pool);
+            return pool;
+        }
+    }
+
+    internal async ValueTask ReleaseServerPoolAsync(DedicatedConnectionPool pool)
+    {
+        try
+        {
+            await pool.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            // Keep the pool visible to concurrent client disposal until its cleanup finishes.
+            lock (_hubGate) _serverPools!.Remove(pool);
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (Disposed)
@@ -334,10 +359,15 @@ internal sealed class ClientCore : IAsyncDisposable
 
         PublishQueuedStates();
         SubscriptionHub? hub;
+        DedicatedConnectionPool[] serverPools;
         lock (_hubGate)
         {
             hub = _hub;
+            serverPools = _serverPools?.ToArray() ?? [];
         }
+
+        foreach (var pool in serverPools)
+            await pool.DisposeAsync().ConfigureAwait(false);
 
         if (hub is not null)
         {

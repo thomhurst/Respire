@@ -1,7 +1,6 @@
 using System.Globalization;
 using Respire.Commands;
 using Respire.Internal;
-using Respire.Networking;
 using Respire.Protocol;
 
 namespace Respire;
@@ -51,28 +50,24 @@ internal sealed partial class ServerCommands
         ResponseConverter<ServerCommands, T> convert, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
+        DedicatedConnectionPool? pool = null;
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var pool = client.Core.Cluster is { } cluster ? cluster.GetDedicatedPool(endpoint) : client.Core.DedicatedPool;
-            RespireConnection? connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                using var reply = await client.SendOnConnectionAsync(operation, connection, command, cancellationToken).ConfigureAwait(false);
-                var result = convert(this, in reply);
-                pool.Return(connection);
-                connection = null;
-                return RespireServerResult<T>.Success(endpoint, result);
-            }
-            finally
-            {
-                if (connection is not null) await pool.DiscardAsync(connection).ConfigureAwait(false);
-            }
+            // Introspection must not retain every historical replica in the routing pool cache.
+            pool = client.Core.CreateServerPool(endpoint);
+            var connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
+            using var reply = await client.SendOnConnectionAsync(operation, connection, command, cancellationToken).ConfigureAwait(false);
+            return RespireServerResult<T>.Success(endpoint, convert(this, in reply));
         }
         catch (Exception error)
         {
             // Preserve successes from other nodes, including when cancellation occurs after discovery.
             return RespireServerResult<T>.Failure(endpoint, error);
+        }
+        finally
+        {
+            if (pool is not null) await client.Core.ReleaseServerPoolAsync(pool).ConfigureAwait(false);
         }
     }
 

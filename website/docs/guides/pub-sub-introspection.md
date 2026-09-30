@@ -64,11 +64,17 @@ or conflicting topology, and discovery failures throw before fan-out starts, so 
 partial topology is never silently presented as complete. Membership can change
 after the snapshot; no atomic Cluster-wide observation is promised.
 
-Execution uses client-owned dedicated leases, preserving authentication/TLS and
-client disposal. A failed node produces an endpoint-associated error while other
-nodes can succeed. Cancellation before or during discovery throws. After discovery,
+Each call re-runs CLUSTER NODES and opens one temporary dedicated connection per
+discovered endpoint. Fan-out concurrency is uncapped; polling large clusters can
+create connection bursts, so choose an appropriate polling interval. These pools
+are scoped to the call and closed on every outcome, including success. They do not
+retain historical replicas or add transports to the routing pool cache. Client
+disposal tracks and aborts active fan-out pools, including pending handshakes.
+
+Execution preserves authentication/TLS. A failed node produces an endpoint-associated
+error while other nodes can succeed. Cancellation before or during discovery throws. After discovery,
 cancellation is recorded in the affected node results; already completed successes
-remain available. Failed leases are discarded. No command is replayed or redirected
+remain available. No command is replayed or redirected
 away from its target endpoint.
 
 Custom `IServerCommands` implementations and decorators must implement or forward

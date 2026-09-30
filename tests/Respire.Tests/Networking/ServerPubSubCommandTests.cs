@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -7,6 +8,75 @@ namespace Respire.Tests.Networking;
 
 public class ServerPubSubCommandTests
 {
+    [Test]
+    public async Task FanOutClosesConnectionsWhenReplicaMembershipChanges()
+    {
+        await using var firstReplica = new FakeRespServer(Integer(7));
+        await using var nextReplica = new FakeRespServer(Integer(9));
+        await using var seed = new FakeRespServer(3, Integer(3));
+        using var logger = new DisconnectLogger();
+        var replicaPort = firstReplica.Port;
+        seed.SuppressReply = command =>
+        {
+            if (command == "CLUSTER SLOTS") { _ = seed.SendRawAsync(Slots(seed.Port)); return true; }
+            if (command != "CLUSTER NODES") return false;
+            var topology = $"self 127.0.0.1:{seed.Port}@2 myself,master - 0 0 1 connected 0-16383\n" +
+                $"replica{replicaPort} 127.0.0.1:{replicaPort}@2 slave self 0 0 1 connected\n";
+            _ = seed.SendRawAsync(Bulk(Encoding.ASCII.GetBytes(topology)));
+            return true;
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)], LoggerFactory = logger,
+        });
+        var first = await client.Server.PubSubPatternCountOnAllNodesAsync();
+        await Assert.That(first.Single(x => x.Endpoint.Port == firstReplica.Port).Value).IsEqualTo(7);
+        await Assert.That(logger.DisconnectCount).IsEqualTo(2);
+        replicaPort = nextReplica.Port;
+        var next = await client.Server.PubSubPatternCountOnAllNodesAsync();
+        await Assert.That(next.Single(x => x.Endpoint.Port == nextReplica.Port).Value).IsEqualTo(9);
+        await Assert.That(next.Any(x => x.Endpoint.Port == firstReplica.Port)).IsFalse();
+        await Assert.That(logger.DisconnectCount).IsEqualTo(4);
+        await Assert.That(seed.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(3);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ClientDisposalAbortsAnInFlightFanOut(bool duringHandshake)
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var selects = 0;
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            SuppressReply = command =>
+            {
+                if (command == "SELECT 1" && Interlocked.Increment(ref selects) == 2 && duringHandshake)
+                {
+                    received.TrySetResult();
+                    return true;
+                }
+                if (duringHandshake || command != "PUBSUB NUMPAT") return false;
+                received.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Connections = 1, Database = 1, Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        var execution = client.Server.PubSubPatternCountOnAllNodesAsync().AsTask();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        var results = await execution.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(results.Length).IsEqualTo(1);
+        await Assert.That(results[0].Endpoint.Port).IsEqualTo(server.Port);
+        await Assert.That(results[0].IsSuccess).IsFalse();
+        if (duringHandshake) await Assert.That(results[0].Error).IsAssignableTo<OperationCanceledException>();
+        else await Assert.That(results[0].Error).IsTypeOf<RespireConnectionException>();
+        await Assert.That(selects).IsEqualTo(2);
+    }
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]
@@ -151,6 +221,22 @@ public class ServerPubSubCommandTests
         await Assert.That(endpoints).IsEquivalentTo([source, new RespireEndpoint("::1", 6380), new RespireEndpoint("replica.example", 6381)]);
         await Assert.That(() => ServerCommands.ParseServerEndpoints("a :0@0 noaddr,master - 0 0 0 disconnected", source))
             .Throws<RespireConnectionException>();
+    }
+
+    private sealed class DisconnectLogger : ILoggerFactory, ILogger
+    {
+        internal int DisconnectCount;
+        public ILogger CreateLogger(string categoryName) => this;
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+            Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == LogLevel.Debug && formatter(state, exception).StartsWith("Disconnected from", StringComparison.Ordinal))
+                Interlocked.Increment(ref DisconnectCount);
+        }
     }
 
     private static byte[] Integer(long value) => Encoding.ASCII.GetBytes($":{value}\r\n");
