@@ -218,10 +218,20 @@ internal sealed class RespireConnection : IAsyncDisposable
             try
             {
                 await socket.ConnectAsync(host, port, timeoutCts.Token).ConfigureAwait(false);
+                timeoutCts.Token.ThrowIfCancellationRequested();
 
                 if (options.UseTls)
                 {
-                    tlsStream = new SslStream(new NetworkStream(socket, ownsSocket: false));
+                    try
+                    {
+                        tlsStream = new SslStream(new NetworkStream(socket, ownsSocket: false));
+                    }
+                    catch (IOException error) when (timeoutCts.IsCancellationRequested)
+                    {
+                        // TCP cancellation can close the socket after connect completes but before
+                        // NetworkStream takes it, especially on .NET 8. Keep our cancellation identity.
+                        throw new OperationCanceledException(error.Message, error, timeoutCts.Token);
+                    }
                     var tlsOptions = CreateTlsOptions(options.TlsOptions, host);
                     await tlsStream.AuthenticateAsClientAsync(tlsOptions, timeoutCts.Token).ConfigureAwait(false);
                 }
@@ -2149,6 +2159,7 @@ internal sealed class RespireConnection : IAsyncDisposable
     /// <summary>Stops acceptance atomically with enqueue, then drains accepted frames and replies.</summary>
     internal Task RetireAsync()
     {
+        _completions.ReleaseCurrentRunner();
         TaskCompletionSource completion;
         lock (_writeGate)
         {

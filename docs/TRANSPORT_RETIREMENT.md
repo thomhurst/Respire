@@ -8,6 +8,12 @@ finished the command. Retirement therefore still waits for its reply. There is n
 timeout: an owner can bound its wait and explicitly dispose to abort a silent peer. A configured
 connection response watchdog still aborts the socket according to its existing policy.
 
+When a delivered reply's inline continuation requests retirement, the completion scheduler
+hands its remaining replies to another worker in their original order. Retirement can then
+finish without waiting for that same continuation to return. The current reply is already
+delivered; its source reference is released when the continuation returns. Other queued
+completions still drain before retirement completes.
+
 Owners that explicitly choose abortive escalation can call the multiplexer overload
 `RetireAsync(abortOnCancellation)`, passing a token with their chosen grace deadline. It awaits
 graceful retirement normally; cancellation triggers `DisposeAsync`, awaits cleanup, and throws
@@ -16,6 +22,9 @@ Cancellation is not proof of successful drain or correction safety: retained fen
 be reconciled by their owner, and the disposed multiplexer cannot perform a later fence retry.
 
 `RespireConnectionMultiplexer.RetireAsync()` stops connection selection and background reconnects, cancels pending handshakes, and prevents initialization or reconnect publication after retirement. It retires existing transports immediately, waits for unpublished connection cleanup, and then awaits their drain tasks. Lifecycle notifications are queued in transition order and delivered outside lifecycle locks.
+
+The retirement `Disconnected` notification means the multiplexer has stopped accepting work.
+Accepted commands may still be draining; await the retirement task to observe completion.
 
 ## Retry boundary
 

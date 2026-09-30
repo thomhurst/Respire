@@ -4,6 +4,7 @@ using System.Text;
 using Respire.Commands;
 using Respire.Networking;
 using Respire.Infrastructure;
+using Respire.Protocol;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -12,6 +13,91 @@ namespace Respire.Tests.Networking;
 
 public class TransportRetirementTests
 {
+    [Test]
+    public async Task ReplyContinuationCanSynchronouslyRetireItsConnection()
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(FakeRespServer.PongReply)
+        {
+            SuppressReply = _ => { received.TrySetResult(); return true; },
+        };
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        var reply = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var awaiter = reply.ConfigureAwait(false).GetAwaiter();
+        awaiter.UnsafeOnCompleted(() =>
+        {
+            try
+            {
+                using var value = awaiter.GetResult();
+                connection.RetireAsync().WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
+                completed.TrySetResult();
+            }
+            catch (Exception error) { completed.TrySetException(error); }
+        });
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await server.SendRawAsync(FakeRespServer.PongReply);
+        await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(connection.DrainedSuccessfully).IsTrue();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ReentrantCompletionHandoffPreservesRemainingReplyOrder(bool queuedBatch)
+    {
+        var scheduler = new CompletionScheduler();
+        var first = new PendingResponseSource();
+        var second = new PendingResponseSource();
+        var third = new PendingResponseSource();
+        first.PrepareForUse();
+        second.PrepareForUse();
+        third.PrepareForUse();
+        var firstAwaiter = first.Task.ConfigureAwait(false).GetAwaiter();
+        var order = new List<long>();
+        var secondTask = ConsumeAsync(second.Task);
+        var thirdTask = ConsumeAsync(third.Task);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var proceed = new ManualResetEventSlim();
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        firstAwaiter.UnsafeOnCompleted(() =>
+        {
+            try
+            {
+                using var value = firstAwaiter.GetResult();
+                entered.TrySetResult();
+                if (!proceed.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Producer did not finish.");
+                scheduler.ReleaseCurrentRunner();
+                scheduler.ReleaseCurrentRunner(); // Repeated retirement must not hand off twice.
+                scheduler.WaitForIdleAsync().WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
+                if (!secondTask.IsCompletedSuccessfully || !thirdTask.IsCompletedSuccessfully)
+                    throw new InvalidOperationException("Retirement skipped queued completions.");
+                completed.TrySetResult();
+            }
+            catch (Exception error) { completed.TrySetException(error); }
+        });
+        scheduler.Add(first, RespValue.Integer(1));
+        scheduler.Add(second, RespValue.Integer(2));
+        if (!queuedBatch) scheduler.Add(third, RespValue.Integer(3));
+        scheduler.Flush();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (queuedBatch)
+        {
+            scheduler.Add(third, RespValue.Integer(3));
+            scheduler.Flush();
+        }
+        proceed.Set();
+        await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.WhenAll(secondTask, thirdTask);
+        await Assert.That(order).IsEquivalentTo([2L, 3L], TUnit.Assertions.Enums.CollectionOrdering.Matching);
+
+        async Task ConsumeAsync(ValueTask<RespValue> task)
+        {
+            using var value = await task.ConfigureAwait(false);
+            order.Add(value.AsInteger());
+        }
+    }
+
     [Test]
     [Arguments(RespireConnectionState.Reconnecting, false)]
     [Arguments(RespireConnectionState.Connected, false)]

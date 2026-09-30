@@ -80,9 +80,11 @@ public class TimeoutDiagnosticsTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task DedicatedTlsAcquisitionPreservesDeadlineAndCallerCancellation(bool cancelCaller)
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task DedicatedTlsAcquisitionPreservesDeadlineAndCallerCancellation(bool cancelCaller, bool waitForTls)
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -93,11 +95,17 @@ public class TimeoutDiagnosticsTests
             ConnectTimeout = TimeSpan.FromSeconds(10), CommandTimeout = null,
         });
         using var caller = new CancellationTokenSource();
-        var timeout = TimeSpan.FromSeconds(1);
+        var timeout = TimeSpan.FromSeconds(10);
         using var deadline = Respire.Internal.CommandTimeoutCancellation.Create(caller.Token, timeout);
         var pending = client.SendBlockingAsync("EVAL", new RawCommand(FakeRespServer.PingFrame), deadline.Token,
             cancellationTimeout: timeout, callerCancellationToken: caller.Token).AsTask();
         using var accepted = await listener.AcceptSocketAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        if (waitForTls)
+        {
+            var received = await accepted.ReceiveAsync(new byte[1].AsMemory(), SocketFlags.None)
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(received).IsEqualTo(1);
+        }
         if (cancelCaller)
         {
             caller.Cancel();
@@ -106,6 +114,7 @@ public class TimeoutDiagnosticsTests
         }
         else
         {
+            deadline.Cancel();
             var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
                 .ThrowsExactly<RespireTimeoutException>();
             await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);

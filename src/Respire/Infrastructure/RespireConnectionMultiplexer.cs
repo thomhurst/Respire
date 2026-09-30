@@ -51,6 +51,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     public int Port { get; }
     public int ConnectionCount => _connections.Length;
     internal bool IsRetired => Volatile.Read(ref _retired) != 0;
+    private bool IsOperational => !IsRetired && Volatile.Read(ref _disposed) == 0;
     internal bool HasPendingCorrectionFences => !_retiredServerClientIds.IsEmpty;
     internal bool IsInitialized => _connected;
     internal bool HasReliableCorrectionOrdering => _correctionOrderingReady;
@@ -734,7 +735,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         bool publish;
         lock (_lifecycleGate)
         {
-            if (IsRetired || Volatile.Read(ref _disposed) != 0
+            if (!IsOperational
                 || Interlocked.CompareExchange(ref _reconnecting[slot], 1, 0) != 0)
                 return;
             _activeReconnects++;
@@ -773,7 +774,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             if (old is not null) await old.DisposeAsync().ConfigureAwait(false);
             lock (_lifecycleGate)
             {
-                publish = !IsRetired && Volatile.Read(ref _disposed) == 0
+                publish = IsOperational
                     && QueueLifecycleNotificationUnderLock(new StateNotification(slot, RespireConnectionState.Connected, null));
             }
         }
@@ -787,7 +788,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                     _logger?.LogWarning(disposeException, "Failed to dispose rejected replacement connection to {Host}:{Port}", Host, Port);
                 }
             }
-            if (!IsRetired && Volatile.Read(ref _disposed) == 0)
+            if (IsOperational)
             {
                 _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; will retry on next use", Host, Port);
                 publish = EnqueueReconnectFailure(slot, ex);
@@ -820,7 +821,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     private void HandleConnectionFailure(int slot, RespireConnection connection)
     {
-        if (!IsRetired && Volatile.Read(ref _disposed) == 0
+        if (IsOperational
             && ReferenceEquals(connection, Volatile.Read(ref _connections[slot])))
         {
             ScheduleReconnect(slot);

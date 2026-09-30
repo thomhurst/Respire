@@ -38,6 +38,18 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
     private bool _running;
     private TaskCompletionSource? _idleWaiter;
 
+    [ThreadStatic]
+    private static RunnerState _currentRunner;
+
+    private struct RunnerState
+    {
+        public CompletionScheduler? Scheduler;
+        public Entry[]? Items;
+        public int Next;
+        public int Count;
+        public bool Detached;
+    }
+
     private struct Entry
     {
         public PendingResponse Source;
@@ -111,6 +123,14 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
 
     public void Execute()
     {
+        var previous = _currentRunner;
+        _currentRunner = new RunnerState { Scheduler = this };
+        try { ExecuteCore(ref _currentRunner); }
+        finally { _currentRunner = previous; }
+    }
+
+    private void ExecuteCore(ref RunnerState runner)
+    {
         while (true)
         {
             Batch batch;
@@ -131,12 +151,15 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
             }
 
             var items = batch.Items;
+            runner.Items = items;
+            runner.Count = batch.Count;
             for (var i = 0; i < batch.Count; i++)
             {
                 ref var entry = ref items[i];
                 var source = entry.Source;
                 var value = entry.Value;
                 entry = default;
+                runner.Next = i + 1;
                 if (!source.TrySetResult(in value))
                 {
                     // Lost to cancellation or connection failure; the reply still had to be
@@ -145,6 +168,7 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
                 }
 
                 source.ReleaseRef();
+                if (runner.Detached) break;
             }
 
             lock (_gate)
@@ -154,7 +178,46 @@ internal sealed class CompletionScheduler : IThreadPoolWorkItem
                     _spares[_spareCount++] = items;
                 }
             }
+            if (runner.Detached) return;
         }
+    }
+
+    /// <summary>
+    /// A delivered reply's continuation may synchronously wait for retirement. Transfer the
+    /// remaining replies to another runner so retirement never waits for that continuation.
+    /// </summary>
+    internal void ReleaseCurrentRunner()
+    {
+        ref var runner = ref _currentRunner;
+        if (!ReferenceEquals(runner.Scheduler, this) || runner.Detached) return;
+        var remaining = runner.Count - runner.Next;
+        Entry[]? tail = null;
+        if (remaining > 0)
+        {
+            tail = new Entry[remaining];
+            Array.Copy(runner.Items!, runner.Next, tail, 0, remaining);
+            Array.Clear(runner.Items!, runner.Next, remaining);
+        }
+        runner.Detached = true;
+        bool schedule;
+        lock (_gate)
+        {
+            if (tail is not null)
+            {
+                if (_pendingCount == _pending.Length) GrowPending();
+                _pendingHead = (_pendingHead + _pending.Length - 1) % _pending.Length;
+                _pending[_pendingHead] = new Batch(tail, remaining);
+                _pendingCount++;
+            }
+            schedule = _pendingCount != 0;
+            _running = schedule;
+            if (!schedule)
+            {
+                _idleWaiter?.TrySetResult();
+                _idleWaiter = null;
+            }
+        }
+        if (schedule) ThreadPool.UnsafeQueueUserWorkItem(this, preferLocal: false);
     }
 
     /// <summary>Called after the receive producer exits and flushes its final batch.</summary>
