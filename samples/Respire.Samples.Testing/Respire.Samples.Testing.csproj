@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Respire.Testing/Respire.Testing.csproj" />
+    <ProjectReference Include="../../src/Respire.Testing.Containers/Respire.Testing.Containers.csproj" />
+    <PackageReference Include="TUnit" />
+  </ItemGroup>
+</Project>

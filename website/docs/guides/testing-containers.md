@@ -112,6 +112,6 @@ to startup-stage diagnostics. Cleanup failure stops retries and reports all star
 cleanup causes together in an `AggregateException`. Cancellation or deadline wrappers
 retain the original startup error as their inner exception.
 
-An in-memory fake and the shared fake/container sample remain tracked by
-[#531](https://github.com/thomhurst/Respire/issues/531) and
-[#532](https://github.com/thomhurst/Respire/issues/532).
+The [in-memory fake](in-memory-testing.md) runs deterministic tests without Docker.
+The [shared sample](testing-sample.md) runs the same public-client scenarios against
+the fake, Redis, and Valkey on both supported frameworks.

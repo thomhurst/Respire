@@ -324,8 +324,8 @@ Pub/sub framing and delivery follow [Redis Pub/Sub](https://redis.io/docs/latest
 [SUBSCRIBE](https://redis.io/docs/latest/commands/subscribe/), and
 [UNSUBSCRIBE](https://redis.io/docs/latest/commands/unsubscribe/).
 Run real-server integration tests for version compatibility, unsupported commands, and
-operational behavior. Transaction and pub/sub work is tracked under
-[#541](https://github.com/thomhurst/Respire/issues/541).
+operational behavior. The [shared testing sample](testing-sample.md) runs identical
+binary value, hash/batch, transaction, and pub/sub scenarios against the fake and real fixtures.
 
 ## Controlled faults
 

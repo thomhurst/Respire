@@ -9,6 +9,7 @@
   </Folder>
   <Folder Name="/Samples/">
     <Project Path="samples/Respire.Samples.Basic/Respire.Samples.Basic.csproj" />
+    <Project Path="samples/Respire.Samples.Testing/Respire.Samples.Testing.csproj" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="benchmarks/Respire.Benchmarks/Respire.Benchmarks.csproj" />

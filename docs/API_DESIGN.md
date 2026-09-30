@@ -593,18 +593,19 @@ public sealed class CartService([FromKeyedServices("cache")] IRespireClient redi
 - All facets and the client are interfaces (`IRespireClient`, `IHashCommands`, …);
   implementations sealed. Mocking works with any framework.
 - `Respire.Testing` connects the real client to an in-memory RESP server for a documented
-  strings/keys/hashes/lists/sets/sorted-sets subset and controllable expiry. Scoped fault rules inject latency, gated waits,
+  strings/keys/hashes/lists/sets/sorted-sets/pub-sub/transactions subset and controllable expiry. Scoped fault rules inject latency, gated waits,
   disconnects, LOADING, READONLY, and MOVED through the real transport. Before/after execution
   boundaries and observed counts make ambiguous mutation acceptance testable. Reset releases
   waits without clearing data; shutdown aborts connections before releasing rules. The fake
-  does not simulate Cluster topology or route MOVED destinations. It does not mock `IRespireClient`;
-  remaining collections and sessions remain separate roadmap items. See the
+  does not simulate Cluster topology or route MOVED destinations. It does not mock `IRespireClient`. See the
   [in-memory testing guide](../website/docs/guides/in-memory-testing.md).
   Compatibility integration tests keep using real Redis via Testcontainers.
 - `Respire.Testing.Containers` provides framework-independent Redis/Valkey fixtures for
   standalone, three-primary Cluster, and Sentinel deployments. Cluster/Sentinel fixtures
   require local Docker. See the [container testing guide](../website/docs/guides/testing-containers.md).
-- A shared fake/container consumer sample remains tracked by #532.
+- The [shared consumer sample](../samples/Respire.Samples.Testing/README.md) runs identical
+  public-client scenarios on the fake, Redis, and Valkey with RESP2/RESP3. Deterministic expiry
+  and fault examples accompany both-framework CI coverage.
 
 ## 18. Delivery status and roadmap
 

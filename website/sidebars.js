@@ -22,6 +22,7 @@ const sidebars = {
       label: 'Guides',
       items: [
         'guides/testing-containers',
+        'guides/testing-sample',
         'guides/distributed-locks',
         'guides/blocking-queues',
         'guides/vector-sets',
