@@ -48,6 +48,11 @@ public sealed record RespireClientSideCacheOptions
             throw new RespireConfigurationException("ClientSideCache.BroadcastPrefixes requires Broadcast tracking.");
         return this with { BroadcastPrefixes = BroadcastPrefixSet.Create(BroadcastPrefixes) };
     }
+    /// <summary>
+    /// Shares concurrent equivalent cache misses within this client. Each caller can cancel
+    /// independently; the shared request is canceled when its last caller leaves. Defaults to true.
+    /// </summary>
+    public bool CoalesceConcurrentMisses { get; init; } = true;
 }
 
 /// <summary>Cumulative and current state of a Respire client-side cache.</summary>
@@ -76,7 +81,7 @@ public interface IRespireClientSideCache
     void Clear();
 }
 
-internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
+internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCache
 {
     private const int EntryOverhead = 64;
 
@@ -136,6 +141,23 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
         RespireTelemetry.ClientCacheMisses.Add(1);
         value = default;
         return false;
+    }
+
+    internal bool TryPeek(in RespireKey key, out RespValue value)
+    {
+        if (Volatile.Read(ref _store).TryGet(in key, out var payload))
+        {
+            value = payload is null ? RespValue.Null : RespValue.BulkString(payload);
+            return true;
+        }
+        value = default;
+        return false;
+    }
+
+    internal bool TryPeek(in QueryRequest request, out RespValue value)
+    {
+        var query = request.Query;
+        return Volatile.Read(ref _store).TryGet(in query, out value);
     }
 
     internal bool TryCreateQuery<TCommand>(
@@ -329,6 +351,7 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             Interlocked.Increment(ref _queryEpoch);
             Volatile.Read(ref _store).Remove(in key, CacheRemoval.Invalidation);
         }
+        RetireSharedReads();
         Interlocked.Increment(ref _invalidations);
         RespireTelemetry.ClientCacheInvalidations.Add(1);
     }
@@ -428,6 +451,7 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
         {
             Interlocked.Increment(ref _continuityFlushes);
         }
+        RetireSharedReads();
         return removed;
     }
 

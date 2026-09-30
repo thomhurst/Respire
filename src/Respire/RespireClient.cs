@@ -1452,10 +1452,23 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken,
         ResponseConverter<RespireClient, TResult> converter)
     {
+        var identity = new ClientCacheCommandKey("GET", resolvedKey.AsValue());
+        using var response = await cache.CoalesceReadAsync(
+            identity, (Client: this, Key: resolvedKey, Cache: cache),
+            static (state, token) => state.Client.FetchGetAndCacheAsync(state.Key, state.Cache, token),
+            cancellationToken).ConfigureAwait(false);
+        return converter(this, in response);
+    }
+
+    private async ValueTask<RespValue> FetchGetAndCacheAsync(
+        RespireKey resolvedKey, ClientSideCacheCoordinator cache, CancellationToken cancellationToken)
+    {
+        if (cache.TryPeek(in resolvedKey, out var cached)) return cached;
         var token = cache.BeginRead(in resolvedKey);
         var command = new Cmd1(Verbs.Get, token.State.Key.AsValue());
         var response = default(RespValue);
         var released = false;
+        var returned = false;
         var allowInsert = true;
         Action<bool>? onRedirect = null;
         if (_core.Cluster is not null)
@@ -1473,7 +1486,8 @@ public sealed partial class RespireClient : IRespireClient
                 "GET", command, cancellationToken, onRedirect).ConfigureAwait(false);
             released = true;
             cache.CompleteRead(in token, in response, allowInsert);
-            return converter(this, in response);
+            returned = true;
+            return response;
         }
         finally
         {
@@ -1481,8 +1495,7 @@ public sealed partial class RespireClient : IRespireClient
             {
                 cache.CompleteRead(in token, in response, allowInsert: false);
             }
-
-            response.Dispose();
+            if (!returned) response.Dispose();
         }
     }
 
@@ -1498,6 +1511,40 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken,
         ResponseConverter<RespireClient, TResult> converter)
     {
+        var identityArguments = new RespireValue[missingCount];
+        for (var i = 0; i < missingCount; i++) identityArguments[i] = missingKeys[i].AsValue();
+        var identity = new ClientCacheCommandKey("MGET", identityArguments);
+        using var response = await cache.CoalesceReadAsync(
+            identity, (Client: this, Keys: missingKeys, Count: missingCount, Cache: cache),
+            static (state, token) => state.Client.FetchManyAndCacheAsync(
+                state.Keys, state.Count, state.Cache, token), cancellationToken).ConfigureAwait(false);
+        var values = response.AsArray();
+        if (values.Length != missingCount)
+            throw new RespireProtocolException($"MGET returned {values.Length} values for {missingCount} keys.");
+        for (var i = 0; i < missingCount; i++)
+            result[missingIndexes[i]] = converter(this, in values[i]);
+        return result;
+    }
+
+    private async ValueTask<RespValue> FetchManyAndCacheAsync(
+        RespireKey[] missingKeys, int missingCount, ClientSideCacheCoordinator cache,
+        CancellationToken cancellationToken)
+    {
+        if (cache.TryPeek(in missingKeys[0], out var firstCached))
+        {
+            var cachedValues = new RespValue[missingCount];
+            cachedValues[0] = firstCached;
+            var allCached = true;
+            for (var i = 1; i < missingCount; i++)
+            {
+                if (!cache.TryPeek(in missingKeys[i], out cachedValues[i]))
+                {
+                    allCached = false;
+                    break;
+                }
+            }
+            if (allCached) return RespValue.Array(cachedValues);
+        }
         var arguments = new RespireValue[missingCount];
         var tokens = new ClientSideCacheCoordinator.ReadToken[missingCount];
         for (var i = 0; i < missingCount; i++)
@@ -1541,19 +1588,17 @@ public sealed partial class RespireClient : IRespireClient
                 ref readonly var value = ref values[index];
                 cache.CompleteRead(in tokens[index], in value, allowInsert);
                 completed++;
-                result[missingIndexes[index]] = converter(this, in value);
             }
 
-            return result;
+            return response;
         }
         finally
         {
+            if (completed < missingCount) response.Dispose();
             for (; completed < missingCount; completed++)
             {
                 cache.CompleteRead(in tokens[completed], in response, allowInsert: false);
             }
-
-            response.Dispose();
         }
     }
 
@@ -1764,10 +1809,19 @@ public sealed partial class RespireClient : IRespireClient
             : response;
     }
 
+    private ValueTask<RespValue> QueryAndCacheAsync<TCommand>(
+        string operation, TCommand command, ClientSideCacheCoordinator cache,
+        ClientSideCacheCoordinator.QueryRequest request, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+        => cache.CoalesceReadAsync(
+            request.Query, (Client: this, Operation: operation, Command: command, Cache: cache, Request: request),
+            static (state, token) => state.Client.FetchQueryAndCacheAsync(
+                state.Operation, state.Command, state.Cache, state.Request, token), cancellationToken);
+
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
-    private async ValueTask<RespValue> QueryAndCacheAsync<TCommand>(
+    private async ValueTask<RespValue> FetchQueryAndCacheAsync<TCommand>(
         string operation,
         TCommand command,
         ClientSideCacheCoordinator cache,
@@ -1775,6 +1829,7 @@ public sealed partial class RespireClient : IRespireClient
         CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
+        if (cache.TryPeek(in request, out var cached)) return cached;
         var snapshot = SnapshotCommand.Create(in command);
         var token = cache.BeginRead(operation, in request);
         var completed = false;
@@ -1803,6 +1858,7 @@ public sealed partial class RespireClient : IRespireClient
             if (!completed)
             {
                 cache.CompleteRead(in token, in response, allowInsert: false);
+                response.Dispose();
             }
         }
     }

@@ -35,6 +35,36 @@ entries and partial-hit behavior; other replies use exact command-and-argument i
 Missing keys are cached too. Replies are deep-owned internally and converted for each call, so
 enabling caching does not introduce shared mutable objects.
 
+## Concurrent misses
+
+Concurrent misses for the same command and byte-for-byte arguments share one tracked request
+within a client. This covers typed `GET` variants, identical ordered `MGET` miss lists, and all
+eligible deterministic query reads. Typed and raw calls can join the same wire command; each
+caller still performs its own conversion and receives independently owned results and leases.
+Binary keys and arguments are snapshotted. Prefix views use resolved wire keys; separate clients,
+databases, and Cluster routing contexts never share work. `GET` and `MGET` are different identities,
+and partially overlapping `MGET` lists are not split into individual `GET` requests.
+
+Canceling one caller does not cancel callers still waiting for the shared request. When the last
+caller cancels, Respire retires and cancels that request. An already accepted command may still
+execute on Redis; its reply is drained in protocol order. The next caller can start a new request.
+Client disposal cancels all shared work, including reads retired by an earlier invalidation.
+Server and transport failures reach every remaining caller, retire the shared request, and allow
+a later call to retry. Sharing never replays an accepted command after a transport failure.
+
+Invalidations, explicit `Clear()`, and tracking continuity changes prevent new callers from joining
+older work. Callers already waiting may receive their original read result, but the existing
+invalidation fences reject stale cache insertion. Retirement is conservative: an invalidation
+currently ends joining for all pending identities, even those with unrelated keys. Completed work
+is always removed, including oversized responses and other replies that cannot enter the cache.
+Cache hit/miss counters remain per caller, not per wire request.
+
+Sharing adds bookkeeping and owned-result copies on misses. To retain independent requests for a
+workload with little contention, set `ClientSideCache.CoalesceConcurrentMisses = false` when
+constructing the options. Cache hits retain their existing fast path. The CI contention benchmark
+compares 1 and 32 callers for `GET` and `HGET`, plus hot `GET`, against both same-run baseline controls;
+latency and allocations include one complete burst and its local cache eviction.
+
 ## Why this is different
 
 StackExchange.Redis 3.1.13 supports RESP3 and exposes keyspace notifications, but it does not

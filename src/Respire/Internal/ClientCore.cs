@@ -357,6 +357,7 @@ internal sealed class ClientCore : IAsyncDisposable
 
         Disposed = true;
         Interlocked.Exchange(ref _threadPoolMonitor, null)?.Dispose();
+        ClientCache?.StopSharedReads();
         ClientCache?.Clear();
         var commandEndpoints = Cluster?.GetActiveEndpoints() ?? [Options.PrimaryEndpoint];
         lock (_stateGate)
