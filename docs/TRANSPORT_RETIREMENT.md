@@ -36,6 +36,14 @@ temporary target and ASKING prefix without changing the slot owner. Tracked exec
 the replacement identity before writing, and cached reads refresh their continuity token.
 An accepted batch entry is never replayed because another entry was rejected.
 
+Route acquisition also retries retirement before returning a connection, a dedicated pool, or
+an entire primary snapshot. Retirement-owned cancellation of an unpublished handshake is
+recognized separately from caller cancellation. Typed FUNCTION/SCRIPT mutations, database
+flush/size fan-outs, SCAN pages, and server-node discovery retry only the rejected endpoint;
+already accepted peers are never replayed. Socket-pinned CLIENT operations and existing WATCH
+state do not use this endpoint replacement helper. SCAN retains its usual weak iteration
+semantics during topology changes; this does not provide a resharding-resumable cursor.
+
 Blocking commands, WATCH creation, and durability batches can also reselect a pool retired
 between selection and rent, including retirement cancellation during the handshake. This retry
 ends at successful rent; it never replays application commands or WATCH state. The returned pool

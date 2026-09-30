@@ -158,6 +158,20 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     internal async ValueTask<RespireConnection> GetConnectionAsync(int? slot, CancellationToken cancellationToken)
     {
+        for (var attempt = 0; ; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            try { return await GetConnectionCoreAsync(slot, cancellationToken).ConfigureAwait(false); }
+            catch (RespireConnectionRetiredException) when (CanRetryRetirement(attempt, cancellationToken))
+            {
+                // No application command was accepted during route acquisition.
+            }
+        }
+    }
+
+    private async ValueTask<RespireConnection> GetConnectionCoreAsync(int? slot, CancellationToken cancellationToken)
+    {
         if (slot is null && TryGetConnectedNode() is { } connectedNode)
         {
             return connectedNode.GetConnection();
@@ -171,10 +185,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             {
                 try
                 {
-                    await master.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                    await EnsureRouteNodeConnectedAsync(master, cancellationToken).ConfigureAwait(false);
                     return master.GetConnection();
                 }
-                catch (Exception error) when (CanRetryConnectionFailure(error, cancellationToken)) { }
+                catch (Exception error) when (error is not RespireConnectionRetiredException && CanRetryConnectionFailure(error, cancellationToken)) { }
             }
         }
 
@@ -182,10 +196,10 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         {
             try
             {
-                await cachedNode.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                await EnsureRouteNodeConnectedAsync(cachedNode, cancellationToken).ConfigureAwait(false);
                 return cachedNode.GetConnection(cachedSlot);
             }
-            catch (Exception error) when (CanRetryConnectionFailure(error, cancellationToken))
+            catch (Exception error) when (error is not RespireConnectionRetiredException && CanRetryConnectionFailure(error, cancellationToken))
             {
                 ClearSlotOwner(cachedSlot, cachedNode);
                 // Refresh through another discovered master before falling back to seeds.
@@ -202,8 +216,19 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         var node = slot is { } value ? Volatile.Read(ref _slots[value]) : null;
         node ??= Volatile.Read(ref _seed)!;
-        await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        await EnsureRouteNodeConnectedAsync(node, cancellationToken).ConfigureAwait(false);
         return slot is { } affinity ? node.GetConnection(affinity) : node.GetConnection();
+    }
+
+    private static async ValueTask EnsureRouteNodeConnectedAsync(
+        RespireConnectionMultiplexer node, CancellationToken cancellationToken)
+    {
+        try { await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (node.IsRetired && !cancellationToken.IsCancellationRequested)
+        {
+            // Preserve caller cancellation; normalize only an unpublished handshake cancelled by retirement.
+            throw new RespireConnectionRetiredException(node.Host, node.Port);
+        }
     }
 
     internal async ValueTask<RespireConnection> GetRedirectConnectionAsync(
@@ -220,7 +245,11 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             }
             var replacement = await RefreshReadOnlyOwnerAsync(error, source, readOnlySlot, cancellationToken)
                 .ConfigureAwait(false);
-            return replacement.GetConnection(readOnlySlot);
+            try { return replacement.GetConnection(readOnlySlot); }
+            catch (RespireConnectionRetiredException) when (CanRetryRetirement(0, cancellationToken))
+            {
+                return await GetConnectionAsync(readOnlySlot, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         if (!TryParseRedirect(error, source.Host, out var slot, out var endpoint))
@@ -310,18 +339,30 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         }
     }
 
-    internal async ValueTask<DedicatedConnectionPool> GetDedicatedPoolAsync(
-        int? slot,
-        CancellationToken cancellationToken)
+    internal async ValueTask<DedicatedConnectionPool> GetDedicatedPoolAsync(int? slot, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            try { return await GetDedicatedPoolCoreAsync(slot, cancellationToken).ConfigureAwait(false); }
+            catch (RespireConnectionRetiredException) when (CanRetryRetirement(attempt, cancellationToken))
+            {
+                // No application command was accepted during route acquisition.
+            }
+        }
+    }
+
+    private async ValueTask<DedicatedConnectionPool> GetDedicatedPoolCoreAsync(int? slot, CancellationToken cancellationToken)
     {
         if (slot is { } cachedSlot && Volatile.Read(ref _slots[cachedSlot]) is { } cachedNode)
         {
             try
             {
-                await cachedNode.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                await EnsureRouteNodeConnectedAsync(cachedNode, cancellationToken).ConfigureAwait(false);
                 return GetOrCreateDedicatedPool(new RespireEndpoint(cachedNode.Host, cachedNode.Port));
             }
-            catch (Exception error) when (CanRetryConnectionFailure(error, cancellationToken))
+            catch (Exception error) when (error is not RespireConnectionRetiredException && CanRetryConnectionFailure(error, cancellationToken))
             {
                 ClearSlotOwner(cachedSlot, cachedNode);
                 // Refresh through another discovered master before falling back to seeds.
@@ -338,7 +379,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         var node = slot is { } value ? Volatile.Read(ref _slots[value]) : null;
         node ??= Volatile.Read(ref _seed)!;
-        await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        await EnsureRouteNodeConnectedAsync(node, cancellationToken).ConfigureAwait(false);
         return GetOrCreateDedicatedPool(new RespireEndpoint(node.Host, node.Port));
     }
 
@@ -692,6 +733,20 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     internal async ValueTask<RespireConnection[]> GetMasterConnectionsAsync(CancellationToken cancellationToken)
     {
+        for (var attempt = 0; ; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            try { return await GetMasterConnectionsCoreAsync(cancellationToken).ConfigureAwait(false); }
+            catch (RespireConnectionRetiredException) when (CanRetryRetirement(attempt, cancellationToken))
+            {
+                // No application command was accepted during route acquisition.
+            }
+        }
+    }
+
+    private async ValueTask<RespireConnection[]> GetMasterConnectionsCoreAsync(CancellationToken cancellationToken)
+    {
         var masters = new HashSet<RespireConnectionMultiplexer>(ReferenceEqualityComparer.Instance);
         AddKnownMasters(masters);
 
@@ -740,7 +795,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // TryLoadSlotsAsync replaces stale owners after a successful refresh. Any owner
             // still present is current; omitting it would make SCAN and cluster-wide server
             // commands silently return incomplete results.
-            await master.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            await EnsureRouteNodeConnectedAsync(master, cancellationToken).ConfigureAwait(false);
             connections[index++] = master.GetConnection();
         }
 

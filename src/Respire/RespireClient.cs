@@ -2266,6 +2266,26 @@ public sealed partial class RespireClient : IRespireClient
             ? ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation)
             : connection.SendCheckedAsync(in command, cancellationToken, operation);
 
+    // Endpoint-pinned fan-outs can retry a rejected target without replaying accepted peers.
+    // Do not use this for WATCH or connection-scoped CLIENT operations, whose socket is part of their contract.
+    internal async ValueTask<RespValue> SendToClusterTargetAsync<TCommand>(
+        string operation, RespireConnection connection, TCommand command, CancellationToken cancellationToken)
+        where TCommand : struct, IRespCommand
+    {
+        var cluster = _core.Cluster;
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await SendOnConnectionAsync(operation, connection, command, cancellationToken).ConfigureAwait(false);
+            }
+            catch (RespireConnectionRetiredException) when (cluster is not null && cluster.CanRetryRetirement(attempt, cancellationToken))
+            {
+                connection = await cluster.GetReplacementConnectionAsync(connection, null, null, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
     internal ValueTask<RespValue> SendOnConnectionAsync<TCommand>(
         string operation,
         RespireConnection connection,

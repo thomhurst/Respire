@@ -17,10 +17,71 @@ public class ClusterRetirementTests
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(5);
 
     [Test]
+    [Arguments("keyed")]
+    [Arguments("unkeyed")]
+    [Arguments("dedicated")]
+    public async Task RouteAcquisitionRetriesAnUnpublishedRetiredHandshake(string path)
+    {
+        await using var target = new FakeRespServer(path == "dedicated" ? 2 : 1, FakeRespServer.PongReply);
+        await using var client = CreateClient();
+        var router = client.Core.Cluster!;
+        var endpoint = new RespireEndpoint("127.0.0.1", target.Port);
+        Publish(router, endpoint, "old", 1);
+        var old = router.GetMultiplexer(endpoint);
+        var gate = (SemaphoreSlim)typeof(RespireConnectionMultiplexer).GetField("_connectGate", Private)!.GetValue(old)!;
+        using var timeout = new CancellationTokenSource(Limit);
+        await gate.WaitAsync(timeout.Token);
+        Task<RespireConnection>? connectionTask = null;
+        Task<DedicatedConnectionPool>? poolTask = null;
+        try
+        {
+            if (path == "dedicated") poolTask = router.GetDedicatedPoolAsync(42, timeout.Token).AsTask();
+            else connectionTask = router.GetConnectionAsync(path == "keyed" ? 42 : null, timeout.Token).AsTask();
+            // The old node has not created a socket or accepted any application command.
+            Publish(router, endpoint, "new", 2);
+        }
+        finally { gate.Release(); }
+        DedicatedConnectionPool? pool = poolTask is null ? null : await poolTask.WaitAsync(timeout.Token);
+        var connection = pool is null ? await connectionTask!.WaitAsync(timeout.Token) : await pool.RentAsync(timeout.Token);
+        try
+        {
+            using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame), timeout.Token);
+            await Assert.That(reply.AsString()).IsEqualTo("PONG");
+            await Assert.That(target.ReceivedCommands).IsEquivalentTo(["PING"]);
+            await Assert.That(ReferenceEquals(old, router.GetMultiplexer(endpoint))).IsFalse();
+        }
+        finally { pool?.Return(connection); }
+        await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task ClusterWideRetirementRetriesOnlyTheRejectedTarget(bool fireAndForget)
+    public Task ClusterWideRetirementRetriesOnlyTheRejectedTarget(bool fireAndForget)
+        => AssertFanOutRetirementAsync(fireAndForget ? "fire-forget" : "raw");
+
+    [Test]
+    [Arguments("function")]
+    [Arguments("script")]
+    [Arguments("flush")]
+    [Arguments("size")]
+    [Arguments("scan")]
+    public Task FacetFanOutRetirementRetriesOnlyTheRejectedTarget(string path)
+        => AssertFanOutRetirementAsync(path);
+
+    private static async Task AssertFanOutRetirementAsync(string path)
     {
+        var commandName = path switch
+        {
+            "script" => "SCRIPT FLUSH", "flush" => "FLUSHDB", "size" => "DBSIZE",
+            "scan" => "SCAN 0 COUNT 250", _ => "FUNCTION FLUSH",
+        };
+        var commandReply = path switch
+        {
+            "size" => ":1\r\n"u8.ToArray(),
+            "scan" => "*2\r\n$1\r\n0\r\n*1\r\n$3\r\nkey\r\n"u8.ToArray(),
+            _ => FakeRespServer.OkReply,
+        };
         var topologyRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var firstAccepted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondFull = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -31,11 +92,11 @@ public class ClusterRetirementTests
             SuppressReply = command =>
             {
                 if (command == "CLUSTER SLOTS") topologyRequested.TrySetResult();
-                else if (command == "FUNCTION FLUSH") firstAccepted.TrySetResult();
+                else if (command == commandName) firstAccepted.TrySetResult();
                 return true;
             },
         };
-        await using var second = new FakeRespServer(2, FakeRespServer.OkReply)
+        await using var second = new FakeRespServer(2, commandReply)
         {
             SuppressReply = command =>
             {
@@ -61,12 +122,12 @@ public class ClusterRetirementTests
         await first.SendRawAsync(topology);
         await firstAccepted.Task.WaitAsync(timeout.Token);
         PublishTargets("new", 2);
-        await first.SendRawAsync(FakeRespServer.OkReply);
+        await first.SendRawAsync(commandReply);
         await pending.WaitAsync(timeout.Token);
         await secondAccepted.Task.WaitAsync(timeout.Token);
 
-        await Assert.That(first.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS", "FUNCTION FLUSH"]);
-        await Assert.That(second.ReceivedCommands).IsEquivalentTo(["PING", "PING", "PING", "PING", "FUNCTION FLUSH"]);
+        await Assert.That(first.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS", commandName]);
+        await Assert.That(second.ReceivedCommands).IsEquivalentTo(["PING", "PING", "PING", "PING", commandName]);
         await Assert.That(second.ReceivedConnectionIds).IsEquivalentTo([0, 0, 0, 0, 1]);
         await Assert.That(accepted.All(task => !task.IsCompleted)).IsTrue();
         await second.SendRawAsync("+PONG\r\n+PONG\r\n+PONG\r\n+PONG\r\n"u8.ToArray(), 0);
@@ -79,14 +140,24 @@ public class ClusterRetirementTests
 
         async Task SendAsync()
         {
-            if (fireAndForget) await client.ExecuteFireAndForgetAsync($"FUNCTION FLUSH", timeout.Token);
-            else
+            switch (path)
             {
-                using var reply = await client.ExecuteAsync($"FUNCTION FLUSH", cancellationToken: timeout.Token);
-                await Assert.That(reply.AsString()).IsEqualTo("OK");
+                case "raw":
+                    using (var reply = await client.ExecuteAsync($"FUNCTION FLUSH", cancellationToken: timeout.Token))
+                        await Assert.That(reply.AsString()).IsEqualTo("OK");
+                    break;
+                case "fire-forget": await client.ExecuteFireAndForgetAsync($"FUNCTION FLUSH", timeout.Token); break;
+                case "function": await client.Functions.FlushAsync(cancellationToken: timeout.Token); break;
+                case "script": await client.Scripts.FlushAsync(cancellationToken: timeout.Token); break;
+                case "flush": await client.Server.FlushDatabaseAsync(timeout.Token); break;
+                case "scan":
+                    var keys = new List<string>();
+                    await foreach (var key in client.Keys.ScanAsync(cancellationToken: timeout.Token)) keys.Add(key);
+                    await Assert.That(keys).IsEquivalentTo(["key", "key"]);
+                    break;
+                default: await Assert.That(await client.Server.DatabaseSizeAsync(timeout.Token)).IsEqualTo(2); break;
             }
         }
-
         void PublishTargets(string secondId, long generation)
         {
             var version = (long)typeof(ClusterRouter).GetField("_topologyVersion", Private)!.GetValue(router)!;

@@ -399,7 +399,7 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         ResponseConverter<ScriptCommands, TResult> convert, CancellationToken cancellationToken)
         where TCommand : struct, IRespCommand
     {
-        using var reply = await client.SendOnConnectionAsync(operation, connection, command, cancellationToken)
+        using var reply = await client.SendToClusterTargetAsync(operation, connection, command, cancellationToken)
             .ConfigureAwait(false);
         return convert(this, in reply);
     }

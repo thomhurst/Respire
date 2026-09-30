@@ -40,6 +40,7 @@ public class RunUnitTestsModule : Module<CommandResult[]>
                 Configuration = "Release",
                 NoBuild = true,
                 ResultsDirectory = resultsDirectory,
+                // HangDump measures time without test activity, not total suite duration.
                 // Capture the stalled test sequence and stacks before the module's
                 // outer timeout terminates the process without useful diagnostics.
                 Arguments = ["--hangdump", "--hangdump-timeout", "2m", "--hangdump-type", "Mini", "--report-trx"]

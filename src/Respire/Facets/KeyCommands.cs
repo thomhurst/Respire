@@ -339,7 +339,7 @@ internal sealed partial class KeyCommands(RespireClient client) : IKeyCommands
                 var command = new CmdN(Verbs.Scan, args);
                 var reply = connection is null
                     ? await client.SendAsync("SCAN", command, token).ConfigureAwait(false)
-                    : await client.SendOnConnectionAsync("SCAN", connection, command, token).ConfigureAwait(false);
+                    : await client.SendToClusterTargetAsync("SCAN", connection, command, token).ConfigureAwait(false);
 
                 var elements = reply.AsArray();
                 cursor = elements[0].AsString();

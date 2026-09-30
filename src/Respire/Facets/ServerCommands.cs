@@ -299,7 +299,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
         long total = 0;
         foreach (var connection in connections)
         {
-            var reply = await client.SendOnConnectionAsync(
+            var reply = await client.SendToClusterTargetAsync(
                     "DBSIZE", connection, new RawCommand(RespCommands.DbSize), cancellationToken)
                 .ConfigureAwait(false);
             try
@@ -328,7 +328,7 @@ internal sealed partial class ServerCommands(RespireClient client) : IServerComm
                 .ConfigureAwait(false);
             foreach (var connection in connections)
             {
-                var reply = await client.SendOnConnectionAsync(
+                var reply = await client.SendToClusterTargetAsync(
                         operation, connection, new RawCommand(command), cancellationToken)
                     .ConfigureAwait(false);
                 try
