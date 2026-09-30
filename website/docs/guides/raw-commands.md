@@ -10,6 +10,9 @@ covers every command in the audited Redis 8.10 and Valkey 9.1 command references
 integrated modules, Valkey's documented optional modules, and documented KeyDB and Dragonfly
 extensions.
 
+See [Dragonfly and KeyDB extensions](server-extensions.md) for vendor command lists,
+version provenance, and rate-limiting/member-expiry examples.
+
 Descriptors expose the canonical command name and the references in which it was found. Their
 command words are encoded once during static initialization, avoiding string splitting and
 temporary token arrays on each execution.

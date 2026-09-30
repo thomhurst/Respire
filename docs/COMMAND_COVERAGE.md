@@ -6,7 +6,7 @@ Respire exposes commands in two layers:
 - `RespireCommands` descriptors for the complete audited command surface. These preserve exact
   RESP command words and return `RespireResult` for server-specific reply shapes.
 
-The generated catalog contains 623 unique descriptors:
+The generated catalog contains 645 unique descriptors:
 
 | Reference | Version audited | Descriptors |
 | --- | --- | ---: |
@@ -14,13 +14,24 @@ The generated catalog contains 623 unique descriptors:
 | Valkey command metadata | 9.1.1 | 464 |
 | Redis integrated modules | Redis 8.10 documentation | Included above |
 | Valkey optional Bloom, JSON, and Search modules | Valkey 9.1 documentation | Included above |
-| KeyDB extensions | Current command reference, 2026-08-09 | 4 |
-| Dragonfly extensions | Current command reference, 2026-08-09 | 1 |
+| KeyDB extensions | 6.3.4 command table and command reference, audited 2026-09-30 | 9 |
+| Dragonfly extensions | Documentation snapshot and 2.0.0 Cluster guide, audited 2026-09-30 | 18 |
 
 Counts overlap because many commands appear in more than one reference. `RespireCommand.Sources`
 records provenance; it is not a runtime feature-negotiation guarantee. Server edition,
 configuration, loaded modules, permissions, and version still determine whether execution is
 accepted.
+
+The compatible-server audit uses [KeyDB's 6.3.4 command table](https://github.com/Snapchat/KeyDB/blob/v6.3.4/src/server.cpp),
+the [KeyDB command reference](https://docs.keydb.dev/docs/commands/),
+[Dragonfly documentation at 31881bce](https://github.com/dragonflydb/documentation/tree/31881bce033d4cec47cb2e85865d46745760e499/docs/command-reference),
+and [Dragonfly 2.0.0's Cluster guide](https://github.com/dragonflydb/dragonfly/blob/v2.0.0/docs/cluster-mode.md).
+The Dragonfly documentation snapshot can describe commands newer than a particular server release;
+its provenance is not a claim that all 18 commands exist in Dragonfly 2.0.0.
+See the [compatible-server guide](../website/docs/guides/server-extensions.md) for the extension list,
+execution examples, and scope. Private replication protocols such as DFLYMIGRATE, RREPLAY,
+and KEYDB.MVCCRESTORE are outside this client-command audit, as is the internal EXPDEL alias.
+Shared command names and server-specific argument forms reuse existing descriptors.
 
 Catalog execution routes blocking commands through the dedicated connection pool. Commands that
 change per-connection state remain discoverable but are rejected by `ExecuteAsync`; use Respire's
