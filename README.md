@@ -406,7 +406,7 @@ atomically in the same round trip.
 - [Lua scripts](docs/SCRIPTING.md) with automatic `EVALSHA` to `EVAL` fallback, read-only execution, and typed script cache commands
 - Streams and consumer groups with per-entry acknowledgement
 - Key-prefixed client views for multi-tenant applications
-- Redis Sentinel primary discovery when connecting
+- Lazy/eager Redis Sentinel discovery and reactive primary handoff after disconnect or READONLY
 - Sharded pub/sub for Redis 7
 - Automatic reconnect and pub/sub resubscribe
 - OpenTelemetry spans and metrics through `ActivitySource` and `Meter`, both named `Respire`

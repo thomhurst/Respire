@@ -636,6 +636,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                     // The lifetime above bounds the entire fence. A second connect timer
                     // could fire first and escape classification as a CLIENT KILL timeout.
                     ConnectTimeout = Timeout.InfiniteTimeSpan,
+                    Generation = null,
                     EnableClientTracking = false, PushHandler = null, SubscriptionConfirmationHandler = null,
                     TlsOptions = _options.UseTls ? RespireConnection.CreateTlsOptions(_options.TlsOptions, Host) : _options.TlsOptions,
                 };
@@ -737,6 +738,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
     private void ScheduleReconnect(int slot)
     {
+        if (_options.Generation?.IsRetired == true) return;
         var connection = Volatile.Read(ref _connections[slot]);
         // An individually draining connection must finish before replacement can dispose it.
         if (connection is { IsConnected: true, IsAcceptingCommands: false }) return;

@@ -18,7 +18,7 @@ Respire is pre-release. Its RESP3-preferred client with bounded RESP2 fallback, 
 - Batches, transactions, and optimistic concurrency with `WATCH`
 - Pub/sub, pattern subscriptions, and Redis 7 sharded pub/sub
 - [Typed standalone keyspace, keyevent, and Redis 8.8 subkey notifications](guides/keyspace-notifications.md)
-- Redis Sentinel primary discovery at connection time
+- Lazy/eager Redis Sentinel discovery and reactive primary handoff after disconnect or READONLY
 - Typed JSON serialization and custom `IRespireSerializer`
 - Raw and interpolated command execution
 - Automatic reconnect and pub/sub resubscription
@@ -33,7 +33,7 @@ Respire is pre-release. Its RESP3-preferred client with bounded RESP2 fallback, 
 | Capability | Current behavior |
 | --- | --- |
 | Redis Cluster gaps | Cluster routing, same-slot `WATCH` transactions, and sharded pub/sub are supported; typed notification fan-out remains unavailable in cluster mode |
-| Automatic Sentinel failover | Sentinel primary discovery is supported by `ConnectAsync`; lazy discovery and automatic re-discovery during failover are not supported |
+| Sentinel event monitoring | Lazy discovery and reactive re-discovery are supported; Sentinel event subscriptions and the real-server failover matrix remain planned |
 
 If one of these is a hard requirement today, use a mature client such as StackExchange.Redis.
 

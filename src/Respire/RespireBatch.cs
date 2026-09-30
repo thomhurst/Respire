@@ -214,17 +214,28 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
         _sent = true;
         var core = _client.Core;
-        var telemetry = RespireTelemetry.StartBatchOperation(
+        var telemetryOperation = "PIPELINE";
+        var sentinelStarted = core.Sentinel is null ? 0 : RespireTelemetry.CaptureStartTimestamp();
+        var telemetry = core.Sentinel is null ? RespireTelemetry.StartBatchOperation(
             "PIPELINE",
             _ops,
             static op => op.Operation,
-            core.Multiplexer.Host,
-            core.Multiplexer.Port,
+            core.Endpoint,
             core.Options.Database,
-            out var telemetryOperation);
+            out telemetryOperation) : default;
         if (_ops.Count == 0)
         {
-            telemetry.Complete(core, telemetryOperation, batchSize: 0);
+            if (core.Sentinel is not null)
+            {
+                telemetry = RespireTelemetry.StartBatchOperation(
+                    "PIPELINE", _ops, static op => op.Operation, core.Options.Database,
+                    out telemetryOperation, sentinelStarted);
+            }
+            if (core.Sentinel is null)
+                telemetry.Complete(core, telemetryOperation, batchSize: 0);
+            else
+                telemetry.Complete(telemetryOperation, host: null, port: 6379,
+                    database: core.Options.Database, batchSize: 0);
             return new RespireBatchResult(0, null);
         }
 
@@ -279,6 +290,10 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
         try
         {
             connection = await _client.AcquireConnectionAsync(cancellationToken).ConfigureAwait(false);
+            if (core.Sentinel is not null)
+                telemetry = RespireTelemetry.StartBatchOperation(
+                    "PIPELINE", _ops, static op => op.Operation,
+                    connection.Host, connection.Port, core.Options.Database, out telemetryOperation, sentinelStarted);
         }
         catch (Exception ex)
         {
@@ -289,6 +304,9 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
                 op.Fail(ex);
             }
 
+            if (connection is null)
+                RespireTelemetry.RecordUnroutedBatchFailure("PIPELINE", _ops, static op => op.Operation,
+                    core.Options.Database, sentinelStarted, ex);
             telemetry.Complete(
                 core,
                 telemetryOperation,

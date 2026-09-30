@@ -219,7 +219,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
         }
         else
         {
-            await client.Core.Multiplexer.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            await client.Core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
             await EnsureOnConnectionAsync(client.Core.Multiplexer.GetConnection(), library, cancellationToken).ConfigureAwait(false);
         }
     }

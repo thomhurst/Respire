@@ -21,6 +21,7 @@ internal sealed class InflightRing
     public static readonly PendingResponseSource DiscardSentinel = new();
 
     private readonly Slot[] _slots;
+    private string?[]? _discardedOperations;
     private readonly int _mask;
     private long _completedWriteEnd;
     private long _head;
@@ -55,6 +56,36 @@ internal sealed class InflightRing
         slot.WriteEnd = writeEnd;
         Volatile.Write(ref _tail, tail + 1);
         return true;
+    }
+
+    // Generation-owned connections retain discarded-reply metadata in a lazily allocated,
+    // bounded array. Ordinary rings allocate no metadata array; the slot layout is unchanged.
+    internal bool TryEnqueueDiscard(string operation, long writeEnd)
+    {
+        var tail = _tail;
+        if (tail - Volatile.Read(ref _head) >= _slots.Length) return false;
+        (_discardedOperations ??= new string?[_slots.Length])[tail & _mask] = operation;
+        return TryEnqueue(DiscardSentinel, writeEnd);
+    }
+
+    internal bool TryDequeue(out PendingResponse source, out string? discardedOperation)
+    {
+        var head = _head;
+        if (Volatile.Read(ref _tail) == head)
+        {
+            source = null!;
+            discardedOperation = null;
+            return false;
+        }
+        // Read and clear before releasing the slot to the producer in TryDequeue.
+        // The receive loop is the only consumer, so the head cannot change here.
+        discardedOperation = null;
+        if (_discardedOperations is { } operations)
+        {
+            discardedOperation = operations[head & _mask];
+            operations[head & _mask] = null;
+        }
+        return TryDequeue(out source);
     }
 
     /// <summary>Consumer only. Returns the head source without consuming it, so the receive

@@ -127,7 +127,7 @@ The full surface, conventions, and roadmap live in
 
 ## When *not* to use Respire (yet)
 
-Honesty section. Today Respire still lacks automatic Sentinel failover and cluster sharded pub/sub.
+Honesty section. Today Respire still lacks Sentinel event monitoring and cluster sharded pub/sub. Sentinel supports lazy discovery and reactive primary handoff after disconnect or READONLY.
 StackExchange.Redis also has a much longer production history and ecosystem. If those capabilities
 or maturity outweigh Respire's server-assisted cache, blocking-command pool, and modern API,
 StackExchange.Redis remains the safer choice.

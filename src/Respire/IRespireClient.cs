@@ -12,7 +12,11 @@ public interface IRespireClient : IAsyncDisposable
     /// <summary>Client-side cache diagnostics, or null when caching is disabled.</summary>
     IRespireClientSideCache? ClientSideCache => null;
 
-    /// <summary>The primary endpoint currently used by this client.</summary>
+    /// <summary>The configured data endpoint, or the latest validated primary for a Sentinel client.</summary>
+    /// <remarks>Reading this property performs no network I/O. After a Sentinel handoff, a previously
+    /// captured endpoint can be historical; host and port always come from one generation.</remarks>
+    /// <exception cref="InvalidOperationException">A lazy Sentinel client has not resolved a validated
+    /// primary yet. Use ConnectAsync or await the first command before reading its endpoint.</exception>
     RespireEndpoint Endpoint { get; }
 
     /// <summary>Whether at least one command connection is currently usable.</summary>

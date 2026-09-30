@@ -24,6 +24,13 @@ internal static class RespireTelemetry
     public static readonly ActivitySource Source = new(SourceName, Version);
     public static readonly Meter Meter = new(SourceName, Version);
 
+    public static readonly Counter<long> SentinelFailovers = Meter.CreateCounter<long>(
+        "respire.sentinel.failover", unit: "{failover}", description: "Validated Sentinel primary endpoint changes published by the client.");
+
+    public static readonly ObservableGauge<long> SentinelRetiredGenerations = Meter.CreateObservableGauge(
+        "respire.sentinel.generations.retired", () => SentinelRouter.RetiredGenerationCount, "{generation}",
+        "Process-wide retired Sentinel generations still owned while commands, leases, or correction fences drain.");
+
     public static readonly ObservableGauge<double> ThreadPoolSchedulingDelay = Meter.CreateObservableGauge(
         "respire.thread_pool.scheduling.delay", ThreadPoolMonitor.ObserveDelay, "s",
         "Latest process-wide probe scheduling delay; a lower bound while the probe is pending.");
@@ -142,6 +149,28 @@ internal static class RespireTelemetry
 
     public static bool IsEnabled => Source.HasListeners() || OperationDuration.Enabled;
 
+    internal static long CaptureStartTimestamp() => IsEnabled ? Stopwatch.GetTimestamp() : 0;
+
+    internal static void RecordUnroutedBatchFailure<T>(string prefix, IReadOnlyList<T> operations,
+        Func<T, string> operationName, int database, long started, Exception error)
+    {
+        if (started == 0) return;
+        var operation = BatchOperationName(prefix, operations, operationName);
+        int? batchSize = operations.Count == 1 ? null : operations.Count;
+        RecordUnroutedFailure(operation, database, started, error, batchSize: batchSize);
+    }
+
+    internal static void RecordUnroutedFailure(string operation, int database, long started,
+        Exception error, string? storedProcedureName = null, int? batchSize = null)
+    {
+        if (started == 0) return;
+        // No data connection was acquired. Do not identify a Sentinel seed or historical
+        // generation as the executing server; include the failed acquisition in duration.
+        StartOperation(operation, host: null, DefaultRedisPort, database, batchSize,
+            storedProcedureName, started).Complete(operation, host: null, DefaultRedisPort,
+                database, storedProcedureName, error, batchSize: batchSize);
+    }
+
     public static void RecordSubscriptionMessageDropped(
         SubscriptionKind kind,
         SubscriptionOverflow overflow)
@@ -158,12 +187,18 @@ internal static class RespireTelemetry
     }
 
     public static OperationScope StartOperation(
+        string operation, RespireEndpoint endpoint, int database,
+        int? batchSize = null, string? storedProcedureName = null)
+        => StartOperation(operation, endpoint.Host, endpoint.Port, database, batchSize, storedProcedureName);
+
+    public static OperationScope StartOperation(
         string operation,
-        string host,
+        string? host,
         int port,
         int database,
         int? batchSize = null,
-        string? storedProcedureName = null)
+        string? storedProcedureName = null,
+        long started = 0)
     {
         var traceEnabled = Source.HasListeners();
         var metricEnabled = OperationDuration.Enabled;
@@ -180,11 +215,11 @@ internal static class RespireTelemetry
                 { "db.system.name", DatabaseSystem },
                 { "db.namespace", database.ToString(CultureInfo.InvariantCulture) },
                 { "db.operation.name", operation },
-                { "server.address", host },
             };
-            if (port != DefaultRedisPort)
+            if (host is not null)
             {
-                tags.Add("server.port", port);
+                tags.Add("server.address", host);
+                if (port != DefaultRedisPort) tags.Add("server.port", port);
             }
 
             if (batchSize is not null)
@@ -202,10 +237,32 @@ internal static class RespireTelemetry
                 ? operation
                 : $"{operation} {storedProcedureName}";
             activity = Source.StartActivity(
-                activityName, ActivityKind.Client, default(ActivityContext), tags: tags);
+                activityName, ActivityKind.Client, default(ActivityContext), tags: tags,
+                startTime: started == 0 ? default : DateTimeOffset.UtcNow - Stopwatch.GetElapsedTime(started));
         }
 
-        return new OperationScope(activity, metricEnabled ? Stopwatch.GetTimestamp() : 0);
+        if (metricEnabled && started == 0) started = Stopwatch.GetTimestamp();
+        return new OperationScope(activity, metricEnabled ? started : 0);
+    }
+
+    public static OperationScope StartBatchOperation<T>(
+        string prefix, IReadOnlyList<T> operations, Func<T, string> operationName,
+        RespireEndpoint endpoint, int database, out string operation)
+        => StartBatchOperation(prefix, operations, operationName, endpoint.Host, endpoint.Port, database, out operation);
+
+    public static OperationScope StartBatchOperation<T>(
+        string prefix, IReadOnlyList<T> operations, Func<T, string> operationName,
+        int database, out string operation, long started = 0)
+    {
+        if (!IsEnabled)
+        {
+            operation = prefix;
+            return default;
+        }
+
+        operation = BatchOperationName(prefix, operations, operationName);
+        return StartOperation(operation, host: null, DefaultRedisPort, database,
+            batchSize: operations.Count == 1 ? null : operations.Count, started: started);
     }
 
     public static OperationScope StartBatchOperation<T>(
@@ -215,7 +272,8 @@ internal static class RespireTelemetry
         string host,
         int port,
         int database,
-        out string operation)
+        out string operation,
+        long started = 0)
     {
         if (!IsEnabled)
         {
@@ -229,7 +287,8 @@ internal static class RespireTelemetry
             host,
             port,
             database,
-            batchSize: operations.Count == 1 ? null : operations.Count);
+            batchSize: operations.Count == 1 ? null : operations.Count,
+            started: started);
     }
 
     private static string BatchOperationName<T>(
@@ -266,19 +325,16 @@ internal static class RespireTelemetry
             Exception? error = null,
             RespireConnection? connection = null,
             int? batchSize = null)
-            => Complete(
-                operation,
-                core.Multiplexer.Host,
-                core.Multiplexer.Port,
-                core.Options.Database,
-                storedProcedureName,
-                error,
-                connection,
-                batchSize);
+        {
+            if (activity is null && startTimestamp == 0) return;
+            var endpoint = connection is null ? core.Endpoint : new RespireEndpoint(connection.Host, connection.Port);
+            Complete(operation, endpoint.Host, endpoint.Port, core.Options.Database,
+                storedProcedureName, error, connection, batchSize);
+        }
 
         public void Complete(
             string operation,
-            string host,
+            string? host,
             int port,
             int database,
             string? storedProcedureName = null,
@@ -332,11 +388,11 @@ internal static class RespireTelemetry
                 { "db.system.name", DatabaseSystem },
                 { "db.namespace", database.ToString(CultureInfo.InvariantCulture) },
                 { "db.operation.name", operation },
-                { "server.address", host },
             };
-            if (port != DefaultRedisPort)
+            if (host is not null)
             {
-                tags.Add("server.port", port);
+                tags.Add("server.address", host);
+                if (port != DefaultRedisPort) tags.Add("server.port", port);
             }
 
             if (storedProcedureName is not null)

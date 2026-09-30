@@ -135,3 +135,31 @@ unavailable peers can retain generations indefinitely; age is diagnostic, never 
 to abandon an owed fence. The existing one-to-30-second fence retry backoff and explicit
 client-disposal behavior are unchanged. Any future policy that abandons ordering guarantees
 requires a separate explicit contract.
+
+## Sentinel primary changes
+
+Sentinel batch, durability-batch, and transaction acquisition failures still emit an error
+activity and `db.client.operation.duration`, including time spent discovering or connecting.
+Those failure records omit `server.address` and `server.port` because no data connection was
+acquired. Successful batch, durability, transaction, blocking, and script durations also
+include discovery/acquisition time while retaining the selected primary's endpoint on the operation;
+the Sentinel seed is never substituted as the executing Redis server. Blocking, transaction,
+and correction-identity timeouts before data-peer selection likewise carry endpoint-less
+connecting diagnostics; a selected physical connection retains its own diagnostic identity.
+
+`ConnectionStateChanged` reports the retired endpoint and validated replacement for reactive
+Sentinel handoffs. Prefix views share these events. The `respire.sentinel.failover` counter
+records primary endpoint changes with `server.address` and `server.port` tags. Initial
+discovery and reconnection to the same endpoint do not increment it. Published failover
+measurements remain queued even when disposal suppresses lifecycle callbacks. Lifecycle observers run
+outside discovery and transport work; queued events are suppressed after client disposal.
+The process-wide `respire.sentinel.generations.retired` gauge reports retired generations
+still owned while accepted work or correction fences drain. Continued growth warrants
+investigation. A persistently nonzero value after normal commands and borrowed leases have
+finished can indicate an unreachable correction peer or failed cleanup; inspect the warning
+logs. Fence retries retain their one-to-30-second backoff, but warnings are limited to one
+per retired generation every five minutes. An unexpected terminal cleanup failure logs that
+the generation remains retained until disposal; the gauge deliberately continues counting
+that ownership. Retention has no deadline that abandons an unacknowledged fence. Client disposal aborts
+and joins retained connection work.
+See [Sentinel connections](../fundamentals/connections.md#redis-sentinel) for drain and no-replay behavior.
