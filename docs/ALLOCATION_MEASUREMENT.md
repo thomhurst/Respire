@@ -65,8 +65,14 @@ The regression now:
    and requires at least 37,000 bytes, independent of object-header size.
 
 The 16 MiB region budget is a GC reservation, not an allowed allocation threshold.
+The measured control uses about 64 KiB on X64; this fixed reservation leaves headroom
+for runtime and coverage activity during the short interval. TUnit 1.72.4's unkeyed
+`NotInParallel` excludes all other tests, as documented in the pinned
+[attribute source](https://github.com/thomhurst/TUnit/blob/db75285568cad2de096028e117e64d57201fcca6/src/TUnit.Core/Attributes/TestMetadata/NotInParallelAttribute.cs).
 Failure to start the region throws. Failure to retain it is reported by
-`GC.EndNoGCRegion`; neither case skips the test or retries until a sample passes.
+`GC.EndNoGCRegion` and wrapped with explicit boundary context when measurement itself
+succeeded. An earlier measurement exception propagates unchanged. Neither case skips
+the test or retries until a sample passes.
 Cleanup uses `finally` and there is no `await` inside the region.
 
 The assertion continues to run under coverage on both supported frameworks.
