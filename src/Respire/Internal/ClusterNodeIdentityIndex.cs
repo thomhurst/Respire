@@ -16,11 +16,12 @@ internal sealed class ClusterNodeIdentityIndex
     // TODO #390: drain superseded transports and remove obsolete identities before releasing ownership.
     private readonly HashSet<RespireConnectionMultiplexer> _allNodes = [];
     private readonly Func<RespireEndpoint, RespireConnectionMultiplexer> _create;
-    private readonly object? _gate;
+    private readonly object _gate;
 
     internal ClusterNodeIdentityIndex(RespireEndpoint endpoint, RespireConnectionMultiplexer primary,
-        Func<RespireEndpoint, RespireConnectionMultiplexer> create, object? gate = null)
+        Func<RespireEndpoint, RespireConnectionMultiplexer> create, object gate)
     {
+        ArgumentNullException.ThrowIfNull(gate);
         _create = create;
         _gate = gate;
         _nodes.Add(endpoint, primary);
@@ -58,6 +59,13 @@ internal sealed class ClusterNodeIdentityIndex
     {
         AssertAccess();
         var advertisedById = CollectAdvertisedEndpoints(ranges);
+        // Reserve preferred addresses across the entire snapshot before considering aliases.
+        // A later range must not lose its transport to an earlier range's metadata.
+        var preferredOwners = new Dictionary<RespireEndpoint, string?>(EndpointComparer.Instance);
+        foreach (var range in ranges)
+        {
+            preferredOwners.TryAdd(range.Preferred, range.NodeId);
+        }
         var selectedById = new Dictionary<string, RespireConnectionMultiplexer>(StringComparer.Ordinal);
         var selectedNodeIds = new Dictionary<RespireConnectionMultiplexer, string>();
         var selectedEndpoints = new Dictionary<RespireEndpoint, RespireConnectionMultiplexer>(EndpointComparer.Instance);
@@ -73,7 +81,7 @@ internal sealed class ClusterNodeIdentityIndex
             {
                 var advertised = range.NodeId is { } knownId ? advertisedById[knownId]
                     : new HashSet<RespireEndpoint>(range.Aliases, EndpointComparer.Instance) { range.Preferred };
-                node = ResolveTopologyNode(range, advertised, selectedEndpoints, selectedNodeIds);
+                node = ResolveTopologyNode(range, advertised, preferredOwners, selectedEndpoints, selectedNodeIds);
                 if (range.NodeId is { } nodeId)
                 {
                     selectedById.Add(nodeId, node);
@@ -159,12 +167,13 @@ internal sealed class ClusterNodeIdentityIndex
 
     [Conditional("DEBUG")]
     private void AssertAccess()
-        => Debug.Assert(_gate is null || Monitor.IsEntered(_gate), "Cluster identity access requires the router node gate.");
+        => Debug.Assert(Monitor.IsEntered(_gate), "Cluster identity access requires the router node gate.");
 
     // Reuse a transport only while its immutable address remains
     // advertised for this node; a stable node ID alone does not make an old host reachable.
     private RespireConnectionMultiplexer ResolveTopologyNode(
         ClusterTopologyRange range, HashSet<RespireEndpoint> advertised,
+        Dictionary<RespireEndpoint, string?> preferredOwners,
         Dictionary<RespireEndpoint, RespireConnectionMultiplexer> selectedEndpoints,
         Dictionary<RespireConnectionMultiplexer, string> selectedNodeIds)
     {
@@ -208,6 +217,12 @@ internal sealed class ClusterNodeIdentityIndex
         bool CanReuse(RespireConnectionMultiplexer node)
         {
             var endpoint = new RespireEndpoint(node.Host, node.Port);
+            if (!EndpointComparer.Instance.Equals(endpoint, range.Preferred)
+                && preferredOwners.TryGetValue(endpoint, out var preferredId)
+                && (range.NodeId is null || preferredId != range.NodeId))
+            {
+                return false;
+            }
             // An alias that never connected may have failed TLS or DNS. Only reuse an
             // established alias; otherwise try the server's preferred authentication name.
             return advertised.Contains(endpoint)
