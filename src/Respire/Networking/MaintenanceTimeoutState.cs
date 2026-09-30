@@ -6,6 +6,8 @@ internal sealed class MaintenanceTimeoutState(long maximumWindowMilliseconds)
     private const int MaximumOperations = 256;
     private readonly object _gate = new();
     private readonly Dictionary<(string Family, long Sequence), Window> _windows = [];
+    // Insertion order, so capacity eviction removes the oldest finished identity deterministically.
+    private readonly List<(string Family, long Sequence)> _order = new(MaximumOperations);
     private long _overflowUntil;
     private ActiveWindow? _active;
     private readonly record struct Window(long Expires, bool Completed);
@@ -43,12 +45,15 @@ internal sealed class MaintenanceTimeoutState(long maximumWindowMilliseconds)
             : maximumWindowMilliseconds;
         if (_windows.Count == MaximumOperations)
         {
-            // Retain completed/expired identities until capacity pressure requires eviction.
-            // Dictionary order is not a replay-age guarantee; remove any finished identity.
-            foreach (var pair in _windows)
+            // Retain completed/expired identities until capacity pressure requires eviction,
+            // then evict the oldest finished one so recent identities keep replay suppression.
+            for (var i = 0; i < _order.Count; i++)
             {
-                if (pair.Value.Expires > now && !pair.Value.Completed) continue;
-                _windows.Remove(pair.Key);
+                var candidate = _order[i];
+                var window = _windows[candidate];
+                if (window.Expires > now && !window.Completed) continue;
+                _windows.Remove(candidate);
+                _order.RemoveAt(i);
                 break;
             }
         }
@@ -60,6 +65,7 @@ internal sealed class MaintenanceTimeoutState(long maximumWindowMilliseconds)
             return;
         }
         _windows.Add(key, new(now + duration, notification.IsCompletion));
+        _order.Add(key);
     }
 
     internal ActiveWindow? GetWindow(long now)

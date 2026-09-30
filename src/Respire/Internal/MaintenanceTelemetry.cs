@@ -46,6 +46,9 @@ internal sealed class MaintenanceTelemetry(string host, int port, int database, 
                     _dispatching = false;
                     return;
                 }
+                // A drop only happens when Publish enqueues behind it, so every drop precedes
+                // a queued item and is read here before the drain can go idle. A failed dropped
+                // counter emission stays pending until a later item is delivered.
                 dropped = _dropped;
             }
             var notification = item.Notification;

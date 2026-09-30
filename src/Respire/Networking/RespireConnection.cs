@@ -1931,6 +1931,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
         MarkReplyReceived();
 
+        if (_maintenanceStatus == MaintenanceNegotiating)
+        {
+            ObserveMaintenanceAcknowledgement(in value);
+        }
+
         if (ReferenceEquals(source, InflightRing.DiscardSentinel))
         {
             value.Dispose();

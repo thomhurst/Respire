@@ -65,8 +65,9 @@ var options = new RespireOptions
 ```
 
 `Disabled` is the default and sends no extra handshake command. `Auto` sends
-`CLIENT MAINT_NOTIFICATIONS ON` after RESP3 setup; an unknown command/subcommand disables
-maintenance handling for that connection. RESP2 connections also leave it disabled.
+`CLIENT MAINT_NOTIFICATIONS ON` after RESP3 setup; an `ERR` reply reporting an unknown command
+or unknown subcommand disables maintenance handling for that connection. Other error wording
+is treated as a setup failure rather than as missing support. RESP2 connections also leave it disabled.
 `Enabled` requires RESP3 and a successful acknowledgement. Authentication/ACL errors,
 malformed replies, timeouts, and transport failures always fail setup. Ordinary servers
 that accept the request but never send a maintenance push retain their normal timeouts.
@@ -88,9 +89,9 @@ Both maintenance duration options must be between one millisecond and one day.
 Overlapping operations have independent sequence/family windows. Duplicate starts do not
 extend retained windows; unmatched completions cannot close another operation. Up to 256
 recent identities are retained per physical connection, including completed/expired ones.
-Under pressure, finished identities are evicted first. More than 256 concurrent operations
+Under pressure, the oldest finished identity is evicted first. More than 256 concurrent operations
 share a conservative overflow window that expires automatically. Completion replays received
-during handshake negotiation are suppressed. Reconnect starts with fresh per-connection state.
+before the negotiation acknowledgement are suppressed; pushes after it are handled normally. Reconnect starts with fresh per-connection state.
 
 This release implements notifications, diagnostics, and timeout relaxation. It does not yet
 perform proactive `MOVING` handoff ([#634](https://github.com/thomhurst/Respire/issues/634))

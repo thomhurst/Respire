@@ -133,6 +133,11 @@ public class MaintenanceNotificationTests
     [Arguments(">2\r\n+FAILING_OVER\r\n:1\r\n")]
     [Arguments(">3\r\n+SMIGRATING\r\n:1\r\n+16384\r\n")]
     [Arguments(">3\r\n+SMIGRATING\r\n:1\r\n+10-9\r\n")]
+    [Arguments(">3\r\n+SMIGRATING\r\n:1\r\n+1,,2\r\n")]
+    [Arguments(">3\r\n+SMIGRATING\r\n:1\r\n+1-\r\n")]
+    [Arguments(">3\r\n+SMIGRATING\r\n:1\r\n+-1\r\n")]
+    [Arguments(">3\r\n+SMIGRATING\r\n:1\r\n+ 1\r\n")]
+    [Arguments(">3\r\n+SMIGRATING\r\n:1\r\n+1,\r\n")]
     [Arguments(">3\r\n+SMIGRATED\r\n:1\r\n*1\r\n*2\r\n+old:6379\r\n+new:6379\r\n")]
     public async Task RejectsMalformedWireNotifications(string wire)
         => await Assert.That(Parse(wire)).IsNull();
@@ -156,6 +161,42 @@ public class MaintenanceNotificationTests
         await Assert.That(state.Remaining(1600)).IsEqualTo(0);
         state.Apply(new("SMIGRATING", 3), 1700); // Expired duplicate cannot reopen the window.
         await Assert.That(state.Remaining(1700)).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task CapacityEvictsOldestFinishedIdentityFirst()
+    {
+        var state = new MaintenanceTimeoutState(1000);
+        for (var i = 0; i < 256; i++)
+        {
+            state.Apply(new("MIGRATING", i), 0);
+            state.Apply(new("MIGRATED", i), 0);
+        }
+        state.Apply(new("MIGRATING", 1000), 10); // Evicts sequence 0.
+        state.Apply(new("MIGRATED", 1000), 10);
+        state.Apply(new("MIGRATING", 2000), 20); // Evicts sequence 1, not the newer 1000.
+        state.Apply(new("MIGRATED", 2000), 20);
+        await Assert.That(state.Remaining(30)).IsEqualTo(0);
+        state.Apply(new("MIGRATING", 1000), 30); // Recent replay remains suppressed.
+        await Assert.That(state.Remaining(30)).IsEqualTo(0);
+        state.Apply(new("MIGRATING", 2), 30);
+        await Assert.That(state.Remaining(30)).IsEqualTo(0);
+        state.Apply(new("MIGRATING", 1), 40); // Evicted identity is treated as new.
+        await Assert.That(state.Remaining(40)).IsEqualTo(1000);
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task PushesFollowingAcknowledgementInSameReadAreHandled(bool completed)
+    {
+        var reply = FakeRespServer.OkReply.Concat(Start("MIGRATING", 7));
+        if (completed) reply = reply.Concat(Finish("MIGRATED", 7));
+        await using var server = Server(reply.ToArray());
+        await using var connection = await Connect(server, TimeSpan.FromSeconds(2));
+        using var result = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+        await Assert.That(result.AsString()).IsEqualTo("PONG");
+        await Assert.That(connection.HasMaintenanceWindow).IsEqualTo(!completed);
     }
 
     [Test]

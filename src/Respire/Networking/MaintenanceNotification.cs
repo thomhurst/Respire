@@ -99,16 +99,30 @@ internal sealed record MaintenanceNotification(string Kind, long SequenceId, lon
     private static bool ValidSlots(in RespValue value)
     {
         if (!IsString(value)) return false;
-        var text = value.AsString();
-        if (string.IsNullOrEmpty(text) || text.Length > 100_000) return false;
-        foreach (var range in text.Split(','))
+        // Scan the wire bytes: a large slot list must not allocate a string per range.
+        var text = value.AsSpan();
+        if (text.IsEmpty || text.Length > 100_000) return false;
+        while (true)
         {
-            var dash = range.IndexOf('-');
-            var startText = dash < 0 ? range.AsSpan() : range.AsSpan(0, dash);
-            if (!int.TryParse(startText, NumberStyles.None, CultureInfo.InvariantCulture, out var start)
-                || start is < 0 or >= 16384) return false;
-            if (dash >= 0 && (!int.TryParse(range.AsSpan(dash + 1), NumberStyles.None, CultureInfo.InvariantCulture, out var end)
-                || end < start || end >= 16384)) return false;
+            var comma = text.IndexOf((byte)',');
+            var range = comma < 0 ? text : text[..comma];
+            var dash = range.IndexOf((byte)'-');
+            if (!TrySlot(dash < 0 ? range : range[..dash], out var start)
+                || (dash >= 0 && (!TrySlot(range[(dash + 1)..], out var end) || end < start))) return false;
+            if (comma < 0) return true;
+            text = text[(comma + 1)..];
+        }
+    }
+
+    private static bool TrySlot(ReadOnlySpan<byte> text, out int slot)
+    {
+        slot = 0;
+        if (text.IsEmpty) return false;
+        foreach (var digit in text)
+        {
+            if (digit is < (byte)'0' or > (byte)'9') return false;
+            slot = slot * 10 + (digit - '0');
+            if (slot >= 16384) return false;
         }
         return true;
     }

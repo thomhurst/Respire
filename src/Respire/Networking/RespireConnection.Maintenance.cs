@@ -9,9 +9,13 @@ internal sealed partial class RespireConnection
     private static readonly RawCommand EnableMaintenance = new(
         "*3\r\n$6\r\nCLIENT\r\n$19\r\nMAINT_NOTIFICATIONS\r\n$2\r\nON\r\n"u8.ToArray());
     private readonly RespireConnectionOptions? _maintenanceOptions;
+    // Created lazily and only by the receive loop; other threads read the state volatilely.
     private MaintenanceTimeoutState? _maintenanceState;
     private MaintenanceTelemetry? _maintenanceTelemetry;
-    // 0 = inactive, 1 = negotiating (completion replay suppressed), 2 = enabled.
+    private const int MaintenanceInactive = 0;
+    // Negotiation sent; pushes parsed before the acknowledgement may be replayed completions.
+    private const int MaintenanceNegotiating = 1;
+    private const int MaintenanceEnabled = 2;
     private int _maintenanceStatus;
     internal bool HasMaintenanceWindow => Volatile.Read(ref _maintenanceState)?.Remaining(Environment.TickCount64) > 0;
 
@@ -25,32 +29,61 @@ internal sealed partial class RespireConnection
                 throw new RespireConnectionException("Maintenance notifications require RESP3.");
             return;
         }
-        Volatile.Write(ref _maintenanceStatus, 1);
-        using var reply = await SendAsync(EnableMaintenance, cancellationToken, armCommandDeadline,
-            "CLIENT MAINT_NOTIFICATIONS").ConfigureAwait(false);
-        if (reply.IsError)
+        Volatile.Write(ref _maintenanceStatus, MaintenanceNegotiating);
+        try
         {
-            Volatile.Write(ref _maintenanceStatus, 0);
-            Volatile.Write(ref _maintenanceState, null);
-            var error = reply.GetErrorMessage();
-            if (options.MaintenanceNotifications == RespireMaintenanceNotificationMode.Auto
-                && error.StartsWith("ERR ", StringComparison.Ordinal)
-                && (error.Contains("unknown subcommand", StringComparison.OrdinalIgnoreCase)
-                    || error.Contains("unknown command", StringComparison.OrdinalIgnoreCase))) return;
-            throw CreateHandshakeException(in reply, "CLIENT MAINT_NOTIFICATIONS");
+            using var reply = await SendAsync(EnableMaintenance, cancellationToken, armCommandDeadline,
+                "CLIENT MAINT_NOTIFICATIONS").ConfigureAwait(false);
+            if (reply.IsError)
+            {
+                DisableMaintenance();
+                var error = reply.GetErrorMessage();
+                if (options.MaintenanceNotifications == RespireMaintenanceNotificationMode.Auto
+                    && error.StartsWith("ERR ", StringComparison.Ordinal)
+                    && (error.Contains("unknown subcommand", StringComparison.OrdinalIgnoreCase)
+                        || error.Contains("unknown command", StringComparison.OrdinalIgnoreCase))) return;
+                throw CreateHandshakeException(in reply, "CLIENT MAINT_NOTIFICATIONS");
+            }
+            if (!IsMaintenanceAcknowledgement(in reply))
+                throw new RespireConnectionException("CLIENT MAINT_NOTIFICATIONS returned an invalid acknowledgement.");
+            // The receive loop normally enables at the acknowledgement's wire position already.
+            Volatile.Write(ref _maintenanceStatus, MaintenanceEnabled);
         }
-        if (reply.Type != RespDataType.SimpleString || !reply.AsSpan().SequenceEqual("OK"u8))
-            throw new RespireConnectionException("CLIENT MAINT_NOTIFICATIONS returned an invalid acknowledgement.");
-        Volatile.Write(ref _maintenanceStatus, 2);
+        catch
+        {
+            DisableMaintenance();
+            throw;
+        }
+    }
+
+    private void DisableMaintenance()
+    {
+        Volatile.Write(ref _maintenanceStatus, MaintenanceInactive);
+        Volatile.Write(ref _maintenanceState, null);
+    }
+
+    private static bool IsMaintenanceAcknowledgement(in RespValue reply)
+        => reply.Type == RespDataType.SimpleString && reply.AsSpan().SequenceEqual("OK"u8);
+
+    /// <summary>
+    /// Receive loop only, for the reply that answers the negotiation command (the handshake
+    /// has no other command in flight). Enabling here, rather than in the deferred awaiting
+    /// continuation, lets a completion that follows the acknowledgement in the same read end
+    /// the window its start opened.
+    /// </summary>
+    private void ObserveMaintenanceAcknowledgement(in RespValue reply)
+    {
+        if (IsMaintenanceAcknowledgement(in reply))
+            Volatile.Write(ref _maintenanceStatus, MaintenanceEnabled);
     }
 
     private bool TryHandleMaintenancePush(in RespValue value)
     {
         var status = Volatile.Read(ref _maintenanceStatus);
-        if (status == 0 || MaintenanceNotification.Parse(in value) is not { } notification) return false;
+        if (status == MaintenanceInactive || MaintenanceNotification.Parse(in value) is not { } notification) return false;
         // Servers can replay historical completion notifications during opt-in. They must not
         // become a new maintenance window or a current diagnostic event.
-        if (status == 1 && notification.IsCompletion) return true;
+        if (status == MaintenanceNegotiating && notification.IsCompletion) return true;
         var state = Volatile.Read(ref _maintenanceState);
         if (state is null)
         {
