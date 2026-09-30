@@ -13,6 +13,27 @@ namespace Respire;
 /// </summary>
 public interface IBatchListCommands
 {
+    /// <summary>First matching zero-based index, or null. Negative rank searches from the tail; maxLength 0 scans without a limit. Redis: LPOS.</summary>
+    RespirePending<long?> Position(RespireKey key, RespireValue value, long rank = 1, long maxLength = 0);
+
+    /// <summary>Matching zero-based indexes in search order; empty when absent. Count 0 returns all matches, negative rank searches from the tail, maxLength 0 scans without a limit. Redis: LPOS COUNT.</summary>
+    RespirePending<long[]> Positions(RespireKey key, RespireValue value, long count = 0, long rank = 1, long maxLength = 0);
+
+    /// <summary>Inserts before the first pivot; returns the new length, 0 for a missing key, or -1 for a missing pivot. Redis: LINSERT BEFORE.</summary>
+    RespirePending<long> InsertBefore(RespireKey key, RespireValue pivot, RespireValue value);
+
+    /// <summary>Inserts after the first pivot; returns the new length, 0 for a missing key, or -1 for a missing pivot. Redis: LINSERT AFTER.</summary>
+    RespirePending<long> InsertAfter(RespireKey key, RespireValue pivot, RespireValue value);
+
+    /// <summary>Replaces an element; negative indexes count from the tail. Returns true on OK; missing keys and out-of-range indexes raise server errors. Redis: LSET.</summary>
+    RespirePending<bool> Set(RespireKey key, long index, RespireValue value);
+
+    /// <summary>Prepends values only to an existing list; returns the new length or 0 when missing. Redis: LPUSHX.</summary>
+    RespirePending<long> LeftPushIfExists(RespireKey key, params ReadOnlySpan<RespireValue> values);
+
+    /// <summary>Appends values only to an existing list; returns the new length or 0 when missing. Redis: RPUSHX.</summary>
+    RespirePending<long> RightPushIfExists(RespireKey key, params ReadOnlySpan<RespireValue> values);
+
     /// <summary>Prepends values; returns the new length. Redis: LPUSH.</summary>
     RespirePending<long> LeftPush(RespireKey key, params ReadOnlySpan<RespireValue> values);
 
@@ -84,6 +105,42 @@ public interface IBatchListCommands
 
 internal sealed class BatchListCommands(IPendingSink sink) : IBatchListCommands
 {
+    public RespirePending<long?> Position(RespireKey key, RespireValue value, long rank = 1, long maxLength = 0)
+        => sink.Add<Cmd1N, long?>("LPOS", new Cmd1N(RespireCommands.List.LPOS.Verb, sink.Client.Key(in key), ListCommands.PositionArguments(value, rank, null, maxLength)),
+            static (c, v) => ResponseReader.IntegerOrNull(in v));
+
+    public RespirePending<long[]> Positions(RespireKey key, RespireValue value, long count = 0, long rank = 1, long maxLength = 0)
+        => sink.Add<Cmd1N, long[]>("LPOS", new Cmd1N(RespireCommands.List.LPOS.Verb, sink.Client.Key(in key), ListCommands.PositionArguments(value, rank, count, maxLength)),
+            static (c, v) => ResponseReader.IntegerArray(in v));
+
+    public RespirePending<long> InsertBefore(RespireKey key, RespireValue pivot, RespireValue value)
+        => Insert(key, "BEFORE", pivot, value);
+
+    public RespirePending<long> InsertAfter(RespireKey key, RespireValue pivot, RespireValue value)
+        => Insert(key, "AFTER", pivot, value);
+
+    private RespirePending<long> Insert(RespireKey key, RespireValue placement, RespireValue pivot, RespireValue value)
+        => sink.Add<Cmd4, long>("LINSERT", new Cmd4(RespireCommands.List.LINSERT.Verb, sink.Client.Key(in key), placement, pivot, value),
+            static (c, v) => ResponseReader.Integer(in v));
+
+    public RespirePending<bool> Set(RespireKey key, long index, RespireValue value)
+        => sink.Add<Cmd3, bool>("LSET", new Cmd3(RespireCommands.List.LSET.Verb, sink.Client.Key(in key), index, value),
+            static (c, v) => ResponseReader.Ok(in v));
+
+    public RespirePending<long> LeftPushIfExists(RespireKey key, params ReadOnlySpan<RespireValue> values)
+    {
+        ListCommands.ValidatePushValues(values);
+        return sink.Add<Cmd1N, long>("LPUSHX", new Cmd1N(RespireCommands.List.LPUSHX.Verb, sink.Client.Key(in key), values.ToArray()),
+            static (c, v) => ResponseReader.Integer(in v));
+    }
+
+    public RespirePending<long> RightPushIfExists(RespireKey key, params ReadOnlySpan<RespireValue> values)
+    {
+        ListCommands.ValidatePushValues(values);
+        return sink.Add<Cmd1N, long>("RPUSHX", new Cmd1N(RespireCommands.List.RPUSHX.Verb, sink.Client.Key(in key), values.ToArray()),
+            static (c, v) => ResponseReader.Integer(in v));
+    }
+
     public RespirePending<long> LeftPush(RespireKey key, params ReadOnlySpan<RespireValue> values)
         => sink.Add<Cmd1N, long>(
             "LPUSH", new Cmd1N(Verbs.LPush, sink.Client.Key(in key), values.ToArray()),

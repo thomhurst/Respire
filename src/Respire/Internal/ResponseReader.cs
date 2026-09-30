@@ -12,6 +12,21 @@ internal static class ResponseReader
 {
     public static long Integer(in RespValue value) => value.AsInteger();
 
+    public static long[] IntegerArray(in RespValue value)
+    {
+        var elements = value.AsArray();
+        if (elements.IsEmpty)
+        {
+            return [];
+        }
+        var result = new long[elements.Length];
+        for (var i = 0; i < elements.Length; i++)
+        {
+            result[i] = elements[i].AsInteger();
+        }
+        return result;
+    }
+
     /// <summary>An affirmative reply: RESP3 boolean true or integer &gt;= 1.</summary>
     public static bool Flag(in RespValue value)
         => value.Type == RespDataType.Boolean ? value.AsBoolean() : value.AsInteger() >= 1;
