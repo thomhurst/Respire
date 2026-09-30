@@ -534,14 +534,30 @@ public class RespireConnectionTests
     [Test]
     public async Task FailedReconnect_HandlerCanImmediatelyScheduleAnotherReconnect()
     {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        var acceptTask = listener.AcceptSocketAsync();
-        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync("127.0.0.1", port);
-        using var socket = await acceptTask;
+        var reconnectHandshakes = new[]
+        {
+            new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously),
+            new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously),
+        };
+        var authenticationCount = 0;
+        // Keep the port reserved throughout the test. Every reconnect must fail its
+        // handshake, regardless of which ports parallel tests use.
+        await using var server = new FakeRespServer(3, FakeRespServer.OkReply)
+        {
+            CloseConnectionAfterCommand = 2,
+            SuppressReply = command =>
+            {
+                if (command != "AUTH secret") return false;
+                var attempt = Interlocked.Increment(ref authenticationCount);
+                if (attempt == 1) return false;
+                reconnectHandshakes[attempt - 2].TrySetResult();
+                return true;
+            },
+        };
+        await using var multiplexer = await RespireConnectionMultiplexer.CreateAsync(
+            "127.0.0.1", server.Port, options: new RespireConnectionOptions { Password = "secret" });
         var secondReconnect = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var laterSubscriberThreeStates = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var laterSubscriberFourStates = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var laterSubscriberStates = new ConcurrentQueue<RespireConnectionState>();
         var reconnectCount = 0;
         var retryRequested = 0;
@@ -570,31 +586,40 @@ public class RespireConnectionTests
         multiplexer.StateChanged += change =>
         {
             laterSubscriberStates.Enqueue(change.State);
-            if (laterSubscriberStates.Count >= 3)
+            if (laterSubscriberStates.Count >= 4)
             {
-                laterSubscriberThreeStates.TrySetResult();
+                laterSubscriberFourStates.TrySetResult();
             }
         };
 
-        listener.Stop();
-        socket.LingerState = new LingerOption(true, 0);
-        socket.Close();
-
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await Assert.That(async () => await multiplexer.GetConnection()
+            .SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask().WaitAsync(timeout.Token))
+            .Throws<RespireConnectionException>();
         while (multiplexer.IsConnected)
         {
             await Task.Delay(10, timeout.Token);
         }
 
         await Assert.That(() => multiplexer.GetConnection()).Throws<RespireConnectionException>();
+        for (var i = 0; i < reconnectHandshakes.Length; i++)
+        {
+            await reconnectHandshakes[i].Task.WaitAsync(timeout.Token);
+            await server.SendRawAsync("-WRONGPASS reconnect rejected\r\n"u8.ToArray(), connectionId: i + 1);
+        }
+
         await secondReconnect.Task.WaitAsync(timeout.Token);
-        await laterSubscriberThreeStates.Task.WaitAsync(timeout.Token);
+        await laterSubscriberFourStates.Task.WaitAsync(timeout.Token);
 
         var states = laterSubscriberStates.ToArray();
-        await Assert.That(states.Length).IsGreaterThanOrEqualTo(3);
+        await Assert.That(states.Length).IsEqualTo(4);
         await Assert.That(states[0]).IsEqualTo(RespireConnectionState.Reconnecting);
         await Assert.That(states[1]).IsEqualTo(RespireConnectionState.Disconnected);
         await Assert.That(states[2]).IsEqualTo(RespireConnectionState.Reconnecting);
+        await Assert.That(states[3]).IsEqualTo(RespireConnectionState.Disconnected);
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(["AUTH secret", "PING", "AUTH secret", "AUTH secret"]);
+        await Assert.That(server.ReceivedConnectionIds).IsEquivalentTo([0, 0, 1, 2]);
+        await Assert.That(multiplexer.IsConnected).IsFalse();
     }
 
     [Test]
