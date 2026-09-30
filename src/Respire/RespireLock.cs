@@ -131,7 +131,7 @@ public sealed class RespireLock : IAsyncDisposable
 
     /// <summary>
     /// Resets the lock's expiry to <paramref name="newDuration"/> from now, only while this handle is
-    /// still the owner. Redis: compare-and-PEXPIRE.
+    /// still the owner. Uses SET IFEQ PX when supported, otherwise Lua compare-and-PEXPIRE.
     /// </summary>
     /// <remarks>
     /// Managed extensions that can time out or be cancelled use Redis <c>CLIENT ID</c> and

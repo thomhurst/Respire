@@ -1387,6 +1387,40 @@ public class ClientSideCacheTests
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(["HELLO 3", "CLIENT TRACKING ON OPTIN", "CLIENT CACHING YES", "DIGEST tenant:key"]);
     }
 
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task NativeLockMutationKeepsCacheFencesAcrossTheReply(bool extend, bool applied)
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(HelloReply, FakeRespServer.OkReply)
+        {
+            SuppressReply = command =>
+            {
+                if (!command.Contains(" IFEQ ", StringComparison.Ordinal)) return false;
+                received.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await ConnectAsync(server);
+        var view = client.WithKeyPrefix("tenant:");
+        var cache = client.Core.ClientCache!;
+        InsertCachedValue(cache, "tenant:key", "owner");
+        var pending = extend
+            ? view.Locks.ResetExpiryAsync("key", "owner", TimeSpan.FromSeconds(30)).AsTask()
+            : view.Locks.ReleaseAsync("key", "owner").AsTask();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(cache.Count).IsEqualTo(0);
+        InsertCachedValue(cache, "tenant:key", "racing-read");
+        byte[] reply = extend
+            ? (applied ? FakeRespServer.OkReply : "$-1\r\n"u8.ToArray())
+            : (applied ? ":1\r\n"u8.ToArray() : ":0\r\n"u8.ToArray());
+        await server.SendRawAsync(reply);
+        await Assert.That(await pending).IsEqualTo(applied);
+        await Assert.That(cache.Count).IsEqualTo(0);
+    }
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server)
         => RespireClient.ConnectAsync(new RespireOptions
         {
