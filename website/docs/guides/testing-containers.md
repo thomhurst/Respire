@@ -9,6 +9,9 @@ Install `Respire.Testing.Containers` in a test project. It uses Testcontainers a
 a working Docker engine with Linux containers. The fixture has no dependency on a test
 framework; use it with TUnit, xUnit, NUnit, or your own executable.
 
+The package brings Testcontainers 4.15.0 as a transitive dependency and does not claim
+Native AOT compatibility. Keep it in test projects that run on the normal .NET runtime.
+
 ```csharp
 using Respire.Testing.Containers;
 
