@@ -74,6 +74,21 @@ public class ClusterDatabaseTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
+    public async Task MissingVersionFailsBeforeSelectAndIdentifiesMissingField(bool resp3)
+    {
+        const string body = "# Server\r\nserver_name:valkey\r\nserver_mode:cluster";
+        var info = Encoding.UTF8.GetBytes($"${Encoding.UTF8.GetByteCount(body)}\r\n{body}\r\n");
+        await using var server = new FakeRespServer(resp3 ? [Hello, info] : [info]);
+        var error = await Assert.That(async () => await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            new RespireConnectionOptions { Database = 2, RequireClusterDatabaseSupport = true, UseResp3 = resp3 }))
+            .ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(error!.Message).Contains("valkey_version=<missing>");
+        await Assert.That(server.ReceivedCommands).DoesNotContain("SELECT 2");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     public async Task DeniedInfoOrSelectDoesNotPublishConnection(bool select)
     {
         byte[] denied = "-NOPERM denied\r\n"u8.ToArray();

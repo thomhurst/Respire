@@ -1250,7 +1250,8 @@ internal sealed class ClusterRouter : IAsyncDisposable
         catch (Exception error) when (CanRetryConnectionFailure(error, cancellationToken))
         {
             // ACLs and Redis-compatible servers may hide CLUSTER SLOTS. MOVED/ASK learning
-            // remains sufficient for correctness, so topology discovery is opportunistic.
+            // remains sufficient for correctness, so topology discovery is opportunistic for
+            // connection/server failures. Incompatible configuration must still propagate.
             return false;
         }
     }

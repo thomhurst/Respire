@@ -475,13 +475,18 @@ internal sealed class RespireConnection : IAsyncDisposable
     private void ValidateClusterDatabaseSupport(in RespValue reply)
     {
         string? server = null, version = null, mode = null;
-        foreach (var line in reply.AsString().Split('\n', StringSplitOptions.TrimEntries))
+        var remaining = reply.AsString().AsSpan();
+        while (!remaining.IsEmpty)
         {
-            if (line.StartsWith("server_name:", StringComparison.Ordinal)) server = line[12..];
-            else if (line.StartsWith("valkey_version:", StringComparison.Ordinal)) version = line[15..];
-            else if (line.StartsWith("server_mode:", StringComparison.Ordinal)) mode = line[12..];
+            var end = remaining.IndexOf('\n');
+            var line = (end < 0 ? remaining : remaining[..end]).Trim();
+            remaining = end < 0 ? default : remaining[(end + 1)..];
+            if (line.StartsWith("server_name:", StringComparison.Ordinal)) server = line[12..].ToString();
+            else if (line.StartsWith("valkey_version:", StringComparison.Ordinal)) version = line[15..].ToString();
+            else if (line.StartsWith("server_mode:", StringComparison.Ordinal)) mode = line[12..].ToString();
         }
 
+        // Valkey uses an unsigned major followed by a dotted version or prerelease suffix.
         var majorText = version.AsSpan();
         var separator = majorText.IndexOfAny('.', '-');
         if (separator >= 0) majorText = majorText[..separator];
