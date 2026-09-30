@@ -2934,11 +2934,14 @@ public sealed partial class RespireClient : IRespireClient
         var core = _core;
         ObjectDisposedException.ThrowIf(core.Disposed, this);
 
-        var pool = core.Cluster is { } cluster
-            ? identity.Connection is { } original
-                ? cluster.GetCorrectionPool(original)
-                : cluster.GetDedicatedPool(identity.Endpoint)
-            : core.DedicatedPool;
+        // Successful retirement already consumed every accepted reply and closed the socket.
+        // A late fence must not kill a reused client ID on a replacement server at that address.
+        if (identity.Connection is { DrainedSuccessfully: true }) return;
+
+        await using var correction = core.Cluster is { } cluster && identity.Connection is { } original
+            ? cluster.GetCorrectionLease(original) : null;
+        var pool = correction?.Pool ?? (core.Cluster is { } routerPool
+            ? routerPool.GetDedicatedPool(identity.Endpoint) : core.DedicatedPool);
         // A cold control connection may need SELECT/AUTH while the server is paused.
         // The fence cannot abandon those commands before it reaches CLIENT KILL.
         var control = await pool.RentAsync(CancellationToken.None, armHandshakeDeadline: false).ConfigureAwait(false);
@@ -2966,7 +2969,7 @@ public sealed partial class RespireClient : IRespireClient
 
         if (identity.Connection?.Multiplexer is { } originalMultiplexer)
         {
-            await originalMultiplexer.RetireConnectionAsync(identity.ServerClientId).ConfigureAwait(false);
+            await originalMultiplexer.RetireConnectionAsync(identity.Connection!).ConfigureAwait(false);
         }
         else if (core.Cluster is { } router)
         {
@@ -3229,10 +3232,32 @@ public sealed partial class RespireClient : IRespireClient
                 ?? (core.Cluster is { } cluster && connectionIdentity.Endpoint.Host is not null
                     ? cluster.GetMultiplexer(connectionIdentity.Endpoint)
                     : core.Multiplexer);
-            await multiplexer.SendToAllConnectionsAsync(
-                new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]),
-                connectionIdentity.RequiresAsking,
-                CancellationToken.None).ConfigureAwait(false);
+            var command = new Cmd2N(Verbs.Eval, script.Source, tail[0], tail[1..]);
+            try
+            {
+                await multiplexer.SendToAllConnectionsAsync(command,
+                    connectionIdentity.RequiresAsking, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (RespireConnectionRetiredException) when (core.Cluster is not null && connectionIdentity.Connection is not null)
+            {
+                // Retirement rejected new acceptance. Wait for the old FIFO and every owed
+                // kill barrier before sending the idempotent correction on its original peer.
+                try { await multiplexer.RetireAsync().ConfigureAwait(false); }
+                catch (Exception) when (multiplexer.HasPendingCorrectionFences)
+                {
+                    await multiplexer.FenceRetiredConnectionsAsync().ConfigureAwait(false);
+                }
+                await using var lease = core.Cluster.GetCorrectionLease(connectionIdentity.Connection);
+                var control = await lease.Pool.RentAsync(CancellationToken.None, armHandshakeDeadline: false).ConfigureAwait(false);
+                try
+                {
+                    using var reply = connectionIdentity.RequiresAsking
+                        ? await ClusterRouter.SendAskingUncheckedAsync(control, command, CancellationToken.None, armCommandDeadline: false).ConfigureAwait(false)
+                        : await control.SendAsync(command, CancellationToken.None, armCommandDeadline: false).ConfigureAwait(false);
+                    if (reply.IsError) throw ResponseReader.ServerError(in reply, "EVAL");
+                }
+                finally { lease.Pool.Return(control); }
+            }
         }
         finally
         {

@@ -123,6 +123,61 @@ public class TlsTests
         }
     }
 
+    [Test]
+    [Arguments(null)]
+    [Arguments("explicit.example")]
+    public async Task LateCorrectionPoolKeepsTlsNameWhenConnectingToCapturedAddress(string? explicitHost)
+    {
+        using var certificate = CreateCertificate(explicitHost ?? "localhost");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var server = ServeBothAsync();
+        try
+        {
+            var tlsOptions = new SslClientAuthenticationOptions
+            {
+                TargetHost = explicitHost,
+                RemoteCertificateValidationCallback = (_, _, _, errors) =>
+                    (errors & ~SslPolicyErrors.RemoteCertificateChainErrors) == SslPolicyErrors.None,
+            };
+            var options = new RespireOptions
+            {
+                UseCluster = true, UseTls = true, TlsOptions = tlsOptions, Connections = 1,
+                Endpoints = { new RespireEndpoint("localhost", port) },
+            };
+            await using var primary = await RespireConnectionMultiplexer.CreateAsync("localhost", port,
+                options: options.ToConnectionOptions(), cancellationToken: deadline.Token);
+            await using var router = new ClusterRouter(options, primary);
+            var original = primary.GetConnection();
+            using (var pong = await original.SendAsync(new RawCommand(FakeRespServer.PingFrame), deadline.Token))
+                await Assert.That(pong.AsString()).IsEqualTo("PONG");
+            await primary.RetireAsync().WaitAsync(deadline.Token);
+            await using var correction = router.GetCorrectionLease(original);
+            var control = await correction.Pool.RentAsync(deadline.Token);
+            try
+            {
+                using var pong = await control.SendAsync(new RawCommand(FakeRespServer.PingFrame), deadline.Token);
+                await Assert.That(pong.AsString()).IsEqualTo("PONG");
+                await Assert.That(control.Host).IsEqualTo(original.NetworkPeerAddress);
+                await Assert.That(tlsOptions.TargetHost).IsEqualTo(explicitHost);
+            }
+            finally { correction.Pool.Return(control); }
+            await server.WaitAsync(deadline.Token);
+        }
+        finally
+        {
+            listener.Stop();
+        }
+
+        async Task ServeBothAsync()
+        {
+            await RunTlsServerAsync(listener, certificate);
+            await RunTlsServerAsync(listener, certificate);
+        }
+    }
+
     private static async Task RunClusterTlsServerAsync(
         TcpListener listener, X509Certificate2 certificate, int port,
         Action<string?> observeSni, CancellationToken cancellationToken)

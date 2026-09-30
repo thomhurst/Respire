@@ -33,12 +33,16 @@ public class ClusterNodeIdentityTests
         var callbackThread = Environment.CurrentManagedThreadId;
         var measurements = 0;
         var gateHeld = false;
+        // Initialize the static instruments before subscribing: publication during their
+        // type initializer runs before each readonly field has received its reference.
+        var evictionInstrument = RespireTelemetry.ClientCacheEvictions;
+        var continuityInstrument = RespireTelemetry.ClientCacheContinuityFlushes;
         using var listener = new System.Diagnostics.Metrics.MeterListener
         {
             InstrumentPublished = (instrument, current) =>
             {
-                if (ReferenceEquals(instrument, RespireTelemetry.ClientCacheEvictions)
-                    || ReferenceEquals(instrument, RespireTelemetry.ClientCacheContinuityFlushes))
+                if (ReferenceEquals(instrument, evictionInstrument)
+                    || ReferenceEquals(instrument, continuityInstrument))
                 {
                     current.EnableMeasurementEvents(instrument);
                 }
@@ -389,9 +393,11 @@ public class ClusterNodeIdentityTests
         var second = primary.GetConnection(1);
         await Assert.That(ReferenceEquals(first, second)).IsFalse();
 
-        var pool = router.GetCorrectionPool(first);
-        await Assert.That(ReferenceEquals(pool, router.GetCorrectionPool(second))).IsTrue();
-        await Assert.That(ReferenceEquals(pool, router.GetCorrectionPool(replacement.GetConnection()))).IsFalse();
+        await using var firstLease = router.GetCorrectionLease(first);
+        await using var secondLease = router.GetCorrectionLease(second);
+        await using var replacementLease = router.GetCorrectionLease(replacement.GetConnection());
+        await Assert.That(ReferenceEquals(firstLease.Pool, secondLease.Pool)).IsTrue();
+        await Assert.That(ReferenceEquals(firstLease.Pool, replacementLease.Pool)).IsFalse();
     }
 
     [Test]
@@ -408,7 +414,9 @@ public class ClusterNodeIdentityTests
         first.Multiplexer = primary;
         second.Multiplexer = primary;
 
-        await Assert.That(ReferenceEquals(router.GetCorrectionPool(first), router.GetCorrectionPool(second))).IsFalse();
+        await using var firstLease = router.GetCorrectionLease(first);
+        await using var secondLease = router.GetCorrectionLease(second);
+        await Assert.That(ReferenceEquals(firstLease.Pool, secondLease.Pool)).IsFalse();
     }
 
     [Test]
@@ -432,7 +440,7 @@ public class ClusterNodeIdentityTests
         await client.ExecuteOnAllConnectionsAsync(script, ["key"], [], execution.ConnectionIdentity);
 
         var correctionIndex = target.ReceivedCommands.ToList().FindLastIndex(command => command.StartsWith("EVAL "));
-        await Assert.That(target.ReceivedConnectionIds[correctionIndex]).IsEqualTo(0);
+        await Assert.That(target.ReceivedConnectionIds[correctionIndex]).IsNotEqualTo(0);
         await client.FenceCorrectionConnectionAsync(execution.ConnectionIdentity);
         await Assert.That(original.IsConnected).IsFalse();
         await Assert.That(replacement.IsConnected).IsTrue();
@@ -522,7 +530,8 @@ public class ClusterNodeIdentityTests
 
         var current = router.GetMultiplexer(new RespireEndpoint(preferred, seed.Port));
         await Assert.That(ReferenceEquals(current, primary)).IsFalse();
-        await Assert.That(primary.IsConnected).IsTrue();
+        await router.WaitForRetirementAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(primary.IsConnected).IsEqualTo(movedHost);
         var slotless = await router.GetConnectionAsync(null, default);
         await Assert.That(ReferenceEquals(slotless, current.GetConnection())).IsTrue();
         await Assert.That(router.SeedEndpoint.Host).IsEqualTo(preferred);

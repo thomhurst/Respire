@@ -9,6 +9,51 @@ namespace Respire.Tests.Networking;
 public class ClusterNodeIdentityIndexTests
 {
     [Test]
+    public async Task DetachingGenerationsPrunesIdentitiesAndPreservesConfiguredSeeds()
+    {
+        var seedEndpoint = new RespireEndpoint("seed.example");
+        var endpoint = new RespireEndpoint("node.example");
+        await using var seed = RespireConnectionMultiplexer.Create(seedEndpoint.Host, seedEndpoint.Port);
+        await using var first = RespireConnectionMultiplexer.Create(endpoint.Host, endpoint.Port);
+        await using var second = RespireConnectionMultiplexer.Create(endpoint.Host, endpoint.Port);
+        var created = 0;
+        var gate = new object();
+        var index = new ClusterNodeIdentityIndex(seedEndpoint, seed, _ => ++created == 1 ? first : second, gate);
+        WithLock(gate, () => index.ApplySnapshot([new(0, 16383, endpoint, "old", [])]));
+        WithLock(gate, () => index.ApplySnapshot([new(0, 16383, endpoint, "new", [])]));
+
+        var detached = WithLock(gate, () => index.DetachInactive([second], [seedEndpoint]));
+        await Assert.That(detached).IsEquivalentTo([first]);
+        await Assert.That(WithLock(gate, () => index.IsActive(first))).IsFalse();
+        await Assert.That(WithLock(gate, () => index.GetOrCreate(seedEndpoint))).IsSameReferenceAs(seed);
+        await Assert.That(WithLock(gate, () => index.NodeIdCount)).IsEqualTo(1);
+        await Assert.That(WithLock(gate, () => index.ReverseNodeIdCount)).IsEqualTo(1);
+        await Assert.That(WithLock(gate, () => index.All.Count())).IsEqualTo(3);
+        await first.RetireAsync();
+        lock (gate) index.Forget(first);
+        await Assert.That(WithLock(gate, () => index.All.Count())).IsEqualTo(2);
+        await Assert.That(WithLock(gate, () => index.GetOrCreate(endpoint))).IsSameReferenceAs(second);
+    }
+
+    [Test]
+    public async Task RetainedSeedWithoutSlotsLosesItsOldNodeIdentity()
+    {
+        var seedEndpoint = new RespireEndpoint("seed.example");
+        var endpoint = new RespireEndpoint("node.example");
+        await using var seed = RespireConnectionMultiplexer.Create(seedEndpoint.Host, seedEndpoint.Port);
+        await using var replacement = RespireConnectionMultiplexer.Create(endpoint.Host, endpoint.Port);
+        var gate = new object();
+        var index = new ClusterNodeIdentityIndex(seedEndpoint, seed, _ => replacement, gate);
+        WithLock(gate, () => index.ApplySnapshot([new(0, 16383, seedEndpoint, "old", [])]));
+        WithLock(gate, () => index.ApplySnapshot([new(0, 16383, endpoint, "new", [])]));
+        var detached = WithLock(gate, () => index.DetachInactive([replacement], [seedEndpoint]));
+        await Assert.That(detached).IsEmpty();
+        await Assert.That(WithLock(gate, () => index.NodeIdCount)).IsEqualTo(1);
+        await Assert.That(WithLock(gate, () => index.ReverseNodeIdCount)).IsEqualTo(1);
+        await Assert.That(WithLock(gate, () => index.GetOrCreate(seedEndpoint))).IsSameReferenceAs(seed);
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(false, true)]
     [Arguments(true, false)]

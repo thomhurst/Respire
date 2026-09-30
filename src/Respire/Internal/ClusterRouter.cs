@@ -6,7 +6,7 @@ using Respire.Networking;
 
 namespace Respire.Internal;
 
-internal sealed class ClusterRouter : IAsyncDisposable
+internal sealed partial class ClusterRouter : IAsyncDisposable
 {
     private const int MaxRedirects = 5;
     private static readonly RawCommand Asking = new("*1\r\n$6\r\nASKING\r\n"u8.ToArray());
@@ -18,8 +18,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
     private readonly ClusterNodeIdentityIndex _identities;
     private readonly Dictionary<RespireConnectionMultiplexer, Action<int, RespireConnectionStateChange>> _nodeStateHandlers = [];
     private readonly Dictionary<RespireConnectionMultiplexer, DedicatedConnectionPool> _dedicatedPools = [];
-    // TODO #390: drain correction pools for departed transport/peer identities along with dedicated pools.
-    private readonly Dictionary<CorrectionPoolIdentity, DedicatedConnectionPool> _correctionPools = [];
+    private readonly Dictionary<CorrectionPoolIdentity, CorrectionPoolEntry> _correctionPools = [];
     private readonly object _nodesGate = new();
     private readonly RespireConnectionMultiplexer?[] _slots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
     private RespireConnectionMultiplexer[] _masters = [];
@@ -69,7 +68,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
             foreach (var master in Volatile.Read(ref _masters))
             {
-                if (master.IsConnected)
+                if (master.IsConnected && !master.IsRetired)
                 {
                     return true;
                 }
@@ -598,7 +597,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
         AddKnownMasters(masters);
 
         var refreshed = false;
-        if (Volatile.Read(ref _seed) is { IsConnected: true } seed)
+        if (Volatile.Read(ref _seed) is { IsConnected: true, IsRetired: false } seed)
         {
             refreshed = await TryRefreshTopologyAsync(seed, cancellationToken).ConfigureAwait(false);
         }
@@ -776,14 +775,14 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
     private RespireConnectionMultiplexer? TryGetConnectedNode()
     {
-        if (Volatile.Read(ref _seed) is { IsConnected: true } seed)
+        if (Volatile.Read(ref _seed) is { IsConnected: true, IsRetired: false } seed)
         {
             return seed;
         }
 
         foreach (var master in Volatile.Read(ref _masters))
         {
-            if (master.IsConnected)
+            if (master.IsConnected && !master.IsRetired)
             {
                 return master;
             }
@@ -815,6 +814,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
     private void ApplyTopology(List<ClusterTopologyRange> ranges, long expectedVersion, long discoveryGeneration)
     {
         List<RespireConnectionMultiplexer>? retiredNodes;
+        List<RetiredGeneration> retirements;
         lock (_nodesGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -849,11 +849,13 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 }
             }
 
-            if (Volatile.Read(ref _seed) is { } seed)
-            {
-                SetSeedLocked(seed);
-            }
             retiredNodes = ReplaceSlotOwnersLocked(refreshedSlots, expectedVersion);
+            // Resolve stable node identity before pruning the old reverse mapping.
+            if (Volatile.Read(ref _seed) is { } previousSeed) SetSeedLocked(previousSeed);
+            var retained = new HashSet<RespireConnectionMultiplexer>(_masters);
+            if (protectedNodes is not null) retained.UnionWith(protectedNodes);
+            retirements = DetachGenerationsLocked(_identities.DetachInactive(retained, _seeds));
+            if (Volatile.Read(ref _seed) is { } seed) SetSeedLocked(seed);
             _publishedDiscoveryGeneration = discoveryGeneration;
             // Older discoveries can no longer publish; later requests capture these versions.
             foreach (var (node, version) in _redirectVersions)
@@ -865,6 +867,8 @@ internal sealed class ClusterRouter : IAsyncDisposable
             }
         }
 
+        // Launch cleanup before callbacks: a callback may synchronously dispose the client.
+        foreach (var retirement in retirements) _ = DrainGenerationAsync(retirement);
         if (retiredNodes is not null)
         {
             foreach (var node in retiredNodes)
@@ -885,7 +889,12 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
     // Caller holds _nodesGate, including topology publication.
     private void SetSeedLocked(RespireConnectionMultiplexer node)
-        => Volatile.Write(ref _seed, _identities.GetCurrent(node));
+    {
+        var current = _identities.GetCurrent(node);
+        if (!_identities.IsActive(current) || current.IsRetired)
+            current = _masters.FirstOrDefault() ?? _identities.GetOrCreate(_seeds[0]);
+        Volatile.Write(ref _seed, current);
+    }
 
     // Called under _nodesGate: create a lazy transport without connecting or raising state events.
     private RespireConnectionMultiplexer CreateNode(RespireEndpoint endpoint)
@@ -911,6 +920,8 @@ internal sealed class ClusterRouter : IAsyncDisposable
         RespireConnectionMultiplexer? retiredNode = null;
         lock (_nodesGate)
         {
+            if (_retiringNodes.ContainsKey(node) || node.IsRetired)
+                throw new RespireConnectionRetiredException(node.Host, node.Port);
             ObserveNode(node);
             var previous = Volatile.Read(ref _slots[slot]);
             PublishSlotLocked(slot, node, ++_topologyVersion);
@@ -1091,36 +1102,6 @@ internal sealed class ClusterRouter : IAsyncDisposable
         return node.GetConnection();
     }
 
-    internal DedicatedConnectionPool GetCorrectionPool(RespireConnection original)
-    {
-        var identity = new CorrectionPoolIdentity(original.Multiplexer,
-            original.NetworkPeerAddress ?? original.Host, original.NetworkPeerPort ?? original.Port, original.Host);
-        lock (_nodesGate)
-        {
-            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            if (_correctionPools.TryGetValue(identity, out var existing))
-            {
-                return existing;
-            }
-            // CLIENT IDs are server-local. Keep the original peer address even after a DNS
-            // cutover, while retaining its TLS authentication name and connection options.
-            var options = original.Multiplexer?.Options ?? _options.ToConnectionOptions();
-            if (options.UseTls)
-            {
-                options = options with { TlsOptions = RespireConnection.CreateTlsOptions(options.TlsOptions, original.Host) };
-            }
-            var pool = new DedicatedConnectionPool(
-                identity.PeerAddress,
-                identity.PeerPort,
-                options, _options.CreateLogger($"Respire.Cluster.Correction.{original.Host}:{original.Port}"));
-            _correctionPools.Add(identity, pool);
-            return pool;
-        }
-    }
-
-    private readonly record struct CorrectionPoolIdentity(
-        RespireConnectionMultiplexer? Multiplexer, string PeerAddress, int PeerPort, string TlsHost);
-
     private DedicatedConnectionPool GetOrCreateDedicatedPool(RespireEndpoint endpoint)
     {
         lock (_nodesGate)
@@ -1138,6 +1119,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 _options.ToConnectionOptions(),
                 _options.CreateLogger($"Respire.Cluster.Blocking.{node.Host}:{node.Port}"));
             _dedicatedPools.Add(node, pool);
+            _ownedPools.Add(pool);
             return pool;
         }
     }
@@ -1266,29 +1248,24 @@ internal sealed class ClusterRouter : IAsyncDisposable
         RespireConnectionMultiplexer[] nodes;
         KeyValuePair<RespireConnectionMultiplexer, Action<int, RespireConnectionStateChange>>[] stateHandlers;
         DedicatedConnectionPool[] dedicatedPools;
+        Task retirements;
         lock (_nodesGate)
         {
             nodes = _identities.All.ToArray();
             stateHandlers = _nodeStateHandlers.ToArray();
-            dedicatedPools = [.. _dedicatedPools.Values, .. _correctionPools.Values];
+            dedicatedPools = _ownedPools.ToArray();
+            retirements = Task.WhenAll(_retiringNodes.Values.Select(entry => entry.Completion.Task));
+            _nodeStateHandlers.Clear();
+            _dedicatedPools.Clear();
+            _correctionPools.Clear();
         }
 
-        foreach (var pool in dedicatedPools)
-        {
-            await pool.DisposeAsync().ConfigureAwait(false);
-        }
-
-        foreach (var (node, handler) in stateHandlers)
-        {
-            node.SlotStateChanged -= handler;
-        }
-
-        foreach (var node in nodes)
-        {
-            if (!ReferenceEquals(node, _primary))
-            {
-                await node.DisposeAsync().ConfigureAwait(false);
-            }
-        }
+        _stopRetirement.Cancel();
+        foreach (var (node, handler) in stateHandlers) node.SlotStateChanged -= handler;
+        // Abort all owned work before awaiting either drain. The primary may itself be a
+        // superseded generation; ClientCore's later disposal of it is idempotent.
+        await Task.WhenAll(dedicatedPools.Select(pool => pool.DisposeAsync().AsTask())
+            .Concat(nodes.Select(node => node.DisposeAsync().AsTask()))).ConfigureAwait(false);
+        await retirements.ConfigureAwait(false);
     }
 }

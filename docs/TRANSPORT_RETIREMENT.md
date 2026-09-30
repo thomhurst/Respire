@@ -28,13 +28,13 @@ Accepted commands may still be draining; await the retirement task to observe co
 
 ## Retry boundary
 
-`RespireConnectionRetiredException` is internal and distinct from an ambiguous `RespireConnectionException`. A router may select the current generation and retry only an operation rejected with the retired exception: that operation did not enqueue any bytes. It must not retry an accepted command merely because topology changed. This primitive does not itself change Cluster routing; generation ownership and routing integration are tracked by #466.
+`RespireConnectionRetiredException` is internal and distinct from an ambiguous `RespireConnectionException`. A router may select the current generation and retry only an operation rejected with the retired exception: that operation did not enqueue any bytes. It must not retry an accepted command merely because topology changed. Cluster topology publication detaches old generations before starting their graceful retirement.
 
 ## Correction ownership
 
 Successful drains need no server-side kill: all accepted replies have been consumed. Failed transports with a known Redis client ID retain their `CLIENT KILL` obligation, including identities obtained during interrupted correction bootstrap. Retirement and disposal wait for an in-progress CLIENT ID bootstrap to publish before completing
 identity ownership; a reply dequeued before retirement cannot publish an untracked ID afterward.
-Multiplexer retirement fences these IDs through an unpooled control connection with the original endpoint and authentication settings. This connection is never published as a replacement and does not enable client tracking.
+Multiplexer retirement fences these IDs through an unpooled control connection with the captured network peer address and original TLS name and authentication settings. This connection is never published as a replacement and does not enable client tracking.
 
 A fence failure faults the retirement task and preserves unresolved IDs. Owners must retain the generation while `HasPendingCorrectionFences` is true and retry `FenceRetiredConnectionsAsync()` before releasing its correction ownership. A successful explicit retry clears the obligations; the original retirement task retains its failure. Never treat a faulted retirement task as proof that pending server commands are harmless.
 
@@ -49,3 +49,29 @@ Abortive cleanup alone is never proof of correction ordering. Since a disposed m
 cannot retry fencing, a generation owner that still needs correction guarantees must retain
 its ownership and complete fencing before disposal, or arrange that obligation outside the
 disposed transport. Retirement after disposal succeeds only when no fence obligations remain.
+
+## Cluster generation ownership
+
+A successful topology publication prunes departed and superseded generations from endpoint,
+node-ID, reverse-ID, health-handler, redirect, and dedicated-pool lookup. Newer MOVED and ASK
+routes retain their existing version protection. Configured seed addresses remain available for
+discovery even without slots. Re-adding a departed address creates a new generation; old cleanup
+cannot remove its replacement.
+
+Detached multiplexers drain accepted frames and replies. Their dedicated pools reject new rents
+and wait for borrowed operations to return. There is no implicit timeout that aborts accepted
+application commands. Failed tracked sockets retain their server-local client IDs and captured
+network peers until CLIENT KILL is acknowledged. Each control attempt is bounded by ConnectTimeout;
+the Cluster owner retries failed fences and retains the generation until success or explicit client
+disposal. Client disposal aborts active and detached transports, borrowed connections, and control
+attempts before waiting for cleanup.
+
+Correction pools share live multiplexer/peer/TLS identities, including replacement sockets on the
+same peer. A changed peer gets a separate pool; obsolete entries detach from lookup. A correction
+reservation protects asynchronous rent through command completion, so topology cleanup cannot
+close a pool between selection and rent. Detached pools close after their reservations return.
+A late fence for an already successfully drained socket needs no server command. Other late
+corrections can create a temporary client-owned pool for the original captured peer even
+after routing ownership has been released. They never resolve a new server through the old hostname.
+Idempotent script corrections arriving after retirement wait for drain and fence completion before
+executing through that original peer. TLS authentication keeps the original configured name.
