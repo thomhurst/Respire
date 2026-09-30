@@ -11,6 +11,15 @@
   must implement the new members. See [reference-aware removal](../website/docs/commands/collections.md#reference-aware-removal-redis-82)
   for pending-reference semantics and server compatibility.
 
+### Raw Cluster key validation
+
+- Immediate raw execution now rejects cross-slot keys locally for supported layouts, including
+  KEYDB.MEXISTS, Redis multi-key commands, script key counts, blocking pops, and stream reads.
+  Catalog, string, interpolated, and fire-and-forget forms share the same validation. Standalone
+  execution and unknown-layout server validation remain unchanged; requests are never split
+  across nodes. See [raw Cluster validation](../website/docs/guides/raw-commands.md#cluster-key-validation)
+  for supported layouts and compatibility details.
+
 ### Stream trimming
 
 - `StreamAddOptions` adds `MinId` and `Limit`. `Streams.TrimAsync` and deferred `Streams.Trim`

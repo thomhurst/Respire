@@ -50,6 +50,41 @@ Descriptors that require or alter connection state—such as `MULTI`, `WAIT`, `S
 safely preserve their connection affinity. Use transactions, subscription APIs, or
 `RespireOptions` instead.
 
+## Cluster key validation
+
+With `UseCluster`, immediate catalog, string, interpolated, and fire-and-forget execution
+validate every declared key in supported layouts before connecting or sending the command.
+Different slots throw `RespireServerException` with code `CROSSSLOT`, including when
+`NoRedirect` is set. The client does not split these raw requests across nodes. This changes
+previous first-key-only routing for these layouts; standalone execution still leaves argument
+validation to the server.
+Malformed arguments for a known Cluster layout (for example, a missing GET key or an invalid
+EVAL key count) throw `ArgumentException` locally. The same malformed standalone request reaches
+the server and can instead produce `RespireServerException`; argument-error types therefore differ
+between these modes. Null declared keys are rejected with `ArgumentNullException` before Cluster I/O.
+
+The shared layout table covers the [deferred raw allowlist](deferred-raw-commands.md), including
+all-key commands such as MGET/DEL, key/value pairs in MSET/MSETNX, source/destination pairs,
+BITOP, and declared key counts in scripts/functions and sorted-set combinations. Immediate
+execution additionally understands KEYDB.MEXISTS, blocking list/sorted-set pops and moves,
+MSETEX pairs, XREAD/XREADGROUP keys after STREAMS, MIGRATE's fixed key or KEYS form, and
+JSON.MGET keys before its path. Argument values, script arguments, stream IDs, JSON paths,
+and MIGRATE credentials are not keys. Binary hash tags use their original bytes.
+
+This table is deliberately explicit. Unknown commands and undeclared layouts, including
+dynamic key discovery such as SORT patterns, retain their existing routing and server-side
+validation; a catalog entry alone does not guarantee complete key discovery. Use typed facets
+where available and supply compatible keys for other raw commands. No caller-provided layout
+API is required or inferred. Administrative commands retain their existing node-local scope.
+Prefixed views still reject immediate catalog execution; use typed facets or supported deferred
+raw execution when the client should apply a key prefix. The deferred allowlist is unchanged.
+
+Key-layout references: [KeyDB 6.3.4 command table](https://github.com/Snapchat/KeyDB/blob/v6.3.4/src/server.cpp),
+[MSETEX](https://redis.io/docs/latest/commands/msetex/),
+[XREAD](https://redis.io/docs/latest/commands/xread/),
+[MIGRATE](https://redis.io/docs/latest/commands/migrate/), and
+[JSON.MGET](https://redis.io/docs/latest/commands/json.mget/).
+
 ## Dynamic commands
 
 Use a string when targeting an experimental command absent from the audited references.

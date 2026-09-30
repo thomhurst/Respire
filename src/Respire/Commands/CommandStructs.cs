@@ -582,8 +582,11 @@ internal static class DynamicCommandRouting
 }
 
 /// <summary>A pre-encoded catalog command followed by caller-supplied arguments.</summary>
-internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] args) : IRespCommand
+internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] args,
+    RawCommandKeyLayouts.KeyRouting routing = default) : IRespCommand
 {
+    private int RoutingKeyIndex => routing.Known
+        ? routing.Index : DynamicCommandRouting.GetCatalogRoutingKeyIndex(command.Name, args);
     public bool TryGetClientCacheKey(string operation, out ClientCacheCommandKey key)
     {
         key = new(operation, args);
@@ -591,7 +594,7 @@ internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] a
     }
     public bool TryGetPrimaryKey(out RespireValue key)
     {
-        var index = DynamicCommandRouting.GetCatalogRoutingKeyIndex(command.Name, args);
+        var index = RoutingKeyIndex;
         if ((uint)index < (uint)args.Length)
         {
             key = args[index];
@@ -604,7 +607,7 @@ internal readonly struct CatalogCommand(RespireCommand command, RespireValue[] a
 
     public bool TryGetClusterSlot(out int slot)
     {
-        var routingKeyIndex = DynamicCommandRouting.GetCatalogRoutingKeyIndex(command.Name, args);
+        var routingKeyIndex = RoutingKeyIndex;
         if ((uint)routingKeyIndex < (uint)args.Length)
         {
             return args[routingKeyIndex].TryGetClusterSlot(out slot);

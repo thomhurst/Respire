@@ -80,6 +80,15 @@ public class ServerExtensionIntegrationTests
         exists[0].AsBoolean().Should().BeTrue();
         exists[1].AsBoolean().Should().BeFalse();
         exists[2].AsBoolean().Should().BeTrue();
+        using var discoveredKeys = await client.ExecuteAsync(RespireCommands.Server.COMMAND_GETKEYS,
+            "KEYDB.MEXISTS", "members", "missing", "hash");
+        Enumerable.Range(0, discoveredKeys.Count).Select(index => discoveredKeys[index].AsString())
+            .Should().Equal("members", "missing", "hash");
+        Respire.Commands.RawCommandKeyLayouts.TryGetLayout("KEYDB.MEXISTS",
+            ["members", "missing", "hash"], out var layout).Should().BeTrue();
+        layout.Start.Should().Be(0);
+        layout.Count.Should().Be(discoveredKeys.Count);
+        layout.Stride.Should().Be(1);
         Func<Task> invalid = async () =>
         {
             using var result = await client.ExecuteAsync(RespireCommands.KeyDb.EXPIREMEMBER, "members", member, "invalid");

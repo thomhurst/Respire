@@ -19,10 +19,10 @@ public class DeferredRawKeyLayoutTests(RedisTestContainer fixture)
             var operation = metadata[0].AsString()!.Replace('|', ' ').ToUpperInvariant();
             var words = operation.Split(' ');
             var args = BuildArguments(operation, checked((int)Math.Abs(metadata[1].AsInteger())) - words.Length);
-            DeferredRawCommands.KeyLayout layout;
+            Respire.Commands.RawCommandKeyLayouts.KeyLayout layout;
             try
             {
-                layout = DeferredRawCommands.GetLayout(operation, args.Select(x => (RespireValue)x).ToArray());
+                layout = Respire.Commands.RawCommandKeyLayouts.GetDeferredLayout(operation, args.Select(x => (RespireValue)x).ToArray());
             }
             catch (NotSupportedException)
             {
@@ -48,7 +48,7 @@ public class DeferredRawKeyLayoutTests(RedisTestContainer fixture)
 
         // New allowlisted commands must have a server fixture; unsupported server versions
         // cannot silently turn this check into partial coverage.
-        verified.Should().BeEquivalentTo(DeferredRawCommands.SupportedOperations);
+        verified.Should().BeEquivalentTo(Respire.Commands.RawCommandKeyLayouts.DeferredOperations);
     }
 
     private static async Task<RespireResult> DiscoverKeys(RespireClient client, string operation, RespireValue[] query)
