@@ -18,10 +18,16 @@ public partial interface IServerCommands
     /// <summary>Counts unique subscribed patterns on one execution node. Redis: PUBSUB NUMPAT.</summary>
     ValueTask<long> PubSubPatternCountAsync(CancellationToken cancellationToken = default);
     /// <summary>Lists channels separately on every discovered Cluster node, including replicas; one result on standalone.</summary>
+    /// <remarks>Cancellation during discovery throws. After discovery it becomes per-node errors in the returned
+    /// results, preserving completed successes. Inspect each result's IsSuccess or Error.</remarks>
     ValueTask<RespireServerResult<RespireChannel[]>[]> PubSubChannelsOnAllNodesAsync(RespireChannel? pattern = null, bool sharded = false, CancellationToken cancellationToken = default);
     /// <summary>Counts subscribers separately on every discovered node; results are not aggregated.</summary>
+    /// <remarks>Cancellation during discovery throws. After discovery it becomes per-node errors in the returned
+    /// results, preserving completed successes. Inspect each result's IsSuccess or Error.</remarks>
     ValueTask<RespireServerResult<RespireChannelSubscriberCount[]>[]> PubSubSubscriberCountsOnAllNodesAsync(ReadOnlySpan<RespireChannel> channels, bool sharded = false, CancellationToken cancellationToken = default);
     /// <summary>Counts unique patterns separately on every discovered node; results are not aggregated.</summary>
+    /// <remarks>Cancellation during discovery throws. After discovery it becomes per-node errors in the returned
+    /// results, preserving completed successes. Inspect each result's IsSuccess or Error.</remarks>
     ValueTask<RespireServerResult<long>[]> PubSubPatternCountOnAllNodesAsync(CancellationToken cancellationToken = default);
 }
 
