@@ -807,14 +807,16 @@ public class ClusterTests
     }
 
     [Test]
-    public async Task Connect_TriesLaterSeedWhenFirstIsUnavailable()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Connect_TriesLaterSeedWhenFirstIsUnavailable(bool useConnectionString)
     {
         await using var target = new FakeRespServer("$5\r\nvalue\r\n"u8.ToArray());
         var slot = ClusterHash.GetSlot("key");
         var topology = Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
         await using var seed = new FakeRespServer(topology);
-        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        var options = new RespireOptions
         {
             UseCluster = true,
             ConnectTimeout = TestConnectTimeout,
@@ -823,7 +825,13 @@ public class ClusterTests
                 new RespireEndpoint("127.0.0.1", 1),
                 new RespireEndpoint("127.0.0.1", seed.Port),
             },
-        });
+        };
+        if (useConnectionString)
+        {
+            options = RespireOptions.Parse(
+                $"127.0.0.1:1,127.0.0.1:{seed.Port},cluster=true,connectTimeout=1000");
+        }
+        await using var client = await RespireClient.ConnectAsync(options);
 
         var value = await client.GetStringAsync("key");
 

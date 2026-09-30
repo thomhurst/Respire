@@ -198,10 +198,11 @@ public class RespireOptionsTests
     public async Task UriOptions_ExposeDescriptivePropertyNames()
     {
         var options = RespireOptions.Parse(
-            "redis://localhost?useCluster=true&sentinelPrimaryName=primary&connectionIdleReadTimeoutMs=2500");
+            "redis://localhost?useCluster=true&connectionIdleReadTimeoutMs=2500");
+        var sentinel = RespireOptions.Parse("redis://localhost?sentinelPrimaryName=primary");
 
         await Assert.That(options.UseCluster).IsTrue();
-        await Assert.That(options.SentinelPrimaryName).IsEqualTo("primary");
+        await Assert.That(sentinel.SentinelPrimaryName).IsEqualTo("primary");
         await Assert.That(options.ConnectionIdleReadTimeout)
             .IsEqualTo(TimeSpan.FromMilliseconds(2500));
     }
@@ -243,6 +244,159 @@ public class RespireOptionsTests
 
         await Assert.That(exception.Message).Contains("multiple endpoints");
         await Assert.That(exception.Message).Contains("RespireOptions");
+    }
+
+    [Test]
+    [Arguments("cache-a:6380,cache-b,cluster=true")]
+    [Arguments("UseCluster=true,cache-a:6380,cache-b")]
+    public async Task StackExchangeConnectionString_ClusterRetainsEverySeed(string connectionString)
+    {
+        var options = RespireOptions.Parse(connectionString);
+
+        await Assert.That(options.UseCluster).IsTrue();
+        await Assert.That(options.Endpoints).IsEquivalentTo([
+            new RespireEndpoint("cache-a", 6380), new RespireEndpoint("cache-b", 6379)]);
+    }
+
+    [Test]
+    public async Task StackExchangeConnectionString_SentinelDefaultsOnlyUnspecifiedPorts()
+    {
+        var options = RespireOptions.Parse(
+            "sentinel-a,[::1],sentinel-b:6379,serviceName=primary,password=a=b://c," +
+            "sentinelUser=observer,sentinelPassword=,sentinelTls=false");
+
+        await Assert.That(options.Endpoints).IsEquivalentTo([
+            new RespireEndpoint("sentinel-a", 26379), new RespireEndpoint("::1", 26379),
+            new RespireEndpoint("sentinel-b", 6379)]);
+        await Assert.That(options.SentinelPrimaryName).IsEqualTo("primary");
+        await Assert.That(options.Password).IsEqualTo("a=b://c");
+        await Assert.That(options.SentinelUsername).IsEqualTo("observer");
+        await Assert.That(options.SentinelPassword).IsEqualTo(string.Empty);
+        await Assert.That(options.SentinelUseTls.GetValueOrDefault(true)).IsFalse();
+    }
+
+    [Test]
+    [Arguments("cache-a,cache-b,cluster=false")]
+    [Arguments("cache-a,cache-b")]
+    public async Task StackExchangeConnectionString_AmbiguousModeExplainsChoices(string connectionString)
+    {
+        var error = Assert.Throws<ArgumentException>(() => RespireOptions.Parse(connectionString));
+
+        await Assert.That(error.Message).Contains("cluster=true");
+        await Assert.That(error.Message).Contains("serviceName");
+        await Assert.That(error.Message).Contains("ConnectAnyAsync");
+    }
+
+    [Test]
+    [Arguments("cache-a,cache-b,cluster=true,serviceName=primary")]
+    [Arguments("redis://cache?cluster=true&serviceName=primary")]
+    [Arguments("redis://cache?serviceName=primary&cluster=true")]
+    [Arguments("cache-a,cache-b,serviceName= ")]
+    [Arguments("redis://cache?serviceName=%20")]
+    [Arguments("cache,sslHost= ")]
+    [Arguments("cache,serviceName=primary,sentinelSslHost= ")]
+    public async Task ConnectionString_RejectsInvalidModesAndEmptyHosts(string connectionString)
+    {
+        var error = Assert.Throws<ArgumentException>(() => RespireOptions.Parse(connectionString));
+        await Assert.That(error.ParamName).IsEqualTo("connectionString");
+    }
+
+    [Test]
+    [Arguments("cache,serviceName= ", "serviceName")]
+    [Arguments("redis://cache?serviceName=%20", "serviceName")]
+    [Arguments("cache,sslHost= ", "sslHost")]
+    [Arguments("cache,serviceName=primary,sentinelSslHost= ", "sentinelSslHost")]
+    public async Task EmptyOption_DiagnosticNamesOptionAndPublicParameter(string connectionString, string option)
+    {
+        var error = Assert.Throws<ArgumentException>(() => RespireOptions.Parse(connectionString));
+        await Assert.That(error.ParamName).IsEqualTo("connectionString");
+        await Assert.That(error.Message).Contains(option);
+    }
+
+    [Test]
+    public async Task StandaloneOptions_RejectIgnoredEndpoints()
+    {
+        var options = new RespireOptions { Endpoints = { new("first"), new("second") } };
+        var error = Assert.Throws<RespireConfigurationException>(() => RespireClient.Create(options));
+
+        await Assert.That(error.Message).Contains("ConnectAnyAsync");
+    }
+
+    [Test]
+    public async Task StackExchangeConnectionString_MapsTlsAndNameEquivalents()
+    {
+        var options = RespireOptions.Parse(
+            "cache,name=api,sslHost=cache.example,sslProtocols=Tls12|Tls13,checkCertificateRevocation=true");
+
+        await Assert.That(options.ClientName).IsEqualTo("api");
+        await Assert.That(options.UseTls).IsTrue();
+        await Assert.That(options.TlsOptions!.TargetHost).IsEqualTo("cache.example");
+        await Assert.That(options.TlsOptions.EnabledSslProtocols).IsEqualTo(
+            System.Security.Authentication.SslProtocols.Tls12 | System.Security.Authentication.SslProtocols.Tls13);
+        await Assert.That(options.TlsOptions.CertificateRevocationCheckMode)
+            .IsEqualTo(System.Security.Cryptography.X509Certificates.X509RevocationMode.Online);
+    }
+
+    [Test]
+    [Arguments("15360")]
+    [Arguments("Tls12|12288")]
+    public async Task StackExchangeConnectionString_AcceptsCombinedTlsMasks(string protocols)
+    {
+        var options = RespireOptions.Parse($"cache,ssl=true,sslProtocols={protocols}");
+
+        await Assert.That(options.TlsOptions!.EnabledSslProtocols).IsEqualTo(
+            System.Security.Authentication.SslProtocols.Tls12 | System.Security.Authentication.SslProtocols.Tls13);
+    }
+
+    [Test]
+    [Arguments("cache,ssl=false,sslHost=cache.example")]
+    [Arguments("cache,sslHost=cache.example,ssl=false")]
+    public async Task StackExchangeConnectionString_ExplicitTlsDisableOverridesHost(string connectionString)
+    {
+        var options = RespireOptions.Parse(connectionString);
+
+        await Assert.That(options.UseTls).IsFalse();
+        await Assert.That(options.TlsOptions!.TargetHost).IsEqualTo("cache.example");
+    }
+
+    [Test]
+    public async Task StackExchangeConnectionString_TlsSettingsDoNotEnableTls()
+    {
+        var options = RespireOptions.Parse("cache,sslProtocols=Tls12,checkCertificateRevocation=true");
+
+        await Assert.That(options.UseTls).IsFalse();
+        await Assert.That(options.TlsOptions!.EnabledSslProtocols)
+            .IsEqualTo(System.Security.Authentication.SslProtocols.Tls12);
+        await Assert.That(options.TlsOptions.CertificateRevocationCheckMode)
+            .IsEqualTo(System.Security.Cryptography.X509Certificates.X509RevocationMode.Online);
+    }
+
+    [Test]
+    [Arguments("cache,cluster=invalid")]
+    [Arguments("cache,ssl=invalid")]
+    [Arguments("cache,checkCertificateRevocation=invalid")]
+    [Arguments("redis://cache?sentinelTls=invalid")]
+    public async Task ConnectionString_RejectsInvalidBooleanOptions(string connectionString)
+    {
+        var error = await Assert.That(() => RespireOptions.Parse(connectionString)).Throws<ArgumentException>();
+        await Assert.That(error!.ParamName).IsEqualTo("connectionString");
+    }
+
+    [Test]
+    [Arguments("999")]
+    [Arguments("Tls12|999")]
+    [Arguments("Unknown")]
+    [Arguments("1024")]
+    [Arguments("2048")]
+    [Arguments("4096")]
+    [Arguments("8192")]
+    [Arguments("Tls13|1024")]
+    [Arguments("-1")]
+    public async Task StackExchangeConnectionString_RejectsUndefinedTlsProtocols(string protocols)
+    {
+        var error = await Assert.That(() => RespireOptions.Parse($"cache,sslProtocols={protocols}"))
+            .Throws<ArgumentException>();
+        await Assert.That(error!.ParamName).IsEqualTo("connectionString");
     }
 
     [Test]

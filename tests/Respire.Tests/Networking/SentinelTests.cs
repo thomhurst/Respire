@@ -59,6 +59,68 @@ public class SentinelTests
     }
 
     [Test]
+    public async Task SentinelConnectionString_InheritsPrimaryTlsHostUnlessOverridden()
+    {
+        var primary = RespireOptions.Parse(
+            "sentinel,serviceName=primary,ssl=true,sslHost=shared.example,sslProtocols=Tls12");
+        var sentinel = SentinelResolver.CreateSentinelConnectionOptions(primary);
+
+        await Assert.That(sentinel.UseTls).IsTrue();
+        await Assert.That(sentinel.TlsOptions!.TargetHost).IsEqualTo("shared.example");
+        await Assert.That(sentinel.TlsOptions.EnabledSslProtocols).IsEqualTo(primary.TlsOptions!.EnabledSslProtocols);
+    }
+
+    [Test]
+    public async Task SentinelConnectionString_SeparatesPrimaryAndSentinelTlsHostnames()
+    {
+        var primary = RespireOptions.Parse(
+            "sentinel-a,sentinel-b,serviceName=primary,sslHost=primary.example," +
+            "sentinelSslHost=sentinel.example,sslProtocols=Tls12|Tls13,checkCertificateRevocation=true");
+        var sentinel = SentinelResolver.CreateSentinelConnectionOptions(primary);
+
+        await Assert.That(primary.TlsOptions!.TargetHost).IsEqualTo("primary.example");
+        await Assert.That(sentinel.TlsOptions!.TargetHost).IsEqualTo("sentinel.example");
+        await Assert.That(sentinel.UseTls).IsTrue();
+        await Assert.That(sentinel.TlsOptions.EnabledSslProtocols).IsEqualTo(primary.TlsOptions.EnabledSslProtocols);
+        await Assert.That(sentinel.TlsOptions.CertificateRevocationCheckMode)
+            .IsEqualTo(primary.TlsOptions.CertificateRevocationCheckMode);
+    }
+
+    [Test]
+    [Arguments("sentinelTls=false,sentinelSslHost=sentinel.example")]
+    [Arguments("sentinelSslHost=sentinel.example,sentinelTls=false")]
+    public async Task SentinelConnectionString_ExplicitTlsDisableOverridesHost(string settings)
+    {
+        var primary = RespireOptions.Parse($"sentinel,serviceName=primary,ssl=true,{settings}");
+        var sentinel = SentinelResolver.CreateSentinelConnectionOptions(primary);
+
+        await Assert.That(primary.UseTls).IsTrue();
+        await Assert.That(sentinel.UseTls).IsFalse();
+        await Assert.That(sentinel.TlsOptions!.TargetHost).IsEqualTo("sentinel.example");
+    }
+
+    [Test]
+    public async Task TlsHostOverride_PreservesConfiguredOptionsWithoutMutation()
+    {
+        var primary = new SslClientAuthenticationOptions
+        {
+            TargetHost = "primary.example",
+            AllowRenegotiation = false,
+            RemoteCertificateValidationCallback = (_, _, _, _) => true,
+            ApplicationProtocols = [SslApplicationProtocol.Http2],
+        };
+        var sentinel = Respire.Networking.RespireConnection.CreateTlsOptions(
+            primary, "sentinel.example", overrideTargetHost: true);
+
+        await Assert.That(primary.TargetHost).IsEqualTo("primary.example");
+        await Assert.That(sentinel.TargetHost).IsEqualTo("sentinel.example");
+        await Assert.That(sentinel.AllowRenegotiation).IsFalse();
+        await Assert.That(ReferenceEquals(sentinel.RemoteCertificateValidationCallback,
+            primary.RemoteCertificateValidationCallback)).IsTrue();
+        await Assert.That(sentinel.ApplicationProtocols).IsEquivalentTo(primary.ApplicationProtocols);
+    }
+
+    [Test]
     public async Task ConnectionString_RejectsEmptyServiceName()
     {
         var error = Assert.Throws<ArgumentException>(
@@ -145,13 +207,15 @@ public class SentinelTests
     }
 
     [Test]
-    public async Task ConnectAsync_FallsBackWhenSentinelReturnsInvalidPort()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ConnectAsync_FallsBackWhenSentinelReturnsInvalidPort(bool useConnectionString)
     {
         await using var primary = new FakeRespServer(FakeRespServer.PongReply);
         await using var invalidSentinel = new FakeRespServer(PrimaryReply(65536));
         await using var validSentinel = new FakeRespServer(PrimaryReply(primary.Port));
 
-        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        var options = new RespireOptions
         {
             Endpoints =
             {
@@ -160,7 +224,13 @@ public class SentinelTests
             },
             SentinelPrimaryName = "mymaster",
             ConnectTimeout = TimeSpan.FromSeconds(1),
-        });
+        };
+        if (useConnectionString)
+        {
+            options = RespireOptions.Parse(
+                $"127.0.0.1:{invalidSentinel.Port},127.0.0.1:{validSentinel.Port},serviceName=mymaster,connectTimeout=1000");
+        }
+        await using var client = await RespireClient.ConnectAsync(options);
 
         _ = await client.PingAsync();
 

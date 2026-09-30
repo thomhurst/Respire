@@ -85,14 +85,61 @@ StackExchange.Redis:
 cache-a:6380,password=secret,ssl=true,defaultDatabase=2
 ```
 
-This format accepts one endpoint. Multi-endpoint strings fail immediately because Respire cannot
-infer whether they represent Redis Cluster, Sentinel, or standalone failover; configure
-`RespireOptions` directly and select the mode explicitly. Supported options are `user` (or
-`username`), `password`, `ssl`, `clientName`, `defaultDatabase` (or `db`),
-`connectTimeout`, `asyncTimeout` (or `syncTimeout`), `protocol` (`resp2` or `resp3`),
-and `allowAdmin`. Unsupported StackExchange.Redis options fail immediately with an
-`ArgumentException`; use a `redis://` URI or configure `RespireOptions` directly for Respire-only
-settings.
+Multiple endpoints require an explicit deployment mode:
+
+| Configuration | Meaning |
+| --- | --- |
+| `cache-a,cache-b,cluster=true` | Redis Cluster seeds, tried during connection setup; discovered slot owners and redirects route later commands. |
+| `sentinel-a,sentinel-b,serviceName=mymaster` | Sentinel discovery endpoints, tried until a reachable primary is found at startup. |
+| `cache-a,cache-b` | Rejected: the endpoints could belong to unrelated standalone deployments. |
+
+Use `ConnectAnyAsync` with separate `RespireOptions` candidates for connection-time fallback
+between independent deployments. It does not perform continuous geographic failover. Sentinel
+currently discovers the primary at startup; it does not automatically discover a replacement
+primary later. Ordinary reconnection targets the deployment already selected. Cluster routing
+is distinct from either standalone fallback or Sentinel discovery.
+
+Programmatic `RespireOptions.Endpoints` follows the same rule: standalone mode requires one
+endpoint. Lists that previously left extra standalone endpoints unused now fail validation.
+Cluster and Sentinel cannot both be selected in one comma-delimited string.
+
+Supported options are `user` (or `username`), `password`, `ssl`, `sslHost`, `sslProtocols`,
+`checkCertificateRevocation`, `clientName` (or `name`), `defaultDatabase` (or `db`),
+`connectTimeout`, `asyncTimeout` (or `syncTimeout`), `protocol` (`resp2` or `resp3`), and
+`allowAdmin`. `sslHost` sets the TLS certificate/SNI target and enables TLS unless
+`ssl=false` explicitly disables it, regardless of option order. `sslProtocols`
+accepts pipe-separated enum names, such as `Tls12|Tls13`, or numeric masks combining defined
+protocol bits, such as `15360`. `sslProtocols` and `checkCertificateRevocation` configure TLS
+settings but do not enable TLS by themselves; those settings have no effect on a plaintext
+connection. Use `ssl=true` or `sslHost` without `ssl=false` to enable TLS. Boolean options accept `true` or `false`
+(case-insensitive); other values throw `ArgumentException`. Existing password splitting and
+async-timeout precedence stay unchanged.
+
+In Cluster mode, an explicit `sslHost` applies the same certificate/SNI target to every seed
+and discovered node. Use it only when every node certificate covers that shared name; omit it
+to validate each connection's own hostname.
+
+Mode options are `cluster` (or `useCluster`) and `serviceName` (or `sentinelPrimaryName`).
+Sentinel also accepts `sentinelUser`, `sentinelPassword`, `sentinelTls`, and `sentinelSslHost`; an empty
+`sentinelPassword=` disables inherited authentication. Omitted ports default to 26379 in
+Sentinel mode and retain Respire's existing 6379 default otherwise, including TLS. Explicit
+ports always take precedence.
+
+Set `sentinelSslHost=sentinel.example` when Sentinel certificates use a different hostname from
+the primary's `sslHost`. This overrides only the Sentinel TLS target; protocol and revocation
+settings remain inherited. It enables Sentinel TLS unless `sentinelTls=false` explicitly
+disables it. Without `sentinelSslHost`, Sentinel inherits the primary TLS settings.
+
+`sslHost`, `sentinelSslHost`, `sslProtocols`, and `checkCertificateRevocation` are options for
+the comma-delimited format, not URI query parameters. With `rediss://`, configure `TlsOptions`
+and `SentinelTlsOptions` on the parsed options in code when you need these overrides.
+
+Unknown or unsupported options still throw `ArgumentException`, catching spelling mistakes.
+For example, StackExchange.Redis `keepAlive` sends protocol messages; it is not equivalent to
+Respire's TCP keepalive settings. Configure `TcpKeepAliveTime` directly when kernel probes are
+wanted. Connection groups and continuous failover require application-level policy; an endpoint
+list never silently enables them. See the [StackExchange.Redis option reference](https://seredis.dev/Configuration.html)
+for its original option semantics, and use `RespireOptions` directly for Respire-only settings.
 
 Bare IPv6 endpoints use the default Redis port. Add brackets when specifying a port: `::1` or
 `[::1]:6380`.

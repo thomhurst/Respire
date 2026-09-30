@@ -70,4 +70,15 @@ builder.Services.AddRespire(options =>
 Default registrations and each service key may be added only once. A duplicate registration
 throws immediately instead of silently retaining the first configuration.
 
+For these lazy DI registrations, multiple `Endpoints` require `UseCluster = true`.
+A standalone client with several endpoints throws `RespireConfigurationException` when the
+container first resolves it. Register separate named clients for independent deployments;
+endpoint order does not imply automatic failover.
+
+Sentinel configurations require `await RespireClient.ConnectAsync(options)` during application
+startup because discovery performs network I/O. `AddRespire` and `AddKeyedRespire` create lazy
+clients through `RespireClient.Create`, which rejects `SentinelPrimaryName`; setting that option
+on the DI builder does not enable Sentinel discovery. Applications can register an already
+connected Sentinel client as a singleton and retain responsibility for disposing it at shutdown.
+
 For ASP.NET Core cache abstractions, continue to [caching integrations](./caching).

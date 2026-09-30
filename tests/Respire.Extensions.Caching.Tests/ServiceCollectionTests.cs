@@ -76,6 +76,21 @@ public class ServiceCollectionTests(RedisTestContainer fixture)
     }
 
     [Test]
+    public async Task AddRespire_ActionBuilder_RejectsAmbiguousStandaloneEndpointsOnResolution()
+    {
+        var services = new ServiceCollection();
+        services.AddRespire(options =>
+        {
+            options.Endpoints.Add(new RespireEndpoint("first"));
+            options.Endpoints.Add(new RespireEndpoint("second"));
+        });
+        await using var provider = services.BuildServiceProvider();
+
+        await Assert.That(() => provider.GetRequiredService<RespireClient>())
+            .Throws<RespireConfigurationException>();
+    }
+
+    [Test]
     public async Task AddRespire_ActionBuilder_RegistersConfiguredClient()
     {
         var endpoint = RespireOptions.Parse(fixture.ConnectionString).Endpoints[0];
