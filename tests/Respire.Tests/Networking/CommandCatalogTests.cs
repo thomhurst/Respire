@@ -249,6 +249,37 @@ public class CommandCatalogTests
     }
 
     [Test]
+    public async Task PreencodedSafeSubcommands_UseSubcommandAwareExecution()
+    {
+        await using var server = new FakeRespServer(
+            "*1\r\n:1\r\n"u8.ToArray(),
+            "$6\r\nstring\r\n"u8.ToArray(),
+            "+OK\r\n"u8.ToArray());
+        await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+
+        using (var exists = await client.ExecuteAsync(RespireCommands.Scripting.SCRIPT, "EXISTS", "sha1"))
+        {
+            await Assert.That(exists.Count).IsEqualTo(1);
+        }
+
+        using (var encoding = await client.ExecuteAsync(RespireCommands.Key.OBJECT, "ENCODING", "key"))
+        {
+            await Assert.That(encoding.AsString()).IsEqualTo("string");
+        }
+
+        using (var clients = await client.ExecuteAsync(RespireCommands.Connection.CLIENT, "LIST"))
+        {
+            await Assert.That(clients.AsString()).IsEqualTo("OK");
+        }
+
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo([
+            "SCRIPT EXISTS sha1",
+            "OBJECT ENCODING key",
+            "CLIENT LIST",
+        ]);
+    }
+
+    [Test]
     public async Task CatalogCommands_OnKeyPrefixedViews_AreRejectedBeforeSending()
     {
         await using var server = new FakeRespServer();

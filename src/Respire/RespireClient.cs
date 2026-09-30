@@ -352,17 +352,57 @@ public sealed partial class RespireClient : IRespireClient
         RespireValue[] args,
         RespireCommandFlags flags,
         CancellationToken cancellationToken)
-        => command.IsCallerSupplied
-            ? ExecuteRawAsync(command.Name, args, flags, cancellationToken)
+    {
+        if (command.IsCallerSupplied)
+        {
+            return ExecuteRawAsync(command.Name, args, flags, cancellationToken);
+        }
+
+        return TryGetPreencodedRawOperation(command, args, out var operation, out var rawArguments)
+            ? ExecuteRawAsync(operation, rawArguments, flags, cancellationToken)
             : ExecuteCatalogAsync(command, args, flags, cancellationToken);
+    }
 
     private ValueTask ExecuteCommandFireAndForgetAsync(
         RespireCommand command,
         RespireValue[] args,
         CancellationToken cancellationToken)
-        => command.IsCallerSupplied
-            ? ExecuteRawFireAndForgetAsync(command.Name, args, cancellationToken)
+    {
+        if (command.IsCallerSupplied)
+        {
+            return ExecuteRawFireAndForgetAsync(command.Name, args, cancellationToken);
+        }
+
+        return TryGetPreencodedRawOperation(command, args, out var operation, out var rawArguments)
+            ? ExecuteRawFireAndForgetAsync(operation, rawArguments, cancellationToken)
             : ExecuteCatalogFireAndForgetAsync(command, args, cancellationToken);
+    }
+
+    private static bool TryGetPreencodedRawOperation(
+        RespireCommand command,
+        RespireValue[] args,
+        out string operation,
+        out RespireValue[] rawArguments)
+    {
+        var multiplexedSubcommand = IsMultiplexedRawSubcommand(command.Name, [], args);
+        if (command.Behavior == RespireCommandBehavior.ConnectionScoped && !multiplexedSubcommand)
+        {
+            operation = string.Empty;
+            rawArguments = args;
+            return false;
+        }
+
+        if (args.Length > 0 && KnownRawOperation(command.Name, args[0]) is { } normalized)
+        {
+            operation = normalized;
+            rawArguments = args.AsSpan(1).ToArray();
+            return true;
+        }
+
+        operation = command.Name;
+        rawArguments = args;
+        return multiplexedSubcommand;
+    }
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
