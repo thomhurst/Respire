@@ -1,4 +1,3 @@
-using System.Text;
 using Respire.Commands;
 using Respire.Internal;
 using Respire.Protocol;
@@ -11,7 +10,11 @@ public partial interface IListCommands
     /// Pops up to count values from the first nonempty list in input order. Null when no list
     /// is ready before waitFor expires. Without waitFor, returns immediately. Redis: LMPOP / BLMPOP (7.0+).
     /// </summary>
-    /// <remarks>Keys must share a Cluster slot. Count must be positive. Timeout.InfiniteTimeSpan waits indefinitely.</remarks>
+    /// <remarks>
+    /// Keys must share a Cluster slot. Count must be positive. Timeout.InfiniteTimeSpan waits indefinitely.
+    /// TimeSpan.Zero uses a minimum blocking wait of one millisecond; omit waitFor for nonblocking LMPOP.
+    /// Invalid arguments throw synchronously before a task is returned.
+    /// </remarks>
     ValueTask<RespireListPopManyResult?> PopManyAsync(
         ReadOnlySpan<RespireKey> keys, long count = 1, ListSide side = ListSide.Left,
         TimeSpan? waitFor = null, CancellationToken cancellationToken = default);
@@ -20,7 +23,11 @@ public partial interface IListCommands
     /// Waits for and pops one value from the first nonempty list in input order. Null on timeout.
     /// Uses a dedicated pooled connection. Redis: BLPOP / BRPOP.
     /// </summary>
-    /// <remarks>Keys must share a Cluster slot. Timeout.InfiniteTimeSpan waits indefinitely.</remarks>
+    /// <remarks>
+    /// Keys must share a Cluster slot. Timeout.InfiniteTimeSpan waits indefinitely.
+    /// TimeSpan.Zero uses a minimum blocking wait of one millisecond.
+    /// Invalid arguments throw synchronously before a task is returned.
+    /// </remarks>
     ValueTask<RespireListPopResult?> PopAsync(
         ReadOnlySpan<RespireKey> keys, TimeSpan waitFor, ListSide side = ListSide.Left,
         CancellationToken cancellationToken = default);
@@ -36,7 +43,7 @@ internal sealed partial class ListCommands
         return waitFor.HasValue
             ? PopManyBlockingAsync(operation, command, cancellationToken)
             : client.ConvertResponseAsync(operation, command, cancellationToken, client,
-                static (RespireClient c, in RespValue reply) => ParsePopMany(in reply, c.KeyPrefix));
+                static (RespireClient c, in RespValue reply) => ParsePopMany(in reply, c.KeyPrefixBytes));
     }
 
     public ValueTask<RespireListPopResult?> PopAsync(
@@ -57,7 +64,7 @@ internal sealed partial class ListCommands
         string operation, CmdN command, CancellationToken cancellationToken)
     {
         using var reply = await client.SendBlockingAsync(operation, command, cancellationToken).ConfigureAwait(false);
-        return ParsePopMany(in reply, client.KeyPrefix);
+        return ParsePopMany(in reply, client.KeyPrefixBytes);
     }
 
     private async ValueTask<RespireListPopResult?> PopOneBlockingAsync(
@@ -73,7 +80,7 @@ internal sealed partial class ListCommands
         {
             throw new RespireProtocolException("Expected a selected list key and one popped value.");
         }
-        return new RespireListPopResult(ParsePoppedKey(in elements[0], client.KeyPrefix), elements[1].AsString());
+        return new RespireListPopResult(ParsePoppedKey(in elements[0], client.KeyPrefixBytes), elements[1].AsString());
     }
 
     internal static (string Operation, CmdN Command) PopManyCommand(
@@ -140,7 +147,7 @@ internal sealed partial class ListCommands
         }
     }
 
-    internal static RespireListPopManyResult? ParsePopMany(in RespValue reply, string? prefix)
+    internal static RespireListPopManyResult? ParsePopMany(in RespValue reply, ReadOnlySpan<byte> prefix)
     {
         if (reply.IsNull)
         {
@@ -154,17 +161,16 @@ internal sealed partial class ListCommands
         return new RespireListPopManyResult(ParsePoppedKey(in elements[0], prefix), ResponseReader.StringArray(in elements[1]));
     }
 
-    private static RespireKey ParsePoppedKey(in RespValue value, string? prefix)
+    private static RespireKey ParsePoppedKey(in RespValue value, ReadOnlySpan<byte> prefix)
     {
         var bytes = value.AsSpan();
-        if (prefix is not null)
+        if (!prefix.IsEmpty)
         {
-            var prefixBytes = Encoding.UTF8.GetBytes(prefix);
-            if (!bytes.StartsWith(prefixBytes))
+            if (!bytes.StartsWith(prefix))
             {
                 throw new RespireProtocolException("Returned list key does not start with the client key prefix.");
             }
-            bytes = bytes[prefixBytes.Length..];
+            bytes = bytes[prefix.Length..];
         }
         return new RespireKey(bytes.ToArray());
     }

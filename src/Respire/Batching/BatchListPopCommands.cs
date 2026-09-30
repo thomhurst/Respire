@@ -17,6 +17,6 @@ internal sealed partial class BatchListCommands
     {
         var (operation, command) = ListCommands.PopManyCommand(sink.Client, keys, count, side, waitFor: null);
         return sink.Add<CmdN, RespireListPopManyResult?>(operation, command, keys,
-            static (c, reply) => ListCommands.ParsePopMany(in reply, c.KeyPrefix));
+            static (c, reply) => ListCommands.ParsePopMany(in reply, c.KeyPrefixBytes));
     }
 }

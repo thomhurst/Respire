@@ -44,14 +44,14 @@ public class MultiKeyListPopTests
     {
         byte[] key = [(byte)'p', (byte)':', 0xff, 0];
         using var reply = RespValue.Array(RespValue.BulkString(key), RespValue.Array(RespValue.BulkString("a")));
-        var result = ListCommands.ParsePopMany(in reply, "p:")!.Value;
+        var result = ListCommands.ParsePopMany(in reply, "p:"u8)!.Value;
         key[2] = 1;
         await Assert.That(result.Key).IsEqualTo((RespireKey)new byte[] { 0xff, 0 });
         await Assert.That(result.Values).IsEquivalentTo(["a"]);
-        await Assert.That(() => ListCommands.ParsePopMany(in reply, "other:"))
+        await Assert.That(() => ListCommands.ParsePopMany(in reply, "other:"u8))
             .Throws<RespireProtocolException>();
         using var malformed = RespValue.Array(RespValue.BulkString("key"));
-        await Assert.That(() => ListCommands.ParsePopMany(in malformed, null))
+        await Assert.That(() => ListCommands.ParsePopMany(in malformed, default))
             .Throws<RespireProtocolException>();
     }
 
