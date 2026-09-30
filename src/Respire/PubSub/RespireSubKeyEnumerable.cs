@@ -60,6 +60,8 @@ public readonly struct RespireSubKeyEnumerable
             if (_single) Current = _remaining;
             else
             {
+                // The parser validates every length and separator before constructing this
+                // enumerable, so iteration only decodes offsets in the validated payload.
                 KeyNotificationParser.TryReadLength(_remaining.Span, out var length, out var start);
                 Current = _remaining.Slice(start, length);
                 _remaining = _count == 0 ? default : _remaining[(start + length + 1)..];

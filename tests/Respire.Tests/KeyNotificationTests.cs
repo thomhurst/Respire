@@ -179,6 +179,22 @@ public class KeyNotificationTests
     }
 
     [Test]
+    public async Task NotificationMetadataPreservesChannelSizeAndDatabaseBoundaries()
+    {
+        await Assert.That(System.Runtime.CompilerServices.Unsafe.SizeOf<RespireChannel>()).IsEqualTo(IntPtr.Size + 8);
+        await Assert.That(default(RespireChannel).NotificationDatabase).IsNull();
+        await Assert.That(default(RespireChannel).RoutingSlot).IsNull();
+        await Assert.That(RespireChannel.KeyEvent("set"u8).NotificationDatabase).IsNull();
+        foreach (var database in new[] { 0, int.MaxValue })
+        {
+            var channel = RespireChannel.KeySpaceSingleKey("key", database);
+            await Assert.That(channel.NotificationDatabase).IsEqualTo(database);
+            await Assert.That(RespireChannel.Literal(channel).NotificationDatabase).IsEqualTo(database);
+            await Assert.That(channel.RoutingSlot).IsEqualTo(new RespireKey("key").ClusterSlot);
+        }
+    }
+
+    [Test]
     public async Task InvalidFactoriesAndKindOverridesAreRejected()
     {
         await Assert.That(() => RespireChannel.KeySpaceSingleKey("key", -1)).Throws<ArgumentOutOfRangeException>();

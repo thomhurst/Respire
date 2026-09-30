@@ -10,6 +10,12 @@ namespace Respire;
 public readonly partial struct RespireChannel : IEquatable<RespireChannel>
 {
     private readonly byte[]? _bytes;
+    // Keep the descriptor at 16 bytes on 64-bit runtimes: messages carry both a channel
+    // and an optional pattern. Zero encodes null; Redis slots fit in 15 bits after adding one.
+    private readonly uint _notificationDatabasePlusOne;
+    private readonly ushort _routingSlotPlusOne;
+    private readonly byte _kind;
+    private readonly byte _routingScope;
 
     /// <summary>Creates a literal channel from valid UTF-16 text, encoded as UTF-8.</summary>
     /// <exception cref="ArgumentException">The text contains an unpaired surrogate.</exception>
@@ -27,10 +33,10 @@ public readonly partial struct RespireChannel : IEquatable<RespireChannel>
         int? notificationDatabase = null, int? routingSlot = null)
     {
         _bytes = bytes;
-        Kind = kind;
-        RoutingScope = routingScope;
-        NotificationDatabase = notificationDatabase;
-        RoutingSlot = routingSlot;
+        _kind = (byte)kind;
+        _routingScope = (byte)routingScope;
+        _notificationDatabasePlusOne = notificationDatabase is { } database ? (uint)database + 1 : 0;
+        _routingSlotPlusOne = routingSlot is { } slot ? checked((ushort)(slot + 1)) : (ushort)0;
     }
 
     /// <summary>The exact owned channel bytes; accessing them does not allocate.</summary>
@@ -39,16 +45,16 @@ public readonly partial struct RespireChannel : IEquatable<RespireChannel>
 
     /// <summary>The explicit subscription command family. Reserved names do not change this value.</summary>
     /// <remarks>Kind is not part of equality or hashing; literal and pattern values with the same bytes compare equal.</remarks>
-    public SubscriptionKind Kind { get; }
+    public SubscriptionKind Kind => (SubscriptionKind)_kind;
 
     /// <summary>Whether this is a server-owned notification descriptor that cannot be published.</summary>
     public bool IsNotification => RoutingScope != RespireChannelRoutingScope.Global;
     /// <summary>The explicit routing scope; arbitrary reserved-looking bytes remain ordinary channels.</summary>
-    public RespireChannelRoutingScope RoutingScope { get; }
+    public RespireChannelRoutingScope RoutingScope => (RespireChannelRoutingScope)_routingScope;
     /// <summary>The physical key's slot for KeyOwner descriptors; null otherwise.</summary>
-    public int? RoutingSlot { get; }
+    public int? RoutingSlot => _routingSlotPlusOne == 0 ? null : _routingSlotPlusOne - 1;
     /// <summary>The notification database, or null for all databases/ordinary channels.</summary>
-    public int? NotificationDatabase { get; }
+    public int? NotificationDatabase => _notificationDatabasePlusOne == 0 ? null : (int)(_notificationDatabasePlusOne - 1);
 
     /// <summary>The Redis Cluster slot computed from the raw bytes, including hash tags.</summary>
     public int ClusterSlot => ClusterHash.GetSlot(_bytes.AsSpan());
