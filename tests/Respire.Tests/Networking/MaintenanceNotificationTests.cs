@@ -33,6 +33,7 @@ public class MaintenanceNotificationTests
     [Arguments(RespireMaintenanceNotificationMode.Auto, "-ERR unknown subcommand 'MAINT_NOTIFICATIONS'\r\n", false)]
     [Arguments(RespireMaintenanceNotificationMode.Enabled, "-ERR unknown subcommand 'MAINT_NOTIFICATIONS'\r\n", true)]
     [Arguments(RespireMaintenanceNotificationMode.Auto, "-NOPERM denied\r\n", true)]
+    [Arguments(RespireMaintenanceNotificationMode.Auto, "-ERR maintenance subsystem unavailable\r\n", true)]
     [Arguments(RespireMaintenanceNotificationMode.Auto, "+unexpected\r\n", true)]
     public async Task OnlyAutoUnsupportedCapabilityFallsBack(RespireMaintenanceNotificationMode mode, string reply, bool fails)
     {
@@ -155,6 +156,57 @@ public class MaintenanceNotificationTests
         await Assert.That(state.Remaining(1600)).IsEqualTo(0);
         state.Apply(new("SMIGRATING", 3), 1700); // Expired duplicate cannot reopen the window.
         await Assert.That(state.Remaining(1700)).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(999)]
+    [Arguments(1000)]
+    [Arguments(1001)]
+    public async Task LateMaintenanceCannotReviveExpiredCommand(long deadline)
+    {
+        var state = new MaintenanceTimeoutState(5000);
+        state.Apply(new("MIGRATING", 1), 1000);
+        var pool = new PendingResponsePool(1);
+        var ring = new InflightRing(1);
+        var source = pool.Rent(commandName: "PING");
+        source.Deadline = deadline;
+        ring.TryEnqueue(source);
+        var window = state.GetWindow(1100)!;
+        var remaining = ring.SweepExpired(1100, TimeSpan.FromMilliseconds(200), null,
+            deadlineExtension: 1000, maintenanceStarted: window.Started);
+        if (deadline <= 1000)
+        {
+            await Assert.That(remaining).IsEqualTo(-1);
+            var error = await Assert.That(async () => await source.Task).ThrowsExactly<RespireTimeoutException>();
+            await Assert.That(error!.Timeout).IsEqualTo(TimeSpan.FromMilliseconds(200));
+        }
+        else
+        {
+            await Assert.That(remaining).IsEqualTo(901);
+            source.TrySetResult(RespValue.Integer(1));
+            using var result = await source.Task;
+        }
+        ring.TryDequeue(out var dequeued);
+        dequeued.ReleaseRef();
+    }
+
+    [Test]
+    public async Task CutoffSurvivesOverlapAndResetsAfterCompletionOrExpiry()
+    {
+        var state = new MaintenanceTimeoutState(1000);
+        state.Apply(new("MIGRATING", 1), 100);
+        state.Apply(new("FAILING_OVER", 2), 200);
+        state.Apply(new("MIGRATED", 1), 300);
+        await Assert.That(state.GetWindow(400)!.Started).IsEqualTo(100);
+        state.Apply(new("FAILED_OVER", 2), 500);
+        await Assert.That(state.GetWindow(500)).IsNull();
+        state.Apply(new("MIGRATING", 3), 600);
+        await Assert.That(state.GetWindow(600)!.Started).IsEqualTo(600);
+        state.Apply(new("MIGRATING", 4), 1700);
+        await Assert.That(state.GetWindow(1700)!.Started).IsEqualTo(1700);
+        state.Apply(new("MIGRATING", 4), 1800);
+        await Assert.That(state.GetWindow(1800)!.Started).IsEqualTo(1700);
+        await Assert.That(state.GetWindow(2700)).IsNull();
     }
 
     [Test]

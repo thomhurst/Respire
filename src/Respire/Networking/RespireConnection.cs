@@ -2158,7 +2158,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     continue;
                 }
 
-                var effectiveTimeout = MaintenanceTimeout(timeout, Environment.TickCount64, out var window);
+                var effectiveTimeout = MaintenanceTimeout(timeout, Environment.TickCount64, out var window, out _);
                 var elapsed = Stopwatch.GetElapsedTime(deadlineStart);
                 var delay = GetWatchdogDelay(effectiveTimeout, elapsed);
                 if (window > 0)
@@ -2178,7 +2178,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     if (deadlineStart != _receiveDeadlineTimestamp
                         || _sentReplyCount <= _receivedReplyCount
                         || Volatile.Read(ref _responseTimeoutSuppressions) != 0
-                        || Stopwatch.GetElapsedTime(deadlineStart) < MaintenanceTimeout(timeout, Environment.TickCount64, out _))
+                        || Stopwatch.GetElapsedTime(deadlineStart) < MaintenanceTimeout(timeout, Environment.TickCount64, out _, out _))
                     {
                         continue;
                     }
@@ -2213,9 +2213,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             while (true)
             {
                 var now = Environment.TickCount64;
-                var effectiveTimeout = MaintenanceTimeout(timeout, now, out _);
-                var next = _inflight.SweepExpired(now, effectiveTimeout, this,
-                    (long)(effectiveTimeout - timeout).TotalMilliseconds);
+                var effectiveTimeout = MaintenanceTimeout(timeout, now, out _, out var maintenanceStarted);
+                var next = _inflight.SweepExpired(now, timeout, this,
+                    (long)(effectiveTimeout - timeout).TotalMilliseconds, maintenanceStarted);
                 var delay = next < 0 || next > granularityMilliseconds
                     ? granularity
                     : TimeSpan.FromMilliseconds(next);

@@ -67,9 +67,12 @@ internal sealed partial class RespireConnection
         return true;
     }
 
-    private TimeSpan MaintenanceTimeout(TimeSpan normal, long now, out long remainingWindow)
+    private TimeSpan MaintenanceTimeout(TimeSpan normal, long now, out long remainingWindow, out long started,
+        long deadline = long.MaxValue)
     {
-        remainingWindow = Volatile.Read(ref _maintenanceState)?.Remaining(now) ?? 0;
+        var window = Volatile.Read(ref _maintenanceState)?.GetWindow(now);
+        started = window?.Started ?? long.MaxValue;
+        remainingWindow = window is not null && deadline > window.Started ? window.Expires - now : 0;
         return remainingWindow > 0 && _maintenanceOptions!.MaintenanceRelaxedTimeout > normal
             ? _maintenanceOptions.MaintenanceRelaxedTimeout : normal;
     }
@@ -81,7 +84,7 @@ internal sealed partial class RespireConnection
         {
             cancellationToken.ThrowIfCancellationRequested();
             var now = Environment.TickCount64;
-            var timeout = MaintenanceTimeout(_commandTimeout!.Value, now, out var window);
+            var timeout = MaintenanceTimeout(_commandTimeout!.Value, now, out var window, out _, deadline);
             var remaining = deadline + (long)(timeout - _commandTimeout.Value).TotalMilliseconds - now;
             if (remaining <= 0)
                 throw new RespireTimeoutException(commandName ?? "(command)", timeout, null,

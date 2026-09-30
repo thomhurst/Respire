@@ -81,6 +81,8 @@ An already-expired caller cannot be revived. Completion/expiry restores normal d
 so an old pending command can time out immediately afterward. Caller cancellation remains
 active. Null command or receive timeouts remain unlimited. Watchdog restoration is observed
 within its polling interval (at most one second); command restoration uses the normal sweep.
+A notification does not revive a command whose original deadline already elapsed before the uninterrupted maintenance window began, even when the deadline sweep has not yet observed it. Overlapping operations retain the same cutoff; a later window after completion or expiry gets a new cutoff.
+
 Both maintenance duration options must be between one millisecond and one day.
 
 Overlapping operations have independent sequence/family windows. Duplicate starts do not
