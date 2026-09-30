@@ -427,7 +427,7 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             "COMMAND INFO" or "COMMAND DOCS" or "COMMAND GETKEYS" or "MODULE LIST" or
             "CLUSTER INFO" or "CLUSTER NODES" or "CLUSTER SHARDS" or "CLUSTER LINKS" or "CLUSTER MYID" or
             "CLUSTER MYSHARDID" or "CLUSTER KEYSLOT" or "CLUSTER COUNTKEYSINSLOT" or "CLUSTER SLOT-STATS" or
-            "COMMANDLOG GET" or "COMMANDLOG LEN";
+            "COMMANDLOG GET" or "COMMANDLOG LEN" or "HOTKEYS GET";
 
     private static bool DisruptsClientCacheTracking<TCommand>(string operation, in TCommand command)
         where TCommand : struct, IRespCommand
