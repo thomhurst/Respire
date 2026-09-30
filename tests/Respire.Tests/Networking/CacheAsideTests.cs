@@ -199,6 +199,12 @@ public class CacheAsideTests
         await using var client = await server.ConnectAsync();
         var view = client.WithKeyPrefix("tenant:");
         byte[] bytes = [0, 255, 1];
+        byte[] physicalKey = [.. "tenant:"u8, .. bytes];
+        var invalidated = new TaskCompletionSource<RespireClientCacheInvalidation>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var observer = view.ClientSideCache!.SubscribeInvalidations(physicalKey, change =>
+        {
+            if (change.Reasons.HasFlag(RespireClientCacheInvalidationReason.LocalMutation)) invalidated.TrySetResult(change);
+        });
         var entered = NewSignal();
         var release = NewSignal();
         var read = view.GetOrSetAsync<string>(bytes, async token =>
@@ -214,6 +220,8 @@ public class CacheAsideTests
         }
         finally { release.TrySetResult(); }
         await Assert.That(await read.WaitAsync(Limit)).IsEqualTo("value");
+        var change = await invalidated.Task.WaitAsync(Limit);
+        await Assert.That(change.Key).IsEqualTo((RespireKey)physicalKey);
         var frame = server.Server.ReceivedArguments.Single(arguments => arguments[0].AsSpan().SequenceEqual("SET"u8));
         await Assert.That(frame[1]).IsEquivalentTo(new byte[] { 116, 101, 110, 97, 110, 116, 58, 0, 255, 1 });
     }

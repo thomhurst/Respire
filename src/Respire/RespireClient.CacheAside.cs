@@ -91,6 +91,7 @@ public sealed partial class RespireClient
 
     private static class CacheAsideType<T>
     {
+        // Issued once per closed generic type and never recycled across operations or reconnects.
         // Generic statics distinguish runtime types, including identically named types
         // from separate load contexts. The shared command key can store this integer
         // without adding a Type field to every ordinary cached-command identity.
