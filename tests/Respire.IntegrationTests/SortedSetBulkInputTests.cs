@@ -7,12 +7,21 @@ namespace Respire.IntegrationTests;
 public class SortedSetBulkInputTests(RedisTestContainer fixture)
 {
     [Test]
-    [Arguments(0)]
-    [Arguments(1)]
-    [Arguments(2)]
-    public async Task BulkAdd_PreservesBinaryMembersAndScores(int mode)
+    [Arguments(false, 2, 0)]
+    [Arguments(false, 3, 0)]
+    [Arguments(true, 2, 0)]
+    [Arguments(true, 3, 0)]
+    [Arguments(false, 2, 1)]
+    [Arguments(false, 3, 1)]
+    [Arguments(true, 2, 1)]
+    [Arguments(true, 3, 1)]
+    [Arguments(false, 2, 2)]
+    [Arguments(false, 3, 2)]
+    public async Task BulkAdd_PreservesBinaryMembersAndScores(bool useFake, int protocol, int mode)
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
         var key = $"sorted:binary:{Guid.NewGuid():N}";
         byte[] first = [0xff, 0x00, 0x80];
         byte[] second = [0xfe, 0x00, 0x80];

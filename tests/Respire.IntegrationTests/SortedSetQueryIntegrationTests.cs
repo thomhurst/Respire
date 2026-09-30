@@ -64,15 +64,21 @@ public class SortedSetQueryIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [Arguments(2, QueryMode.Immediate)]
-    [Arguments(2, QueryMode.Batch)]
-    [Arguments(2, QueryMode.Transaction)]
-    [Arguments(3, QueryMode.Immediate)]
-    [Arguments(3, QueryMode.Batch)]
-    [Arguments(3, QueryMode.Transaction)]
-    public async Task LexRanges_RespectInclusiveExclusiveInfiniteAndEmptyBounds(int protocol, QueryMode mode)
+    [Arguments(false, 2, QueryMode.Immediate)]
+    [Arguments(false, 2, QueryMode.Batch)]
+    [Arguments(false, 2, QueryMode.Transaction)]
+    [Arguments(false, 3, QueryMode.Immediate)]
+    [Arguments(false, 3, QueryMode.Batch)]
+    [Arguments(false, 3, QueryMode.Transaction)]
+    [Arguments(true, 2, QueryMode.Immediate)]
+    [Arguments(true, 2, QueryMode.Batch)]
+    [Arguments(true, 3, QueryMode.Immediate)]
+    [Arguments(true, 3, QueryMode.Batch)]
+    public async Task LexRanges_RespectInclusiveExclusiveInfiniteAndEmptyBounds(bool useFake, int protocol, QueryMode mode)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
         var view = client.WithKeyPrefix($"lex:{Guid.NewGuid():N}:");
         await view.SortedSets.AddAsync("key", ("", 0), ("a", 0), ("b", 0), ("c", 0));
         var range = new RespireLexRange(RespireLexBound.Exclusive("a"), RespireLexBound.Inclusive("c"));
@@ -89,15 +95,21 @@ public class SortedSetQueryIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [Arguments(2, QueryMode.Immediate)]
-    [Arguments(2, QueryMode.Batch)]
-    [Arguments(2, QueryMode.Transaction)]
-    [Arguments(3, QueryMode.Immediate)]
-    [Arguments(3, QueryMode.Batch)]
-    [Arguments(3, QueryMode.Transaction)]
-    public async Task Intersection_CountsSharedMembersAndHonorsLimit(int protocol, QueryMode mode)
+    [Arguments(false, 2, QueryMode.Immediate)]
+    [Arguments(false, 2, QueryMode.Batch)]
+    [Arguments(false, 2, QueryMode.Transaction)]
+    [Arguments(false, 3, QueryMode.Immediate)]
+    [Arguments(false, 3, QueryMode.Batch)]
+    [Arguments(false, 3, QueryMode.Transaction)]
+    [Arguments(true, 2, QueryMode.Immediate)]
+    [Arguments(true, 2, QueryMode.Batch)]
+    [Arguments(true, 3, QueryMode.Immediate)]
+    [Arguments(true, 3, QueryMode.Batch)]
+    public async Task Intersection_CountsSharedMembersAndHonorsLimit(bool useFake, int protocol, QueryMode mode)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
         var view = client.WithKeyPrefix($"intersection:{Guid.NewGuid():N}:");
         await view.SortedSets.AddAsync("first", ("a", 1), ("b", 2));
         await view.SortedSets.AddAsync("second", ("a", 50), ("b", 60), ("c", 70));
