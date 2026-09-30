@@ -199,6 +199,7 @@ internal static class Verbs
     public static readonly Verb ZRank = new("ZRANK");
     public static readonly Verb ZRevRank = new("ZREVRANK");
     public static readonly Verb ZRange = new("ZRANGE");
+    public static readonly Verb ZInterCard = new(1, "ZINTERCARD");
     public static readonly Verb ZInter = new(1, "ZINTER");
     public static readonly Verb ZUnion = new(1, "ZUNION");
     public static readonly Verb ZDiff = new(1, "ZDIFF");

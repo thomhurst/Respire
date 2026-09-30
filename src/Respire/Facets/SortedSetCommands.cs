@@ -154,7 +154,7 @@ public readonly record struct RespireLexRange(RespireLexBound Minimum, RespireLe
 /// <see cref="CountAsync"/>; score-range cardinality uses
 /// <see cref="CountByScoreAsync(RespireKey, double, double, CancellationToken)"/>.
 /// </summary>
-public interface ISortedSetCommands
+public partial interface ISortedSetCommands
 {
     /// <summary>Adds or updates one member. Returns true when the member was new. Redis: ZADD.</summary>
     ValueTask<bool> AddAsync(RespireKey key, RespireValue member, double score, CancellationToken cancellationToken = default);
@@ -374,7 +374,7 @@ public interface ISortedSetCommands
         CancellationToken cancellationToken = default);
 }
 
-internal sealed class SortedSetCommands(RespireClient client) : ISortedSetCommands
+internal sealed partial class SortedSetCommands(RespireClient client) : ISortedSetCommands
 {
     public ValueTask<bool> AddAsync(RespireKey key, RespireValue member, double score, CancellationToken cancellationToken = default)
         => client.FlagAsync("ZADD", new Cmd3(Verbs.ZAdd, client.Key(in key), score, member), cancellationToken);
