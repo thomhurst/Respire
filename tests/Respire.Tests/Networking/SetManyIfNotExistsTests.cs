@@ -49,8 +49,10 @@ public class SetManyIfNotExistsTests
         await Assert.That(() => transaction.Strings.SetManyIfNotExists()).Throws<ArgumentException>();
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        await Assert.That(async () => await client.Strings.SetManyIfNotExistsAsync([("a", "value")], cancellation.Token))
-            .Throws<OperationCanceledException>();
+        var canceled = client.Strings.SetManyIfNotExistsAsync([("a", "value")], cancellation.Token);
+        await Assert.That(canceled.IsCanceled).IsTrue();
+        var error = await Assert.That(async () => await canceled).Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken).IsEqualTo(cancellation.Token);
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 

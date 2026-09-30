@@ -396,7 +396,8 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
     public ValueTask<bool> SetManyIfNotExistsAsync(
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs, CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        if (cancellationToken.IsCancellationRequested)
+            return ValueTask.FromCanceled<bool>(cancellationToken);
         return client.FlagAsync(
             "MSETNX", new CmdN(RespireCommands.String.MSETNX.Verb, SetManyIfNotExistsArgs(client, pairs)), cancellationToken);
     }
@@ -463,19 +464,25 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         ValidatePairs(pairs);
         var args = SetManyArgs(client, pairs);
         if (client.Core.Cluster is not null)
+            EnsureSameSlot(args, stride: 2, operation: "MSETNX");
+        return args;
+    }
+
+    private static void EnsureSameSlot(ReadOnlySpan<RespireValue> args, int stride, string operation)
+    {
+        int? slot = null;
+        for (var index = 0; index < args.Length; index += stride)
         {
-            int? slot = null;
-            for (var index = 0; index < args.Length; index += 2)
+            if (args[index].TryGetClusterSlot(out var keySlot))
             {
-                if (args[index].TryGetClusterSlot(out var keySlot))
+                if (slot is { } expected && keySlot != expected)
                 {
-                    if (slot is { } expected && keySlot != expected)
-                        throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", "MSETNX");
-                    slot = keySlot;
+                    // Match other multi-key facets: this server-shaped error is raised locally before I/O.
+                    throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", operation);
                 }
+                slot = keySlot;
             }
         }
-        return args;
     }
 
     /// <summary>MSETEX numkeys key value… [NX|XX] expiry — shared with the deferred facet.</summary>
