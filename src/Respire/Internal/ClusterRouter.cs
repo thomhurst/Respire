@@ -118,7 +118,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     internal async ValueTask EnsureConnectedAsync(CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
-        if (Volatile.Read(ref _seed) is { IsConnected: true })
+        if (Volatile.Read(ref _seed) is { IsConnected: true } readySeed && discovery?.HasRejected(readySeed) != true)
         {
             return;
         }
@@ -129,15 +129,18 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         try
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            if (Volatile.Read(ref _seed) is { IsConnected: true })
+            if (Volatile.Read(ref _seed) is { IsConnected: true } seed && discovery?.HasRejected(seed) != true)
             {
                 return;
             }
 
-            Exception? lastError = null;
+            Exception? lastError = discovery?.PendingFailure;
             foreach (var endpoint in _seeds)
             {
                 var node = GetOrCreateNode(endpoint);
+                // Owner/master recovery may already have rejected this configured seed.
+                // Do not spend another fallback attempt on the same multiplexer generation.
+                if (discovery?.HasRejected(node) == true) continue;
                 if (discovery is not null) await discovery.BeforeCandidateAsync(endpoint, cancellationToken).ConfigureAwait(false);
                 try
                 {
@@ -149,7 +152,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 catch (Exception ex) when (CanRetryConnectionFailure(ex, cancellationToken))
                 {
                     lastError = ex;
-                    discovery?.Failed(endpoint, ex);
+                    discovery?.FailedNode(node, ex);
                 }
             }
 
@@ -243,7 +246,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 }
                 catch (Exception error) when (error is not RespireConnectionRetiredException && CanRetryDiscoveryFailure(error, cancellationToken, discovery))
                 {
-                    discovery?.Failed(Endpoint(master), error);
+                    discovery?.FailedNode(master, error);
                 }
             }
         }
@@ -258,7 +261,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             }
             catch (Exception error) when (error is not RespireConnectionRetiredException && CanRetryDiscoveryFailure(error, cancellationToken, discovery))
             {
-                discovery?.Failed(Endpoint(cachedNode), error);
+                discovery?.FailedNode(cachedNode, error);
                 ClearSlotOwner(cachedSlot, cachedNode);
                 failedOwner = cachedNode;
                 // Refresh through another discovered master before falling back to seeds.
@@ -290,12 +293,12 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         {
             // Preserve caller cancellation; normalize only an unpublished handshake cancelled by retirement.
             var retired = new RespireConnectionRetiredException(node.Host, node.Port);
-            discovery?.Failed(Endpoint(node), retired);
+            discovery?.FailedNode(node, retired);
             throw retired;
         }
         catch (Exception error)
         {
-            discovery?.Failed(Endpoint(node), error);
+            discovery?.FailedNode(node, error);
             throw;
         }
     }
@@ -505,7 +508,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             }
             catch (Exception error) when (error is not RespireConnectionRetiredException && CanRetryDiscoveryFailure(error, cancellationToken, discovery))
             {
-                discovery?.Failed(Endpoint(cachedNode), error);
+                discovery?.FailedNode(cachedNode, error);
                 ClearSlotOwner(cachedSlot, cachedNode);
                 failedOwner = cachedNode;
                 // Refresh through another discovered master before falling back to seeds.
@@ -821,7 +824,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
     // Configuration failures remain actionable; cancellation belongs to the caller.
     private static bool CanRetryConnectionFailure(Exception error, CancellationToken cancellationToken)
-        => error is not RespireConfigurationException && !cancellationToken.IsCancellationRequested;
+        => error is not (RespireConfigurationException or DiscoveryRoundUsageException)
+            && !cancellationToken.IsCancellationRequested;
 
     private bool CanRetryDiscoveryFailure(Exception error, CancellationToken cancellationToken, DiscoveryRound? discovery)
         => discovery?.Exhaustion is null && Volatile.Read(ref _disposed) == 0
@@ -944,7 +948,8 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
 
         var refreshed = false;
         RespireConnectionMultiplexer? attemptedSeed = null;
-        if (Volatile.Read(ref _seed) is { IsConnected: true, IsRetired: false } seed)
+        if (Volatile.Read(ref _seed) is { IsConnected: true, IsRetired: false } seed
+            && discovery?.HasRejected(seed) != true)
         {
             attemptedSeed = seed;
             refreshed = await TryRefreshTopologyAsync(seed, cancellationToken, discovery).ConfigureAwait(false);
@@ -956,7 +961,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             {
                 // The connected seed is also a known master. Its failed query has already
                 // seeded the round; reserve the fallback budget for a different candidate.
-                if (ReferenceEquals(master, attemptedSeed)) continue;
+                if (ReferenceEquals(master, attemptedSeed) || discovery?.HasRejected(master) == true) continue;
                 if (await TryRefreshTopologyAsync(master, cancellationToken, discovery).ConfigureAwait(false))
                 {
                     SetSeed(master);
@@ -1058,12 +1063,12 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         {
             await EnsureRouteNodeConnectedAsync(node, cancellationToken, discovery).ConfigureAwait(false);
             var complete = await TryLoadSlotsAsync(node, cancellationToken).ConfigureAwait(false) && HasCompleteTopology();
-            if (!complete) discovery?.Failed(Endpoint(node), new RespireConnectionException("Cluster candidate did not provide a complete topology."));
+            if (!complete) discovery?.FailedNode(node, new RespireConnectionException("Cluster candidate did not provide a complete topology."));
             return complete;
         }
         catch (Exception error) when (CanRetryDiscoveryFailure(error, cancellationToken, discovery))
         {
-            discovery?.Failed(Endpoint(node), error);
+            discovery?.FailedNode(node, error);
             return false;
         }
     }
@@ -1077,7 +1082,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         {
             // A failed owner can still own other slots. Spend fallback budget on a distinct
             // generation instead of immediately retrying the already rejected connection.
-            if (ReferenceEquals(master, failedOwner)) continue;
+            if (ReferenceEquals(master, failedOwner) || discovery?.HasRejected(master) == true) continue;
             if (!await TryRefreshTopologyAsync(master, cancellationToken, discovery).ConfigureAwait(false))
             {
                 continue;
@@ -1097,7 +1102,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             }
             catch (Exception error) when (CanRetryDiscoveryFailure(error, cancellationToken, discovery))
             {
-                discovery?.Failed(Endpoint(owner), error);
+                discovery?.FailedNode(owner, error);
                 ClearSlotOwner(slot, owner);
             }
         }
@@ -1123,7 +1128,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 }
                 catch (Exception error) when (CanRetryDiscoveryFailure(error, cancellationToken, discovery))
                 {
-                    discovery?.Failed(Endpoint(master), error);
+                    discovery?.FailedNode(master, error);
                 }
             }
             await EnsureConnectedAsync(cancellationToken, discovery).ConfigureAwait(false);

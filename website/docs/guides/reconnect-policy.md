@@ -274,7 +274,10 @@ this process. `SourceState` describes discovery; `State` retains aggregate physi
 health. Discovery never inserts a synthetic failed command slot. Measurements
 and lifecycle callbacks run on an ordered asynchronous queue; keep observers short. Discovery
 ordering is independent of command-slot and dedicated recovery notification queues; events
-from different sources have no shared ordering guarantee.
+from different sources have no shared ordering guarantee and can arrive after the triggering
+operation completes. Configured-seed fallback skips multiplexer generations already rejected
+by owner or known-master discovery in that round. A replacement generation at the same address
+remains eligible; skipping a duplicate does not consume another policy attempt.
 A caller-cancelled round that started fallback emits a terminal `Disconnected` source event
 with the cancellation error and the same episode ID; cancellation is not policy exhaustion.
 A READONLY phase timeout is retryable while the overall recovery deadline remains active.

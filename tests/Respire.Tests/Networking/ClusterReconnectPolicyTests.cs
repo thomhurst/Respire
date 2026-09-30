@@ -525,6 +525,109 @@ public class ClusterReconnectPolicyTests
     }
 
     [Test]
+    [Arguments("command", 1)]
+    [Arguments("command", 2)]
+    [Arguments("tracked", 1)]
+    [Arguments("tracked", 2)]
+    [Arguments("dedicated", 1)]
+    [Arguments("dedicated", 2)]
+    [Arguments("unkeyed", 1)]
+    [Arguments("unkeyed", 2)]
+    [Arguments("pubsub", 1)]
+    [Arguments("pubsub", 2)]
+    [Arguments("masters", 1)]
+    [Arguments("masters", 2)]
+    [Arguments("known-masters", 1)]
+    [Arguments("known-masters", 2)]
+    public async Task ConfiguredSeedsSkipPreviouslyRejectedGenerations(string path, int failedCount)
+    {
+        await using var first = new FakeRespServer(4, "-ERR owner unavailable\r\n"u8.ToArray());
+        await using var second = new FakeRespServer(4, "-ERR master unavailable\r\n"u8.ToArray());
+        await using var healthy = new FakeRespServer(2, FakeRespServer.OkReply);
+        healthy.ReplyOverride = (_, command) => command switch
+        {
+            "CLUSTER SLOTS" => Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{healthy.Port}\r\n"),
+            "CLIENT ID" => ":1\r\n"u8.ToArray(),
+            _ => null,
+        };
+        await using var client = RespireClient.Create(Options(failedCount == 1
+            ? [first.Port, healthy.Port] : [first.Port, second.Port, healthy.Port]) with
+        {
+            ReconnectPolicy = new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = failedCount },
+        });
+        var router = client.Core.Cluster!;
+        router.SetSlotOwner(42, router.GetMultiplexer(new("127.0.0.1", first.Port)));
+        router.SetSlotOwner(43, router.GetMultiplexer(new("127.0.0.1", first.Port)));
+        if (failedCount == 2) router.SetSlotOwner(44, router.GetMultiplexer(new("127.0.0.1", second.Port)));
+        var changes = new ConcurrentQueue<RespireConnectionStateChange>();
+        var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        router.DiscoveryStateChanged += change =>
+        {
+            changes.Enqueue(change);
+            if (change.SourceState == RespireConnectionState.Connected) recovered.TrySetResult();
+        };
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        int port;
+        switch (path)
+        {
+            case "tracked": port = (await router.GetTrackedConnectionAsync(42, true, timeout.Token, discovery: null)).Port; break;
+            case "dedicated":
+                var pool = await router.GetDedicatedPoolAsync(42, timeout.Token, discovery: null);
+                var connection = await pool.RentAsync(timeout.Token);
+                try { port = connection.Port; }
+                finally { pool.Return(connection); }
+                break;
+            case "pubsub": port = (await router.GetPubSubEndpointAsync(timeout.Token)).Port; break;
+            case "masters": port = (await router.GetMasterConnectionsAsync(timeout.Token, discovery: null)).Single().Port; break;
+            case "known-masters": port = (await router.GetKnownMastersAsync(timeout.Token, discovery: null)).Single().Port; break;
+            default: port = (await router.GetConnectionAsync(path == "unkeyed" ? null : 42, timeout.Token, discovery: null)).Port; break;
+        }
+        await Assert.That(port).IsEqualTo(healthy.Port);
+        await recovered.Task.WaitAsync(timeout.Token);
+        await Assert.That(first.ReceivedCommands).IsEquivalentTo(["AUTH test"]);
+        await Assert.That(second.ReceivedCommands.Count).IsEqualTo(failedCount == 1 ? 0 : 1);
+        var attempts = changes.Where(change => change.NextReconnectDelay is not null).ToArray();
+        await Assert.That(attempts.Length).IsEqualTo(failedCount);
+        await Assert.That(attempts[^1].Endpoint.Port).IsEqualTo(healthy.Port);
+        await Assert.That(changes.Any(change => change.ReconnectExhausted)).IsFalse();
+        await Assert.That(changes.Last().Error).IsNull();
+    }
+
+    [Test]
+    public async Task RejectedConnectedSeedDoesNotBypassDistinctFallback()
+    {
+        await using var first = new FakeRespServer(FakeRespServer.OkReply);
+        await using var healthy = new FakeRespServer(FakeRespServer.OkReply);
+        var queries = 0;
+        first.ReplyOverride = (_, command) => command != "CLUSTER SLOTS" ? null
+            : Interlocked.Increment(ref queries) == 1 ? Topology(first.Port) : "-ERR topology unavailable\r\n"u8.ToArray();
+        healthy.ReplyOverride = (_, command) => command == "CLUSTER SLOTS" ? Topology(healthy.Port) : null;
+        await using var client = await RespireClient.ConnectAsync(Options(first.Port, healthy.Port));
+        var router = client.Core.Cluster!;
+        var connections = await router.GetMasterConnectionsAsync(default, discovery: null);
+        await Assert.That(connections.Single().Port).IsEqualTo(healthy.Port);
+        await Assert.That((await router.GetKnownMastersAsync(default, discovery: null)).Single().Port).IsEqualTo(healthy.Port);
+        await Assert.That(queries).IsEqualTo(2);
+
+        static byte[] Topology(int port)
+            => Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{port}\r\n");
+    }
+
+    [Test]
+    public async Task RejectedSeedDepletionPreservesOriginalFailure()
+    {
+        await using var failed = new FakeRespServer(2, "-ERR owner unavailable\r\n"u8.ToArray());
+        await using var client = RespireClient.Create(Options(failed.Port));
+        var router = client.Core.Cluster!;
+        router.SetSlotOwner(42, router.GetMultiplexer(new("127.0.0.1", failed.Port)));
+        var error = await Assert.That(async () => await router.GetConnectionAsync(42, default, discovery: null))
+            .ThrowsExactly<RespireConnectionException>();
+        await Assert.That(error!.InnerException is RespireConnectionException).IsTrue();
+        await Assert.That(error.InnerException!.Message.Contains("AUTH failed", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(failed.ReceivedCommands).IsEquivalentTo(["AUTH test"]);
+    }
+
+    [Test]
     public async Task DiscoveryRoundRejectsConcurrentMutationAndReleasesGuardAfterCancellation()
     {
         await using var client = RespireClient.Create(Options(1));
@@ -546,10 +649,10 @@ public class ClusterReconnectPolicyTests
         {
             await Assert.That(pending.IsCompleted).IsFalse();
             await Assert.That(async () => await round.BeforeCandidateAsync(endpoint, default))
-                .ThrowsExactly<InvalidOperationException>();
-            await Assert.That(() => round.Failed(new IOException())).ThrowsExactly<InvalidOperationException>();
-            await Assert.That(() => round.Failed(endpoint, new IOException())).ThrowsExactly<InvalidOperationException>();
-            await Assert.That(() => round.TerminalError = new IOException()).ThrowsExactly<InvalidOperationException>();
+                .ThrowsExactly<ClusterRouter.DiscoveryRoundUsageException>();
+            await Assert.That(() => round.Failed(new IOException())).ThrowsExactly<ClusterRouter.DiscoveryRoundUsageException>();
+            await Assert.That(() => round.Failed(endpoint, new IOException())).ThrowsExactly<ClusterRouter.DiscoveryRoundUsageException>();
+            await Assert.That(() => round.TerminalError = new IOException()).ThrowsExactly<ClusterRouter.DiscoveryRoundUsageException>();
         }
         finally
         {
@@ -783,7 +886,7 @@ public class ClusterReconnectPolicyTests
         await Assert.That(ended.ReconnectExhausted).IsFalse();
         round.Finish();
         round.Finish();
-        await Assert.That(() => round.Failed(new IOException())).ThrowsExactly<InvalidOperationException>();
+        await Assert.That(() => round.Failed(new IOException())).ThrowsExactly<ClusterRouter.DiscoveryRoundUsageException>();
 
         // An independently queued episode is a FIFO barrier for duplicate terminal events.
         var next = new ClusterRouter.DiscoveryRound(router, new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 });

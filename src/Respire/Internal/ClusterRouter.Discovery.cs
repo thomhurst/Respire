@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Respire.Infrastructure;
 using Respire.Networking;
 
 namespace Respire.Internal;
@@ -9,6 +10,7 @@ internal sealed partial class ClusterRouter
     private readonly object _discoveryNotificationsGate = new();
     private Queue<RespireConnectionStateChange>? _discoveryNotifications;
     private bool _publishingDiscovery;
+    // Deliberately process-wide within ReconnectSource.ClusterDiscovery, not a per-client sequence.
     private static long _nextDiscoveryEpisode;
     internal TimeProvider DiscoveryClock { get; set; } = TimeProvider.System;
 
@@ -46,6 +48,9 @@ internal sealed partial class ClusterRouter
         round.Failed(endpoint, error);
     }
 
+    internal sealed class DiscoveryRoundUsageException() : InvalidOperationException(
+        "DiscoveryRound must have only one sequential consumer and cannot be reused after finishing.");
+
     // One asynchronous control flow owns a round. Nested discovery helpers borrow it only
     // through sequential awaits; master fan-out is sequential too. Concurrent callers own
     // separate rounds, even when the seed gate coalesces their physical connection work.
@@ -63,7 +68,7 @@ internal sealed partial class ClusterRouter
         private void Enter()
         {
             if (Interlocked.CompareExchange(ref _state, Active, 0) != 0)
-                throw new InvalidOperationException("DiscoveryRound must have only one sequential consumer and cannot be reused after finishing.");
+                throw new DiscoveryRoundUsageException();
         }
         private void Exit()
         {
@@ -71,6 +76,10 @@ internal sealed partial class ClusterRouter
         }
 
         private Exception? _failure;
+        private HashSet<RespireConnectionMultiplexer>? _rejectedNodes;
+        internal bool HasRejected(RespireConnectionMultiplexer node) => _rejectedNodes?.Contains(node) == true;
+        internal void FailedNode(RespireConnectionMultiplexer node, Exception error)
+            => Failed(Endpoint(node), error, node);
         private RespireEndpoint _endpoint;
         private int _attempts;
         private long _episode;
@@ -87,6 +96,7 @@ internal sealed partial class ClusterRouter
             }
         }
         internal bool HasPendingFailure => _failure is not null;
+        internal Exception? PendingFailure => _failure;
 
         internal void RecordCommandFailure(Exception error, bool discoveryPending)
         {
@@ -112,13 +122,17 @@ internal sealed partial class ClusterRouter
             finally { Exit(); }
         }
 
-        internal void Failed(RespireEndpoint endpoint, Exception error)
+        internal void Failed(RespireEndpoint endpoint, Exception error, RespireConnectionMultiplexer? rejectedNode = null)
         {
             Enter();
             try
             {
                 _endpoint = endpoint;
                 _failure = error;
+                // Track generation identity, not its address: a replacement at that address
+                // remains eligible. Allocate only after an actual cold-path rejection.
+                if (rejectedNode is not null)
+                    (_rejectedNodes ??= new(ReferenceEqualityComparer.Instance)).Add(rejectedNode);
                 if (Exhaustion is null && ReferenceEquals(_terminalError, error)) _terminalError = null;
             }
             finally { Exit(); }
