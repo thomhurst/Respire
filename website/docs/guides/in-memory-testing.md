@@ -36,9 +36,10 @@ Dispose clients before their server. Disposing one client leaves other clients a
 data intact. Server disposal closes all owned pipe endpoints and joins server loops;
 concurrent calls join the same cleanup task. It does not dispose your client objects.
 Previously obtained options cannot create connections after server disposal.
-Unexpected command/clock failures close the affected connection and are reported again by
-server disposal. Failed connections remain retained until disposal so their errors cannot
-be lost after a client disconnects. Keep fixture lifetimes bounded and dispose the server
+Unexpected command/clock failures and malformed requests close the affected connection and are
+reported by server disposal. Completed connections are removed; their exceptions remain retained
+until disposal so errors cannot be lost after a client disconnects. Keep fixture lifetimes bounded
+and dispose the server
 even when a test fails. Other connections remain independent; a command failure does not
 make future connections throw a historical error.
 
@@ -68,7 +69,8 @@ fail initialization. Do not enable these modes and infer production behavior fro
 Individual RESP requests are limited to 16 MiB; larger requests close their connection
 and report the size-limit error when the server is disposed.
 Arguments are copied into owned arrays and commands execute under one server lock.
-This fixture is not a throughput benchmark tool.
+Incomplete requests can reparse already received arguments; highly fragmented arrays may cost
+more CPU than contiguous requests. This fixture is not a throughput benchmark tool.
 There is no eviction policy or total memory budget: keep test datasets bounded.
 
 ## Expiry and determinism

@@ -16,6 +16,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
     private readonly TimeProvider _clock;
     private readonly Dictionary<byte[], Entry> _entries = new(BinaryKeyComparer.Instance);
     private readonly HashSet<Connection> _connections = [];
+    private readonly List<Exception> _failures = [];
     private Task? _disposeTask;
     private bool _disposed;
     private long _nextConnectionId;
@@ -43,7 +44,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (host != _host || port != 6379)
-                throw new NotSupportedException("Fake server options must retain their original endpoint.");
+                throw new NotSupportedException($"Fake server options must retain endpoint {_host}:6379.");
             var requests = new Pipe();
             var responses = new Pipe();
             var client = new DuplexPipeStream(responses.Reader, requests.Writer);
@@ -80,18 +81,27 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
                 {
                     var status = RespParser.TryParseValue(buffer.AsSpan(0, length), ref consumed, out var request);
                     if (status == RespParseStatus.NeedMoreData) break;
-                    if (status != RespParseStatus.Done) throw new IOException("Invalid RESP request to fake server.");
+                    if (status != RespParseStatus.Done)
+                    {
+                        connection.Failed = true;
+                        throw new IOException("Invalid RESP request to fake server.");
+                    }
                     byte[]? reply;
                     try
                     {
                         var arguments = ReadArguments(in request);
                         reply = ExecuteLocked(connection, arguments);
                     }
+                    catch
+                    {
+                        connection.Failed = true;
+                        throw;
+                    }
                     finally { request.Dispose(); }
                     if (reply is null) return; // Server disposal won the command's state lock.
                     await connection.Stream.WriteAsync(reply).ConfigureAwait(false);
                 }
-                buffer.AsSpan(consumed, length - consumed).CopyTo(buffer);
+                if (consumed > 0) buffer.AsSpan(consumed, length - consumed).CopyTo(buffer);
                 length -= consumed;
             }
         }
@@ -99,19 +109,18 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         {
             // Peer closure/cancellation terminates this connection; the real client observes EOF.
         }
-        catch
+        catch (Exception error)
         {
-            // Retain an unexpected fault until disposal observes the failed task, even when
-            // the peer has already disconnected. Do not turn a broken fake into silent success.
-            connection.Failed = true;
-            throw;
+            // Retain only the failure, not the completed connection and its request buffer.
+            // Disposal joins active loops before observing this list under the same gate.
+            lock (_gate) _failures.Add(error);
         }
         finally
         {
             connection.Stream.Dispose();
             lock (_gate)
             {
-                if (!connection.Failed) _connections.Remove(connection);
+                _connections.Remove(connection);
             }
         }
     }
@@ -138,16 +147,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         lock (_gate)
         {
             if (_disposed) return null;
-            try
-            {
-                return Execute(connection, arguments).Encode(connection.Resp3);
-            }
-            catch
-            {
-                // Command/clock exceptions are faults even if their types also describe pipe closure.
-                connection.Failed = true;
-                throw;
-            }
+            return Execute(connection, arguments).Encode(connection.Resp3);
         }
     }
 
@@ -248,7 +248,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         return new(completion.Task);
     }
 
-    private static async Task DisposeConnectionsAsync(Connection[] connections, TaskCompletionSource completion)
+    private async Task DisposeConnectionsAsync(Connection[] connections, TaskCompletionSource completion)
     {
         List<Exception>? errors = null;
         foreach (var connection in connections)
@@ -258,6 +258,11 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         }
         try { await Task.WhenAll(connections.Select(connection => connection.Completion)).ConfigureAwait(false); }
         catch (Exception error) { (errors ??= []).Add(error); }
+        lock (_gate)
+        {
+            if (_failures.Count != 0) (errors ??= []).AddRange(_failures);
+            _failures.Clear();
+        }
         if (errors is null) completion.SetResult();
         else completion.SetException(errors);
     }

@@ -299,6 +299,64 @@ public class FakeServerTests
         await Assert.That(failure).IsSameReferenceAs(expected);
     }
 
+    [Test]
+    [Arguments("?\r\n")]
+    [Arguments("+OK\r\n")]
+    [Arguments("*0\r\n")]
+    [Arguments("*1\r\n:1\r\n")]
+    public async Task MalformedRequestsAreReportedDuringServerDisposal(string request)
+    {
+        var server = new RespireFakeServer();
+        var options = server.CreateOptions();
+        await using var stream = await options.TestingStreamFactory!(options.Endpoints[0].Host, 6379, default);
+        try
+        {
+            await stream.WriteAsync(System.Text.Encoding.ASCII.GetBytes(request)).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            await Assert.That(await stream.ReadAsync(new byte[1]).AsTask().WaitAsync(TimeSpan.FromSeconds(5))).IsEqualTo(0);
+        }
+        finally
+        {
+            await Assert.That(async () => await server.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)))
+                .ThrowsExactly<IOException>();
+        }
+    }
+
+    [Test]
+    public async Task RepeatedFaultsRetainExceptionsWithoutRetainingCompletedConnections()
+    {
+        var expected = new InvalidOperationException("clock failure");
+        var server = new RespireFakeServer(new ThrowingClock(expected));
+        try
+        {
+            for (var index = 0; index < 3; index++)
+            {
+                await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Protocol = RespProtocol.Resp2 });
+                await Assert.That(async () => await client.SetAsync("key", "value")).Throws<RespireConnectionException>();
+            }
+            // Wait for server-loop cleanup after the client observes EOF. Inspect only the
+            // retained ownership set; no production hook is needed for this leak regression.
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var field = typeof(RespireFakeServer).GetField("_connections", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            var gate = typeof(RespireFakeServer).GetField("_gate", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(server)!;
+            while (true)
+            {
+                bool empty;
+                lock (gate) empty = !((System.Collections.IEnumerable)field.GetValue(server)!).Cast<object>().Any();
+                if (empty) break;
+                await Task.Delay(10, deadline.Token);
+            }
+        }
+        finally
+        {
+            var disposal = server.DisposeAsync().AsTask();
+            var error = await Assert.That(async () => await disposal.WaitAsync(TimeSpan.FromSeconds(5)))
+                .ThrowsExactly<InvalidOperationException>();
+            await Assert.That(error).IsSameReferenceAs(expected);
+            await Assert.That(disposal.Exception!.InnerExceptions.Count).IsEqualTo(3);
+            foreach (var failure in disposal.Exception.InnerExceptions)
+                await Assert.That(failure).IsSameReferenceAs(expected);
+        }
+    }
     private sealed class ThrowingClock(Exception error) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => throw error;

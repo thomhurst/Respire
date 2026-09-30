@@ -2367,8 +2367,9 @@ internal delegate void RespirePushHandler(in RespValue value);
 /// <summary>Tuning options for a single RESP connection.</summary>
 internal sealed record RespireConnectionOptions
 {
-    internal Func<string, int, CancellationToken, ValueTask<Stream>>? TestingStreamFactory { get; init; }
     public static readonly RespireConnectionOptions Default = new();
+
+    internal Func<string, int, CancellationToken, ValueTask<Stream>>? TestingStreamFactory { get; init; }
 
     internal RespireReconnectPolicy? ReconnectPolicy { get; init; }
 
