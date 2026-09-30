@@ -708,10 +708,11 @@ public class TimeoutDiagnosticsTests
     [NotInParallel] // The no-GC measurement boundary is process-wide.
     public async Task SuccessfulRingAccounting_DoesNotAllocatePerCommand()
     {
+        _ = MeasureRingAllocations(new InflightRing(1), allocate: false, iterations: 100);
+        _ = MeasureRingAllocations(new InflightRing(1), allocate: true, iterations: 100);
+        // Separate warm-up rings keep write offsets monotonic on every instance.
         var ring = new InflightRing(1);
         var controlRing = new InflightRing(1);
-        _ = MeasureRingAllocations(ring, allocate: false, iterations: 100);
-        _ = MeasureRingAllocations(controlRing, allocate: true, iterations: 100);
         // Isolate the counter from concurrent GC without changing the exact-zero
         // contract. See docs/ALLOCATION_MEASUREMENT.md for evidence and limitations.
         var (allocated, control) = AllocationMeasurement.WithoutConcurrentGc(() =>

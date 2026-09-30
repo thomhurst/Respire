@@ -106,3 +106,11 @@ not establish the exact source of this new CI delta. No new local reproduction o
 mutation experiment has run for #554 because another worker holds the mandatory shared
 performance reservation. Fresh CI on both frameworks, including coverage, must validate
 the change. Production ring behavior is unchanged.
+
+If a nonzero sample recurs, retain the failing run and capture generation 0/1/2
+`GC.CollectionCount` deltas around the counter interval, outside the counted work.
+Use an allocation-stack trace to distinguish actual managed allocations from counter
+behavior. Do not rerun until green or weaken the zero-byte assertion. Unkeyed
+`NotInParallel` excludes other TUnit tests; unrelated runtime/background activity
+can still consume the process-wide reservation and causes an explicit failure if
+the no-GC region cannot be retained.
