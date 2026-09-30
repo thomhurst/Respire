@@ -157,12 +157,16 @@ A successful validated primary ends the resolution. Exhaustion preserves the fin
 A new explicit `ConnectAsync` call starts a fresh resolution budget. Null policy retains
 immediate fallback across all available candidates. Caller cancellation bounds every
 wait, while each candidate retains its existing discovery and connection timeout.
+Policy delays sit outside those per-candidate timeouts. Supply a caller deadline to
+bound the total resolution, including backoff and every candidate.
 No application command is replayed during discovery.
 
 The same attempt/delay/exhaustion instruments carry the candidate's `server.address`
 and `server.port` plus `respire.reconnect.scope = sentinel-discovery`. Exhaustion is
 attributed to the final failed fallback. Scheduling is recorded before delay, including
-waits later cancelled by the caller. Successful fallback does not record exhaustion.
+waits later cancelled by the caller. Successful fallback does not record exhaustion. Running out of candidates before the
+configured attempt limit also does not emit policy exhaustion; observe the returned
+connection exception to detect every terminal discovery failure.
 Initial Sentinel resolution has no returned client for `ConnectionStateChanged`
 subscriptions; lifecycle events for ongoing failover belong to #396. This policy does
 not enable automatic failover or lazy Sentinel routing.

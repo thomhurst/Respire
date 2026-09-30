@@ -12,6 +12,8 @@ public sealed record RespireReconnectPolicy
     /// <summary>Exponential delay multiplier. Must be finite and at least one.</summary>
     public double BackoffMultiplier { get; init; } = 2;
     /// <summary>Maximum actual delay, including jitter. Defaults to five seconds; at most one day.</summary>
+    /// <remarks>Sentinel fallback delays are bounded by caller cancellation, not the subsequent
+    /// per-candidate ConnectTimeout or CommandTimeout. Supply a caller deadline to bound total resolution time.</remarks>
     public TimeSpan MaxDelay { get; init; } = TimeSpan.FromSeconds(5);
     /// <summary>Symmetric random variation as a fraction of the exponential delay, from zero to one.</summary>
     public double JitterRatio { get; init; } = 0.2;
