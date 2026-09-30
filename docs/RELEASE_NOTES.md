@@ -10,6 +10,15 @@
   K4os dependency is confined to the optional package. See
   [value codecs](../website/docs/guides/value-codecs.md#optional-lz4-package).
 
+### Cluster retirement diagnostics
+
+- `RespireClient.GetClusterRetirementSnapshot()` exposes owned aggregate counts for
+  retained generations, oldest retirement age, pending correction fences, unfinished
+  transport drains, cleanup failures, and dedicated operation-pool leases/acquisitions.
+  Capture performs no network I/O and retains no transport references. See
+  [observability](../website/docs/integrations/observability.md#cluster-retirement)
+  for concurrency, disposal, and counter scope. Retry and retention policies are unchanged.
+
 ### Sentinel discovery validation
 
 - Sentinel-discovered data connections must confirm a valid primary `ROLE` before

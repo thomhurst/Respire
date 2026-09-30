@@ -32,6 +32,17 @@ internal sealed class DedicatedConnectionPool(
         get { lock (_gate) return _stopping; }
     }
 
+    internal (int Borrowed, int Connecting, bool CleanupFailed) CaptureRetirementState()
+    {
+        lock (_gate)
+        {
+            var borrowed = 0;
+            foreach (var entry in _connections.Values)
+                if (entry.State == State.Rented) borrowed++;
+            return (borrowed, _connecting, _closeError is not null);
+        }
+    }
+
     private enum State { Idle, Rented, Closing }
 
     private sealed class Entry(RespireConnection connection)

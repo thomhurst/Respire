@@ -55,6 +55,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     internal bool IsRetired => Volatile.Read(ref _retired) != 0;
     private bool IsOperational => !IsRetired && Volatile.Read(ref _disposed) == 0;
     internal bool HasPendingCorrectionFences => !_retiredServerClientIds.IsEmpty;
+    internal int PendingCorrectionFenceCount => _retiredServerClientIds.Count;
     // Published only after accepted work drained and every failed-socket identity was collected.
     internal bool RetirementDrained => Volatile.Read(ref _retirementDrained);
     internal bool IsInitialized => _connected;

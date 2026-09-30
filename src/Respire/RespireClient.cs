@@ -214,6 +214,16 @@ public sealed partial class RespireClient : IRespireClient
     public bool IsConnected
         => !_core.Disposed && (_core.Cluster?.IsConnected ?? _core.Multiplexer.IsConnected);
 
+    /// <summary>Captures owned Cluster retirement diagnostics, or null for a non-Cluster client.</summary>
+    /// <remarks>Performs no network I/O. Prefix views share the underlying router's state.
+    /// Counters are best-effort observations, not a completion or correction-ordering barrier.
+    /// Capture after client disposal begins throws; an already captured snapshot remains valid.</remarks>
+    public RespireClusterRetirementSnapshot? GetClusterRetirementSnapshot()
+    {
+        ObjectDisposedException.ThrowIf(_core.Disposed, this);
+        return _core.Cluster?.CaptureRetirementSnapshot();
+    }
+
     /// <inheritdoc/>
     public IRespireClientSideCache? ClientSideCache => _core.ClientCache;
 

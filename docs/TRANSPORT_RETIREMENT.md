@@ -122,3 +122,23 @@ These unexpected cleanup failures are terminal for that generation's retirement 
 enter the retry loop for unacknowledged fences. The generation remains owned until explicit client
 disposal aborts its transports and observes the original failure. Retrying an already faulted,
 memoized transport cleanup task cannot restart cleanup or prove a successful drain.
+
+## Retirement diagnostics
+
+`RespireClient.GetClusterRetirementSnapshot()` captures aggregate retained-generation
+counts, monotonic oldest age, published fence obligations, transport-drain state,
+unexpected cleanup failures, and dedicated operation-pool leases/acquisitions. It adds
+no command-path counters or I/O. The snapshot owns only scalar observations; retaining
+it cannot retain a generation, connection, pool, router, or exception.
+
+Capture uses `_nodesGate` before reading a dedicated pool's `_gate`. Pool code never
+calls back into the router while holding `_gate`, and completion continuations are
+asynchronous. Fence counts use the existing concurrent identity set. Membership is
+stable during capture, but independently changing transport counters are observational,
+not a completion barrier. Completed generations are not retained for history. Fresh
+capture after disposal begins throws; existing snapshots remain valid.
+
+See the [observability guide](../website/docs/integrations/observability.md#cluster-retirement)
+for category overlap and the exact scope of each counter. No retention-age threshold can
+abandon an owed fence or establish correction ordering. This diagnostic API leaves retry
+backoff, ownership, and explicit-disposal semantics unchanged.
