@@ -89,7 +89,7 @@ public sealed partial class RespireFakeServer
             {
                 lock (_gate)
                 {
-                    var rejection = QueueOutputLocked(connection, FakeReply.Error(fault.Error!).Encode(connection.Resp3), push: false);
+                    var rejection = QueueOutputLocked(connection, RejectCommand(connection, Token(arguments[0]), FakeReply.Error(fault.Error!)).Encode(connection.Resp3), push: false);
                     rejection?.Ready.TrySetResult();
                     return rejection;
                 }

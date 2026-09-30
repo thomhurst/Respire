@@ -38,7 +38,7 @@ public sealed partial class RespireFakeServer
         var old = Find(args[1]);
         var previous = get ? old?.Value : null; // SET GET checks type even when NX rejects the write.
         if ((nx && old is not null) || (xx && old is null)) return get ? FakeReply.Bulk(previous) : FakeReply.Null;
-        _entries[args[1]] = new Entry(args[2], keepTtl ? old?.ExpiresAt : expiresAt);
+        SetEntry(args[1], new Entry(args[2], keepTtl ? old?.ExpiresAt : expiresAt));
         return get ? FakeReply.Bulk(previous) : FakeReply.Ok;
     }
 
@@ -49,21 +49,21 @@ public sealed partial class RespireFakeServer
             for (var index = 1; index < args.Length; index += 2)
                 if (Find(args[index]) is not null) return FakeReply.Integer(0);
         for (var index = 1; index < args.Length; index += 2)
-            _entries[args[index]] = new Entry(args[index + 1]);
+            SetEntry(args[index], new Entry(args[index + 1]));
         return command == "MSETNX" ? FakeReply.Integer(1) : FakeReply.Ok;
     }
 
     private FakeReply GetDelete(byte[] key)
     {
         var old = Find(key)?.Value;
-        _entries.Remove(key);
+        DeleteEntry(key);
         return FakeReply.Bulk(old);
     }
 
     private FakeReply GetSet(byte[] key, byte[] value)
     {
         var old = Find(key)?.Value;
-        _entries[key] = new Entry(value);
+        SetEntry(key, new Entry(value));
         return FakeReply.Bulk(old);
     }
 
@@ -71,7 +71,7 @@ public sealed partial class RespireFakeServer
     {
         var old = Find(key);
         byte[] combined = [.. old?.Value ?? [], .. value];
-        _entries[key] = new Entry(combined, old?.ExpiresAt);
+        SetEntry(key, new Entry(combined, old?.ExpiresAt));
         return FakeReply.Integer(combined.Length);
     }
 
@@ -80,7 +80,7 @@ public sealed partial class RespireFakeServer
         var old = Find(key);
         var current = old is null ? 0 : Integer(old.Value);
         var result = subtract ? checked(current - amount) : checked(current + amount);
-        _entries[key] = new Entry(Encoding.ASCII.GetBytes(result.ToString(CultureInfo.InvariantCulture)), old?.ExpiresAt);
+        SetEntry(key, new Entry(Encoding.ASCII.GetBytes(result.ToString(CultureInfo.InvariantCulture)), old?.ExpiresAt));
         return FakeReply.Integer(result);
     }
 
@@ -103,7 +103,8 @@ public sealed partial class RespireFakeServer
             options.Contains("GT") && (entry.ExpiresAt is null || expires <= entry.ExpiresAt) ||
             options.Contains("LT") && entry.ExpiresAt is { } old && expires >= old) return FakeReply.Integer(0);
         entry.ExpiresAt = expires;
-        if (expires <= Now) _entries.Remove(args[1]);
+        if (expires <= Now) DeleteEntry(args[1]);
+        else TouchWatchedKey(args[1]);
         return FakeReply.Integer(1);
     }
 
@@ -122,6 +123,7 @@ public sealed partial class RespireFakeServer
         var entry = Find(key);
         if (entry?.ExpiresAt is null) return FakeReply.Integer(0);
         entry.ExpiresAt = null;
+        TouchWatchedKey(key);
         return FakeReply.Integer(1);
     }
 
@@ -148,7 +150,11 @@ public sealed partial class RespireFakeServer
         var entry = Find(args[1]);
         if (entry is null) return FakeReply.Null;
         var value = entry.Value; // Validate type before changing the key's expiry.
-        if (persist || expiration is not null) entry.ExpiresAt = expires;
+        if (expiration is not null || persist && entry.ExpiresAt is not null)
+        {
+            entry.ExpiresAt = expires;
+            TouchWatchedKey(args[1]);
+        }
         return FakeReply.Bulk(value);
     }
 }

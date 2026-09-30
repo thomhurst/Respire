@@ -12,6 +12,7 @@ public sealed partial class RespireFakeServer
         for (var index = 2; index < args.Length; index++)
             if (set.Add(args[index])) added++;
         if (entry is null) _entries[args[1]] = new Entry(set);
+        if (added != 0) TouchWatchedKey(args[1]);
         return FakeReply.Integer(added);
     }
 
@@ -23,6 +24,7 @@ public sealed partial class RespireFakeServer
         for (var index = 2; index < args.Length; index++)
             if (set.Remove(args[index])) removed++;
         if (set.Count == 0) _entries.Remove(args[1]);
+        if (removed != 0) TouchWatchedKey(args[1]);
         return FakeReply.Integer(removed);
     }
 
@@ -51,7 +53,8 @@ public sealed partial class RespireFakeServer
             destinationSet = new HashSet<byte[]>(BinaryKeyComparer.Instance);
             _entries[args[2]] = new Entry(destinationSet);
         }
-        destinationSet.Add(args[3]);
+        TouchWatchedKey(args[1]);
+        if (destinationSet.Add(args[3])) TouchWatchedKey(args[2]);
         return FakeReply.Integer(1);
     }
 
@@ -70,8 +73,8 @@ public sealed partial class RespireFakeServer
         var result = CombineSets(sets, operation);
         if (!store) return FakeReply.Set(result.Select(FakeReply.Bulk).ToArray());
         // Materialize first: destination may alias any source. STORE replaces its type and TTL.
-        if (result.Count == 0) _entries.Remove(args[1]);
-        else _entries[args[1]] = new Entry(result);
+        if (result.Count == 0) DeleteEntry(args[1]);
+        else SetEntry(args[1], new Entry(result));
         return FakeReply.Integer(result.Count);
     }
 
