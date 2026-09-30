@@ -12,6 +12,40 @@ public class ClusterReadOnlyTests
     private static readonly byte[] ReadOnlyReply = "-READONLY You can't write against a read only replica.\r\n"u8.ToArray();
 
     [Test]
+    public async Task UnavailableLastSeedLeavesReservedTimeForLastUsableSeed()
+    {
+        await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
+        await using var replica = new FakeRespServer(ReadOnlyReply);
+        await using var initialSeed = new FakeRespServer(Topology(replica.Port));
+        await using var healthySeed = new FakeRespServer(Topology(replacement.Port));
+        // Cached-owner connection failure can consume the primary phase first. This reply
+        // fits the final quarter-round but cannot run on the already-expired early-seed token.
+        healthySeed.DelayReply(0, 100);
+        await using var unavailable = new FakeRespServer();
+        var unavailablePort = unavailable.Port;
+        await unavailable.DisposeAsync();
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            UseCluster = true, Connections = 1, ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = null,
+            Endpoints = [new("127.0.0.1", initialSeed.Port), new("127.0.0.1", healthySeed.Port),
+                new("127.0.0.1", unavailablePort)],
+        });
+        initialSeed.SuppressReply = _ => true;
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        replica.SuppressReply = _ => { received.TrySetResult(); return true; };
+        var write = client.SetAsync("key", "value").AsTask();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var router = client.Core.Cluster!;
+        router.SetSlotOwner(ClusterHash.GetSlot("key"),
+            router.GetMultiplexer(new RespireEndpoint("127.0.0.1", unavailablePort)));
+        await replica.SendRawAsync(ReadOnlyReply);
+
+        await Assert.That(await write.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue();
+        await Assert.That(healthySeed.ReceivedCommands).IsEquivalentTo(["CLUSTER SLOTS"]);
+        await Assert.That(replacement.ReceivedCommands).IsEquivalentTo(["SET key value"]);
+    }
+
+    [Test]
     public async Task ManyStalledSeedsLeaveUsableTimeForFinalSeed()
     {
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
@@ -55,7 +89,7 @@ public class ClusterReadOnlyTests
         await using var original = new FakeRespServer();
         await using var intermediate = new FakeRespServer();
         await using var stale = new FakeRespServer();
-        await using var seed = new FakeRespServer(Topology(original.Port));
+        await using var seed = new FakeRespServer(FullTopology(original.Port));
         await using var client = await ConnectAsync(seed.Port);
         var router = client.Core.Cluster!;
         var refreshing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -67,7 +101,7 @@ public class ClusterReadOnlyTests
         var originalOwner = router.GetMultiplexer(new RespireEndpoint("127.0.0.1", original.Port));
         router.SetSlotOwner(slot, router.GetMultiplexer(new RespireEndpoint("127.0.0.1", intermediate.Port)));
         router.SetSlotOwner(slot, originalOwner);
-        await seed.SendRawAsync(Topology(stale.Port));
+        await seed.SendRawAsync(FullTopology(stale.Port));
         _ = await refresh.WaitAsync(TimeSpan.FromSeconds(5));
 
         await Assert.That((await router.GetConnectionAsync(slot, CancellationToken.None)).Port).IsEqualTo(original.Port);
@@ -87,6 +121,7 @@ public class ClusterReadOnlyTests
         await Assert.That(async () => await client.SetAsync("key", "value")).Throws<ObjectDisposedException>();
         await Assert.That(seed.CommandsSeen).IsEqualTo(1);
     }
+
     [Test]
     public async Task TwoStalledPrimariesStillLeaveTimeForSeedDiscovery()
     {
@@ -582,4 +617,7 @@ public class ClusterReadOnlyTests
         var slot = ClusterHash.GetSlot("key");
         return Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{port}\r\n");
     }
+
+    private static byte[] FullTopology(int port)
+        => Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{port}\r\n");
 }

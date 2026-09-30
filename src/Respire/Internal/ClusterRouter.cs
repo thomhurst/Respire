@@ -369,10 +369,17 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 continue;
             }
             budget.Token.ThrowIfCancellationRequested();
-            // Give the final configured seed all remaining time; the demoted source is
-            // only a best-effort fallback if that seed fails before the deadline.
+            // Reserve the remainder for the final usable seed, excluding an owner that
+            // already failed connection. The demoted source is only a best-effort fallback.
+            var lastUsableSeed = candidates.Count - 1;
+            while (lastUsableSeed >= 0
+                && (ReferenceEquals(candidates[lastUsableSeed], unavailableOwner)
+                    || IsSameEndpoint(candidates[lastUsableSeed], source)))
+            {
+                lastUsableSeed--;
+            }
             var attemptToken = primaryPhase ? budget.PrimaryToken
-                : budget.GetFallbackToken(index >= candidates.Count - 2);
+                : budget.GetFallbackToken(index >= lastUsableSeed);
             if (attemptToken.IsCancellationRequested)
             {
                 continue;
