@@ -50,9 +50,9 @@ public sealed record RespireClientSideCacheOptions
     }
     /// <summary>
     /// Shares concurrent equivalent cache misses within this client. Each caller can cancel
-    /// independently; the shared request is canceled when its last caller leaves. Defaults to true.
+    /// independently; the shared request is canceled when its last caller leaves. Defaults to false.
     /// </summary>
-    public bool CoalesceConcurrentMisses { get; init; } = true;
+    public bool CoalesceConcurrentMisses { get; init; }
 }
 
 /// <summary>Cumulative and current state of a Respire client-side cache.</summary>

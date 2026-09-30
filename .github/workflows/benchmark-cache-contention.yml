@@ -16,7 +16,7 @@ jobs:
   cache-contention-comparison:
     name: Compare cache contention (informational)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     services:
       redis:
         image: redis:8.10@sha256:6f81e8915c60b065a524e6967e0ad1c639ba6efa84d669f823683ea04d9150ee
@@ -60,6 +60,7 @@ jobs:
             (
               cd "$source"
               git rev-parse HEAD
+              if [ "$source" = baseline ]; then export RESPIRE_CONTENTION_BASELINE=1; fi
               dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
                 --filter "$filter" --job "$job" --exporters json markdown \
                 --artifacts "$GITHUB_WORKSPACE/results/$phase"
@@ -75,7 +76,7 @@ jobs:
               assert reports, f"Missing benchmark results: {phase}"
               for report in reports:
                   benchmarks = json.loads(report.read_text())["Benchmarks"]
-                  assert len(benchmarks) == 6, f"Expected three operations with 1 and 32 callers: {report}"
+                  assert len(benchmarks) == 9, f"Expected three operations with three contention scenarios: {report}"
                   for benchmark in benchmarks:
                       statistics = benchmark.get("Statistics")
                       assert statistics and statistics["Mean"] > 0, f"Failed benchmark: {report}"
@@ -105,6 +106,35 @@ jobs:
                            f"{100 * (b / a - 1):+.2f}% | {allocations} |")
           summary = "\n".join(lines) + "\n"
           Path("results/comparison.md").write_text(summary)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(summary)
+      - name: Summarize diagnostic process CPU
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          prefix = "CACHE_CONTENTION_PROCESS_METRICS "
+          lines = ["## Diagnostic process CPU", "",
+                   "Includes warmup, calibration, and background work; not isolated operation CPU.", "",
+                   "| Phase | Operation | Scenario | Operations | CPU ms | Wall seconds |",
+                   "| --- | --- | --- | ---: | ---: | ---: |"]
+          records = []
+          for phase in ("baseline-a", "candidate", "baseline-b"):
+              found = []
+              for line in Path(f"{phase}.log").read_text().splitlines():
+                  if line.startswith(prefix):
+                      record = json.loads(line[len(prefix):])
+                      record["phase"] = phase
+                      found.append(record)
+                      lines.append(f"| {phase} | {record['operation']} | {record['scenario']} | {record['operations']} | "
+                                   f"{record['cpuMilliseconds']:.3f} | {record['elapsedSeconds']:.3f} |")
+              assert {record["scenario"] for record in found} == {"DefaultSingle", "CoalescedSingle", "CoalescedBurst"}
+              assert all(record["operations"] > 0 and record["cpuMilliseconds"] >= 0 for record in found)
+              records.extend(found)
+          Path("results/process-metrics.json").write_text(json.dumps(records, indent=2))
+          summary = "\n".join(lines) + "\n"
+          Path("results/process-metrics.md").write_text(summary)
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
               output.write(summary)
       - name: Publish comparison reports

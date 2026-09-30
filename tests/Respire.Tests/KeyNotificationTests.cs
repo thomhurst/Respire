@@ -243,13 +243,26 @@ public class KeyNotificationTests
     public async Task RepeatedParsingAndStructEnumerationAllocateNothing()
     {
         var message = Message("__subkeyevent@0__:hset", "3:key|1:a,0:,3:x,y");
-        for (var index = 0; index < 100; index++) ParseAndCount(message);
+        // Warm the same loop and method entry used for measurement, including JIT and
+        // coverage probes. Assertions and async test machinery stay outside that method.
+        _ = MeasureParsing(message);
+        var measurements = new (int Count, long Allocated)[3];
+        for (var batch = 0; batch < measurements.Length; batch++)
+            measurements[batch] = MeasureParsing(message);
+        foreach (var measurement in measurements)
+        {
+            await Assert.That(measurement.Count).IsEqualTo(4000);
+            await Assert.That(measurement.Allocated).IsEqualTo(0L);
+        }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static (int Count, long Allocated) MeasureParsing(RespireMessage message)
+    {
         var before = GC.GetAllocatedBytesForCurrentThread();
         var count = 0;
         for (var index = 0; index < 1000; index++) count += ParseAndCount(message);
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-        await Assert.That(count).IsEqualTo(4000);
-        await Assert.That(allocated).IsEqualTo(0L);
+        return (count, GC.GetAllocatedBytesForCurrentThread() - before);
     }
 
     private static int ParseAndCount(RespireMessage message)

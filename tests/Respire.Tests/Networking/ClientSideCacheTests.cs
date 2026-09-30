@@ -866,7 +866,7 @@ public class ClientSideCacheTests
             FakeRespServer.OkReply,
             "$3\r\nold\r\n"u8.ToArray(),
             ":1\r\n"u8.ToArray());
-        server.DelayReply(4, 250);
+        server.SuppressReply = command => command.StartsWith("EVAL", StringComparison.Ordinal);
         await using var client = await ConnectAsync(server);
 
         await client.GetStringAsync("key");
@@ -877,6 +877,7 @@ public class ClientSideCacheTests
         await Assert.That(cache.Count).IsEqualTo(0);
         InsertCachedValue(cache, "key", "old");
 
+        await server.SendRawAsync(":1\r\n"u8.ToArray());
         await execution;
 
         await Assert.That(cache.Count).IsEqualTo(0);
@@ -892,7 +893,7 @@ public class ClientSideCacheTests
             FakeRespServer.OkReply,
             "$3\r\nold\r\n"u8.ToArray(),
             ":1\r\n"u8.ToArray());
-        server.DelayReply(5, 250);
+        server.SuppressReply = command => command.StartsWith("EVAL", StringComparison.Ordinal);
         await using var client = await ConnectAsync(server);
         await client.EnsureReliableCorrectionOrderingAsync();
 
@@ -908,6 +909,7 @@ public class ClientSideCacheTests
         await Assert.That(cache.Count).IsEqualTo(0);
         InsertCachedValue(cache, "key", "old");
 
+        await server.SendRawAsync(":1\r\n"u8.ToArray());
         using var result = await execution.Response;
 
         await Assert.That(result.AsInteger()).IsEqualTo(1);

@@ -5,6 +5,9 @@ namespace Respire;
 
 internal sealed partial class ClientSideCacheCoordinator
 {
+    private static long _sharedReadRetirements;
+    internal static long SharedReadRetirements => Interlocked.Read(ref _sharedReadRetirements);
+
     private readonly Lock _sharedReadLock = new();
     private readonly Dictionary<ClientCacheCommandKey, SharedRead> _sharedReads = new();
     private readonly HashSet<SharedRead> _activeSharedReads = new();
@@ -41,6 +44,7 @@ internal sealed partial class ClientSideCacheCoordinator
 
         // Start outside the gate: transport callbacks and metrics may reenter the cache.
         // Every producer snapshots its inputs before its first asynchronous suspension.
+        // ProduceSharedReadAsync must capture every failure in Completion; it is not awaited here.
         if (owner) _ = ProduceSharedReadAsync(shared, state, read);
         return WaitForSharedReadAsync(shared, cancellationToken);
     }
@@ -58,6 +62,8 @@ internal sealed partial class ClientSideCacheCoordinator
         catch (Exception error)
         {
             FinishSharedRead(shared);
+            // Producer cancellation can also come from client disposal or the command
+            // deadline, independently of a waiter's token. Preserve that original failure.
             shared.Completion.TrySetException(error);
             // All callers may have canceled. Observe the producer failure even then.
             _ = shared.Completion.Task.Exception;
@@ -70,7 +76,13 @@ internal sealed partial class ClientSideCacheCoordinator
         try
         {
             var response = await shared.Completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
-            // No caller receives another caller's arrays or a pooled transport lease.
+            // Completion removes the joinable identity before waking callers. Earlier
+            // callers finish copying before decrementing Waiters, so the last caller can
+            // take the producer's owned value without sharing mutable arrays.
+            lock (_sharedReadLock)
+            {
+                if (shared.Waiters == 1) return response;
+            }
             return response.ToOwned();
         }
         finally
@@ -139,7 +151,12 @@ internal sealed partial class ClientSideCacheCoordinator
     // Conservatively retire all identities: an invalidation of any dependency ends joining.
     private void RetireSharedReads()
     {
-        lock (_sharedReadLock) _sharedReads.Clear();
+        lock (_sharedReadLock)
+        {
+            // Observable measurement keeps user meter callbacks outside cache gates.
+            if (_sharedReads.Count != 0) Interlocked.Add(ref _sharedReadRetirements, _sharedReads.Count);
+            _sharedReads.Clear();
+        }
     }
 
     internal void StopSharedReads()

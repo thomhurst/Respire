@@ -37,8 +37,8 @@ enabling caching does not introduce shared mutable objects.
 
 ## Concurrent misses
 
-Concurrent misses for the same command and byte-for-byte arguments share one tracked request
-within a client. This covers typed `GET` variants, identical ordered `MGET` miss lists, and all
+Set `ClientSideCache.CoalesceConcurrentMisses = true` to share concurrent misses for the same
+command and byte-for-byte arguments within a client. Sharing is opt-in; the default is `false`. This covers typed `GET` variants, identical ordered `MGET` miss lists, and all
 eligible deterministic query reads. Typed and raw calls can join the same wire command; each
 caller still performs its own conversion and receives independently owned results and leases.
 Binary keys and arguments are snapshotted. Prefix views use resolved wire keys; separate clients,
@@ -57,13 +57,18 @@ older work. Callers already waiting may receive their original read result, but 
 invalidation fences reject stale cache insertion. Retirement is conservative: an invalidation
 currently ends joining for all pending identities, even those with unrelated keys. Completed work
 is always removed, including oversized responses and other replies that cannot enter the cache.
-Cache hit/miss counters remain per caller, not per wire request.
+Cache hit/miss counters remain per caller, not per wire request. The process-wide observable
+counter `respire.client_cache.shared_read.retirements` counts pending identities removed by invalidation,
+clearing, or continuity loss. Normal completion and last-caller cancellation are excluded.
+Use this counter to assess how often churn prevents new callers from joining existing work.
 
-Sharing adds bookkeeping and owned-result copies on misses. To retain independent requests for a
-workload with little contention, set `ClientSideCache.CoalesceConcurrentMisses = false` when
-constructing the options. Cache hits retain their existing fast path. The CI contention benchmark
-compares 1 and 32 callers for `GET` and `HGET`, plus hot `GET`, against both same-run baseline controls;
-latency and allocations include one complete burst and its local cache eviction.
+Sharing adds bookkeeping and owned-result copies on misses. Keep the default independent
+requests for workloads with little contention. The last remaining waiter receives the producer's
+owned result; other waiters receive separate copies. Cache hits retain their existing fast path. The CI contention benchmark
+compares default single-caller misses, opted-in single-caller misses, and opted-in 32-caller bursts
+for `GET` and `HGET`, plus hot `GET`, against both same-run baseline controls. Latency and allocations
+include one complete burst and its local cache eviction. Process CPU counters include benchmark
+warmup/calibration and background client work; they are diagnostic, not per-operation CPU samples.
 
 ## Why this is different
 

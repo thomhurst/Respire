@@ -121,6 +121,10 @@ internal static class RespireTelemetry
         unit: "{read}",
         description: "Client-side cache reads sent to Redis.");
 
+    public static readonly ObservableCounter<long> ClientCacheSharedReadRetirements = Meter.CreateObservableCounter(
+        "respire.client_cache.shared_read.retirements", () => ClientSideCacheCoordinator.SharedReadRetirements,
+        unit: "{request}", description: "Joinable shared reads retired by invalidation, clearing, or continuity loss.");
+
     public static readonly Counter<long> ClientCacheInvalidations = Meter.CreateCounter<long>(
         "respire.client_cache.invalidations",
         unit: "{key}",

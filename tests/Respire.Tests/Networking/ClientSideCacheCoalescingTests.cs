@@ -58,6 +58,9 @@ public class ClientSideCacheCoalescingTests
         await server.SendRawAsync("+OK\r\n*2\r\n$1\r\na\r\n$1\r\nb\r\n+PONG\r\n"u8.ToArray());
         using var left = await first.WaitAsync(Timeout);
         using var right = await second.WaitAsync(Timeout);
+        // Mutate the actual owned payload, not a conversion copy. Each waiter and the
+        // resident cache must remain independent even when the last waiter takes ownership.
+        System.Runtime.InteropServices.MemoryMarshal.AsMemory(left[1].AsMemory()).Span[0] = (byte)'z';
         left.Dispose();
         await Assert.That(right[1].AsString()).IsEqualTo("b");
         using var cached = await client.ExecuteAsync("HGETALL", "hash");
@@ -190,7 +193,7 @@ public class ClientSideCacheCoalescingTests
     [Test]
     public async Task CompletedUncacheableReadRetiresAndDoesNotBecomeAnUnboundedCache()
     {
-        var cache = new ClientSideCacheCoordinator(new());
+        var cache = new ClientSideCacheCoordinator(new() { CoalesceConcurrentMisses = true });
         var identity = new ClientCacheCommandKey("GET", "key");
         var calls = 0;
         ValueTask<RespValue> Read(int _, CancellationToken token)
@@ -226,6 +229,10 @@ public class ClientSideCacheCoalescingTests
         await Assert.That(client.Core.ClientCache!.ActiveSharedReadCount).IsEqualTo(0);
         await Assert.That(client.ClientSideCache!.Count).IsEqualTo(0);
         server.SuppressReply = null;
+        // Standalone reads fail fast until background replacement completes. A failed
+        // accepted read does not imply that the next connection is already published.
+        await WaitUntilAsync(() => client.IsConnected
+            && server.ReceivedCommands.Count(c => c == "CLIENT TRACKING ON OPTIN") == 2);
         await Assert.That(await client.GetStringAsync("key").AsTask().WaitAsync(Timeout)).IsEqualTo("new");
         await Assert.That(server.ReceivedCommands.Count(c => c == "GET key")).IsEqualTo(2);
         await Assert.That(server.ReceivedCommands.Count(c => c == "CLIENT TRACKING ON OPTIN")).IsEqualTo(2);
@@ -260,7 +267,7 @@ public class ClientSideCacheCoalescingTests
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             Database = 1,
-            ClientSideCache = new(),
+            ClientSideCache = new() { CoalesceConcurrentMisses = true },
         });
         var first = firstClient.GetStringAsync("key").AsTask();
         var second = secondClient.GetStringAsync("key").AsTask();
@@ -274,14 +281,14 @@ public class ClientSideCacheCoalescingTests
     [Test]
     [Arguments(true, 1)]
     [Arguments(false, 2)]
-    public async Task CoalescingCanBeDisabled(bool enabled, int requests)
+    public async Task CoalescingIsExplicitlyEnabled(bool enabled, int requests)
     {
         await using var server = CreateServer();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
-            ClientSideCache = new() { CoalesceConcurrentMisses = enabled },
+            ClientSideCache = enabled ? new() { CoalesceConcurrentMisses = true } : new(),
         });
         var first = client.GetStringAsync("key").AsTask();
         var second = client.GetStringAsync("key").AsTask();
@@ -338,7 +345,7 @@ public class ClientSideCacheCoalescingTests
         {
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
-            ClientSideCache = new(),
+            ClientSideCache = new() { CoalesceConcurrentMisses = true },
         });
 
     // PING is queued after every caller. Its arrival proves all preceding wire writes are visible.
