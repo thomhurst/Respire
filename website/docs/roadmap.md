@@ -5,11 +5,12 @@ description: What Respire supports today and what remains before a stable releas
 
 # Status and roadmap
 
-Respire is pre-release. Its core RESP2 client, typed command surface, pipelining, blocking command routing, pub/sub, streams, transactions, caching, dependency injection, and telemetry are implemented. Public APIs may still change.
+Respire is pre-release. Its RESP3-preferred client with bounded RESP2 fallback, typed command surface, pipelining, blocking command routing, pub/sub, streams, transactions, caching, dependency injection, and telemetry are implemented. Public APIs may still change.
 
 ## Available now
 
 - Redis-style URI and `RespireOptions` connections
+- Automatic RESP3 preference with unsupported-HELLO fallback, strict protocol overrides, and typed RESP2/RESP3 reply normalization
 - Multiplexed connection pool with automatic pipelining
 - String, key, hash, list, set, sorted-set, stream, bitmap, HyperLogLog, geo, script, and server facets
 - Generated descriptors for every audited Redis, Valkey, module, KeyDB, and Dragonfly command
@@ -33,7 +34,6 @@ Respire is pre-release. Its core RESP2 client, typed command surface, pipelining
 | --- | --- |
 | Redis Cluster gaps | Cluster routing and same-slot `WATCH` transactions are supported; sharded pub/sub and typed notification fan-out remain unavailable in cluster mode |
 | Automatic Sentinel failover | Sentinel primary discovery is supported by `ConnectAsync`; lazy discovery and automatic re-discovery during failover are not supported |
-| RESP3-first internals | Automatic RESP3 preference with unsupported-HELLO fallback, strict protocol overrides, and typed RESP2/RESP3 reply normalization |
 
 If one of these is a hard requirement today, use a mature client such as StackExchange.Redis.
 

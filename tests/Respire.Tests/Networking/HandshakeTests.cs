@@ -44,7 +44,7 @@ public class HandshakeTests
     {
         await using var server = new FakeRespServer(HelloReply);
         await using var connection = await RespireConnection.ConnectAsync(
-            "127.0.0.1", server.Port, new RespireConnectionOptions { UseResp3 = true });
+            "127.0.0.1", server.Port, new RespireConnectionOptions { Protocol = RespProtocol.Resp3 });
 
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("HELLO 3");
     }
@@ -54,7 +54,7 @@ public class HandshakeTests
     {
         await using var server = new FakeRespServer(HelloReply);
         await using var connection = await RespireConnection.ConnectAsync(
-            "127.0.0.1", server.Port, new RespireConnectionOptions { UseResp3 = true, Password = "secret" });
+            "127.0.0.1", server.Port, new RespireConnectionOptions { Protocol = RespProtocol.Resp3, Password = "secret" });
 
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("HELLO 3 AUTH default secret");
     }
@@ -133,7 +133,7 @@ public class HandshakeTests
         await using var server = new FakeRespServer("-ERR unknown command 'HELLO'\r\n"u8.ToArray());
 
         await Assert.That(async () => await RespireConnection.ConnectAsync(
-                "127.0.0.1", server.Port, new RespireConnectionOptions { UseResp3 = true }))
+                "127.0.0.1", server.Port, new RespireConnectionOptions { Protocol = RespProtocol.Resp3 }))
             .Throws<RespireConnectionException>();
     }
 
@@ -143,7 +143,7 @@ public class HandshakeTests
         await using var server = new FakeRespServer("%1\r\n$5\r\nproto\r\n:2\r\n"u8.ToArray());
 
         await Assert.That(async () => await RespireConnection.ConnectAsync(
-                "127.0.0.1", server.Port, new RespireConnectionOptions { UseResp3 = true }))
+                "127.0.0.1", server.Port, new RespireConnectionOptions { Protocol = RespProtocol.Resp3 }))
             .Throws<RespireConnectionException>();
     }
 
@@ -153,7 +153,7 @@ public class HandshakeTests
         await using var server = new FakeRespServer("%1\r\n$6\r\nserver\r\n$5\r\nredis\r\n"u8.ToArray());
 
         await Assert.That(async () => await RespireConnection.ConnectAsync(
-                "127.0.0.1", server.Port, new RespireConnectionOptions { UseResp3 = true }))
+                "127.0.0.1", server.Port, new RespireConnectionOptions { Protocol = RespProtocol.Resp3 }))
             .Throws<RespireConnectionException>();
     }
 

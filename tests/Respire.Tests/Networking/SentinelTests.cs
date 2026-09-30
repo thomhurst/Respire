@@ -231,7 +231,7 @@ public class SentinelTests
             ClientName = "primary-client",
         });
 
-        await Assert.That(options.UseResp3).IsFalse();
+        await Assert.That(options.Protocol).IsEqualTo(RespProtocol.Resp2);
         await Assert.That(options.UseTls).IsFalse();
         await Assert.That(options.ClientName).IsNull();
     }

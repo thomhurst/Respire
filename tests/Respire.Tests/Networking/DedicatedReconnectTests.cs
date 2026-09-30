@@ -96,7 +96,7 @@ public class DedicatedReconnectTests
         };
         var terminal = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
-            new RespireConnectionOptions { UseResp3 = true, ReconnectPolicy = Policy() with { MaxAttempts = null } }, null,
+            new RespireConnectionOptions { Protocol = RespProtocol.Resp3, ReconnectPolicy = Policy() with { MaxAttempts = null } }, null,
             change => { if (change.State == RespireConnectionState.Disconnected) terminal.TrySetResult(change); });
         using var deadline = new CancellationTokenSource(Deadline);
         var error = await Assert.That(async () => await pool.RentAsync(deadline.Token)).ThrowsExactly<RespireConnectionException>();

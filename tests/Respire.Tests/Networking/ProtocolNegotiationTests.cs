@@ -104,7 +104,7 @@ public class ProtocolNegotiationTests
         await using var server = new FakeRespServer("-NOPROTO unsupported protocol version\r\n"u8.ToArray(),
             FakeRespServer.OkReply);
         await Assert.That(async () => await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
-            new RespireConnectionOptions { UseResp3 = true, AllowResp2Fallback = true, EnableClientTracking = true }))
+            new RespireConnectionOptions { Protocol = RespProtocol.Auto, EnableClientTracking = true }))
             .Throws<RespireConnectionException>();
         await Assert.That(server.ReceivedCommands[0]).IsEqualTo("HELLO 3");
         await Assert.That(server.ReceivedCommands.All(command => !command.StartsWith("AUTH"))).IsTrue();
@@ -155,8 +155,7 @@ public class ProtocolNegotiationTests
     {
         var options = RespireOptions.Parse(text);
         await Assert.That(options.Protocol).IsEqualTo(RespProtocol.Auto);
-        await Assert.That(options.ToConnectionOptions().UseResp3).IsTrue();
-        await Assert.That(options.ToConnectionOptions().AllowResp2Fallback).IsTrue();
+        await Assert.That(options.ToConnectionOptions().Protocol).IsEqualTo(RespProtocol.Auto);
     }
 
     private static RespireOptions Options(FakeRespServer server) => new()
