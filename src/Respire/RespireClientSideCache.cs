@@ -633,7 +633,7 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             "ZADD" or "ZINCRBY" or "ZREM" or "ZREMRANGEBYRANK" or "ZREMRANGEBYSCORE" or "ZREMRANGEBYLEX" or
             "XADD" or "XACK" or "XDEL" or "XTRIM" or "XSETID" or
             "XGROUP CREATE" or "XGROUP DESTROY" or "XGROUP CREATECONSUMER" or
-            "SETBIT" or "BITFIELD" or "PFADD" or "GEOADD";
+            "SETBIT" or "BITFIELD" or "PFADD" or "GEOADD" or "VADD" or "VREM" or "VSETATTR";
 
     internal readonly record struct ReadToken(
         InflightRead State,

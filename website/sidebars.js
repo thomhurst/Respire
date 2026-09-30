@@ -23,6 +23,7 @@ const sidebars = {
       items: [
         'guides/distributed-locks',
         'guides/blocking-queues',
+        'guides/vector-sets',
         'guides/pub-sub',
         'guides/pub-sub-introspection',
         'guides/client-administration',

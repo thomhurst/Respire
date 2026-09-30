@@ -1,6 +1,8 @@
 using System.Buffers;
+using System.Buffers.Binary;
 using System.Buffers.Text;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 using Respire.Networking;
 using Respire.Internal;
@@ -38,6 +40,25 @@ internal ref struct RespWriter
         span[value.Length] = RespConstants.CarriageReturn;
         span[value.Length + 1] = RespConstants.LineFeed;
         _buffer.Advance(value.Length + 2);
+    }
+
+    /// <summary>Writes FP32 components in little-endian order without a temporary vector buffer.</summary>
+    public void WriteBulkFloat32(scoped ReadOnlySpan<float> values)
+    {
+        if (BitConverter.IsLittleEndian)
+        {
+            WriteBulkString(MemoryMarshal.AsBytes(values));
+            return;
+        }
+
+        var length = checked(values.Length * sizeof(float));
+        WritePrefixedLine(RespConstants.BulkStringPrefix, length);
+        var output = _buffer.GetSpan(checked(length + 2));
+        for (var index = 0; index < values.Length; index++)
+            BinaryPrimitives.WriteSingleLittleEndian(output.Slice(index * sizeof(float), sizeof(float)), values[index]);
+        output[length] = RespConstants.CarriageReturn;
+        output[length + 1] = RespConstants.LineFeed;
+        _buffer.Advance(length + 2);
     }
 
     /// <summary>Writes a string as a bulk string, encoding UTF-8 directly into the buffer.</summary>

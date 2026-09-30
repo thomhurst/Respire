@@ -1396,6 +1396,7 @@ public class RespireDistributedCacheTests(RedisTestContainer fixture)
         public IBitmapCommands Bitmaps => inner.Bitmaps;
         public IHyperLogLogCommands HyperLogLog => inner.HyperLogLog;
         public IGeoCommands Geo => inner.Geo;
+        public IVectorSetCommands VectorSets => inner.VectorSets;
         public IServerCommands Server => inner.Server;
 
         public ValueTask<string?> GetStringAsync(RespireKey key, CancellationToken cancellationToken = default)

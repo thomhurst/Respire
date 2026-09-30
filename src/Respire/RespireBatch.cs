@@ -45,6 +45,7 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
     private IBatchBitmapCommands? _bitmaps;
     private IBatchHyperLogLogCommands? _hyperLogLog;
     private IBatchGeoCommands? _geo;
+    private IBatchVectorSetCommands? _vectorSets;
     private IBatchScriptCommands? _scripts;
     private IBatchFunctionCommands? _functions;
     private IBatchStreamCommands? _streams;
@@ -86,6 +87,9 @@ public sealed partial class RespireBatch : IDisposable, IRespireCommandQueue, IP
 
     /// <summary>Geospatial commands. Redis: GEOADD, GEODIST, GEOSEARCH, …</summary>
     public IBatchGeoCommands Geo => _geo ??= new BatchGeoCommands(this);
+
+    /// <summary>Redis vector-set commands.</summary>
+    public IBatchVectorSetCommands VectorSets => _vectorSets ??= new BatchVectorSetCommands(this);
 
     /// <summary>Lua script evaluation. Redis: EVAL.</summary>
     public IBatchScriptCommands Scripts => _scripts ??= new BatchScriptCommands(this);
