@@ -29,6 +29,7 @@ const sidebars = {
         'guides/acl-administration',
         'guides/server-metadata-and-persistence',
         'guides/server-diagnostics',
+        'guides/cluster-inspection',
         'guides/batches-and-transactions',
         'guides/durability-acknowledgements',
         'guides/raw-commands',
