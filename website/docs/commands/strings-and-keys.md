@@ -48,6 +48,11 @@ await redis.Strings.SetManyAsync(
     ("feature:a", "on"),
     ("feature:b", "off"));
 
+// MSETNX writes both keys only when neither exists.
+bool allCreated = await redis.Strings.SetManyIfNotExistsAsync(
+    ("reservation:42:owner", "alice"),
+    ("reservation:42:state", "pending"));
+
 // One shared expiry (and optional NX/XX) for every pair — Redis MSETEX.
 await redis.Strings.SetManyExpireAsync(
     TimeSpan.FromMinutes(5),
@@ -61,6 +66,16 @@ long removed = await redis.DeleteAsync("feature:a", "feature:b");
 
 Respire deliberately retains bare-varargs calls such as `DeleteAsync("a", "b")`, so multi-item
 commands use a uniform pair of overloads rather than a single optional-token span overload.
+
+`SetManyIfNotExistsAsync(pairs, cancellationToken)` uses atomic
+[MSETNX](https://redis.io/docs/latest/commands/msetnx/), also supported by
+[Valkey](https://valkey.io/commands/msetnx/). It returns `false` without changing any key when
+one already exists, even if that key has another data type. New values have no expiry.
+At least one pair is required; empty keys and values are valid. Duplicate keys are sent in order:
+when the key was absent, the last value wins. Cluster keys must share a slot after prefixing.
+Values use raw `RespireValue` encoding, including binary values. Keep binary buffers unchanged
+until completion. Batches and transactions expose `Strings.SetManyIfNotExists(pairs)` with the
+same boolean result; cancellation is passed to batch execution or transaction commit.
 
 Variadic APIs use `params ReadOnlySpan<T>` where possible, avoiding a params-array allocation on supported C# toolchains. Because a `params` parameter must come last, each of these has a sibling overload taking the items non-params plus a required `CancellationToken`:
 

@@ -160,6 +160,15 @@ public interface IStringCommands
     ValueTask<bool> SetManyAsync(
         ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs, CancellationToken cancellationToken);
 
+    /// <summary>Atomically sets every pair only when all keys are absent; returns false without writing if any key exists. Redis: MSETNX.</summary>
+    /// <remarks>Requires at least one pair. Cluster keys must share a slot after prefixing. Values are raw; binary buffers must remain unchanged until completion. Duplicate keys follow server semantics.</remarks>
+    ValueTask<bool> SetManyIfNotExistsAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs);
+
+    /// <summary>Atomically sets every pair only when all keys are absent; returns false without writing if any key exists. Redis: MSETNX.</summary>
+    /// <remarks>Requires at least one pair. Cluster keys must share a slot after prefixing. Values are raw; binary buffers must remain unchanged until completion. Duplicate keys follow server semantics.</remarks>
+    ValueTask<bool> SetManyIfNotExistsAsync(
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs, CancellationToken cancellationToken);
+
     /// <summary>
     /// Atomically sets many keys with a shared expiry. Use
     /// <see cref="RespireCommands.String.MSETEX"/> directly for second-precision EX/EXAT forms.
@@ -381,6 +390,17 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
         => client.OkResultAsync(
             "MSET", new CmdN(Verbs.MSet, SetManyArgs(client, pairs)), cancellationToken);
 
+    public ValueTask<bool> SetManyIfNotExistsAsync(params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+        => SetManyIfNotExistsAsync(pairs, CancellationToken.None);
+
+    public ValueTask<bool> SetManyIfNotExistsAsync(
+        ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return client.FlagAsync(
+            "MSETNX", new CmdN(RespireCommands.String.MSETNX.Verb, SetManyIfNotExistsArgs(client, pairs)), cancellationToken);
+    }
+
     public ValueTask<bool> SetManyExpireAsync(
         RespireExpiry expiry, params ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
         => SetManyExpireAsync(expiry, SetWhen.Always, pairs, CancellationToken.None);
@@ -434,6 +454,27 @@ internal sealed class StringCommands(RespireClient client) : IStringCommands
             args[i * 2 + 1] = pairs[i].Value;
         }
 
+        return args;
+    }
+
+    internal static RespireValue[] SetManyIfNotExistsArgs(
+        RespireClient client, ReadOnlySpan<(RespireKey Key, RespireValue Value)> pairs)
+    {
+        ValidatePairs(pairs);
+        var args = SetManyArgs(client, pairs);
+        if (client.Core.Cluster is not null)
+        {
+            int? slot = null;
+            for (var index = 0; index < args.Length; index += 2)
+            {
+                if (args[index].TryGetClusterSlot(out var keySlot))
+                {
+                    if (slot is { } expected && keySlot != expected)
+                        throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", "MSETNX");
+                    slot = keySlot;
+                }
+            }
+        }
         return args;
     }
 

@@ -1301,6 +1301,36 @@ public class ClientSideCacheTests
         await Assert.That(server.ReceivedCommands.Count).IsEqualTo(readOnly ? 5 : 7);
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task MSetNx_FencesAllKeysBeforeAndAfterCompletion(bool applied)
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(HelloReply, FakeRespServer.OkReply)
+        {
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("MSETNX ", StringComparison.Ordinal)) return false;
+                received.TrySetResult();
+                return true;
+            },
+        };
+        await using var client = await ConnectAsync(server);
+        var view = client.WithKeyPrefix("tenant:");
+        var cache = client.Core.ClientCache!;
+        InsertCachedValue(cache, "tenant:a", "old");
+        InsertCachedValue(cache, "tenant:b", "old");
+        var write = view.Strings.SetManyIfNotExistsAsync(("a", "new"), ("b", "new")).AsTask();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(cache.Count).IsEqualTo(0);
+        InsertCachedValue(cache, "tenant:a", "racing");
+        InsertCachedValue(cache, "tenant:b", "racing");
+        await server.SendRawAsync(Encoding.ASCII.GetBytes(applied ? ":1\r\n" : ":0\r\n"));
+        await Assert.That(await write).IsEqualTo(applied);
+        await Assert.That(cache.Count).IsEqualTo(0);
+    }
+
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server)
         => RespireClient.ConnectAsync(new RespireOptions
         {
