@@ -369,6 +369,69 @@ public class PubSubReconnectPolicyTests
     }
 
     [Test]
+    public async Task DisposalPreservesQueuedExhaustionMeasurements()
+    {
+        await using var server = new FakeRespServer(2, Confirmation) { CloseConnectionAfterCommand = 2 };
+        await using var client = RespireClient.Create(Options(server.Port, Policy(attempts: 1)));
+        await using var subscription = await client.SubscribeAsync("ch");
+        using var deadline = new CancellationTokenSource(Deadline);
+        using var releaseObserver = new ManualResetEventSlim();
+        var observingAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var observedExhaustion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lifecycleEvents = new ConcurrentQueue<RespireConnectionStateChange>();
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.ReconnectSource == RespireReconnectSource.PubSub) lifecycleEvents.Enqueue(change);
+        };
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, current) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name is
+                "respire.connection.reconnect.attempt" or "respire.connection.reconnect.exhausted")
+                current.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, _, tags, _) =>
+        {
+            var endpoint = false;
+            var pubsub = false;
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "server.port" && Equals(tag.Value, server.Port)) endpoint = true;
+                if (tag.Key == "respire.connection.source" && Equals(tag.Value, "pubsub")) pubsub = true;
+            }
+            if (!endpoint || !pubsub) return;
+            if (instrument.Name == "respire.connection.reconnect.exhausted")
+                observedExhaustion.TrySetResult();
+            else
+            {
+                observingAttempt.TrySetResult();
+                if (!releaseObserver.Wait(Deadline)) throw new TimeoutException("Test did not release the metric observer.");
+            }
+        });
+        listener.Start();
+        try
+        {
+            server.SuppressReply = _ => true;
+            await Assert.That(async () => await client.SubscribeAsync("lost", deadline.Token)).Throws<RespireConnectionException>();
+            await observingAttempt.Task.WaitAsync(deadline.Token);
+            await WaitForCommandsAsync(server, 3, deadline.Token);
+            await server.SendRawAsync(Rejection, server.ReceivedConnectionIds[^1]);
+            await Assert.That(await subscription.Completion.WaitAsync(deadline.Token))
+                .IsEqualTo(RespireSubscriptionEndReason.ReconnectExhausted);
+            // The first measurement holds the dispatcher, so terminal telemetry is still queued.
+            await client.DisposeAsync().AsTask().WaitAsync(deadline.Token);
+            releaseObserver.Set();
+            await observedExhaustion.Task.WaitAsync(deadline.Token);
+            await Assert.That(lifecycleEvents.IsEmpty).IsTrue();
+        }
+        finally
+        {
+            releaseObserver.Set();
+            await client.DisposeAsync();
+        }
+    }
+
+    [Test]
     public async Task RecoveryObserverCanDisposeSynchronously()
     {
         await using var server = new FakeRespServer(Confirmation) { CloseConnectionAfterCommand = 2 };

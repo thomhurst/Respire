@@ -571,7 +571,9 @@ internal sealed partial class SubscriptionHub(ClientCore core) : IAsyncDisposabl
             {
                 core.Logger?.LogWarning(error, "Pub/sub recovery metric observer threw");
             }
-            core.NotifySubscriptionStateChanged(change);
+            // Measurements describe scheduled work and survive disposal. Lifecycle events
+            // still queued when disposal wins must not restore the client's subscription state.
+            if (!_disposed) core.NotifySubscriptionStateChanged(change);
         }
     }
 
@@ -678,7 +680,7 @@ internal sealed partial class SubscriptionHub(ClientCore core) : IAsyncDisposabl
             }
 
             _disposed = true;
-            _pendingReconnectStates.Clear();
+            // Leave queued observations for the independent dispatcher to measure and drain.
         }
 
         _lifetimeCancellation.Cancel();

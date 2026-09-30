@@ -133,6 +133,8 @@ Disposal cancels configured delays, connection handshakes, and resubscription wa
 then drains owned recovery and socket cleanup. Ordered lifecycle delivery happens outside
 the recovery task so a lifecycle handler can synchronously dispose the client. Keep event
 handlers short; attempt observations can lag the work they describe.
+Disposal suppresses queued lifecycle callbacks, but queued measurements still drain because
+they describe already scheduled attempts or completed exhaustion. They may arrive after disposal.
 
 ## Lifecycle and telemetry
 
