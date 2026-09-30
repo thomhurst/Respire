@@ -22,7 +22,9 @@ public sealed record RespireReconnectPolicy
     /// is recreated; there is no automatic cooldown or reset. Successful replacement resets the count
     /// before exhaustion. Each dedicated rent starts a new budget, so exhaustion does not disable the pool.
     /// Leave null for long-lived clients that must keep trying after an outage.
-    /// Sentinel resolution counts fallback candidates after the first; a new explicit resolution starts fresh.</remarks>
+    /// Sentinel resolution counts fallback candidates after the first; a new explicit resolution starts fresh.
+    /// With null, all available Sentinel candidates may incur backoff and their own timeouts. Supply caller
+    /// cancellation with a deadline to bound total resolution time; this setting does not provide one.</remarks>
     public int? MaxAttempts { get; init; }
 
     internal bool IsExhausted(int attempts) => MaxAttempts is { } maximum && attempts >= maximum;
