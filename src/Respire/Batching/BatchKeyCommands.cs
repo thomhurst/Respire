@@ -6,7 +6,8 @@ namespace Respire;
 /// <summary>
 /// Generic key management commands queued on a <see cref="RespireBatch"/> or
 /// <see cref="RespireTransaction"/>. Mirrors <see cref="IKeyCommands"/>, minus
-/// <c>ScanAsync</c> — a cursor walk is many round trips and cannot be deferred.
+/// <c>ScanAsync</c> and <c>ScanClusterPageAsync</c>: cursor walks and validated Cluster pages
+/// require multiple round trips and cannot be deferred.
 /// </summary>
 public partial interface IBatchKeyCommands
 {

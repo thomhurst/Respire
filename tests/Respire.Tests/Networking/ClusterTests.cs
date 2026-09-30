@@ -972,13 +972,15 @@ public class ClusterTests
     public async Task Scan_TraversesEveryKnownMaster()
     {
         await using var firstNode = new FakeRespServer(
-            "*2\r\n$1\r\n0\r\n*1\r\n$3\r\none\r\n"u8.ToArray());
-        await using var secondNode = new FakeRespServer(
             "*2\r\n$1\r\n0\r\n*1\r\n$3\r\ntwo\r\n"u8.ToArray());
+        await using var secondNode = new FakeRespServer(
+            "*2\r\n$1\r\n0\r\n*1\r\n$3\r\none\r\n"u8.ToArray());
         var topology = Encoding.ASCII.GetBytes(
             $"*2\r\n" +
             $"*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{firstNode.Port}\r\n" +
             $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{secondNode.Port}\r\n");
+        ConfigureClusterScanMetadata(firstNode, "first", "0-8191", topology);
+        ConfigureClusterScanMetadata(secondNode, "second", "8192-16383", topology);
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
@@ -993,8 +995,8 @@ public class ClusterTests
         }
 
         await Assert.That(keys).IsEquivalentTo(["one", "two"]);
-        await Assert.That(firstNode.ReceivedCommands[0]).IsEqualTo("SCAN 0 COUNT 250");
-        await Assert.That(secondNode.ReceivedCommands[0]).IsEqualTo("SCAN 0 COUNT 250");
+        await Assert.That(firstNode.ReceivedCommands.First(command => command.StartsWith("SCAN "))).IsEqualTo("SCAN 0 COUNT 250");
+        await Assert.That(secondNode.ReceivedCommands.First(command => command.StartsWith("SCAN "))).IsEqualTo("SCAN 0 COUNT 250");
     }
 
     [Test]
@@ -1008,6 +1010,7 @@ public class ClusterTests
             $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{currentNode.Port}\r\n");
         var currentTopology = Encoding.ASCII.GetBytes(
             $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{currentNode.Port}\r\n");
+        ConfigureClusterScanMetadata(currentNode, "current", "0-16383", currentTopology);
         await using var seed = new FakeRespServer(staleTopology, currentTopology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
@@ -1023,7 +1026,7 @@ public class ClusterTests
         }
 
         await Assert.That(keys).IsEquivalentTo(["current"]);
-        await Assert.That(currentNode.ReceivedCommands[0]).IsEqualTo("SCAN 0 COUNT 250");
+        await Assert.That(currentNode.ReceivedCommands.First(command => command.StartsWith("SCAN "))).IsEqualTo("SCAN 0 COUNT 250");
     }
 
     [Test]
@@ -1121,13 +1124,15 @@ public class ClusterTests
     public async Task Scan_RefreshesThroughCachedMasterWhenSeedIsUnavailable()
     {
         await using var refreshedFirstNode = new FakeRespServer(
-            "*2\r\n$1\r\n0\r\n*1\r\n$3\r\none\r\n"u8.ToArray());
-        await using var secondNode = new FakeRespServer(
             "*2\r\n$1\r\n0\r\n*1\r\n$3\r\ntwo\r\n"u8.ToArray());
+        await using var secondNode = new FakeRespServer(
+            "*2\r\n$1\r\n0\r\n*1\r\n$3\r\none\r\n"u8.ToArray());
         var refreshedTopology = Encoding.ASCII.GetBytes(
             $"*2\r\n" +
             $"*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{refreshedFirstNode.Port}\r\n" +
             $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{secondNode.Port}\r\n");
+        ConfigureClusterScanMetadata(refreshedFirstNode, "first", "0-8191", refreshedTopology);
+        ConfigureClusterScanMetadata(secondNode, "second", "8192-16383", refreshedTopology);
         await using var cachedFirstNode = new FakeRespServer(refreshedTopology);
         var initialTopology = Encoding.ASCII.GetBytes(
             $"*2\r\n" +
@@ -1156,7 +1161,7 @@ public class ClusterTests
 
         await Assert.That(keys).IsEquivalentTo(["one", "two"]);
         await Assert.That(cachedFirstNode.ReceivedCommands[0]).IsEqualTo("CLUSTER SLOTS");
-        await Assert.That(refreshedFirstNode.ReceivedCommands[0]).IsEqualTo("SCAN 0 COUNT 250");
+        await Assert.That(refreshedFirstNode.ReceivedCommands.First(command => command.StartsWith("SCAN "))).IsEqualTo("SCAN 0 COUNT 250");
     }
 
     [Test]
@@ -1644,6 +1649,20 @@ public class ClusterTests
 
         await Assert.That(options.UseCluster).IsTrue();
     }
+
+    private static void ConfigureClusterScanMetadata(FakeRespServer server, string id, string slots, byte[] topology)
+    {
+        server.ReplyOverride = (_, command) => command switch
+        {
+            "CLUSTER SLOTS" => topology,
+            "CLUSTER NODES" => ScanMetadataReply($"{id} 127.0.0.1:{server.Port}@17000 myself,master - 0 0 1 connected {slots}\n"),
+            "INFO server" => ScanMetadataReply($"run_id:{id}-run\r\n"),
+            _ => null,
+        };
+    }
+
+    private static byte[] ScanMetadataReply(string value)
+        => Encoding.UTF8.GetBytes($"${Encoding.UTF8.GetByteCount(value)}\r\n{value}\r\n");
 
     private static bool TryGetSlot<TCommand>(TCommand command, out int slot)
         where TCommand : struct, IRespCommand

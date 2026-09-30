@@ -273,3 +273,83 @@ use `PEXPIREAT`. `RespireExpiry.Persist` uses `PERSIST`, which rejects these con
 See Redis's [EXPIRETIME](https://redis.io/docs/latest/commands/expiretime/),
 [OBJECT IDLETIME](https://redis.io/docs/latest/commands/object-idletime/), and
 [OBJECT FREQ](https://redis.io/docs/latest/commands/object-freq/) command references.
+
+
+### Resumable Cluster scans
+
+In Cluster mode, `Keys.ScanAsync` uses the same slot-aware page engine as
+`Keys.ScanClusterPageAsync`. Use the page API when work needs a durable checkpoint:
+
+```csharp
+await using var cluster = await RespireClient.ConnectAsync(new RespireOptions
+{
+    UseCluster = true,
+    Endpoints = { new("redis-1", 6379), new("redis-2", 6379) },
+});
+var cursor = RespireClusterScanCursor.Start;
+do
+{
+    var page = await cluster.Keys.ScanClusterPageAsync(cursor, match: "user:*", countHint: 250);
+    foreach (var key in page.Keys)
+        Console.WriteLine(key);
+
+    // Persist this string after processing every key in the page.
+    string checkpoint = page.Cursor.ToString();
+    // The same string can be parsed by another process connected to this cluster.
+    cursor = RespireClusterScanCursor.Parse(checkpoint);
+    if (page.WaitingOnMigration) await Task.Delay(250);
+}
+while (!cursor.IsComplete);
+```
+
+Each cursor is immutable. Reusing one repeats that scan position; a failed or cancelled
+page call leaves its input cursor usable. Retry that input after a transient connection
+failure. Save the returned cursor only after processing its keys, and make processing
+idempotent: Redis SCAN may return duplicates. Empty pages can still have an incomplete
+cursor. `COUNT` is a server work hint, not a maximum number of returned keys.
+`CompletedSlotCount` reports progress across 16,384 slots and can decrease after resharding.
+
+Keep the same `match`, `type`, and key-prefix view when resuming. These are bound into the
+cursor and a mismatch fails before network access; `countHint` may change. Prefixes are
+glob-escaped for matching, and returned keys have the literal prefix removed, just as with
+`ScanAsync`. The string API retains its existing UTF-8 decoding semantics for key names.
+
+The cursor records slot ownership/completion and the active primary's server cursor,
+configuration epoch, and process run ID. Each page refreshes topology and reads primary-local
+[CLUSTER NODES](https://redis.io/docs/latest/commands/cluster-nodes/) metadata; migration
+annotations appear only on the queried node's own row. [INFO server](https://redis.io/docs/latest/commands/info/)
+validates the process before reusing its cursor.
+A completed node pass is validated again before its stable slots are marked complete.
+Moved slots become pending on the new owner, including an owner scanned earlier; unaffected
+completed slots stay complete. A changed process or configuration epoch restarts the active
+node pass. Migrating/importing slots cannot complete until their transition settles.
+Continuous epoch changes can prevent an active pass from finishing; unaffected slots already
+validated remain complete. Use cancellation or an application deadline to bound a scan.
+When only moving slots remain, a page sets `WaitingOnMigration`, contains no keys, and issues
+no INFO or SCAN. Page callers should delay before retrying. `ScanAsync` waits 50 ms, doubling
+to a maximum of 250 ms between consecutive waiting pages; stable work resets this delay.
+The wait observes the enumeration's cancellation token.
+Redis scans whole node dictionaries, so rescanning affected slots still traverses the new
+owner's dictionary, while filtering already completed slots from the result.
+
+This requires `SCAN`, `CLUSTER SLOTS`, `CLUSTER NODES`, and `INFO` permissions. Metadata
+validation adds round trips per page; use a larger count hint to amortize them. Incomplete
+or contradictory ownership and unavailable primaries fail explicitly instead of silently
+omitting keys. The scan follows Cluster-reported ownership and epochs; it is not a database
+snapshot or a history of unreported topology changes. Topology is sampled on every page,
+not only at pass boundaries. A reported migration or owner change invalidates that slot's
+active pass even if its original owner returns later. A complete A-to-B-to-A move between
+two metadata reads can remain invisible when the reported identities and epochs also match;
+this scan cannot guarantee coverage across that unobserved history. For observed changes,
+continuously present keys remain covered across completed resharding and failover. Keys
+inserted/deleted during iteration have Redis SCAN's usual weak guarantees. Continuous topology changes may prevent completion;
+use cancellation to bound the work. Standalone scans retain their existing cursor loop.
+
+`Parse` rejects malformed, oversized, or unsupported-version tokens; `TryParse` returns
+false instead. Tokens are versioned Base64 data, not encrypted or authenticated. They contain
+filters and node identities, but no passwords, sockets, or process-local registry handles.
+Treat checkpoints as trusted application state; do not accept arbitrary client-supplied tokens
+as validated scan progress. Authenticate them at the application boundary if they cross a
+trust boundary, and enforce storage/request size limits. Tokens can be several kilobytes;
+the encoded ceiling is 6 MiB and fragmented slot layouts increase their size. Start a new scan
+with `Start` after completion.

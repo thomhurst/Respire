@@ -94,6 +94,13 @@ public class ClusterRetirementTests
 
     private static async Task AssertFanOutRetirementAsync(string path)
     {
+        if (path == "scan")
+        {
+            // Resumable SCAN validates primary metadata before each page. Exercise retirement
+            // during that acquisition while preserving an already accepted page and in-flight work.
+            await ClusterScanTests.AssertRetirementPreservesAcceptedPagesAsync();
+            return;
+        }
         var commandName = path switch
         {
             "script" => "SCRIPT FLUSH", "flush" => "FLUSHDB", "size" => "DBSIZE",

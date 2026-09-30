@@ -12,6 +12,9 @@ public class DeferredFacetParityTests
         // Cursor scans issue multiple commands while streaming; they are not one queued result.
         typeof(IKeyCommands).GetMethod(nameof(IKeyCommands.ScanAsync),
             [typeof(string), typeof(RespireKeyType?), typeof(int), typeof(CancellationToken)])!,
+        // A resumable page also discovers/validates multiple primaries before committing progress.
+        typeof(IKeyCommands).GetMethod(nameof(IKeyCommands.ScanClusterPageAsync),
+            [typeof(RespireClusterScanCursor), typeof(string), typeof(RespireKeyType?), typeof(int), typeof(CancellationToken)])!,
         typeof(IHashCommands).GetMethod(nameof(IHashCommands.ScanAsync),
             [typeof(RespireKey), typeof(string), typeof(int), typeof(CancellationToken)])!,
         typeof(ISetCommands).GetMethod(nameof(ISetCommands.ScanAsync),
