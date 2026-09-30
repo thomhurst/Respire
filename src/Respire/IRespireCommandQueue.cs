@@ -50,6 +50,9 @@ public interface IRespireCommandQueue
     /// <summary>Geospatial commands.</summary>
     IBatchGeoCommands Geo { get; }
 
+    /// <summary>Redis vector-set commands.</summary>
+    IBatchVectorSetCommands VectorSets { get; }
+
     /// <summary>Lua script evaluation.</summary>
     IBatchScriptCommands Scripts { get; }
 

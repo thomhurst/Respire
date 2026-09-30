@@ -9,6 +9,32 @@ namespace Respire.Tests;
 public class ClientSideCacheCoordinatorTests
 {
     [Test]
+    public async Task VectorReadsPreserveCacheAndMutationsFenceOnlyTheirKey()
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        Insert(cache, "vectors", "old");
+        Insert(cache, "unrelated", "retained");
+        foreach (var operation in new[] { "VCARD", "VDIM", "VEMB", "VGETATTR", "VINFO", "VISMEMBER", "VLINKS", "VRANDMEMBER", "VRANGE", "VSIM" })
+        {
+            var read = new Cmd1(new Verb(operation), "vectors");
+            var fence = cache.BeforeCommand(operation, in read);
+            await Assert.That(fence.IsRequired).IsFalse();
+            await Assert.That(cache.Count).IsEqualTo(2);
+        }
+        foreach (var operation in new[] { "VADD", "VREM", "VSETATTR" })
+        {
+            Insert(cache, "vectors", "old");
+            var command = new Cmd1(new Verb(operation), "vectors");
+            var fence = cache.BeforeCommand(operation, in command);
+            await Assert.That(cache.Count).IsEqualTo(1);
+            Insert(cache, "vectors", "racing-read");
+            cache.CompleteMutation(in fence);
+            await Assert.That(cache.Count).IsEqualTo(1);
+            await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
+        }
+    }
+
+    [Test]
     [Arguments("LPUSHX")]
     [Arguments("RPUSHX")]
     public async Task ConditionalListPushInvalidatesOnlyItsKeyBeforeAndAfterCompletion(string operation)

@@ -44,6 +44,8 @@ public interface IRespireClient : IAsyncDisposable
     IHyperLogLogCommands HyperLogLog { get; }
     /// <summary>Geospatial commands.</summary>
     IGeoCommands Geo { get; }
+    /// <summary>Redis vector-set commands.</summary>
+    IVectorSetCommands VectorSets { get; }
     /// <summary>Lua script commands.</summary>
     IScriptCommands Scripts { get; }
 

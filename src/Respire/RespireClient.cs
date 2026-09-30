@@ -40,6 +40,7 @@ public sealed partial class RespireClient : IRespireClient
         Bitmaps = new BitmapCommands(this);
         HyperLogLog = new HyperLogLogCommands(this);
         Geo = new GeoCommands(this);
+        VectorSets = new VectorSetCommands(this);
         Scripts = new ScriptCommands(this);
         Functions = new FunctionCommands(this);
         Server = new ServerCommands(this);
@@ -219,6 +220,8 @@ public sealed partial class RespireClient : IRespireClient
     public IHyperLogLogCommands HyperLogLog { get; }
     /// <inheritdoc/>
     public IGeoCommands Geo { get; }
+    /// <inheritdoc/>
+    public IVectorSetCommands VectorSets { get; }
     /// <inheritdoc/>
     public IScriptCommands Scripts { get; }
 

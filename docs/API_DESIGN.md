@@ -133,7 +133,7 @@ TimeSpan roundTrip = await client.PingAsync(cancellationToken);
 ```
 
 The facet properties are `Strings`, `Keys`, `Hashes`, `Lists`, `Sets`, `SortedSets`, `Streams`,
-`Bitmaps`, `HyperLogLog`, `Geo`, `Scripts`, `Locks`, and `Server`. See `IRespireClient` for
+`Bitmaps`, `HyperLogLog`, `Geo`, `VectorSets`, `Scripts`, `Locks`, and `Server`. See `IRespireClient` for
 complete signatures; the snippets use application-defined model types such as `User`.
 
 Naming inside facets drops the Redis prefix — the facet *is* the prefix:

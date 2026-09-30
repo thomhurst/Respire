@@ -21,6 +21,17 @@
   identity constraints, and explicit raw-byte use. Cache integration and optional codec
   packages remain separate work; no existing client interface gains members.
 
+### Typed vector sets
+
+- `VectorSets` adds VADD/VSIM with direct little-endian FP32 encoding, VALUES support,
+  binary members, attributes, metadata, graph links, random/range reads, and deferred
+  mirrors. Replies own their storage; batch/transaction inputs are snapshotted when queued.
+  Integration contracts are pinned to Redis 8.6.0 on both protocols. **Breaking interface
+  addition:** external `IRespireClient` and `IRespireCommandQueue` implementations must
+  forward the new property. See the [vector guide](../website/docs/guides/vector-sets.md)
+  for accuracy, memory, serialization, and ownership limits. Performance evidence is
+  tracked separately in #534; no zero-copy networking or throughput guarantee is implied.
+
 ### Stream production and negative acknowledgements
 
 - `StreamAddOptions.Idempotency` adds mutually exclusive IDMP/IDMPAUTO production

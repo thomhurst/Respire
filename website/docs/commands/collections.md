@@ -597,4 +597,5 @@ GeoSearchResult[] nearby = await redis.Geo.SearchAsync(
 
 BITFIELD operations use `BitFieldEncoding.Signed(width)` (1–64 bits) or `Unsigned(width)` (1–63 bits). `BitFieldOffset.Bits(n)` is an absolute bit offset; `Fields(n)` multiplies the index by the encoding width (Redis `#n`). Both offset factories reject negative values. The default offset is bit zero. `Get`, `Set`, and `Increment` all accept these types; `FieldReadOnlyAsync` accepts only `Get` operations.
 
+For Redis vector similarity, use the typed [VectorSets facet](../guides/vector-sets).
 For uncommon operations and modules, use the [complete command catalog](../guides/raw-commands).
