@@ -32,6 +32,14 @@ internal sealed partial class SubscriptionHub(ClientCore core) : IAsyncDisposabl
         SubscriptionKind kind, RespireChannel[] names, RespireSubscriptionOptions options)
     {
         ArgumentNullException.ThrowIfNull(names);
+        foreach (var name in names)
+        {
+            if (!name.IsNotification || core.Cluster is null) continue;
+            if (name.NotificationDatabase is not null and not 0)
+                throw new ArgumentException("Redis Cluster notifications support only database 0.", nameof(names));
+            throw new NotSupportedException("Notification routing across Redis Cluster primaries is not supported yet.");
+        }
+
         if (kind == SubscriptionKind.Sharded && core.Cluster is not null)
         {
             throw new NotSupportedException(

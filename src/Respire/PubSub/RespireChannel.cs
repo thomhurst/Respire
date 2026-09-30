@@ -7,7 +7,7 @@ namespace Respire;
 /// An owned, binary-safe pub/sub channel or pattern. Equality compares bytes, independently of
 /// subscription kind. The default value is a valid empty literal channel.
 /// </summary>
-public readonly struct RespireChannel : IEquatable<RespireChannel>
+public readonly partial struct RespireChannel : IEquatable<RespireChannel>
 {
     private readonly byte[]? _bytes;
 
@@ -23,10 +23,14 @@ public readonly struct RespireChannel : IEquatable<RespireChannel>
     public RespireChannel(ReadOnlyMemory<byte> value)
         => _bytes = value.IsEmpty ? [] : value.ToArray();
 
-    private RespireChannel(byte[]? bytes, SubscriptionKind kind)
+    private RespireChannel(byte[]? bytes, SubscriptionKind kind, RespireChannelRoutingScope routingScope = default,
+        int? notificationDatabase = null, int? routingSlot = null)
     {
         _bytes = bytes;
         Kind = kind;
+        RoutingScope = routingScope;
+        NotificationDatabase = notificationDatabase;
+        RoutingSlot = routingSlot;
     }
 
     /// <summary>The exact owned channel bytes; accessing them does not allocate.</summary>
@@ -88,6 +92,11 @@ public readonly struct RespireChannel : IEquatable<RespireChannel>
 
     internal ReadOnlySpan<byte> Span => _bytes;
 
-    internal RespireChannel WithKind(SubscriptionKind kind) => new(_bytes, kind);
+    internal RespireChannel WithKind(SubscriptionKind kind)
+    {
+        if (IsNotification && kind != Kind)
+            throw new ArgumentException("Notification descriptors retain their subscription kind; construct an ordinary channel to override it.", nameof(kind));
+        return new(_bytes, kind, RoutingScope, NotificationDatabase, RoutingSlot);
+    }
     internal RespireValue AsValue() => new(Bytes);
 }

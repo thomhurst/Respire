@@ -928,6 +928,8 @@ public sealed partial class RespireClient : IRespireClient
     /// <summary>Publishes raw channel bytes; sharded metadata selects SPUBLISH. Patterns cannot be published.</summary>
     public ValueTask<long> PublishAsync(RespireChannel channel, RespireValue message, CancellationToken cancellationToken = default)
     {
+        if (channel.IsNotification)
+            throw new ArgumentException("Notification descriptors are server-owned and cannot be published.", nameof(channel));
         if (channel.Kind == SubscriptionKind.Pattern)
         {
             throw new ArgumentException("A pattern cannot be published; use a literal channel.", nameof(channel));
@@ -940,6 +942,8 @@ public sealed partial class RespireClient : IRespireClient
     /// <summary>Publishes raw bytes with SPUBLISH. Channel names are not prefixed.</summary>
     public ValueTask<long> PublishShardedAsync(RespireChannel channel, RespireValue message, CancellationToken cancellationToken = default)
     {
+        if (channel.IsNotification)
+            throw new ArgumentException("Notification descriptors are server-owned and cannot be published.", nameof(channel));
         if (channel.Kind == SubscriptionKind.Pattern)
         {
             throw new ArgumentException("A pattern cannot be published; use a sharded channel.", nameof(channel));
