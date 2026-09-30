@@ -64,6 +64,11 @@ sending or enqueueing. Redis 7.4+ is required for external Cluster BY/GET patter
 older servers' errors are preserved. Redis ACL rules may also require full key-read
 permissions for external lookups.
 
+`RespireSortOptions` record equality compares `Get` by its memory backing store and
+slice, not by pattern contents. Separately allocated equal pattern arrays therefore
+produce unequal options. A `with` copy shares that memory; enqueueing snapshots its
+patterns as described below.
+
 ## RANDOMKEY and MOVE
 
 `Keys.RandomAsync()` returns an owned binary `RespireKey?`, or null when the selected

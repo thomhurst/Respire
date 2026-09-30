@@ -15,6 +15,7 @@ public sealed record RespireSortOptions
     /// <summary>External weight pattern, optionally using ->field. A pattern without * disables sorting.</summary>
     public RespireKey? By { get; init; }
     /// <summary>Ordered GET patterns. # returns the original member; missing external values become null.</summary>
+    /// <remarks>Options equality compares the memory backing store and slice, not pattern contents. A with copy shares this memory.</remarks>
     public ReadOnlyMemory<RespireKey> Get { get; init; }
     /// <summary>Use SORT_RO (Redis 7+). Cannot be combined with SortStore.</summary>
     public bool ReadOnly { get; init; }
