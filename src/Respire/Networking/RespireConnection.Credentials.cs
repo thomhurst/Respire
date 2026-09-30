@@ -7,6 +7,31 @@ namespace Respire.Networking;
 internal sealed partial class RespireConnection
 {
     private CredentialSession? _credentialSession;
+    // Protected by _writeGate. Only the private renewal command can cross this fence.
+    private bool _credentialRenewalPending;
+
+    private readonly struct CredentialRenewalAuthCommand(RespireCredentials credentials) : IRespCommand
+    {
+        public void Write(ref RespWriter writer)
+            => new AuthCommand(credentials.Username, credentials.Password).Write(ref writer);
+    }
+
+    private ValueTask<RespValue> SendCredentialRenewalAsync(RespireCredentials credentials, CancellationToken cancellationToken)
+    {
+        lock (_writeGate)
+        {
+            ThrowIfRetired();
+            if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+            _credentialRenewalPending = true;
+        }
+        return SendAsync(new CredentialRenewalAuthCommand(credentials), cancellationToken);
+    }
+
+    private void CompleteCredentialRenewal()
+    {
+        lock (_writeGate) _credentialRenewalPending = false;
+        _capacitySignal.Signal();
+    }
 
     internal Task? CredentialRefreshCompletion => _credentialSession?.Completion;
 
@@ -138,10 +163,12 @@ internal sealed partial class RespireConnection
                     }
                     if (next.ExpiresAt == current.ExpiresAt && next.Username == current.Username && next.Password == current.Password)
                     {
+                        Record(succeeded: null, "unchanged");
                         retry = true;
                         continue;
                     }
 
+                    var renewed = false;
                     try
                     {
                         if ((next.Username ?? "default") != (current.Username ?? "default"))
@@ -153,8 +180,8 @@ internal sealed partial class RespireConnection
                             throw new RespireAuthenticationException($"Replacement credentials expired before renewal for {connection.Host}:{connection.Port}.");
                         using var authDeadline = new CancellationTokenSource(Min(authRemaining, options.ConnectTimeout), clock);
                         using var authCancellation = CancellationTokenSource.CreateLinkedTokenSource(linked.Token, authDeadline.Token);
-                        InvalidateCache();
-                        using var reply = await connection.SendAsync(new AuthCommand(next.Username, next.Password),
+                        PublishCacheMetrics(InvalidateCache());
+                        using var reply = await connection.SendCredentialRenewalAsync(next,
                             authCancellation.Token).ConfigureAwait(false);
                         if (reply.Type != RespDataType.SimpleString || !reply.AsSpan().SequenceEqual("OK"u8))
                             throw new RespireAuthenticationException($"Credential renewal was rejected by {connection.Host}:{connection.Port}.");
@@ -163,17 +190,25 @@ internal sealed partial class RespireConnection
                             throw new RespireAuthenticationException($"Credentials expired during renewal for {connection.Host}:{connection.Port}.");
                         current = next;
                         retry = false;
-                        Record(succeeded: true, "reauthenticate");
+                        renewed = true;
                     }
                     catch (OperationCanceledException) when (_stop.IsCancellationRequested) { return; }
                     catch (Exception error)
                     {
-                        Record(succeeded: false, "reauthenticate");
                         connection.Abort(error as RespireAuthenticationException
                             ?? new RespireAuthenticationException($"Credential renewal failed for {connection.Host}:{connection.Port}.", error));
+                        Record(succeeded: false, "reauthenticate");
                         return;
                     }
-                    finally { InvalidateCache(); }
+                    finally
+                    {
+                        var evictions = InvalidateCache();
+                        // Failure/stop keeps admission fenced until Abort marks the socket dead.
+                        // In particular, RequestStop can run before Abort acquires _writeGate.
+                        if (renewed) connection.CompleteCredentialRenewal();
+                        PublishCacheMetrics(evictions);
+                    }
+                    Record(succeeded: true, "reauthenticate");
                 }
             }
             catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
@@ -184,12 +219,19 @@ internal sealed partial class RespireConnection
             }
         }
 
-        private void InvalidateCache()
+        private int? InvalidateCache()
         {
-            // Cache mutation precedes its optional metrics callbacks. A listener failure
-            // must not turn successful authentication into a broken transport.
-            try { options.CredentialCacheInvalidation?.Invoke(); }
-            catch { }
+            try { return options.CredentialCacheInvalidation?.Invoke(); }
+            catch { return null; }
+        }
+
+        private static void PublishCacheMetrics(int? evictions)
+        {
+            // Publish only after successful admission resumes (or after failure aborts).
+            // A metrics observer must not run while it could wait on our AUTH fence.
+            if (evictions is not { } count) return;
+            try { ClientSideCacheCoordinator.PublishContinuityFlushMetrics(count); }
+            catch { /* Instrumentation cannot change authentication state. */ }
         }
 
         private void Expire()
@@ -198,7 +240,7 @@ internal sealed partial class RespireConnection
             connection.Abort(new RespireAuthenticationException($"Credentials expired before renewal for {connection.Host}:{connection.Port}."));
         }
 
-        private void Record(bool succeeded, string stage)
+        private void Record(bool? succeeded, string stage)
             => RespireTelemetry.RecordCredentialRefresh(connection.Host, connection.Port, succeeded, stage, connection._logger);
 
         public async ValueTask DisposeAsync()

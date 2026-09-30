@@ -1242,7 +1242,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                     throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
                 }
 
-                if (_inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
+                if ((_credentialRenewalPending && typeof(TCommand) != typeof(CredentialRenewalAuthCommand))
+                    || _inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
                 {
                     return false;
                 }
@@ -1315,7 +1316,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
             }
 
-            if (_inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
+            if ((_credentialRenewalPending && typeof(TCommand) != typeof(CredentialRenewalAuthCommand))
+                || _inflight.Capacity - _inflight.Count < discardRepliesBefore + 1)
             {
                 return false;
             }
@@ -2894,7 +2896,7 @@ internal sealed record RespireConnectionOptions
     internal TimeSpan CredentialRefreshBeforeExpiry { get; init; } = TimeSpan.FromMinutes(5);
     internal TimeSpan CredentialRefreshRetryDelay { get; init; } = TimeSpan.FromSeconds(5);
     internal TimeProvider CredentialTimeProvider { get; init; } = TimeProvider.System;
-    internal Action? CredentialCacheInvalidation { get; init; }
+    internal Func<int>? CredentialCacheInvalidation { get; init; }
 
     /// <summary>When set, CLIENT SETNAME runs during the handshake.</summary>
     public string? ClientName { get; init; }

@@ -51,7 +51,9 @@ new connections still query the provider. Azure and AWS adapters are tracked sep
 ## Ownership and identity
 
 The application owns the provider and keeps it alive until every client using it is disposed.
-Respire never disposes the provider. Calls may overlap across physical connections. Honor
+Respire never disposes the provider. Calls may overlap across physical connections; renewal and its fixed retry delay are per
+connection. Large pools can therefore call a shared provider concurrently or retry together.
+Cache and coalesce token acquisition inside the caller-owned provider when that load matters. Honor
 cancellation, avoid blocking before returning a `ValueTask`, and keep cancellation callbacks
 short. Client disposal cancels outstanding acquisition and joins its refresh workers.
 
@@ -78,7 +80,11 @@ again. A provider failure does not silently stop renewal. A successful replaceme
 expiry ends proactive renewal on that connection.
 
 AUTH uses the ordinary connection FIFO and write gate. In-flight replies retain their order,
-and AUTH cannot split an atomic MULTI/EXEC frame. Client-side cache state is flushed before and
+and AUTH cannot split an atomic MULTI/EXEC frame. While replacement AUTH is pending, new
+application commands wait outside the wire queue, including transactions and fire-and-forget
+writes. Admission resumes only after Redis returns OK and the replacement remains unexpired;
+rejection, expiry, or disposal aborts the socket without sending those waiting commands.
+Waiting callers retain their cancellation and command-timeout bounds. Client-side cache state is flushed before and
 after re-authentication, preventing replies from an earlier cache epoch from being retained.
 
 A server-blocking command such as BLPOP prevents Redis from processing a later AUTH until the
@@ -103,10 +109,11 @@ These rules keep discovery and data identities separate.
 ## Diagnostics and dependency injection
 
 The `Respire` meter publishes `respire.authentication.refresh`, tagged with `server.address`,
-`server.port`, `respire.authentication.stage` (`provider`, `reauthenticate`, `expired`, or `worker`),
-and `respire.authentication.outcome` (`success` or `failure`). Successful AUTH records success;
+`server.port`, `respire.authentication.stage` (`provider`, `reauthenticate`, `unchanged`, `expired`, or `worker`),
+and `respire.authentication.outcome` (`success`, `failure`, or `retry`). Successful AUTH records success;
 failed acquisition, rejected/unfinished AUTH, expiry, and unexpected worker failure record
-failure. Unchanged credentials are a retry, not an authentication attempt. Warnings use
+failure. Unchanged credentials record stage `unchanged` and outcome `retry`, without a failure
+warning or an AUTH attempt. Warnings use
 `CredentialRefreshFailed` (event ID 4001). Neither telemetry nor these warnings includes
 credential values or provider exception text. Exceptions thrown by listeners or loggers do
 not terminate renewal; callbacks must still return promptly.

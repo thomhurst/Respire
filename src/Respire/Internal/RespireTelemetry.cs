@@ -34,7 +34,7 @@ internal static class RespireTelemetry
     public static readonly Counter<long> CredentialRefreshes = Meter.CreateCounter<long>(
         "respire.authentication.refresh", "{attempt}", "Credential renewal outcomes, without credential material.");
 
-    internal static void RecordCredentialRefresh(string host, int port, bool succeeded, string stage, ILogger? logger)
+    internal static void RecordCredentialRefresh(string host, int port, bool? succeeded, string stage, ILogger? logger)
     {
         try
         {
@@ -42,12 +42,12 @@ internal static class RespireTelemetry
                 new KeyValuePair<string, object?>("server.address", host),
                 new KeyValuePair<string, object?>("server.port", port),
                 new KeyValuePair<string, object?>("respire.authentication.stage", stage),
-                new KeyValuePair<string, object?>("respire.authentication.outcome", succeeded ? "success" : "failure"));
+                new KeyValuePair<string, object?>("respire.authentication.outcome", succeeded switch { true => "success", false => "failure", null => "retry" }));
         }
         catch { /* Instrumentation must not change authentication or transport state. */ }
         try
         {
-            if (!succeeded)
+            if (succeeded == false)
                 logger?.LogWarning(new EventId(4001, "CredentialRefreshFailed"),
                     "Credential renewal failed at {Stage} for {Host}:{Port}", stage, host, port);
         }

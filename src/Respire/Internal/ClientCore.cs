@@ -56,7 +56,7 @@ internal sealed class ClientCore : IAsyncDisposable
             pushHandler,
             enableClientTracking: ClientCache is not null, enableMaintenanceNotifications: true) with
         {
-            CredentialCacheInvalidation = ClientCache is { } cache ? cache.FlushForContinuityLoss : null,
+            CredentialCacheInvalidation = ClientCache is { } cache ? cache.FlushForContinuityLossWithoutMetrics : null,
         };
         _multiplexer = RespireConnectionMultiplexer.Create(
             endpoint.Host, endpoint.Port, options.Connections, connectionOptions, Logger);
