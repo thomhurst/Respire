@@ -9,6 +9,37 @@ namespace Respire.Tests;
 public class ClientSideCacheCoordinatorTests
 {
     [Test]
+    [Arguments("LPUSHX")]
+    [Arguments("RPUSHX")]
+    public async Task ConditionalListPushInvalidatesOnlyItsKeyBeforeAndAfterCompletion(string operation)
+    {
+        var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions());
+        Insert(cache, "unrelated", "retained");
+        var read = new Cmd1(Verbs.LLen, "list");
+        await Assert.That(cache.TryCreateQuery("LLEN", in read, out var request)).IsTrue();
+        CacheLength();
+        await Assert.That(cache.Count).IsEqualTo(2);
+        var verb = operation == "LPUSHX" ? RespireCommands.List.LPUSHX.Verb : RespireCommands.List.RPUSHX.Verb;
+        var command = new Cmd1N(verb, "list", ["value"]);
+
+        var fence = cache.BeforeCommand(operation, in command);
+        await Assert.That(cache.Count).IsEqualTo(1);
+        await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
+        CacheLength();
+        await Assert.That(cache.Count).IsEqualTo(2);
+        cache.CompleteMutation(in fence);
+        await Assert.That(cache.Count).IsEqualTo(1);
+        await Assert.That(Read(cache, "unrelated")).IsEqualTo("retained");
+
+        void CacheLength()
+        {
+            var token = cache.BeginRead("LLEN", in request);
+            var response = RespValue.Integer(1);
+            cache.CompleteRead(in token, in response, allowInsert: true);
+        }
+    }
+
+    [Test]
     public async Task Capacity_IsBoundedByEntryCount()
     {
         var cache = new ClientSideCacheCoordinator(new RespireClientSideCacheOptions

@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using Respire.Commands;
 using Respire.Internal;
+using Respire.Protocol;
 using Respire.Serialization;
 
 namespace Respire;
@@ -25,6 +26,33 @@ public enum ListSide
 /// </summary>
 public interface IListCommands
 {
+    /// <summary>First matching zero-based index, or null. Negative rank searches from the tail; maxLength 0 scans without a limit. Redis: LPOS.</summary>
+    ValueTask<long?> PositionAsync(RespireKey key, RespireValue value, long rank = 1, long maxLength = 0, CancellationToken cancellationToken = default);
+
+    /// <summary>Matching zero-based indexes in search order; empty when absent. Count 0 returns all matches, negative rank searches from the tail, maxLength 0 scans without a limit. Redis: LPOS COUNT.</summary>
+    ValueTask<long[]> PositionsAsync(RespireKey key, RespireValue value, long count = 0, long rank = 1, long maxLength = 0, CancellationToken cancellationToken = default);
+
+    /// <summary>Inserts before the first pivot; returns the new length, 0 for a missing key, or -1 for a missing pivot. Redis: LINSERT BEFORE.</summary>
+    ValueTask<long> InsertBeforeAsync(RespireKey key, RespireValue pivot, RespireValue value, CancellationToken cancellationToken = default);
+
+    /// <summary>Inserts after the first pivot; returns the new length, 0 for a missing key, or -1 for a missing pivot. Redis: LINSERT AFTER.</summary>
+    ValueTask<long> InsertAfterAsync(RespireKey key, RespireValue pivot, RespireValue value, CancellationToken cancellationToken = default);
+
+    /// <summary>Replaces an element; negative indexes count from the tail. Returns true on OK; missing keys and out-of-range indexes raise server errors. Redis: LSET.</summary>
+    ValueTask<bool> SetAsync(RespireKey key, long index, RespireValue value, CancellationToken cancellationToken = default);
+
+    /// <summary>Prepends values only to an existing list; returns the new length or 0 when missing. Redis: LPUSHX.</summary>
+    ValueTask<long> LeftPushIfExistsAsync(RespireKey key, params ReadOnlySpan<RespireValue> values);
+
+    /// <summary>Prepends values only to an existing list; returns the new length or 0 when missing. Redis: LPUSHX.</summary>
+    ValueTask<long> LeftPushIfExistsAsync(RespireKey key, ReadOnlySpan<RespireValue> values, CancellationToken cancellationToken);
+
+    /// <summary>Appends values only to an existing list; returns the new length or 0 when missing. Redis: RPUSHX.</summary>
+    ValueTask<long> RightPushIfExistsAsync(RespireKey key, params ReadOnlySpan<RespireValue> values);
+
+    /// <summary>Appends values only to an existing list; returns the new length or 0 when missing. Redis: RPUSHX.</summary>
+    ValueTask<long> RightPushIfExistsAsync(RespireKey key, ReadOnlySpan<RespireValue> values, CancellationToken cancellationToken);
+
     /// <summary>Prepends values; returns the new length. Redis: LPUSH.</summary>
     ValueTask<long> LeftPushAsync(RespireKey key, params ReadOnlySpan<RespireValue> values);
 
@@ -123,6 +151,84 @@ public interface IListCommands
 
 internal sealed class ListCommands(RespireClient client) : IListCommands
 {
+    public ValueTask<long?> PositionAsync(RespireKey key, RespireValue value, long rank = 1, long maxLength = 0, CancellationToken cancellationToken = default)
+        => client.IntegerOrNullAsync("LPOS", new Cmd1N(RespireCommands.List.LPOS.Verb, client.Key(in key), PositionArguments(value, rank, null, maxLength)), cancellationToken);
+
+    public ValueTask<long[]> PositionsAsync(RespireKey key, RespireValue value, long count = 0, long rank = 1, long maxLength = 0, CancellationToken cancellationToken = default)
+        => client.ConvertResponseAsync("LPOS", new Cmd1N(RespireCommands.List.LPOS.Verb, client.Key(in key), PositionArguments(value, rank, count, maxLength)), cancellationToken,
+            0, static (int _, in RespValue reply) => ResponseReader.IntegerArray(in reply));
+
+    public ValueTask<long> InsertBeforeAsync(RespireKey key, RespireValue pivot, RespireValue value, CancellationToken cancellationToken = default)
+        => InsertAsync(key, "BEFORE", pivot, value, cancellationToken);
+
+    public ValueTask<long> InsertAfterAsync(RespireKey key, RespireValue pivot, RespireValue value, CancellationToken cancellationToken = default)
+        => InsertAsync(key, "AFTER", pivot, value, cancellationToken);
+
+    private ValueTask<long> InsertAsync(RespireKey key, RespireValue placement, RespireValue pivot, RespireValue value, CancellationToken cancellationToken)
+        => client.IntegerAsync("LINSERT", new Cmd4(RespireCommands.List.LINSERT.Verb, client.Key(in key), placement, pivot, value), cancellationToken);
+
+    public ValueTask<bool> SetAsync(RespireKey key, long index, RespireValue value, CancellationToken cancellationToken = default)
+        => client.OkResultAsync("LSET", new Cmd3(RespireCommands.List.LSET.Verb, client.Key(in key), index, value), cancellationToken);
+
+    public ValueTask<long> LeftPushIfExistsAsync(RespireKey key, params ReadOnlySpan<RespireValue> values)
+        => LeftPushIfExistsAsync(key, values, CancellationToken.None);
+
+    public ValueTask<long> LeftPushIfExistsAsync(RespireKey key, ReadOnlySpan<RespireValue> values, CancellationToken cancellationToken)
+    {
+        ValidatePushValues(values);
+        return client.IntegerValuesAsync("LPUSHX", RespireCommands.List.LPUSHX.Verb, client.Key(in key), values, cancellationToken);
+    }
+
+    public ValueTask<long> RightPushIfExistsAsync(RespireKey key, params ReadOnlySpan<RespireValue> values)
+        => RightPushIfExistsAsync(key, values, CancellationToken.None);
+
+    public ValueTask<long> RightPushIfExistsAsync(RespireKey key, ReadOnlySpan<RespireValue> values, CancellationToken cancellationToken)
+    {
+        ValidatePushValues(values);
+        return client.IntegerValuesAsync("RPUSHX", RespireCommands.List.RPUSHX.Verb, client.Key(in key), values, cancellationToken);
+    }
+
+    internal static void ValidatePushValues(ReadOnlySpan<RespireValue> values)
+    {
+        if (values.IsEmpty)
+        {
+            throw new ArgumentException("At least one value is required.", nameof(values));
+        }
+    }
+
+    internal static RespireValue[] PositionArguments(RespireValue value, long rank, long? count, long maxLength)
+    {
+        if (rank is 0 or long.MinValue)
+        {
+            throw new ArgumentOutOfRangeException(nameof(rank), rank, "Rank must be nonzero and greater than Int64.MinValue.");
+        }
+        if (count < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count), count, "Count cannot be negative.");
+        }
+        ArgumentOutOfRangeException.ThrowIfNegative(maxLength);
+
+        var arguments = new RespireValue[1 + (rank == 1 ? 0 : 2) + (count.HasValue ? 2 : 0) + (maxLength == 0 ? 0 : 2)];
+        arguments[0] = value;
+        var index = 1;
+        if (rank != 1)
+        {
+            arguments[index++] = "RANK";
+            arguments[index++] = rank;
+        }
+        if (count is { } matches)
+        {
+            arguments[index++] = "COUNT";
+            arguments[index++] = matches;
+        }
+        if (maxLength != 0)
+        {
+            arguments[index++] = "MAXLEN";
+            arguments[index] = maxLength;
+        }
+        return arguments;
+    }
+
     public ValueTask<long> LeftPushAsync(RespireKey key, params ReadOnlySpan<RespireValue> values)
         => LeftPushAsync(key, values, CancellationToken.None);
 

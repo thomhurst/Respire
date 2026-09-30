@@ -76,6 +76,29 @@ string[] nextBatch = await redis.Lists.LeftPopManyAsync("jobs", count: 128);
 string[] pending = await redis.Lists.RangeAsync("jobs", 0, 99);
 ```
 
+Search with `PositionAsync` for one index or `PositionsAsync` for multiple indexes (Redis 6.0.6+).
+A missing match returns `null` or an empty array respectively. Indexes always count from the head;
+negative `rank` searches from the tail and returns matches in that search order. `rank` cannot be
+zero or `long.MinValue`. `count: 0` returns all matches, and `maxLength: 0` removes the scan limit;
+negative counts and scan limits are rejected.
+
+```csharp
+long? position = await redis.Lists.PositionAsync("jobs", "invoice:42", rank: -1);
+long[] positions = await redis.Lists.PositionsAsync("jobs", "invoice:42", count: 10, maxLength: 1000);
+long inserted = await redis.Lists.InsertBeforeAsync("jobs", "invoice:43", "invoice:42a");
+await redis.Lists.InsertAfterAsync("jobs", "invoice:43", "invoice:43a");
+await redis.Lists.SetAsync("jobs", -1, "invoice:44");
+long existingLength = await redis.Lists.RightPushIfExistsAsync("jobs", "invoice:45", "invoice:46");
+```
+
+`InsertBeforeAsync` and `InsertAfterAsync` return the new length, `0` for a missing key, or `-1`
+for a missing pivot. They target the first matching pivot. `SetAsync` accepts negative indexes
+and preserves Redis errors for missing keys or out-of-range indexes. `LeftPushIfExistsAsync`
+and `RightPushIfExistsAsync` require at least one value and return `0` without creating a missing
+list. Values and pivots accept binary `RespireValue` inputs. Every method also exists on batch
+and transaction `Lists` facets without the `Async` suffix; queued push methods snapshot the
+argument span, while supplied byte buffers must remain unchanged until execution finishes.
+
 Set `waitFor` to transparently select the blocking command and a dedicated connection. See [blocking queues](../guides/blocking-queues).
 
 ## Sets
