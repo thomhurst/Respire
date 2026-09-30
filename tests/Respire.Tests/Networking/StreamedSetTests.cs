@@ -71,12 +71,83 @@ public sealed class StreamedSetTests
             LoggerFactory = NullLoggerFactory.Instance,
         });
 
-        var source = new MemoryStream(new byte[50]);
+        var source = new GeneratedStream(50);
         await Assert.That(async () => await client.Strings.SetAsync("partial", source, 100))
             .Throws<EndOfStreamException>();
         await server.ConnectionClosed.WaitAsync(TimeSpan.FromSeconds(5));
         await Assert.That(source.CanRead).IsTrue();
         await Assert.That(server.Commands.Contains("SET")).IsFalse();
+    }
+
+    [Test]
+    public async Task ShortSeekableStreamIsRejectedBeforeAnyFrameIsSent()
+    {
+        await using var server = new CountingSetServer();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new("127.0.0.1", server.Port) },
+            Protocol = RespProtocol.Resp2,
+            Connections = 1,
+            ThreadPoolMonitoring = false,
+            LoggerFactory = NullLoggerFactory.Instance,
+        });
+
+        var source = new MemoryStream(new byte[50]) { Position = 10 };
+        await Assert.That(async () => await client.Strings.SetAsync("short", source, 41))
+            .Throws<ArgumentOutOfRangeException>();
+        await Assert.That(source.Position).IsEqualTo(10);
+        await client.PingAsync();
+        await Assert.That(server.Commands.Contains("SET")).IsFalse();
+    }
+
+    [Test]
+    public async Task StreamingGateWaitTimeoutReportsCommandTimeout()
+    {
+        await using var server = new CountingSetServer();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            Protocol = RespProtocol.Resp2,
+            CommandTimeout = TimeSpan.FromMilliseconds(200),
+        });
+        var holder = new PausedStream();
+        var first = new StreamedSetCommand((RespireValue)"first", holder, 4, default, SetWhen.Always);
+        var firstSet = connection.SendAsync(in first, armCommandDeadline: false, commandName: "SET").AsTask();
+        await holder.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var second = new StreamedSetCommand(
+            (RespireValue)"second", new MemoryStream(new byte[4]), 4, default, SetWhen.Always);
+        var error = await Assert.That(async () => await connection.SendCheckedAsync(in second, commandName: "SET"))
+            .Throws<RespireTimeoutException>();
+        await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.WaitingForCapacity);
+
+        holder.ContinueReading.TrySetResult();
+        using var reply = await firstSet;
+        await Assert.That(reply.AsString()).IsEqualTo("OK");
+    }
+
+    [Test]
+    public async Task RetirementDrainsAcceptedStreamedSet()
+    {
+        await using var server = new CountingSetServer();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port, new()
+        {
+            Protocol = RespProtocol.Resp2,
+        });
+        var source = new PausedStream();
+        var command = new StreamedSetCommand((RespireValue)"retiring", source, 4, default, SetWhen.Always);
+        var set = connection.SendCheckedAsync(in command, commandName: "SET").AsTask();
+        await source.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var retirement = connection.RetireAsync();
+        await Task.Delay(100);
+        await Assert.That(retirement.IsCompleted).IsFalse();
+
+        source.ContinueReading.TrySetResult();
+        using var reply = await set.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(reply.AsString()).IsEqualTo("OK");
+        await retirement.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(connection.DrainedSuccessfully).IsTrue();
+        await Assert.That(server.Commands).IsEquivalentTo(new[] { "SET" });
     }
 
     [Test]

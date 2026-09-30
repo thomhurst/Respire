@@ -25,16 +25,21 @@ await redis.Strings.SetAsync("archive", file, file.Length);
 ```
 
 The stream overload requires an exact, non-negative byte length. Respire reads no more than
-that length, leaves the stream open, and does not seek it. The source must provide all declared
-bytes; early end throws `EndOfStreamException`. The `ReadOnlySequence<byte>` overload sends
-segments incrementally too; keep its memory unchanged until the returned task completes.
+that length, leaves the stream open, and does not seek it. A seekable stream with fewer
+remaining bytes than the declared length is rejected with `ArgumentOutOfRangeException` before
+anything is sent; any other source that ends early throws `EndOfStreamException`. The
+`ReadOnlySequence<byte>` overload sends segments incrementally too; keep its memory unchanged
+until the returned task completes.
 
 Respire holds that connection's write path for the complete RESP frame, so later commands on
-the connection follow the streamed `SET`. Cancellation or a read failure before Respire queues
-the complete frame closes the connection to prevent later bytes from being parsed as another
-command. After the complete frame is queued, cancellation only cancels the wait for its reply.
-A streamed write is not retried automatically. Redirect replies and transport failures are
-returned to the caller; after a transport failure, Redis may or may not have applied the write.
+the connection follow the streamed `SET`, and a slow source delays them. Cancellation or a read
+failure before Respire queues the complete frame closes the connection to prevent later bytes
+from being parsed as another command, which also fails other commands pipelined on it. Prefer
+seekable or in-memory sources, and use a separate client for slow sources such as network
+streams. After the complete frame is queued, cancellation only cancels the wait for its reply.
+A streamed write is not retried once its header is sent. Redirect replies such as `MOVED` and
+transport failures are returned to the caller; after a transport failure, Redis may or may not
+have applied the write.
 
 Conditional writes use `SetWhen`:
 

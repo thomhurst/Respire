@@ -78,7 +78,8 @@ public partial interface IStringCommands
     /// <summary>
     /// Sets a key from exactly <paramref name="length"/> bytes read from <paramref name="value"/>.
     /// The stream remains open. Cancellation or a read failure during transmission closes the
-    /// connection to preserve RESP framing. Respire does not retry streamed writes.
+    /// connection to preserve RESP framing, failing other commands pipelined on it; later
+    /// commands on that connection wait for the complete frame. Respire does not retry streamed writes.
     /// </summary>
     ValueTask<bool> SetAsync(
         RespireKey key,
@@ -293,6 +294,11 @@ internal sealed partial class StringCommands(RespireClient client) : IStringComm
         ArgumentNullException.ThrowIfNull(value);
         if (!value.CanRead) throw new ArgumentException("The source stream must be readable.", nameof(value));
         ArgumentOutOfRangeException.ThrowIfNegative(length);
+        // A short seekable source is rejected before any bytes are written, so it cannot close
+        // the shared connection mid-frame.
+        if (value.CanSeek && value.Length - value.Position < length)
+            throw new ArgumentOutOfRangeException(nameof(length), length,
+                "The declared length exceeds the bytes remaining in the seekable source stream.");
         SetCommand.ValidateExpiry(expiry);
         return client.OkOrNullAsync("SET",
             new StreamedSetCommand(client.Key(in key), value, length, expiry, when), cancellationToken);

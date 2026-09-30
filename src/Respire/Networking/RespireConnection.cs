@@ -1198,6 +1198,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
         where TCommand : struct, IRespCommand
     {
         if (!commandDeadline.IsSet && armCommandDeadline) commandDeadline = CommandDeadline.After(_commandTimeoutMilliseconds);
+        // TCommand is always a struct, so the JIT specializes this method per command type and
+        // folds the type test to a constant; it costs nothing on the ordinary command hot path.
         if (command is StreamedSetCommand streamedSet)
         {
             return SendStreamedSetAsync(streamedSet, cancellationToken, armCommandDeadline);
@@ -1247,7 +1249,18 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             ? null
             : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCancellation.Token);
         var effectiveCancellation = linkedCancellation?.Token ?? cancellationToken;
-        await _streamingGate.WaitAsync(effectiveCancellation).ConfigureAwait(false);
+        try
+        {
+            await _streamingGate.WaitAsync(effectiveCancellation).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException error) when (timeoutCancellation is not null
+            && IsDeadlineCancellation(error, effectiveCancellation, cancellationToken))
+        {
+            // Another streamed SET held this connection's frame for the whole command timeout.
+            throw new RespireTimeoutException("SET", _commandTimeout!.Value, error,
+                CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
+        }
+
         PendingResponseSource source;
         try
         {
@@ -1289,8 +1302,10 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
             source.Deadline = deadline;
 
-            requestStarted = true;
+            // AppendStreamingStart rejects a retired or closed connection before writing any
+            // bytes, so the request (and the caller's stream) stays untouched and retryable.
             var write = AppendStreamingStart(command, out queuedBatchStarted, out var requestWriteStart);
+            requestStarted = true;
             ScheduleFlush(queuedBatchStarted);
             await write.ConfigureAwait(false);
 
@@ -1373,6 +1388,11 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 else if (Volatile.Read(ref _sending))
                 {
                     write = _spareBuffer.WriteCompletion;
+                    // The flush loop clears _sending outside this lock before completing the
+                    // buffer. If it did so while this waiter was created, its completion may
+                    // already have run; re-check instead of waiting for the buffer's next send.
+                    Interlocked.MemoryBarrier();
+                    if (!Volatile.Read(ref _sending)) continue;
                 }
                 else
                 {
@@ -1406,7 +1426,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         lock (_writeGate)
         {
-            ThrowIfRetired();
+            // The header is already queued, so the command was accepted before any retirement.
+            // Retirement drains accepted work; _streamingActive keeps the drain pending.
             if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
             _activeBuffer.Append(bytes);
             Volatile.Write(ref _enqueuedBytes, _enqueuedBytes + bytes.Length);
@@ -1419,7 +1440,7 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         lock (_writeGate)
         {
-            ThrowIfRetired();
+            // Accepted before any retirement (see AppendStreamingBytes); finish the frame.
             if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
             var start = _activeBuffer.Count;
             startedBatch = start == 0 && _inflight.Count == 0;
@@ -3074,9 +3095,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
 
             _dead = true;
             _abortReason = reason;
+            // The flush loop owns an in-progress send: it completes that buffer when the socket
+            // accepted every byte, or fails it when the closed socket rejects the write.
             _activeBuffer.FailWrite(writeFailure);
-            if (Volatile.Read(ref _sending)) _spareBuffer.FailWrite(writeFailure);
-            Volatile.Write(ref _sending, false);
         }
 
         Volatile.Read(ref _activeBulkStreamSource)?.AbortPayload(writeFailure);
