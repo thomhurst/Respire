@@ -25,6 +25,7 @@ const sidebars = {
         'guides/blocking-queues',
         'guides/pub-sub',
         'guides/pub-sub-introspection',
+        'guides/client-administration',
         'guides/batches-and-transactions',
         'guides/durability-acknowledgements',
         'guides/raw-commands',

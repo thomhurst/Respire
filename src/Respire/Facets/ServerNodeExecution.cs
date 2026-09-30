@@ -100,7 +100,7 @@ internal sealed partial class ServerCommands
         // slotless members, which can have their own subscribers. Never silently omit them.
         using var reply = await client.SendOnConnectionAsync("CLUSTER NODES", connection,
             new Cmd(ClusterNodes), cancellationToken).ConfigureAwait(false);
-        if (reply.Type is not (RespDataType.BulkString or RespDataType.SimpleString))
+        if (reply.Type is not (RespDataType.BulkString or RespDataType.SimpleString or RespDataType.VerbatimString))
             throw new RespireProtocolException("CLUSTER NODES must return topology text.");
         return ParseServerEndpoints(reply.AsString(), source);
     }
