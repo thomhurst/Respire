@@ -107,12 +107,12 @@ public sealed partial class RespireFakeServer
         if (list is null) return FakeReply.Integer(0);
         // long.MinValue requests more matches than any managed list can contain.
         var limit = requested is 0 or long.MinValue ? long.MaxValue : Math.Abs(requested);
-        var skip = requested < 0 ? Math.Max(0, list.Count(value => value.AsSpan().SequenceEqual(args[3])) - limit) : 0;
+        var skip = requested < 0 ? Math.Max(0, list.Count(value => SameListValue(value, args[3])) - limit) : 0;
         var remaining = limit;
         // Compact once, preserving order. Repeated RemoveAt would be quadratic for many matches.
         var removed = list.RemoveAll(value =>
         {
-            if (!value.AsSpan().SequenceEqual(args[3]) || remaining == 0) return false;
+            if (!SameListValue(value, args[3]) || remaining == 0) return false;
             if (skip > 0) { skip--; return false; }
             remaining--;
             return true;
@@ -127,7 +127,7 @@ public sealed partial class RespireFakeServer
         if (position is not ("BEFORE" or "AFTER")) return Syntax("LINSERT");
         var list = Find(args[1])?.List;
         if (list is null) return FakeReply.Integer(0);
-        var pivot = list.FindIndex(value => value.AsSpan().SequenceEqual(args[3]));
+        var pivot = list.FindIndex(value => SameListValue(value, args[3]));
         if (pivot < 0) return FakeReply.Integer(-1);
         list.Insert(position == "BEFORE" ? pivot : pivot + 1, args[4]);
         return FakeReply.Integer(list.Count);
@@ -167,7 +167,7 @@ public sealed partial class RespireFakeServer
             for (var scanned = 0; scanned < list.Count && (maxLength == 0 || scanned < maxLength); scanned++)
             {
                 var index = rank > 0 ? scanned : list.Count - scanned - 1;
-                if (!list[index].AsSpan().SequenceEqual(args[2]) || ++matches < Math.Abs(rank)) continue;
+                if (!SameListValue(list[index], args[2]) || ++matches < Math.Abs(rank)) continue;
                 if (positions is null) return FakeReply.Integer(index);
                 positions.Add(FakeReply.Integer(index));
                 if (count > 0 && positions.Count == count) break;
@@ -175,4 +175,6 @@ public sealed partial class RespireFakeServer
         }
         return positions is null ? FakeReply.Null : FakeReply.Array(positions.ToArray());
     }
+
+    private static bool SameListValue(byte[] left, byte[] right) => left.AsSpan().SequenceEqual(right);
 }

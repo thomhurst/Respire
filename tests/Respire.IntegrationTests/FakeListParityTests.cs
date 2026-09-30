@@ -76,6 +76,11 @@ public class FakeListParityTests(RedisTestContainer fixture)
         foreach (var (command, args) in new (string, RespireValue[])[]
         {
             ("LPUSH", ["list"]), ("RPUSHX", ["list"]), ("LPOP", ["list", -1]),
+            ("LPOP", ["list", "-0"]), ("RPOP", ["list", "-0"]),
+            ("LRANGE", ["list", "-0", -1]), ("LTRIM", ["list", 0, "-0"]),
+            ("LINDEX", ["list", "-0"]), ("LSET", ["list", "-0", "x"]),
+            ("LREM", ["list", "-0", "a"]), ("LPOS", ["list", "a", "RANK", "-0"]),
+            ("LPOS", ["list", "a", "COUNT", "-0"]), ("LPOS", ["list", "a", "MAXLEN", "-0"]),
             ("RPOP", ["list", "01"]), ("LPOP", ["list", 1, 2]), ("LLEN", ["list", 1]),
             ("LRANGE", ["list", "bad", -1]), ("LTRIM", ["list", 0, "bad"]),
             ("LINDEX", ["list", "01"]), ("LSET", ["list", 99, "x"]),
