@@ -54,6 +54,17 @@ public class HashReadTests
     }
 
     [Test]
+    public async Task ExpiryTime_RejectsOverflowingSecondsAsMalformedReplies()
+    {
+        const long largestSeconds = long.MaxValue / 1000;
+        await Assert.That(RespireExpiryTime.FromRedis(largestSeconds, ExpiryTimePrecision.Seconds).UnixTimeMilliseconds)
+            .IsEqualTo(largestSeconds * 1000);
+        await Assert.That(() => RespireExpiryTime.FromRedis(largestSeconds + 1, ExpiryTimePrecision.Seconds))
+            .Throws<RespireProtocolException>();
+        await Assert.That(() => RespireExpiryTime.FromRedis(long.MaxValue, ExpiryTimePrecision.Seconds))
+            .Throws<RespireProtocolException>();
+    }
+    [Test]
     public async Task ExpiryTime_RejectsUnexpectedNegativeSentinels()
     {
         await Assert.That(() => RespireExpiryTime.FromRedis(-3, ExpiryTimePrecision.Milliseconds))

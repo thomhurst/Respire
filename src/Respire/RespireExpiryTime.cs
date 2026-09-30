@@ -47,6 +47,8 @@ public readonly struct RespireExpiryTime
         {
             -2 => new RespireExpiryTime(exists: false, unixTimeMilliseconds: null),
             -1 => new RespireExpiryTime(exists: true, unixTimeMilliseconds: null),
+            > long.MaxValue / 1000 when precision == ExpiryTimePrecision.Seconds
+                => throw new RespireProtocolException($"Expiry timestamp cannot be represented in milliseconds: {timestamp}."),
             >= 0 => new RespireExpiryTime(exists: true, precision == ExpiryTimePrecision.Seconds
                 ? checked(timestamp * 1000) : timestamp),
             _ => throw new RespireProtocolException($"Unexpected expiry timestamp: {timestamp}."),
