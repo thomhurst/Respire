@@ -12,6 +12,55 @@ namespace Respire.Tests.Networking;
 public class TimeoutDiagnosticsTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task PublicConstructionDoesNotInventObservations(bool withCause)
+    {
+        var error = withCause
+            ? new RespireTimeoutException("GET", TimeSpan.FromSeconds(1), new IOException("cause"))
+            : new RespireTimeoutException("GET", TimeSpan.FromSeconds(1));
+        var snapshot = error.Diagnostics;
+        await Assert.That(snapshot.Stage).IsEqualTo(RespireCommandStage.Unknown);
+        await Assert.That(snapshot.Endpoint).IsNull();
+        await Assert.That(snapshot.BusyWorkerThreads).IsNull();
+        await Assert.That(snapshot.MinWorkerThreads).IsNull();
+        await Assert.That(snapshot.BusyIoThreads).IsNull();
+        await Assert.That(snapshot.MinIoThreads).IsNull();
+        await Assert.That(snapshot.PendingWorkItems).IsNull();
+        await Assert.That(snapshot.PossibleThreadPoolStarvation).IsFalse();
+        await Assert.That(snapshot.Hint).Contains("No timeout observations");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TransactionCancellationRequiresTheDeadlineToken(bool deadlineExpired)
+    {
+        await using var server = new FakeRespServer();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        using var deadline = new CancellationTokenSource();
+        using var unrelated = new CancellationTokenSource();
+        deadline.Cancel();
+        unrelated.Cancel();
+        var cause = new OperationCanceledException(deadlineExpired ? deadline.Token : unrelated.Token);
+        var method = typeof(RespireConnection).GetMethod("AwaitTimedMultiReplyAsync",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var reply = (ValueTask<Respire.Protocol.RespValue>)method.Invoke(connection,
+            [ValueTask.FromException<Respire.Protocol.RespValue>(cause), 0L, 0L,
+                TimeSpan.FromSeconds(1), CancellationToken.None, deadline.Token])!;
+        if (deadlineExpired)
+        {
+            var error = await Assert.That(async () => await reply).ThrowsExactly<RespireTimeoutException>();
+            await Assert.That(error!.InnerException).IsSameReferenceAs(cause);
+        }
+        else
+        {
+            var error = await Assert.That(async () => await reply).ThrowsExactly<OperationCanceledException>();
+            await Assert.That(error).IsSameReferenceAs(cause);
+        }
+    }
+
+    [Test]
     public async Task ImmediateTimeout_ReportsConnectionAndAwaitingReplyWithoutArguments()
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply)
@@ -35,8 +84,8 @@ public class TimeoutDiagnosticsTests
         await Assert.That(diagnostics.IsConnected).IsTrue();
         await Assert.That(error.Message.Contains("secret-key", StringComparison.Ordinal)).IsFalse();
         await Assert.That(error.Message.Contains("Stage=AwaitingReply", StringComparison.Ordinal)).IsTrue();
-        await Assert.That(diagnostics.BusyWorkerThreads).IsGreaterThanOrEqualTo(0);
-        await Assert.That(diagnostics.PendingWorkItems).IsGreaterThanOrEqualTo(0);
+        await Assert.That(diagnostics.BusyWorkerThreads.GetValueOrDefault()).IsGreaterThanOrEqualTo(0);
+        await Assert.That(diagnostics.PendingWorkItems.GetValueOrDefault()).IsGreaterThanOrEqualTo(0);
     }
 
     [Test]
@@ -113,7 +162,7 @@ public class TimeoutDiagnosticsTests
     }
 
     [Test]
-    public async Task StalledWrite_ReportsBufferedCommandAndPayloadBacklog()
+    public async Task StalledPeer_ReportsUnansweredPayloadAndObservedStage()
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -123,17 +172,21 @@ public class TimeoutDiagnosticsTests
             new RespireConnectionOptions { SocketSendBufferSize = 1024, CommandTimeout = TimeSpan.FromMilliseconds(500) });
         using var peer = await accept;
         peer.ReceiveBufferSize = 1024;
-        // The peer deliberately never reads. A payload exceeding both socket buffers keeps
-        // the persistent sender occupied while the next command remains in the active buffer.
+        // The peer never reads, but kernels differ in how much loopback data a send can
+        // accept. Assert the observed write stage while all unanswered bytes remain in flight.
         using var cancellation = new CancellationTokenSource();
         var large = connection.SendAsync(new RawCommand(new byte[8 * 1024 * 1024]), cancellation.Token,
             armCommandDeadline: false).AsTask();
         var error = await Assert.That(async () => await connection.SendAsync(
                 new RawCommand(FakeRespServer.PingFrame), commandName: "PING"))
             .ThrowsExactly<RespireTimeoutException>();
-        await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Buffered);
-        await Assert.That(error.Diagnostics.PendingWriteBytes.GetValueOrDefault()).IsGreaterThan(1024);
-        await Assert.That(error.Diagnostics.InflightCount).IsEqualTo(2);
+        var snapshot = error!.Diagnostics;
+        var pendingBytes = snapshot.PendingWriteBytes.GetValueOrDefault();
+        var expectedStage = pendingBytes == 0 ? RespireCommandStage.AwaitingReply
+            : pendingBytes >= FakeRespServer.PingFrame.Length ? RespireCommandStage.Buffered : RespireCommandStage.Writing;
+        await Assert.That(snapshot.Stage).IsEqualTo(expectedStage);
+        await Assert.That(snapshot.InflightBytes).IsEqualTo(8 * 1024 * 1024 + FakeRespServer.PingFrame.LongLength);
+        await Assert.That(snapshot.InflightCount).IsEqualTo(2);
         cancellation.Cancel();
         await Assert.That(async () => await large).ThrowsExactly<OperationCanceledException>();
     }

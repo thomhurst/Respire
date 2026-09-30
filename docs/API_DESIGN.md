@@ -16,8 +16,8 @@ users touch.
 >   model everywhere); `RespireResult.IsError` still exposes nested error elements.
 > - Watched transactions shipped in v1 as `CreateTransactionAsync(watchKeys)` on a dedicated
 >   connection (§6 marked it v2).
-> - The timeout exception's queue-depth diagnostic snapshot (§13) is still roadmap; the message
->   covers cause and next steps.
+> - Timeout exceptions expose a best-effort diagnostic snapshot, including command stage,
+>   connection counters, and thread-pool observations when available.
 > - Open questions resolved: plural facet names; root shortcuts as in §2; `GetStringAsync` +
 >   `GetAsync<T>` (no non-generic string-returning `GetAsync`).
 > - Obsolete compatibility aliases are removed before the first release. Custom facet

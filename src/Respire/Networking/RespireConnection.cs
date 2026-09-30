@@ -745,26 +745,28 @@ internal sealed class RespireConnection : IAsyncDisposable
 
         source.RegisterCancellation(cancellationToken);
         ScheduleFlush(startedBatch);
-        return AwaitMultiReplyAsync(source, cancellationTimeout, callerCancellationToken);
+        return AwaitMultiReplyAsync(source, cancellationTimeout, callerCancellationToken, cancellationToken);
     }
 
     private ValueTask<RespValue> AwaitMultiReplyAsync(MultiReplyPendingResponseSource source,
-        TimeSpan? cancellationTimeout, CancellationToken callerCancellationToken)
+        TimeSpan? cancellationTimeout, CancellationToken callerCancellationToken, CancellationToken deadlineToken)
         => cancellationTimeout is { } timeout
-            ? AwaitTimedMultiReplyAsync(source.Task, source.WriteStart, source.WriteEnd, timeout, callerCancellationToken)
+            ? AwaitTimedMultiReplyAsync(source.Task, source.WriteStart, source.WriteEnd, timeout, callerCancellationToken, deadlineToken)
             : source.Task;
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
 #endif
     private async ValueTask<RespValue> AwaitTimedMultiReplyAsync(ValueTask<RespValue> reply,
-        long writeStart, long writeEnd, TimeSpan timeout, CancellationToken callerCancellationToken)
+        long writeStart, long writeEnd, TimeSpan timeout, CancellationToken callerCancellationToken,
+        CancellationToken deadlineToken)
     {
         try
         {
             return await reply.ConfigureAwait(false);
         }
-        catch (OperationCanceledException ex) when (!callerCancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException ex) when (!callerCancellationToken.IsCancellationRequested
+            && deadlineToken.IsCancellationRequested && ex.CancellationToken == deadlineToken)
         {
             throw new RespireTimeoutException("MULTI/EXEC", timeout, ex,
                 CaptureTimeoutDiagnostics(writeStart, writeEnd));
@@ -1081,25 +1083,20 @@ internal sealed class RespireConnection : IAsyncDisposable
         var enqueued = Volatile.Read(ref _enqueuedBytes);
         if (writeEnd > 0)
         {
-            stage = RespireCommandStage.Buffered;
-            if (sent >= writeEnd)
-            {
-                stage = RespireCommandStage.AwaitingReply;
-            }
-            else if (sent > writeStart)
-            {
-                stage = RespireCommandStage.Writing;
-            }
+            stage = RespireTimeoutDiagnostics.ComputeStage(sent, writeStart, writeEnd);
         }
         var read = Volatile.Read(ref _lastReadTimestamp);
         var write = Volatile.Read(ref _lastWriteTimestamp);
         var serverId = ServerClientId;
         // Counters advance independently; clamp differences that cross concurrent observations.
-        return RespireTimeoutDiagnostics.Capture(stage, new RespireEndpoint(Host, Port), _diagnosticId,
-            serverId == 0 ? null : serverId, Math.Max(0, _inflight.Count),
-            Math.Max(0, enqueued - _inflight.CompletedWriteEnd), Math.Max(0, enqueued - sent),
-            read == 0 ? null : Stopwatch.GetElapsedTime(read), write == 0 ? null : Stopwatch.GetElapsedTime(write),
-            IsConnected, Multiplexer?.GetReconnectState(this), writtenBytes: sent);
+        return RespireTimeoutDiagnostics.Capture(
+            stage: stage, endpoint: new RespireEndpoint(Host, Port), connectionId: _diagnosticId,
+            serverClientId: serverId == 0 ? null : serverId, inflightCount: Math.Max(0, _inflight.Count),
+            inflightBytes: Math.Max(0, enqueued - _inflight.CompletedWriteEnd),
+            pendingWriteBytes: Math.Max(0, enqueued - sent),
+            timeSinceLastRead: read == 0 ? null : Stopwatch.GetElapsedTime(read),
+            timeSinceLastWrite: write == 0 ? null : Stopwatch.GetElapsedTime(write),
+            isConnected: IsConnected, isReconnecting: Multiplexer?.GetReconnectState(this), writtenBytes: sent);
     }
 
     /// <summary>
@@ -1172,7 +1169,8 @@ internal sealed class RespireConnection : IAsyncDisposable
                     .ConfigureAwait(false);
             }
         }
-        catch (OperationCanceledException ex) when (cancellationTimeout is not null && !callerCancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException ex) when (cancellationTimeout is not null && !callerCancellationToken.IsCancellationRequested
+            && cancellationToken.IsCancellationRequested && ex.CancellationToken == cancellationToken)
         {
             ReclaimUnpublished(source, replyCount + 1);
             throw new RespireTimeoutException("MULTI/EXEC", cancellationTimeout.Value, ex,
@@ -1186,7 +1184,7 @@ internal sealed class RespireConnection : IAsyncDisposable
 
         source.RegisterCancellation(cancellationToken);
         ScheduleFlush(startedBatch);
-        return await AwaitMultiReplyAsync(source, cancellationTimeout, callerCancellationToken).ConfigureAwait(false);
+        return await AwaitMultiReplyAsync(source, cancellationTimeout, callerCancellationToken, cancellationToken).ConfigureAwait(false);
     }
 
 #if NET

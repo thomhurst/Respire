@@ -28,6 +28,8 @@ public sealed class RespireTimeoutDiagnostics
 {
     private RespireTimeoutDiagnostics() { }
 
+    internal static RespireTimeoutDiagnostics Unavailable { get; } = new();
+
     /// <summary>The last observed command stage.</summary>
     public RespireCommandStage Stage { get; private set; }
     private long? WrittenBytes { get; init; }
@@ -53,15 +55,15 @@ public sealed class RespireTimeoutDiagnostics
     /// <summary>Whether the inspected connection owner is reconnecting, when known.</summary>
     public bool? IsReconnecting { get; private init; }
     /// <summary>Busy thread-pool worker threads at capture time.</summary>
-    public int BusyWorkerThreads { get; private init; }
+    public int? BusyWorkerThreads { get; private init; }
     /// <summary>The configured minimum worker thread count.</summary>
-    public int MinWorkerThreads { get; private init; }
+    public int? MinWorkerThreads { get; private init; }
     /// <summary>Busy thread-pool I/O completion threads at capture time.</summary>
-    public int BusyIoThreads { get; private init; }
+    public int? BusyIoThreads { get; private init; }
     /// <summary>The configured minimum I/O completion thread count.</summary>
-    public int MinIoThreads { get; private init; }
+    public int? MinIoThreads { get; private init; }
     /// <summary>Queued thread-pool work items at capture time.</summary>
-    public long PendingWorkItems { get; private init; }
+    public long? PendingWorkItems { get; private init; }
     /// <summary>A heuristic: work is queued and busy workers have reached the configured minimum.</summary>
     public bool PossibleThreadPoolStarvation => PendingWorkItems > 0 && BusyWorkerThreads >= MinWorkerThreads;
     /// <summary>Suggested checks based on the observed stage and counters.</summary>
@@ -69,6 +71,8 @@ public sealed class RespireTimeoutDiagnostics
     {
         get
         {
+            if (Stage == RespireCommandStage.Unknown && PendingWorkItems is null)
+                return "No timeout observations are available; inspect the original operation and its connection.";
             if (PossibleThreadPoolStarvation)
                 return "Possible thread-pool starvation: inspect blocking work and worker availability.";
             if (Stage == RespireCommandStage.Connecting || IsReconnecting == true)
@@ -110,8 +114,7 @@ public sealed class RespireTimeoutDiagnostics
         if (WrittenBytes is not { } sent || writeEnd <= 0)
             return this;
 
-        var stage = sent >= writeEnd ? RespireCommandStage.AwaitingReply
-            : sent > writeStart ? RespireCommandStage.Writing : RespireCommandStage.Buffered;
+        var stage = ComputeStage(sent, writeStart, writeEnd);
         if (Stage == stage)
             return this;
 
@@ -119,6 +122,10 @@ public sealed class RespireTimeoutDiagnostics
         snapshot.Stage = stage;
         return snapshot;
     }
+
+    internal static RespireCommandStage ComputeStage(long sent, long writeStart, long writeEnd)
+        => sent >= writeEnd ? RespireCommandStage.AwaitingReply
+            : sent > writeStart ? RespireCommandStage.Writing : RespireCommandStage.Buffered;
 
     internal string Describe()
         => $"Stage={Stage}; endpoint={Endpoint?.ToString() ?? "unknown"}; connection={ConnectionId?.ToString() ?? "unknown"}; " +

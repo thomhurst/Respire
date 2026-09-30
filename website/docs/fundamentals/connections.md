@@ -262,7 +262,10 @@ report their complete MULTI/EXEC frame: its full byte count remains outstanding 
 replies, while intermediate replies reduce the outstanding slot count. Other multi-command
 frames use the same accounting.
 Snapshots also accompany batch failures and dedicated connection operations. Relabeled
-internal timeout exceptions preserve the original snapshot.
+internal timeout exceptions preserve the original snapshot. Exceptions constructed by application code
+have an unavailable snapshot unless wrapping another timeout exception; they do not sample unrelated
+thread-pool activity. Cluster discovery, redirection, and multi-step acquisition can report the stage
+without a physical endpoint or connection when none can be reliably identified.
 
 Counters are best-effort observations, not an atomic connection view. Null fields mean no
 physical connection or measurement was available, such as during connection acquisition or

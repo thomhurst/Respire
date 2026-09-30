@@ -172,12 +172,12 @@ public sealed class RespireTimeoutException : RespireException
 {
     /// <summary>Creates a command timeout exception with an unavailable-connection snapshot.</summary>
     public RespireTimeoutException(string commandName, TimeSpan timeout)
-        : this(commandName, timeout, null, RespireTimeoutDiagnostics.Capture()) { }
+        : this(commandName, timeout, null, RespireTimeoutDiagnostics.Unavailable) { }
 
     /// <summary>Creates a command timeout exception, preserving an underlying timeout snapshot.</summary>
     public RespireTimeoutException(string commandName, TimeSpan timeout, Exception innerException)
         : this(commandName, timeout, innerException,
-            (innerException as RespireTimeoutException)?.Diagnostics ?? RespireTimeoutDiagnostics.Capture()) { }
+            (innerException as RespireTimeoutException)?.Diagnostics ?? RespireTimeoutDiagnostics.Unavailable) { }
 
     internal RespireTimeoutException(string commandName, TimeSpan timeout, Exception? innerException,
         RespireTimeoutDiagnostics diagnostics)
