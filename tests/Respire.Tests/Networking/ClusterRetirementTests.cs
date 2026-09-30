@@ -363,6 +363,137 @@ public class ClusterRetirementTests
     }
 
     [Test]
+    [Arguments("ordinary", "MOVED", false)]
+    [Arguments("ordinary", "MOVED", true)]
+    [Arguments("ordinary", "ASK", false)]
+    [Arguments("ordinary", "ASK", true)]
+    [Arguments("ordinary", "READONLY", false)]
+    [Arguments("ordinary", "READONLY", true)]
+    [Arguments("tracked", "MOVED", false)]
+    [Arguments("tracked", "MOVED", true)]
+    [Arguments("tracked", "ASK", false)]
+    [Arguments("tracked", "ASK", true)]
+    [Arguments("tracked", "READONLY", false)]
+    [Arguments("tracked", "READONLY", true)]
+    [Arguments("batch", "MOVED", false)]
+    [Arguments("batch", "MOVED", true)]
+    [Arguments("batch", "ASK", false)]
+    [Arguments("batch", "ASK", true)]
+    [Arguments("batch", "READONLY", false)]
+    [Arguments("batch", "READONLY", true)]
+    [Arguments("script", "MOVED", false)]
+    [Arguments("script", "MOVED", true)]
+    [Arguments("script", "ASK", false)]
+    [Arguments("script", "ASK", true)]
+    [Arguments("script", "READONLY", false)]
+    [Arguments("script", "READONLY", true)]
+    [Arguments("native-lock", "MOVED", false)]
+    [Arguments("native-lock", "MOVED", true)]
+    [Arguments("native-lock", "ASK", false)]
+    [Arguments("native-lock", "ASK", true)]
+    [Arguments("native-lock", "READONLY", false)]
+    [Arguments("native-lock", "READONLY", true)]
+    [Arguments("transaction", "MOVED", false)]
+    [Arguments("transaction", "MOVED", true)]
+    [Arguments("transaction", "ASK", false)]
+    [Arguments("transaction", "ASK", true)]
+    [Arguments("transaction", "READONLY", false)]
+    [Arguments("transaction", "READONLY", true)]
+    [Arguments("blocking", "MOVED", false)]
+    [Arguments("blocking", "MOVED", true)]
+    [Arguments("blocking", "ASK", false)]
+    [Arguments("blocking", "ASK", true)]
+    [Arguments("blocking", "READONLY", false)]
+    [Arguments("blocking", "READONLY", true)]
+    public async Task TerminalRoutingRejectionReportsFailedDiscovery(string path, string code, bool unlimited)
+    {
+        await using var server = new FakeRespServer(2, FakeRespServer.OkReply);
+        await using var client = CreateClient(reconnectPolicy: new()
+        {
+            InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = unlimited ? null : 5,
+        });
+        using var timeout = new CancellationTokenSource(Limit);
+        var router = client.Core.Cluster!;
+        Publish(router, new("127.0.0.1", server.Port), "owner", 1);
+        var attempts = 0;
+        var slot = ClusterHash.GetSlot("key");
+        server.ReplyOverride = (_, command) =>
+        {
+            if (command == "CLIENT ID") return ":42\r\n"u8.ToArray();
+            if (command.StartsWith("CLIENT KILL ", StringComparison.Ordinal)) return ":0\r\n"u8.ToArray();
+            if (command == "EXEC") return "-EXECABORT rejected queue\r\n"u8.ToArray();
+            if (!command.StartsWith("SET ", StringComparison.Ordinal)
+                && !command.StartsWith("EVALSHA ", StringComparison.Ordinal)
+                && !command.StartsWith("BLPOP ", StringComparison.Ordinal)) return null;
+            var final = Interlocked.Increment(ref attempts) > ClusterRouter.RedirectLimit;
+            // Five successful reselections start one episode. The last route still rejects
+            // the command, including READONLY after selection no longer has a pending failure.
+            var rejection = final ? code : "MOVED";
+            return System.Text.Encoding.ASCII.GetBytes(rejection == "READONLY"
+                ? "-READONLY demoted\r\n" : $"-{rejection} {slot} 127.0.0.1:{server.Port}\r\n");
+        };
+        var changes = new System.Collections.Concurrent.ConcurrentQueue<RespireConnectionStateChange>();
+        var completed = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
+            changes.Enqueue(change);
+            if (change.NextReconnectDelay is null) completed.TrySetResult(change);
+        };
+        var error = await Assert.That(async () => await SendAsync().WaitAsync(timeout.Token))
+            .ThrowsExactly<RespireServerException>();
+        await Assert.That(error!.Code).IsEqualTo(code);
+        var terminal = await completed.Task.WaitAsync(timeout.Token);
+        await Assert.That(terminal.SourceState).IsEqualTo(RespireConnectionState.Disconnected);
+        await Assert.That(terminal.Error).IsSameReferenceAs(error);
+        await Assert.That(terminal.ReconnectAttempt).IsEqualTo(5);
+        await Assert.That(terminal.ReconnectExhausted).IsFalse();
+        await Assert.That(attempts).IsEqualTo(6);
+        await Assert.That(changes.Count).IsEqualTo(6);
+        await Assert.That(changes.Select(change => change.ReconnectEpisodeId).Distinct().Count()).IsEqualTo(1);
+
+        async Task SendAsync()
+        {
+            switch (path)
+            {
+                case "tracked":
+                    var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
+                    using (await (ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
+                        ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, null])!) { }
+                    break;
+                case "batch":
+                    var batch = client.CreateBatch();
+                    var batched = batch.Set("key", "value");
+                    await batch.ExecuteAsync(timeout.Token);
+                    _ = batched.Result;
+                    break;
+                case "script":
+                    var execution = await client.StartTrackedScriptExecutionAsync(
+                        RespireScript.Create("return redis.call('SET', KEYS[1], ARGV[1])"), ["key"], ["value"], timeout.Token);
+                    using (await execution.Response) { }
+                    break;
+                case "native-lock":
+                    await client.ExecuteLockAsync("key", new RespireLockToken("owner"), 1000, timeout.Token);
+                    break;
+                case "transaction":
+                    await using (var transaction = client.CreateTransaction())
+                    {
+                        transaction.Set("key", "value");
+                        await transaction.CommitAsync(timeout.Token);
+                    }
+                    break;
+                case "blocking":
+                    using (await client.SendBlockingAsync("BLPOP",
+                        new Cmd2(RespireCommands.List.BLPOP.Verb, "key", "0"), timeout.Token)) { }
+                    break;
+                default:
+                    using (await client.ExecuteAsync(RespireCommands.String.SET, ["key", "value"], cancellationToken: timeout.Token)) { }
+                    break;
+            }
+        }
+    }
+
+    [Test]
     [NotInParallel] // The ActivityListener enables process-wide operation instrumentation.
     [Arguments("batch", "MOVED", false)]
     [Arguments("batch", "MOVED", true)]
@@ -555,6 +686,9 @@ public class ClusterRetirementTests
     [Test]
     [Arguments("ordinary", "server-error")]
     [Arguments("ordinary", "accepted-cancellation")]
+    [Arguments("no-redirect", "MOVED")]
+    [Arguments("no-redirect", "ASK")]
+    [Arguments("no-redirect", "READONLY")]
     [Arguments("no-redirect", "server-error")]
     [Arguments("no-redirect", "accepted-cancellation")]
     [Arguments("tracked", "server-error")]
@@ -564,6 +698,7 @@ public class ClusterRetirementTests
     [Arguments("ordinary", "recovery-cancellation")]
     public async Task ApplicationFailureAfterRetirementDoesNotFailDiscovery(string path, string outcome)
     {
+        var errorCode = outcome is "MOVED" or "ASK" or "READONLY" ? outcome : "WRONGTYPE";
         var cancelAfterAcceptance = outcome == "accepted-cancellation";
         var cancelDuringRecovery = outcome == "recovery-cancellation";
         var scheduled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -587,7 +722,7 @@ public class ClusterRetirementTests
                 }
                 return false;
             },
-            ReplyOverride = (_, command) => command == "SET key value" ? "-WRONGTYPE test application error\r\n"u8.ToArray() : null,
+            ReplyOverride = (_, command) => command == "SET key value" ? System.Text.Encoding.ASCII.GetBytes($"-{errorCode} test application error\r\n") : null,
         };
         await using var client = CreateClient(maxInflightCommands: 4,
             reconnectPolicy: new() { InitialDelay = cancelDuringRecovery ? TimeSpan.FromSeconds(30) : TimeSpan.Zero,
@@ -623,7 +758,7 @@ public class ClusterRetirementTests
             else
             {
                 var error = await Assert.That(async () => await pending.WaitAsync(timeout.Token)).Throws<RespireServerException>();
-                await Assert.That(error!.Code).IsEqualTo("WRONGTYPE");
+                await Assert.That(error!.Code).IsEqualTo(errorCode);
             }
             var recovered = await terminal.Task.WaitAsync(timeout.Token);
             await Assert.That(recovered.SourceState).IsEqualTo(cancelDuringRecovery

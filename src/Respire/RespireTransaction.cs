@@ -390,12 +390,12 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
 
         async ValueTask<RespValue> SendAsync(CancellationToken token)
         {
+            var slot = _hasClusterSlot ? _clusterSlot : (int?)null;
             ClusterRouter.DiscoveryRound? discovery = null;
             var discoveryPending = false;
             try
             {
                 var cluster = core.Cluster;
-                var slot = _hasClusterSlot ? _clusterSlot : (int?)null;
                 for (var attempt = 0; ; attempt++)
                 {
                     connection ??= await _client.AcquireConnectionAsync(slot, token)
@@ -418,7 +418,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                         discoveryPending = false;
                         continue;
                     }
-                    if (!reply.IsError || cluster is null || attempt >= ClusterRouter.RedirectLimit)
+                    if (!reply.IsError || cluster is null)
                     {
                         return reply;
                     }
@@ -431,6 +431,12 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                     }
 
                     reply.Dispose();
+                    if (attempt >= ClusterRouter.RedirectLimit)
+                    {
+                        // Throw within the owning round so its outcome and queued operations
+                        // retain the same terminal routing rejection.
+                        throw redirect;
+                    }
                     if (_watchConnection is not null)
                     {
                         // Replaying on another connection would lose WATCH and could commit stale reads.
@@ -445,6 +451,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
 
                     if (redirect.Code == RespireErrorCodes.Ask)
                     {
+                        discovery?.RecordCommandFailure(redirect, discoveryPending: false, slot);
                         throw new RespireConnectionException(
                             "Redis Cluster transactions cannot follow ASK redirects during slot migration.",
                             redirect);
@@ -459,7 +466,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
             }
             catch (Exception error)
             {
-                discovery?.RecordCommandFailure(error, discoveryPending);
+                discovery?.RecordCommandFailure(error, discoveryPending, slot);
                 throw;
             }
             finally { discovery?.Finish(); }

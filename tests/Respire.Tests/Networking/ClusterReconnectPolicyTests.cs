@@ -628,6 +628,26 @@ public class ClusterReconnectPolicyTests
     }
 
     [Test]
+    [Arguments("MOVED", null, false, true)]
+    [Arguments("ASK", null, false, true)]
+    [Arguments("READONLY", 42, false, true)]
+    [Arguments("READONLY", null, false, false)]
+    [Arguments("WRONGTYPE", 42, false, false)]
+    [Arguments("MOVED", 42, true, false)]
+    [Arguments("ASK", 42, true, false)]
+    [Arguments("READONLY", 42, true, false)]
+    public async Task FinalRoutingRejectionRequiresRecoverableCommand(string code, int? slot, bool noRedirect, bool failed)
+    {
+        await using var client = RespireClient.Create(Options(1));
+        var round = new ClusterRouter.DiscoveryRound(client.Core.Cluster!, new());
+        var error = new RespireServerException(code + " rejected");
+        round.RecordCommandFailure(error, discoveryPending: false, slot, noRedirect);
+        if (failed) await Assert.That(round.TerminalError).IsSameReferenceAs(error);
+        else await Assert.That(round.TerminalError).IsNull();
+        round.Finish();
+    }
+
+    [Test]
     public async Task DiscoveryRoundRejectsConcurrentMutationAndReleasesGuardAfterCancellation()
     {
         await using var client = RespireClient.Create(Options(1));
@@ -650,9 +670,15 @@ public class ClusterReconnectPolicyTests
             await Assert.That(pending.IsCompleted).IsFalse();
             await Assert.That(async () => await round.BeforeCandidateAsync(endpoint, default))
                 .ThrowsExactly<ClusterRouter.DiscoveryRoundUsageException>();
-            await Assert.That(() => round.Failed(new IOException())).ThrowsExactly<ClusterRouter.DiscoveryRoundUsageException>();
-            await Assert.That(() => round.Failed(endpoint, new IOException())).ThrowsExactly<ClusterRouter.DiscoveryRoundUsageException>();
-            await Assert.That(() => round.TerminalError = new IOException()).ThrowsExactly<ClusterRouter.DiscoveryRoundUsageException>();
+            var original = new IOException("original Redis connection failure");
+            var recorded = await Assert.That(() => round.Failed(original)).ThrowsExactly<IOException>();
+            await Assert.That(recorded).IsSameReferenceAs(original);
+            recorded = await Assert.That(() => round.Failed(endpoint, original)).ThrowsExactly<IOException>();
+            await Assert.That(recorded).IsSameReferenceAs(original);
+            recorded = await Assert.That(() => round.TerminalError = original).ThrowsExactly<IOException>();
+            await Assert.That(recorded).IsSameReferenceAs(original);
+            await Assert.That(round.HasPendingFailure).IsFalse();
+            await Assert.That(round.TerminalError).IsNull();
         }
         finally
         {
@@ -886,7 +912,9 @@ public class ClusterReconnectPolicyTests
         await Assert.That(ended.ReconnectExhausted).IsFalse();
         round.Finish();
         round.Finish();
-        await Assert.That(() => round.Failed(new IOException())).ThrowsExactly<ClusterRouter.DiscoveryRoundUsageException>();
+        var original = new IOException("late failure after finish");
+        var late = await Assert.That(() => round.Failed(original)).ThrowsExactly<IOException>();
+        await Assert.That(late).IsSameReferenceAs(original);
 
         // An independently queued episode is a FIFO barrier for duplicate terminal events.
         var next = new ClusterRouter.DiscoveryRound(router, new() { InitialDelay = TimeSpan.Zero, JitterRatio = 0 });

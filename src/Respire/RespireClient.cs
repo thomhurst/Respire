@@ -1684,12 +1684,12 @@ public sealed partial class RespireClient : IRespireClient
         Action<bool>? onRedirect)
         where TCommand : struct, IRespCommand
     {
+        var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
         ClusterRouter.DiscoveryRound? discovery = null;
-        // Keep the budget across sends, but classify only failures during reselection as discovery failures.
+        // Keep the budget across sends; successful selection does not imply the final route accepts the command.
         var discoveryPending = false;
         try
         {
-            var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
             var connection = await cluster.GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
             var sendAsking = false;
             for (var attempt = 0; ; attempt++)
@@ -1736,7 +1736,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            discovery?.RecordCommandFailure(error, discoveryPending);
+            discovery?.RecordCommandFailure(error, discoveryPending, slot);
             throw;
         }
         finally { discovery?.Finish(); }
@@ -2082,11 +2082,11 @@ public sealed partial class RespireClient : IRespireClient
         RespireServerException? initialRejection = null)
         where TCommand : struct, IRespCommand
     {
+        var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
         ClusterRouter.DiscoveryRound? discovery = null;
         var discoveryPending = false;
         try
         {
-            var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
             var connection = initialConnection
                 ?? await cluster.GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
             if (initialRetirement is not null)
@@ -2139,7 +2139,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            discovery?.RecordCommandFailure(error, discoveryPending);
+            discovery?.RecordCommandFailure(error, discoveryPending, slot, noRedirect);
             throw;
         }
         finally { discovery?.Finish(); }
@@ -2805,8 +2805,8 @@ public sealed partial class RespireClient : IRespireClient
                                 ? RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting)
                                 : connection.CaptureDedicatedTimeoutDiagnostics())
                         : null;
-                    if ((acquiringRedirectPool || connection is null) && discovery is not null)
-                        discovery.TerminalError = timeoutError ?? ex;
+                    discovery?.RecordCommandFailure(timeoutError ?? ex,
+                        acquiringRedirectPool || connection is null, slot, noRedirect);
                     telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
                     if (connection is not null && !returned)
                     {
@@ -3222,12 +3222,12 @@ public sealed partial class RespireClient : IRespireClient
         bool requiresIdentity,
         CancellationToken cancellationToken)
     {
+        var command = new Cmd2N(verb, body, tail[0], tail[1..]);
+        var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
         ClusterRouter.DiscoveryRound? discovery = null;
         var discoveryPending = false;
         try
         {
-            var command = new Cmd2N(verb, body, tail[0], tail[1..]);
-            var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
             var connection = initialConnection;
             var sendAsking = execution.ConnectionIdentity.RequiresAsking;
             for (var attempt = 0; ; attempt++)
@@ -3269,7 +3269,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            discovery?.RecordCommandFailure(error, discoveryPending);
+            discovery?.RecordCommandFailure(error, discoveryPending, slot);
             throw;
         }
         finally { discovery?.Finish(); }

@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.Logging;
 using Respire.Infrastructure;
 using Respire.Networking;
@@ -63,29 +64,38 @@ internal sealed partial class ClusterRouter
     internal sealed class DiscoveryRound(ClusterRouter owner, RespireReconnectPolicy policy)
     {
         private readonly object _lifecycleGate = new();
-        private bool _active;
-        private bool _finishRequested;
-        private bool _finished;
-        private void Enter()
+        private enum Lifecycle { Idle, InTransition, FinishPending, Done }
+        private Lifecycle _lifecycle;
+        private void Enter(Exception? originalError = null)
         {
             lock (_lifecycleGate)
             {
-                if (_active || _finishRequested || _finished)
+                if (_lifecycle != Lifecycle.Idle)
+                {
+                    // Error bookkeeping must not replace the failure it is already unwinding.
+                    // Reject the mutation without changing shared state or losing the original stack.
+                    if (originalError is not null) ExceptionDispatchInfo.Capture(originalError).Throw();
                     throw new DiscoveryRoundUsageException();
-                _active = true;
+                }
+                _lifecycle = Lifecycle.InTransition;
             }
         }
         private void Exit()
         {
             lock (_lifecycleGate)
             {
-                _active = false;
-                if (!_finishRequested || _finished) return;
-                _finished = true;
+                if (_lifecycle != Lifecycle.FinishPending)
+                {
+                    _lifecycle = Lifecycle.Idle;
+                    return;
+                }
+                _lifecycle = Lifecycle.Done;
             }
             CompleteFinish();
         }
 
+        // Only the sequential consumer reads or writes retry/outcome fields. The lifecycle gate
+        // excludes overlapping consumers and hands a concurrent Finish to the active transition.
         private Exception? _failure;
         private HashSet<RespireConnectionMultiplexer>? _rejectedNodes;
         internal bool HasRejected(RespireConnectionMultiplexer node) => _rejectedNodes?.Contains(node) == true;
@@ -101,7 +111,7 @@ internal sealed partial class ClusterRouter
             get => _terminalError;
             set
             {
-                Enter();
+                Enter(value);
                 try { _terminalError = value; }
                 finally { Exit(); }
             }
@@ -117,6 +127,15 @@ internal sealed partial class ClusterRouter
             if (discoveryPending || error is RespireConnectionRetiredException) TerminalError = error;
         }
 
+        internal void RecordCommandFailure(Exception error, bool discoveryPending, int? commandSlot, bool noRedirect = false)
+        {
+            // A route can reject the final send after selection succeeded. Reaching the command's
+            // redirect cap ends recovery unsuccessfully even when the policy still permits retries.
+            // NoRedirect and unkeyed READONLY deliberately remain ordinary command errors.
+            var routingRejected = !noRedirect && error is RespireServerException rejection && CanRecover(rejection, commandSlot);
+            RecordCommandFailure(error, discoveryPending || routingRejected);
+        }
+
         // Retirement wrappers preserve the endpoint selected by the last BeforeCandidateAsync.
         // Repeated reports replace the pending failure; only scheduling another candidate consumes it.
         // A caller can handle a scheduling cancellation as a retryable candidate failure (for
@@ -124,7 +143,7 @@ internal sealed partial class ClusterRouter
         // error; unrelated terminal failures and latched exhaustion remain authoritative.
         internal void Failed(Exception error)
         {
-            Enter();
+            Enter(error);
             try
             {
                 _failure = error;
@@ -135,7 +154,7 @@ internal sealed partial class ClusterRouter
 
         internal void Failed(RespireEndpoint endpoint, Exception error, RespireConnectionMultiplexer? rejectedNode = null)
         {
-            Enter();
+            Enter(error);
             try
             {
                 _endpoint = endpoint;
@@ -205,9 +224,13 @@ internal sealed partial class ClusterRouter
             // Mark completion under the gate, then publish outside it exactly once.
             lock (_lifecycleGate)
             {
-                _finishRequested = true;
-                if (_active || _finished) return;
-                _finished = true;
+                if (_lifecycle is Lifecycle.Done or Lifecycle.FinishPending) return;
+                if (_lifecycle == Lifecycle.InTransition)
+                {
+                    _lifecycle = Lifecycle.FinishPending;
+                    return;
+                }
+                _lifecycle = Lifecycle.Done;
             }
             CompleteFinish();
         }
@@ -244,7 +267,8 @@ internal sealed partial class ClusterRouter
         }
     }
 
-    // Called only while holding _discoveryNotificationsGate.
+    // Called only while holding _discoveryNotificationsGate. One drainer preserves event and
+    // measurement order for each episode even when observers enqueue further discovery work.
     private void StartDiscoveryPublisher()
     {
         if (_publishingDiscovery || _discoveryNotifications is not { Count: > 0 }) return;
