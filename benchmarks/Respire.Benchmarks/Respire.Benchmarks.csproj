@@ -3,10 +3,12 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DefineConstants>$(DefineConstants);FENCED_LOCKS</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Respire\Respire.csproj" />
+    <ProjectReference Include="..\..\src\Respire.Extensions.Coordination\Respire.Extensions.Coordination.csproj" />
     <ProjectReference Include="..\..\src\Respire.Compression.Lz4\Respire.Compression.Lz4.csproj" />
     <ProjectReference Include="..\..\src\Respire.Compression.Zstd\Respire.Compression.Zstd.csproj" />
   </ItemGroup>

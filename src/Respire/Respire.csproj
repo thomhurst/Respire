@@ -16,6 +16,9 @@
          for FIFO-ordered TTL corrections. -->
     <InternalsVisibleTo Include="Respire.Extensions.Caching" />
     <InternalsVisibleTo Include="Respire.Extensions.Caching.Tests" />
+    <!-- Reuse owned binary keys and the managed lock's cancellation-safe renewal lifecycle. -->
+    <InternalsVisibleTo Include="Respire.Extensions.Coordination" />
+    <InternalsVisibleTo Include="Respire.Extensions.Coordination.Tests" />
     <InternalsVisibleTo Include="Respire.Tests" />
     <InternalsVisibleTo Include="Respire.IntegrationTests" />
     <InternalsVisibleTo Include="Respire.Benchmarks" />

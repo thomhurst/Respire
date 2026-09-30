@@ -9,6 +9,11 @@ Respire's lock helpers use Redis leases: each lock has an owner token and an exp
 `SET ... NX PX`; extension and release use atomic owner comparisons, so an expired
 handle cannot extend or delete a later owner's lock.
 
+For leases carrying an ordered token that a protected resource can check, use the optional
+[fencing-token locks](coordination.md) in `Respire.Extensions.Coordination`. Its persistent
+counter has explicit failover and rollback limitations; ordinary lock ownership alone does
+not enforce fencing at an external resource.
+
 ## Native commands and compatibility
 
 Respire chooses the operation supported by each physical server connection:
