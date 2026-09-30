@@ -12,6 +12,8 @@ namespace Respire.Pipeline.Modules;
 [DependsOn<BuildProjectsModule>]
 public class RunUnitTestsModule : Module<CommandResult[]>
 {
+    // Keep below the pipeline's outer module deadline so diagnostic collection can finish.
+    private const string HangDumpInactivityTimeout = "2m";
     private readonly IConfiguration _configuration;
 
     public RunUnitTestsModule(IConfiguration configuration)
@@ -34,16 +36,18 @@ public class RunUnitTestsModule : Module<CommandResult[]>
         
         foreach (var project in testProjects)
         {
+            var projectResultsDirectory = Path.Combine(resultsDirectory, Path.GetFileNameWithoutExtension(project));
+            Directory.CreateDirectory(projectResultsDirectory);
             var result = await context.DotNet().Test(new DotNetTestOptions
             {
                 Project = project,
                 Configuration = "Release",
                 NoBuild = true,
-                ResultsDirectory = resultsDirectory,
+                ResultsDirectory = projectResultsDirectory,
                 // HangDump measures time without test activity, not total suite duration.
                 // Capture the stalled test sequence and stacks before the module's
                 // outer timeout terminates the process without useful diagnostics.
-                Arguments = ["--hangdump", "--hangdump-timeout", "2m", "--hangdump-type", "Mini", "--report-trx"]
+                Arguments = ["--hangdump", "--hangdump-timeout", HangDumpInactivityTimeout, "--hangdump-type", "Mini", "--report-trx"]
             }, cancellationToken: cancellationToken);
             
             results.Add(result);
