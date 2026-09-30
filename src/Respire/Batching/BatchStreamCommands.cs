@@ -29,12 +29,14 @@ public interface IBatchStreamCommands
 internal sealed class BatchStreamCommands(IPendingSink sink) : IBatchStreamCommands
 {
     public RespirePending<RespireStreamId> Add(RespireKey key, params ReadOnlySpan<(string Field, RespireValue Value)> fields)
-        => sink.Add<Cmd1N, RespireStreamId>("XADD", StreamCommands.BuildAddCommand(sink.Client, SnapshotKey(key), default, fields, snapshotValues: sink is RespireBatch),
+        => sink.Add<Cmd1N, RespireStreamId>("XADD",
+            StreamCommands.BuildAddCommand(sink.Client, SnapshotKey(key), default, fields, snapshotValues: sink is RespireBatch),
             static (_, value) => new RespireStreamId(ResponseReader.String(in value)));
 
     public RespirePending<RespireStreamId?> Add(RespireKey key, StreamAddOptions options,
         params ReadOnlySpan<(string Field, RespireValue Value)> fields)
-        => sink.Add<Cmd1N, RespireStreamId?>("XADD", StreamCommands.BuildAddCommand(sink.Client, SnapshotKey(key), options, fields, snapshotValues: sink is RespireBatch),
+        => sink.Add<Cmd1N, RespireStreamId?>("XADD",
+            StreamCommands.BuildAddCommand(sink.Client, SnapshotKey(key), options, fields, snapshotValues: sink is RespireBatch),
             static (_, value) => value.IsNull ? default(RespireStreamId?) : new RespireStreamId(ResponseReader.String(in value)));
 
     public RespirePending<long> Count(RespireKey key)
@@ -47,6 +49,7 @@ internal sealed class BatchStreamCommands(IPendingSink sink) : IBatchStreamComma
         var (from, to) = StreamCommands.RangeBounds(start, end, descending);
         var operation = descending ? "XREVRANGE" : "XRANGE";
         var verb = descending ? Verbs.XRevRange : Verbs.XRange;
+        // Range entries own their fields and do not carry a consumer-group acknowledgement context.
         return count is { } take
             ? sink.Add<Cmd5, RespireStreamEntry[]>(operation, new Cmd5(verb, sink.Client.Key(SnapshotKey(key)), from, to, "COUNT", take),
                 static (_, value) => StreamCommands.ParseEntries(in value, client: null, resolvedKey: default, group: null))

@@ -144,7 +144,7 @@ Console.WriteLine(appended.Result);
 MULTI/EXEC applies the state write and event append atomically. Redis execution-time
 errors do not roll back other transaction commands. Pending results cannot supply
 arguments to later queued operations: use explicit entry ids when subsequent work
-needs the id before execution. Inputs are serialized at enqueue time; later changes
+needs the id before execution. Inputs are copied or serialized at enqueue time; later changes
 to supplied binary keys, values, or arrays do not change queued commands. Range
 results own their field bytes and remain readable after queue disposal.
 

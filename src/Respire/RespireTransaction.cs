@@ -39,7 +39,6 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
     private IBatchGeoCommands? _geo;
     private IBatchScriptCommands? _scripts;
     private IBatchFunctionCommands? _functions;
-
     private IBatchStreamCommands? _streams;
 
     internal RespireTransactionBase(RespireClient client, RespireConnection? watchConnection)

@@ -26,8 +26,7 @@ namespace Respire;
 /// Stream append, range, count, remove, trim, and acknowledge commands support deferred execution.
 /// Blocking stream reads, consumer loops, group administration, server administration, and distributed
 /// locks remain client-only because their blocking, streaming, connection-scoped, or managed-lifetime
-/// semantics do not fit a deferred
-/// single-flush command queue.
+/// semantics do not fit a deferred single-flush command queue.
 /// </remarks>
 public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSink
 {
@@ -47,7 +46,6 @@ public sealed class RespireBatch : IDisposable, IRespireCommandQueue, IPendingSi
     private IBatchGeoCommands? _geo;
     private IBatchScriptCommands? _scripts;
     private IBatchFunctionCommands? _functions;
-
     private IBatchStreamCommands? _streams;
 
     internal RespireBatch(RespireClient client) => _client = client;
