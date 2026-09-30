@@ -202,5 +202,5 @@ public sealed class RespireTimeoutException : RespireException
            (diagnostics.Stage == RespireCommandStage.WaitingForCapacity
                ? "The command had not been enqueued on the inspected connection. "
                : "The command may still execute on the server; only the wait was abandoned. ") +
-           diagnostics.Describe();
+           diagnostics.Describe() + " Review RespireOptions.CommandTimeout if the observed latency is expected.";
 }

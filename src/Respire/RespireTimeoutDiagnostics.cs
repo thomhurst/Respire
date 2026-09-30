@@ -122,6 +122,7 @@ public sealed class RespireTimeoutDiagnostics
             return this;
 
         var snapshot = (RespireTimeoutDiagnostics)MemberwiseClone();
+        // This clone is unpublished; callers can never mutate an observed snapshot.
         snapshot.Stage = stage;
         return snapshot;
     }
@@ -130,10 +131,13 @@ public sealed class RespireTimeoutDiagnostics
         => sent >= writeEnd ? RespireCommandStage.AwaitingReply
             : sent > writeStart ? RespireCommandStage.Writing : RespireCommandStage.Buffered;
 
+    private static string Display<T>(T? value) where T : struct
+        => value?.ToString() ?? "unknown";
+
     internal string Describe()
-        => $"Stage={Stage}; endpoint={Endpoint?.ToString() ?? "unknown"}; connection={ConnectionId?.ToString() ?? "unknown"}; " +
-           $"in-flight={InflightCount}; in-flight bytes={InflightBytes}; pending write bytes={PendingWriteBytes}; " +
-           $"last read={TimeSinceLastRead}; last write={TimeSinceLastWrite}; reconnecting={IsReconnecting}; " +
-           $"workers busy/min={BusyWorkerThreads}/{MinWorkerThreads}; IO busy/min={BusyIoThreads}/{MinIoThreads}; " +
-           $"pending work={PendingWorkItems}. {Hint}";
+        => $"Stage={Stage}; endpoint={Display(Endpoint)}; connection={Display(ConnectionId)}; " +
+           $"in-flight={Display(InflightCount)}; in-flight bytes={Display(InflightBytes)}; pending write bytes={Display(PendingWriteBytes)}; " +
+           $"last read={Display(TimeSinceLastRead)}; last write={Display(TimeSinceLastWrite)}; reconnecting={Display(IsReconnecting)}; " +
+           $"workers busy/min={Display(BusyWorkerThreads)}/{Display(MinWorkerThreads)}; IO busy/min={Display(BusyIoThreads)}/{Display(MinIoThreads)}; " +
+           $"pending work={Display(PendingWorkItems)}. {Hint}";
 }

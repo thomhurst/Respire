@@ -118,31 +118,40 @@ public class TimeoutDiagnosticsTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task TransactionCancellationRequiresTheDeadlineToken(bool deadlineExpired)
+    [Arguments(true, false)]
+    [Arguments(false, false)]
+    [Arguments(true, true)]
+    public async Task TransactionCancellationRequiresTheDeadlineToken(bool deadlineExpired, bool callerCancelled)
     {
         await using var server = new FakeRespServer();
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
         using var deadline = new CancellationTokenSource();
         using var unrelated = new CancellationTokenSource();
+        using var caller = new CancellationTokenSource();
+        if (callerCancelled) caller.Cancel();
         deadline.Cancel();
         unrelated.Cancel();
         var cause = new OperationCanceledException(deadlineExpired ? deadline.Token : unrelated.Token);
-        var method = typeof(RespireConnection).GetMethod("AwaitTimedMultiReplyAsync",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
-        var reply = (ValueTask<Respire.Protocol.RespValue>)method.Invoke(connection,
-            [ValueTask.FromException<Respire.Protocol.RespValue>(cause), 0L, 0L,
-                TimeSpan.FromSeconds(1), CancellationToken.None, deadline.Token])!;
-        if (deadlineExpired)
+        var source = MultiReplyPendingResponseSource.Rent(1, 0, "MULTI/EXEC");
+        source.ConfigureTimeout(connection, TimeSpan.FromSeconds(1), caller.Token, deadline.Token);
+        var reply = source.Task;
+        source.TrySetException(cause);
+        try
         {
-            var error = await Assert.That(async () => await reply).ThrowsExactly<RespireTimeoutException>();
-            await Assert.That(error!.InnerException).IsSameReferenceAs(cause);
+            if (deadlineExpired && !callerCancelled)
+            {
+                var error = await Assert.That(async () => await reply).ThrowsExactly<RespireTimeoutException>();
+                await Assert.That(error!.InnerException).IsSameReferenceAs(cause);
+            }
+            else
+            {
+                var error = await Assert.That(async () => await reply).ThrowsExactly<OperationCanceledException>();
+                await Assert.That(error).IsSameReferenceAs(cause);
+            }
         }
-        else
+        finally
         {
-            var error = await Assert.That(async () => await reply).ThrowsExactly<OperationCanceledException>();
-            await Assert.That(error).IsSameReferenceAs(cause);
+            source.ReleaseRef(); // No receive loop owns this isolated source.
         }
     }
 

@@ -723,6 +723,7 @@ internal sealed class RespireConnection : IAsyncDisposable
     {
         var replyCount = repliesBeforeFinal + 1;
         var source = MultiReplyPendingResponseSource.Rent(replyCount, firstQueueReply, commandName);
+        source.ConfigureTimeout(this, cancellationTimeout, callerCancellationToken, cancellationToken);
 
         bool enqueued;
         bool startedBatch;
@@ -745,34 +746,10 @@ internal sealed class RespireConnection : IAsyncDisposable
 
         source.RegisterCancellation(cancellationToken);
         ScheduleFlush(startedBatch);
-        return AwaitMultiReplyAsync(source, cancellationTimeout, callerCancellationToken, cancellationToken);
+        return source.Task;
     }
 
-    private ValueTask<RespValue> AwaitMultiReplyAsync(MultiReplyPendingResponseSource source,
-        TimeSpan? cancellationTimeout, CancellationToken callerCancellationToken, CancellationToken deadlineToken)
-        => cancellationTimeout is { } timeout
-            ? AwaitTimedMultiReplyAsync(source.Task, source.WriteStart, source.WriteEnd, timeout, callerCancellationToken, deadlineToken)
-            : source.Task;
-
-#if NET
-    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
-#endif
-    private async ValueTask<RespValue> AwaitTimedMultiReplyAsync(ValueTask<RespValue> reply,
-        long writeStart, long writeEnd, TimeSpan timeout, CancellationToken callerCancellationToken,
-        CancellationToken deadlineToken)
-    {
-        try
-        {
-            return await reply.ConfigureAwait(false);
-        }
-        catch (OperationCanceledException ex) when (IsDeadlineCancellation(ex, deadlineToken, callerCancellationToken))
-        {
-            throw new RespireTimeoutException("MULTI/EXEC", timeout, ex,
-                CaptureTimeoutDiagnostics(writeStart, writeEnd));
-        }
-    }
-
-    private static bool IsDeadlineCancellation(OperationCanceledException error,
+    internal static bool IsDeadlineCancellation(OperationCanceledException error,
         CancellationToken deadlineToken, CancellationToken callerToken)
         => !callerToken.IsCancellationRequested && deadlineToken.IsCancellationRequested
             && error.CancellationToken == deadlineToken;
@@ -1188,7 +1165,7 @@ internal sealed class RespireConnection : IAsyncDisposable
 
         source.RegisterCancellation(cancellationToken);
         ScheduleFlush(startedBatch);
-        return await AwaitMultiReplyAsync(source, cancellationTimeout, callerCancellationToken, cancellationToken).ConfigureAwait(false);
+        return await source.Task.ConfigureAwait(false);
     }
 
 #if NET

@@ -182,6 +182,20 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
     private bool _hasQueueError;
     private string? _commandName;
 
+    private RespireConnection? _timeoutConnection;
+    private TimeSpan? _cancellationTimeout;
+    private CancellationToken _callerToken;
+    private CancellationToken _deadlineToken;
+
+    internal void ConfigureTimeout(RespireConnection connection, TimeSpan? timeout,
+        CancellationToken callerToken, CancellationToken deadlineToken)
+    {
+        _timeoutConnection = timeout.HasValue ? connection : null;
+        _cancellationTimeout = timeout;
+        _callerToken = callerToken;
+        _deadlineToken = deadlineToken;
+    }
+
     private MultiReplyPendingResponseSource()
     {
     }
@@ -242,7 +256,18 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
 
     protected override void SetResultCore(in RespValue result) => _core.SetResult(result);
 
-    protected override void SetExceptionCore(Exception exception) => _core.SetException(exception);
+    protected override void SetExceptionCore(Exception exception)
+    {
+        // The caller still owns this source until GetResult. Capture its stamped offsets
+        // before publishing failure, without wrapping every successful transaction in an await.
+        if (_cancellationTimeout is { } timeout && exception is OperationCanceledException cancelled
+            && RespireConnection.IsDeadlineCancellation(cancelled, _deadlineToken, _callerToken))
+        {
+            exception = new RespireTimeoutException(CommandName ?? "MULTI/EXEC", timeout, cancelled,
+                _timeoutConnection!.CaptureTimeoutDiagnostics(WriteStart, WriteEnd));
+        }
+        _core.SetException(exception);
+    }
 
     RespValue IValueTaskSource<RespValue>.GetResult(short token)
     {
@@ -284,6 +309,10 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
             source._replyIndex = 0;
             source._hasQueueError = false;
             source._commandName = null;
+            source._timeoutConnection = null;
+            source._cancellationTimeout = null;
+            source._callerToken = default;
+            source._deadlineToken = default;
             source._core.Reset();
             return true;
         }
