@@ -378,7 +378,7 @@ public sealed partial class RespireClient : IRespireClient
             : ExecuteCatalogFireAndForgetAsync(command, args, cancellationToken);
     }
 
-    private static bool TryGetPreencodedRawOperation(
+    private bool TryGetPreencodedRawOperation(
         RespireCommand command,
         RespireValue[] args,
         out string operation,
@@ -394,6 +394,7 @@ public sealed partial class RespireClient : IRespireClient
 
         if (args.Length > 0 && KnownRawOperation(command.Name, args[0]) is { } normalized)
         {
+            ValidateCatalogKeyPrefix();
             operation = normalized;
             rawArguments = args.AsSpan(1).ToArray();
             return true;
@@ -401,6 +402,7 @@ public sealed partial class RespireClient : IRespireClient
 
         operation = command.Name;
         rawArguments = args;
+        if (multiplexedSubcommand) ValidateCatalogKeyPrefix();
         return multiplexedSubcommand;
     }
 
@@ -659,18 +661,23 @@ public sealed partial class RespireClient : IRespireClient
             throw new ArgumentException("Command must be an entry from RespireCommands.", nameof(command));
         }
 
-        if (_keyPrefix is not null)
-        {
-            throw new NotSupportedException(
-                "Catalog commands cannot run through a key-prefixed view because not every command has a known key layout. " +
-                "Use the typed command facets instead.");
-        }
+        ValidateCatalogKeyPrefix();
 
         if (command.Behavior == RespireCommandBehavior.ConnectionScoped)
         {
             throw new NotSupportedException(
                 $"{command.Name} requires connection affinity and cannot run through ExecuteAsync. " +
                 "Use RespireOptions, CreateTransaction, or the subscription APIs instead.");
+        }
+    }
+
+    private void ValidateCatalogKeyPrefix()
+    {
+        if (_keyPrefix is not null)
+        {
+            throw new NotSupportedException(
+                "Catalog commands cannot run through a key-prefixed view because not every command has a known key layout. " +
+                "Use the typed command facets instead.");
         }
     }
 
@@ -835,7 +842,7 @@ public sealed partial class RespireClient : IRespireClient
         return (command, 1);
     }
 
-    private static string? KnownRawOperation(string command, string candidate)
+    internal static string? KnownRawOperation(string command, string candidate)
         => KnownRawOperation(command, (RespireValue)candidate);
 
     private static string? KnownRawOperation(string command, RespireValue candidate)
@@ -847,6 +854,9 @@ public sealed partial class RespireClient : IRespireClient
             "CLIENT" when candidate.EqualsAsciiIgnoreCase("TRACKING") => "CLIENT TRACKING",
             "MEMORY" when candidate.EqualsAsciiIgnoreCase("USAGE") => "MEMORY USAGE",
             "OBJECT" when candidate.EqualsAsciiIgnoreCase("ENCODING") => "OBJECT ENCODING",
+            "OBJECT" when candidate.EqualsAsciiIgnoreCase("FREQ") => "OBJECT FREQ",
+            "OBJECT" when candidate.EqualsAsciiIgnoreCase("IDLETIME") => "OBJECT IDLETIME",
+            "OBJECT" when candidate.EqualsAsciiIgnoreCase("REFCOUNT") => "OBJECT REFCOUNT",
             "FUNCTION" when candidate.EqualsAsciiIgnoreCase("DELETE") => "FUNCTION DELETE",
             "FUNCTION" when candidate.EqualsAsciiIgnoreCase("FLUSH") => "FUNCTION FLUSH",
             "FUNCTION" when candidate.EqualsAsciiIgnoreCase("LOAD") => "FUNCTION LOAD",
@@ -859,8 +869,13 @@ public sealed partial class RespireClient : IRespireClient
             "SCRIPT" when candidate.EqualsAsciiIgnoreCase("LOAD") => "SCRIPT LOAD",
             "SCRIPT" when candidate.EqualsAsciiIgnoreCase("SHOW") => "SCRIPT SHOW",
             "XGROUP" when candidate.EqualsAsciiIgnoreCase("CREATE") => "XGROUP CREATE",
+            "XGROUP" when candidate.EqualsAsciiIgnoreCase("SETID") => "XGROUP SETID",
+            "XGROUP" when candidate.EqualsAsciiIgnoreCase("DESTROY") => "XGROUP DESTROY",
+            "XGROUP" when candidate.EqualsAsciiIgnoreCase("CREATECONSUMER") => "XGROUP CREATECONSUMER",
+            "XGROUP" when candidate.EqualsAsciiIgnoreCase("DELCONSUMER") => "XGROUP DELCONSUMER",
             "XINFO" when candidate.EqualsAsciiIgnoreCase("GROUPS") => "XINFO GROUPS",
             "XINFO" when candidate.EqualsAsciiIgnoreCase("STREAM") => "XINFO STREAM",
+            "XINFO" when candidate.EqualsAsciiIgnoreCase("CONSUMERS") => "XINFO CONSUMERS",
             _ => null,
         };
 

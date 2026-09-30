@@ -314,6 +314,58 @@ public class ClusterTests
         await Assert.That(RawSlot("GET", booleanKeyTokens, 1)).IsEqualTo(ClusterHash.GetSlot("1"));
         await Assert.That(RawSlot("INFO", infoTokens, 1)).IsNull();
         await Assert.That(RawSlot("MSETEX", msetexTokens, 1)).IsEqualTo(ClusterHash.GetSlot("msetex-key"));
+
+        foreach (var (parent, subcommand, key) in new[]
+        {
+            ("OBJECT", "FREQ", "object-key"),
+            ("OBJECT", "IDLETIME", "object-key"),
+            ("OBJECT", "REFCOUNT", "object-key"),
+            ("XGROUP", "DESTROY", "stream-key"),
+            ("XGROUP", "SETID", "stream-key"),
+            ("XGROUP", "CREATECONSUMER", "stream-key"),
+            ("XGROUP", "DELCONSUMER", "stream-key"),
+            ("XINFO", "CONSUMERS", "stream-key"),
+        })
+        {
+            var operation = RespireClient.KnownRawOperation(parent, subcommand);
+            await Assert.That(operation).IsNotNull();
+            await Assert.That(RawSlot(operation!, [parent, subcommand, key], 2))
+                .IsEqualTo(ClusterHash.GetSlot(key));
+        }
+    }
+
+    [Test]
+    public async Task PreencodedXGroupSubcommand_RoutesByStreamKey()
+    {
+        const string subcommand = "DESTROY";
+        var key = "stream-key";
+        var keySlot = ClusterHash.GetSlot(key);
+        var subcommandSlot = ClusterHash.GetSlot(subcommand);
+        while (keySlot == 0 || keySlot == subcommandSlot)
+        {
+            key += "x";
+            keySlot = ClusterHash.GetSlot(key);
+        }
+        await using var target = new FakeRespServer(FakeRespServer.OkReply);
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply);
+        seed.ReplyOverride = (_, command) => command == "CLUSTER SLOTS"
+            ? Encoding.ASCII.GetBytes(
+                $"*2\r\n*3\r\n:0\r\n:{keySlot - 1}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{seed.Port}\r\n" +
+                $"*3\r\n:{keySlot}\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n")
+            : null;
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Protocol = RespProtocol.Resp2,
+            UseCluster = true,
+            Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
+        });
+
+        using var result = await client.ExecuteAsync(
+            RespireCommand.Create("XGROUP"), [subcommand, key, "group"], flags: RespireCommandFlags.NoRedirect);
+
+        await Assert.That(result.AsString()).IsEqualTo("OK");
+        await Assert.That(seed.ReceivedCommands).DoesNotContain($"XGROUP {subcommand} {key} group");
+        await Assert.That(target.ReceivedCommands).Contains($"XGROUP {subcommand} {key} group");
     }
 
     [Test]

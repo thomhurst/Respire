@@ -288,6 +288,11 @@ public class CommandCatalogTests
 
         await Assert.That(async () => await tenant.ExecuteAsync(RespireCommands.String.GET, "settings"))
             .Throws<NotSupportedException>();
+        await Assert.That(async () => await tenant.ExecuteAsync(RespireCommand.Create("XGROUP"), "DESTROY", "stream", "group"))
+            .Throws<NotSupportedException>();
+        await Assert.That(async () => await tenant.ExecuteFireAndForgetAsync(
+                RespireCommand.Create("XGROUP"), "DESTROY", "stream", "group"))
+            .Throws<NotSupportedException>();
         await Assert.That(server.ReceivedCommands).IsEmpty();
     }
 
