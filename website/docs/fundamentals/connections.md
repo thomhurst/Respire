@@ -237,6 +237,51 @@ Commands with a `CancellationToken` abandon the wait when cancelled; cancellatio
 
 Likewise, a `RespireTimeoutException` means the response did not arrive within `CommandTimeout`. Treat writes as potentially executed and design retries around operation idempotency.
 
+`RespireTimeoutException.Diagnostics` captures the command stage, physical endpoint and
+process-local connection ID, outstanding reply count and serialized bytes, bytes waiting to
+be written, and time since the last successful read and write. It also includes busy/minimum
+worker and I/O thread counts, pending thread-pool work, and a diagnostic hint.
+
+```csharp
+try
+{
+    await redis.GetStringAsync("session:123");
+}
+catch (RespireTimeoutException error)
+{
+    var snapshot = error.Diagnostics;
+    Console.WriteLine($"{snapshot.Stage}: {snapshot.Endpoint}, pending bytes={snapshot.PendingWriteBytes}");
+    Console.WriteLine(snapshot.Hint);
+}
+```
+
+`WaitingForCapacity` means this attempt was not enqueued. `Buffered`, `Writing`, and
+`AwaitingReply` distinguish buffered data, a partial write, and a completed write whose reply
+has not completed. A successful socket write does not prove server execution. Transactions
+report their complete MULTI/EXEC frame: its full byte count remains outstanding until EXEC
+replies, while intermediate replies reduce the outstanding slot count. Other multi-command
+frames use the same accounting.
+Snapshots also accompany batch failures and dedicated connection operations. Relabeled
+internal timeout exceptions preserve the original snapshot. Exceptions constructed by application code
+have an unavailable snapshot unless wrapping another timeout exception; they do not sample unrelated
+thread-pool activity. Cluster discovery, redirection, and multi-step acquisition can report the stage
+without a physical endpoint or connection when none can be reliably identified.
+
+Counters are best-effort observations, not an atomic connection view. Null fields mean no
+physical connection or measurement was available, such as during connection acquisition or
+multi-step setup. `ConnectionId` is local to the process; `ServerClientId` is populated only
+when Redis CLIENT ID was already obtained. Snapshot capture performs no network I/O and
+includes no keys, values, or credentials. The snapshot and thread-pool inspection are created
+only on failure; successful commands update numeric counters without diagnostic allocations.
+Commands expired by one deadline sweep share its connection and thread-pool observations;
+each command retains its own stage.
+
+Hints suggest checks; they do not identify a root cause. In particular, queued work with busy
+workers at or above the configured minimum is only a possible starvation signal. Inspect
+blocking application work, Redis SLOWLOG, payload sizes, and network health before changing
+timeouts or thread-pool settings. Intentional blocking commands retain their existing timeout
+and cancellation semantics.
+
 Redis error replies throw `RespireServerException`. Its `Code` identifies the Redis error,
 `CommandName` identifies the originating command when available, and `IsTransient` classifies
 `LOADING`, `BUSY`, `CLUSTERDOWN`, `TRYAGAIN`, and `MASTERDOWN`. Use `RespireErrorCodes` instead of

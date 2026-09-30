@@ -20,8 +20,9 @@ internal sealed class InflightRing
     /// <summary>Marks a slot whose response should be read and thrown away.</summary>
     public static readonly PendingResponseSource DiscardSentinel = new();
 
-    private readonly PendingResponse?[] _slots;
+    private readonly Slot[] _slots;
     private readonly int _mask;
+    private long _completedWriteEnd;
     private long _head;
     private long _tail;
 
@@ -29,17 +30,19 @@ internal sealed class InflightRing
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
         capacity = (int)BitOperations.RoundUpToPowerOf2((uint)capacity);
-        _slots = new PendingResponse?[capacity];
+        _slots = new Slot[capacity];
         _mask = capacity - 1;
     }
 
     public int Capacity => _slots.Length;
 
+    internal long CompletedWriteEnd => Volatile.Read(ref _completedWriteEnd);
+
     public int Count => (int)(Volatile.Read(ref _tail) - Volatile.Read(ref _head));
 
     /// <summary>Producer only (must be called under the connection's write gate).</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool TryEnqueue(PendingResponse source)
+    public bool TryEnqueue(PendingResponse source, long writeEnd = 0)
     {
         var tail = _tail;
         if (tail - Volatile.Read(ref _head) >= _slots.Length)
@@ -47,7 +50,9 @@ internal sealed class InflightRing
             return false;
         }
 
-        _slots[tail & _mask] = source;
+        ref var slot = ref _slots[tail & _mask];
+        slot.Source = source;
+        slot.WriteEnd = writeEnd;
         Volatile.Write(ref _tail, tail + 1);
         return true;
     }
@@ -64,7 +69,7 @@ internal sealed class InflightRing
             return false;
         }
 
-        source = _slots[head & _mask]!;
+        source = _slots[head & _mask].Source!;
         return true;
     }
 
@@ -79,14 +84,15 @@ internal sealed class InflightRing
     /// skipped; a source recycled after its state was captured is rejected by the epoch CAS
     /// inside <see cref="PendingResponse.TrySetTimedOut"/>.
     /// </summary>
-    public long SweepExpired(long nowMilliseconds, TimeSpan timeout)
+    public long SweepExpired(long nowMilliseconds, TimeSpan timeout, RespireConnection? connection)
     {
         var head = Volatile.Read(ref _head);
         var tail = Volatile.Read(ref _tail);
         long next = -1;
+        RespireTimeoutDiagnostics? diagnostics = null;
         for (var position = head; position < tail; position++)
         {
-            var source = Volatile.Read(ref _slots[position & _mask]);
+            var source = Volatile.Read(ref _slots[position & _mask].Source);
             if (source is null || ReferenceEquals(source, DiscardSentinel))
             {
                 continue;
@@ -119,7 +125,7 @@ internal sealed class InflightRing
                 continue;
             }
 
-            source.TrySetTimedOut(state, timeout);
+            source.TrySetTimedOut(state, timeout, ref diagnostics, connection);
         }
 
         return next;
@@ -136,10 +142,20 @@ internal sealed class InflightRing
             return false;
         }
 
-        var index = head & _mask;
-        source = _slots[index]!;
-        _slots[index] = null;
+        ref var slot = ref _slots[head & _mask];
+        source = slot.Source!;
+        // Intermediate replies carry the frame start; only the final reply advances past
+        // the complete frame. This offset never retreats across FIFO-ordered frames.
+        Volatile.Write(ref _completedWriteEnd, slot.WriteEnd);
+        slot.Source = null;
         Volatile.Write(ref _head, head + 1);
         return true;
+    }
+
+    // Keep a response and its byte position together instead of indexing two arrays.
+    private struct Slot
+    {
+        internal PendingResponse? Source;
+        internal long WriteEnd;
     }
 }

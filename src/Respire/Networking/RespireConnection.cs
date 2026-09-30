@@ -76,6 +76,12 @@ internal sealed class RespireConnection : IAsyncDisposable
     private bool _dead;
     private int _disposed;
     private long _serverClientId;
+    private static long _nextDiagnosticId;
+    private readonly long _diagnosticId = Interlocked.Increment(ref _nextDiagnosticId);
+    private long _enqueuedBytes;
+    private long _sentBytes;
+    private long _lastReadTimestamp;
+    private long _lastWriteTimestamp;
     private long _sentReplyCount;
     private long _receivedReplyCount;
     private long _receiveDeadlineTimestamp;
@@ -203,13 +209,23 @@ internal sealed class RespireConnection : IAsyncDisposable
             using var timeoutCts = CommandTimeoutCancellation.Create(
                 cancellationToken,
                 options.ConnectTimeout);
-            await socket.ConnectAsync(host, port, timeoutCts.Token).ConfigureAwait(false);
-
-            if (options.UseTls)
+            try
             {
-                tlsStream = new SslStream(new NetworkStream(socket, ownsSocket: false));
-                var tlsOptions = CreateTlsOptions(options.TlsOptions, host);
-                await tlsStream.AuthenticateAsClientAsync(tlsOptions, timeoutCts.Token).ConfigureAwait(false);
+                await socket.ConnectAsync(host, port, timeoutCts.Token).ConfigureAwait(false);
+
+                if (options.UseTls)
+                {
+                    tlsStream = new SslStream(new NetworkStream(socket, ownsSocket: false));
+                    var tlsOptions = CreateTlsOptions(options.TlsOptions, host);
+                    await tlsStream.AuthenticateAsClientAsync(tlsOptions, timeoutCts.Token).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
+                error, cancellationToken, timeoutCts.Token))
+            {
+                // Preserve the initiating token across our private connect-timeout link.
+                // An independent connect timeout or unrelated cancellation keeps its own token.
+                throw new OperationCanceledException(error.Message, error, cancellationToken);
             }
         }
         catch
@@ -620,7 +636,8 @@ internal sealed class RespireConnection : IAsyncDisposable
     /// Redis Cluster can report MOVED/ASK there and then return only EXECABORT from EXEC.
     /// </summary>
     public ValueTask<RespValue> SendTransactionAsync(
-        ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken = default)
+        ReadOnlyMemory<byte> serializedCommands, int commandCount, CancellationToken cancellationToken = default,
+        TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(commandCount);
 
@@ -637,7 +654,7 @@ internal sealed class RespireConnection : IAsyncDisposable
 
         return SendMultiReplyCoreAsync(
             new TransactionCommand(serializedCommands), repliesBeforeFinal: commandCount + 1,
-            firstQueueReply: 1, cancellationToken, commandName: "MULTI/EXEC");
+            firstQueueReply: 1, cancellationToken, commandName: "MULTI/EXEC", cancellationTimeout, callerCancellationToken);
     }
 
     /// <summary>
@@ -710,11 +727,13 @@ internal sealed class RespireConnection : IAsyncDisposable
         int repliesBeforeFinal,
         int firstQueueReply,
         CancellationToken cancellationToken,
-        string commandName)
+        string commandName,
+        TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default)
         where TCommand : struct, IRespCommand
     {
         var replyCount = repliesBeforeFinal + 1;
         var source = MultiReplyPendingResponseSource.Rent(replyCount, firstQueueReply, commandName);
+        source.ConfigureTimeout(this, cancellationTimeout, callerCancellationToken, cancellationToken);
 
         bool enqueued;
         bool startedBatch;
@@ -732,13 +751,18 @@ internal sealed class RespireConnection : IAsyncDisposable
         if (!enqueued)
         {
             return SendMultiReplySlowAsync(
-                command, source, repliesBeforeFinal, replyCount, cancellationToken);
+                command, source, repliesBeforeFinal, replyCount, cancellationToken, cancellationTimeout, callerCancellationToken);
         }
 
         source.RegisterCancellation(cancellationToken);
         ScheduleFlush(startedBatch);
         return source.Task;
     }
+
+    internal static bool IsDeadlineCancellation(OperationCanceledException error,
+        CancellationToken deadlineToken, CancellationToken callerToken)
+        => !callerToken.IsCancellationRequested && deadlineToken.IsCancellationRequested
+            && error.CancellationToken == deadlineToken;
 
     private ValueTask<RespValue> SendCoreAsync<TCommand>(
         in TCommand command,
@@ -925,13 +949,14 @@ internal sealed class RespireConnection : IAsyncDisposable
                     _activeReplyCount += discardRepliesBefore + 1;
                 }
 
+                var writeStart = StampWritePosition(source, frame.Length);
                 StampDeadline(source, armCommandDeadline);
                 for (var i = 0; i < discardRepliesBefore; i++)
                 {
-                    _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel);
+                    _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel, writeStart);
                 }
 
-                _inflight.TryEnqueue(source);
+                _inflight.TryEnqueue(source, _enqueuedBytes);
                 if (trackWrite)
                 {
                     writeTask = _activeBuffer.WriteCompletion;
@@ -1006,13 +1031,14 @@ internal sealed class RespireConnection : IAsyncDisposable
                 _activeReplyCount += discardRepliesBefore + 1;
             }
 
+            var writeStart = StampWritePosition(source, _activeBuffer.Count - mark);
             StampDeadline(source, armCommandDeadline);
             for (var i = 0; i < discardRepliesBefore; i++)
             {
-                _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel);
+                _inflight.TryEnqueue(retainRepliesBefore ? source : InflightRing.DiscardSentinel, writeStart);
             }
 
-            _inflight.TryEnqueue(source);
+            _inflight.TryEnqueue(source, _enqueuedBytes);
             if (trackWrite)
             {
                 writeTask = _activeBuffer.WriteCompletion;
@@ -1020,6 +1046,62 @@ internal sealed class RespireConnection : IAsyncDisposable
 
             return true;
         }
+    }
+
+    // Stamp byte offsets under the write gate before publishing reply slots.
+    private long StampWritePosition(PendingResponse source, int length)
+    {
+        var start = _enqueuedBytes;
+        Volatile.Write(ref _enqueuedBytes, start + length);
+        if (!ReferenceEquals(source, InflightRing.DiscardSentinel))
+        {
+            source.WriteStart = start;
+            source.WriteEnd = start + length;
+        }
+        return start;
+    }
+
+    private void RecordWrite(int bytes)
+    {
+        // Only the persistent FlushLoopAsync sender calls this method, including TLS writes.
+        Volatile.Write(ref _sentBytes, _sentBytes + bytes);
+        Volatile.Write(ref _lastWriteTimestamp, Stopwatch.GetTimestamp());
+    }
+
+    /// <summary>Captures the sole outstanding frame on an exclusively rented connection.</summary>
+    internal RespireTimeoutDiagnostics CaptureDedicatedTimeoutDiagnostics()
+    {
+        // Dedicated callers never pipeline another operation on this lease. The completed
+        // reply watermark therefore starts the current frame, including an ASKING prefix.
+        // If the reply won the race after cancellation, retain counters but leave stage unknown.
+        var start = _inflight.CompletedWriteEnd;
+        var end = Volatile.Read(ref _enqueuedBytes);
+        return end > start
+            ? CaptureTimeoutDiagnostics(start, end)
+            : CaptureTimeoutDiagnostics();
+    }
+
+    internal RespireTimeoutDiagnostics CaptureTimeoutDiagnostics(
+        long writeStart = 0, long writeEnd = 0, RespireCommandStage stage = RespireCommandStage.Unknown)
+    {
+        var sent = Volatile.Read(ref _sentBytes);
+        var enqueued = Volatile.Read(ref _enqueuedBytes);
+        if (writeEnd > 0)
+        {
+            stage = RespireTimeoutDiagnostics.ComputeStage(sent, writeStart, writeEnd);
+        }
+        var read = Volatile.Read(ref _lastReadTimestamp);
+        var write = Volatile.Read(ref _lastWriteTimestamp);
+        var serverId = ServerClientId;
+        // Counters advance independently; clamp differences that cross concurrent observations.
+        return RespireTimeoutDiagnostics.Capture(
+            stage: stage, endpoint: new RespireEndpoint(Host, Port), connectionId: _diagnosticId,
+            serverClientId: serverId == 0 ? null : serverId, inflightCount: Math.Max(0, _inflight.Count),
+            inflightBytes: Math.Max(0, enqueued - _inflight.CompletedWriteEnd),
+            pendingWriteBytes: Math.Max(0, enqueued - sent),
+            timeSinceLastRead: read == 0 ? null : Stopwatch.GetElapsedTime(read),
+            timeSinceLastWrite: write == 0 ? null : Stopwatch.GetElapsedTime(write),
+            isConnected: IsConnected, isReconnecting: Multiplexer?.GetReconnectState(this), writtenBytes: sent);
     }
 
     /// <summary>
@@ -1066,7 +1148,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         MultiReplyPendingResponseSource source,
         int repliesBeforeFinal,
         int replyCount,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeSpan? cancellationTimeout, CancellationToken callerCancellationToken)
         where TCommand : struct, IRespCommand
     {
         bool startedBatch;
@@ -1090,6 +1173,13 @@ internal sealed class RespireConnection : IAsyncDisposable
                 await WaitForCapacityAsync(capacityAvailable, deadline, source.CommandName, cancellationToken)
                     .ConfigureAwait(false);
             }
+        }
+        catch (OperationCanceledException ex) when (cancellationTimeout is not null
+            && IsDeadlineCancellation(ex, cancellationToken, callerCancellationToken))
+        {
+            ReclaimUnpublished(source, replyCount + 1);
+            throw new RespireTimeoutException("MULTI/EXEC", cancellationTimeout.Value, ex,
+                CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
         }
         catch
         {
@@ -1219,7 +1309,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         var remaining = deadline - Environment.TickCount64;
         if (remaining <= 0)
         {
-            throw new RespireTimeoutException(commandName ?? "(command)", _commandTimeout!.Value);
+            throw new RespireTimeoutException(commandName ?? "(command)", _commandTimeout!.Value, null,
+                CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
         }
 
         try
@@ -1230,7 +1321,8 @@ internal sealed class RespireConnection : IAsyncDisposable
         }
         catch (TimeoutException)
         {
-            throw new RespireTimeoutException(commandName ?? "(command)", _commandTimeout!.Value);
+            throw new RespireTimeoutException(commandName ?? "(command)", _commandTimeout!.Value, null,
+                CaptureTimeoutDiagnostics(stage: RespireCommandStage.WaitingForCapacity));
         }
     }
 
@@ -1327,6 +1419,7 @@ internal sealed class RespireConnection : IAsyncDisposable
                                 sent = await pending.ConfigureAwait(false);
                             }
 
+                            RecordWrite(sent);
                             memory = memory[sent..];
                         }
                     }
@@ -1339,6 +1432,7 @@ internal sealed class RespireConnection : IAsyncDisposable
                         }
 
                         await pending.ConfigureAwait(false);
+                        RecordWrite(memory.Length);
                     }
 
                     MarkRepliesSent(sendingReplyCount);
@@ -1910,7 +2004,7 @@ internal sealed class RespireConnection : IAsyncDisposable
         {
             while (true)
             {
-                var next = _inflight.SweepExpired(Environment.TickCount64, timeout);
+                var next = _inflight.SweepExpired(Environment.TickCount64, timeout, this);
                 var delay = next < 0 || next > granularityMilliseconds
                     ? granularity
                     : TimeSpan.FromMilliseconds(next);
@@ -1932,6 +2026,7 @@ internal sealed class RespireConnection : IAsyncDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void ResetReceiveDeadline()
     {
+        Volatile.Write(ref _lastReadTimestamp, Stopwatch.GetTimestamp());
         if (_responseTimeout is null)
         {
             return;

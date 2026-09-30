@@ -22,6 +22,12 @@ internal sealed class ClusterRecoveryBudget : IDisposable
     internal CancellationToken Token => _round.Token;
     internal CancellationToken PrimaryToken => _primaries.Token;
 
+    internal bool IsCallerCancellation(OperationCanceledException error, CancellationToken callerToken)
+        => CommandTimeoutCancellation.IsFromLinkedToken(error, callerToken, Token)
+            || CommandTimeoutCancellation.IsFromLinkedToken(error, callerToken, PrimaryToken)
+            || (_earlySeeds is not null
+                && CommandTimeoutCancellation.IsFromLinkedToken(error, callerToken, _earlySeeds.Token));
+
     internal CancellationToken GetFallbackToken(bool last)
     {
         if (last)

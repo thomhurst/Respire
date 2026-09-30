@@ -267,7 +267,9 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
                     }
                     catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                     {
-                        throw new RespireTimeoutException("MULTI/EXEC", timeout);
+                        throw new RespireTimeoutException("MULTI/EXEC", timeout, null,
+                            core.Cluster is null ? core.Multiplexer.CaptureConnectionWait()
+                                : RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting));
                     }
                 }
                 else
@@ -374,7 +376,8 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
             {
                 connection ??= await _client.AcquireConnectionAsync(slot, token)
                     .ConfigureAwait(false);
-                var reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, token)
+                var reply = await connection.SendTransactionAsync(_buffer.WrittenMemory, _ops.Count, token,
+                        core.Options.CommandTimeout, cancellationToken)
                     .ConfigureAwait(false);
                 if (!reply.IsError || cluster is null || attempt >= ClusterRouter.RedirectLimit)
                 {

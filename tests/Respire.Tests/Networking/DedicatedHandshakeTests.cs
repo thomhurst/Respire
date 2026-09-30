@@ -10,6 +10,33 @@ namespace Respire.Tests.Networking;
 public class DedicatedHandshakeTests
 {
     [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task TlsCancellationPreservesCallerTokenWithoutRelabelingConnectTimeout(bool pooled, bool connectTimeout)
+    {
+        using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        var options = new RespireConnectionOptions
+        {
+            UseTls = true,
+            ConnectTimeout = connectTimeout ? TimeSpan.FromMilliseconds(200) : TimeSpan.FromSeconds(10),
+        };
+        using var caller = new CancellationTokenSource();
+        await using var pool = new DedicatedConnectionPool("127.0.0.1", port, options, null);
+        var pending = pooled ? pool.RentAsync(caller.Token).AsTask()
+            : RespireConnection.ConnectAsync("127.0.0.1", port, options, cancellationToken: caller.Token);
+        using var accepted = await listener.AcceptSocketAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        if (!connectTimeout) caller.Cancel();
+        var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+            .Throws<OperationCanceledException>();
+        await Assert.That(error!.CancellationToken == caller.Token).IsEqualTo(!connectTimeout);
+        await Assert.That(caller.IsCancellationRequested).IsEqualTo(!connectTimeout);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task FencingHandshakePreservesNormalDeadlinesOnReuse(bool fencing)

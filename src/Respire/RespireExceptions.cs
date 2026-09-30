@@ -164,26 +164,28 @@ public static class RespireErrorCodes
 }
 
 /// <summary>
-/// A command's response did not arrive within <see cref="RespireOptions.CommandTimeout"/>. The
-/// timeout covers waiting for the response only — the command was already sent and may still
-/// execute on the server.
+/// A command did not complete within <see cref="RespireOptions.CommandTimeout"/>. Commands
+/// already enqueued may still execute on the server. Inspect <see cref="Diagnostics"/> for
+/// timeouts during connection acquisition or while waiting for queue capacity.
 /// </summary>
 public sealed class RespireTimeoutException : RespireException
 {
-    /// <summary>Creates a command timeout exception.</summary>
+    /// <summary>Creates a command timeout exception with an unavailable-connection snapshot.</summary>
     public RespireTimeoutException(string commandName, TimeSpan timeout)
-        : base(CreateMessage(commandName, timeout))
-    {
-        CommandName = commandName;
-        Timeout = timeout;
-    }
+        : this(commandName, timeout, null, RespireTimeoutDiagnostics.Unavailable) { }
 
-    /// <summary>Creates a command timeout exception with its underlying cause.</summary>
+    /// <summary>Creates a command timeout exception, preserving an underlying timeout snapshot.</summary>
     public RespireTimeoutException(string commandName, TimeSpan timeout, Exception innerException)
-        : base(CreateMessage(commandName, timeout), innerException)
+        : this(commandName, timeout, innerException,
+            (innerException as RespireTimeoutException)?.Diagnostics ?? RespireTimeoutDiagnostics.Unavailable) { }
+
+    internal RespireTimeoutException(string commandName, TimeSpan timeout, Exception? innerException,
+        RespireTimeoutDiagnostics diagnostics)
+        : base(CreateMessage(commandName, timeout, diagnostics), innerException!)
     {
         CommandName = commandName;
         Timeout = timeout;
+        Diagnostics = diagnostics;
     }
 
     /// <summary>The Redis command whose response timed out.</summary>
@@ -192,8 +194,13 @@ public sealed class RespireTimeoutException : RespireException
     /// <summary>The response timeout that elapsed.</summary>
     public TimeSpan Timeout { get; }
 
-    private static string CreateMessage(string commandName, TimeSpan timeout)
-        => $"{commandName} timed out after {timeout.TotalMilliseconds:0}ms. The command was sent and may still " +
-           "execute on the server; only the wait was abandoned. If this recurs, check server load and slow " +
-           $"commands (SLOWLOG), network latency, and whether {nameof(RespireOptions)}.{nameof(RespireOptions.CommandTimeout)} is realistic.";
+    /// <summary>A snapshot captured on the timeout path; unavailable connection fields are null.</summary>
+    public RespireTimeoutDiagnostics Diagnostics { get; }
+
+    private static string CreateMessage(string commandName, TimeSpan timeout, RespireTimeoutDiagnostics diagnostics)
+        => $"{commandName} timed out after {timeout.TotalMilliseconds:0}ms. " +
+           (diagnostics.Stage is RespireCommandStage.Connecting or RespireCommandStage.WaitingForCapacity
+               ? "The command had not been enqueued on the inspected connection. "
+               : "The command may still execute on the server; only the wait was abandoned. ") +
+           diagnostics.Describe() + " Review RespireOptions.CommandTimeout if the observed latency is expected.";
 }

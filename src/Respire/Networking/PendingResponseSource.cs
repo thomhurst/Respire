@@ -31,6 +31,8 @@ internal abstract class PendingResponse
     /// none. Written before the ring slot is published, read afterwards by the deadline sweep.
     /// </summary>
     internal long Deadline;
+    internal long WriteStart;
+    internal long WriteEnd;
 
     /// <summary>Command label used in timeout errors; null when the source carries none.</summary>
     internal virtual string? CommandName => null;
@@ -81,14 +83,17 @@ internal abstract class PendingResponse
     /// sweep read this source from its ring slot; the CAS fails if the source completed or
     /// was recycled since, so a stale peek can never time out a different command.
     /// </summary>
-    internal bool TrySetTimedOut(long observedState, TimeSpan timeout)
+    internal bool TrySetTimedOut(long observedState, TimeSpan timeout,
+        ref RespireTimeoutDiagnostics? diagnostics, RespireConnection? connection)
     {
         if (Interlocked.CompareExchange(ref _state, observedState | 1, observedState) != observedState)
         {
             return false;
         }
 
-        DispatchException(new RespireTimeoutException(CommandName ?? "(command)", timeout));
+        diagnostics ??= connection?.CaptureTimeoutDiagnostics() ?? RespireTimeoutDiagnostics.Capture();
+        DispatchException(new RespireTimeoutException(CommandName ?? "(command)", timeout, null,
+            diagnostics.ForCommand(WriteStart, WriteEnd)));
         return true;
     }
 
@@ -107,10 +112,17 @@ internal abstract class PendingResponse
     /// hop to the pool themselves rather than run caller continuations where they stand.
     /// </summary>
     private void DispatchException(Exception exception)
-        => ThreadPool.UnsafeQueueUserWorkItem(
+    {
+        // Completion has been claimed, and the caller still owns a reference. Capture
+        // observations now: queue latency must not replace the timeout with recovered state.
+        exception = PrepareException(exception);
+        ThreadPool.UnsafeQueueUserWorkItem(
             static state => state.Self.SetExceptionCore(state.Exception),
             (Self: this, Exception: exception),
             preferLocal: false);
+    }
+
+    protected virtual Exception PrepareException(Exception exception) => exception;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal void RegisterCancellation(CancellationToken cancellationToken)
@@ -177,6 +189,20 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
     private bool _hasQueueError;
     private string? _commandName;
 
+    private RespireConnection? _timeoutConnection;
+    private TimeSpan? _cancellationTimeout;
+    private CancellationToken _callerToken;
+    private CancellationToken _deadlineToken;
+
+    internal void ConfigureTimeout(RespireConnection connection, TimeSpan? timeout,
+        CancellationToken callerToken, CancellationToken deadlineToken)
+    {
+        _timeoutConnection = timeout.HasValue ? connection : null;
+        _cancellationTimeout = timeout;
+        _callerToken = callerToken;
+        _deadlineToken = deadlineToken;
+    }
+
     private MultiReplyPendingResponseSource()
     {
     }
@@ -237,6 +263,19 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
 
     protected override void SetResultCore(in RespValue result) => _core.SetResult(result);
 
+    protected override Exception PrepareException(Exception exception)
+    {
+        // Called synchronously after winning completion, before dispatching to the pool.
+        // Successful transactions still return their original pooled ValueTask unchanged.
+        if (_cancellationTimeout is { } timeout && exception is OperationCanceledException cancelled
+            && RespireConnection.IsDeadlineCancellation(cancelled, _deadlineToken, _callerToken))
+        {
+            exception = new RespireTimeoutException(CommandName ?? "MULTI/EXEC", timeout, cancelled,
+                _timeoutConnection!.CaptureTimeoutDiagnostics(WriteStart, WriteEnd));
+        }
+        return exception;
+    }
+
     protected override void SetExceptionCore(Exception exception) => _core.SetException(exception);
 
     RespValue IValueTaskSource<RespValue>.GetResult(short token)
@@ -279,6 +318,10 @@ internal sealed class MultiReplyPendingResponseSource : PendingResponse, IValueT
             source._replyIndex = 0;
             source._hasQueueError = false;
             source._commandName = null;
+            source._timeoutConnection = null;
+            source._cancellationTimeout = null;
+            source._callerToken = default;
+            source._deadlineToken = default;
             source._core.Reset();
             return true;
         }
