@@ -3,7 +3,6 @@ namespace Respire.Testing;
 public sealed partial class RespireFakeServer
 {
     private enum SortedSetRangeKind { Auto, Rank, Score, Lex }
-    private sealed class SortedSetArgumentException(string message) : Exception(message);
 
     private FakeReply SortedSetAdd(byte[][] args, bool increment = false)
     {
@@ -34,7 +33,9 @@ public sealed partial class RespireFakeServer
         if (increment && count != 1) return FakeReply.Error("ERR INCR option supports a single increment-element pair");
         // Parse every score before looking up or mutating the key, including later duplicates.
         var scores = new double[count];
-        for (var index = 0; index < count; index++) scores[index] = SortedSetNumber(args[start + index * 2]);
+        for (var index = 0; index < count; index++)
+            if (!RedisScore.TryParse(args[start + index * 2], out scores[index]))
+                return FakeReply.Error("ERR value is not a valid float");
         var entry = Find(args[1]);
         var set = entry?.SortedSet;
         if (set is null && xx) return increment ? FakeReply.Null : FakeReply.Integer(0);
@@ -89,21 +90,29 @@ public sealed partial class RespireFakeServer
     {
         if (set is null) return [];
         var entries = set.ToArray();
-        System.Array.Sort(entries, static (left, right) =>
-        {
-            var scoreOrder = left.Value.CompareTo(right.Value);
-            return scoreOrder != 0 ? scoreOrder : left.Key.AsSpan().SequenceCompareTo(right.Key);
-        });
+        System.Array.Sort(entries, CompareSortedSetEntries);
         if (reverse) System.Array.Reverse(entries);
         return entries;
     }
 
     private FakeReply SortedSetRank(byte[][] args, bool reverse)
     {
-        var entries = OrderedSortedSet(Find(args[1])?.SortedSet, reverse);
-        for (var index = 0; index < entries.Length; index++)
-            if (entries[index].Key.AsSpan().SequenceEqual(args[2])) return FakeReply.Integer(index);
-        return FakeReply.Null;
+        var set = Find(args[1])?.SortedSet;
+        if (set is null || !set.TryGetValue(args[2], out var score)) return FakeReply.Null;
+        var target = new KeyValuePair<byte[], double>(args[2], score);
+        var rank = 0;
+        foreach (var entry in set)
+        {
+            var order = CompareSortedSetEntries(entry, target);
+            if (reverse ? order > 0 : order < 0) rank++;
+        }
+        return FakeReply.Integer(rank);
+    }
+
+    private static int CompareSortedSetEntries(KeyValuePair<byte[], double> left, KeyValuePair<byte[], double> right)
+    {
+        var scoreOrder = left.Value.CompareTo(right.Value);
+        return scoreOrder != 0 ? scoreOrder : left.Key.AsSpan().SequenceCompareTo(right.Key);
     }
 
     private FakeReply SortedSetPop(byte[][] args, bool reverse, bool resp3)
@@ -157,8 +166,14 @@ public sealed partial class RespireFakeServer
         switch (kind)
         {
             case SortedSetRangeKind.Rank: start = Integer(first); stop = Integer(last); break;
-            case SortedSetRangeKind.Score: minimumScore = ScoreBoundary.Parse(first); maximumScore = ScoreBoundary.Parse(last); break;
-            case SortedSetRangeKind.Lex: minimumLex = LexBoundary.Parse(first); maximumLex = LexBoundary.Parse(last); break;
+            case SortedSetRangeKind.Score:
+                if (!ScoreBoundary.TryParse(first, out minimumScore) || !ScoreBoundary.TryParse(last, out maximumScore))
+                    return FakeReply.Error("ERR min or max is not a float");
+                break;
+            case SortedSetRangeKind.Lex:
+                if (!LexBoundary.TryParse(first, out minimumLex) || !LexBoundary.TryParse(last, out maximumLex))
+                    return FakeReply.Error("ERR min or max not valid string range item");
+                break;
         }
         var set = Find(args[1])?.SortedSet;
         var ordered = OrderedSortedSet(set, reverse);
@@ -247,12 +262,14 @@ public sealed partial class RespireFakeServer
 
     private readonly record struct ScoreBoundary(double Value, bool Exclusive)
     {
-        internal static ScoreBoundary Parse(byte[] bytes)
+        internal static bool TryParse(byte[] bytes, out ScoreBoundary boundary)
         {
+            boundary = default;
             var exclusive = bytes.Length != 0 && bytes[0] == '(';
             var text = exclusive ? bytes.AsSpan(1) : bytes.AsSpan();
-            if (!RedisScore.TryParse(text, out var value)) throw new SortedSetArgumentException("ERR min or max is not a float");
-            return new(value, exclusive);
+            if (!RedisScore.TryParse(text, out var value)) return false;
+            boundary = new(value, exclusive);
+            return true;
         }
         internal bool Allows(double score, bool minimum)
         {
@@ -263,12 +280,18 @@ public sealed partial class RespireFakeServer
 
     private readonly record struct LexBoundary(byte[]? Value, bool Exclusive, int Infinity)
     {
-        internal static LexBoundary Parse(byte[] bytes)
+        internal static bool TryParse(byte[] bytes, out LexBoundary boundary)
         {
-            if (bytes.Length == 1 && bytes[0] is (byte)'+' or (byte)'-') return new(null, false, bytes[0] == '+' ? 1 : -1);
+            boundary = default;
+            if (bytes.Length == 1 && bytes[0] is (byte)'+' or (byte)'-')
+            {
+                boundary = new(null, false, bytes[0] == '+' ? 1 : -1);
+                return true;
+            }
             if (bytes.Length == 0 || bytes[0] is not ((byte)'[' or (byte)'('))
-                throw new SortedSetArgumentException("ERR min or max not valid string range item");
-            return new(bytes[1..], bytes[0] == '(', 0);
+                return false;
+            boundary = new(bytes[1..], bytes[0] == '(', 0);
+            return true;
         }
         internal bool Allows(byte[] member, bool minimum)
         {
@@ -278,7 +301,4 @@ public sealed partial class RespireFakeServer
             return Exclusive ? order < 0 : order <= 0;
         }
     }
-
-    private static double SortedSetNumber(byte[] bytes)
-        => RedisScore.TryParse(bytes, out var value) ? value : throw new SortedSetArgumentException("ERR value is not a valid float");
 }

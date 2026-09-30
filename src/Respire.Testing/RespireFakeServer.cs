@@ -176,7 +176,6 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
             return handler.Execute(this, connection, args);
         }
         catch (WrongTypeException) { return FakeReply.Error("WRONGTYPE Operation against a key holding the wrong kind of value"); }
-        catch (SortedSetArgumentException error) { return FakeReply.Error(error.Message); }
         catch (FormatException) { return FakeReply.Error("ERR value is not an integer or out of range"); }
         catch (OverflowException) { return FakeReply.Error("ERR increment or expiry would overflow"); }
     }
