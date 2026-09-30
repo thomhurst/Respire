@@ -156,6 +156,57 @@ public class TimeoutDiagnosticsTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task GuardedRemovalPreservesTimeoutSnapshotAndCallerCancellation(bool cluster, bool cancelCaller)
+    {
+        var scriptSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var target = new FakeRespServer(2, FakeRespServer.OkReply)
+        {
+            SuppressReply = command =>
+            {
+                if (!command.StartsWith("EVAL ", StringComparison.Ordinal)) return false;
+                scriptSeen.TrySetResult();
+                return true;
+            }
+        };
+        var topology = System.Text.Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{target.Port}\r\n");
+        await using var seed = new FakeRespServer(topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("127.0.0.1", cluster ? seed.Port : target.Port) },
+            Connections = 1, UseCluster = cluster,
+            CommandTimeout = TimeSpan.FromSeconds(2)
+        });
+        using var caller = new CancellationTokenSource();
+        var removal = client.UnlinkGuardedAsync("private-key", caller.Token).AsTask();
+        await scriptSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (cancelCaller)
+        {
+            caller.Cancel();
+            await Assert.That(async () => await removal).ThrowsExactly<OperationCanceledException>();
+        }
+        else
+        {
+            var error = await Assert.That(async () => await removal).ThrowsExactly<RespireTimeoutException>();
+            await Assert.That(error!.CommandName).IsEqualTo("UNLINK");
+            await Assert.That(error.Diagnostics.Stage).IsEqualTo(RespireCommandStage.AwaitingReply);
+            await Assert.That(error.Diagnostics.Endpoint).IsEqualTo(new RespireEndpoint("127.0.0.1", target.Port));
+            await Assert.That(error.Diagnostics.ConnectionId).IsNotNull();
+            await Assert.That(error.Diagnostics.InflightCount).IsEqualTo(1);
+            await Assert.That(error.Diagnostics.InflightBytes.GetValueOrDefault()).IsGreaterThan(0);
+            // Capture must precede discarding the dedicated connection.
+            await Assert.That(error.Diagnostics.IsConnected).IsTrue();
+            await Assert.That(error.Message.Contains("private-key", StringComparison.Ordinal)).IsFalse();
+        }
+        // Cancellation and timeout both wait for the removal lease to be revoked.
+        await Assert.That(target.ReceivedCommands).Contains(command => command.StartsWith("UNLINK "));
+    }
+
+    [Test]
     public async Task ImmediateTimeout_ReportsConnectionAndAwaitingReplyWithoutArguments()
     {
         await using var server = new FakeRespServer(FakeRespServer.PongReply)

@@ -1057,6 +1057,19 @@ internal sealed class RespireConnection : IAsyncDisposable
         Volatile.Write(ref _lastWriteTimestamp, Stopwatch.GetTimestamp());
     }
 
+    /// <summary>Captures the sole outstanding frame on an exclusively rented connection.</summary>
+    internal RespireTimeoutDiagnostics CaptureDedicatedTimeoutDiagnostics()
+    {
+        // Dedicated callers never pipeline another operation on this lease. The completed
+        // reply watermark therefore starts the current frame, including an ASKING prefix.
+        // If the reply won the race after cancellation, retain counters but leave stage unknown.
+        var start = _inflight.CompletedWriteEnd;
+        var end = Volatile.Read(ref _enqueuedBytes);
+        return end > start
+            ? CaptureTimeoutDiagnostics(start, end)
+            : CaptureTimeoutDiagnostics();
+    }
+
     internal RespireTimeoutDiagnostics CaptureTimeoutDiagnostics(
         long writeStart = 0, long writeEnd = 0, RespireCommandStage stage = RespireCommandStage.Unknown)
     {

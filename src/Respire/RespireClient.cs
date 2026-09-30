@@ -2238,7 +2238,8 @@ public sealed partial class RespireClient : IRespireClient
         TCommand command,
         CancellationToken cancellationToken,
         string? storedProcedureName = null,
-        bool noRedirect = false)
+        bool noRedirect = false,
+        TimeSpan? cancellationTimeout = null, CancellationToken callerCancellationToken = default)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -2250,7 +2251,8 @@ public sealed partial class RespireClient : IRespireClient
             if (core.Cluster is { } cluster)
             {
                 return await SendBlockingClusterAsync(
-                        operation, cluster, command, cancellationToken, storedProcedureName, noRedirect)
+                        operation, cluster, command, cancellationToken, storedProcedureName, noRedirect,
+                        cancellationTimeout, callerCancellationToken)
                     .ConfigureAwait(false);
             }
 
@@ -2281,13 +2283,21 @@ public sealed partial class RespireClient : IRespireClient
             }
             catch (Exception ex)
             {
-                telemetry.Complete(core, operation, storedProcedureName, ex, connection);
+                var timeoutError = cancellationTimeout is { } timeout && ex is OperationCanceledException cancelled
+                    && RespireConnection.IsDeadlineCancellation(cancelled, cancellationToken, callerCancellationToken)
+                    ? new RespireTimeoutException(operation, timeout, cancelled,
+                        connection?.CaptureDedicatedTimeoutDiagnostics()
+                        ?? RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting,
+                            new RespireEndpoint(core.Multiplexer.Host, core.Multiplexer.Port)))
+                    : null;
+                telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
                 if (connection is not null && !returned)
                 {
                     // The connection may still be mid-block server-side; don't return it to the pool.
                     await core.DedicatedPool.DiscardAsync(connection).ConfigureAwait(false);
                 }
 
+                if (timeoutError is not null) throw timeoutError;
                 throw;
             }
         }
@@ -2306,7 +2316,8 @@ public sealed partial class RespireClient : IRespireClient
         TCommand command,
         CancellationToken cancellationToken,
         string? storedProcedureName,
-        bool noRedirect)
+        bool noRedirect,
+        TimeSpan? cancellationTimeout, CancellationToken callerCancellationToken)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -2369,12 +2380,19 @@ public sealed partial class RespireClient : IRespireClient
             }
             catch (Exception ex)
             {
-                telemetry.Complete(core, operation, storedProcedureName, ex, connection);
+                var timeoutError = cancellationTimeout is { } timeout && ex is OperationCanceledException cancelled
+                    && RespireConnection.IsDeadlineCancellation(cancelled, cancellationToken, callerCancellationToken)
+                    ? new RespireTimeoutException(operation, timeout, cancelled,
+                        connection?.CaptureDedicatedTimeoutDiagnostics()
+                        ?? RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting))
+                    : null;
+                telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
                 if (connection is not null && !returned)
                 {
                     await pool.DiscardAsync(connection).ConfigureAwait(false);
                 }
 
+                if (timeoutError is not null) throw timeoutError;
                 throw;
             }
         }
@@ -2989,15 +3007,22 @@ public sealed partial class RespireClient : IRespireClient
         using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
         try
         {
-            await UnlinkLeasedAsync(key, timeoutSource.Token).ConfigureAwait(false);
+            await UnlinkLeasedAsync(key, timeoutSource.Token, timeout, cancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (RespireTimeoutException ex)
         {
-            throw new RespireTimeoutException("UNLINK", timeout);
+            throw new RespireTimeoutException("UNLINK", timeout, ex);
+        }
+        catch (OperationCanceledException ex) when (
+            RespireConnection.IsDeadlineCancellation(ex, timeoutSource.Token, cancellationToken))
+        {
+            throw new RespireTimeoutException("UNLINK", timeout, ex,
+                RespireTimeoutDiagnostics.Capture());
         }
     }
 
-    private async ValueTask UnlinkLeasedAsync(RespireKey key, CancellationToken cancellationToken)
+    private async ValueTask UnlinkLeasedAsync(RespireKey key, CancellationToken cancellationToken,
+        TimeSpan timeout, CancellationToken callerCancellationToken)
     {
         while (true)
         {
@@ -3024,7 +3049,8 @@ public sealed partial class RespireClient : IRespireClient
             try
             {
                 value = await SendBlockingAsync(
-                    "EVAL", command, cancellationToken, LeasedUnlinkScript.Sha1).ConfigureAwait(false);
+                    "EVAL", command, cancellationToken, LeasedUnlinkScript.Sha1,
+                    cancellationTimeout: timeout, callerCancellationToken: callerCancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not RespireServerException and not ObjectDisposedException)
             {

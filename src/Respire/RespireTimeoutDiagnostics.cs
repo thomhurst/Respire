@@ -1,6 +1,7 @@
 namespace Respire;
 
 /// <summary>The last observed stage of a command that timed out.</summary>
+/// <remarks>Future versions may add stages. Consumers should handle unrecognized values.</remarks>
 public enum RespireCommandStage
 {
     /// <summary>No physical command was available to inspect.</summary>
