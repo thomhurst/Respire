@@ -330,6 +330,11 @@ construction. Authentication errors, denied discovery/selection, and out-of-rang
 errors fail connection setup; Respire never falls back to database `0`. Reconnection repeats
 validation and selection before the socket can execute application commands.
 
+An incompatible seed stops setup immediately, even if a later seed is compatible. Respire does
+not hide a mixed-version or incorrectly configured endpoint behind another seed. Transient
+connection failures still allow the next seed to be tried. Capability errors include the
+observed server name, Valkey version, and mode to help identify the incompatible endpoint.
+
 Database `0` and standalone connections retain their existing handshake and need no new discovery
 permission. Redis Cluster and Valkey before version 9 still support only database `0`.
 Hash slots depend on key bytes, not the selected database; multi-key and transaction slot rules

@@ -42,18 +42,25 @@ public class ClusterDatabaseTests
     [Arguments("9.0.0", "redis", "cluster")]
     [Arguments("9.0.0", "valkey", "standalone")]
     [Arguments("not-a-version", "valkey", "cluster")]
+    [Arguments("+9", "valkey", "cluster")]
+    [Arguments("9preview", "valkey", "cluster")]
     public async Task UnsupportedServersFailBeforeSelectOrUserCommands(string version, string name, string mode)
     {
         await using var server = new FakeRespServer(Info(version, name, mode));
         var error = await Assert.That(async () => await RespireClient.ConnectAsync(Options(server.Port)))
             .ThrowsExactly<RespireConfigurationException>();
         await Assert.That(error!.Message).Contains("database 0");
+        await Assert.That(error.Message).Contains($"server_name={name}");
+        await Assert.That(error.Message).Contains($"valkey_version={version}");
+        await Assert.That(error.Message).Contains($"server_mode={mode}");
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "INFO SERVER" });
     }
 
     [Test]
     [Arguments("9.0.0-rc1")]
     [Arguments("10.0.0")]
+    [Arguments("9")]
+    [Arguments("10")]
     public async Task CompatibleVersionsAndFutureMajorsAreAccepted(string version)
     {
         await using var server = new FakeRespServer(Info(version), FakeRespServer.OkReply);
@@ -86,6 +93,51 @@ public class ClusterDatabaseTests
             .ThrowsExactly<RespireConnectionException>();
         await Assert.That(error!.Message).Contains("AUTH failed");
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "AUTH secret", "INFO SERVER" });
+    }
+
+    [Test]
+    public async Task IncompatibleSeedFailsBeforeTryingAnotherSeed()
+    {
+        await using var incompatible = new FakeRespServer(Info("8.1.0"));
+        await using var compatible = new FakeRespServer(Info(), FakeRespServer.OkReply, "*0\r\n"u8.ToArray());
+        var options = Options(incompatible.Port);
+        options.Endpoints.Add(new RespireEndpoint("127.0.0.1", compatible.Port));
+        await Assert.That(async () => await RespireClient.ConnectAsync(options))
+            .ThrowsExactly<RespireConfigurationException>();
+        await Assert.That(incompatible.ReceivedCommands).IsEquivalentTo(["INFO SERVER"]);
+        await Assert.That(compatible.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task DedicatedLeaseSelectsBeforeItsFirstCommand()
+    {
+        await using var server = new FakeRespServer(Info(), FakeRespServer.OkReply, FakeRespServer.PongReply);
+        await using var client = RespireClient.Create(Options(server.Port));
+        var pool = client.Core.DedicatedPool;
+        var connection = await pool.RentAsync(CancellationToken.None);
+        try
+        {
+            using var pong = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+            await Assert.That(pong.AsString()).IsEqualTo("PONG");
+            await Assert.That(server.ReceivedCommands).IsEquivalentTo(["INFO SERVER", "SELECT 2", "PING"]);
+        }
+        finally
+        {
+            await pool.DiscardAsync(connection);
+        }
+    }
+
+    [Test]
+    public async Task PubSubSocketSelectsBeforeSubscribing()
+    {
+        byte[] subscribed = "*3\r\n$9\r\nsubscribe\r\n$2\r\nch\r\n:1\r\n"u8.ToArray();
+        await using var server = new FakeRespServer(2, Info(), FakeRespServer.OkReply, subscribed);
+        await using var seed = new FakeRespServer(Info(), FakeRespServer.OkReply, Topology(server.Port));
+        await using var client = await RespireClient.ConnectAsync(Options(seed.Port));
+        await using var subscription = await client.SubscribeAsync("ch").AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(
+            ["INFO SERVER", "SELECT 2", "INFO SERVER", "SELECT 2", "SUBSCRIBE ch"]);
+        await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(2);
     }
 
     [Test]

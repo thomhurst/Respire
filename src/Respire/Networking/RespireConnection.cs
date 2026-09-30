@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -452,6 +453,7 @@ internal sealed class RespireConnection : IAsyncDisposable
         {
             // Do not select a database or publish this connection until capability validation
             // succeeds. SELECT also verifies the configured database range and ACL permission.
+            // Tracking must follow SELECT so its initial registration uses the selected database.
             await CompleteHandshakeStepAsync("SELECT", new Commands.SelectCommand(options.Database),
                 cancellationToken, armCommandDeadline).ConfigureAwait(false);
             if (options.EnableClientTracking)
@@ -480,16 +482,20 @@ internal sealed class RespireConnection : IAsyncDisposable
             else if (line.StartsWith("server_mode:", StringComparison.Ordinal)) mode = line[12..];
         }
 
-        var versionNumber = version?.Split('-', 2)[0];
+        var majorText = version.AsSpan();
+        var separator = majorText.IndexOfAny('.', '-');
+        if (separator >= 0) majorText = majorText[..separator];
         if (string.Equals(server, "valkey", StringComparison.OrdinalIgnoreCase)
-            && mode == "cluster" && Version.TryParse(versionNumber, out var parsed) && parsed.Major >= 9)
+            && mode == "cluster"
+            && int.TryParse(majorText, NumberStyles.None, CultureInfo.InvariantCulture, out var major) && major >= 9)
         {
             return;
         }
 
         throw new RespireConfigurationException(
             $"Redis Cluster supports database 0 only. Non-zero Cluster databases require Valkey 9+; " +
-            $"INFO SERVER from {Host}:{Port} did not confirm a compatible Valkey cluster.");
+            $"INFO SERVER from {Host}:{Port} did not confirm a compatible Valkey cluster " +
+            $"(server_name={server ?? "<missing>"}, valkey_version={version ?? "<missing>"}, server_mode={mode ?? "<missing>"}).");
     }
 
     private RespireConnectionException CreateHandshakeException(in RespValue reply, string step)
