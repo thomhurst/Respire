@@ -860,19 +860,24 @@ public class ClientSideCacheTests
     [Test]
     public async Task CorrectionScript_FencesCacheThroughCompletion()
     {
-        await using var server = new FakeRespServer(
-            HelloReply,
-            FakeRespServer.OkReply,
-            FakeRespServer.OkReply,
-            "$3\r\nold\r\n"u8.ToArray(),
-            ":1\r\n"u8.ToArray());
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => HelloReply,
+                "CLIENT ID" => ":123\r\n"u8.ToArray(),
+                _ when command.StartsWith("CLIENT KILL ", StringComparison.Ordinal) => ":0\r\n"u8.ToArray(),
+                "GET key" => "$3\r\nold\r\n"u8.ToArray(),
+                _ => FakeRespServer.OkReply,
+            },
+        };
         server.SuppressReply = command => command.StartsWith("EVAL", StringComparison.Ordinal);
         await using var client = await ConnectAsync(server);
 
         await client.GetStringAsync("key");
         var script = RespireScript.Create("return redis.call('DEL', KEYS[1])");
         var execution = client.ExecuteOnAllConnectionsAsync(script, ["key"], []).AsTask();
-        await WaitUntilAsync(() => server.CommandsSeen >= 5);
+        await WaitUntilAsync(() => server.ReceivedCommands.Any(command => command.StartsWith("EVAL ", StringComparison.Ordinal)));
         var cache = client.Core.ClientCache!;
         await Assert.That(cache.Count).IsEqualTo(0);
         InsertCachedValue(cache, "key", "old");
@@ -886,13 +891,17 @@ public class ClientSideCacheTests
     [Test]
     public async Task TrackedScriptResponse_OwnsCompletionFence()
     {
-        await using var server = new FakeRespServer(
-            HelloReply,
-            FakeRespServer.OkReply,
-            ":123\r\n"u8.ToArray(),
-            FakeRespServer.OkReply,
-            "$3\r\nold\r\n"u8.ToArray(),
-            ":1\r\n"u8.ToArray());
+        await using var server = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            ReplyOverride = (_, command) => command switch
+            {
+                "HELLO 3" => HelloReply,
+                "CLIENT ID" => ":123\r\n"u8.ToArray(),
+                _ when command.StartsWith("CLIENT KILL ", StringComparison.Ordinal) => ":0\r\n"u8.ToArray(),
+                "GET key" => "$3\r\nold\r\n"u8.ToArray(),
+                _ => FakeRespServer.OkReply,
+            },
+        };
         server.SuppressReply = command => command.StartsWith("EVAL", StringComparison.Ordinal);
         await using var client = await ConnectAsync(server);
         await client.EnsureReliableCorrectionOrderingAsync();
@@ -904,7 +913,7 @@ public class ClientSideCacheTests
             ["key"],
             [],
             CancellationToken.None);
-        await WaitUntilAsync(() => server.CommandsSeen >= 6);
+        await WaitUntilAsync(() => server.ReceivedCommands.Any(command => command.StartsWith("EVALSHA ", StringComparison.Ordinal)));
         var cache = client.Core.ClientCache!;
         await Assert.That(cache.Count).IsEqualTo(0);
         InsertCachedValue(cache, "key", "old");

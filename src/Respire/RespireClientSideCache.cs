@@ -341,20 +341,24 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
     internal void Invalidate(in RespireKey key)
     {
-        if (_inflight.TryGetValue(key, out var state))
+        BeginSharedReadInvalidation();
+        try
         {
-            lock (state)
+            if (_inflight.TryGetValue(key, out var state))
             {
-                state.Generation++;
+                lock (state)
+                {
+                    state.Generation++;
+                }
+            }
+
+            lock (_queryLock)
+            {
+                Interlocked.Increment(ref _queryEpoch);
+                Volatile.Read(ref _store).Remove(in key, CacheRemoval.Invalidation);
             }
         }
-
-        lock (_queryLock)
-        {
-            Interlocked.Increment(ref _queryEpoch);
-            Volatile.Read(ref _store).Remove(in key, CacheRemoval.Invalidation);
-        }
-        RetireSharedReads();
+        finally { EndSharedReadInvalidation(); }
         Interlocked.Increment(ref _invalidations);
         RespireTelemetry.ClientCacheInvalidations.Add(1);
     }
@@ -441,21 +445,25 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
     private int FlushState(bool continuityLost)
     {
-        Interlocked.Increment(ref _continuityEpoch);
-        Interlocked.Increment(ref _queryEpoch);
-        var replacement = new CacheStore(_options, RecordEviction);
-        var removed = Interlocked.Exchange(ref _store, replacement).Count;
-        if (removed > 0)
+        BeginSharedReadInvalidation();
+        try
         {
-            Interlocked.Add(ref _evictions, removed);
-        }
+            Interlocked.Increment(ref _continuityEpoch);
+            Interlocked.Increment(ref _queryEpoch);
+            var replacement = new CacheStore(_options, RecordEviction);
+            var removed = Interlocked.Exchange(ref _store, replacement).Count;
+            if (removed > 0)
+            {
+                Interlocked.Add(ref _evictions, removed);
+            }
 
-        if (continuityLost)
-        {
-            Interlocked.Increment(ref _continuityFlushes);
+            if (continuityLost)
+            {
+                Interlocked.Increment(ref _continuityFlushes);
+            }
+            return removed;
         }
-        RetireSharedReads();
-        return removed;
+        finally { EndSharedReadInvalidation(); }
     }
 
     private static void PublishFlushMetrics(int removed, bool continuityLost)

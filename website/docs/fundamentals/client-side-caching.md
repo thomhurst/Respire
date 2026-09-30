@@ -41,6 +41,8 @@ Set `ClientSideCache.CoalesceConcurrentMisses = true` to share concurrent misses
 command and byte-for-byte arguments within a client. Sharing is opt-in; the default is `false`. This covers typed `GET` variants, identical ordered `MGET` miss lists, and all
 eligible deterministic query reads. Typed and raw calls can join the same wire command; each
 caller still performs its own conversion and receives independently owned results and leases.
+With sharing enabled, typed and raw `GET`/`MGET` use the same per-key entries, so either caller
+can populate later hits for both APIs. Raw `MGET` also reuses the typed partial-hit path.
 Binary keys and arguments are snapshotted. Prefix views use resolved wire keys; separate clients,
 databases, and Cluster routing contexts never share work. `GET` and `MGET` are different identities,
 and partially overlapping `MGET` lists are not split into individual `GET` requests.
@@ -57,7 +59,10 @@ a later call to retry. Sharing never replays an accepted command after a transpo
 Invalidations, explicit `Clear()`, and tracking continuity changes prevent new callers from joining
 older work. Callers already waiting may receive their original read result, but the existing
 invalidation fences reject stale cache insertion. Retirement is conservative: an invalidation
-currently ends joining for all pending identities, even those with unrelated keys. Completed work
+currently ends joining for all pending identities, even those with unrelated keys. Reads
+started during an invalidation run independently and
+cannot become a source for later callers. Overlapping invalidations keep that interval open
+until every cache-state change finishes. Completed work
 is always removed, including oversized responses and other replies that cannot enter the cache.
 Cache hit/miss counters remain per caller, not per wire request. The process-wide observable
 counter `respire.client_cache.shared_read.retirements` counts pending identities removed by invalidation,

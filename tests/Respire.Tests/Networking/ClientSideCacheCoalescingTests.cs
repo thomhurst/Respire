@@ -35,16 +35,49 @@ public class ClientSideCacheCoalescingTests
     }
 
     [Test]
-    public async Task TypedAndRawGetShareTheSameWireRead()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TypedAndRawGetShareTheSameWireRead(bool rawFirst)
     {
         await using var server = CreateServer();
         await using var client = await ConnectAsync(server);
+        Task<RespireResult>? raw = rawFirst ? client.ExecuteAsync("GET", "key").AsTask() : null;
         var typed = client.GetStringAsync("key").AsTask();
-        var raw = client.ExecuteAsync("GET", "key").AsTask();
+        raw ??= client.ExecuteAsync("GET", "key").AsTask();
         await BarrierAsync(server, client, 1);
         await server.SendRawAsync("+OK\r\n$5\r\nvalue\r\n+PONG\r\n"u8.ToArray());
         using var result = await raw.WaitAsync(Timeout);
         await Assert.That(result.AsString()).IsEqualTo(await typed.WaitAsync(Timeout));
+        await Assert.That(await client.GetStringAsync("key").AsTask().WaitAsync(Timeout)).IsEqualTo("value");
+        using var cached = await client.ExecuteAsync("GET", "key").AsTask().WaitAsync(Timeout);
+        await Assert.That(cached.AsString()).IsEqualTo("value");
+        await Assert.That(server.ReceivedCommands.Count(command => command == "GET key")).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TypedAndRawMGetSharePerKeyEntriesAndResolvedPrefixes(bool rawFirst)
+    {
+        await using var server = CreateServer();
+        await using var root = await ConnectAsync(server);
+        var client = root.WithKeyPrefix("tenant:");
+        Task<RespireResult>? raw = rawFirst ? client.ExecuteAsync("MGET", "a", "b", "a").AsTask() : null;
+        var typed = client.Strings.GetManyAsync("a", "b", "a").AsTask();
+        raw ??= client.ExecuteAsync("MGET", "a", "b", "a").AsTask();
+        await BarrierAsync(server, root, 1);
+        await server.SendRawAsync("+OK\r\n*3\r\n$1\r\nx\r\n$-1\r\n$1\r\nx\r\n+PONG\r\n"u8.ToArray());
+        using var result = await raw.WaitAsync(Timeout);
+        await Assert.That(await typed.WaitAsync(Timeout)).IsEquivalentTo(new string?[] { "x", null, "x" });
+        await Assert.That(result[0].AsString()).IsEqualTo("x");
+        await Assert.That(result[1].IsNull).IsTrue();
+        await Assert.That(await client.Strings.GetManyAsync("a", "b", "a").AsTask().WaitAsync(Timeout))
+            .IsEquivalentTo(new string?[] { "x", null, "x" });
+        using var cached = await client.ExecuteAsync("MGET", "a", "b", "a").AsTask().WaitAsync(Timeout);
+        await Assert.That(cached[2].AsString()).IsEqualTo("x");
+        await Assert.That(cached[1].IsNull).IsTrue();
+        await Assert.That(server.ReceivedCommands.Count(command => command.StartsWith("MGET "))).IsEqualTo(1);
+        await Assert.That(server.ReceivedCommands).Contains("MGET tenant:a tenant:b tenant:a");
     }
 
     [Test]
@@ -147,6 +180,64 @@ public class ClientSideCacheCoalescingTests
         await server.SendRawAsync("+OK\r\n$3\r\nold\r\n+OK\r\n$3\r\nnew\r\n"u8.ToArray());
         await Assert.That(await retry.WaitAsync(Timeout)).IsEqualTo("new");
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("new");
+    }
+
+    [Test]
+    public async Task CallersDuringEntryRemovalCannotJoinOrPublishStaleSharedWork()
+    {
+        var cache = new ClientSideCacheCoordinator(new() { CoalesceConcurrentMisses = true });
+        RespireKey key = "key";
+        var token = cache.BeginRead(in key);
+        using var cached = RespValue.BulkString("cached"u8.ToArray());
+        cache.CompleteRead(in token, in cached, allowInsert: true);
+        var identity = new ClientCacheCommandKey("GET", "key");
+        var finishReads = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        async ValueTask<RespValue> Read(int _, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref calls);
+            await finishReads.Task.WaitAsync(cancellationToken);
+            return RespValue.BulkString("value"u8.ToArray());
+        }
+
+        // Remove first evicts the scalar entry, then takes the dependency gate. Hold that
+        // gate to expose the exact interval between eviction and invalidation completion.
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var store = typeof(ClientSideCacheCoordinator).GetField("_store", flags)!.GetValue(cache)!;
+        var dependencies = (Lock)store.GetType().GetField("_dependencyLock", flags)!.GetValue(store)!;
+        var gateHeld = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holder = Task.Run(() =>
+        {
+            lock (dependencies)
+            {
+                gateHeld.TrySetResult();
+                releaseGate.Task.GetAwaiter().GetResult();
+            }
+        });
+        var reads = new List<Task<RespValue>>();
+        Task invalidating = Task.CompletedTask;
+        try
+        {
+            await gateHeld.Task.WaitAsync(Timeout);
+            reads.Add(cache.CoalesceReadAsync(identity, 0, Read, default).AsTask());
+            invalidating = Task.Run(() => cache.Invalidate(in key));
+            await WaitUntilAsync(() => cache.Count == 0);
+            reads.Add(cache.CoalesceReadAsync(identity, 0, Read, default).AsTask());
+            reads.Add(cache.CoalesceReadAsync(identity, 0, Read, default).AsTask());
+            releaseGate.TrySetResult();
+            await invalidating.WaitAsync(Timeout);
+            reads.Add(cache.CoalesceReadAsync(identity, 0, Read, default).AsTask());
+            await Assert.That(calls).IsEqualTo(4);
+        }
+        finally
+        {
+            releaseGate.TrySetResult();
+            finishReads.TrySetResult();
+            await Task.WhenAll(holder, invalidating).WaitAsync(Timeout);
+            foreach (var read in reads) (await read.WaitAsync(Timeout)).Dispose();
+        }
+        await Assert.That(cache.ActiveSharedReadCount).IsEqualTo(0);
     }
 
     [Test]

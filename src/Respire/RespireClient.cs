@@ -1336,7 +1336,8 @@ public sealed partial class RespireClient : IRespireClient
     internal ValueTask<TResult[]> CachedGetManyAsync<TResult>(
         ReadOnlySpan<RespireKey> keys,
         CancellationToken cancellationToken,
-        ResponseConverter<RespireClient, TResult> converter)
+        ResponseConverter<RespireClient, TResult> converter,
+        bool keysResolved = false)
     {
         var cache = _core.ClientCache;
         if (keys.Length == 0)
@@ -1365,7 +1366,7 @@ public sealed partial class RespireClient : IRespireClient
             int? clusterSlot = null;
             for (var i = 0; i < keys.Length; i++)
             {
-                var resolvedKey = ResolveKey(keys[i]);
+                var resolvedKey = keysResolved ? keys[i] : ResolveKey(keys[i]);
                 arguments[i] = resolvedKey.AsValue();
                 ValidateMGetClusterSlot(in resolvedKey, ref clusterSlot);
             }
@@ -1395,7 +1396,7 @@ public sealed partial class RespireClient : IRespireClient
         int? cachedClusterSlot = null;
         for (var i = 0; i < keys.Length; i++)
         {
-            var resolvedKey = ResolveKey(keys[i]);
+            var resolvedKey = keysResolved ? keys[i] : ResolveKey(keys[i]);
             ValidateMGetClusterSlot(in resolvedKey, ref cachedClusterSlot);
             if (cache.TryGet(in resolvedKey, out var cached))
             {
@@ -1799,6 +1800,16 @@ public sealed partial class RespireClient : IRespireClient
             && cache is not null
             && cache.TryCreateQuery(operation, in command, out var query))
         {
+            // Shared GET/MGET producers must populate the same per-key representation,
+            // regardless of whether a typed or raw caller wins the miss.
+            if (cache.CoalesceConcurrentMisses)
+            {
+                if (operation == "GET" && query.Query.ArgumentCount == 1)
+                    return CachedGetAsync(query.PrimaryKey, cancellationToken,
+                        static (RespireClient _, in RespValue value) => value.ToOwned());
+                if (operation == "MGET" && query.Query.ArgumentCount > 0)
+                    return CachedRawGetManyAsync(query.Query, cancellationToken);
+            }
             if (cache.TryGet(in query, out var cached))
             {
                 return new ValueTask<RespValue>(cached);
@@ -1831,6 +1842,19 @@ public sealed partial class RespireClient : IRespireClient
         return mutationFence.IsRequired
             ? CompleteMutationAsync(response, cache!, mutationFence)
             : response;
+    }
+
+#if NET
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
+#endif
+    private async ValueTask<RespValue> CachedRawGetManyAsync(
+        ClientCacheCommandKey query, CancellationToken cancellationToken)
+    {
+        var keys = new RespireKey[query.ArgumentCount];
+        for (var index = 0; index < keys.Length; index++) keys[index] = query.GetArgument(index).AsKey();
+        var values = await CachedGetManyAsync(keys, cancellationToken,
+            static (RespireClient _, in RespValue value) => value.ToOwned(), keysResolved: true).ConfigureAwait(false);
+        return RespValue.Array(values);
     }
 
     private ValueTask<RespValue> QueryAndCacheAsync<TCommand>(

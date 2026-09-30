@@ -14,6 +14,7 @@ internal sealed partial class ClientSideCacheCoordinator
     private readonly Dictionary<ClientCacheCommandKey, SharedRead> _sharedReads = new();
     private readonly HashSet<SharedRead> _activeSharedReads = new();
     private bool _sharedReadsStopped;
+    private int _sharedReadInvalidations;
 
     internal int ActiveSharedReadCount
     {
@@ -33,11 +34,13 @@ internal sealed partial class ClientSideCacheCoordinator
         lock (_sharedReadLock)
         {
             ObjectDisposedException.ThrowIf(_sharedReadsStopped, this);
-            if (!_sharedReads.TryGetValue(identity, out shared!))
+            if (_sharedReadInvalidations != 0 || !_sharedReads.TryGetValue(identity, out shared!))
             {
                 // Borrowed binary arguments must not outlive the caller that supplied them.
                 shared = new SharedRead(identity.Snapshot());
-                _sharedReads.Add(shared.Identity, shared);
+                // Reads starting during invalidation cannot become joinable: their producer
+                // may still observe the store before its entries have been removed.
+                if (_sharedReadInvalidations == 0) _sharedReads.Add(shared.Identity, shared);
                 _activeSharedReads.Add(shared);
                 owner = true;
             }
@@ -54,16 +57,20 @@ internal sealed partial class ClientSideCacheCoordinator
     private async Task ProduceSharedReadAsync<TState>(
         SharedRead shared, TState state, Func<TState, CancellationToken, ValueTask<RespValue>> read)
     {
+        RespValue owned = default;
         try
         {
-            using var response = await read(state, shared.Cancellation.Token).ConfigureAwait(false);
-            var owned = response.ToOwned();
-            FinishSharedRead(shared);
+            try
+            {
+                using var response = await read(state, shared.Cancellation.Token).ConfigureAwait(false);
+                owned = response.ToOwned();
+            }
+            finally { FinishSharedRead(shared); }
             shared.Completion.TrySetResult(owned);
         }
         catch (Exception error)
         {
-            FinishSharedRead(shared);
+            owned.Dispose();
             // Producer cancellation can also come from client disposal or the command
             // deadline, independently of a waiter's token. Preserve that original failure.
             shared.Completion.TrySetException(error);
@@ -150,16 +157,24 @@ internal sealed partial class ClientSideCacheCoordinator
     }
 
     // Called under membership/health gates too. Never cancel or invoke callbacks here.
-    // Conservatively retire all identities: an invalidation of any dependency ends joining.
-    private void RetireSharedReads()
+    // End joining before any cache state changes. Overlapping invalidations keep joining
+    // disabled until all changes finish; no shared gate is held while touching cache stores.
+    private void BeginSharedReadInvalidation()
     {
         if (!_options.CoalesceConcurrentMisses) return;
         lock (_sharedReadLock)
         {
+            _sharedReadInvalidations++;
             // Observable measurement keeps user meter callbacks outside cache gates.
             if (_sharedReads.Count != 0) Interlocked.Add(ref _sharedReadRetirements, _sharedReads.Count);
             _sharedReads.Clear();
         }
+    }
+
+    private void EndSharedReadInvalidation()
+    {
+        if (!_options.CoalesceConcurrentMisses) return;
+        lock (_sharedReadLock) _sharedReadInvalidations--;
     }
 
     internal void StopSharedReads()

@@ -114,3 +114,18 @@ behavior. Do not rerun until green or weaken the zero-byte assertion. Unkeyed
 `NotInParallel` excludes other TUnit tests; unrelated runtime/background activity
 can still consume the process-wide reservation and causes an explicit failure if
 the no-GC region cannot be retained.
+
+## Notification parsing regression
+
+The first full net10.0 run after rebasing #597 onto merged #600 reported 1,728 bytes
+in `RepeatedParsingAndStructEnumerationAllocateNothing` (2,259/2,260 tests passed).
+The parser's current-head CI benchmarks measured zero bytes on all four layouts.
+Those results do not establish the exact source of the local counter delta.
+
+The notification test now follows the existing boundary above: unkeyed
+`NotInParallel`, warmed synchronous no-inline measurements, and the shared no-GC
+region. Both paths still parse, filter the prefix and enumerate 1,000 messages,
+with an exact 4,000-byte subkey-length total. The ordinary path must allocate exactly
+zero bytes; the positive control adds an escaping 37-byte array per iteration and
+must observe at least 37,000 bytes. The test does not discard samples, retry or
+relax its allocation requirement. Production parsing is unchanged.
