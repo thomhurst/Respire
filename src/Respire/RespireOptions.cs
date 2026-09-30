@@ -96,6 +96,8 @@ public enum SubscriptionOverflow
 /// </summary>
 public sealed record RespireOptions
 {
+    // Internal seam for Respire.Testing. Ordinary TCP/TLS connections retain their direct path.
+    internal Func<string, int, CancellationToken, ValueTask<Stream>>? TestingStreamFactory { get; init; }
     private const string ConnectionStringParameterName = "connectionString";
 
     private static readonly TimeSpan DefaultCommandTimeout = TimeSpan.FromSeconds(10);
@@ -371,6 +373,7 @@ public sealed record RespireOptions
         bool enableClientTracking = false)
         => new()
         {
+            TestingStreamFactory = TestingStreamFactory,
             ConnectTimeout = ConnectTimeout,
             ReconnectPolicy = ReconnectPolicy,
             ResponseTimeout = ConnectionIdleReadTimeout,

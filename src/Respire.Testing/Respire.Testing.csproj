@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Respire.Testing</PackageId>
+    <Title>Respire.Testing</Title>
+    <Description>Deterministic in-memory RESP server for testing real Respire client code without Docker.</Description>
+    <PackageTags>$(PackageTags);testing;fake</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Respire/Respire.csproj" />
+  </ItemGroup>
+</Project>

@@ -12,9 +12,15 @@ namespace Respire.IntegrationTests;
 public class TypedValueIntegrationTests(RedisTestContainer fixture)
 {
     [Test]
-    public async Task TryGetAsync_SeparatesMissingKeyFromStoredDefault()
+    [Arguments(false, 2)]
+    [Arguments(false, 3)]
+    [Arguments(true, 2)]
+    [Arguments(true, 3)]
+    public async Task TryGetAsync_SeparatesMissingKeyFromStoredDefault(bool useFake, int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
 
         // The gap TryGetAsync closes: GetAsync<int> answers 0 for both cases.
         (await client.GetAsync<int>("typed:absent")).Should().Be(0);
@@ -37,9 +43,15 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    public async Task TryGetAsync_ReadsSerializedPayloads()
+    [Arguments(false, 2)]
+    [Arguments(false, 3)]
+    [Arguments(true, 2)]
+    [Arguments(true, 3)]
+    public async Task TryGetAsync_ReadsSerializedPayloads(bool useFake, int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
         var payload = new TypedPayload(7, "seven");
 
         await client.SetAsync("typed:payload", payload);
@@ -55,9 +67,15 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    public async Task CombinedGets_DeserializeSerializedPayloads()
+    [Arguments(false, 2)]
+    [Arguments(false, 3)]
+    [Arguments(true, 2)]
+    [Arguments(true, 3)]
+    public async Task CombinedGets_DeserializeSerializedPayloads(bool useFake, int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync(fixture.ConnectionString);
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
         var deletedPayload = new TypedPayload(8, "deleted");
         var expiredPayload = new TypedPayload(9, "expired");
         await client.SetAsync("typed:combined:delete", deletedPayload);

@@ -45,8 +45,8 @@ internal sealed class RespireConnection : IAsyncDisposable
     private static readonly TimeSpan MinWatchdogDelay = TimeSpan.FromMilliseconds(1);
     private static readonly TimeSpan MaxWatchdogSleep = TimeSpan.FromDays(1);
 
-    private readonly Socket _socket;
-    private readonly SslStream? _tlsStream;
+    private readonly Socket? _socket;
+    private readonly Stream? _stream;
     private readonly Lock _writeGate = new();
     private readonly InflightRing _inflight;
     private readonly PendingResponsePool _sourcePool;
@@ -124,11 +124,11 @@ internal sealed class RespireConnection : IAsyncDisposable
     internal long ServerClientId => Volatile.Read(ref _serverClientId);
 
     private RespireConnection(
-        Socket socket, SslStream? tlsStream, string host, int port, RespireConnectionOptions options, ILogger? logger)
+        Socket? socket, Stream? stream, string host, int port, RespireConnectionOptions options, ILogger? logger)
     {
         _socket = socket;
-        _tlsStream = tlsStream;
-        if (socket.RemoteEndPoint is IPEndPoint remoteEndpoint)
+        _stream = stream;
+        if (socket?.RemoteEndPoint is IPEndPoint remoteEndpoint)
         {
             var address = remoteEndpoint.Address;
             _networkPeerAddress = (address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address).ToString();
@@ -192,6 +192,9 @@ internal sealed class RespireConnection : IAsyncDisposable
         }
 
         ValidateTcpKeepAlive(options);
+
+        if (options.TestingStreamFactory is not null)
+            return await ConnectTestingStreamAsync(host, port, options, logger, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
 
         var socket = new Socket(SocketType.Stream, ProtocolType.Tcp)
         {
@@ -265,6 +268,35 @@ internal sealed class RespireConnection : IAsyncDisposable
         }
 
         return connection;
+    }
+
+    private static async Task<RespireConnection> ConnectTestingStreamAsync(
+        string host, int port, RespireConnectionOptions options, ILogger? logger,
+        CancellationToken cancellationToken, bool armHandshakeDeadline)
+    {
+        if (options.UseTls) throw new NotSupportedException("In-memory testing connections do not support TLS.");
+        using var timeout = CommandTimeoutCancellation.Create(cancellationToken, options.ConnectTimeout);
+        Stream stream;
+        try
+        {
+            stream = await options.TestingStreamFactory!(host, port, timeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(error, cancellationToken, timeout.Token))
+        {
+            throw new OperationCanceledException(error.Message, error, cancellationToken);
+        }
+        var connection = new RespireConnection(null, stream, host, port, options, logger);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await connection.HandshakeAsync(options, cancellationToken, armHandshakeDeadline).ConfigureAwait(false);
+            return connection;
+        }
+        catch
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     internal static SslClientAuthenticationOptions CreateTlsOptions(
@@ -1488,11 +1520,11 @@ internal sealed class RespireConnection : IAsyncDisposable
 
                     // Never cancelled: a partial RESP frame on the wire is unrecoverable.
                     var memory = sending.WrittenMemory;
-                    if (_tlsStream is null)
+                    if (_stream is null)
                     {
                         while (memory.Length > 0)
                         {
-                            var pending = _socket.SendAsync(memory, SocketFlags.None);
+                            var pending = _socket!.SendAsync(memory, SocketFlags.None);
                             int sent;
                             if (pending.IsCompletedSuccessfully)
                             {
@@ -1510,7 +1542,7 @@ internal sealed class RespireConnection : IAsyncDisposable
                     }
                     else
                     {
-                        var pending = _tlsStream.WriteAsync(memory);
+                        var pending = _stream.WriteAsync(memory);
                         if (!pending.IsCompletedSuccessfully)
                         {
                             synchronousBatches = -1;
@@ -1911,9 +1943,9 @@ internal sealed class RespireConnection : IAsyncDisposable
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private ValueTask<int> ReceiveAsync(Memory<byte> buffer)
-        => _tlsStream is null
-            ? _socket.ReceiveAsync(buffer, SocketFlags.None)
-            : _tlsStream.ReadAsync(buffer);
+        => _stream is null
+            ? _socket!.ReceiveAsync(buffer, SocketFlags.None)
+            : _stream.ReadAsync(buffer);
 
     /// <summary>
     /// Routes out-of-band frames to the push handler. RESP3 delivers them as Push frames; on a
@@ -2166,7 +2198,7 @@ internal sealed class RespireConnection : IAsyncDisposable
 
         try
         {
-            _tlsStream?.Dispose();
+            _stream?.Dispose();
         }
         catch
         {
@@ -2175,7 +2207,7 @@ internal sealed class RespireConnection : IAsyncDisposable
 
         try
         {
-            _socket.Close(0);
+            _socket?.Close(0);
         }
         catch
         {
@@ -2302,8 +2334,8 @@ internal sealed class RespireConnection : IAsyncDisposable
                 _activeBuffer.Release();
                 _spareBuffer.Release();
             }
-            _tlsStream?.Dispose();
-            _socket.Dispose();
+            _stream?.Dispose();
+            _socket?.Dispose();
             _watchdogCancellation?.Dispose();
             _logger?.LogDebug("Disconnected from {Host}:{Port}", Host, Port);
             completion.TrySetResult();
@@ -2325,6 +2357,7 @@ internal delegate void RespirePushHandler(in RespValue value);
 /// <summary>Tuning options for a single RESP connection.</summary>
 internal sealed record RespireConnectionOptions
 {
+    internal Func<string, int, CancellationToken, ValueTask<Stream>>? TestingStreamFactory { get; init; }
     public static readonly RespireConnectionOptions Default = new();
 
     internal RespireReconnectPolicy? ReconnectPolicy { get; init; }

@@ -37,6 +37,7 @@ $requiredPackages = @(
     'Respire.Compression.Lz4'
     'Respire.Compression.Zstd'
     'Respire'
+    'Respire.Testing'
     'Respire.Extensions.Caching'
     'Respire.Extensions.Caching.Hybrid'
     'Respire.Extensions.DependencyInjection'
