@@ -252,20 +252,93 @@ public class DedicatedReconnectTests
     }
 
     [Test]
-    public async Task EachReplacementHandshakeRetainsItsCommandDeadline()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task EachReplacementHandshakeRetainsItsCommandDeadline(bool holdServerReceipt)
     {
-        await using var server = new FakeRespServer(2) { SuppressReply = _ => true };
+        var acceptGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(2, holdServerReceipt ? acceptGate.Task : Task.CompletedTask)
+            { SuppressReply = _ => true };
+        var changes = new ConcurrentQueue<RespireConnectionStateChange>();
+        var exhausted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var timeout = TimeSpan.FromMilliseconds(50);
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
             new RespireConnectionOptions
             {
-                Database = 1, CommandTimeout = TimeSpan.FromMilliseconds(50), ReconnectPolicy = Policy(attempts: 1),
-            }, null);
+                Database = 1, CommandTimeout = timeout, ReconnectPolicy = Policy(attempts: 1),
+            }, null, change =>
+            {
+                changes.Enqueue(change);
+                if (change.ReconnectExhausted) exhausted.TrySetResult();
+            });
         using var deadline = new CancellationTokenSource(Deadline);
         var error = await Assert.That(async () => await pool.RentAsync(deadline.Token))
             .ThrowsExactly<RespireReconnectLimitException>();
-        await Assert.That(error!.InnerException).IsTypeOf<RespireTimeoutException>();
-        await Assert.That(server.CommandsSeen).IsEqualTo(2);
+        await exhausted.Task.WaitAsync(deadline.Token);
+        // Acquisition has ended and exhaustion is the final queued event for this rent.
+        var attempts = changes.ToArray();
+        await Assert.That(attempts.Length).IsEqualTo(2);
+        await Assert.That(attempts[0].State).IsEqualTo(RespireConnectionState.Reconnecting);
+        await Assert.That(attempts[0].ReconnectAttempt).IsEqualTo(1);
+        await Assert.That(attempts[0].ReconnectExhausted).IsFalse();
+        await Assert.That(attempts[1].State).IsEqualTo(RespireConnectionState.Disconnected);
+        await Assert.That(attempts[1].ReconnectAttempt).IsEqualTo(1);
+        await Assert.That(attempts[1].ReconnectExhausted).IsTrue();
+        await Assert.That(attempts[1].ReconnectEpisodeId).IsEqualTo(attempts[0].ReconnectEpisodeId);
+        foreach (var attempt in attempts)
+        {
+            var failure = await Assert.That(attempt.Error).IsTypeOf<RespireTimeoutException>();
+            // Internal handshake commands currently leave CommandName unspecified.
+            await Assert.That(failure!.Timeout).IsEqualTo(timeout);
+            await Assert.That(failure.Diagnostics.ConnectionId).IsNotNull();
+        }
+        var initial = (RespireTimeoutException)attempts[0].Error!;
+        var replacement = (RespireTimeoutException)attempts[1].Error!;
+        await Assert.That(replacement.Diagnostics.ConnectionId).IsNotEqualTo(initial.Diagnostics.ConnectionId);
+        await Assert.That(error!.InnerException).IsSameReferenceAs(replacement);
+        // Command deadlines start at enqueue. Neither timeout proves server receipt.
+        if (holdServerReceipt) await Assert.That(server.CommandsSeen).IsEqualTo(0);
         await Assert.That(deadline.IsCancellationRequested).IsFalse();
+    }
+
+    [Test]
+    public async Task CallerCancellationAfterHandshakeReceiptDoesNotConsumeReplacementBudget()
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer
+        {
+            SuppressReply = command =>
+            {
+                if (command == "SELECT 1") received.TrySetResult();
+                return true;
+            },
+        };
+        await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
+            new RespireConnectionOptions { Database = 1, ReconnectPolicy = Policy(attempts: 1) }, null);
+        using var caller = new CancellationTokenSource();
+        var pending = pool.RentAsync(caller.Token).AsTask();
+        try
+        {
+            await received.Task.WaitAsync(Deadline);
+            caller.Cancel();
+            var error = await Assert.That(async () => await pending.WaitAsync(Deadline)).Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+            await server.PeerClosed.WaitAsync(Deadline);
+            await Assert.That(server.CommandsSeen).IsEqualTo(1);
+            // QueueRecovery allocates this queue before scheduling its asynchronous
+            // publisher. A null queue proves no notification was ever queued, even if
+            // a wrongly scheduled publisher has not run yet. Check before pool disposal.
+            var notifications = typeof(DedicatedConnectionPool).GetField("_recoveryNotifications",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            await Assert.That(notifications.GetValue(pool)).IsNull();
+        }
+        finally
+        {
+            caller.Cancel();
+            await pool.DisposeAsync();
+            try { await pending.WaitAsync(Deadline); }
+            catch (OperationCanceledException) { }
+        }
     }
 
     [Test]
