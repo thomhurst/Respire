@@ -65,6 +65,8 @@ public sealed partial class RespireClient
     {
         // Each field uses the existing HGET identity and hash-key dependency. A single hash
         // invalidation therefore removes every projection, regardless of the requested list.
+        // QueryReadToken is an owned snapshot of keys, epochs and the store. BeginRead
+        // registers no pending reader state, so failed/cancelled reads need no abandonment.
         var tokens = new ClientSideCacheCoordinator.QueryReadToken[fields.Length];
         for (var index = 0; index < fields.Length; index++)
         {

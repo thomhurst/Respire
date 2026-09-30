@@ -99,7 +99,8 @@ With both `ReuseHashFields` and `CoalesceConcurrentMisses` enabled, concurrent r
 same physical hash key and identical ordered missing fields share one HMGET producer. Full field
 lists may differ when their cached fields differ. Each caller keeps its own cached values, output
 order, and independently owned result. Different missing lists run independently; they are not
-split into per-field requests. Cancellation, invalidation, and continuity changes follow the
+split into per-field requests. For example, missing lists `[a, b]` and `[b, a]` do not share
+one producer: matching uses argument order, not set equality. Cancellation, invalidation, and continuity changes follow the
 shared-read rules above. Hashes outside broadcast prefix coverage bypass per-field reuse.
 
 Hit/miss statistics count field lookups, including repeated fields. As with cached MGET,
