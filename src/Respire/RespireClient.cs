@@ -1736,7 +1736,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            if (discoveryPending && discovery is not null) discovery.TerminalError = error;
+            discovery?.RecordCommandFailure(error, discoveryPending);
             throw;
         }
         finally { discovery?.Finish(); }
@@ -2139,7 +2139,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            if (discoveryPending && discovery is not null) discovery.TerminalError = error;
+            discovery?.RecordCommandFailure(error, discoveryPending);
             throw;
         }
         finally { discovery?.Finish(); }
@@ -2226,7 +2226,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            if (discoveryPending && discovery is not null) discovery.TerminalError = error;
+            discovery?.RecordCommandFailure(error, discoveryPending);
             throw;
         }
         finally { discovery?.Finish(); }
@@ -2444,7 +2444,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            if (discoveryPending && discovery is not null) discovery.TerminalError = error;
+            discovery?.RecordCommandFailure(error, discoveryPending);
             throw;
         }
         finally { discovery?.Finish(); }
@@ -2498,7 +2498,7 @@ public sealed partial class RespireClient : IRespireClient
                     {
                         // A later target may still succeed; retain this target's discovery
                         // failure before continuing, without classifying application failures.
-                        if (discoveryPending && discovery is not null) discovery.TerminalError = ex;
+                        discovery?.RecordCommandFailure(ex, discoveryPending);
                         discoveryPending = false;
                         (failures ??= []).Add(ex);
                     }
@@ -2520,7 +2520,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            if (discoveryPending && discovery is not null) discovery.TerminalError = error;
+            discovery?.RecordCommandFailure(error, discoveryPending);
             throw;
         }
         finally { discovery?.Finish(); }
@@ -2567,7 +2567,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            if (discoveryPending && discovery is not null) discovery.TerminalError = error;
+            discovery?.RecordCommandFailure(error, discoveryPending);
             throw;
         }
         finally { discovery?.Finish(); }
@@ -3269,7 +3269,7 @@ public sealed partial class RespireClient : IRespireClient
         }
         catch (Exception error)
         {
-            if (discoveryPending && discovery is not null) discovery.TerminalError = error;
+            discovery?.RecordCommandFailure(error, discoveryPending);
             throw;
         }
         finally { discovery?.Finish(); }

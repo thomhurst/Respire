@@ -459,7 +459,7 @@ public abstract class RespireTransactionBase : IAsyncDisposable, IRespireCommand
             }
             catch (Exception error)
             {
-                if (discoveryPending && discovery is not null) discovery.TerminalError = error;
+                discovery?.RecordCommandFailure(error, discoveryPending);
                 throw;
             }
             finally { discovery?.Finish(); }

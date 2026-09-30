@@ -280,6 +280,89 @@ public class ClusterRetirementTests
     }
 
     [Test]
+    [NotInParallel] // The ActivityListener deterministically retires each selected generation.
+    [Arguments("ordinary", false)]
+    [Arguments("ordinary", true)]
+    [Arguments("no-redirect", false)]
+    [Arguments("no-redirect", true)]
+    [Arguments("tracked", false)]
+    [Arguments("tracked", true)]
+    [Arguments("pinned", false)]
+    [Arguments("pinned", true)]
+    [Arguments("fire-forget", false)]
+    [Arguments("fire-forget", true)]
+    public async Task RetirementAtRedirectLimitReportsFailedDiscovery(string path, bool unlimited)
+    {
+        await using var server = new FakeRespServer(8, FakeRespServer.OkReply);
+        await using var client = CreateClient(allowAdmin: true, reconnectPolicy: new()
+        {
+            InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = unlimited ? null : 5,
+        });
+        using var timeout = new CancellationTokenSource(Limit);
+        var router = client.Core.Cluster!;
+        var endpoint = new RespireEndpoint("127.0.0.1", server.Port);
+        Publish(router, endpoint, "generation-0", 1);
+        var original = await router.GetConnectionAsync(42, timeout.Token, discovery: null);
+        var attempts = 0;
+        using var listener = new System.Diagnostics.ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Respire",
+            Sample = (ref System.Diagnostics.ActivityCreationOptions<System.Diagnostics.ActivityContext> _) =>
+                System.Diagnostics.ActivitySamplingResult.AllData,
+            ActivityStarted = activity =>
+            {
+                if (activity.GetTagItem("server.port") is not int port || port != server.Port) return;
+                if (activity.OperationName is not ("SET" or "SHUTDOWN")) return;
+                var generation = Interlocked.Increment(ref attempts);
+                Publish(router, endpoint, "generation-" + generation, generation + 1);
+            },
+        };
+        System.Diagnostics.ActivitySource.AddActivityListener(listener);
+        var changes = new System.Collections.Concurrent.ConcurrentQueue<RespireConnectionStateChange>();
+        var completed = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
+            changes.Enqueue(change);
+            if (change.NextReconnectDelay is null) completed.TrySetResult(change);
+        };
+        var error = await Assert.That(async () => await SendAsync().WaitAsync(timeout.Token))
+            .Throws<RespireConnectionRetiredException>();
+        var terminal = await completed.Task.WaitAsync(timeout.Token);
+        await Assert.That(terminal.SourceState).IsEqualTo(RespireConnectionState.Disconnected);
+        await Assert.That(terminal.Error).IsSameReferenceAs(error);
+        await Assert.That(terminal.ReconnectAttempt).IsEqualTo(5);
+        // The command's redirect cap ended recovery, not the policy's fallback budget.
+        await Assert.That(terminal.ReconnectExhausted).IsFalse();
+        await Assert.That(attempts).IsEqualTo(6);
+        await Assert.That(changes.Count).IsEqualTo(6);
+        await Assert.That(changes.Select(change => change.ReconnectEpisodeId).Distinct().Count()).IsEqualTo(1);
+        await Assert.That(server.CommandsSeen).IsEqualTo(0);
+
+        async Task SendAsync()
+        {
+            var command = new Cmd2(RespireCommands.String.SET.Verb, "key", "value");
+            if (path == "tracked")
+            {
+                var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
+                using var reply = await (ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
+                    ["SET", router, command, timeout.Token, null])!;
+            }
+            else if (path == "pinned")
+            {
+                using var reply = await client.SendToClusterTargetAsync("SET", original, command, timeout.Token);
+            }
+            else if (path == "fire-forget")
+                await client.ExecuteFireAndForgetAsync($"SHUTDOWN NOSAVE", timeout.Token);
+            else
+            {
+                using var reply = await client.ExecuteAsync(RespireCommands.String.SET, ["key", "value"],
+                    path == "no-redirect" ? RespireCommandFlags.NoRedirect : RespireCommandFlags.None, timeout.Token);
+            }
+        }
+    }
+
+    [Test]
     [NotInParallel] // The ActivityListener enables process-wide operation instrumentation.
     [Arguments("batch", "MOVED", false)]
     [Arguments("batch", "MOVED", true)]

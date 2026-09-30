@@ -88,6 +88,14 @@ internal sealed partial class ClusterRouter
         }
         internal bool HasPendingFailure => _failure is not null;
 
+        internal void RecordCommandFailure(Exception error, bool discoveryPending)
+        {
+            // Retirement rejects a command before admission, including when the command's
+            // redirect cap prevents another retry. Application errors after admission do not
+            // change the outcome of an otherwise successful discovery episode.
+            if (discoveryPending || error is RespireConnectionRetiredException) TerminalError = error;
+        }
+
         // Retirement wrappers preserve the endpoint selected by the last BeforeCandidateAsync.
         // Repeated reports replace the pending failure; only scheduling another candidate consumes it.
         internal void Failed(Exception error)
@@ -162,6 +170,8 @@ internal sealed partial class ClusterRouter
         {
             // Request ownership without throwing from a finally/Dispose path. Either this
             // caller or the active transition's Exit completes the round, never both.
+            // Repeated requests can add FinishRequested to Finished. That terminal combination
+            // cannot match either the idle state in Enter or the pending state in CompleteFinish.
             if (Interlocked.Or(ref _state, FinishRequested) == 0) CompleteFinish();
         }
 
