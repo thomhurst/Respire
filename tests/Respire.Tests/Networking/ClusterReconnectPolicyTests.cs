@@ -63,11 +63,13 @@ public class ClusterReconnectPolicyTests
                 JitterRatio = 0, MaxAttempts = 1 },
         });
         using var caller = new CancellationTokenSource();
-        var scheduled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var scheduled = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ended = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
         client.ConnectionStateChanged += change =>
         {
-            if (change.ReconnectSource == RespireReconnectSource.ClusterDiscovery && change.NextReconnectDelay is not null)
-                scheduled.TrySetResult();
+            if (change.ReconnectSource != RespireReconnectSource.ClusterDiscovery) return;
+            if (change.NextReconnectDelay is not null) scheduled.TrySetResult(change);
+            if (change.SourceState == RespireConnectionState.Disconnected) ended.TrySetResult(change);
         };
         var command = client.PingAsync(caller.Token).AsTask();
         try
@@ -77,7 +79,15 @@ public class ClusterReconnectPolicyTests
             else caller.Cancel();
             var error = await Assert.That(async () => await command.WaitAsync(TimeSpan.FromSeconds(5)))
                 .Throws<OperationCanceledException>();
-            if (!disposeClient) await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+            if (!disposeClient)
+            {
+                await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
+                var terminal = await ended.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await Assert.That(terminal.Error).IsSameReferenceAs(error);
+                await Assert.That(terminal.ReconnectEpisodeId).IsEqualTo(scheduled.Task.Result.ReconnectEpisodeId);
+                await Assert.That(terminal.ReconnectAttempt).IsEqualTo(1);
+                await Assert.That(terminal.ReconnectExhausted).IsFalse();
+            }
             await Assert.That(second.CommandsSeen).IsEqualTo(0);
         }
         finally
@@ -324,6 +334,12 @@ public class ClusterReconnectPolicyTests
             ConnectTimeout = TimeSpan.FromSeconds(30),
         });
         using var caller = new CancellationTokenSource();
+        var ended = new TaskCompletionSource<RespireConnectionStateChange>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.ReconnectSource == RespireReconnectSource.ClusterDiscovery
+                && change.SourceState == RespireConnectionState.Disconnected) ended.TrySetResult(change);
+        };
         var command = client.Core.Cluster!.EnsureConnectedAsync(caller.Token).AsTask();
         try
         {
@@ -336,6 +352,10 @@ public class ClusterReconnectPolicyTests
             {
                 await Assert.That(error is OperationCanceledException).IsTrue();
                 await Assert.That(((OperationCanceledException)error!).CancellationToken).IsEqualTo(caller.Token);
+                var terminal = await ended.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await Assert.That(terminal.Error).IsSameReferenceAs(error);
+                await Assert.That(terminal.ReconnectAttempt).IsEqualTo(1);
+                await Assert.That(terminal.ReconnectExhausted).IsFalse();
             }
             await second.PeerClosed.WaitAsync(TimeSpan.FromSeconds(5));
             await Assert.That(second.ReceivedCommands).IsEquivalentTo(["AUTH test"]);

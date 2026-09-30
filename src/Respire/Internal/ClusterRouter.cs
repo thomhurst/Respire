@@ -123,7 +123,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             return;
         }
 
-        using var scope = BeginDiscovery(discovery, cancellationToken);
+        using var scope = BeginDiscovery(discovery);
         discovery = scope.Round;
         await _seedGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -199,7 +199,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private async ValueTask<RespireConnection> GetConnectionWithDiscoveryAsync(
         int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
-        using var scope = BeginDiscovery(discovery, cancellationToken);
+        using var scope = BeginDiscovery(discovery);
         discovery = scope.Round;
         try
         {
@@ -304,7 +304,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         CancellationToken cancellationToken,
         int? commandSlot = null, DiscoveryRound? discovery = null)
     {
-        using var scope = BeginDiscovery(discovery, cancellationToken);
+        using var scope = BeginDiscovery(discovery);
         discovery = scope.Round;
         if (discovery is { HasPendingFailure: false })
             discovery.Failed(new RespireEndpoint(source.Host, source.Port), error);
@@ -381,7 +381,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireConnection? endpointSource, int? slot, bool? requireIdentity, CancellationToken cancellationToken,
         DiscoveryRound? discovery)
     {
-        using var scope = BeginDiscovery(discovery, cancellationToken);
+        using var scope = BeginDiscovery(discovery);
         discovery = scope.Round;
         try
         {
@@ -423,7 +423,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         CancellationToken cancellationToken,
         int? commandSlot = null)
     {
-        using var scope = BeginDiscovery(null, cancellationToken);
+        using var scope = BeginDiscovery(null);
         var discovery = scope.Round;
         try
         {
@@ -473,7 +473,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     private async ValueTask<DedicatedConnectionPool> GetDedicatedPoolWithDiscoveryAsync(
         int? slot, CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
-        using var scope = BeginDiscovery(discovery, cancellationToken);
+        using var scope = BeginDiscovery(discovery);
         discovery = scope.Round;
         try
         {
@@ -528,7 +528,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         CancellationToken cancellationToken,
         int? commandSlot = null, DiscoveryRound? discovery = null)
     {
-        using var scope = BeginDiscovery(discovery, cancellationToken);
+        using var scope = BeginDiscovery(discovery);
         discovery = scope.Round;
         if (discovery is { HasPendingFailure: false })
             discovery.Failed(new RespireEndpoint(source.Host, source.Port), error);
@@ -606,7 +606,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
                 {
                     if (attempt == 0)
                     {
-                        scope = BeginDiscovery(null, cancellationToken);
+                        scope = BeginDiscovery(null);
                         discovery = scope.Round;
                     }
                     discovery?.Failed(error);
@@ -912,7 +912,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     internal async ValueTask<RespireConnection[]> GetMasterConnectionsAsync(
         CancellationToken cancellationToken, DiscoveryRound? discovery = null)
     {
-        using var scope = BeginDiscovery(discovery, cancellationToken);
+        using var scope = BeginDiscovery(discovery);
         discovery = scope.Round;
         try
         {
@@ -1016,7 +1016,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
         RespireConnectionMultiplexer[] masters,
         CancellationToken cancellationToken, DiscoveryRound? discovery)
     {
-        using var scope = BeginDiscovery(discovery, cancellationToken);
+        using var scope = BeginDiscovery(discovery);
         discovery = scope.Round;
         try
         {
@@ -1098,7 +1098,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
     {
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        using var scope = BeginDiscovery(null, cancellationToken);
+        using var scope = BeginDiscovery(null);
         var discovery = scope.Round;
         try
         {

@@ -260,7 +260,13 @@ use `ReconnectSource.ClusterDiscovery`, a process-local `ReconnectEpisodeId`, an
 `ConnectionSlot`. `SourceState` describes discovery; `State` retains aggregate physical
 endpoint health. Discovery never inserts a synthetic failed command slot. Measurements
 and lifecycle callbacks run on an ordered asynchronous queue; keep observers short.
+A caller-cancelled round that started fallback emits a terminal `Disconnected` source event
+with the cancellation error and the same episode ID; cancellation is not policy exhaustion.
 Scheduled measurements survive disposal, while pending lifecycle events are suppressed.
+The queue preserves every scheduled measurement and source transition and has no capacity
+limit, matching dedicated recovery notifications. Slow or blocked observers can accumulate
+notifications from concurrent or repeated rounds. `MaxAttempts` bounds one discovery round,
+not the notification queue; handlers should hand off expensive work and return promptly.
 
 ## Remaining recovery paths
 

@@ -14,11 +14,11 @@ internal sealed partial class ClusterRouter
 
     // One cold discovery operation owns this scope; nested helpers borrow the same round.
     // A null policy allocates neither a round nor a linked cancellation source.
-    private DiscoveryScope BeginDiscovery(DiscoveryRound? shared, CancellationToken callerToken)
+    private DiscoveryScope BeginDiscovery(DiscoveryRound? shared)
         => new(shared ?? (_options.ReconnectPolicy is { } policy ? new DiscoveryRound(this, policy) : null),
-            shared is null, callerToken);
+            shared is null);
 
-    private readonly struct DiscoveryScope(DiscoveryRound? round, bool ownsRound, CancellationToken callerToken) : IDisposable
+    private readonly struct DiscoveryScope(DiscoveryRound? round, bool ownsRound) : IDisposable
     {
         internal DiscoveryRound? Round => round;
         internal void Failed(Exception error)
@@ -27,7 +27,7 @@ internal sealed partial class ClusterRouter
         }
         public void Dispose()
         {
-            if (ownsRound && !callerToken.IsCancellationRequested) round?.Finish();
+            if (ownsRound) round?.Finish();
         }
     }
 
@@ -69,6 +69,7 @@ internal sealed partial class ClusterRouter
             var failure = _failure;
             _failure = null;
             _endpoint = endpoint;
+            // Unlimited policies must not wrap the backoff index during long-lived recovery.
             if (_attempts < int.MaxValue) _attempts++;
             if (_episode == 0) _episode = Interlocked.Increment(ref _nextDiscoveryEpisode);
             var delay = policy.GetDelay(_attempts);
