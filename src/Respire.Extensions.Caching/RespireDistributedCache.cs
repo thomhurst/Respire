@@ -2,15 +2,17 @@ using System.Buffers;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Caching.Distributed;
+using Respire.Compression;
 using Respire.Internal;
 
 namespace Respire.Extensions.Caching;
 
 /// <summary>
 /// An <see cref="IDistributedCache"/> (and <see cref="IBufferDistributedCache"/>, so HybridCache
-/// takes its allocation-free path) backed by Redis through Respire. Entries use the same hash
+/// takes its buffer-oriented path) backed by Redis through Respire. Entries use the same hash
 /// layout as Microsoft.Extensions.Caching.StackExchangeRedis — fields <c>absexp</c>,
-/// <c>sldexp</c> and <c>data</c> — so the two implementations can read each other's entries.
+/// <c>sldexp</c> and <c>data</c> — so the two implementations can read each other's entries
+/// when no value codec is configured.
 /// Unlike the Microsoft implementation, a read of a sliding-expiration entry refreshes the TTL
 /// in the same round trip via a Lua script instead of issuing a second command.
 /// </summary>
@@ -165,6 +167,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         """);
 
     private readonly IRespireClient _client;
+    private readonly IRespireValueCodec? _valueCodec;
     private readonly RespireClient? _ownedClient;
 
     // The real client (a key-prefixed view is still a RespireClient), which exposes wire-level
@@ -179,6 +182,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     {
         ArgumentNullException.ThrowIfNull(client);
         _client = ApplyInstanceName(client, options);
+        _valueCodec = options?.ValueCodec;
         _wireClient = _client as RespireClient;
     }
 
@@ -187,6 +191,7 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
     {
         _ownedClient = ownedClient;
         _client = ApplyInstanceName(ownedClient, options);
+        _valueCodec = options?.ValueCodec;
         _wireClient = _client as RespireClient;
     }
 
@@ -208,7 +213,9 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         }
 
         var payload = result[1];
-        return payload.IsNull ? null : payload.AsBytes();
+        if (payload.IsNull) return null;
+        token.ThrowIfCancellationRequested();
+        return _valueCodec is null ? payload.AsBytes() : _valueCodec.Decode(payload.AsSpan());
     }
 
     /// <inheritdoc/>
@@ -234,7 +241,9 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
             return false;
         }
 
-        destination.Write(payload.AsSpan());
+        token.ThrowIfCancellationRequested();
+        if (_valueCodec is null) destination.Write(payload.AsSpan());
+        else _valueCodec.Decode(payload.AsSpan(), destination);
         return true;
     }
 
@@ -263,6 +272,13 @@ public sealed class RespireDistributedCache : IDistributedCache, IBufferDistribu
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(options);
         token.ThrowIfCancellationRequested();
+        if (_valueCodec is not null)
+        {
+            // Own the encoded bytes through the asynchronous send, including abandoned waits.
+            // Complete compression before sampling expiry so it cannot inflate the stored TTL.
+            value = _valueCodec.Encode(value.Span);
+            token.ThrowIfCancellationRequested();
+        }
 
         var trackedWire = await GetTrackedWireAsync(token).ConfigureAwait(false);
 

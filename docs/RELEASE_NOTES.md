@@ -45,8 +45,13 @@
   `RespireValueCodecSerializer` decorates the existing serializer; primitive and raw
   value paths and all default behavior are unchanged. See
   [value codecs](../website/docs/guides/value-codecs.md) for framing, migration, collection
-  identity constraints, and explicit raw-byte use. Cache integration and optional codec
-  packages remain separate work; no existing client interface gains members.
+  identity constraints, and explicit raw-byte use. Optional codec packages remain separate
+  work; no existing client interface gains members.
+- `RespireCacheOptions.ValueCodec` opts distributed-cache and HybridCache L2 payloads into
+  the same codec contract. Array and buffer APIs decode transparently; default raw storage,
+  expiry metadata, and client ownership are unchanged. Codec-enabled namespaces require
+  compatible readers/writers and cannot read unframed legacy entries. See
+  [Microsoft caching](../website/docs/integrations/caching.md) for migration and allocation costs.
 
 ### Typed vector sets
 

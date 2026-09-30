@@ -113,9 +113,10 @@ instead of using them as identity-bearing members. Codec frames do not provide c
 serialization or stable compressed bytes across runtime versions.
 
 The default raw/primitive paths remain suitable for numeric operations because they
-bypass this decorator. Distributed-cache configuration is a separate opt-in integration
-tracked in [#524](https://github.com/thomhurst/Respire/issues/524); setting a client's
-serializer does not compress the distributed cache's raw payload field.
+bypass this decorator. Distributed-cache compression is a separate opt-in through
+`RespireCacheOptions.ValueCodec`, also used for HybridCache L2. Setting a client's serializer
+does not compress the distributed cache's payload field. See [Microsoft caching](../integrations/caching.md)
+for configuration, buffer APIs, and cache namespace migration.
 
 ## Optional LZ4 package
 

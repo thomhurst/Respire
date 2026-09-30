@@ -9,8 +9,9 @@ public static class RespireHybridCacheServiceCollectionExtensions
     /// <summary>
     /// Registers <see cref="HybridCache"/> with Respire as its distributed (L2) backend. The
     /// Respire cache implements IBufferDistributedCache, so HybridCache reads and writes L2
-    /// through pooled buffers instead of byte[] copies. Configure the Redis side (connection
-    /// string, key prefix) with <paramref name="configureCache"/>; when no connection string is
+    /// through its buffer API. A configured value codec is applied to the L2 payload.
+    /// Configure the Redis side (connection
+    /// string, key prefix, optional value codec) with <paramref name="configureCache"/>; when no connection string is
     /// set the container's <see cref="IRespireClient"/> (from AddRespire) is used.
     /// </summary>
     public static IHybridCacheBuilder AddRespireHybridCache(
