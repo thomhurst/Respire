@@ -16,6 +16,56 @@ public class TypedValueIntegrationTests(RedisTestContainer fixture)
     [Arguments(false, 3)]
     [Arguments(true, 2)]
     [Arguments(true, 3)]
+    public async Task RepeatedSetAndGetExModifiersMatchRedis(bool useFake, int protocol)
+    {
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        var key = Guid.NewGuid().ToString("N");
+        await client.SetAsync(key, "original");
+        using var repeatedGet = await client.ExecuteAsync("SET", key, "replacement", "GET", "GET");
+        repeatedGet.AsString().Should().Be("original");
+        (await client.GetStringAsync(key)).Should().Be("replacement");
+
+        using var repeatedExpiry = await client.ExecuteAsync("SET", key, "expiring", "EX", 1, "EX", 60);
+        repeatedExpiry.AsString().Should().Be("OK");
+        using var ttl = await client.ExecuteAsync("TTL", key);
+        ttl.AsInteger().Should().BeInRange(50, 60);
+        using var repeatedGetEx = await client.ExecuteAsync("GETEX", key, "EX", 1, "EX", 120);
+        repeatedGetEx.AsString().Should().Be("expiring");
+        using var extendedTtl = await client.ExecuteAsync("TTL", key);
+        extendedTtl.AsInteger().Should().BeInRange(110, 120);
+
+        Func<Task> conflictingExpiry = async () =>
+        {
+            using var ignored = await client.ExecuteAsync("SET", key, "invalid", "EX", 1, "PX", 2000);
+        };
+        await conflictingExpiry.Should().ThrowAsync<RespireServerException>();
+        (await client.GetStringAsync(key)).Should().Be("expiring");
+    }
+
+    [Test]
+    [Arguments(false, 2)]
+    [Arguments(false, 3)]
+    [Arguments(true, 2)]
+    [Arguments(true, 3)]
+    public async Task EchoPreservesBinaryArgumentAndRejectsMissingArgument(bool useFake, int protocol)
+    {
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        await using var client = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        byte[] bytes = [0, 255, 13, 10];
+        using var echoed = await client.ExecuteAsync("ECHO", bytes);
+        echoed.AsBytes().Should().Equal(bytes);
+        Func<Task> missing = async () => { using var ignored = await client.ExecuteAsync("ECHO"); };
+        await missing.Should().ThrowAsync<RespireServerException>().WithMessage("*wrong number of arguments*echo*");
+    }
+
+    [Test]
+    [Arguments(false, 2)]
+    [Arguments(false, 3)]
+    [Arguments(true, 2)]
+    [Arguments(true, 3)]
     public async Task TryGetAsync_SeparatesMissingKeyFromStoredDefault(bool useFake, int protocol)
     {
         await using var fake = useFake ? new RespireFakeServer() : null;

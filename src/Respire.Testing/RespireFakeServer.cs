@@ -148,6 +148,7 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
                 "HELLO" => Hello(connection, args),
                 "PING" when args.Length == 1 => FakeReply.Simple("PONG"),
                 "PING" or "ECHO" when args.Length == 2 => FakeReply.Bulk(args[1]),
+                "PING" or "ECHO" => FakeReply.Error($"ERR wrong number of arguments for '{command.ToLowerInvariant()}' command"),
                 "SELECT" when args.Length == 2 && Token(args[1]) == "0" => FakeReply.Ok,
                 "CLIENT" => Client(connection, args),
                 "GET" when args.Length == 2 => FakeReply.Bulk(Find(args[1])?.Value),
