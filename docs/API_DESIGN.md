@@ -597,3 +597,18 @@ and their deferred forms. Missing keys return null for scalar pops and empty arr
 for multi-member pops. Rename pre-release count-based `PopAsync`/`Pop` calls to their
 `Many` forms; no compatibility aliases remain. Redis commands and count semantics
 are unchanged, including an empty result for a zero count.
+
+### Dedicated pool retirement (internal)
+
+`DedicatedConnectionPool.RetireAsync` stops new rentals and cancels unfinished handshakes,
+closes idle connections, and waits for accepted borrowed leases to return or be discarded.
+Those borrowed operations keep their connections until they finish. `DisposeAsync` escalates
+an existing retirement by aborting borrowed operations, including indefinitely blocking reads.
+Both methods return the same completion task, which includes receive/flush cleanup and pending
+acquisitions, not merely removal from the rented set. Ordinary returned connections remain
+reusable until retirement begins; closing connections never reenter the idle pool.
+
+This is a lifecycle primitive for Cluster generation retirement. Router integration must retain
+retiring pools until completion, protect owed correction barriers before retiring control pools,
+and avoid handing a retired pool to a new generation. That integration is tracked by #466;
+this primitive alone does not remove departed nodes from Cluster routing.

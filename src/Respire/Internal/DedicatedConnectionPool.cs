@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using Respire.Networking;
 
@@ -17,101 +16,207 @@ internal sealed class DedicatedConnectionPool(
 {
     private const int MaxIdle = 4;
 
-    private readonly LockFreeStack<RespireConnection> _idle = new(MaxIdle);
-    private readonly ConcurrentDictionary<RespireConnection, byte> _rented = new();
+    private readonly object _gate = new();
+    private readonly Stack<Entry> _idle = new(MaxIdle);
+    // Keep closing entries registered until socket and receive/flush cleanup actually completes.
+    private readonly Dictionary<RespireConnection, Entry> _connections = [];
     private readonly CancellationTokenSource _lifetimeCancellation = new();
-    private int _disposed;
+    private TaskCompletionSource? _completion;
+    private Exception? _closeError;
+    private int _connecting;
+    private bool _stopping;
+    private bool _cancellationComplete;
+
+    private enum State { Idle, Rented, Closing }
+
+    private sealed class Entry(RespireConnection connection)
+    {
+        internal readonly RespireConnection Connection = connection;
+        internal State State = State.Rented;
+        internal TaskCompletionSource? Closed;
+    }
 
     public async ValueTask<RespireConnection> RentAsync(
         CancellationToken cancellationToken, bool armHandshakeDeadline = true)
     {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-
-        while (_idle.TryPop(out var pooled))
+        while (true)
         {
-            if (pooled.IsConnected)
+            Entry stale;
+            lock (_gate)
             {
-                return Track(pooled);
+                ObjectDisposedException.ThrowIf(_stopping, this);
+                if (_idle.TryPop(out var entry))
+                {
+                    if (entry.Connection.IsConnected)
+                    {
+                        entry.State = State.Rented;
+                        return entry.Connection;
+                    }
+                    BeginCloseLocked(entry);
+                    stale = entry;
+                }
+                else
+                {
+                    // Reserve acquisition before reading the lifetime token. Completion cannot
+                    // dispose its source until this acquisition has finished all cleanup.
+                    _connecting++;
+                    break;
+                }
             }
-
-            await pooled.DisposeAsync().ConfigureAwait(false);
+            await CloseAsync(stale).ConfigureAwait(false);
         }
 
-        // Connecting sockets are not in _rented yet. Disposal must also cancel their
-        // handshakes, including a correction fence with no ordinary command deadline.
-        using var connectCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken, _lifetimeCancellation.Token);
-        var connection = await RespireConnection.ConnectAsync(
-            host, port, options, logger, connectCancellation.Token, armHandshakeDeadline).ConfigureAwait(false);
-        return Track(connection);
-    }
-
-    private RespireConnection Track(RespireConnection connection)
-    {
-        _rented[connection] = 0;
-
-        // Disposal may have swept _rented between the entry check and this registration; if the
-        // flag is set now, this connection is ours to clean up.
-        if (Volatile.Read(ref _disposed) != 0 && _rented.TryRemove(connection, out _))
+        try
         {
-            _ = connection.DisposeAsync().AsTask();
+            using var connectCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken, _lifetimeCancellation.Token);
+            var connection = await RespireConnection.ConnectAsync(
+                host, port, options, logger, connectCancellation.Token, armHandshakeDeadline).ConfigureAwait(false);
+            var entry = new Entry(connection);
+            lock (_gate)
+            {
+                _connections.Add(connection, entry);
+                if (!_stopping) return connection;
+                BeginCloseLocked(entry);
+            }
+            await CloseAsync(entry).ConfigureAwait(false);
             throw new ObjectDisposedException(nameof(DedicatedConnectionPool));
         }
-
-        return connection;
-    }
-
-    /// <summary>Returns a healthy connection for reuse; anything else (or overflow) is disposed.</summary>
-    public void Return(RespireConnection connection)
-    {
-        _rented.TryRemove(connection, out _);
-        if (Volatile.Read(ref _disposed) != 0 || !connection.IsConnected || !_idle.TryPush(connection))
+        finally
         {
-            _ = connection.DisposeAsync().AsTask();
-            return;
-        }
-
-        // Disposal may have drained the idle stack just before the push above landed.
-        if (Volatile.Read(ref _disposed) != 0)
-        {
-            DrainIdle();
-        }
-    }
-
-    /// <summary>Removes a connection that must not be reused (failed or abandoned mid-block).</summary>
-    public ValueTask DiscardAsync(RespireConnection connection)
-    {
-        _rented.TryRemove(connection, out _);
-        return connection.DisposeAsync();
-    }
-
-    private void DrainIdle()
-    {
-        while (_idle.TryPop(out var connection))
-        {
-            _ = connection.DisposeAsync().AsTask();
-        }
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            return;
-        _lifetimeCancellation.Cancel();
-        _lifetimeCancellation.Dispose();
-        while (_idle.TryPop(out var connection))
-        {
-            await connection.DisposeAsync().ConfigureAwait(false);
-        }
-
-        // Abort connections mid-blocking-command: closing the socket wakes the receive loop and
-        // fails the in-flight wait, so a BLPOP with an infinite wait cannot outlive the client.
-        foreach (var rented in _rented.Keys)
-        {
-            if (_rented.TryRemove(rented, out _))
+            lock (_gate)
             {
-                await rented.DisposeAsync().ConfigureAwait(false);
+                _connecting--;
+                CompleteIfDrainedLocked();
             }
         }
+    }
+
+    /// <summary>Returns a healthy connection for reuse; anything else (or overflow) is closed.</summary>
+    public void Return(RespireConnection connection)
+    {
+        Entry entry;
+        lock (_gate)
+        {
+            if (!_connections.TryGetValue(connection, out entry!) || entry.State != State.Rented) return;
+            if (!_stopping && connection.IsConnected && _idle.Count < MaxIdle)
+            {
+                entry.State = State.Idle;
+                _idle.Push(entry);
+                return;
+            }
+            BeginCloseLocked(entry);
+        }
+        _ = CloseAsync(entry);
+    }
+
+    /// <summary>Removes a failed or abandoned lease and waits for its cleanup.</summary>
+    public ValueTask DiscardAsync(RespireConnection connection)
+    {
+        Entry entry;
+        lock (_gate)
+        {
+            if (!_connections.TryGetValue(connection, out entry!)) return ValueTask.CompletedTask;
+            if (entry.State == State.Closing) return new ValueTask(entry.Closed!.Task);
+            // Discard accepts borrowed leases, never an entry already returned to the idle stack.
+            if (entry.State != State.Rented) throw new InvalidOperationException("Connection is not rented.");
+            BeginCloseLocked(entry);
+        }
+        _ = CloseAsync(entry);
+        return new ValueTask(entry.Closed!.Task);
+    }
+
+    /// <summary>
+    /// Stops rentals and pending handshakes, closes idle sockets, and waits for borrowed leases
+    /// to return. Accepted operations can finish; DisposeAsync can still abort them later.
+    /// </summary>
+    internal ValueTask RetireAsync() => Stop(abortBorrowed: false);
+
+    /// <summary>Stops the pool and aborts borrowed operations, including an existing retirement.</summary>
+    public ValueTask DisposeAsync() => Stop(abortBorrowed: true);
+
+    private ValueTask Stop(bool abortBorrowed)
+    {
+        List<Entry>? closing = null;
+        bool cancel;
+        Task completion;
+        lock (_gate)
+        {
+            cancel = !_stopping;
+            _stopping = true;
+            _completion ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            completion = _completion.Task;
+            foreach (var entry in _connections.Values)
+            {
+                if (entry.State == State.Idle || (abortBorrowed && entry.State == State.Rented))
+                {
+                    BeginCloseLocked(entry);
+                    (closing ??= []).Add(entry);
+                }
+            }
+            _idle.Clear();
+        }
+
+        if (cancel)
+        {
+            try
+            {
+                // Outside the gate: cancellation may synchronously finish an acquisition.
+                _lifetimeCancellation.Cancel();
+            }
+            catch (Exception error)
+            {
+                lock (_gate) _closeError ??= error;
+            }
+            finally
+            {
+                lock (_gate)
+                {
+                    _cancellationComplete = true;
+                    CompleteIfDrainedLocked();
+                }
+            }
+        }
+        if (closing is not null)
+        {
+            foreach (var entry in closing) _ = CloseAsync(entry);
+        }
+        return new ValueTask(completion);
+    }
+
+    private static void BeginCloseLocked(Entry entry)
+    {
+        entry.State = State.Closing;
+        entry.Closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    private async Task CloseAsync(Entry entry)
+    {
+        Exception? failure = null;
+        try
+        {
+            await entry.Connection.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            failure = error;
+        }
+        lock (_gate)
+        {
+            _closeError ??= failure;
+            _connections.Remove(entry.Connection);
+            if (failure is null) entry.Closed!.TrySetResult();
+            else entry.Closed!.TrySetException(failure);
+            CompleteIfDrainedLocked();
+        }
+    }
+
+    private void CompleteIfDrainedLocked()
+    {
+        if (!_stopping || !_cancellationComplete || _connecting != 0 || _connections.Count != 0
+            || _completion!.Task.IsCompleted) return;
+        _lifetimeCancellation.Dispose();
+        if (_closeError is null) _completion.TrySetResult();
+        else _completion.TrySetException(_closeError);
     }
 }
