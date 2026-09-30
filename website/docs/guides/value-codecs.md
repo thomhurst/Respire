@@ -38,6 +38,12 @@ value can therefore grow compared with storage without a codec. Encoding and dec
 allocate owned buffers and consume CPU. Comparative measurements are tracked in
 [#527](https://github.com/thomhurst/Respire/issues/527); no throughput improvement is promised.
 
+The serializer decorator buffers the complete serialized value, then copies the owned
+frame into its destination. DEFLATE compression buffers stream output and copies it
+into an owned array; decoding copies compressed input into a stream-backed array.
+These allocations are part of the current opt-in cost. The decoded-length limit does
+not bound serializer buffering, compression workspace, or total peak memory.
+
 ## Where codecs apply
 
 The decorator participates wherever Respire already uses `IRespireSerializer`:
@@ -111,11 +117,19 @@ Version 1 uses this byte layout; offsets and length exclude any Redis RESP frami
 | 18 | remaining | Encoded payload |
 
 The checksum detects accidental changes and truncation before invoking a decompressor;
-it does not authenticate data. A compressed payload must be smaller than the declared
+it does not authenticate data. SHA-256 uses the platform implementation without adding
+a hashing dependency; truncation limits frame overhead to eight checksum bytes. This
+choice does not claim a throughput advantage over noncryptographic checksums.
+A compressed payload must be smaller than the declared
 original, while an uncompressed payload must have exactly that length. Output length is
 checked against `MaximumDecodedLength` before allocation and must match the decompressor's
 actual output. Corrupt frames and size violations fail locally; commands are not retried
 because value conversion failed. The limit applies to serialized bytes, not .NET object size.
+
+A checksum-valid frame can allocate its declared output size before decompression
+rejects malformed data. The default 64 MiB is a per-value ceiling, not a total memory
+budget or a Redis server limit. Set `MaximumDecodedLength` to the smallest application
+value limit that fits your data, and account for concurrent reads when choosing it.
 
 The public `RespireValueCodec` base class shares these framing rules with optional/custom
 codecs. IDs 3 and 4 are reserved for LZ4 and Zstandard packages; IDs 16–255 are available

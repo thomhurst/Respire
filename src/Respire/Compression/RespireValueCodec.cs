@@ -7,7 +7,8 @@ namespace Respire.Compression;
 /// <remarks>Frames use RVC-NUL, version 1, an algorithm byte, a little-endian original length,
 /// and the first eight SHA-256 bytes of the encoded payload. Algorithm 0 is uncompressed;
 /// 1/2 are Brotli/Deflate, 3/4 are reserved for LZ4/Zstandard, and 16-255 are available to custom codecs.
-/// The checksum detects accidental corruption; it is not authentication. Unframed input is rejected.</remarks>
+/// SHA-256 provides a platform implementation without adding a hashing dependency; truncating it bounds
+/// frame overhead. The checksum detects accidental corruption, not authentication. Unframed input is rejected.</remarks>
 public abstract class RespireValueCodec : IRespireValueCodec
 {
     /// <summary>Number of bytes preceding the encoded payload in a version 1 frame.</summary>

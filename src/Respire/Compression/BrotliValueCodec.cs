@@ -21,6 +21,7 @@ public sealed class BrotliValueCodec : RespireValueCodec
         var buffer = ArrayPool<byte>.Shared.Rent(BrotliEncoder.GetMaxCompressedLength(payload.Length));
         try
         {
+            // The window is encoded in the Brotli stream; decoding does not depend on this encoder setting.
             if (!BrotliEncoder.TryCompress(payload, buffer, out var written, _quality, window: 22))
                 throw new InvalidDataException("Brotli could not encode the value within its output bound.");
             return buffer.AsSpan(0, written).ToArray();

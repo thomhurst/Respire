@@ -19,5 +19,7 @@ public sealed record RespireValueCodecOptions
     public int MinimumLength { get; init; } = 1024;
 
     /// <summary>Maximum original or decoded payload bytes. Checked before output allocation. Default: 64 MiB.</summary>
+    /// <remarks>A checksum-valid frame can allocate up to this limit before decompression rejects it.
+    /// Choose a lower limit for smaller application values. This does not cap total working memory or object size.</remarks>
     public int MaximumDecodedLength { get; init; } = 64 * 1024 * 1024;
 }
