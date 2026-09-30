@@ -108,7 +108,7 @@ the time already sampled by an executing command.
 The controllable clock affects server expiry only. It does not advance client timeouts,
 schedule asynchronous work, or guarantee ordering between simultaneous callers. Use awaited
 operations or batches when a test requires a specific order. The fake has no expiry
-notifications, background expiry task, or injected transport faults in this foundation.
+notifications or background expiry task.
 Cancellation retains the real client's contract: it abandons waiting and does not undo a
 command accepted for sending. Do not infer from cancellation that a mutation was absent.
 
@@ -119,7 +119,70 @@ Hash behavior follows [HSET](https://redis.io/docs/latest/commands/hset/),
 [HGETALL](https://redis.io/docs/latest/commands/hgetall/), and
 [HINCRBY](https://redis.io/docs/latest/commands/hincrby/).
 Run real-server integration tests for version compatibility, unsupported commands, and
-operational behavior. Remaining collections, pub/sub/transactions, and deterministic fault injection
-remain tracked in [#540](https://github.com/thomhurst/Respire/issues/540),
-[#541](https://github.com/thomhurst/Respire/issues/541), and
-[#542](https://github.com/thomhurst/Respire/issues/542).
+operational behavior. Remaining collections and pub/sub/transactions remain tracked in
+[#540](https://github.com/thomhurst/Respire/issues/540) and
+[#541](https://github.com/thomhurst/Respire/issues/541).
+
+## Controlled faults
+
+Install faults after connecting when the handshake is not the subject of the test.
+Rules match a case-insensitive command name and, optionally, exact bytes of its first
+argument. That argument is not necessarily a key. The server copies matcher bytes.
+The first available matching rule wins in registration order, atomically across all
+connections. `occurrences` defaults to one; use a positive count or `null` to repeat.
+A fragmented request counts only once, when its complete command has been parsed.
+
+```csharp
+using Respire.Testing;
+
+await using var server = new RespireFakeServer();
+await using var client = await RespireClient.ConnectAsync(server.CreateOptions() with { Connections = 1 });
+var gate = new RespireFakeGate();
+using var fault = server.InjectFault("SET", RespireFakeFault.Pause(gate, afterExecution: true));
+var pending = client.SetAsync("key", "value").AsTask();
+await fault.Matched.WaitAsync(TimeSpan.FromSeconds(5));
+// SET has executed, but its reply is held. No sleep or scheduler race is needed.
+gate.Release();
+await pending;
+if (fault.ExecutionCount != 1)
+    throw new InvalidOperationException("Expected exactly one handler invocation.");
+```
+
+| Action | Before execution (default) | `afterExecution: true` |
+| --- | --- | --- |
+| `Pause(gate)` | Hold before invoking the handler | Execute once, then hold the reply |
+| `Delay(duration)` | Delay before invoking the handler | Execute once, then delay the reply |
+| `Disconnect()` | Close without invoking the handler or replying | Execute once, then close without a reply |
+| `Loading()`, `ReadOnly()`, `Moved(slot, destination)` | Return the named RESP error without invoking the handler | Not supported |
+
+`Matched` completes at the selected action's boundary, so an after-execution match
+proves the handler has returned. `MatchedCount` counts reserved complete commands;
+`ExecutionCount` counts handler invocations, including handlers that return an error.
+Neither count claims that every invocation mutated data. A rule removed before its
+first boundary cancels `Matched`; always use a deadline if matching is optional.
+
+Disposing a scope removes future matches and releases its selected delays/pauses.
+`ResetFaults()` does this for all current rules, preserving data and later registrations.
+Removal does not undo an executed command or reverse a selected rejection/disconnect.
+A released gate stays released; create a new gate for the next pause. Delay uses wall-clock
+time, not `RespireFakeClock`; gates provide deterministic scheduling without sleeps.
+Close the client or server to abort held work. Server disposal cancels connections before
+releasing rules, joins server loops, and treats injected EOF as expected cleanup.
+
+Caller cancellation retains the actual client's wait-only contract. It does not cancel a
+server-side pause or undo an accepted mutation. Release the gate or dispose its scope so
+the reply can drain; a later command on the same connection then verifies FIFO alignment.
+A disconnect after execution deliberately leaves acceptance ambiguous to the client.
+Tests must inspect independent server state, not retry the mutation blindly.
+
+These actions exercise the real response parser, error propagation, command cancellation,
+FIFO draining, and connection replacement. With `ReconnectPolicy`, a subsequent standalone
+send can fail fast while scheduling replacement; observe `ConnectionStateChanged` before
+expecting a restored connection. The client does not replay the disconnected mutation.
+`LOADING` and `READONLY` are standalone server rejections here, not automatic application retries.
+
+`MOVED` deliberately demonstrates redirect failure: a standalone client surfaces the exact
+error and the command is not applied. Trying a different destination with these fake options throws
+`NotSupportedException` instead of opening a real socket. No destination mapping, slot map,
+Cluster discovery, ASK handling, topology refresh, Sentinel handoff, or replica election is
+simulated. Use real Cluster/Sentinel integration fixtures to validate those recovery policies.
