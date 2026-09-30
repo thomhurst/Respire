@@ -34,6 +34,7 @@ public class FakePipeDisposalTests
         }
         try
         {
+            // The read already owns a non-cancelled result; only AdvanceTo is held.
             await Assert.That(await read.WaitAsync(Limit)).IsEqualTo(1);
             await Assert.That(buffer[0]).IsEqualTo((byte)42);
             await reader.Completed.Task.WaitAsync(Limit);

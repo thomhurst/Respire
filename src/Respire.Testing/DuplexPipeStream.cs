@@ -44,6 +44,7 @@ internal sealed class DuplexPipeStream(PipeReader reader, PipeWriter writer, Act
     }
     public override void Flush()
     {
+        // Flush owns the writer side just like Write; disposal must wait for either.
         BeginOperation(read: false);
         try { _output.Flush(); }
         finally { EndOperation(read: false); }
