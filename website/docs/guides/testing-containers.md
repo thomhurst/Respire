@@ -71,8 +71,21 @@ fixtures use Docker-assigned random host ports. Cluster and Sentinel discovery a
 loopback addresses, and each client port is the same inside and outside the container.
 Cluster bus ports remain inside the container and are not published. Ports are chosen from the operating
 system's ephemeral range rather than fixed service ports. A small race exists between releasing
-the temporary port reservations and Docker binding them; a collision fails startup and cleans
-up instead of connecting to another fixture. Other fixtures and existing services are never stopped.
+the temporary port reservations and Docker binding them. Cluster and Sentinel fixtures retry
+recognized Docker host-port collisions at most twice (three container attempts total). Each
+failed owned container is fully removed before a fresh container uses new ports; ports from
+earlier attempts are excluded. Other fixtures and existing services are never stopped.
+
+Retry requires a Docker API HTTP 500 response with a known port-allocation or TCP
+address-in-use bind message naming one of the selected `127.0.0.1` ports. The recognized
+formats cover Moby's allocator/Linux bind errors and Docker Desktop's TCP bind errors on
+Windows and macOS. Unknown formats, permission/reserved-port errors, image/authentication
+errors, readiness failures, and standalone startup failures are returned without retry.
+This conservative recognition cannot guarantee recovery for every Docker version or network
+backend. The [Moby bind implementation](https://github.com/moby/moby/blob/v28.5.2/libnetwork/drivers/bridge/port_mapping_linux.go),
+[Moby port allocator](https://github.com/moby/moby/blob/v28.5.2/libnetwork/portallocator/portallocator.go),
+and [Docker Desktop bind report](https://github.com/docker/for-win/issues/13686)
+document the error forms used by the regression tests.
 
 Local-host validation uses the host reported by Testcontainers after startup, so an
 unsupported remote engine can pull and start the container before rejection and owned
@@ -87,9 +100,17 @@ no replicas. These are unauthenticated development servers; do not put sensitive
 
 Startup waits for PING, complete Cluster membership/slot coverage, or replication plus Sentinel
 quorum and discovery of the healthy replica by every Sentinel. Readiness polling backs off
-from 100 ms to one second. `StartupTimeout` includes image pull and readiness. Caller cancellation is preserved;
+from 100 ms to one second. One `StartupTimeout` covers image pull, every collision retry,
+and readiness; it is never restarted for a replacement container. Caller cancellation is preserved;
 an elapsed startup deadline reports the stage and latest readiness reply. Cleanup is awaited
 even after the startup deadline expires.
+
+When retries exhaust, the final Docker exception remains the thrown error. Its `Data`
+includes `RespireFixture.StartupAttempt`, `RespireFixture.SelectedPorts`,
+`RespireFixture.ContainerId`, and any `RespireFixture.PreviousPortCollisions`, in addition
+to startup-stage diagnostics. Cleanup failure stops retries and reports all startup and
+cleanup causes together in an `AggregateException`. Cancellation or deadline wrappers
+retain the original startup error as their inner exception.
 
 An in-memory fake and the shared fake/container sample remain tracked by
 [#531](https://github.com/thomhurst/Respire/issues/531) and

@@ -30,6 +30,6 @@ public sealed record RespireContainerOptions
     /// <summary>Image override, including its tag or digest. It must contain the selected server and CLI binaries, /bin/sh, mkdir, and tail.</summary>
     /// <remarks>Defaults to redis:7.2-alpine or valkey/valkey:8.1-alpine. Cluster requires Redis 7+ or Valkey.</remarks>
     public string? Image { get; init; }
-    /// <summary>Maximum startup and readiness time, including pulling the image. Defaults to two minutes.</summary>
+    /// <summary>Maximum total startup and readiness time, including image pull and up to two retries for recognized host-port collisions. Defaults to two minutes.</summary>
     public TimeSpan StartupTimeout { get; init; } = TimeSpan.FromMinutes(2);
 }
