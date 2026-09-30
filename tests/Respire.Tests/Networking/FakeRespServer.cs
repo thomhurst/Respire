@@ -24,6 +24,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
     private readonly Task _acceptTask;
     private readonly CancellationTokenSource _cts = new();
     private readonly TaskCompletionSource<Socket> _clientSocket = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _peerClosed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly List<string> _receivedCommands = [];
     private readonly List<byte[][]> _receivedArguments = [];
     private readonly List<int> _receivedConnectionIds = [];
@@ -32,6 +33,8 @@ internal sealed class FakeRespServer : IAsyncDisposable
     private int _disposed;
 
     public int Port { get; }
+    /// <summary>Completes when a client closes its socket cleanly, before server teardown.</summary>
+    public Task PeerClosed => _peerClosed.Task;
     public int CommandsSeen => Volatile.Read(ref _commandsSeen);
 
     /// <summary>
@@ -160,6 +163,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
                 var read = await socket.ReceiveAsync(buffer.AsMemory(end), SocketFlags.None, _cts.Token);
                 if (read == 0)
                 {
+                    _peerClosed.TrySetResult();
                     return;
                 }
 
