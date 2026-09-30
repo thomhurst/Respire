@@ -379,7 +379,7 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             "HRANDFIELD" or "SRANDMEMBER" or "SSCAN" or "ZRANDMEMBER" or "ZSCAN" or
             "VRANDMEMBER" or "XREAD" or "XINFO CONSUMERS" or
             "OBJECT FREQ" or "OBJECT IDLETIME" or "OBJECT REFCOUNT" or "TOUCH" or
-            "EVAL_RO" or "EVALSHA_RO" or "FCALL_RO" or "SCRIPT EXISTS" or
+            "EVAL_RO" or "EVALSHA_RO" or "FCALL_RO" or "SCRIPT EXISTS" or "SCRIPT LOAD" or "SCRIPT FLUSH" or
             "BF.CARD" or "BF.DEBUG" or "BF.EXISTS" or "BF.INFO" or "BF.MEXISTS" or "BF.SCANDUMP" or
             "CF.COUNT" or "CF.DEBUG" or "CF.EXISTS" or "CF.INFO" or
             "CF.MEXISTS" or "CF.SCANDUMP" or "CMS.INFO" or "CMS.QUERY" or

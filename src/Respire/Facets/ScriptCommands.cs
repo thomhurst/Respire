@@ -361,7 +361,15 @@ internal sealed class ScriptCommands(RespireClient client) : IScriptCommands
         var results = await SendToPrimariesAsync(cluster, "SCRIPT LOAD", new Cmd1(Verbs.ScriptLoad, script.Source),
             static (ScriptCommands _, in RespValue value) => ResponseReader.String(in value), cancellationToken)
             .ConfigureAwait(false);
-        return results[0];
+        var digest = results[0];
+        for (var i = 1; i < results.Length; i++)
+        {
+            if (!string.Equals(digest, results[i], StringComparison.Ordinal))
+            {
+                throw new RespireProtocolException("SCRIPT LOAD returned inconsistent digests across primaries.");
+            }
+        }
+        return digest;
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]

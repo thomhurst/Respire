@@ -1262,12 +1262,15 @@ public class ClusterTests
     }
 
     [Test]
-    public async Task ScriptLoad_VisitsEveryMaster()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ScriptLoad_VisitsEveryMaster(bool mismatchedDigest)
     {
         var script = RespireScript.Create("return 1");
         var response = Encoding.ASCII.GetBytes($"$40\r\n{script.Sha1}\r\n");
         await using var firstNode = new FakeRespServer(response);
-        await using var secondNode = new FakeRespServer(response);
+        await using var secondNode = new FakeRespServer(mismatchedDigest
+            ? Encoding.ASCII.GetBytes($"$40\r\n{new string('0', 40)}\r\n") : response);
         var topology = Encoding.ASCII.GetBytes(
             $"*2\r\n" +
             $"*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{firstNode.Port}\r\n" +
@@ -1279,9 +1282,15 @@ public class ClusterTests
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
 
-        var sha1 = await client.Scripts.LoadAsync(script);
-
-        await Assert.That(sha1).IsEqualTo(script.Sha1);
+        if (mismatchedDigest)
+        {
+            await Assert.That(async () => await client.Scripts.LoadAsync(script))
+                .Throws<RespireProtocolException>();
+        }
+        else
+        {
+            await Assert.That(await client.Scripts.LoadAsync(script)).IsEqualTo(script.Sha1);
+        }
         await Assert.That(firstNode.ReceivedCommands).IsEquivalentTo(["SCRIPT LOAD return 1"]);
         await Assert.That(secondNode.ReceivedCommands).IsEquivalentTo(["SCRIPT LOAD return 1"]);
     }
