@@ -2,7 +2,7 @@
   <PropertyGroup>
     <PackageId>Respire.Extensions.Coordination</PackageId>
     <Title>Respire.Extensions.Coordination</Title>
-    <Description>Redis coordination primitives with explicit lease and fencing semantics.</Description>
+    <Description>Redis coordination primitives with explicit hash-field and fencing-token lease semantics.</Description>
     <PackageTags>$(PackageTags);coordination;distributed-lock;fencing</PackageTags>
   </PropertyGroup>
   <ItemGroup>

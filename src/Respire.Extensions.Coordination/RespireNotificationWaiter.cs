@@ -8,6 +8,8 @@ internal static class RespireNotificationWaiter
     internal static async ValueTask<TResult> WaitAsync<TResult>(
         IRespireClient client,
         RespireKey key,
+        Func<CancellationToken, ValueTask> trackedRead,
+        Func<CancellationToken, ValueTask<RespireTtl>> getTimeToLive,
         Func<CancellationToken, ValueTask<(bool Succeeded, TResult Result)>> tryOperation,
         CancellationToken cancellationToken)
     {
@@ -40,10 +42,10 @@ internal static class RespireNotificationWaiter
                 linkedCancellation.Token.ThrowIfCancellationRequested();
                 // Subscribe first, then perform a tracked read and the atomic ownership attempt.
                 // An invalidation at any point before WaitAsync leaves one queued signal.
-                _ = await client.Strings.GetStringAsync(key, linkedCancellation.Token).ConfigureAwait(false);
+                await trackedRead(linkedCancellation.Token).ConfigureAwait(false);
                 var (succeeded, result) = await tryOperation(linkedCancellation.Token).ConfigureAwait(false);
                 if (succeeded) return result;
-                var ttl = await client.Keys.ExpiryAsync(key, linkedCancellation.Token).ConfigureAwait(false);
+                var ttl = await getTimeToLive(linkedCancellation.Token).ConfigureAwait(false);
                 if (!ttl.Exists) continue;
                 if (ttl.TimeToLive is { } remaining)
                 {

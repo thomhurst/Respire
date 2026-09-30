@@ -81,6 +81,9 @@ public interface IHashCommands
     /// <summary>Gets a field's raw bytes, or null when missing. Redis: HGET.</summary>
     ValueTask<byte[]?> GetBytesAsync(RespireKey key, string field, CancellationToken cancellationToken = default);
 
+    /// <summary>Gets a binary field's raw bytes, or null when missing. Redis: HGET.</summary>
+    ValueTask<byte[]?> GetBytesAsync(RespireKey key, RespireKey field, CancellationToken cancellationToken = default);
+
     /// <summary>Gets many fields in one round trip; missing fields yield null. Redis: HMGET.</summary>
     /// <remarks>With ClientSideCache.ReuseHashFields enabled, only uncached fields are fetched;
     /// hash invalidation evicts all fields. Cached and fetched values can come from different
@@ -166,6 +169,13 @@ public interface IHashCommands
     /// <summary>Expiry state for fields, in milliseconds. Redis: HPTTL.</summary>
     ValueTask<RespireTtl[]> ExpiryAsync(
         RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
+
+    /// <summary>Expiry state for binary fields, in milliseconds. Redis: HPTTL (Redis 7.4+).</summary>
+    ValueTask<RespireTtl[]> ExpiryAsync(
+        RespireKey key, ReadOnlySpan<RespireKey> fields, CancellationToken cancellationToken);
+
+    /// <summary>Expiry state for one binary field, in milliseconds. Redis: HPTTL (Redis 7.4+).</summary>
+    ValueTask<RespireTtl> ExpiryAsync(RespireKey key, RespireKey field, CancellationToken cancellationToken = default);
 
     /// <summary>Sets, updates, or removes field expiry metadata. Redis: HPEXPIRE/HPEXPIREAT/HPERSIST.</summary>
     ValueTask<HashFieldExpiryResult[]> ExpireAsync(
@@ -296,6 +306,12 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
 
     public ValueTask<byte[]?> GetBytesAsync(RespireKey key, string field, CancellationToken cancellationToken = default)
         => client.BytesOrNullAsync("HGET", new Cmd2(Verbs.HGet, client.Key(in key), field), cancellationToken);
+
+    public ValueTask<byte[]?> GetBytesAsync(RespireKey key, RespireKey field, CancellationToken cancellationToken = default)
+    {
+        var fieldSnapshot = field.Snapshot();
+        return client.BytesOrNullAsync("HGET", new Cmd2(Verbs.HGet, client.Key(in key), fieldSnapshot.AsValue()), cancellationToken);
+    }
 
     public ValueTask<string?[]> GetManyAsync(RespireKey key, params ReadOnlySpan<string> fields)
         => GetManyAsync(key, fields, CancellationToken.None);
@@ -455,6 +471,22 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
             "HPTTL",
             new Cmd1N(RespireCommands.Hash.HPTTL.Verb, client.Key(in key), FieldsBlock(fields)),
             cancellationToken);
+
+    public ValueTask<RespireTtl[]> ExpiryAsync(
+        RespireKey key, ReadOnlySpan<RespireKey> fields, CancellationToken cancellationToken)
+    {
+        if (fields.IsEmpty) throw new ArgumentException("At least one hash field is required.", nameof(fields));
+        var fieldSnapshots = new RespireKey[fields.Length];
+        for (var i = 0; i < fields.Length; i++) fieldSnapshots[i] = fields[i].Snapshot();
+        return client.TtlArrayAsync(
+            "HPTTL",
+            new Cmd1N(RespireCommands.Hash.HPTTL.Verb, client.Key(in key), FieldsBlock(fieldSnapshots)),
+            cancellationToken);
+    }
+
+    public async ValueTask<RespireTtl> ExpiryAsync(
+        RespireKey key, RespireKey field, CancellationToken cancellationToken = default)
+        => (await ExpiryAsync(key, new[] { field }, cancellationToken).ConfigureAwait(false))[0];
 
     public ValueTask<HashFieldExpiryResult[]> ExpireAsync(
         RespireKey key, RespireExpiry expiry, params ReadOnlySpan<string> fields)
@@ -660,6 +692,16 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
             args[2 + i] = fields[i];
         }
 
+        return args;
+    }
+
+    internal static RespireValue[] FieldsBlock(ReadOnlySpan<RespireKey> fields)
+    {
+        if (fields.IsEmpty) throw new ArgumentException("At least one hash field is required.", nameof(fields));
+        var args = new RespireValue[fields.Length + 2];
+        args[0] = "FIELDS";
+        args[1] = fields.Length;
+        for (var i = 0; i < fields.Length; i++) args[i + 2] = fields[i].Snapshot().AsValue();
         return args;
     }
 
