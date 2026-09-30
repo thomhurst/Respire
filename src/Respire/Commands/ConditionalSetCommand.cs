@@ -20,7 +20,7 @@ internal readonly struct ConditionalSetCommand(RespireValue key, RespireValue va
         writer.WriteRaw(Verbs.Set.Bulk);
         key.WriteTo(ref writer);
         value.WriteTo(ref writer);
-        writer.WriteBulkString(condition.Token);
+        writer.WriteBulkString(condition.Token.Span);
         condition.Operand.WriteTo(ref writer);
         if (expiry.TryGetRelativeMilliseconds(out var milliseconds))
         {

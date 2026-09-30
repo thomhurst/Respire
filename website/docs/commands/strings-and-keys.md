@@ -59,7 +59,9 @@ if (digest is not null)
 These APIs send the requested command directly. Unsupported commands, conditions,
 malformed digests, and wrong-type keys retain server errors. There is no version
 negotiation, script fallback, or substitution between Redis `DELEX` and Valkey
-`DELIFEQ`. Use ordinary `Keys.DeleteAsync` for unconditional deletion.
+`DELIFEQ`. If the server flavor is unknown, determine its flavor and supported
+version before choosing either conditional-delete API; neither is portable across
+all Redis and Valkey versions. Use ordinary `Keys.DeleteAsync` for unconditional deletion.
 
 Conditional SET returns `true` when it writes and `false` when the comparison fails.
 For a missing key, equality conditions fail; Redis inequality conditions create it.
