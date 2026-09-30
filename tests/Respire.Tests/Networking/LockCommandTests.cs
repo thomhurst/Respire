@@ -733,14 +733,17 @@ public class LockCommandTests
     [Test]
     public async Task RespireLock_PollingAcquireDefaultsTheRetryInterval()
     {
-        await using var server = new FakeRespServer("$-1\r\n"u8.ToArray());
+        // The second reply grants the lock. Prove that omitting retryEvery still retries,
+        // without requiring two network round trips inside a 120 ms scheduling window.
+        await using var server = new FakeRespServer("$-1\r\n"u8.ToArray(), FakeRespServer.OkReply, ":1\r\n"u8.ToArray());
         await using var client = await FakeRespServer.ConnectClientAsync(server.Port);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 
-        var attempt = await client.Locks.AcquireAsync(
-            "resource", TimeSpan.FromSeconds(30), wait: TimeSpan.FromMilliseconds(120));
+        await using var attempt = await client.Locks.AcquireAsync(
+            "resource", TimeSpan.FromSeconds(30), wait: TimeSpan.FromSeconds(5), cancellationToken: timeout.Token);
 
-        await Assert.That(attempt.Acquired).IsFalse();
-        await Assert.That(server.ReceivedCommands.Count).IsGreaterThan(1);
+        await Assert.That(attempt.Acquired).IsTrue();
+        await Assert.That(server.ReceivedCommands.Count).IsEqualTo(2);
     }
 
     [Test]

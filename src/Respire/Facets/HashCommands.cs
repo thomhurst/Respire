@@ -126,6 +126,34 @@ public interface IHashCommands
     /// <summary>All values. Redis: HVALS.</summary>
     ValueTask<string[]> ValuesAsync(RespireKey key, CancellationToken cancellationToken = default);
 
+    /// <summary>Byte length of a field's value, or zero when the key or field is missing. Redis: HSTRLEN.</summary>
+    ValueTask<long> LengthAsync(RespireKey key, string field, CancellationToken cancellationToken = default);
+
+    /// <summary>A random field name, or null when the hash is missing. Redis: HRANDFIELD (Redis 6.2+).</summary>
+    ValueTask<string?> RandomFieldAsync(RespireKey key, CancellationToken cancellationToken = default);
+
+    /// <summary>Random field names. Positive count selects distinct fields; negative count allows repeats. Redis: HRANDFIELD (Redis 6.2+).</summary>
+    ValueTask<string[]> RandomFieldsAsync(RespireKey key, long count, CancellationToken cancellationToken = default);
+
+    /// <summary>Random field/value pairs, preserving repeated fields for negative count. Redis: HRANDFIELD WITHVALUES (Redis 6.2+).</summary>
+    ValueTask<KeyValuePair<string, string>[]> RandomFieldsWithValuesAsync(
+        RespireKey key, long count, CancellationToken cancellationToken = default);
+
+    /// <summary>Absolute field expiry times with millisecond resolution. Redis: HPEXPIRETIME (Redis 7.4+).</summary>
+    ValueTask<RespireExpiryTime[]> ExpiryTimeAsync(RespireKey key, params ReadOnlySpan<string> fields);
+
+    /// <summary>Absolute field expiry times with millisecond resolution. Redis: HPEXPIRETIME (Redis 7.4+).</summary>
+    ValueTask<RespireExpiryTime[]> ExpiryTimeAsync(
+        RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
+
+    /// <summary>Absolute field expiry times at the requested resolution. Redis: HEXPIRETIME/HPEXPIRETIME (Redis 7.4+).</summary>
+    ValueTask<RespireExpiryTime[]> ExpiryTimeAsync(
+        RespireKey key, ExpiryTimePrecision precision, params ReadOnlySpan<string> fields);
+
+    /// <summary>Absolute field expiry times at the requested resolution. Redis: HEXPIRETIME/HPEXPIRETIME (Redis 7.4+).</summary>
+    ValueTask<RespireExpiryTime[]> ExpiryTimeAsync(
+        RespireKey key, ExpiryTimePrecision precision, ReadOnlySpan<string> fields, CancellationToken cancellationToken);
+
     /// <summary>Expiry state for fields, in milliseconds. Redis: HPTTL.</summary>
     ValueTask<RespireTtl[]> ExpiryAsync(RespireKey key, params ReadOnlySpan<string> fields);
 
@@ -311,6 +339,93 @@ internal sealed class HashCommands(RespireClient client) : IHashCommands
 
     public ValueTask<string[]> ValuesAsync(RespireKey key, CancellationToken cancellationToken = default)
         => client.StringArrayAsync("HVALS", new Cmd1(Verbs.HVals, client.Key(in key)), cancellationToken);
+
+    public ValueTask<long> LengthAsync(RespireKey key, string field, CancellationToken cancellationToken = default)
+        => client.IntegerAsync("HSTRLEN",
+            new Cmd2(RespireCommands.Hash.HSTRLEN.Verb, client.Key(in key), field), cancellationToken);
+
+    public ValueTask<string?> RandomFieldAsync(RespireKey key, CancellationToken cancellationToken = default)
+        => client.StringOrNullAsync("HRANDFIELD",
+            new Cmd1(RespireCommands.Hash.HRANDFIELD.Verb, client.Key(in key)), cancellationToken);
+
+    public ValueTask<string[]> RandomFieldsAsync(RespireKey key, long count, CancellationToken cancellationToken = default)
+        => client.StringArrayAsync("HRANDFIELD",
+            new Cmd2(RespireCommands.Hash.HRANDFIELD.Verb, client.Key(in key), count), cancellationToken);
+
+    public ValueTask<KeyValuePair<string, string>[]> RandomFieldsWithValuesAsync(
+        RespireKey key, long count, CancellationToken cancellationToken = default)
+        => client.ConvertResponseAsync("HRANDFIELD",
+            new Cmd3(RespireCommands.Hash.HRANDFIELD.Verb, client.Key(in key), count, "WITHVALUES"),
+            cancellationToken, this,
+            static (HashCommands _, in RespValue value) => ParseRandomPairs(in value));
+
+    // Params spans must be last, so each default/explicit-precision form has a separate
+    // span-plus-token overload. Keep all four forms for variadic calls and cancellation.
+    public ValueTask<RespireExpiryTime[]> ExpiryTimeAsync(RespireKey key, params ReadOnlySpan<string> fields)
+        => ExpiryTimeAsync(key, ExpiryTimePrecision.Milliseconds, fields, CancellationToken.None);
+
+    public ValueTask<RespireExpiryTime[]> ExpiryTimeAsync(
+        RespireKey key, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
+        => ExpiryTimeAsync(key, ExpiryTimePrecision.Milliseconds, fields, cancellationToken);
+
+    public ValueTask<RespireExpiryTime[]> ExpiryTimeAsync(
+        RespireKey key, ExpiryTimePrecision precision, params ReadOnlySpan<string> fields)
+        => ExpiryTimeAsync(key, precision, fields, CancellationToken.None);
+
+    public ValueTask<RespireExpiryTime[]> ExpiryTimeAsync(
+        RespireKey key, ExpiryTimePrecision precision, ReadOnlySpan<string> fields, CancellationToken cancellationToken)
+    {
+        var (operation, verb) = ExpiryTimeCommand(precision);
+        return client.ConvertResponseAsync(operation,
+            new Cmd1N(verb, client.Key(in key), FieldsBlock(fields)), cancellationToken, precision,
+            static (ExpiryTimePrecision p, in RespValue value) => ParseExpiryTimes(in value, p));
+    }
+
+    internal static (string Operation, Verb Verb) ExpiryTimeCommand(ExpiryTimePrecision precision)
+        => precision switch
+        {
+            ExpiryTimePrecision.Milliseconds => ("HPEXPIRETIME", RespireCommands.Hash.HPEXPIRETIME.Verb),
+            ExpiryTimePrecision.Seconds => ("HEXPIRETIME", RespireCommands.Hash.HEXPIRETIME.Verb),
+            _ => throw new ArgumentOutOfRangeException(nameof(precision), precision, null),
+        };
+
+    internal static RespireExpiryTime[] ParseExpiryTimes(in RespValue value, ExpiryTimePrecision precision)
+    {
+        var elements = value.AsArray();
+        var result = new RespireExpiryTime[elements.Length];
+        for (var i = 0; i < elements.Length; i++)
+        {
+            result[i] = RespireExpiryTime.FromRedis(elements[i].AsInteger(), precision);
+        }
+        return result;
+    }
+
+    internal static KeyValuePair<string, string>[] ParseRandomPairs(in RespValue value)
+    {
+        var elements = value.AsArray();
+        if (elements.Length == 0)
+        {
+            return [];
+        }
+
+        // RESP3 returns nested pairs; RESP2 returns a flat field/value array.
+        var nested = elements[0].Type == RespDataType.Array;
+        if (!nested && elements.Length % 2 != 0)
+        {
+            throw new RespireProtocolException("Expected complete field/value pairs from HRANDFIELD.");
+        }
+        var result = new KeyValuePair<string, string>[nested ? elements.Length : elements.Length / 2];
+        for (var i = 0; i < result.Length; i++)
+        {
+            var pair = nested ? elements[i].AsArray() : elements.Slice(i * 2, 2);
+            if (pair.Length != 2)
+            {
+                throw new RespireProtocolException("Expected two elements per HRANDFIELD pair.");
+            }
+            result[i] = new KeyValuePair<string, string>(pair[0].AsString(), pair[1].AsString());
+        }
+        return result;
+    }
 
     private static KeyValuePair<string, string>[] ParseScanEntries(in RespValue page)
     {

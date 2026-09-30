@@ -96,6 +96,25 @@ public interface IBatchHashCommands
     /// <summary>All values. Redis: HVALS.</summary>
     RespirePending<string[]> Values(RespireKey key);
 
+    /// <summary>Byte length of a field's value, or zero when missing. Redis: HSTRLEN.</summary>
+    RespirePending<long> Length(RespireKey key, string field);
+
+    /// <summary>A random field name, or null when missing. Redis: HRANDFIELD (Redis 6.2+).</summary>
+    RespirePending<string?> RandomField(RespireKey key);
+
+    /// <summary>Random field names. Positive count selects distinct fields; negative count allows repeats. Redis: HRANDFIELD (Redis 6.2+).</summary>
+    RespirePending<string[]> RandomFields(RespireKey key, long count);
+
+    /// <summary>Random field/value pairs, preserving repeated fields for negative count. Redis: HRANDFIELD WITHVALUES (Redis 6.2+).</summary>
+    RespirePending<KeyValuePair<string, string>[]> RandomFieldsWithValues(RespireKey key, long count);
+
+    /// <summary>Absolute field expiry times with millisecond resolution. Redis: HPEXPIRETIME (Redis 7.4+).</summary>
+    RespirePending<RespireExpiryTime[]> ExpiryTime(RespireKey key, params ReadOnlySpan<string> fields);
+
+    /// <summary>Absolute field expiry times at the requested resolution. Redis: HEXPIRETIME/HPEXPIRETIME (Redis 7.4+).</summary>
+    RespirePending<RespireExpiryTime[]> ExpiryTime(
+        RespireKey key, ExpiryTimePrecision precision, params ReadOnlySpan<string> fields);
+
     /// <summary>Expiry state for fields, in milliseconds. Redis: HPTTL.</summary>
     RespirePending<RespireTtl[]> Expiry(RespireKey key, params ReadOnlySpan<string> fields);
 
@@ -243,6 +262,40 @@ internal sealed class BatchHashCommands(IPendingSink sink) : IBatchHashCommands
         => sink.Add<Cmd1, string[]>(
             "HVALS", new Cmd1(Verbs.HVals, sink.Client.Key(in key)),
             static (c, v) => ResponseReader.StringArray(in v));
+
+    public RespirePending<long> Length(RespireKey key, string field)
+        => sink.Add<Cmd2, long>("HSTRLEN",
+            new Cmd2(RespireCommands.Hash.HSTRLEN.Verb, sink.Client.Key(in key), field),
+            static (c, v) => ResponseReader.Integer(in v));
+
+    public RespirePending<string?> RandomField(RespireKey key)
+        => sink.Add<Cmd1, string?>("HRANDFIELD",
+            new Cmd1(RespireCommands.Hash.HRANDFIELD.Verb, sink.Client.Key(in key)),
+            static (c, v) => ResponseReader.StringOrNull(in v));
+
+    public RespirePending<string[]> RandomFields(RespireKey key, long count)
+        => sink.Add<Cmd2, string[]>("HRANDFIELD",
+            new Cmd2(RespireCommands.Hash.HRANDFIELD.Verb, sink.Client.Key(in key), count),
+            static (c, v) => ResponseReader.StringArray(in v));
+
+    public RespirePending<KeyValuePair<string, string>[]> RandomFieldsWithValues(RespireKey key, long count)
+        => sink.Add<Cmd3, KeyValuePair<string, string>[]>("HRANDFIELD",
+            new Cmd3(RespireCommands.Hash.HRANDFIELD.Verb, sink.Client.Key(in key), count, "WITHVALUES"),
+            static (c, v) => HashCommands.ParseRandomPairs(in v));
+
+    public RespirePending<RespireExpiryTime[]> ExpiryTime(RespireKey key, params ReadOnlySpan<string> fields)
+        => ExpiryTime(key, ExpiryTimePrecision.Milliseconds, fields);
+
+    public RespirePending<RespireExpiryTime[]> ExpiryTime(
+        RespireKey key, ExpiryTimePrecision precision, params ReadOnlySpan<string> fields)
+    {
+        var (operation, verb) = HashCommands.ExpiryTimeCommand(precision);
+        return sink.Add<Cmd1N, RespireExpiryTime[]>(operation,
+            new Cmd1N(verb, sink.Client.Key(in key), HashCommands.FieldsBlock(fields)),
+            precision == ExpiryTimePrecision.Seconds
+                ? static (c, v) => HashCommands.ParseExpiryTimes(in v, ExpiryTimePrecision.Seconds)
+                : static (c, v) => HashCommands.ParseExpiryTimes(in v, ExpiryTimePrecision.Milliseconds));
+    }
 
     public RespirePending<RespireTtl[]> Expiry(RespireKey key, params ReadOnlySpan<string> fields)
         => sink.Add<Cmd1N, RespireTtl[]>(
