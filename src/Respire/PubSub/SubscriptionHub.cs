@@ -401,7 +401,9 @@ internal sealed partial class SubscriptionHub(ClientCore core) : IAsyncDisposabl
             }
             if (previous is not null)
             {
-                await previous.DisposeAsync().ConfigureAwait(false);
+                // The replacement is already published. Prior cleanup must not invalidate it
+                // or consume a configured recovery attempt before routes are restored.
+                await ObserveAbandonedConnectionAsync(previous.DisposeAsync().AsTask()).ConfigureAwait(false);
             }
 
             return connection;

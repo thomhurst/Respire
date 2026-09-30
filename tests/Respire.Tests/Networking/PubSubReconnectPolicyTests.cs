@@ -270,7 +270,40 @@ public class PubSubReconnectPolicyTests
         }
     }
 
-    private sealed class CleanupLogger(Action onReplacementCleanup) : ILoggerFactory, ILogger
+    [Test]
+    public async Task FailedPriorCleanupPreservesSuccessfulReplacement()
+    {
+        var cleanupError = new IOException("Injected prior connection cleanup failure");
+        using var logger = new CleanupLogger(() => throw cleanupError, cleanupNumber: 1);
+        await using var server = new FakeRespServer(2, Confirmation);
+        await using var client = RespireClient.Create(Options(server.Port, Policy(attempts: 1)) with { LoggerFactory = logger });
+        await using var subscription = await client.SubscribeAsync("ch");
+        using var deadline = new CancellationTokenSource(Deadline);
+        await using var reader = subscription.GetAsyncEnumerator(deadline.Token);
+        var recovered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ConnectionStateChanged += change =>
+        {
+            if (change.State == RespireConnectionState.Connected) recovered.TrySetResult();
+        };
+        try
+        {
+            // Fail the receive loop without an outstanding control command detaching the old connection.
+            await server.SendRawAsync("?invalid\r\n"u8.ToArray(), server.ReceivedConnectionIds[0]);
+            await Task.WhenAny(recovered.Task, subscription.Completion).WaitAsync(deadline.Token);
+            await Assert.That(subscription.Completion.IsCompleted).IsFalse();
+            await recovered.Task.WaitAsync(deadline.Token);
+            await Assert.That(logger.LoggedErrors.Contains(cleanupError)).IsTrue();
+            await Assert.That(server.CommandsSeen).IsEqualTo(2);
+            await Assert.That(server.ReceivedConnectionIds.Distinct().Count()).IsEqualTo(2);
+            await server.SendRawAsync("*3\r\n$7\r\nmessage\r\n$2\r\nch\r\n$5\r\nhello\r\n"u8.ToArray(), server.ReceivedConnectionIds[^1]);
+            await Assert.That(await reader.MoveNextAsync()).IsTrue();
+            await Assert.That(reader.Current.Kind).IsEqualTo(RespireMessageKind.Gap);
+            await Assert.That(await reader.MoveNextAsync()).IsTrue();
+            await Assert.That(reader.Current.Text).IsEqualTo("hello");
+        }
+        finally { await client.DisposeAsync(); }
+    }
+    private sealed class CleanupLogger(Action onCleanup, int cleanupNumber = 2) : ILoggerFactory, ILogger
     {
         private int _cleanups;
         internal readonly TaskCompletionSource FirstCleanup = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -287,7 +320,7 @@ public class PubSubReconnectPolicyTests
             if (!formatter(state, exception).StartsWith("Disconnected from ", StringComparison.Ordinal)) return;
             var count = Interlocked.Increment(ref _cleanups);
             if (count == 1) FirstCleanup.TrySetResult();
-            if (count == 2) onReplacementCleanup();
+            if (count == cleanupNumber) onCleanup();
         }
     }
 

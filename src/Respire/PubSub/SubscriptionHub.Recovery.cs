@@ -11,7 +11,9 @@ internal sealed partial class SubscriptionHub
     private RespireConnection? _configuredConnection;
     private TaskCompletionSource? _configuredRecoveryDrained;
     private RespireReconnectLimitException? _recoveryExhaustion;
-    private bool _configuredRecoveryActive;
+    private ConfiguredRecoveryPhase _configuredRecoveryPhase;
+
+    private enum ConfiguredRecoveryPhase { Idle, Recovering, Exhausted }
 
     private void ThrowIfConfiguredRecoveryRequired()
     {
@@ -19,9 +21,11 @@ internal sealed partial class SubscriptionHub
         lock (_reconnectStateGate)
         {
             if (_recoveryExhaustion is { } exhausted) throw exhausted;
-            if (_configuredRecoveryActive || _configuredConnection is { } connection
-                && (!ReferenceEquals(_connection, connection) || !connection.IsConnected))
+            if (_configuredRecoveryPhase == ConfiguredRecoveryPhase.Recovering)
                 throw new RespireConnectionException("Pub/sub recovery is in progress. Subscribe again after recovery completes.");
+            if (_configuredConnection is { } connection
+                && (!ReferenceEquals(_connection, connection) || !connection.IsConnected))
+                throw new RespireConnectionException("Pub/sub connection closed. Automatic recovery must complete before subscribing.");
         }
     }
 
@@ -30,10 +34,10 @@ internal sealed partial class SubscriptionHub
         TaskCompletionSource drained;
         lock (_reconnectStateGate)
         {
-            if (_disposed || _configuredRecoveryActive || _recoveryExhaustion is not null
+            if (_disposed || _configuredRecoveryPhase != ConfiguredRecoveryPhase.Idle
                 || !ReferenceEquals(_configuredConnection, connection)) return;
             _configuredConnection = null;
-            _configuredRecoveryActive = true;
+            _configuredRecoveryPhase = ConfiguredRecoveryPhase.Recovering;
             _configuredRecoveryDrained = drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
         // Reserve ownership before starting any work. Observers are dispatched separately
@@ -105,7 +109,8 @@ internal sealed partial class SubscriptionHub
             lock (_reconnectStateGate)
             {
                 _configuredConnection = restored;
-                _configuredRecoveryActive = false;
+                if (_configuredRecoveryPhase == ConfiguredRecoveryPhase.Recovering)
+                    _configuredRecoveryPhase = ConfiguredRecoveryPhase.Idle;
                 if (restored is not null)
                     QueueConfiguredState(endpoint, RespireConnectionState.Connected, null, attempt);
                 drained.TrySetResult();
@@ -143,6 +148,7 @@ internal sealed partial class SubscriptionHub
             if (_disposed) return;
             _recoveryExhaustion = new RespireReconnectLimitException(
                 $"Pub/sub recovery exhausted {attempt} replacement attempts. Recreate the client to subscribe again.");
+            _configuredRecoveryPhase = ConfiguredRecoveryPhase.Exhausted;
             HashSet<RespireSubscription> subscriptions = [];
             lock (_gate)
             {
@@ -153,6 +159,8 @@ internal sealed partial class SubscriptionHub
                 }
                 _interrupted.Clear();
             }
+            // Completion only closes an internal buffer and signals asynchronous continuations.
+            // No user callback runs here; keep the terminal reason serialized with disposal.
             foreach (var subscription in subscriptions) subscription.CompleteFromReconnectExhaustion();
             QueueConfiguredState(endpoint, RespireConnectionState.Disconnected, failure, attempt, exhausted: true);
         }
