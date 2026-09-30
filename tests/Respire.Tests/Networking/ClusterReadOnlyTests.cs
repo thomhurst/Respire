@@ -1,5 +1,3 @@
-using System.Net;
-using System.Net.Sockets;
 using System.Text;
 using Respire.Internal;
 using TUnit.Assertions;
@@ -23,14 +21,8 @@ public class ClusterReadOnlyTests
         // Cached-owner connection failure can consume the primary phase first. This reply
         // fits the final quarter-round but cannot run on the already-expired early-seed token.
         healthySeed.DelayReply(0, 100);
-        // Keep the port reserved without listening. Disposing a listener here lets parallel
-        // wire tests reuse the port, turning the unavailable owner into an unrelated server.
-        using var unavailable = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
-        {
-            ExclusiveAddressUse = true,
-        };
-        unavailable.Bind(new IPEndPoint(IPAddress.Loopback, 0));
-        var unavailablePort = ((IPEndPoint)unavailable.LocalEndPoint!).Port;
+        using var unavailable = new ReservedUnavailablePort();
+        var unavailablePort = unavailable.Port;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
             UseCluster = true, Connections = 1, ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = null,
@@ -213,14 +205,8 @@ public class ClusterReadOnlyTests
         await using var replacement = new FakeRespServer(FakeRespServer.OkReply);
         await using var replica = new FakeRespServer(ReadOnlyReply);
         await using var seed = new FakeRespServer(Topology(replica.Port), Topology(replacement.Port));
-        // Keep the port reserved without listening. Disposing a listener here lets parallel
-        // wire tests reuse the port, turning the unavailable owner into an unrelated server.
-        using var unavailable = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
-        {
-            ExclusiveAddressUse = true,
-        };
-        unavailable.Bind(new IPEndPoint(IPAddress.Loopback, 0));
-        var unavailablePort = ((IPEndPoint)unavailable.LocalEndPoint!).Port;
+        using var unavailable = new ReservedUnavailablePort();
+        var unavailablePort = unavailable.Port;
         await using var client = await ConnectAsync(seed.Port, TimeSpan.FromSeconds(5));
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         replica.SuppressReply = _ => { received.TrySetResult(); return true; };

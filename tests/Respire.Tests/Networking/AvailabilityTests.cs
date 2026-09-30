@@ -1,6 +1,4 @@
 using System.Buffers;
-using System.Net;
-using System.Net.Sockets;
 using Respire.Serialization;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -13,7 +11,8 @@ public class AvailabilityTests
     [Test]
     public async Task ConnectAnyAsync_SkipsUnavailableFirstEndpoint_AndUsesLaterCandidateOptions()
     {
-        var unavailablePort = GetUnusedLoopbackPort();
+        using var unavailable = new ReservedUnavailablePort();
+        var unavailablePort = unavailable.Port;
         var serializer = new RecordingSerializer();
         await using var server = new FakeRespServer(
             FakeRespServer.OkReply,
@@ -76,15 +75,6 @@ public class AvailabilityTests
         var aggregate = exception.InnerException as AggregateException;
         await Assert.That(aggregate).IsNotNull();
         await Assert.That(aggregate!.InnerExceptions.Count).IsEqualTo(2);
-    }
-
-    private static int GetUnusedLoopbackPort()
-    {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
     }
 
     private sealed record Payload(int Value);
