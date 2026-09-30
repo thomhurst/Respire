@@ -209,6 +209,7 @@ Each connection has one ordered output writer. Acknowledgements precede later pu
 including when an after-execution fault holds the acknowledgement. Publications never wait
 for a subscriber to read. The fake disconnects a slow subscriber when its pending encoded
 push bytes would exceed 16 MiB, including a push currently waiting for the pipe to flush.
+The bound applies to complete encoded frames, including framing bytes, even for an empty queue.
 This is a fixed test-fixture bound, not Redis's configurable output-buffer policy. Receiver
 counts do not guarantee delivery: a connection can close after being counted. The publication
 that exceeds the bound still counts the disconnected subscriber; subsequent publications do not.

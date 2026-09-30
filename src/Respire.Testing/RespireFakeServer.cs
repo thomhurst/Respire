@@ -189,9 +189,9 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
                 return FakeReply.Error($"ERR Respire.Testing does not support command or arguments: {command}");
             if (args.Length < handler.MinimumArity || args.Length > handler.MaximumArity)
                 return WrongArity(command);
-            if (!connection.Resp3 && connection.Channels.Count != 0
+            if (connection.IsResp2Subscribed
                 && command is not ("SUBSCRIBE" or "UNSUBSCRIBE" or "PING"))
-                return FakeReply.Error($"ERR Can't execute '{command.ToLowerInvariant()}': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context");
+                return FakeReply.Error($"ERR Can't execute '{command.ToLowerInvariant()}': only SUBSCRIBE / UNSUBSCRIBE / PING are supported in this context");
             return handler.Execute(this, connection, args);
         }
         catch (WrongTypeException) { return FakeReply.Error("WRONGTYPE Operation against a key holding the wrong kind of value"); }
@@ -320,12 +320,13 @@ public sealed partial class RespireFakeServer : IAsyncDisposable
         internal bool Closed { get; set; }
         internal Task Stopping { get; set; } = Task.CompletedTask;
         internal HashSet<byte[]> Channels { get; } = new(BinaryKeyComparer.Instance);
+        internal bool IsResp2Subscribed => !Resp3 && Channels.Count != 0;
         internal Channel<Outbound> Output { get; } = Channel.CreateUnbounded<Outbound>(new()
         {
             SingleReader = true,
             AllowSynchronousContinuations = false,
         });
-        internal int PendingPushBytes { get; set; }
+        internal int PendingPushBytes;
     }
 
     private sealed class WrongTypeException : Exception { }

@@ -17,14 +17,20 @@ public sealed partial class RespireFakeServer
     private Outbound? QueueOutputLocked(Connection connection, byte[] bytes, bool push)
     {
         if (_disposed || connection.Closed || connection.Lifetime.IsCancellationRequested) return null;
-        if (push && bytes.Length > MaximumPendingPushBytes - connection.PendingPushBytes)
+        if (push && bytes.Length > MaximumPendingPushBytes - Volatile.Read(ref connection.PendingPushBytes))
         {
             StopConnectionLocked(connection);
             return null;
         }
         var output = new Outbound(bytes, push);
-        if (!connection.Output.Writer.TryWrite(output)) return null;
-        if (push) connection.PendingPushBytes += bytes.Length;
+        // Reserve before publication: the writer can release this frame without _gate.
+        // Producers still serialize the capacity check and reservation under _gate.
+        if (push) Interlocked.Add(ref connection.PendingPushBytes, bytes.Length);
+        if (!connection.Output.Writer.TryWrite(output))
+        {
+            if (push) Interlocked.Add(ref connection.PendingPushBytes, -bytes.Length);
+            return null;
+        }
         return output;
     }
 
@@ -56,13 +62,12 @@ public sealed partial class RespireFakeServer
         }
     }
 
-    // Called outside _gate after sending, or after the stop operation releases _gate.
-    // Keep byte accounting on the same gate as enqueue and the overflow decision.
-    private void ReleaseOutput(Connection connection, Outbound output)
+    // The writer releases each sent or abandoned frame exactly once.
+    private static void ReleaseOutput(Connection connection, Outbound output)
     {
         output.Flushed.TrySetCanceled(connection.Lifetime.Token);
         if (output.Push)
-            lock (_gate) connection.PendingPushBytes -= output.Bytes.Length;
+            Interlocked.Add(ref connection.PendingPushBytes, -output.Bytes.Length);
     }
 
     private void StopConnectionLocked(Connection connection)

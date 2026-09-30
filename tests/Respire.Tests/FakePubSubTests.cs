@@ -68,7 +68,11 @@ public class FakePubSubTests
         await wire.SendAsync("GET", "missing");
         using (var get = await wire.ReadAsync())
         {
-            if (protocol == 2) await Assert.That(get.IsError).IsTrue();
+            if (protocol == 2)
+            {
+                await Assert.That(get.IsError).IsTrue();
+                await Assert.That(get.GetErrorMessage()).IsEqualTo("ERR Can't execute 'get': only SUBSCRIBE / UNSUBSCRIBE / PING are supported in this context");
+            }
             else await Assert.That(get.IsNull).IsTrue();
         }
         await wire.SendAsync("PUBLISH", "first", "self");
@@ -307,6 +311,25 @@ public class FakePubSubTests
         await Assert.That(await publisher.PublishAsync("slow", payload).AsTask().WaitAsync(Limit)).IsEqualTo(0);
         await Assert.That(await publisher.SetAsync("still responsive", "yes")).IsTrue();
         await server.DisposeAsync().AsTask().WaitAsync(Limit);
+    }
+
+    [Test]
+    public async Task DrainedPublicationsReleaseOutputCapacity()
+    {
+        await using var server = new RespireFakeServer();
+        await using var publisher = await RespireClient.ConnectAsync(server.CreateOptions());
+        await using var subscriber = await WireClient.ConnectAsync(server, 3);
+        await subscriber.SendAsync("SUBSCRIBE", "drained");
+        await Confirmation(subscriber, "subscribe", "drained", 1, 3);
+        var payload = new byte[256 * 1024];
+        // Total traffic exceeds the output limit, but only one publication is awaited at a time.
+        for (var index = 0; index < 80; index++)
+        {
+            await Assert.That(await publisher.PublishAsync("drained", payload).AsTask().WaitAsync(Limit)).IsEqualTo(1);
+            using var message = await subscriber.ReadAsync();
+            await Assert.That(message.Type).IsEqualTo(RespDataType.Push);
+            await Assert.That(message.AsArray()[2].AsBytes().Length).IsEqualTo(payload.Length);
+        }
     }
 
     [Test]
