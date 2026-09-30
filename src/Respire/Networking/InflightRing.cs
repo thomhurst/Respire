@@ -20,9 +20,8 @@ internal sealed class InflightRing
     /// <summary>Marks a slot whose response should be read and thrown away.</summary>
     public static readonly PendingResponseSource DiscardSentinel = new();
 
-    private readonly PendingResponse?[] _slots;
+    private readonly Slot[] _slots;
     private readonly int _mask;
-    private readonly long[] _writeEnds;
     private long _completedWriteEnd;
     private long _head;
     private long _tail;
@@ -31,8 +30,7 @@ internal sealed class InflightRing
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
         capacity = (int)BitOperations.RoundUpToPowerOf2((uint)capacity);
-        _slots = new PendingResponse?[capacity];
-        _writeEnds = new long[capacity];
+        _slots = new Slot[capacity];
         _mask = capacity - 1;
     }
 
@@ -52,8 +50,9 @@ internal sealed class InflightRing
             return false;
         }
 
-        _slots[tail & _mask] = source;
-        _writeEnds[tail & _mask] = writeEnd;
+        ref var slot = ref _slots[tail & _mask];
+        slot.Source = source;
+        slot.WriteEnd = writeEnd;
         Volatile.Write(ref _tail, tail + 1);
         return true;
     }
@@ -70,7 +69,7 @@ internal sealed class InflightRing
             return false;
         }
 
-        source = _slots[head & _mask]!;
+        source = _slots[head & _mask].Source!;
         return true;
     }
 
@@ -93,7 +92,7 @@ internal sealed class InflightRing
         RespireTimeoutDiagnostics? diagnostics = null;
         for (var position = head; position < tail; position++)
         {
-            var source = Volatile.Read(ref _slots[position & _mask]);
+            var source = Volatile.Read(ref _slots[position & _mask].Source);
             if (source is null || ReferenceEquals(source, DiscardSentinel))
             {
                 continue;
@@ -143,11 +142,20 @@ internal sealed class InflightRing
             return false;
         }
 
-        var index = head & _mask;
-        source = _slots[index]!;
-        Volatile.Write(ref _completedWriteEnd, _writeEnds[index]);
-        _slots[index] = null;
+        ref var slot = ref _slots[head & _mask];
+        source = slot.Source!;
+        // Intermediate replies carry the frame start; only the final reply advances past
+        // the complete frame. This offset never retreats across FIFO-ordered frames.
+        Volatile.Write(ref _completedWriteEnd, slot.WriteEnd);
+        slot.Source = null;
         Volatile.Write(ref _head, head + 1);
         return true;
+    }
+
+    // Keep a response and its byte position together instead of indexing two arrays.
+    private struct Slot
+    {
+        internal PendingResponse? Source;
+        internal long WriteEnd;
     }
 }

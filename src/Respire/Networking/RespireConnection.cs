@@ -765,13 +765,17 @@ internal sealed class RespireConnection : IAsyncDisposable
         {
             return await reply.ConfigureAwait(false);
         }
-        catch (OperationCanceledException ex) when (!callerCancellationToken.IsCancellationRequested
-            && deadlineToken.IsCancellationRequested && ex.CancellationToken == deadlineToken)
+        catch (OperationCanceledException ex) when (IsDeadlineCancellation(ex, deadlineToken, callerCancellationToken))
         {
             throw new RespireTimeoutException("MULTI/EXEC", timeout, ex,
                 CaptureTimeoutDiagnostics(writeStart, writeEnd));
         }
     }
+
+    private static bool IsDeadlineCancellation(OperationCanceledException error,
+        CancellationToken deadlineToken, CancellationToken callerToken)
+        => !callerToken.IsCancellationRequested && deadlineToken.IsCancellationRequested
+            && error.CancellationToken == deadlineToken;
 
     private ValueTask<RespValue> SendCoreAsync<TCommand>(
         in TCommand command,
@@ -1100,7 +1104,7 @@ internal sealed class RespireConnection : IAsyncDisposable
     }
 
     /// <summary>
-    /// Stamps (or clears — pooled sources carry the previous command's value) the command
+    /// Stamps (or clears â€” pooled sources carry the previous command's value) the command
     /// deadline before the source is published to the ring. The shared discard sentinel is
     /// never written: it sits in many slots at once and the sweep skips it by reference.
     /// </summary>
@@ -1169,8 +1173,8 @@ internal sealed class RespireConnection : IAsyncDisposable
                     .ConfigureAwait(false);
             }
         }
-        catch (OperationCanceledException ex) when (cancellationTimeout is not null && !callerCancellationToken.IsCancellationRequested
-            && cancellationToken.IsCancellationRequested && ex.CancellationToken == cancellationToken)
+        catch (OperationCanceledException ex) when (cancellationTimeout is not null
+            && IsDeadlineCancellation(ex, cancellationToken, callerCancellationToken))
         {
             ReclaimUnpublished(source, replyCount + 1);
             throw new RespireTimeoutException("MULTI/EXEC", cancellationTimeout.Value, ex,

@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   inflight-comparison:
-    name: Compare in-flight FIFO
+    name: Compare in-flight FIFO (informational)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -67,6 +67,7 @@ jobs:
         if: always()
         shell: bash
         run: |
+          echo "Informational A/B/A measurements; review timing and allocation reports before merge. This job does not enforce a regression threshold." >> "$GITHUB_STEP_SUMMARY"
           for phase in baseline-a candidate baseline-b; do
             echo "## $phase" >> "$GITHUB_STEP_SUMMARY"
             for report in "$GITHUB_WORKSPACE/results/$phase/results/"*-report-default.md; do

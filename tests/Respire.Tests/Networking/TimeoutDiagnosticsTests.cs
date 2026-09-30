@@ -12,6 +12,34 @@ namespace Respire.Tests.Networking;
 public class TimeoutDiagnosticsTests
 {
     [Test]
+    [Arguments(9L, RespireCommandStage.Buffered)]
+    [Arguments(10L, RespireCommandStage.Buffered)]
+    [Arguments(11L, RespireCommandStage.Writing)]
+    [Arguments(19L, RespireCommandStage.Writing)]
+    [Arguments(20L, RespireCommandStage.AwaitingReply)]
+    [Arguments(21L, RespireCommandStage.AwaitingReply)]
+    public async Task WriteStageIncludesExactFrameBoundaries(long sent, RespireCommandStage expected)
+        => await Assert.That(RespireTimeoutDiagnostics.ComputeStage(sent, 10, 20)).IsEqualTo(expected);
+
+    [Test]
+    public async Task IntermediateRepliesRetainWholeFrameByteCountAcrossRingWrap()
+    {
+        var ring = new InflightRing(2);
+        ring.TryEnqueue(InflightRing.DiscardSentinel, 10);
+        ring.TryDequeue(out _);
+        ring.TryEnqueue(InflightRing.DiscardSentinel, 10);
+        ring.TryEnqueue(InflightRing.DiscardSentinel, 30);
+        ring.TryDequeue(out _);
+        await Assert.That(ring.CompletedWriteEnd).IsEqualTo(10);
+        await Assert.That(ring.Count).IsEqualTo(1);
+        ring.TryDequeue(out _);
+        await Assert.That(ring.CompletedWriteEnd).IsEqualTo(30);
+        ring.TryEnqueue(InflightRing.DiscardSentinel, 40);
+        ring.TryDequeue(out _);
+        await Assert.That(ring.CompletedWriteEnd).IsEqualTo(40);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task PublicConstructionDoesNotInventObservations(bool withCause)
