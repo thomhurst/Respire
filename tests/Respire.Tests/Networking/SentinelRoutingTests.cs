@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Text;
 using System.Threading.Channels;
+using Respire.Networking;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -1132,6 +1133,105 @@ public class SentinelRoutingTests
         await Assert.That(primary.ReceivedCommands.Any(command => command.StartsWith("HMGET "))).IsFalse();
         await Assert.That(promoted.ReceivedCommands.Where(command => command.StartsWith("HMGET ")))
             .IsEquivalentTo(["HMGET tenant:key first second"]);
+    }
+
+    [Test]
+    public async Task RetirementDuringMGetMissFetchRefetchesCachedAndMissingKeys()
+    {
+        var port = 0;
+        var shouldRetire = 0;
+        Respire.Internal.SentinelRouter.Generation? generation = null;
+        RespireConnection? connection = null;
+        FakeRespServer? promotedServer = null;
+        await using var primary = Primary((_, command) => command switch
+        {
+            "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+            "GET cached" => "$3\r\nold\r\n"u8.ToArray(),
+            "MGET missing" when Interlocked.Exchange(ref shouldRetire, 0) == 1 => RetireAndReply(),
+            "MGET missing" => "*1\r\n$3\r\nold\r\n"u8.ToArray(),
+            _ => null,
+        });
+        await using var promoted = Primary((_, command) => command switch
+        {
+            "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+            "MGET cached missing" => "*2\r\n$3\r\nnew\r\n$3\r\nnew\r\n"u8.ToArray(),
+            _ => null,
+        });
+        promotedServer = promoted;
+        port = primary.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
+        {
+            Protocol = RespProtocol.Resp3, ClientSideCache = new(),
+        });
+        generation = client.Core.Sentinel!.Current!;
+        connection = generation.Multiplexer.GetConnection();
+        await Assert.That(await client.GetStringAsync("cached")).IsEqualTo("old");
+        Volatile.Write(ref shouldRetire, 1);
+
+        var values = await client.Strings.GetManyAsync(["cached", "missing"]).AsTask().WaitAsync(Limit);
+
+        await Assert.That(values).IsEquivalentTo(["new", "new"]);
+        await Assert.That(generation.IsRetired).IsTrue();
+        await Assert.That(promoted.ReceivedCommands.Contains("MGET cached missing")).IsTrue();
+
+        byte[] RetireAndReply()
+        {
+            Volatile.Write(ref port, promotedServer!.Port);
+            using var error = Respire.Protocol.RespValue.Error("READONLY replica");
+            generation!.ObserveResponse(connection!, "SET", in error);
+            return "*1\r\n$3\r\nold\r\n"u8.ToArray();
+        }
+    }
+
+    [Test]
+    public async Task RetirementDuringHmGetMissFetchRefetchesCachedAndMissingFields()
+    {
+        var port = 0;
+        var shouldRetire = 0;
+        Respire.Internal.SentinelRouter.Generation? generation = null;
+        RespireConnection? connection = null;
+        FakeRespServer? promotedServer = null;
+        await using var primary = Primary((_, command) => command switch
+        {
+            "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+            "HGET key first" => "$3\r\nold\r\n"u8.ToArray(),
+            "HMGET key second" when Interlocked.Exchange(ref shouldRetire, 0) == 1 => RetireAndReply(),
+            "HMGET key second" => "*1\r\n$3\r\nold\r\n"u8.ToArray(),
+            _ => null,
+        });
+        await using var promoted = Primary((_, command) => command switch
+        {
+            "HELLO 3" => "%1\r\n$5\r\nproto\r\n:3\r\n"u8.ToArray(),
+            "HMGET key first second" => "*2\r\n$3\r\nnew\r\n$3\r\nnew\r\n"u8.ToArray(),
+            _ => null,
+        });
+        promotedServer = promoted;
+        port = primary.Port;
+        await using var sentinel = Sentinel(() => Volatile.Read(ref port));
+        await using var client = await RespireClient.ConnectAsync(Options(sentinel.Port) with
+        {
+            Protocol = RespProtocol.Resp3,
+            ClientSideCache = new() { ReuseHashFields = true },
+        });
+        generation = client.Core.Sentinel!.Current!;
+        connection = generation.Multiplexer.GetConnection();
+        await Assert.That(await client.Hashes.GetStringAsync("key", "first")).IsEqualTo("old");
+        Volatile.Write(ref shouldRetire, 1);
+
+        var values = await client.Hashes.GetManyAsync("key", "first", "second").AsTask().WaitAsync(Limit);
+
+        await Assert.That(values).IsEquivalentTo(new string?[] { "new", "new" });
+        await Assert.That(generation.IsRetired).IsTrue();
+        await Assert.That(promoted.ReceivedCommands.Contains("HMGET key first second")).IsTrue();
+
+        byte[] RetireAndReply()
+        {
+            Volatile.Write(ref port, promotedServer!.Port);
+            using var error = Respire.Protocol.RespValue.Error("READONLY replica");
+            generation!.ObserveResponse(connection!, "SET", in error);
+            return "*1\r\n$3\r\nold\r\n"u8.ToArray();
+        }
     }
 
     [Test]

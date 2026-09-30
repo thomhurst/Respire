@@ -1362,14 +1362,16 @@ public sealed partial class RespireClient : IRespireClient
         RespireKey[]? missingKeys = null;
         int[]? missingIndexes = null;
         var missingCount = 0;
+        var cachedCount = 0;
         int? cachedClusterSlot = null;
-        var generation = _core.Sentinel?.Current;
+        SentinelRouter.Generation? generation = _core.Sentinel?.Current;
         for (var i = 0; i < keys.Length; i++)
         {
-            var resolvedKey = keysResolved ? keys[i] : ResolveKey(keys[i]);
+            var resolvedKey = (keysResolved ? keys[i] : ResolveKey(keys[i])).Snapshot();
             ValidateMGetClusterSlot(in resolvedKey, ref cachedClusterSlot);
             if (cache.TryGet(in resolvedKey, out var cached))
             {
+                cachedCount++;
                 result[i] = converter(this, in cached);
             }
             else
@@ -1397,6 +1399,16 @@ public sealed partial class RespireClient : IRespireClient
                 missingKeys[i] = keysResolved ? keys[i] : ResolveKey(keys[i]);
                 missingIndexes[i] = i;
             }
+            cachedCount = 0;
+            generation = _core.Sentinel?.Current;
+        }
+
+        RespireKey[]? allKeys = null;
+        if (missingCount != 0 && cachedCount != 0)
+        {
+            allKeys = new RespireKey[keys.Length];
+            for (var i = 0; i < keys.Length; i++)
+                allKeys[i] = (keysResolved ? keys[i] : ResolveKey(keys[i])).Snapshot();
         }
 
         return missingCount == 0
@@ -1408,7 +1420,9 @@ public sealed partial class RespireClient : IRespireClient
                 missingCount,
                 cache,
                 cancellationToken,
-                converter);
+                converter,
+                allKeys,
+                generation);
     }
 
     private bool IsCacheGenerationCurrent(SentinelRouter.Generation? generation)
@@ -1506,15 +1520,18 @@ public sealed partial class RespireClient : IRespireClient
         }
     }
 
-    private ValueTask<TResult[]> GetManyAndCacheAsync<TResult>(
+    private async ValueTask<TResult[]> GetManyAndCacheAsync<TResult>(
         RespireKey[] missingKeys,
         TResult[] result,
         int[] missingIndexes,
         int missingCount,
         ClientSideCacheCoordinator cache,
         CancellationToken cancellationToken,
-        ResponseConverter<RespireClient, TResult> converter)
-        => cache.CoalesceConcurrentMisses
+        ResponseConverter<RespireClient, TResult> converter,
+        RespireKey[]? allKeys,
+        SentinelRouter.Generation? generation)
+    {
+        var fetchedResult = await (cache.CoalesceConcurrentMisses
             ? GetManySharedAndCacheAsync(missingKeys, result, missingIndexes, missingCount, cache, cancellationToken, converter)
             : FetchManyAndCacheAsync(missingKeys, missingCount, cache, cancellationToken,
                 (Client: this, Result: result, Indexes: missingIndexes, Converter: converter),
@@ -1524,7 +1541,41 @@ public sealed partial class RespireClient : IRespireClient
                     for (var index = 0; index < values.Length; index++)
                         state.Result[state.Indexes[index]] = state.Converter(state.Client, in values[index]);
                     return state.Result;
-                });
+                })).ConfigureAwait(false);
+
+        return allKeys is null || IsCacheGenerationCurrent(generation)
+            ? fetchedResult
+            : await FetchManyForCurrentGenerationAsync(allKeys, cache, cancellationToken, converter).ConfigureAwait(false);
+    }
+
+    private async ValueTask<TResult[]> FetchManyForCurrentGenerationAsync<TResult>(
+        RespireKey[] keys, ClientSideCacheCoordinator cache, CancellationToken cancellationToken,
+        ResponseConverter<RespireClient, TResult> converter)
+    {
+        while (true)
+        {
+            var generation = _core.Sentinel?.Current;
+            var result = new TResult[keys.Length];
+            var indexes = new int[keys.Length];
+            for (var index = 0; index < indexes.Length; index++) indexes[index] = index;
+            var fetchedResult = await (cache.CoalesceConcurrentMisses
+                ? GetManySharedAndCacheAsync(keys, result, indexes, keys.Length, cache, cancellationToken, converter)
+                : FetchManyAndCacheAsync(keys, keys.Length, cache, cancellationToken,
+                    (Client: this, Result: result, Indexes: indexes, Converter: converter),
+                    static ((RespireClient Client, TResult[] Result, int[] Indexes,
+                        ResponseConverter<RespireClient, TResult> Converter) state, in RespValue response) =>
+                    {
+                        var values = response.AsArray();
+                        if (values.Length != state.Indexes.Length)
+                            throw new RespireProtocolException(
+                                $"MGET returned {values.Length} values for {state.Indexes.Length} keys.");
+                        for (var index = 0; index < values.Length; index++)
+                            state.Result[state.Indexes[index]] = state.Converter(state.Client, in values[index]);
+                        return state.Result;
+                    })).ConfigureAwait(false);
+            if (IsCacheGenerationCurrent(generation)) return fetchedResult;
+        }
+    }
 
 #if NET
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
