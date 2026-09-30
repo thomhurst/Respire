@@ -38,6 +38,8 @@ an empty or missing field. `RandomFieldAsync` returns one field or null for a mi
 `RandomFieldsAsync` and `RandomFieldsWithValuesAsync` accept a count: positive counts return
 up to that many distinct fields, negative counts allow repeats, and zero returns an empty
 array. The field/value result is an array of pairs so repeated fields are preserved.
+Bound the magnitude of `count` to control reply size and allocation: a negative count can
+return more entries than the hash contains because fields may repeat.
 These random selection methods require Redis 6.2 or later.
 
 ```csharp
@@ -60,6 +62,8 @@ indicates an expiration is set. `UnixTimeMilliseconds` always uses milliseconds,
 when requesting whole-second resolution, and is null when missing or persistent. The numeric
 timestamp preserves Redis values beyond the range of `DateTimeOffset`. Use `ExpiresAt` for a
 nullable UTC `DateTimeOffset`; that conversion throws if a timestamp exceeds its supported range.
+Use `TryGetExpiresAt(out DateTimeOffset expiresAt)` for a nonthrowing conversion; it returns
+false for missing/persistent fields and timestamps outside the supported range.
 
 All these methods also exist on batch and transaction hash facets without the `Async` suffix.
 
