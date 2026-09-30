@@ -1571,6 +1571,7 @@ public class ClusterTests
     }
 
     [Test]
+    [NotInParallel] // A 50 ms watchdog must not compete with the full coverage suite's socket workload.
     public async Task ClusterBlockingCommand_SuppressesResponseWatchdog()
     {
         var slot = ClusterHash.GetSlot("key");
@@ -1596,6 +1597,7 @@ public class ClusterTests
     }
 
     [Test]
+    [NotInParallel] // Preserve the real watchdog/deadline test without scheduler pressure from unrelated tests.
     public async Task ClusterBlockingAskRetry_SuppressesResponseWatchdog()
     {
         var slot = ClusterHash.GetSlot("key");

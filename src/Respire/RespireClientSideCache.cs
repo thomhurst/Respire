@@ -90,6 +90,17 @@ public interface IRespireClientSideCache
 
     /// <summary>Evicts every local entry and rejects older reads still in flight.</summary>
     void Clear();
+
+    /// <summary>Observes invalidations relevant to one physical key without adding Redis tracking.</summary>
+    /// <remarks>Subscribe before reading the key. OPTIN notifications require tracked reads; Broadcast
+    /// requires coverage by the configured prefixes. Callbacks run asynchronously, serially per
+    /// subscription, with one coalesced pending notification. Recheck application state after every
+    /// notification. Cancellation, subscription disposal, or client disposal stops future delivery;
+    /// a callback already selected for execution may finish. The subscription snapshots binary key storage.
+    /// Third-party cache implementations that do not support observation throw NotSupportedException.</remarks>
+    IRespireClientCacheInvalidationSubscription SubscribeInvalidations(
+        RespireKey key, Action<RespireClientCacheInvalidation> observer, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("This client-side cache does not support invalidation observation.");
 }
 
 internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCache
@@ -137,7 +148,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             store.SizeBytes);
     }
 
-    public void Clear() => Flush(continuityLost: false);
+    public void Clear() => Flush(continuityLost: false, RespireClientCacheInvalidationReason.ExplicitClear);
 
     internal bool TryGet(in RespireKey key, out RespValue value)
     {
@@ -349,7 +360,8 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         return true;
     }
 
-    internal void Invalidate(in RespireKey key)
+    internal void Invalidate(in RespireKey key,
+        RespireClientCacheInvalidationReason reason = RespireClientCacheInvalidationReason.LocalMutation)
     {
         BeginSharedReadInvalidation();
         try
@@ -370,6 +382,7 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         }
         finally { EndSharedReadInvalidation(); }
         Interlocked.Increment(ref _invalidations);
+        PublishInvalidation(in key, reason);
         RespireTelemetry.ClientCacheInvalidations.Add(1);
     }
 
@@ -429,14 +442,14 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
         {
             Interlocked.Increment(ref _invalidations);
             RespireTelemetry.ClientCacheInvalidations.Add(1);
-            Flush(continuityLost: false);
+            Flush(continuityLost: false, RespireClientCacheInvalidationReason.ServerInvalidation);
             return;
         }
 
         foreach (ref readonly var value in keys.AsArray())
         {
             var key = new RespireKey(value.AsMemory());
-            Invalidate(in key);
+            Invalidate(in key, RespireClientCacheInvalidationReason.ServerInvalidation);
         }
     }
 
@@ -444,24 +457,27 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
 
     internal void FlushForUnknownCommand() => Flush(continuityLost: false);
 
-    // Only mutate internal state here; callers may hold membership and health gates.
+    // Mutate state and queue observations only; callers may hold membership and health gates.
     internal int FlushForContinuityLossWithoutMetrics() => FlushState(continuityLost: true);
 
     internal static void PublishContinuityFlushMetrics(int removed)
         => PublishFlushMetrics(removed, continuityLost: true);
 
-    private void Flush(bool continuityLost)
-        => PublishFlushMetrics(FlushState(continuityLost), continuityLost);
+    private void Flush(bool continuityLost,
+        RespireClientCacheInvalidationReason reason = RespireClientCacheInvalidationReason.LocalMutation)
+        => PublishFlushMetrics(FlushState(continuityLost, reason), continuityLost);
 
-    private int FlushState(bool continuityLost)
+    private int FlushState(bool continuityLost,
+        RespireClientCacheInvalidationReason reason = RespireClientCacheInvalidationReason.LocalMutation)
     {
         BeginSharedReadInvalidation();
+        int removed;
         try
         {
             Interlocked.Increment(ref _continuityEpoch);
             Interlocked.Increment(ref _queryEpoch);
             var replacement = new CacheStore(_options, RecordEviction);
-            var removed = Interlocked.Exchange(ref _store, replacement).Count;
+            removed = Interlocked.Exchange(ref _store, replacement).Count;
             if (removed > 0)
             {
                 Interlocked.Add(ref _evictions, removed);
@@ -471,9 +487,10 @@ internal sealed partial class ClientSideCacheCoordinator : IRespireClientSideCac
             {
                 Interlocked.Increment(ref _continuityFlushes);
             }
-            return removed;
         }
         finally { EndSharedReadInvalidation(); }
+        PublishInvalidationForAll(continuityLost ? RespireClientCacheInvalidationReason.ContinuityLost : reason);
+        return removed;
     }
 
     private static void PublishFlushMetrics(int removed, bool continuityLost)

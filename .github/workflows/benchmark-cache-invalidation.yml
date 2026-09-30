@@ -1,0 +1,89 @@
+name: Client cache invalidation benchmarks
+
+on:
+  pull_request:
+    paths:
+      - 'src/Respire/RespireClientSideCache*.cs'
+      - 'src/Respire/RespireClientCacheInvalidation.cs'
+      - 'src/Respire/RespireKey.cs'
+      - 'benchmarks/Respire.Benchmarks/ClientCacheInvalidationBenchmarks.cs'
+      - '.github/workflows/benchmark-cache-invalidation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  invalidation:
+    name: Compare unobserved cache invalidations (informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: baseline
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+      - name: Validate and compare pinned builds on one runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp candidate/benchmarks/Respire.Benchmarks/ClientCacheInvalidationBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
+          for phase in validation baseline-a candidate baseline-b; do
+            source=baseline
+            job=Medium
+            if [ "$phase" = candidate ] || [ "$phase" = validation ]; then source=candidate; fi
+            if [ "$phase" = validation ]; then job=Dry; fi
+            (
+              cd "$source"
+              git rev-parse HEAD
+              dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
+                --filter '*ClientCacheInvalidationBenchmarks*' --job "$job" --exporters json markdown \
+                --artifacts "$GITHUB_WORKSPACE/invalidation-results/$phase"
+            ) > "$GITHUB_WORKSPACE/invalidation-$phase.log" 2>&1
+          done
+      - name: Require complete cases and zero steady-state allocations
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          for phase in ("validation", "baseline-a", "candidate", "baseline-b"):
+              reports = list(Path("invalidation-results", phase, "results").glob("*-report-full-compressed.json"))
+              assert len(reports) == 1, f"Missing or duplicate report: {phase}"
+              cases = json.loads(reports[0].read_text(encoding="utf-8"))["Benchmarks"]
+              assert len(cases) == 2, f"Wrong case count: {phase}"
+              assert {case["Method"] for case in cases} == {"LocalInvalidation", "ServerInvalidation"}
+              metrics = [json.loads(line.split("CACHE_INVALIDATION_PROCESS_METRICS ", 1)[1])
+                         for line in Path(f"invalidation-{phase}.log").read_text(encoding="utf-8").splitlines()
+                         if line.startswith("CACHE_INVALIDATION_PROCESS_METRICS ")]
+              assert len(metrics) >= 2 and all(row["elapsedSeconds"] > 0 and row["cpuMilliseconds"] >= 0 for row in metrics), phase
+              for case in cases:
+                  assert case["Statistics"] and case["Statistics"]["Mean"] > 0, case["FullName"]
+                  # Dry includes cold-start allocations; Medium measures the warmed hot path.
+                  if phase != "validation":
+                      assert case["Memory"]["BytesAllocatedPerOperation"] == 0, (phase, case)
+      - name: Publish comparison reports
+        if: always()
+        shell: bash
+        run: |
+          echo 'Review latency, operations/second, dispersion, and both baseline controls before merge. No timing threshold is enforced by this job. Cache setup and RESP frame construction are outside measurement. Process CPU totals in the logs include warmup and calibration; compare elapsed time and operation counts with those totals.' >> "$GITHUB_STEP_SUMMARY"
+          for phase in baseline-a candidate baseline-b; do
+            echo "## $phase" >> "$GITHUB_STEP_SUMMARY"
+            for report in invalidation-results/$phase/results/*-report-default.md; do
+              if [ -f "$report" ]; then cat "$report" >> "$GITHUB_STEP_SUMMARY"; fi
+            done
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: cache-invalidation-comparison
+          path: |
+            invalidation-results/
+            invalidation-*.log
