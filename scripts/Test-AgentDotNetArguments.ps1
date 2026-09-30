@@ -31,7 +31,13 @@ return 0;
     function Assert-Arguments([string[]]$InputArguments, [string[]]$Expected, [switch]$SingleNode) {
         & $guardScript -TimeoutSeconds 30 -DotNetPath $probe -SingleNode:$SingleNode -DotNetArguments $InputArguments
         if ($LASTEXITCODE -ne 0) { throw "Argument probe failed: $LASTEXITCODE" }
-        $actual = @(Get-Content -LiteralPath $env:RESPIRE_GUARD_TEST_CAPTURE -Raw | ConvertFrom-Json)
+        $capture = [Text.Json.JsonDocument]::Parse([IO.File]::ReadAllText($env:RESPIRE_GUARD_TEST_CAPTURE))
+        try {
+            $actual = @($capture.RootElement.EnumerateArray() | ForEach-Object { $_.GetString() })
+        }
+        finally {
+            $capture.Dispose()
+        }
         if ($actual.Count -ne $Expected.Count) {
             throw "Argument count: expected $($Expected.Count), actual $($actual.Count): $($actual -join '|')"
         }
@@ -42,7 +48,7 @@ return 0;
         }
     }
 
-    $special = @('build', '-p:Version=1.2.3', '-p:Label=two words', '', 'quote"value', "apostrophe'value", 'literal$(never-run)', 'C:\path with spaces\', '--flag:false')
+    $special = @('build', '-p:Version=1.2.3', '-p:Label=two words', '', 'quote"value', "apostrophe'value", 'literal$(never-run)', 'C:\path with spaces\', '--flag:false', '2024-01-01T00:00:00Z', '2024-01-01T03:04:05.1234567+02:00')
     Assert-Arguments $special $special
     foreach ($verb in @('build', 'test', 'pack', 'publish', 'msbuild')) {
         Assert-Arguments @($verb, 'project') @($verb, 'project', '-m:1') -SingleNode
@@ -56,6 +62,13 @@ return 0;
     Assert-Arguments @('--', '-m:4') @('--', '-m:4') -SingleNode
     $longArgument = 'x' * 8192
     Assert-Arguments @('build', $longArgument) @('build', $longArgument, '-m:1') -SingleNode
+
+    if (-not $IsWindows) {
+        # Each argument stays small, but their aggregate exceeds Linux's 128 KiB
+        # per-environment-string ceiling. Windows has its own 32K command-line limit.
+        $manyArguments = @('build') + @(1..160 | ForEach-Object { ('x' * 1024) + $_ })
+        Assert-Arguments $manyArguments ($manyArguments + '-m:1') -SingleNode
+    }
 
     # Exercise real MSBuild with the injected switch, not only the probe.
     & $guardScript -SingleNode -TimeoutSeconds 60 -DotNetArguments @('pack', $project, '--no-restore', '--nologo')

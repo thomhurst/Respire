@@ -600,12 +600,11 @@ $startInfo.Environment['DOTNET_CLI_TELEMETRY_OPTOUT'] = '1'
 $startInfo.Environment['DOTNET_CLI_USE_MSBUILD_SERVER'] = '0'
 $startInfo.Environment['MSBUILDDISABLENODEREUSE'] = '1'
 $startInfo.Environment['UseSharedCompilation'] = 'false'
-# -File parses colon switches before populating $args. Transport the invocation as
-# data instead, including empty arguments, without quoting it as PowerShell code.
-$startInfo.Environment['RESPIRE_AGENT_DOTNET_INVOCATION'] = ConvertTo-Json -Compress -Depth 3 -InputObject @{
-    Executable = $DotNetPath
-    Arguments = $effectiveArguments
-}
+# -File reparses colon switches. Pass only a random payload path through the
+# environment so the invocation retains the platform's native argv size limit.
+$invocationPath = [IO.Path]::Combine(
+    [IO.Path]::GetTempPath(), "agent-dotnet-invocation-$([guid]::NewGuid()).json")
+$startInfo.Environment['RESPIRE_AGENT_DOTNET_INVOCATION'] = $invocationPath
 $pwshPath = (Get-Process -Id $PID).Path
 $wrapperPath = [System.IO.Path]::Combine(
     [System.IO.Path]::GetTempPath(),
@@ -673,15 +672,29 @@ if ([AgentDotNetUnixChildNative]::setpriority(0, 0, 10) -ne 0) {
     $startInfo.ArgumentList.Add($wrapperPath)
 }
 
-# Both containment wrappers start the workload through the same native argument path.
+# Each prefix establishes OS containment; this shared tail decodes data and launches the workload.
 $wrapperScript += @'
+$ErrorActionPreference = 'Stop'
 $startInfo = [Diagnostics.ProcessStartInfo]::new()
 $startInfo.UseShellExecute = $false
-$invocation = $env:RESPIRE_AGENT_DOTNET_INVOCATION | ConvertFrom-Json
+$invocationPath = $env:RESPIRE_AGENT_DOTNET_INVOCATION
 $startInfo.Environment.Remove('RESPIRE_AGENT_DOTNET_INVOCATION') | Out-Null
-$startInfo.FileName = $invocation.Executable
-foreach ($argument in $invocation.Arguments) {
-    $startInfo.ArgumentList.Add($argument)
+try {
+    # JsonDocument.GetString preserves date-like strings without PowerShell type inference.
+    $invocation = [Text.Json.JsonDocument]::Parse([IO.File]::ReadAllText($invocationPath))
+    try {
+        $startInfo.FileName = $invocation.RootElement.GetProperty('Executable').GetString()
+        foreach ($argument in $invocation.RootElement.GetProperty('Arguments').EnumerateArray()) {
+            $startInfo.ArgumentList.Add($argument.GetString())
+        }
+    }
+    finally {
+        $invocation.Dispose()
+    }
+}
+finally {
+    # The workload never needs the payload. The parent also cleans up launch failures.
+    [IO.File]::Delete($invocationPath)
 }
 
 $child = [Diagnostics.Process]::Start($startInfo)
@@ -709,6 +722,26 @@ $windowsStartGate = $null
 $unixProcessGroupId = 0
 
 try {
+    $invocationBytes = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -Compress -Depth 3 -InputObject @{
+        Executable = $DotNetPath
+        Arguments = $effectiveArguments
+    }))
+    $payloadOptions = [IO.FileStreamOptions]::new()
+    $payloadOptions.Mode = [IO.FileMode]::CreateNew
+    $payloadOptions.Access = [IO.FileAccess]::Write
+    $payloadOptions.Share = [IO.FileShare]::None
+    if (-not $IsWindows) {
+        $payloadOptions.UnixCreateMode = [IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::UserWrite
+    }
+    # Windows inherits the current user's temporary-directory ACL. Unix creates mode 0600.
+    $payload = [IO.FileStream]::new($invocationPath, $payloadOptions)
+    try {
+        $payload.Write($invocationBytes, 0, $invocationBytes.Length)
+    }
+    finally {
+        $payload.Dispose()
+    }
+
     # -File works on supported PowerShell versions; -CommandWithArgs was
     # experimental before PowerShell 7.5.
     [System.IO.File]::WriteAllText(
@@ -817,6 +850,9 @@ finally {
 
     if (Test-Path -LiteralPath $wrapperPath) {
         Remove-Item -LiteralPath $wrapperPath -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $invocationPath) {
+        Remove-Item -LiteralPath $invocationPath -Force -ErrorAction SilentlyContinue
     }
 }
 

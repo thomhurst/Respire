@@ -277,5 +277,6 @@ finally {
     }
 }
 
-# Expected timeout/memory failures must not leak into the Actions pwsh exit check.
+# Every failed assertion throws before reaching this line. Only expected child
+# timeout/memory exit codes must not leak into the Actions pwsh exit check.
 exit 0
