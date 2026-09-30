@@ -230,7 +230,8 @@ Enable cluster routing and provide one or more seed nodes. Respire loads `CLUSTE
 `MOVED`/`ASK` redirects, and caches learned routes. Batches may span nodes; transactions must keep
 all keys in one slot, so use Redis hash tags for related keys. Watched transactions use a dedicated
 connection to that slot owner; a redirect requires a new WATCH attempt and fresh reads. See the
-[Cluster WATCH guide](website/docs/guides/batches-and-transactions.md#cluster-watch-transactions). Sharded pub/sub is unavailable
+[Cluster WATCH guide](website/docs/guides/batches-and-transactions.md#cluster-watch-transactions).
+Sharded pub/sub is unavailable
 in cluster mode; `SSUBSCRIBE` subscriptions require a non-cluster client.
 
 ```csharp
