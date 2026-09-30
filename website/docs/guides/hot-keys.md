@@ -10,7 +10,9 @@ claim exclusive ownership or silently substitute another diagnostic on older ser
 Acquire a pinned handle before starting. Every operation uses that original physical
 connection, even when the client has multiple connections or Cluster routing changes.
 `Endpoint` identifies its server; `IsConnected` is a point-in-time observation. The
-handle uses a client-owned socket and requires no disposal. It does not reconnect,
+handle uses a client-owned socket and requires no disposal. The socket remains shared
+with ordinary commands; holding a tracker does not reserve pool capacity, even with
+one configured connection. It does not reconnect,
 follow redirects, retry writes, or automatically stop tracking. After disconnection,
 reacquire explicitly and inspect the server's state before starting another session.
 Operations on a disconnected handle fail with `RespireConnectionException`; operations

@@ -14,7 +14,8 @@ public partial interface IServerCommands
     /// <remarks>Includes replicas. Sessions are shared with other users, not owned by this client. Partial success is possible.</remarks>
     ValueTask<RespireServerResult<bool>[]> StartHotKeysOnAllNodesAsync(RespireHotKeysOptions options, CancellationToken cancellationToken = default);
     /// <summary>Returns each currently discovered node's owned snapshots; null means no session on that node.</summary>
-    /// <remarks>Discovery can change between calls. Compare endpoints; results are not a global ranking.</remarks>
+    /// <remarks>Does not require AllowAdmin; server ACLs still apply. Discovery can change between calls.
+    /// Compare endpoints; results are not a global ranking.</remarks>
     ValueTask<RespireServerResult<RespireHotKeysSnapshot[]?>[]> GetHotKeysOnAllNodesAsync(CancellationToken cancellationToken = default);
     /// <summary>Stops tracking on every currently discovered node. Requires AllowAdmin; false means no active session.</summary>
     ValueTask<RespireServerResult<bool>[]> StopHotKeysOnAllNodesAsync(CancellationToken cancellationToken = default);
@@ -64,7 +65,9 @@ internal sealed partial class ServerCommands
 
 /// <summary>A pinned connection to one server's shared HOTKEYS tracker. Requires Redis 8.6+.</summary>
 /// <remarks>This handle neither owns the socket nor reserves the server's tracking session. Other clients can
-/// stop, reset, or replace that session. It never reconnects, reroutes, retries writes, or automatically stops tracking.</remarks>
+/// stop, reset, or replace that session. The connection remains shared with ordinary client commands;
+/// holding a tracker does not reserve pool capacity. It never reconnects, reroutes, retries writes,
+/// or automatically stops tracking.</remarks>
 public sealed class RespireHotKeysTracker
 {
     private readonly RespireClient _client;
@@ -93,6 +96,7 @@ public sealed class RespireHotKeysTracker
     }
 
     /// <summary>Returns owned snapshot maps in server order, or null when no session exists. Does not stop tracking.</summary>
+    /// <remarks>Does not require AllowAdmin; server ACLs still apply.</remarks>
     public async ValueTask<RespireHotKeysSnapshot[]?> GetAsync(CancellationToken cancellationToken = default)
     {
         using var reply = await SendAsync("HOTKEYS GET", new Cmd(HotKeysCommands.Get), cancellationToken).ConfigureAwait(false);

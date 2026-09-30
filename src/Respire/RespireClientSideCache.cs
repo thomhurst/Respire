@@ -391,6 +391,7 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
         RespireTelemetry.ClientCacheEvictions.Add(1);
     }
 
+    // Read-only here means preserving cached keyspace values. Diagnostic and script state may change.
     private static bool IsReadOnly(string operation)
         => IsCacheableRead(operation)
            || operation is
