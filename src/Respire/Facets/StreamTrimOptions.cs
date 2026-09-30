@@ -18,14 +18,14 @@ public readonly record struct StreamTrimOptions
     /// <summary>Limits trimming work; requires approximate trimming and Redis 6.2+. Zero disables the limit.</summary>
     public long? Limit { get; init; }
 
-    internal int ValidateAndCountArguments(bool requireThreshold)
+    internal int ValidateAndCountArguments(bool requireThreshold, string parameterName)
     {
         if (MaxLength.HasValue && MinId.HasValue)
-            throw new ArgumentException("MAXLEN and MINID are mutually exclusive trimming thresholds.");
+            throw new ArgumentException("MAXLEN and MINID are mutually exclusive trimming thresholds.", parameterName);
         var hasThreshold = MaxLength.HasValue || MinId.HasValue;
         if (requireThreshold && !hasThreshold)
-            throw new ArgumentException("A MAXLEN or MINID trimming threshold is required.");
-        if (MaxLength is { } length) ArgumentOutOfRangeException.ThrowIfNegative(length);
+            throw new ArgumentException("A MAXLEN or MINID trimming threshold is required.", parameterName);
+        if (MaxLength is { } length) ArgumentOutOfRangeException.ThrowIfNegative(length, parameterName);
         if (MinId is { } id)
         {
             // MINID accepts numeric thresholds, not the ms-* ID-generation syntax used by XADD.
@@ -35,13 +35,13 @@ public readonly record struct StreamTrimOptions
             if (!ulong.TryParse(milliseconds, NumberStyles.None, CultureInfo.InvariantCulture, out _)
                 || (separator >= 0 && !ulong.TryParse(text[(separator + 1)..], NumberStyles.None,
                     CultureInfo.InvariantCulture, out _)))
-                throw new ArgumentException("MINID requires a numeric stream id.", nameof(MinId));
+                throw new ArgumentException("MINID requires a numeric stream id.", parameterName);
         }
         if (Limit is { } limit)
         {
-            ArgumentOutOfRangeException.ThrowIfNegative(limit);
+            ArgumentOutOfRangeException.ThrowIfNegative(limit, parameterName);
             if (!hasThreshold || !Approximate)
-                throw new ArgumentException("LIMIT requires a trimming threshold and approximate trimming.", nameof(Limit));
+                throw new ArgumentException("LIMIT requires a trimming threshold and approximate trimming.", parameterName);
         }
         return hasThreshold ? 2 + (Approximate ? 1 : 0) + (Limit.HasValue ? 2 : 0) : 0;
     }

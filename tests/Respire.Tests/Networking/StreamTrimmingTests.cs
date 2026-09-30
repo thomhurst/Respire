@@ -85,9 +85,12 @@ public class StreamTrimmingTests
         {
             var add = new StreamAddOptions { MaxLength = trim.MaxLength, MinId = trim.MinId,
                 ApproximateTrim = trim.Approximate, Limit = trim.Limit };
-            await Assert.That(async () => await client.Streams.TrimAsync("events", trim)).Throws<ArgumentException>();
-            await Assert.That(async () => await client.Streams.AddAsync("events", add, ("field", "value")))
+            var trimError = await Assert.That(async () => await client.Streams.TrimAsync("events", trim))
                 .Throws<ArgumentException>();
+            var addError = await Assert.That(async () => await client.Streams.AddAsync("events", add, ("field", "value")))
+                .Throws<ArgumentException>();
+            await Assert.That(trimError!.ParamName).IsEqualTo("options");
+            await Assert.That(addError!.ParamName).IsEqualTo("options");
             foreach (var stream in new[] { batch.Streams, transaction.Streams })
             {
                 await Assert.That(() => stream.Trim("events", trim)).Throws<ArgumentException>();
@@ -97,6 +100,28 @@ public class StreamTrimmingTests
         await Assert.That(async () => await client.Streams.TrimAsync("events", default)).Throws<ArgumentException>();
         await Assert.That(() => batch.Streams.Trim("events", default)).Throws<ArgumentException>();
         await Assert.That(() => transaction.Streams.Trim("events", default)).Throws<ArgumentException>();
+        await Assert.That(batch.Count).IsEqualTo(0);
+        await Assert.That(transaction.Count).IsEqualTo(0);
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
+    [Test]
+    public async Task AddLimitWithoutThresholdRejectsDefaultApproximationBeforeIoOrEnqueue()
+    {
+        await using var server = new FakeRespServer();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        using var batch = client.CreateBatch();
+        await using var transaction = client.CreateTransaction();
+        var options = new StreamAddOptions { Limit = 1 };
+        var error = await Assert.That(async () => await client.Streams.AddAsync("events", options, ("field", "value")))
+            .ThrowsExactly<ArgumentException>();
+        await Assert.That(error!.ParamName).IsEqualTo("options");
+        await Assert.That(error.Message).Contains("LIMIT requires a trimming threshold");
+        await Assert.That(() => batch.Streams.Add("events", options, ("field", "value"))).ThrowsExactly<ArgumentException>();
+        await Assert.That(() => transaction.Streams.Add("events", options, ("field", "value"))).ThrowsExactly<ArgumentException>();
         await Assert.That(batch.Count).IsEqualTo(0);
         await Assert.That(transaction.Count).IsEqualTo(0);
         await Assert.That(server.ReceivedCommands).IsEmpty();

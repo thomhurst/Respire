@@ -275,6 +275,11 @@ public readonly record struct StreamAddOptions
         init => _createStream = value;
     }
 
+    internal StreamTrimOptions ToTrimOptions() => new()
+    {
+        MaxLength = MaxLength, MinId = MinId, Approximate = ApproximateTrim, Limit = Limit,
+    };
+
     /// <inheritdoc/>
     public bool Equals(StreamAddOptions other)
         => Id == other.Id
@@ -509,12 +514,8 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
         ReadOnlySpan<(string Field, RespireValue Value)> fields,
         bool snapshotValues = false)
     {
-        var trim = new StreamTrimOptions
-        {
-            MaxLength = options.MaxLength, MinId = options.MinId,
-            Approximate = options.ApproximateTrim, Limit = options.Limit,
-        };
-        var optionCount = (options.CreateStream ? 0 : 1) + trim.ValidateAndCountArguments(requireThreshold: false);
+        var trim = options.ToTrimOptions();
+        var optionCount = (options.CreateStream ? 0 : 1) + trim.ValidateAndCountArguments(requireThreshold: false, nameof(options));
         var args = new RespireValue[optionCount + 1 + fields.Length * 2];
         var offset = 0;
         if (!options.CreateStream)
@@ -608,7 +609,7 @@ internal sealed class StreamCommands(RespireClient client) : IStreamCommands
 
     internal static Cmd1N BuildTrimCommand(RespireClient client, RespireKey key, StreamTrimOptions options)
     {
-        var args = new RespireValue[options.ValidateAndCountArguments(requireThreshold: true)];
+        var args = new RespireValue[options.ValidateAndCountArguments(requireThreshold: true, nameof(options))];
         options.CopyArgumentsTo(args);
         return new Cmd1N(XTrim, client.Key(in key), args);
     }
