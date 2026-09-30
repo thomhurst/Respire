@@ -27,8 +27,8 @@
 - Server diagnostics add latency and memory doctor reports, typed latency histories and
   cumulative histograms, slow-log lengths, and admin-gated allocator purging. Each has
   an explicit per-node counterpart with endpoint-associated results and errors.
-  Custom `IServerCommands` implementations, decorators, and mocks must add all twelve
-  methods. See [server diagnostics](../website/docs/guides/server-diagnostics.md) for
+  **Breaking interface change:** custom `IServerCommands` implementations, decorators,
+  and mocks must add all twelve methods. See [server diagnostics](../website/docs/guides/server-diagnostics.md) for
   versions, units, ownership, collection costs, and partial-success semantics.
 
 ### Stream reference policies
