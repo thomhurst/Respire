@@ -48,6 +48,7 @@ internal static class RespireApiStub
             }
 
             public readonly struct RespireBatchResult { }
+            public readonly struct RespireAofAcknowledgement { }
 
             public sealed class RespireBatch
             {
@@ -57,6 +58,8 @@ internal static class RespireApiStub
                 public ValueTask SendAsync() => default;
                 public ValueTask<RespireBatchResult> ExecuteAsync() => default;
                 public ValueTask<RespireBatchResult> TryExecuteAsync() => default;
+                public ValueTask<long> ExecuteAndWaitForReplicationAsync(int replicas, TimeSpan timeout, System.Threading.CancellationToken cancellationToken = default) => default;
+                public ValueTask<RespireAofAcknowledgement> ExecuteAndWaitForAofAsync(bool requireLocal, int replicas, TimeSpan timeout, System.Threading.CancellationToken cancellationToken = default) => default;
             }
 
             public abstract class RespireTransactionBase : IAsyncDisposable

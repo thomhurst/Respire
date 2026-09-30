@@ -62,6 +62,13 @@ have succeeded. If the acknowledgement fails, successful write pendings remain
 readable. The client never repeats writes after a disconnect, cancellation, or
 Cluster redirect; failure after a send may leave the write outcome uncertain.
 
+After an execution exception, inspect each queued pending's `Status` and `Error`.
+If every status is `RespirePendingStatus.Succeeded`, all command replies completed
+successfully and execution failed afterward, for example during acknowledgement or
+cancellation. Those results remain readable, but durability is unconfirmed. A failed
+command pending does not prove its write was never applied. Do not replay writes
+merely because the acknowledgement failed.
+
 Durability execution conservatively invalidates the client-side cache before writes
 and again when execution finishes, just like ordinary batches. Borrowed input buffers
 must remain unchanged until execution completes. Dispose the batch after use;

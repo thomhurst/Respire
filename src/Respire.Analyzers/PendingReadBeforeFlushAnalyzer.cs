@@ -26,6 +26,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
     private const string SendAsync = "SendAsync";
     private const string ExecuteAsync = "ExecuteAsync";
     private const string TryExecuteAsync = "TryExecuteAsync";
+    private const string ExecuteAndWaitForReplicationAsync = "ExecuteAndWaitForReplicationAsync";
+    private const string ExecuteAndWaitForAofAsync = "ExecuteAndWaitForAofAsync";
     private const string CommitAsync = "CommitAsync";
     private const string ResultPropertyName = "Result";
     private const string GetAwaiter = "GetAwaiter";
@@ -439,7 +441,8 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                         && context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol
                             is IMethodSymbol { ReducedFrom: not null }
                         && (!allowNamedFlushExtension
-                            || member.Name.Identifier.ValueText is not (SendAsync or ExecuteAsync or TryExecuteAsync or CommitAsync))
+                            || (member.Name.Identifier.ValueText != CommitAsync
+                                && !IsBatchFlushMethodName(member.Name.Identifier.ValueText)))
                         && DominatesRead(context, scope, invocation, before))
                     {
                         return true;
@@ -861,6 +864,10 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
         return false;
     }
 
+    private static bool IsBatchFlushMethodName(string name)
+        => name is SendAsync or ExecuteAsync or TryExecuteAsync
+            or ExecuteAndWaitForReplicationAsync or ExecuteAndWaitForAofAsync;
+
     private static bool IsFlushInvocation(
         SyntaxNodeAnalysisContext context, InvocationExpressionSyntax invocation, ILocalSymbol batch)
     {
@@ -869,7 +876,7 @@ public sealed class PendingReadBeforeFlushAnalyzer : DiagnosticAnalyzer
                && context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol
                    is IMethodSymbol method
                && (isBatch
-                   ? method.Name is SendAsync or ExecuteAsync or TryExecuteAsync
+                   ? IsBatchFlushMethodName(method.Name)
                    : method.Name == CommitAsync)
                && SymbolEqualityComparer.Default.Equals(method.ContainingType, batch.Type)
                && context.SemanticModel.GetSymbolInfo(
