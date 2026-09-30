@@ -531,6 +531,7 @@ public class LockCommandTests
             disposal = keepAlive.DisposeAsync().AsTask();
             await Assert.That(disposal.IsCompleted).IsFalse();
             var fenceIndex = server.ReceivedCommands.ToList().IndexOf("CLIENT KILL ID 41");
+            await Assert.That(fenceIndex).IsGreaterThanOrEqualTo(0);
             var controlConnection = server.ReceivedConnectionIds[fenceIndex];
             await Assert.That(controlConnection).IsEqualTo(1);
             await server.SendRawAsync(":1\r\n"u8.ToArray(), controlConnection);
