@@ -9,15 +9,22 @@ public class ListSearchMutationIntegrationTests(RedisTestContainer fixture)
     public enum ExecutionMode { Immediate, Batch, Transaction }
 
     [Test]
-    [Arguments(2, ExecutionMode.Immediate)]
-    [Arguments(2, ExecutionMode.Batch)]
-    [Arguments(2, ExecutionMode.Transaction)]
-    [Arguments(3, ExecutionMode.Immediate)]
-    [Arguments(3, ExecutionMode.Batch)]
-    [Arguments(3, ExecutionMode.Transaction)]
-    public async Task Search_HandlesRankCountLimitsAndBinaryValues(int protocol, ExecutionMode mode)
+    [Arguments(2, ExecutionMode.Immediate, false)]
+    [Arguments(2, ExecutionMode.Batch, false)]
+    [Arguments(2, ExecutionMode.Transaction, false)]
+    [Arguments(3, ExecutionMode.Immediate, false)]
+    [Arguments(3, ExecutionMode.Batch, false)]
+    [Arguments(3, ExecutionMode.Transaction, false)]
+    [Arguments(2, ExecutionMode.Immediate, true)]
+    [Arguments(2, ExecutionMode.Batch, true)]
+    [Arguments(3, ExecutionMode.Immediate, true)]
+    [Arguments(3, ExecutionMode.Batch, true)]
+    public async Task Search_HandlesRankCountLimitsAndBinaryValues(int protocol, ExecutionMode mode, bool useFake)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         var view = client.WithKeyPrefix("tenant:");
         byte[] binary = [0xff, 0, 0x42];
         await view.Lists.RightPushAsync("list", binary, "gap", binary, binary);
@@ -36,15 +43,22 @@ public class ListSearchMutationIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [Arguments(2, ExecutionMode.Immediate)]
-    [Arguments(2, ExecutionMode.Batch)]
-    [Arguments(2, ExecutionMode.Transaction)]
-    [Arguments(3, ExecutionMode.Immediate)]
-    [Arguments(3, ExecutionMode.Batch)]
-    [Arguments(3, ExecutionMode.Transaction)]
-    public async Task Mutations_PreserveBinaryValuesNegativeIndexesAndSentinels(int protocol, ExecutionMode mode)
+    [Arguments(2, ExecutionMode.Immediate, false)]
+    [Arguments(2, ExecutionMode.Batch, false)]
+    [Arguments(2, ExecutionMode.Transaction, false)]
+    [Arguments(3, ExecutionMode.Immediate, false)]
+    [Arguments(3, ExecutionMode.Batch, false)]
+    [Arguments(3, ExecutionMode.Transaction, false)]
+    [Arguments(2, ExecutionMode.Immediate, true)]
+    [Arguments(2, ExecutionMode.Batch, true)]
+    [Arguments(3, ExecutionMode.Immediate, true)]
+    [Arguments(3, ExecutionMode.Batch, true)]
+    public async Task Mutations_PreserveBinaryValuesNegativeIndexesAndSentinels(int protocol, ExecutionMode mode, bool useFake)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         var view = client.WithKeyPrefix("tenant:");
         byte[] binary = [0xff, 0, 0x42];
         (await Run(view, mode, l => l.InsertBeforeAsync("missing", binary, "before"), l => l.InsertBefore("missing", binary, "before"))).Should().Be(0);
@@ -68,15 +82,22 @@ public class ListSearchMutationIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [Arguments(2, ExecutionMode.Immediate)]
-    [Arguments(2, ExecutionMode.Batch)]
-    [Arguments(2, ExecutionMode.Transaction)]
-    [Arguments(3, ExecutionMode.Immediate)]
-    [Arguments(3, ExecutionMode.Batch)]
-    [Arguments(3, ExecutionMode.Transaction)]
-    public async Task ServerErrors_ArePreserved(int protocol, ExecutionMode mode)
+    [Arguments(2, ExecutionMode.Immediate, false)]
+    [Arguments(2, ExecutionMode.Batch, false)]
+    [Arguments(2, ExecutionMode.Transaction, false)]
+    [Arguments(3, ExecutionMode.Immediate, false)]
+    [Arguments(3, ExecutionMode.Batch, false)]
+    [Arguments(3, ExecutionMode.Transaction, false)]
+    [Arguments(2, ExecutionMode.Immediate, true)]
+    [Arguments(2, ExecutionMode.Batch, true)]
+    [Arguments(3, ExecutionMode.Immediate, true)]
+    [Arguments(3, ExecutionMode.Batch, true)]
+    public async Task ServerErrors_ArePreserved(int protocol, ExecutionMode mode, bool useFake)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString);
+        await using var root = await RespireClient.ConnectAsync(options with { Protocol = (RespProtocol)protocol });
+        var client = root.WithKeyPrefix(Guid.NewGuid().ToString("N") + ":");
         await client.SetAsync("wrong", "string");
         await client.Lists.RightPushAsync("list", "value");
         Func<Task>[] wrongType =

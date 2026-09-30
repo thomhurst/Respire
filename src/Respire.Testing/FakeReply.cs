@@ -7,6 +7,7 @@ namespace Respire.Testing;
 internal sealed record FakeReply(byte Prefix, object? Value)
 {
     internal static readonly FakeReply Null = new((byte)'$', null);
+    internal static readonly FakeReply NullArray = new((byte)'*', null);
     internal static readonly FakeReply Ok = Simple("OK");
     internal static FakeReply Bulk(byte[]? value) => value is null ? Null : new((byte)'$', value);
     internal static FakeReply Text(string value) => Bulk(Encoding.UTF8.GetBytes(value));
@@ -26,7 +27,11 @@ internal sealed record FakeReply(byte Prefix, object? Value)
 
     private void Write(ArrayBufferWriter<byte> writer, bool resp3)
     {
-        if (Value is FakeReply[] elements)
+        if (Prefix == '*' && Value is null)
+        {
+            writer.Write(resp3 ? "_\r\n"u8 : "*-1\r\n"u8);
+        }
+        else if (Value is FakeReply[] elements)
         {
             Line(writer, Prefix == '~' && !resp3 ? (byte)'*' : Prefix, (elements.Length / (Prefix == '%' ? 2 : 1)).ToString(CultureInfo.InvariantCulture));
             foreach (var element in elements) element.Write(writer, resp3);

@@ -1,6 +1,6 @@
 ---
 title: In-memory testing
-description: Exercise real Respire client code against a deterministic strings, keys, hashes, and sets server without Docker.
+description: Exercise real Respire client code against a deterministic strings, keys, hashes, lists, and sets server without Docker.
 ---
 
 # In-memory testing
@@ -54,6 +54,7 @@ An error consumes exactly one response slot, so later valid commands still work.
 | Strings | `GET`, `SET` with `NX`, `XX`, `GET`, `KEEPTTL`, `EX`, `PX`, `EXAT`, `PXAT`; `MGET`, `MSET`, `MSETNX`, `GETDEL`, `GETSET`, `GETEX`, `STRLEN`, `APPEND` |
 | Integer strings | `INCR`, `DECR`, `INCRBY`, `DECRBY`, with checked signed 64-bit arithmetic |
 | Hashes | `HSET`, `HSETNX`, `HMSET`, `HGET`, `HMGET`, `HGETALL`, `HDEL`, `HEXISTS`, `HLEN`, `HKEYS`, `HVALS`, `HSTRLEN`, `HINCRBY` |
+| Lists | `LPUSH`, `RPUSH`, `LPUSHX`, `RPUSHX`, `LPOP`/`RPOP` with optional count, `LLEN`, `LRANGE`, `LINDEX`, `LSET`, `LTRIM`, `LREM`, `LINSERT BEFORE/AFTER`, `LPOS RANK/COUNT/MAXLEN` |
 | Sets | `SADD`, `SREM`, `SMEMBERS`, `SCARD`, `SISMEMBER`, `SMISMEMBER`, `SMOVE`, `SINTER`, `SUNION`, `SDIFF`, their `STORE` forms, and `SINTERCARD` with `LIMIT` |
 | Keys | `DEL`, `UNLINK`, `EXISTS`, `TYPE`, `PERSIST` |
 | Expiry | `EXPIRE`, `PEXPIRE`, `EXPIREAT`, `PEXPIREAT` with `NX`, `XX`, `GT`, `LT`; `TTL`, `PTTL`, `EXPIRETIME`, `PEXPIRETIME` |
@@ -68,7 +69,7 @@ Hash fields and values preserve binary bytes. `HSET` counts newly added fields, 
 duplicate fields within one command only once; `HMGET` preserves requested field order and
 nulls. `HGETALL` emits a RESP2 array or RESP3 map. Hash enumeration order is unspecified.
 `HINCRBY` uses checked signed 64-bit arithmetic. Hash mutations retain key-level TTL; removing
-the last field deletes the key and its TTL. String operations reject hashes and sets with `WRONGTYPE`,
+the last field deletes the key and its TTL. String operations reject hashes, lists, and sets with `WRONGTYPE`,
 except `MGET` returns null for non-string keys and ordinary `SET`/`MSET` may replace their type.
 Failed operations preserve existing fields and TTL. Hash-field expiry, `HINCRBYFLOAT`,
 `HRANDFIELD`, and `HSCAN` are explicitly unsupported.
@@ -110,8 +111,38 @@ if (onlineSubscribers.Length != 1 || onlineSubscribers[0] != "Grace")
     throw new InvalidOperationException("Set intersection did not match.");
 ```
 
+Lists retain binary elements, duplicates, insertion order, and key TTL across mutations.
+Negative indexes count from the tail. `LRANGE`/`LTRIM` use inclusive end indexes;
+`LREM` uses positive counts from the head, negative counts from the tail, or zero for all matches.
+`LPOS` supports reverse ranks, unlimited `COUNT 0`, and a `MAXLEN` scan bound. Without
+`COUNT`, a missing match returns null; with it, the reply is an array. Count-pop returns
+null for a missing key and an empty array for count zero on an existing list.
+Ranks must be nonzero and have a magnitude no greater than `long.MaxValue`, matching Redis 7.2+.
+Repeated valid options use their final values, but every occurrence is validated immediately:
+`RANK 0 RANK 1`, `COUNT -1 COUNT 1`, and `MAXLEN -1 MAXLEN 0` still fail.
+Removing the final element deletes the key and its TTL. Wrong types and malformed options
+fail without changing data. Immediate commands and batches use the same handlers.
+
+```csharp
+using Respire.Testing;
+
+await using var server = new RespireFakeServer();
+await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
+await client.Lists.RightPushAsync("jobs", 10, 20, 30);
+using var batch = client.CreateBatch();
+var first = batch.Lists.LeftPop<int>("jobs");
+var rest = batch.Lists.RightPopMany<int>("jobs", 2);
+await batch.ExecuteAsync();
+if (first.Result != 10 || !rest.Result.SequenceEqual(new[] { 30, 20 }))
+    throw new InvalidOperationException("List ordering did not round-trip.");
+```
+
+Blocking pops, multi-key pops, and moves (`BLPOP`, `BRPOP`, `LMPOP`, `BLMPOP`, `LMOVE`,
+`BLMOVE`, `RPOPLPUSH`, and `BRPOPLPUSH`) remain explicitly unsupported. Use the nonblocking
+typed overloads without `waitFor`; a populated list does not make a blocking command supported.
+
 Only database zero and standalone operation are supported. Authentication, TLS, Cluster,
-Sentinel, scripts/functions, client-side tracking, lists, sorted sets, pub/sub, transactions,
+Sentinel, scripts/functions, client-side tracking, sorted sets, pub/sub, transactions,
 persistence and administrative diagnostics are not simulated. Unsupported handshake features
 fail initialization. Do not enable these modes and infer production behavior from the fake.
 Individual RESP requests are limited to 16 MiB; larger requests close their connection
@@ -147,6 +178,8 @@ Hash behavior follows [HSET](https://redis.io/docs/latest/commands/hset/),
 [SMOVE](https://redis.io/docs/latest/commands/smove/),
 [SINTERSTORE](https://redis.io/docs/latest/commands/sinterstore/), and
 [SINTERCARD](https://redis.io/docs/latest/commands/sintercard/).
+List option and reply behavior follows [Redis LPOS](https://redis.io/docs/latest/commands/lpos/)
+and the [Redis list command implementation](https://github.com/redis/redis/blob/7.2/src/t_list.c).
 Run real-server integration tests for version compatibility, unsupported commands, and
 operational behavior. Remaining collections and pub/sub/transactions remain tracked in
 [#540](https://github.com/thomhurst/Respire/issues/540) and
