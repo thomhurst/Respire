@@ -32,6 +32,12 @@ public class ContainerFixtureIntegrationTests
         });
         fixture.SentinelEndpoints.Should().HaveCount(topology == RespireContainerTopology.Sentinel ? 3 : 0);
         fixture.ContainerId.Should().NotBeNullOrWhiteSpace();
+        using (var docker = TestcontainersSettings.OS.DockerEndpointAuthConfig
+            .GetDockerClientBuilder(Guid.NewGuid()).WithTimeout(TimeSpan.FromSeconds(5)).Build())
+        {
+            var container = await docker.Containers.InspectContainerAsync(fixture.ContainerId);
+            container.HostConfig.Init.Should().BeTrue();
+        }
         foreach (var endpoint in fixture.SentinelEndpoints)
         {
             // Assert readiness immediately: no test-side polling can hide early return.
@@ -127,6 +133,9 @@ public class ContainerFixtureIntegrationTests
             Server = RespireContainerServer.Valkey, Image = "redis:7.2-alpine",
         });
         var failure = await start.Should().ThrowAsync<InvalidOperationException>().WithMessage("*valkey-server*failed*");
+        failure.Which.Data["RespireFixture.StartupStep"].Should().BeOfType<string>()
+            .Which.Should().Contain("valkey-server");
+        failure.Which.Data["RespireFixture.LastReadinessResponse"].Should().BeOfType<string>();
         var identity = Regex.Match(failure.Which.Message, @"Fixture container ([a-f0-9]{64}) command");
         identity.Success.Should().BeTrue();
         await AssertContainerRemovedAsync(identity.Groups[1].Value);

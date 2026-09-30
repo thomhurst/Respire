@@ -15,6 +15,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
     /// <summary>The monitored service name used by Sentinel fixtures.</summary>
     public const string SentinelServiceName = "respire-test";
     private const int ClusterPrimaryCount = 3;
+    private const int ClusterBusPortStart = 16379;
     private readonly IContainer _container;
     private readonly RespireContainerOptions _options;
     private readonly int[] _ports;
@@ -34,6 +35,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         _cli = options.Server == RespireContainerServer.Redis ? "redis-cli" : "valkey-cli";
         var image = options.Image ?? (options.Server == RespireContainerServer.Redis ? "redis:7.2-alpine" : "valkey/valkey:8.1-alpine");
         var builder = new ContainerBuilder(image)
+            .WithCreateParameterModifier(parameters => parameters.HostConfig.Init = true)
             .WithEntrypoint("/bin/sh", "-c")
             .WithCommand("mkdir -p /tmp/respire-fixture; exec tail -f /dev/null")
             .WithLabel("respire.testing.fixture", "true");
@@ -81,6 +83,8 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         }
         catch (Exception startupError)
         {
+            startupError.Data["RespireFixture.StartupStep"] = fixture._startupStep;
+            startupError.Data["RespireFixture.LastReadinessResponse"] = fixture._lastReadinessResponse;
             // Capture before disposal. Creation may have failed before Docker assigned an ID;
             // diagnostic lookup must never hide the original startup or cleanup exception.
             string? containerId = null;
@@ -121,7 +125,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         {
             var config = BaseConfiguration(_ports[index]);
             if (_options.Topology == RespireContainerTopology.Cluster)
-                config += $"cluster-enabled yes\ncluster-config-file /tmp/respire-fixture/nodes-{index}.conf\ncluster-announce-ip 127.0.0.1\ncluster-port {16379 + index}\ncluster-announce-bus-port {16379 + index}\n";
+                config += $"cluster-enabled yes\ncluster-config-file /tmp/respire-fixture/nodes-{index}.conf\ncluster-announce-ip 127.0.0.1\ncluster-port {ClusterBusPortStart + index}\ncluster-announce-bus-port {ClusterBusPortStart + index}\n";
             if (_options.Topology == RespireContainerTopology.Sentinel && index == 1)
                 config += $"replicaof 127.0.0.1 {_ports[0]}\nreplica-announce-ip 127.0.0.1\nreplica-announce-port {_ports[1]}\n";
             await StartServerAsync(index, config, sentinel: false, cancellationToken).ConfigureAwait(false);
@@ -134,7 +138,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
                 var last = (index + 1) * 16384 / dataCount - 1;
                 await CliAsync(_ports[index], ["CLUSTER", "ADDSLOTSRANGE", Number(first), Number(last)], cancellationToken).ConfigureAwait(false);
                 if (index != 0)
-                    await CliAsync(_ports[0], ["CLUSTER", "MEET", "127.0.0.1", Number(_ports[index]), Number(16379 + index)], cancellationToken).ConfigureAwait(false);
+                    await CliAsync(_ports[0], ["CLUSTER", "MEET", "127.0.0.1", Number(_ports[index]), Number(ClusterBusPortStart + index)], cancellationToken).ConfigureAwait(false);
             }
             foreach (var port in _ports)
                 await WaitForAsync(port, ["CLUSTER", "INFO"], text =>
@@ -218,7 +222,10 @@ public sealed class RespireContainerFixture : IAsyncDisposable
 
     private async Task<string> ExecuteAsync(string[] command, CancellationToken cancellationToken)
     {
+        _startupStep = string.Join(' ', command);
+        _lastReadinessResponse = null;
         var result = await _container.ExecAsync(command, cancellationToken).ConfigureAwait(false);
+        _lastReadinessResponse = result.Stdout + result.Stderr;
         if (result.ExitCode != 0)
             throw new InvalidOperationException($"Fixture container {_container.Id} command {command[0]} failed ({result.ExitCode}): {result.Stdout} {result.Stderr}");
         return result.Stdout;
@@ -233,15 +240,20 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         // Cluster/Sentinel advertise ports in replies. Preserve those ports across local NAT.
         // Keep reservations together to avoid duplicate ephemeral choices within this fixture.
         var listeners = new List<TcpListener>();
+        var ports = new List<int>(count);
         try
         {
-            for (var index = 0; index < count; index++)
+            while (ports.Count < count)
             {
                 var listener = new TcpListener(IPAddress.Loopback, 0);
                 listener.Start();
                 listeners.Add(listener);
+                var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+                // Retain excluded reservations too, so the next choice cannot repeat them.
+                if (port < ClusterBusPortStart || port >= ClusterBusPortStart + ClusterPrimaryCount)
+                    ports.Add(port);
             }
-            return listeners.Select(listener => ((IPEndPoint)listener.LocalEndpoint).Port).ToArray();
+            return ports.ToArray();
         }
         finally { foreach (var listener in listeners) listener.Stop(); }
     }
