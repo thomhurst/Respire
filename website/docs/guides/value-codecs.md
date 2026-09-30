@@ -28,7 +28,7 @@ var profile = await compressed.GetAsync<Dictionary<string, string>>("profile");
 `BrotliValueCodec` defaults to quality 4 (valid range 0–11). `DeflateValueCodec` uses
 raw DEFLATE and defaults to `CompressionLevel.Fastest`. Both use the .NET compression
 libraries without extra compression packages. The default threshold is 1 KiB and the
-default maximum original/decoded length is 64 MiB. Settings are captured when the codec
+default maximum original/decoded length is 8 MiB. Settings are captured when the codec
 is constructed. Instances are reusable across concurrent operations.
 
 Above the threshold, a codec tries compression and keeps it only if its payload is
@@ -38,9 +38,14 @@ value can therefore grow compared with storage without a codec. Encoding and dec
 allocate owned buffers and consume CPU. Comparative measurements are tracked in
 [#527](https://github.com/thomhurst/Respire/issues/527); no throughput improvement is promised.
 
-The serializer decorator buffers the complete serialized value, then asks the codec
-to write into its destination. Built-in codecs construct the final frame directly in
-that writer, avoiding an intermediate frame array and its copy. DEFLATE compression buffers stream output and copies it
+The serializer decorator buffers the complete serialized value in rented storage, then
+asks the codec to write into its destination. Built-in codecs construct the final frame
+directly in that writer, avoiding an intermediate frame array and its copy. Decode also
+uses rented scratch storage before calling the inner serializer. Every scratch rental is
+cleared and returned after success or failure; returned objects must own their data.
+Brotli compression writes into bounded rented storage without an intermediate compressed
+array. DEFLATE compression uses the compatibility fallback, which copies its compressed
+array into scratch storage. DEFLATE compression buffers stream output and copies it
 into an owned array; decoding copies compressed input into a stream-backed array.
 These allocations are part of the current opt-in cost. The decoded-length limit does
 not bound serializer buffering, compression workspace, or total peak memory.
@@ -137,7 +142,7 @@ actual output. Corrupt frames and size violations fail locally; commands are not
 because value conversion failed. The limit applies to serialized bytes, not .NET object size.
 
 A checksum-valid frame can allocate its declared output size before decompression
-rejects malformed data. The default 64 MiB is a per-value ceiling, not a total memory
+rejects malformed data. The default 8 MiB is a per-value ceiling, not a total memory
 budget or a Redis server limit. Set `MaximumDecodedLength` to the smallest application
 value limit that fits your data, and account for concurrent reads when choosing it.
 
@@ -147,7 +152,9 @@ for an application's custom codecs and must be coordinated between its readers a
 The protected constructor rejects IDs 0–15; built-in implementations use an internal
 reserved-ID constructor, also available to explicitly trusted optional codec assemblies.
 A custom codec implements compression and bounded decompression, while the base manages
-thresholds, ownership, framing, and checksums. There is no decoder registry or automatic
+thresholds, ownership, framing, and checksums. Override the protected `TryCompress` span
+overload to avoid the owned-array fallback and its copy. Its destination is shorter than
+the original input; return false when compressed output does not fit. There is no decoder registry or automatic
 fallback between algorithms.
 
 These are additive public types; existing client and facet interfaces gain no members.

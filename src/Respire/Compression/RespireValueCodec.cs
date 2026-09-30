@@ -48,35 +48,53 @@ public abstract class RespireValueCodec : IRespireValueCodec
     /// <inheritdoc/>
     public byte[] Encode(ReadOnlySpan<byte> payload)
     {
-        var originalLength = payload.Length;
-        var encoded = CompressIfSmaller(payload, out var algorithm);
-        var frame = new byte[HeaderLength + encoded.Length];
-        WriteFrame(encoded, originalLength, algorithm, frame);
-        return frame;
+        byte[]? scratch = null;
+        try
+        {
+            var encoded = CompressIfSmaller(payload, out var algorithm, ref scratch);
+            var frame = new byte[HeaderLength + encoded.Length];
+            WriteFrame(encoded, payload.Length, algorithm, frame);
+            return frame;
+        }
+        finally
+        {
+            if (scratch is not null) ArrayPool<byte>.Shared.Return(scratch, clearArray: true);
+        }
     }
 
     /// <summary>Appends a frame directly to the destination without allocating an intermediate frame array.</summary>
     public void Encode(ReadOnlySpan<byte> payload, IBufferWriter<byte> destination)
     {
         ArgumentNullException.ThrowIfNull(destination);
-        var originalLength = payload.Length;
-        var encoded = CompressIfSmaller(payload, out var algorithm);
-        var length = HeaderLength + encoded.Length;
-        WriteFrame(encoded, originalLength, algorithm, destination.GetSpan(length)[..length]);
-        destination.Advance(length);
+        byte[]? scratch = null;
+        try
+        {
+            var encoded = CompressIfSmaller(payload, out var algorithm, ref scratch);
+            var length = HeaderLength + encoded.Length;
+            WriteFrame(encoded, payload.Length, algorithm, destination.GetSpan(length)[..length]);
+            destination.Advance(length);
+        }
+        finally
+        {
+            if (scratch is not null) ArrayPool<byte>.Shared.Return(scratch, clearArray: true);
+        }
     }
 
-    private ReadOnlySpan<byte> CompressIfSmaller(ReadOnlySpan<byte> payload, out byte algorithm)
+    private ReadOnlySpan<byte> CompressIfSmaller(ReadOnlySpan<byte> payload, out byte algorithm, ref byte[]? scratch)
     {
         if (payload.Length > MaximumDecodedLength)
             throw new ArgumentOutOfRangeException(nameof(payload), "Value exceeds the codec's maximum decoded length.");
         algorithm = 0;
         if (payload.Length >= MinimumLength && !payload.IsEmpty)
         {
-            var compressed = Compress(payload);
-            if (compressed.Length < payload.Length)
+            // A result as large as the input is discarded, so never reserve expansion space.
+            scratch = ArrayPool<byte>.Shared.Rent(payload.Length - 1);
+            var destination = scratch.AsSpan(0, payload.Length - 1);
+            if (TryCompress(payload, destination, out var written))
             {
-                payload = compressed;
+                if ((uint)written > (uint)destination.Length)
+                    throw new InvalidDataException("Codec returned an invalid compressed length.");
+                payload = destination[..written];
                 algorithm = AlgorithmId;
             }
         }
@@ -141,6 +159,20 @@ public abstract class RespireValueCodec : IRespireValueCodec
 
     /// <summary>Returns the owned compressed payload, without a frame. Called only above the configured threshold.</summary>
     protected abstract byte[] Compress(ReadOnlySpan<byte> payload);
+
+    /// <summary>Tries to compress into bounded scratch storage. Returns false when the result does not fit.</summary>
+    /// <remarks>The destination is shorter than the input because only smaller results are stored.
+    /// The default implementation allocates through Compress and copies its result; override to avoid that allocation.
+    /// Implementations must not retain either span. On success, bytesWritten must describe initialized output bytes.</remarks>
+    protected virtual bool TryCompress(ReadOnlySpan<byte> payload, Span<byte> destination, out int bytesWritten)
+    {
+        var compressed = Compress(payload);
+        bytesWritten = 0;
+        if (compressed.Length > destination.Length) return false;
+        compressed.CopyTo(destination);
+        bytesWritten = compressed.Length;
+        return true;
+    }
 
     /// <summary>Fills the entire bounded destination or throws InvalidDataException for malformed data or a length mismatch.</summary>
     protected abstract void Decompress(ReadOnlySpan<byte> payload, Span<byte> destination);

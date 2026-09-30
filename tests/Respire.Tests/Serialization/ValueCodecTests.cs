@@ -117,6 +117,7 @@ public class ValueCodecTests
     [Test]
     public async Task InvalidConfigurationIsRejectedAtConstruction()
     {
+        await Assert.That(new RespireValueCodecOptions().MaximumDecodedLength).IsEqualTo(8 * 1024 * 1024);
         for (byte algorithm = 0; algorithm < 16; algorithm++)
             await Assert.That(() => new CustomCodec(algorithm)).Throws<ArgumentOutOfRangeException>();
         await Assert.That(new CustomCodec(16).AlgorithmId).IsEqualTo((byte)16);
@@ -148,7 +149,7 @@ public class ValueCodecTests
     }
 
     [Test]
-    public async Task SerializerWritesThroughTheCodecDestinationOverload()
+    public async Task SerializerUsesBothCodecDestinationOverloads()
     {
         var codec = new DestinationCodec();
         var serializer = new RespireValueCodecSerializer(new BinarySerializer(), codec);
@@ -159,7 +160,57 @@ public class ValueCodecTests
         var runtime = new ArrayBufferWriter<byte>();
         serializer.Serialize(runtime, typeof(BinaryValue), value);
         await Assert.That(runtime.WrittenMemory.ToArray()).IsEquivalentTo(value.Bytes);
+        await Assert.That(serializer.Deserialize<BinaryValue>(generic.WrittenSpan)!.Bytes).IsEquivalentTo(value.Bytes);
+        await Assert.That(((BinaryValue)serializer.Deserialize(typeof(BinaryValue), runtime.WrittenSpan)!).Bytes).IsEquivalentTo(value.Bytes);
         await Assert.That(codec.Writes).IsEqualTo(2);
+        await Assert.That(codec.Reads).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task ScratchBuffersGrowPreserveBytesAndClearEveryReturnedRental()
+    {
+        var pool = new RecordingPool();
+        using var buffer = new PooledByteBufferWriter(pool);
+        buffer.GetSpan(1)[0] = 42;
+        buffer.Advance(1);
+        buffer.GetMemory(512).Span.Fill(99); // Include uncommitted bytes in clearing.
+        await Assert.That(buffer.WrittenSpan.ToArray()).IsEquivalentTo(new byte[] { 42 });
+        await Assert.That(pool.Returns).IsEqualTo(1);
+        buffer.Dispose();
+        buffer.Dispose();
+        await Assert.That(pool.Returns).IsEqualTo(2);
+        await Assert.That(pool.ClearRequests.All(clear => clear)).IsTrue();
+        await Assert.That(() => buffer.GetMemory(1)).Throws<ObjectDisposedException>();
+        await Assert.That(() => buffer.Advance(0)).Throws<ObjectDisposedException>();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DecodeFailureDisposesUncommittedScratchStorage(bool runtimeType)
+    {
+        var codec = new FailingDestinationCodec();
+        var serializer = new RespireValueCodecSerializer(new BinarySerializer(), codec);
+        await Assert.That(() =>
+        {
+            if (runtimeType) serializer.Deserialize(typeof(BinaryValue), Array.Empty<byte>());
+            else serializer.Deserialize<BinaryValue>(Array.Empty<byte>());
+        }).Throws<InvalidDataException>();
+        await Assert.That(() => codec.Destination!.GetMemory(1)).Throws<ObjectDisposedException>();
+    }
+
+    [Test]
+    public async Task BoundedCompressionBypassesOwnedArrayFallbackAndRejectsInvalidLengths()
+    {
+        var codec = new SpanCodec();
+        var frame = codec.Encode(new byte[64]);
+        await Assert.That(frame[5]).IsEqualTo((byte)16);
+        await Assert.That(codec.Decode(frame)).IsEquivalentTo(new byte[64]);
+        codec.InvalidLength = true;
+        await Assert.That(() => codec.Encode(new byte[64])).Throws<InvalidDataException>();
+        var destination = new ArrayBufferWriter<byte>();
+        await Assert.That(() => codec.Encode(new byte[64], destination)).Throws<InvalidDataException>();
+        await Assert.That(destination.WrittenCount).IsEqualTo(0);
     }
 
     [Test]
@@ -232,13 +283,57 @@ public class ValueCodecTests
 
     private sealed class DestinationCodec : IRespireValueCodec
     {
-        internal int Writes;
+        internal int Writes, Reads;
         public byte[] Encode(ReadOnlySpan<byte> payload) => throw new InvalidOperationException("The serializer must use the destination overload.");
-        public byte[] Decode(ReadOnlySpan<byte> payload) => payload.ToArray();
+        public byte[] Decode(ReadOnlySpan<byte> payload) => throw new InvalidOperationException("The serializer must use the destination overload.");
         public void Encode(ReadOnlySpan<byte> payload, IBufferWriter<byte> destination)
         {
             Writes++;
             destination.Write(payload);
+        }
+        public void Decode(ReadOnlySpan<byte> payload, IBufferWriter<byte> destination)
+        {
+            Reads++;
+            destination.Write(payload);
+        }
+    }
+
+    private sealed class FailingDestinationCodec : IRespireValueCodec
+    {
+        internal IBufferWriter<byte>? Destination;
+        public byte[] Encode(ReadOnlySpan<byte> payload) => throw new NotSupportedException();
+        public byte[] Decode(ReadOnlySpan<byte> payload) => throw new NotSupportedException();
+        public void Decode(ReadOnlySpan<byte> payload, IBufferWriter<byte> destination)
+        {
+            Destination = destination;
+            destination.GetSpan(32).Fill(99);
+            throw new InvalidDataException("Deliberate decoder failure after an uncommitted write.");
+        }
+    }
+
+    private sealed class SpanCodec() : RespireValueCodec(16, new() { MinimumLength = 0 })
+    {
+        internal bool InvalidLength;
+        protected override byte[] Compress(ReadOnlySpan<byte> payload) => throw new InvalidOperationException("Owned compression must be bypassed.");
+        protected override bool TryCompress(ReadOnlySpan<byte> payload, Span<byte> destination, out int bytesWritten)
+        {
+            destination[0] = 0;
+            bytesWritten = InvalidLength ? destination.Length + 1 : 1;
+            return true;
+        }
+        protected override void Decompress(ReadOnlySpan<byte> payload, Span<byte> destination) => destination.Clear();
+    }
+
+    private sealed class RecordingPool : ArrayPool<byte>
+    {
+        internal int Returns;
+        internal readonly List<bool> ClearRequests = [];
+        public override byte[] Rent(int minimumLength) => new byte[minimumLength];
+        public override void Return(byte[] array, bool clearArray = false)
+        {
+            Returns++;
+            ClearRequests.Add(clearArray);
+            if (clearArray) Array.Clear(array);
         }
     }
     private sealed class BinarySerializer : IRespireSerializer

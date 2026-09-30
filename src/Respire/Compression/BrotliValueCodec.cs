@@ -33,6 +33,10 @@ public sealed class BrotliValueCodec : RespireValueCodec
     }
 
     /// <inheritdoc/>
+    protected override bool TryCompress(ReadOnlySpan<byte> payload, Span<byte> destination, out int bytesWritten)
+        => BrotliEncoder.TryCompress(payload, destination, out bytesWritten, _quality, window: 22);
+
+    /// <inheritdoc/>
     protected override void Decompress(ReadOnlySpan<byte> payload, Span<byte> destination)
     {
         var decoder = new BrotliDecoder();

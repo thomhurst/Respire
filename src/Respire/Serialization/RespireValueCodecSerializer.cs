@@ -27,7 +27,7 @@ public sealed class RespireValueCodecSerializer : IRespireSerializer
     public void Serialize<T>(IBufferWriter<byte> destination, T value)
     {
         ArgumentNullException.ThrowIfNull(destination);
-        var buffer = new ArrayBufferWriter<byte>();
+        using var buffer = new PooledByteBufferWriter();
         _serializer.Serialize(buffer, value);
         _codec.Encode(buffer.WrittenSpan, destination);
     }
@@ -35,7 +35,12 @@ public sealed class RespireValueCodecSerializer : IRespireSerializer
     /// <inheritdoc/>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
-    public T? Deserialize<T>(ReadOnlySpan<byte> payload) => _serializer.Deserialize<T>(_codec.Decode(payload));
+    public T? Deserialize<T>(ReadOnlySpan<byte> payload)
+    {
+        using var buffer = new PooledByteBufferWriter();
+        _codec.Decode(payload, buffer);
+        return _serializer.Deserialize<T>(buffer.WrittenSpan);
+    }
 
     /// <inheritdoc/>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
@@ -44,7 +49,7 @@ public sealed class RespireValueCodecSerializer : IRespireSerializer
     {
         ArgumentNullException.ThrowIfNull(destination);
         ArgumentNullException.ThrowIfNull(type);
-        var buffer = new ArrayBufferWriter<byte>();
+        using var buffer = new PooledByteBufferWriter();
         _serializer.Serialize(buffer, type, value);
         _codec.Encode(buffer.WrittenSpan, destination);
     }
@@ -55,6 +60,8 @@ public sealed class RespireValueCodecSerializer : IRespireSerializer
     public object? Deserialize(Type type, ReadOnlySpan<byte> payload)
     {
         ArgumentNullException.ThrowIfNull(type);
-        return _serializer.Deserialize(type, _codec.Decode(payload));
+        using var buffer = new PooledByteBufferWriter();
+        _codec.Decode(payload, buffer);
+        return _serializer.Deserialize(type, buffer.WrittenSpan);
     }
 }
