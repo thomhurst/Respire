@@ -366,6 +366,14 @@ await foreach (RespireMessage msg in sub.WithCancellation(cancellationToken))
   provides no replay. See the pub/sub guide for multi-target and overflow ordering.
 - Publish is just `redis.PublishAsync(channel, value)` on the root.
 
+Server introspection is separate from subscription delivery. `Server.PubSubChannelsAsync`,
+`PubSubSubscriberCountsAsync`, and `PubSubPatternCountAsync` query one execution node;
+channel/count methods also expose the sharded family. Their `OnAllNodesAsync` forms
+return `RespireServerResult<T>` per discovered endpoint, including Cluster replicas,
+with owned binary channel results and endpoint-specific failures. These methods ignore
+key prefixes. See the [introspection guide](../website/docs/guides/pub-sub-introspection.md)
+for discovery, cancellation, and required `IServerCommands` interface additions.
+
 ## 8. Streams
 
 Same async-stream philosophy for consumer groups; XREADGROUP blocking loop, ack on the

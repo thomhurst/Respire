@@ -24,6 +24,7 @@ const sidebars = {
         'guides/distributed-locks',
         'guides/blocking-queues',
         'guides/pub-sub',
+        'guides/pub-sub-introspection',
         'guides/batches-and-transactions',
         'guides/durability-acknowledgements',
         'guides/raw-commands',

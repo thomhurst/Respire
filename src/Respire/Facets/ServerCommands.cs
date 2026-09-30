@@ -96,7 +96,7 @@ public sealed record RespireServerRole(
     string[] MonitoredMasters);
 
 /// <summary>Server administration and introspection commands.</summary>
-public interface IServerCommands
+public partial interface IServerCommands
 {
     /// <summary>The INFO text, optionally one section ("server", "memory", …). Redis: INFO.</summary>
     ValueTask<string> InfoAsync(string? section = null, CancellationToken cancellationToken = default);
@@ -171,7 +171,7 @@ public interface IServerCommands
     ValueTask SetConfigAsync(string name, RespireValue value, CancellationToken cancellationToken = default);
 }
 
-internal sealed class ServerCommands(RespireClient client) : IServerCommands
+internal sealed partial class ServerCommands(RespireClient client) : IServerCommands
 {
     public ValueTask<string> InfoAsync(string? section = null, CancellationToken cancellationToken = default)
         => section is null
