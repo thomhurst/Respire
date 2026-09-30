@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Respire.Compression.Lz4</PackageId>
+    <Title>Respire.Compression.Lz4</Title>
+    <Description>Optional bounded LZ4 value compression for Respire.</Description>
+    <PackageTags>$(PackageTags);compression;lz4</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Respire\Respire.csproj" />
+    <PackageReference Include="K4os.Compression.LZ4" />
+  </ItemGroup>
+</Project>

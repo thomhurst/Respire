@@ -34,6 +34,7 @@ $documentPaths = @(
 )
 
 $requiredPackages = @(
+    'Respire.Compression.Lz4'
     'Respire'
     'Respire.Extensions.Caching'
     'Respire.Extensions.Caching.Hybrid'

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Optional LZ4 value codec
+
+- `Respire.Compression.Lz4` adds `Lz4ValueCodec` through the existing value-codec and
+  serializer contracts. Version 1 frames use reserved algorithm ID 3 for raw LZ4 blocks,
+  with shared thresholds, owned output, checksums, and bounded decompression. The
+  K4os dependency is confined to the optional package. See
+  [value codecs](../website/docs/guides/value-codecs.md#optional-lz4-package).
+
 ### Sentinel discovery validation
 
 - Sentinel-discovered data connections must confirm a valid primary `ROLE` before

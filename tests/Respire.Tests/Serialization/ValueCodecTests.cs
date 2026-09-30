@@ -14,11 +14,12 @@ namespace Respire.Tests.Serialization;
 public class ValueCodecTests
 {
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task FramingKeepsMixedValuesOwnedAndUsesCompressionOnlyWhenSmaller(bool deflate)
+    [Arguments("brotli")]
+    [Arguments("deflate")]
+    [Arguments("lz4")]
+    public async Task FramingKeepsMixedValuesOwnedAndUsesCompressionOnlyWhenSmaller(string algorithm)
     {
-        var codec = Create(deflate);
+        var codec = Create(algorithm);
         var large = Encoding.UTF8.GetBytes(new string('x', 4096));
         byte[] small = [0, 1, 255];
         var random = new byte[4096];
@@ -61,11 +62,12 @@ public class ValueCodecTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task InvalidFramesFailWithoutLegacyFallback(bool deflate)
+    [Arguments("brotli")]
+    [Arguments("deflate")]
+    [Arguments("lz4")]
+    public async Task InvalidFramesFailWithoutLegacyFallback(string algorithm)
     {
-        var codec = Create(deflate);
+        var codec = Create(algorithm);
         var original = codec.Encode(Encoding.UTF8.GetBytes(new string('x', 4096)));
         var invalid = new List<byte[]> { "unframed legacy data"u8.ToArray(), original[..17], original[..^1] };
         foreach (var offset in new[] { 0, 4, 5, 10, original.Length - 1 })
@@ -93,22 +95,23 @@ public class ValueCodecTests
             await Assert.That(destination.WrittenCount).IsEqualTo(1);
             await Assert.That(destination.WrittenMemory.ToArray()).IsEquivalentTo(new byte[] { 42 });
         }
-        await Assert.That(() => Create(!deflate).Decode(original)).Throws<InvalidDataException>();
+        await Assert.That(() => Create(algorithm == "brotli" ? "deflate" : "brotli").Decode(original)).Throws<InvalidDataException>();
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task SizeLimitsAndThresholdAreExplicit(bool deflate)
+    [Arguments("brotli")]
+    [Arguments("deflate")]
+    [Arguments("lz4")]
+    public async Task SizeLimitsAndThresholdAreExplicit(string algorithm)
     {
-        var bounded = Create(deflate, new() { MaximumDecodedLength = 64, MinimumLength = 64 });
+        var bounded = Create(algorithm, new() { MaximumDecodedLength = 64, MinimumLength = 64 });
         var data = new byte[64];
         var frame = bounded.Encode(data);
         await Assert.That(frame[5]).IsEqualTo(bounded.AlgorithmId);
         await Assert.That(bounded.Decode(frame)).IsEquivalentTo(data);
         await Assert.That(bounded.Encode(data[..63])[5]).IsEqualTo((byte)0);
         await Assert.That(() => bounded.Encode(new byte[65])).Throws<ArgumentOutOfRangeException>();
-        var tooLarge = Create(deflate).Encode(new byte[4096]);
+        var tooLarge = Create(algorithm).Encode(new byte[4096]);
         await Assert.That(() => bounded.Decode(tooLarge)).Throws<InvalidDataException>();
         var plain = bounded.Encode("x"u8);
         await Assert.That(() => bounded.Decode([.. plain, 0])).Throws<InvalidDataException>();
@@ -214,11 +217,12 @@ public class ValueCodecTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task OneCodecSupportsConcurrentCalls(bool deflate)
+    [Arguments("brotli")]
+    [Arguments("deflate")]
+    [Arguments("lz4")]
+    public async Task OneCodecSupportsConcurrentCalls(string algorithm)
     {
-        var codec = Create(deflate);
+        var codec = Create(algorithm);
         var work = Enumerable.Range(0, 16).Select(index => Task.Run(() =>
         {
             var bytes = Encoding.UTF8.GetBytes(new string((char)('a' + index), 4096 + index));
@@ -228,12 +232,13 @@ public class ValueCodecTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task DecoratorPreservesGenericAndRuntimeTypedCustomSerializerCalls(bool deflate)
+    [Arguments("brotli")]
+    [Arguments("deflate")]
+    [Arguments("lz4")]
+    public async Task DecoratorPreservesGenericAndRuntimeTypedCustomSerializerCalls(string algorithm)
     {
         var inner = new BinarySerializer();
-        var codec = Create(deflate);
+        var codec = Create(algorithm);
         var serializer = new RespireValueCodecSerializer(inner, codec);
         var value = new BinaryValue([255, 0, 128]);
         var generic = new ArrayBufferWriter<byte>();
@@ -250,8 +255,14 @@ public class ValueCodecTests
         await Assert.That(codec.Decode(generic.WrittenSpan)).IsEquivalentTo(value.Bytes);
     }
 
-    internal static RespireValueCodec Create(bool deflate, RespireValueCodecOptions? options = null)
-        => deflate ? new DeflateValueCodec(options) : new BrotliValueCodec(options);
+    internal static RespireValueCodec Create(string algorithm, RespireValueCodecOptions? options = null)
+        => algorithm switch
+        {
+            "brotli" => new BrotliValueCodec(options),
+            "deflate" => new DeflateValueCodec(options),
+            "lz4" => new Lz4ValueCodec(options),
+            _ => throw new ArgumentOutOfRangeException(nameof(algorithm)),
+        };
 
     [Test]
     public async Task SourceGeneratedSerializerStillUsesItsConfiguredTypeMetadata()
