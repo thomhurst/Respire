@@ -176,6 +176,9 @@ internal static class Verbs
     public static readonly Verb SMembers = new("SMEMBERS");
     public static readonly Verb SPop = new("SPOP");
     public static readonly Verb SRandMember = new("SRANDMEMBER");
+    public static readonly Verb SMisMember = new("SMISMEMBER");
+    public static readonly Verb SMove = new("SMOVE");
+    public static readonly Verb SInterCard = new(1, "SINTERCARD");
     public static readonly Verb SInter = new("SINTER");
     public static readonly Verb SUnion = new("SUNION");
     public static readonly Verb SDiff = new("SDIFF");

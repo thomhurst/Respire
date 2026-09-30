@@ -33,6 +33,18 @@ public interface IBatchSetCommands
     [OverloadResolutionPriority(-1)]
     RespirePending<bool> Contains<T>(RespireKey key, T member);
 
+    /// <summary>Tests each member in input order, including duplicates. Redis 6.2+: SMISMEMBER.</summary>
+    RespirePending<bool[]> ContainsMany(RespireKey key, params ReadOnlySpan<RespireValue> members);
+
+    /// <summary>Moves a member atomically; returns false if absent from the source. Redis: SMOVE.</summary>
+    RespirePending<bool> Move(RespireKey source, RespireKey destination, RespireValue member);
+
+    /// <summary>Counts the intersection without returning its members. Redis 7+: SINTERCARD.</summary>
+    RespirePending<long> IntersectCount(params ReadOnlySpan<RespireKey> keys);
+
+    /// <summary>Counts up to a non-negative limit; zero means unlimited. Redis 7+: SINTERCARD LIMIT.</summary>
+    RespirePending<long> IntersectCount(long limit, params ReadOnlySpan<RespireKey> keys);
+
     /// <summary>Number of members. Redis: SCARD.</summary>
     RespirePending<long> Count(RespireKey key);
 
@@ -94,6 +106,27 @@ internal sealed class BatchSetCommands(IPendingSink sink) : IBatchSetCommands
     [OverloadResolutionPriority(-1)]
     public RespirePending<bool> Contains<T>(RespireKey key, T member)
         => Contains(key, sink.Client.SerializeCollectionMember(member));
+
+    public RespirePending<bool[]> ContainsMany(RespireKey key, params ReadOnlySpan<RespireValue> members)
+    {
+        SetCommands.ValidateMembers(members);
+        return sink.Add<Cmd1N, bool[]>("SMISMEMBER",
+            new Cmd1N(Verbs.SMisMember, sink.Client.Key(in key), members.ToArray()),
+            static (c, v) => ResponseReader.FlagArray(in v));
+    }
+
+    public RespirePending<bool> Move(RespireKey source, RespireKey destination, RespireValue member)
+        => sink.Add<Cmd3, bool>("SMOVE",
+            new Cmd3(Verbs.SMove, sink.Client.Key(in source), sink.Client.Key(in destination), member),
+            source, destination, static (c, v) => ResponseReader.Flag(in v));
+
+    public RespirePending<long> IntersectCount(params ReadOnlySpan<RespireKey> keys)
+        => IntersectCount(0, keys);
+
+    public RespirePending<long> IntersectCount(long limit, params ReadOnlySpan<RespireKey> keys)
+        => sink.Add<CmdN, long>("SINTERCARD",
+            new CmdN(Verbs.SInterCard, SetCommands.IntersectCountArguments(sink.Client, keys, limit)),
+            keys, static (c, v) => ResponseReader.Integer(in v));
 
     public RespirePending<long> Count(RespireKey key)
         => sink.Add<Cmd1, long>(
