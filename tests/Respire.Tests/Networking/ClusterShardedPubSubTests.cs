@@ -65,6 +65,42 @@ public class ClusterShardedPubSubTests
     [Test]
     [Arguments(2)]
     [Arguments(3)]
+    public async Task InitialMovedSubscriptionDoesNotRecoverProvisionalRoute(int protocol)
+    {
+        await using var cluster = new Cluster(protocol);
+        cluster.SecondOverride = (_, command) => command == "SSUBSCRIBE foo"
+            ? Encoding.ASCII.GetBytes($"-MOVED {ClusterHash.GetSlot("foo")} 127.0.0.1:{cluster.First.Port}\r\n") : null;
+        await using var client = cluster.CreateClient(new()
+        {
+            InitialDelay = TimeSpan.FromSeconds(30), MaxDelay = TimeSpan.FromSeconds(30), JitterRatio = 0,
+        });
+        await using var subscription = await client.SubscribeShardedAsync("foo");
+        await using var added = await client.SubscribeShardedAsync("bar").AsTask().WaitAsync(Deadline);
+        await Assert.That(cluster.First.ReceivedCommands.Count(command => command == "SSUBSCRIBE foo")).IsEqualTo(1);
+        await Assert.That(cluster.First.ReceivedCommands.Count(command => command == "SSUBSCRIBE bar")).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
+    public async Task AskSubscriptionSendsAskingBeforeSubscribeOnTargetPrimary(int protocol)
+    {
+        await using var cluster = new Cluster(protocol);
+        cluster.SecondOverride = (_, command) => command == "SSUBSCRIBE foo"
+            ? Encoding.ASCII.GetBytes($"-ASK {ClusterHash.GetSlot("foo")} 127.0.0.1:{cluster.First.Port}\r\n") : null;
+        await using var client = cluster.CreateClient();
+        await using var subscription = await client.SubscribeShardedAsync("foo");
+        var commands = cluster.First.ReceivedCommands;
+        var asking = commands.ToList().IndexOf("ASKING");
+        var subscribe = commands.ToList().IndexOf("SSUBSCRIBE foo");
+        await Assert.That(asking).IsGreaterThanOrEqualTo(0);
+        await Assert.That(subscribe).IsGreaterThan(asking);
+        await Assert.That(cluster.Second.ReceivedCommands.Contains("SSUBSCRIBE foo")).IsTrue();
+    }
+
+    [Test]
+    [Arguments(2)]
+    [Arguments(3)]
     public async Task TopologyMoveResubscribesAndPublishesGapBeforeSameReadMessage(int protocol)
     {
         await using var cluster = new Cluster(protocol);
@@ -534,6 +570,7 @@ public class ClusterShardedPubSubTests
         private byte[] Reply(string command)
         {
             if (command.StartsWith("HELLO ")) return "%1\r\n+proto\r\n:3\r\n"u8.ToArray();
+            if (command == "ASKING") return "+OK\r\n"u8.ToArray();
             if (command == "CLUSTER SLOTS") return Encoding.ASCII.GetBytes(
                 $"*2\r\n*3\r\n:0\r\n:8191\r\n*2\r\n$9\r\n127.0.0.1\r\n:{First.Port}\r\n" +
                 $"*3\r\n:8192\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{Second.Port}\r\n");

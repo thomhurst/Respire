@@ -112,6 +112,7 @@ internal sealed partial class SubscriptionHub
     {
         var slot = ClusterHash.GetSlot(name.Span);
         var commandConnection = await core.Cluster!.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
+        var ask = false;
         try
         {
             for (var redirect = 0; ; redirect++)
@@ -138,7 +139,7 @@ internal sealed partial class SubscriptionHub
                 try
                 {
                     await SendControlAsync(primary.Connection!, SubscribeVerb(SubscriptionKind.Sharded), "SSUBSCRIBE",
-                        name, cancellationToken, instrument: !recovering).ConfigureAwait(false);
+                        name, cancellationToken, instrument: !recovering, ask).ConfigureAwait(false);
                     lock (_gate)
                     {
                         // SUNSUBSCRIBE may follow the acknowledgement in the same socket read.
@@ -147,10 +148,12 @@ internal sealed partial class SubscriptionHub
                     }
                     return;
                 }
-                catch (RespireServerException error) when (error.Code == RespireErrorCodes.Moved && redirect < ClusterRouter.RedirectLimit)
+                catch (RespireServerException error) when ((error.Code is RespireErrorCodes.Moved or RespireErrorCodes.Ask)
+                    && redirect < ClusterRouter.RedirectLimit)
                 {
                     commandConnection = await core.Cluster.GetRedirectConnectionAsync(error, primary.Connection!, cancellationToken, slot)
                         .ConfigureAwait(false);
+                    ask = error.Code == RespireErrorCodes.Ask;
                 }
                 catch (RespireServerException)
                 {
@@ -384,6 +387,7 @@ internal sealed partial class SubscriptionHub
             foreach (var name in _shardedOwners.Names)
             {
                 if (_shardedOwners.TryGetValue(name, out var primary)
+                    && primary.Confirmed.Contains(name)
                     && !ReferenceEquals(primary.Owner, core.Cluster!.GetKnownSlotOwner(ClusterHash.GetSlot(name.Span))))
                     RequestShardedRecoveryLocked(primary);
             }

@@ -326,7 +326,8 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
         string operation,
         RespireChannel name,
         CancellationToken cancellationToken,
-        bool instrument)
+        bool instrument,
+        bool ask = false)
     {
         var telemetry = instrument
             ? RespireTelemetry.StartOperation(
@@ -334,7 +335,10 @@ internal sealed partial class SubscriptionHub(ClientCore core, TimeProvider? tim
             : default;
         try
         {
-            var reply = await connection.SendAsync(new Cmd1(verb, name.AsValue()), cancellationToken).ConfigureAwait(false);
+            var command = new Cmd1(verb, name.AsValue());
+            var reply = ask
+                ? await ClusterRouter.SendAskingAsync(connection, in command, cancellationToken, operation).ConfigureAwait(false)
+                : await connection.SendAsync(command, cancellationToken).ConfigureAwait(false);
             if (reply.IsError)
             {
                 var error = ResponseReader.ServerError(in reply, operation);
