@@ -359,6 +359,11 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 return replacement;
             }
         }
+        catch (OperationCanceledException cancelled) when (budget.IsCallerCancellation(cancelled, cancellationToken))
+        {
+            // Recovery phase tokens are private links; expose the initiating deadline or caller token.
+            throw new OperationCanceledException(cancelled.Message, cancelled, cancellationToken);
+        }
         catch (Exception exception) when (!cancellationToken.IsCancellationRequested
             && (exception is OperationCanceledException || IsDiscoveryFailure(exception)))
         {

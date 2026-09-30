@@ -8,6 +8,22 @@ namespace Respire.Tests;
 public class CommandTimeoutCancellationTests
 {
     [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task LinkedCancellationRequiresInitiatingCancellationAndExactLink(bool cancelInitiator, bool matchesLink)
+    {
+        using var initiator = new CancellationTokenSource();
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(initiator.Token);
+        using var unrelated = new CancellationTokenSource();
+        if (cancelInitiator) initiator.Cancel();
+        var error = new OperationCanceledException(matchesLink ? linked.Token : unrelated.Token);
+        await Assert.That(CommandTimeoutCancellation.IsFromLinkedToken(error, initiator.Token, linked.Token))
+            .IsEqualTo(cancelInitiator && matchesLink);
+    }
+
+    [Test]
     public async Task TimeoutCancelsToken()
     {
         using var cancellation = CommandTimeoutCancellation.Create(

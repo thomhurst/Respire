@@ -2331,6 +2331,7 @@ public sealed partial class RespireClient : IRespireClient
         {
             RespireConnection? connection = null;
             var returned = false;
+            var acquiringRedirectPool = false;
             try
             {
                 connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
@@ -2358,9 +2359,12 @@ public sealed partial class RespireClient : IRespireClient
                     if (!noRedirect && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
                     {
                         core.ClientCache?.FlushForContinuityLoss();
+                        // The source reply completed; no redirected command has been accepted yet.
+                        acquiringRedirectPool = true;
                         var redirectedPool = await cluster.GetRedirectDedicatedPoolAsync(
                                 error, connection, cancellationToken, slot)
                             .ConfigureAwait(false);
+                        acquiringRedirectPool = false;
                         pool.Return(connection);
                         returned = true;
                         pool = redirectedPool;
@@ -2383,8 +2387,9 @@ public sealed partial class RespireClient : IRespireClient
                 var timeoutError = cancellationTimeout is { } timeout && ex is OperationCanceledException cancelled
                     && RespireConnection.IsDeadlineCancellation(cancelled, cancellationToken, callerCancellationToken)
                     ? new RespireTimeoutException(operation, timeout, cancelled,
-                        connection?.CaptureDedicatedTimeoutDiagnostics()
-                        ?? RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting))
+                        acquiringRedirectPool || connection is null
+                            ? RespireTimeoutDiagnostics.Capture(RespireCommandStage.Connecting)
+                            : connection.CaptureDedicatedTimeoutDiagnostics())
                     : null;
                 telemetry.Complete(core, operation, storedProcedureName, timeoutError ?? ex, connection);
                 if (connection is not null && !returned)

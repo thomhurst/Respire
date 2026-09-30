@@ -12,6 +12,74 @@ namespace Respire.Tests.Networking;
 public class TimeoutDiagnosticsTests
 {
     [Test]
+    [Arguments("MOVED", false)]
+    [Arguments("ASK", false)]
+    [Arguments("READONLY", false)]
+    [Arguments("MOVED", true)]
+    [Arguments("ASK", true)]
+    [Arguments("READONLY", true)]
+    public async Task RedirectPoolAcquisitionDoesNotInspectTheCompletedSource(string redirect, bool cancelCaller)
+    {
+        var handshake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var replacement = new FakeRespServer(FakeRespServer.OkReply)
+        {
+            SuppressReply = command =>
+            {
+                if (command != "CLIENT SETNAME redirect-timeout") return false;
+                handshake.TrySetResult();
+                return true;
+            },
+        };
+        var slot = Respire.Internal.ClusterHash.GetSlot("private-key");
+        var redirectReply = System.Text.Encoding.ASCII.GetBytes(redirect == "READONLY"
+            ? "-READONLY replica\r\n" : $"-{redirect} {slot} 127.0.0.1:{replacement.Port}\r\n");
+        await using var source = new FakeRespServer(2, FakeRespServer.OkReply, redirectReply);
+        var topology = System.Text.Encoding.ASCII.GetBytes(
+            $"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{source.Port}\r\n");
+        await using var seed = new FakeRespServer(FakeRespServer.OkReply, topology);
+        await using var client = await RespireClient.ConnectAsync(new RespireOptions
+        {
+            Endpoints = [new("127.0.0.1", seed.Port)], UseCluster = true, Connections = 1,
+            ClientName = "redirect-timeout", CommandTimeout = null, ConnectTimeout = TimeSpan.FromSeconds(10),
+        });
+        if (redirect == "READONLY")
+        {
+            source.SuppressReply = command =>
+            {
+                if (command == "GET private-key")
+                {
+                    var router = client.Core.Cluster!;
+                    router.SetSlotOwner(slot, router.GetMultiplexer(new("127.0.0.1", replacement.Port)));
+                }
+                return false;
+            };
+        }
+        using var caller = new CancellationTokenSource();
+        using var deadline = Respire.Internal.CommandTimeoutCancellation.Create(caller.Token, TimeSpan.FromSeconds(10));
+        var pending = client.SendBlockingAsync("GET", new Cmd1(Verbs.Get, "private-key"), deadline.Token,
+            cancellationTimeout: TimeSpan.FromSeconds(10), callerCancellationToken: caller.Token).AsTask();
+        await handshake.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (cancelCaller)
+        {
+            caller.Cancel();
+            await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Throws<OperationCanceledException>();
+        }
+        else
+        {
+            deadline.Cancel();
+            var error = await Assert.That(async () => await pending.WaitAsync(TimeSpan.FromSeconds(5)))
+                .ThrowsExactly<RespireTimeoutException>();
+            await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.Connecting);
+            await Assert.That(error.Diagnostics.ConnectionId).IsNull();
+            await Assert.That(error.Diagnostics.Endpoint).IsNull();
+            await Assert.That(error.Message).Contains("had not been enqueued");
+        }
+        await Assert.That(source.ReceivedCommands.Count(command => command == "GET private-key")).IsEqualTo(1);
+        await Assert.That(replacement.ReceivedCommands.Any(command => command == "GET private-key")).IsFalse();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task DedicatedTlsAcquisitionPreservesDeadlineAndCallerCancellation(bool cancelCaller)

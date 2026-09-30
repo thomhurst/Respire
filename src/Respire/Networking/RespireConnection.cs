@@ -220,8 +220,8 @@ internal sealed class RespireConnection : IAsyncDisposable
                     await tlsStream.AuthenticateAsClientAsync(tlsOptions, timeoutCts.Token).ConfigureAwait(false);
                 }
             }
-            catch (OperationCanceledException error) when (cancellationToken.IsCancellationRequested
-                && error.CancellationToken == timeoutCts.Token)
+            catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
+                error, cancellationToken, timeoutCts.Token))
             {
                 // Preserve the initiating token across our private connect-timeout link.
                 // An independent connect timeout or unrelated cancellation keeps its own token.
