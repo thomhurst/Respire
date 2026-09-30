@@ -8,8 +8,7 @@ namespace Respire.Internal;
 /// <summary>
 /// Owns a client's single dedicated pub/sub connection (created on first subscription) and
 /// routes incoming messages to subscription buffers. If the connection dies, reconnects with
-/// backoff and resubscribes everything that is still subscribed — enumerators never notice
-/// beyond the gap in messages.
+/// backoff and resubscribes everything that is still subscribed. Ordered markers report delivery gaps.
 /// </summary>
 internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
 {
@@ -24,6 +23,8 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
     private readonly SemaphoreSlim _connectionGate = new(1, 1);
     private RespireConnection? _connection;
     private long _reconnectGeneration;
+    private long _connectionEpoch;
+    private readonly Dictionary<RespireSubscription, Dictionary<RespireChannel, DateTimeOffset>> _interrupted = [];
     private bool _publishingReconnectState;
     private volatile bool _disposed;
 
@@ -113,7 +114,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         }
         catch
         {
-            subscription.Buffer.Writer.TryComplete();
+            subscription.Buffer.Complete();
             RemoveRoutes(subscription);
             if (connection is not null)
             {
@@ -134,7 +135,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
     /// <summary>Unregisters the subscription, unsubscribing channels it was the last consumer of.</summary>
     public async ValueTask RemoveAsync(RespireSubscription subscription)
     {
-        subscription.Buffer.Writer.TryComplete();
+        subscription.Buffer.Complete();
         await _controlGate.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -178,6 +179,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         var releasedRoutes = new List<(SubscriptionKind Kind, RespireChannel Name)>();
         lock (_gate)
         {
+            _interrupted.Remove(subscription);
             var routes = Routes(subscription.Kind);
             foreach (var name in subscription.Names)
             {
@@ -221,9 +223,41 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
     }
 
     private Task? DetachConnection(RespireConnection connection)
-        => ReferenceEquals(Interlocked.CompareExchange(ref _connection, null, connection), connection)
-            ? connection.DisposeAsync().AsTask()
-            : null;
+    {
+        lock (_gate)
+        {
+            if (!ReferenceEquals(_connection, connection)) return null;
+            MarkInterruptedLocked();
+            _connection = null;
+        }
+        return connection.DisposeAsync().AsTask();
+    }
+
+    private void MarkInterruptedLocked()
+    {
+        if (_disposed) return;
+        var now = DateTimeOffset.UtcNow;
+        foreach (var routes in _routes)
+        {
+            foreach (var subscriptions in routes.Values)
+            {
+                foreach (var subscription in subscriptions)
+                {
+                    if (!_interrupted.TryGetValue(subscription, out var targets))
+                    {
+                        _interrupted.Add(subscription, targets = []);
+                    }
+                    foreach (var name in subscription.Names)
+                    {
+                        targets.TryAdd(name, now);
+                    }
+                }
+            }
+        }
+    }
+
+    internal void LogGapHandlerFailure(Exception error)
+        => core.Logger?.LogWarning(error, "Subscription delivery-gap handler threw");
 
     private async Task ObserveAbandonedConnectionAsync(Task disposal)
     {
@@ -322,7 +356,14 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                 return raced;
             }
 
-            var previous = _connection;
+            RespireConnection? previous;
+            long epoch;
+            lock (_gate)
+            {
+                previous = _connection;
+                if (previous is not null) MarkInterruptedLocked();
+                epoch = ++_connectionEpoch;
+            }
             RespireEndpoint endpoint;
             if (core.Cluster is { } cluster)
             {
@@ -333,10 +374,16 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                 endpoint = core.Options.PrimaryEndpoint;
             }
 
-            var options = core.Options.ToConnectionOptions(OnPush);
+            var options = core.Options.ToConnectionOptions((in RespValue value) => OnPush(epoch, in value)) with
+            {
+                SubscriptionConfirmationHandler = (in RespValue value) => OnSubscriptionConfirmation(epoch, in value),
+            };
             var connection = await RespireConnection.ConnectAsync(
                 endpoint.Host, endpoint.Port, options, core.Logger, cancellationToken).ConfigureAwait(false);
-            _connection = connection;
+            lock (_gate)
+            {
+                _connection = connection;
+            }
             _ = WatchConnectionAsync(connection);
             if (previous is not null)
             {
@@ -358,6 +405,11 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         if (_disposed)
         {
             return;
+        }
+
+        lock (_gate)
+        {
+            if (ReferenceEquals(_connection, connection)) MarkInterruptedLocked();
         }
 
         long reconnectGeneration;
@@ -486,9 +538,44 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         }
     }
 
-    /// <summary>Runs on the connection's receive loop — copy out of the frame, never block.</summary>
-    private void OnPush(in RespValue value)
+    // Observe acknowledgements before FIFO completion: a message can follow the acknowledgement
+    // in the same socket read, before the asynchronous resubscribe continuation runs.
+    private void OnSubscriptionConfirmation(long epoch, in RespValue value)
     {
+        var elements = value.AsArray();
+        if (elements.Length < 3) return;
+        var verb = elements[0].AsSpan();
+        SubscriptionKind kind;
+        if (verb.SequenceEqual("subscribe"u8)) kind = SubscriptionKind.Channel;
+        else if (verb.SequenceEqual("psubscribe"u8)) kind = SubscriptionKind.Pattern;
+        else if (verb.SequenceEqual("ssubscribe"u8)) kind = SubscriptionKind.Sharded;
+        else return;
+        List<(RespireSubscription Subscription, RespireSubscriptionGap Gap)>? gaps = null;
+        lock (_gate)
+        {
+            if (_disposed || epoch != _connectionEpoch
+                || !Routes(kind).TryGetValue(elements[1].AsSpan(), out var name, out var subscriptions)) return;
+            foreach (var subscription in subscriptions)
+            {
+                if (_interrupted.TryGetValue(subscription, out var targets) && targets.Remove(name, out var started))
+                {
+                    var ended = DateTimeOffset.UtcNow;
+                    if (ended < started) ended = started;
+                    (gaps ??= []).Add((subscription, new(RespireSubscriptionGapReason.Reconnect, started, ended)));
+                    if (targets.Count == 0) _interrupted.Remove(subscription);
+                }
+            }
+        }
+        if (gaps is not null)
+        {
+            foreach (var (subscription, gap) in gaps) subscription.DeliverGap(gap);
+        }
+    }
+
+    /// <summary>Runs on the connection's receive loop — copy out of the frame, never block.</summary>
+    private void OnPush(long epoch, in RespValue value)
+    {
+        if (epoch != Volatile.Read(ref _connectionEpoch)) return;
         var elements = value.AsArray();
         if (elements.Length < 3)
         {
@@ -542,8 +629,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             core.Options.Serializer);
         foreach (var target in targets)
         {
-            // Bounded with DropOldest/DropWrite — TryWrite applies the overflow policy.
-            target.Buffer.Writer.TryWrite(message);
+            target.Deliver(message);
         }
     }
 
@@ -577,6 +663,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             List<RespireSubscription> subscriptions = [];
             lock (_gate)
             {
+                _interrupted.Clear();
                 foreach (var routes in _routes)
                 {
                     foreach (var list in routes.Values)

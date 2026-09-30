@@ -322,6 +322,7 @@ await using var sub = await redis.SubscribeAsync("orders");  // also: patterns, 
 await foreach (RespireMessage msg in sub.WithCancellation(cancellationToken))
 {
     Console.WriteLine($"{msg.Channel}: {msg.Text}");
+    if (msg.Kind == RespireMessageKind.Gap) { await ReloadOrdersAsync(); continue; }
     var order = msg.As<Order>();                            // serializer-backed
 }
 ```
@@ -329,7 +330,7 @@ await foreach (RespireMessage msg in sub.WithCancellation(cancellationToken))
 - `SubscribeAsync(channel | channels)`, `SubscribePatternAsync(pattern)`,
   `SubscribeShardedAsync(channel)` (Redis 7+ SSUBSCRIBE). Subscribing is always awaited: the
   task completes once the server has acknowledged, so the next publish reaches the stream.
-- Backed by a bounded `Channel<T>`; overflow policy is `DropOldest` (default) or
+- Backed by a bounded message buffer; overflow policy is `DropOldest` (default) or
   `DropNewest`. Blocking and throwing policies are intentionally omitted because either would
   stop the shared pub/sub reader and affect unrelated subscriptions.
 - `RespireChannel` owns binary channel bytes. Text and byte inputs compare by encoded bytes;
@@ -340,6 +341,13 @@ await foreach (RespireMessage msg in sub.WithCancellation(cancellationToken))
   `Targets` use `RespireChannel` instead of strings. `.Bytes` is lossless, allocation-free access;
   `.ToString()` is UTF-8 display with replacement characters for invalid bytes. The message
   also exposes owned `Payload`, `Text`, and `As<T>()`.
+- **Pre-release behavior change:** streams also yield `RespireMessageKind.Gap`. Check `Kind`
+  before payload access. `Gap` includes reconnect/overflow reasons, the observed interval, and
+  known local discard count. Reconnect markers precede resumed messages for each target;
+  adjacent markers coalesce without consuming message capacity or losing the notification.
+  `DeliveryGap` and `respire.pubsub.delivery.gaps` report individual detected gaps. Event handlers
+  must not block the receive path. Reload dependent state from its source after a gap; pub/sub
+  provides no replay. See the pub/sub guide for multi-target and overflow ordering.
 - Publish is just `redis.PublishAsync(channel, value)` on the root.
 
 ## 8. Streams

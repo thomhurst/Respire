@@ -37,6 +37,11 @@ internal static class RespireTelemetry
         unit: "{message}",
         description: "Messages discarded because a subscription buffer was full.");
 
+    public static readonly Counter<long> SubscriptionGaps = Meter.CreateCounter<long>(
+        "respire.pubsub.delivery.gaps",
+        unit: "{gap}",
+        description: "Observed subscription interruptions and buffer discards; adjacent stream markers may coalesce.");
+
     public static readonly Counter<long> ClientCacheHits = Meter.CreateCounter<long>(
         "respire.client_cache.hits",
         unit: "{read}",
@@ -70,6 +75,14 @@ internal static class RespireTelemetry
         => SubscriptionMessagesDropped.Add(1,
             new KeyValuePair<string, object?>("respire.subscription.kind", kind.ToString()),
             new KeyValuePair<string, object?>("respire.subscription.overflow", overflow.ToString()));
+
+    public static void RecordSubscriptionGap(SubscriptionKind kind, RespireSubscriptionGapReason reason)
+    {
+        if (!SubscriptionGaps.Enabled) return;
+        SubscriptionGaps.Add(1,
+            new KeyValuePair<string, object?>("respire.subscription.kind", kind.ToString()),
+            new KeyValuePair<string, object?>("respire.subscription.gap.reason", reason.ToString()));
+    }
 
     public static OperationScope StartOperation(
         string operation,

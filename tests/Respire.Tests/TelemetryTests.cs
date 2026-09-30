@@ -15,6 +15,18 @@ namespace Respire.Tests;
 public class TelemetryTests
 {
     [Test]
+    public async Task SubscriptionGap_EmitsCounterWithReasonTags()
+    {
+        using var capture = new TelemetryCapture();
+        RespireTelemetry.RecordSubscriptionGap(SubscriptionKind.Sharded, RespireSubscriptionGapReason.Reconnect);
+        var measurement = capture.Measurements.Single(item => item.InstrumentName == "respire.pubsub.delivery.gaps"
+            && item.Tags.GetValueOrDefault("respire.subscription.kind") as string == "Sharded"
+            && item.Tags.GetValueOrDefault("respire.subscription.gap.reason") as string == "Reconnect");
+        await Assert.That(measurement.Unit).IsEqualTo("{gap}");
+        await Assert.That(measurement.Value).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task SubscriptionDrop_EmitsCounterWithPolicyTags()
     {
         using var capture = new TelemetryCapture();

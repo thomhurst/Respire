@@ -18,6 +18,11 @@ await using var subscription =
 await foreach (RespireMessage message in
     subscription.WithCancellation(stoppingToken))
 {
+    if (message.Kind == RespireMessageKind.Gap)
+    {
+        await ReloadStateFromSourceAsync(stoppingToken);
+        continue;
+    }
     Console.WriteLine($"{message.Channel}: {message.Text}");
 }
 ```
@@ -29,7 +34,7 @@ await using var patterns = await redis.SubscribePatternAsync("events:*");
 await using var shard = await redis.SubscribeShardedAsync("events:eu-west");
 ```
 
-Messages are buffered from the moment the subscription is acknowledged, so nothing is lost between `SubscribeAsync` returning and the `await foreach` starting.
+Messages are buffered from the moment the subscription is acknowledged. The configured capacity and overflow policy apply even before enumeration starts.
 
 A subscription is a single-consumer stream: only one enumerator may be active at a time. Dispose
 it before starting another. `Kind` and immutable `Targets` describe what the subscription covers,
@@ -116,3 +121,45 @@ for that subscription, and the `respire.pubsub.messages.dropped` counter exposes
 metrics collectors.
 
 Pub/sub is transient: Redis does not retain messages for disconnected subscribers. Use streams when delivery tracking and replay matter.
+
+## Detecting delivery gaps
+
+**Pre-release behavior change:** subscription streams now include `RespireMessageKind.Gap` items.
+Check `Kind` before reading or deserializing a published payload. A gap has empty channel/payload
+fields, and `As<T>()` throws because there is no published value.
+
+```csharp
+await foreach (var message in subscription.WithCancellation(stoppingToken))
+{
+    if (message.Kind == RespireMessageKind.Gap)
+    {
+        await ReloadStateFromSourceAsync(stoppingToken);
+        continue;
+    }
+    await ApplyMessageAsync(message, stoppingToken);
+}
+```
+
+`message.Gap` reports `Reason` (`Reconnect`, `BufferOverflow`, or both), `StartedAt`, `EndedAt`,
+`Duration`, and the known local `DroppedMessages` count. Connection loss counts are unknown.
+The reconnect interval begins when the client observes a failed connection, which can be later
+than the actual interruption, and ends at the target's resubscription acknowledgement.
+
+Each affected target produces a reconnect gap before any messages received after its acknowledgement,
+including when both arrive in one socket read. Multi-target subscriptions can report more than one
+gap as targets resume. Messages already buffered before reconnect remain before the marker.
+Overflow markers sit at the loss position: before retained data for `DropOldest`, after previously
+buffered data for `DropNewest`. Adjacent markers coalesce by combining reasons, observed intervals,
+and discard counts. Markers do not consume data capacity and cannot themselves be dropped; their
+storage remains bounded by the configured message capacity plus one pending marker.
+
+`subscription.DeliveryGap` and the `respire.pubsub.delivery.gaps` counter report each detected target
+interruption or local discard, even without enumeration. Their count can exceed the number of
+coalesced stream markers. Counter tags are `respire.subscription.kind` and
+`respire.subscription.gap.reason`; channel names and payloads are not tags. Event handlers run
+synchronously on the receive path: keep them short, signal background work, and never block on
+Redis or subscription operations. Handler exceptions are logged without stopping message delivery.
+
+Reloading is application-specific: use versions or idempotent updates when reconciling buffered
+messages with a fresh snapshot. Redis pub/sub cannot replay lost messages; use Streams when replay
+or acknowledged delivery is required.

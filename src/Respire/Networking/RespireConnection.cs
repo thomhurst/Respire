@@ -54,6 +54,7 @@ internal sealed class RespireConnection : IAsyncDisposable
     private readonly int? _networkPeerPort;
     private readonly ILogger? _logger;
     private readonly RespirePushHandler? _pushHandler;
+    private readonly RespirePushHandler? _subscriptionConfirmationHandler;
     private readonly Task _receiveTask;
     private readonly Task _flushTask;
     private readonly Task? _watchdogTask;
@@ -125,6 +126,7 @@ internal sealed class RespireConnection : IAsyncDisposable
         Port = port;
         _logger = logger;
         _pushHandler = options.PushHandler;
+        _subscriptionConfirmationHandler = options.SubscriptionConfirmationHandler;
         _receiveBufferSize = options.ReceiveBufferSize;
         _inflight = new InflightRing(options.MaxInflightCommands);
         _sourcePool = new PendingResponsePool(options.CompletionSourcePoolSize);
@@ -1765,6 +1767,8 @@ internal sealed class RespireConnection : IAsyncDisposable
                 || kind.SequenceEqual("ssubscribe"u8)
                 || kind.SequenceEqual("sunsubscribe"u8))
             {
+                // Observe without disposing: this frame still belongs to normal FIFO completion.
+                _subscriptionConfirmationHandler?.Invoke(in value);
                 return false;
             }
         }
@@ -2077,6 +2081,9 @@ internal sealed record RespireConnectionOptions
     /// <see cref="RespirePushHandler"/>). Set by the client's pub/sub hub.
     /// </summary>
     public RespirePushHandler? PushHandler { get; init; }
+
+    /// <summary>Observes subscription acknowledgements before FIFO completion; must not dispose the frame.</summary>
+    public RespirePushHandler? SubscriptionConfirmationHandler { get; init; }
 
     /// <summary>Enables CLIENT TRACKING ON OPTIN before this connection is published.</summary>
     public bool EnableClientTracking { get; init; }

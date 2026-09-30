@@ -1,5 +1,3 @@
-using System.Runtime.CompilerServices;
-using System.Threading.Channels;
 using Respire.Internal;
 
 namespace Respire;
@@ -62,8 +60,8 @@ public readonly record struct RespireSubscriptionOptions(
 /// The subscription is already live when <c>SubscribeAsync</c> returns, so a publish issued right
 /// after it reaches this subscriber and messages are buffered until enumeration starts. Disposing
 /// unsubscribes. If the pub/sub connection drops, Respire reconnects and resubscribes
-/// automatically — the stream just keeps going (messages published while disconnected are lost, as
-/// with any Redis pub/sub). Only one enumerator may be active at a time; dispose it before starting
+/// automatically. Delivery-gap markers report reconnects and local buffer discards; lost messages
+/// cannot be replayed by Redis pub/sub. Only one enumerator may be active at a time; dispose it before starting
 /// another.
 /// </summary>
 public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsyncDisposable
@@ -71,6 +69,7 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
     private readonly SubscriptionHub _hub;
     private readonly TaskCompletionSource<RespireSubscriptionEndReason> _completion =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly SubscriptionOverflow _overflow;
     private long _droppedMessages;
     private int _disposed;
     private int _enumerating;
@@ -86,18 +85,8 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
         Kind = kind;
         Names = names;
         Targets = Array.AsReadOnly(names);
-        Buffer = Channel.CreateBounded<RespireMessage>(new BoundedChannelOptions(bufferSize)
-        {
-            FullMode = overflow == SubscriptionOverflow.DropOldest
-                ? BoundedChannelFullMode.DropOldest
-                : BoundedChannelFullMode.DropWrite,
-            SingleWriter = true,
-            SingleReader = true,
-        }, _ =>
-        {
-            Interlocked.Increment(ref _droppedMessages);
-            RespireTelemetry.RecordSubscriptionMessageDropped(kind, overflow);
-        });
+        _overflow = overflow;
+        Buffer = new SubscriptionBuffer(bufferSize, overflow);
     }
 
     /// <summary>The Redis pub/sub command family used by this subscription.</summary>
@@ -120,7 +109,37 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
 
     internal RespireChannel[] Names { get; }
 
-    internal Channel<RespireMessage> Buffer { get; }
+    internal SubscriptionBuffer Buffer { get; }
+
+    /// <summary>Reports each detected gap, independently of enumeration.</summary>
+    /// <remarks>Runs synchronously on the receive path. Handlers must not block or wait for Redis operations.
+    /// Handler exceptions are logged and do not stop delivery. Stream markers can coalesce adjacent events.</remarks>
+    public event Action<RespireSubscriptionGap>? DeliveryGap;
+
+    internal void Deliver(RespireMessage message)
+    {
+        if (Buffer.Write(message) is not { } gap) return;
+        Interlocked.Increment(ref _droppedMessages);
+        RespireTelemetry.RecordSubscriptionMessageDropped(Kind, _overflow);
+        NotifyGap(gap);
+    }
+
+    internal void DeliverGap(RespireSubscriptionGap gap)
+    {
+        if (Buffer.WriteGap(gap)) NotifyGap(gap);
+    }
+
+    private void NotifyGap(RespireSubscriptionGap gap)
+    {
+        RespireTelemetry.RecordSubscriptionGap(Kind, gap.Reason);
+        var handlers = DeliveryGap;
+        if (handlers is null) return;
+        foreach (Action<RespireSubscriptionGap> handler in handlers.GetInvocationList())
+        {
+            try { handler(gap); }
+            catch (Exception ex) { _hub.LogGapHandlerFailure(ex); }
+        }
+    }
 
     /// <inheritdoc/>
     public IAsyncEnumerator<RespireMessage> GetAsyncEnumerator(CancellationToken cancellationToken = default)
@@ -135,23 +154,12 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
         {
             return new SubscriptionEnumerator(
                 this,
-                EnumerateAsync(cancellationToken).GetAsyncEnumerator(cancellationToken));
+                Buffer.ReadAllAsync(cancellationToken).GetAsyncEnumerator(cancellationToken));
         }
         catch
         {
             Volatile.Write(ref _enumerating, 0);
             throw;
-        }
-    }
-
-    private async IAsyncEnumerable<RespireMessage> EnumerateAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        while (await Buffer.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
-        {
-            while (Buffer.Reader.TryRead(out var message))
-            {
-                yield return message;
-            }
         }
     }
 
@@ -163,7 +171,7 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
             return;
         }
 
-        Buffer.Writer.TryComplete();
+        Buffer.Complete();
         try
         {
             await _hub.RemoveAsync(this).ConfigureAwait(false);
@@ -183,7 +191,7 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
             return;
         }
 
-        Buffer.Writer.TryComplete();
+        Buffer.Complete();
         _completion.TrySetResult(RespireSubscriptionEndReason.ClientDisposed);
     }
 
