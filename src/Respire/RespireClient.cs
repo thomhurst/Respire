@@ -256,6 +256,7 @@ public sealed partial class RespireClient : IRespireClient
     /// Sends a command. Catalog descriptors are pre-encoded; a string converts implicitly to a
     /// caller-supplied descriptor and may contain spaces. The result is a lease.
     /// </summary>
+    /// <remarks>Cluster execution validates all keys in known raw layouts before I/O. Unknown layouts remain server-validated.</remarks>
     public ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args)
         => ExecuteCommandAsync(command, args, RespireCommandFlags.None, CancellationToken.None);
 
@@ -335,7 +336,7 @@ public sealed partial class RespireClient : IRespireClient
         ValidateCatalogCommand(command);
 
         var storedProcedureName = StoredProcedureName(command.Name, args);
-        var commandValue = new CatalogCommand(command, args);
+        var commandValue = new CatalogCommand(command, args, ValidateClusterRawKeys(command.Name, args));
         RespValue response;
         if (_core.Cluster is { } cluster
             && DynamicCommandRouting.IsClusterWideMutation(command.Name, args))
@@ -384,7 +385,7 @@ public sealed partial class RespireClient : IRespireClient
         }
 
         var storedProcedureName = StoredProcedureName(command.Name, args);
-        var commandValue = new CatalogCommand(command, args);
+        var commandValue = new CatalogCommand(command, args, ValidateClusterRawKeys(command.Name, args));
         if (_core.Cluster is { } cluster
             && DynamicCommandRouting.IsClusterWideMutation(command.Name, args))
         {
@@ -503,7 +504,7 @@ public sealed partial class RespireClient : IRespireClient
         var (operation, firstArgumentIndex) = NormalizeInterpolatedOperation(initialOperation, tokens);
         var arguments = tokens.AsSpan(firstArgumentIndex);
         var storedProcedureName = StoredProcedureName(operation, arguments);
-        var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, firstArgumentIndex);
+        var routingKeyIndex = GetRawRoutingKeyIndex(operation, tokens, firstArgumentIndex);
         var commandValue = new DynamicCommand(tokens, routingKeyIndex, firstArgumentIndex);
         var isBlocking = RespireCommand.IsBlocking(
             operation, RespireCommand.Classify(operation), arguments);
@@ -553,7 +554,7 @@ public sealed partial class RespireClient : IRespireClient
         ValidateRawFireAndForgetCommand(operation, ReadOnlySpan<string>.Empty, arguments);
 
         var storedProcedureName = StoredProcedureName(operation, arguments);
-        var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(
+        var routingKeyIndex = GetRawRoutingKeyIndex(
             operation, tokens, firstArgumentIndex);
         var commandValue = new DynamicCommand(tokens, routingKeyIndex, firstArgumentIndex);
         if (_core.Cluster is { } cluster
@@ -580,7 +581,7 @@ public sealed partial class RespireClient : IRespireClient
         if (_keyPrefix is not null)
         {
             throw new NotSupportedException(
-                "Catalog commands cannot run through a key-prefixed view because descriptors do not identify key arguments. " +
+                "Catalog commands cannot run through a key-prefixed view because not every command has a known key layout. " +
                 "Use the typed command facets instead.");
         }
 
@@ -689,7 +690,7 @@ public sealed partial class RespireClient : IRespireClient
         return (operation, words, firstArgumentIndex);
     }
 
-    private static (string? StoredProcedureName, DynamicCommand Command) CreateRawCommand(
+    private (string? StoredProcedureName, DynamicCommand Command) CreateRawCommand(
         string operation,
         string[] words,
         int firstArgumentIndex,
@@ -703,9 +704,20 @@ public sealed partial class RespireClient : IRespireClient
 
         args.CopyTo(tokens, words.Length);
         var storedProcedureName = words.Length == 1 ? StoredProcedureName(operation, args) : null;
-        var routingKeyIndex = DynamicCommandRouting.GetRoutingKeyIndex(
+        var routingKeyIndex = GetRawRoutingKeyIndex(
             operation, tokens, firstArgumentIndex);
         return (storedProcedureName, new DynamicCommand(tokens, routingKeyIndex, firstArgumentIndex));
+    }
+
+    private int ValidateClusterRawKeys(string operation, ReadOnlySpan<RespireValue> arguments)
+        => _core.Cluster is null ? int.MinValue : RawCommandKeyLayouts.ValidateClusterKeys(operation, arguments);
+
+    private int GetRawRoutingKeyIndex(string operation, RespireValue[] tokens, int firstArgumentIndex)
+    {
+        var validated = ValidateClusterRawKeys(operation, tokens.AsSpan(firstArgumentIndex));
+        if (validated == int.MinValue)
+            return DynamicCommandRouting.GetRoutingKeyIndex(operation, tokens, firstArgumentIndex);
+        return validated < 0 ? -1 : firstArgumentIndex + validated;
     }
 
     private static string? StoredProcedureName(string operation, ReadOnlySpan<RespireValue> arguments)

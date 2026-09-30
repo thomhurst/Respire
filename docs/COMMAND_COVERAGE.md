@@ -37,6 +37,12 @@ Catalog execution routes blocking commands through the dedicated connection pool
 change per-connection state remain discoverable but are rejected by `ExecuteAsync`; use Respire's
 transaction/subscription APIs or connection options so affinity stays correct.
 
+Known immediate raw key layouts share the deferred layout table and validate all declared
+keys before Cluster I/O. Immediate-only layouts include KEYDB.MEXISTS, blocking pops/moves,
+MSETEX, stream reads, MIGRATE, and JSON.MGET. Unknown layouts retain server validation;
+descriptor provenance alone does not declare a key layout. See
+[raw Cluster validation](../website/docs/guides/raw-commands.md#cluster-key-validation).
+
 ## Regeneration
 
 Clone the tagged Redis and Valkey repositories, then run:

@@ -257,6 +257,7 @@ public interface IRespireClient : IAsyncDisposable
     /// Sends a command; each value is exactly one argument. The result owns pooled memory
     /// and must be disposed.
     /// </summary>
+    /// <remarks>Cluster execution validates all keys in known raw layouts before I/O. Unknown layouts remain server-validated.</remarks>
     ValueTask<RespireResult> ExecuteAsync(RespireCommand command, params RespireValue[] args);
 
     /// <summary>

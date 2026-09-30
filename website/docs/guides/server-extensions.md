@@ -60,10 +60,11 @@ These commands retain the raw execution contract: arguments are separate binary-
 tokens, caller keys are explicit, and prefixed views reject immediate catalog execution.
 Key-based descriptors route using their first key argument. Administrative commands and
 the `RM` cursor have no routing key and run on one selected node, without Cluster fan-out.
-`KEYDB.MEXISTS key [key ...]` is a multi-key command. This raw catalog routes using
-only its first key; it does not validate all key slots locally or split the request across
-nodes. On KeyDB Cluster, supply keys sharing a hash slot (for example, `{user}:a` and
-`{user}:b`); the server returns `CROSSSLOT` for incompatible keys. Its result contains
+`KEYDB.MEXISTS key [key ...]` is a multi-key command. With `UseCluster`, raw execution validates
+all its key slots before I/O and routes using the first key; it does not split the request across
+nodes. Supply keys sharing a hash slot (for example, `{user}:a` and `{user}:b`);
+incompatible keys fail locally with `CROSSSLOT`. See [raw Cluster validation](raw-commands.md#cluster-key-validation)
+for the supported layouts and unknown-command contract. Its result contains
 one boolean per supplied key, in input order (integer 0/1 replies under RESP2).
 For node-specific administration, use a standalone client aimed at the intended endpoint.
 These vendor descriptors are not added to the deferred raw API's supported key layouts;

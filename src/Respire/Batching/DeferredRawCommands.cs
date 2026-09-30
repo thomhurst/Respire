@@ -1,4 +1,3 @@
-using System.Collections.Frozen;
 using Respire.Commands;
 
 namespace Respire;
@@ -28,7 +27,7 @@ internal static class DeferredRawCommands
         }
 
         // Determine every key, never just guess that the first argument is the routing key.
-        var layout = GetLayout(operation, tokens.AsSpan(words.Length));
+        var layout = RawCommandKeyLayouts.GetDeferredLayout(operation, tokens.AsSpan(words.Length));
 
         // Prefixing only mutates this private snapshot. A failed slot check leaves the sink untouched.
         int? slot = null;
@@ -80,107 +79,5 @@ internal static class DeferredRawCommands
         }
         if (previousSpace) throw new ArgumentException("Command names must not end with a space.", nameof(name));
         return operation;
-    }
-
-    internal readonly record struct KeyLayout(int Start, int Count, int Stride = 1, int Extra = -1);
-
-    private enum LayoutKind { None, First, FirstTwo, All, Pairs, BitOp, CountedAfterName, Counted, CountedWithDestination }
-
-    private static readonly FrozenDictionary<string, LayoutKind> Layouts = CreateLayouts();
-    internal static IEnumerable<string> SupportedOperations => Layouts.Keys;
-
-    private static FrozenDictionary<string, LayoutKind> CreateLayouts()
-    {
-        var layouts = new Dictionary<string, LayoutKind>(StringComparer.Ordinal);
-        Add(LayoutKind.None,
-            "PING", "ECHO", "TIME");
-        Add(LayoutKind.First,
-            "GET", "SET", "GETSET", "SETNX", "SETEX", "PSETEX", "GETDEL",
-            "GETEX", "APPEND", "STRLEN", "GETRANGE", "SETRANGE", "INCR", "INCRBY",
-            "INCRBYFLOAT", "DECR", "DECRBY", "TYPE", "TTL", "PTTL", "EXPIRE",
-            "PEXPIRE", "EXPIREAT", "PEXPIREAT", "EXPIRETIME", "PEXPIRETIME", "PERSIST", "DUMP",
-            "RESTORE", "HGET", "HSET", "HSETNX", "HMGET", "HMSET", "HGETALL",
-            "HDEL", "HEXISTS", "HLEN", "HKEYS", "HVALS", "HSTRLEN", "HINCRBY",
-            "HINCRBYFLOAT", "HRANDFIELD", "LPUSH", "RPUSH", "LPUSHX", "RPUSHX", "LPOP",
-            "RPOP", "LLEN", "LRANGE", "LINDEX", "LSET", "LINSERT", "LREM",
-            "LTRIM", "LPOS", "SADD", "SREM", "SCARD", "SMEMBERS", "SISMEMBER",
-            "SMISMEMBER", "SPOP", "SRANDMEMBER", "ZADD", "ZREM", "ZCARD", "ZSCORE",
-            "ZMSCORE", "ZINCRBY", "ZCOUNT", "ZLEXCOUNT", "ZRANGE", "ZREVRANGE", "ZRANGEBYSCORE",
-            "ZREVRANGEBYSCORE", "ZRANGEBYLEX", "ZREVRANGEBYLEX", "ZRANK", "ZREVRANK", "ZREMRANGEBYRANK", "ZREMRANGEBYSCORE",
-            "ZREMRANGEBYLEX", "ZPOPMIN", "ZPOPMAX", "ZRANDMEMBER", "GETBIT", "SETBIT", "BITCOUNT",
-            "BITPOS", "BITFIELD", "BITFIELD_RO", "PFADD", "GEOADD", "GEODIST", "GEOHASH",
-            "GEOPOS", "GEOSEARCH", "XADD", "XACK", "XDEL", "XTRIM", "XLEN",
-            "XRANGE", "XREVRANGE", "XPENDING", "XCLAIM", "XAUTOCLAIM", "OBJECT ENCODING", "OBJECT FREQ",
-            "OBJECT IDLETIME", "OBJECT REFCOUNT", "MEMORY USAGE", "XINFO STREAM", "XINFO GROUPS", "XINFO CONSUMERS", "XGROUP CREATE",
-            "XGROUP SETID", "XGROUP DESTROY", "XGROUP CREATECONSUMER", "XGROUP DELCONSUMER");
-        Add(LayoutKind.FirstTwo,
-            "RENAME", "RENAMENX", "COPY", "LCS", "SMOVE", "LMOVE", "RPOPLPUSH",
-            "ZRANGESTORE", "GEOSEARCHSTORE");
-        Add(LayoutKind.All,
-            "DEL", "UNLINK", "EXISTS", "TOUCH", "MGET", "SDIFF", "SINTER",
-            "SUNION", "SDIFFSTORE", "SINTERSTORE", "SUNIONSTORE", "PFCOUNT", "PFMERGE");
-        Add(LayoutKind.Pairs,
-            "MSET", "MSETNX");
-        Add(LayoutKind.BitOp,
-            "BITOP");
-        Add(LayoutKind.CountedAfterName,
-            "EVAL", "EVALSHA", "EVAL_RO", "EVALSHA_RO", "FCALL", "FCALL_RO");
-        Add(LayoutKind.Counted,
-            "LMPOP", "ZMPOP", "SINTERCARD", "ZDIFF", "ZINTER", "ZUNION", "ZINTERCARD");
-        Add(LayoutKind.CountedWithDestination,
-            "ZDIFFSTORE", "ZINTERSTORE", "ZUNIONSTORE");
-        return layouts.ToFrozenDictionary(StringComparer.Ordinal);
-
-        void Add(LayoutKind kind, params string[] operations)
-        {
-            foreach (var operation in operations) layouts.Add(operation, kind);
-        }
-    }
-
-    internal static KeyLayout GetLayout(string operation, ReadOnlySpan<RespireValue> args)
-    {
-        if (!Layouts.TryGetValue(operation, out var kind))
-            throw new NotSupportedException($"{operation} has no supported deferred key layout. Use a typed facet or immediate execution; unknown and module commands are not guessed.");
-        switch (kind)
-        {
-            case LayoutKind.None:
-                return new(0, 0);
-            case LayoutKind.First:
-                Require(args.Length >= 1);
-                return new(0, 1);
-            case LayoutKind.FirstTwo:
-                Require(args.Length >= 2);
-                return new(0, 2);
-            case LayoutKind.All:
-                Require(args.Length >= 1);
-                return new(0, args.Length);
-            case LayoutKind.Pairs:
-                Require(args.Length >= 2 && args.Length % 2 == 0);
-                return new(0, args.Length / 2, 2);
-            case LayoutKind.BitOp:
-                Require(args.Length >= 3);
-                return new(1, args.Length - 1);
-            case LayoutKind.CountedAfterName:
-                return Counted(args, 1, allowZero: true);
-            case LayoutKind.Counted:
-                return Counted(args, 0);
-            case LayoutKind.CountedWithDestination:
-                return Counted(args, 1) with { Extra = 0 };
-            default:
-                throw new InvalidOperationException("Unknown deferred command key layout.");
-        }
-    }
-
-    private static KeyLayout Counted(ReadOnlySpan<RespireValue> args, int index, bool allowZero = false)
-    {
-        Require(args.Length > index);
-        Require(args[index].TryGetInt64(out var count) && count >= (allowZero ? 0 : 1)
-            && count <= args.Length - index - 1);
-        return new(index + 1, (int)count);
-    }
-
-    private static void Require(bool condition)
-    {
-        if (!condition) throw new ArgumentException("Arguments do not match the command's required key layout.", "args");
     }
 }
