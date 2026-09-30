@@ -238,7 +238,7 @@ public class ClusterRetirementTests
         var replacements = 0;
         // This callback runs after replacement selection and before the tracked command's next send.
         // Retire that replacement deterministically, without racing the notification dispatcher.
-        Action<bool> onRedirect = _ =>
+        Action onRedirect = () =>
         {
             if (++replacements == 1) Publish(router, new("127.0.0.1", last.Port), "last", 3);
         };
@@ -884,7 +884,7 @@ public class ClusterRetirementTests
             {
                 case "tracked":
                     var rebased = 0;
-                    Action<bool> onRedirect = allowInsert => { if (allowInsert) rebased++; };
+                    Action onRedirect = () => rebased++;
                     var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
                     var pending = (ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
                         ["SET", router, new Cmd2(RespireCommands.String.SET.Verb, "key", "value"), timeout.Token, onRedirect])!;
@@ -1003,7 +1003,7 @@ public class ClusterRetirementTests
         if (tracked)
         {
             var method = typeof(RespireClient).GetMethod("SendTrackedClusterAsync", Private)!.MakeGenericMethod(typeof(Cmd2));
-            Action<bool> onRedirect = rebased.Add;
+            Action onRedirect = () => rebased.Add(true);
             pending = ((ValueTask<Respire.Protocol.RespValue>)method.Invoke(client,
                 ["SET", router, command, timeout.Token, onRedirect])!).AsTask();
         }
@@ -1020,10 +1020,13 @@ public class ClusterRetirementTests
         using (var reply = await pending.WaitAsync(timeout.Token))
             await Assert.That(reply.AsString()).IsEqualTo("OK");
         await Assert.That(oldTarget.IsRetired).IsTrue();
-        await Assert.That(target.ReceivedCommands.Skip(4)).IsEquivalentTo(["ASKING", "SET key value"]);
+        string[] expectedCommands = tracked
+            ? ["ASKING", "CLIENT CACHING YES", "SET key value"]
+            : ["ASKING", "SET key value"];
+        await Assert.That(target.ReceivedCommands.Skip(4)).IsEquivalentTo(expectedCommands);
         await Assert.That(source.ReceivedCommands.Count(value => value == "SET key value")).IsEqualTo(1);
         await Assert.That((await router.GetConnectionAsync(slot, timeout.Token, discovery: null)).Port).IsEqualTo(source.Port);
-        if (tracked) await Assert.That(rebased).IsEquivalentTo([false, false]);
+        if (tracked) await Assert.That(rebased).IsEquivalentTo([true, true]);
         await target.SendRawAsync("+PONG\r\n+PONG\r\n+PONG\r\n+PONG\r\n"u8.ToArray(), 0);
         foreach (var task in accepted) { using var reply = await task.WaitAsync(timeout.Token); }
         await router.WaitForRetirementAsync().WaitAsync(timeout.Token);
