@@ -154,6 +154,7 @@ internal sealed class ThreadPoolMonitor
     private sealed class Lease(ThreadPoolMonitor owner, ILogger? logger, TimeSpan threshold) : IDisposable
     {
         private int _disposed;
+        // Only this lease's sampler thread reads or writes the warning timestamp.
         private long _lastWarning;
 
         internal void Observe(RespireThreadPoolSnapshot sample, long now)
