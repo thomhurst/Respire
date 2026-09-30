@@ -8,6 +8,7 @@ Pass an ordered key span to select the first nonempty sorted set. Selection foll
 key order, not the lowest or highest score across all keys. Entries come only from
 that selected set and follow ascending score order by default; `descending: true`
 selects maximum scores first. Equal-score members follow Redis ordering.
+Duplicate keys are sent unchanged, preserving the supplied key order.
 
 ```csharp
 await using var client = await RespireClient.ConnectAsync("localhost:6379");

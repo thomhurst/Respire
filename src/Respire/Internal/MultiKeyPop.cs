@@ -49,6 +49,7 @@ internal static class MultiKeyPop
         return new RespireKey(bytes.ToArray());
     }
 
+    // Redis zero means infinite blocking; finite waits use at least one millisecond.
     internal static RespireValue ToSeconds(TimeSpan waitFor)
         => waitFor == Timeout.InfiniteTimeSpan ? 0 : Math.Max(waitFor.TotalSeconds, 0.001);
 }
