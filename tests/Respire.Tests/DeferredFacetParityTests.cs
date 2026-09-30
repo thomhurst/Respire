@@ -18,6 +18,9 @@ public class DeferredFacetParityTests
             [typeof(RespireKey), typeof(string), typeof(int), typeof(CancellationToken)])!,
         typeof(ISortedSetCommands).GetMethod(nameof(ISortedSetCommands.ScanAsync),
             [typeof(RespireKey), typeof(string), typeof(int), typeof(CancellationToken)])!,
+        // Multi-key scalar list pops are always blocking and cannot be queued.
+        typeof(IListCommands).GetMethod(nameof(IListCommands.PopAsync),
+            [typeof(ReadOnlySpan<RespireKey>), typeof(TimeSpan), typeof(ListSide), typeof(CancellationToken)])!,
         // Leased replies require explicit pooled-buffer ownership outside deferred completion.
         typeof(IStringCommands).GetMethod(nameof(IStringCommands.GetLeaseAsync),
             [typeof(RespireKey), typeof(CancellationToken)])!,

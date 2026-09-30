@@ -99,6 +99,35 @@ list. Values and pivots accept binary `RespireValue` inputs. Every method also e
 and transaction `Lists` facets without the `Async` suffix; queued push methods snapshot the
 argument span, while supplied byte buffers must remain unchanged until execution finishes.
 
+Multi-key pops return the selected list along with its values. `PopManyAsync` uses LMPOP
+(Redis 7.0+) and selects the first nonempty list in input order. `side` controls which end of
+that list is popped; `count` must be positive. Supplying `waitFor` selects BLMPOP instead.
+`PopAsync` always waits using BLPOP or BRPOP and returns one value. All return `null` when no
+list is available before the timeout. Pass `Timeout.InfiniteTimeSpan` to wait indefinitely;
+zero waits use the same minimum one-millisecond Redis timeout as single-key list pops.
+
+```csharp
+RespireListPopManyResult? jobs = await redis.Lists.PopManyAsync(
+    ["{jobs}:urgent", "{jobs}:normal"], count: 10, side: ListSide.Left);
+RespireListPopResult? job = await redis.Lists.PopAsync(
+    ["{jobs}:urgent", "{jobs}:normal"], waitFor: TimeSpan.FromSeconds(5));
+if (job is { } popped)
+{
+    long remaining = await redis.Lists.CountAsync(popped.Key);
+}
+```
+
+Returned keys preserve binary bytes and own their storage. A prefixed view removes its literal
+prefix from the returned key so it can be passed back through that view. Values are decoded as
+UTF-8, matching the existing list pop methods. Cluster calls require every input key to share a
+slot after prefixing; empty Redis keys remain valid. Blocking calls use dedicated pooled
+connections, and cancellation discards a blocked connection without stalling multiplexed traffic.
+
+Batch and transaction `Lists.PopMany(keys, count, side)` queue the nonblocking LMPOP command.
+The key span is copied into command arguments; caller-owned byte buffers must remain unchanged
+until execution finishes. Returned key bytes and value strings survive deferred response disposal.
+Blocking pops have no batch or transaction form.
+
 Set `waitFor` to transparently select the blocking command and a dedicated connection. See [blocking queues](../guides/blocking-queues).
 
 ## Sets

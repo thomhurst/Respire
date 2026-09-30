@@ -158,6 +158,8 @@ internal static class Verbs
     public static readonly Verb RPush = new("RPUSH");
     public static readonly Verb LPop = new("LPOP");
     public static readonly Verb RPop = new("RPOP");
+    public static readonly Verb LMPop = new(1, "LMPOP");
+    public static readonly Verb BLMPop = new(2, "BLMPOP");
     public static readonly Verb BLPop = new("BLPOP");
     public static readonly Verb BRPop = new("BRPOP");
     public static readonly Verb LLen = new("LLEN");

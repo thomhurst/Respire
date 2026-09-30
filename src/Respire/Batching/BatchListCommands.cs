@@ -15,7 +15,7 @@ namespace Respire;
 /// Batches copy argument spans when queued, but referenced byte buffers must remain unchanged
 /// until execution completes. Transactions serialize arguments into their owned buffer when queued.
 /// </remarks>
-public interface IBatchListCommands
+public partial interface IBatchListCommands
 {
     /// <summary>First matching zero-based index, or null. Negative rank searches from the tail; maxLength 0 scans without a limit. Redis: LPOS.</summary>
     RespirePending<long?> Position(RespireKey key, RespireValue value, long rank = 1, long maxLength = 0);
@@ -107,7 +107,7 @@ public interface IBatchListCommands
     RespirePending<bool> Trim(RespireKey key, long start, long stop);
 }
 
-internal sealed class BatchListCommands(IPendingSink sink) : IBatchListCommands
+internal sealed partial class BatchListCommands(IPendingSink sink) : IBatchListCommands
 {
     public RespirePending<long?> Position(RespireKey key, RespireValue value, long rank = 1, long maxLength = 0)
         => sink.Add<Cmd1N, long?>("LPOS", new Cmd1N(RespireCommands.List.LPOS.Verb, sink.Client.Key(in key), ListCommands.PositionArguments(value, rank, null, maxLength)),
