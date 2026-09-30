@@ -66,6 +66,9 @@ the Cluster owner retries failed fences with exponential delays from one to 30 s
 failed attempts at Debug level, and retains the generation until success or explicit client
 disposal. Client disposal aborts active and detached transports, borrowed connections, and control
 attempts before waiting for cleanup.
+An expired control-attempt deadline surfaces as `RespireTimeoutException` for `CLIENT KILL`;
+caller cancellation and explicit disposal retain their cancellation behavior. A failed pool
+drain faults generation retirement and retains ownership for disposal instead of reporting success.
 
 Correction pools share live multiplexer/peer/TLS identities, including replacement sockets on the
 same peer. A changed peer gets a separate pool; obsolete entries detach from lookup. A correction

@@ -37,7 +37,7 @@ internal sealed partial class ClusterRouter
         var node = retirement.Node;
         // Start both drains before awaiting either. A borrowed blocking lease remains
         // owned until it returns; explicit client disposal can abort both kinds of work.
-        var poolDrain = retirement.DedicatedPool is { } pool ? RetirePoolAsync(pool) : Task.CompletedTask;
+        var poolDrain = retirement.DedicatedPool is { } pool ? DrainPoolAsync(pool) : Task.CompletedTask;
         try
         {
             try
@@ -85,7 +85,7 @@ internal sealed partial class ClusterRouter
             await poolDrain.ConfigureAwait(false);
             List<DedicatedConnectionPool> corrections;
             lock (_nodesGate) corrections = DetachCorrectionPoolsLocked(node);
-            await Task.WhenAll(corrections.Select(RetirePoolAsync)).ConfigureAwait(false);
+            await Task.WhenAll(corrections.Select(DrainPoolAsync)).ConfigureAwait(false);
             lock (_nodesGate)
             {
                 _retiringNodes.Remove(node);
@@ -104,16 +104,19 @@ internal sealed partial class ClusterRouter
     {
         try
         {
-            await pool.RetireAsync().ConfigureAwait(false);
+            await DrainPoolAsync(pool).ConfigureAwait(false);
         }
         catch (Exception error)
         {
             _logger?.LogWarning(error, "A retired Cluster pool reported a cleanup failure");
         }
-        finally
-        {
-            lock (_nodesGate) _ownedPools.Remove(pool);
-        }
+    }
+
+    private async Task DrainPoolAsync(DedicatedConnectionPool pool)
+    {
+        await pool.RetireAsync().ConfigureAwait(false);
+        // Failed cleanup stays owned so explicit client disposal can still visit it.
+        lock (_nodesGate) _ownedPools.Remove(pool);
     }
 
     internal Task WaitForRetirementAsync()

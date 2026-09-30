@@ -612,11 +612,19 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                     EnableClientTracking = false, PushHandler = null, SubscriptionConfirmationHandler = null,
                     TlsOptions = _options.UseTls ? RespireConnection.CreateTlsOptions(_options.TlsOptions, Host) : _options.TlsOptions,
                 };
-                await using var control = await RespireConnection.ConnectAsync(identity.Host, identity.Port,
-                    options, _logger, lifetime.Token).ConfigureAwait(false);
-                using var reply = await control.SendAsync(new ClientKillIdCommand(identity.ClientId), lifetime.Token,
-                    armCommandDeadline: false).ConfigureAwait(false);
-                if (reply.IsError) throw new RespireServerException(reply.GetErrorMessage(), "CLIENT KILL");
+                try
+                {
+                    await using var control = await RespireConnection.ConnectAsync(identity.Host, identity.Port,
+                        options, _logger, lifetime.Token).ConfigureAwait(false);
+                    using var reply = await control.SendAsync(new ClientKillIdCommand(identity.ClientId), lifetime.Token,
+                        armCommandDeadline: false).ConfigureAwait(false);
+                    if (reply.IsError) throw new RespireServerException(reply.GetErrorMessage(), "CLIENT KILL");
+                }
+                catch (OperationCanceledException error) when (lifetime.IsCancellationRequested
+                    && !cancellationToken.IsCancellationRequested && !_abortCancellation.IsCancellationRequested)
+                {
+                    throw new RespireTimeoutException("CLIENT KILL", _options.ConnectTimeout, error);
+                }
                 _retiredServerClientIds.TryRemove(identity, out _);
             }
         }

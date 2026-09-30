@@ -36,7 +36,6 @@ internal sealed partial class ClusterRouter
         lock (_nodesGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            unused = PruneCorrectionPeersLocked(identity.Multiplexer);
             if (!_correctionPools.TryGetValue(identity, out entry!))
             {
                 var options = (original.Multiplexer?.Options ?? _options.ToConnectionOptions()) with
@@ -59,6 +58,10 @@ internal sealed partial class ClusterRouter
                     entry.Detached = true;
             }
             entry.Users++;
+            // Reconnect publication does not take this gate. Recheck after subscribing so
+            // a peer change just before observer installation cannot leave a stale cache entry.
+            // Reserve this lease first: pruning must not retire its pool before rent completes.
+            unused = PruneCorrectionPeersLocked(identity.Multiplexer);
         }
         foreach (var pool in unused) _ = RetirePoolAsync(pool);
         return new(this, entry);

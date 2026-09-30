@@ -1,4 +1,6 @@
 using System.Reflection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Respire.Commands;
 using Respire.Infrastructure;
 using Respire.Internal;
@@ -116,6 +118,71 @@ public class ClusterRetirementTests
         await Assert.That(async () => await pending).Throws<RespireConnectionException>();
         await router.WaitForRetirementAsync().WaitAsync(Limit);
         await Assert.That(connection.IsConnected).IsFalse();
+    }
+
+    [Test]
+    public async Task FailedDedicatedCleanupRemainsOwnedAndFaultsGenerationRetirement()
+    {
+        await using var server = new FakeRespServer(2, FakeRespServer.PongReply);
+        using var logger = new FailingPoolDisconnectLogger();
+        await using var client = CreateClient(logger);
+        var router = client.Core.Cluster!;
+        var endpoint = new RespireEndpoint("127.0.0.1", server.Port);
+        Publish(router, endpoint, "old", 1);
+        var node = router.GetMultiplexer(endpoint);
+        await node.EnsureConnectedAsync();
+        using (var ready = await node.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
+            await Assert.That(ready.AsString()).IsEqualTo("PONG");
+        var pool = router.GetDedicatedPool(endpoint);
+        var borrowed = await pool.RentAsync(default);
+        using (var ready = await borrowed.SendAsync(new RawCommand(FakeRespServer.PingFrame)))
+            await Assert.That(ready.AsString()).IsEqualTo("PONG");
+        Publish(router, endpoint, "new", 2);
+        var retirement = router.WaitForRetirementAsync();
+        pool.Return(borrowed);
+        var error = await Assert.That(async () => await retirement.WaitAsync(Limit)).ThrowsExactly<InvalidOperationException>();
+        await Assert.That(error).IsSameReferenceAs(logger.Failure);
+        await Assert.That(Count(router, "_retiringNodes")).IsEqualTo(1);
+        await Assert.That(Count(router, "_ownedPools")).IsEqualTo(1);
+        await Assert.That(async () => await client.DisposeAsync().AsTask().WaitAsync(Limit)).ThrowsExactly<InvalidOperationException>();
+        await Assert.That(borrowed.IsConnected).IsFalse();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FenceDeadlineIsDistinctFromCallerCancellation(bool cancelCaller)
+    {
+        var killSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var server = new FakeRespServer(2, ":42\r\n"u8.ToArray())
+        {
+            SuppressReply = command =>
+            {
+                if (command != "CLIENT KILL ID 42") return false;
+                killSeen.TrySetResult();
+                return true;
+            },
+        };
+        await using var node = RespireConnectionMultiplexer.Create("unresolvable.invalid",
+            options: new RespireConnectionOptions { ConnectTimeout = cancelCaller ? Limit : TimeSpan.FromMilliseconds(100) });
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
+        await connection.EnsureServerClientIdAsync();
+        InstallPhysicalConnection(node, connection);
+        await connection.DisposeAsync();
+        using var cancel = new CancellationTokenSource();
+        var fencing = node.FenceRetiredConnectionsAsync(cancel.Token).AsTask();
+        await killSeen.Task.WaitAsync(Limit);
+        if (cancelCaller)
+        {
+            cancel.Cancel();
+            await Assert.That(async () => await fencing.WaitAsync(Limit)).Throws<OperationCanceledException>();
+        }
+        else
+        {
+            var error = await Assert.That(async () => await fencing.WaitAsync(Limit)).ThrowsExactly<RespireTimeoutException>();
+            await Assert.That(error!.Message).Contains("CLIENT KILL");
+        }
+        await Assert.That(node.HasPendingCorrectionFences).IsTrue();
     }
 
     [Test]
@@ -284,10 +351,26 @@ public class ClusterRetirementTests
         connection.Multiplexer = node;
     }
 
-    private static RespireClient CreateClient() => RespireClient.Create(new RespireOptions
+    private static RespireClient CreateClient(ILoggerFactory? loggerFactory = null) => RespireClient.Create(new RespireOptions
     {
         UseCluster = true, Connections = 1, Endpoints = { new RespireEndpoint("seed.invalid") },
+        LoggerFactory = loggerFactory,
     });
+
+    private sealed class FailingPoolDisconnectLogger : ILoggerFactory, ILogger
+    {
+        internal readonly InvalidOperationException Failure = new("Test dedicated disconnect failure.");
+        public ILogger CreateLogger(string categoryName) => categoryName.Contains(".Blocking.", StringComparison.Ordinal) ? this : NullLogger.Instance;
+        public void AddProvider(ILoggerProvider provider) { }
+        public void Dispose() { }
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == LogLevel.Debug && formatter(state, exception).StartsWith("Disconnected from", StringComparison.Ordinal))
+                throw Failure;
+        }
+    }
 
     private static ClusterNodeIdentityIndex Identities(ClusterRouter router)
         => (ClusterNodeIdentityIndex)typeof(ClusterRouter).GetField("_identities", Private)!.GetValue(router)!;
