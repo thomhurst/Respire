@@ -652,9 +652,12 @@ public sealed class CartService([FromKeyedServices("cache")] IRespireClient redi
    retain their explicit selections. Raw replies retain their negotiated wire shape.
 3. **Sentinel**: automatic primary discovery and failover. Redis Cluster already uses
    `Endpoints` as seeds and handles `CLUSTER SLOTS`, MOVED, ASK, and hash-slot validation.
-4. **Source-generated custom commands** for modules such as RedisJSON and Search are planned
-   in [#417](https://github.com/thomhurst/Respire/issues/417). Attribute-based declarations and
-   `redis.As<T>()` are not available; use the generated command catalog or raw `ExecuteAsync`.
+4. **Source-generated custom commands** use `[RespireCommands]` interfaces and
+   `[RespireCommand("JSON.GET")]` methods. Construct the generated
+   `<InterfaceName>Implementation` with an `IRespireClient`; no reflection-based `redis.As<T>()`
+   factory is needed. See the generated commands guide for supported shapes and raw execution
+   limitations. First-party module packages remain tracked by
+   [#417](https://github.com/thomhurst/Respire/issues/417).
 5. **Interactive WATCH transactions** are already delivered on dedicated connections (§6).
 
 ## 19. What this deletes from today's surface
