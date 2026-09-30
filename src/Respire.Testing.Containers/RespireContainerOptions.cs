@@ -27,7 +27,7 @@ public sealed record RespireContainerOptions
     public RespireContainerServer Server { get; init; }
     /// <summary>Deployment topology. Defaults to standalone.</summary>
     public RespireContainerTopology Topology { get; init; }
-    /// <summary>Image override, including its tag or digest. It must contain the selected server's binaries and /bin/sh.</summary>
+    /// <summary>Image override, including its tag or digest. It must contain the selected server and CLI binaries, /bin/sh, mkdir, and tail.</summary>
     /// <remarks>Defaults to redis:7.2-alpine or valkey/valkey:8.1-alpine. Cluster requires Redis 7+ or Valkey.</remarks>
     public string? Image { get; init; }
     /// <summary>Maximum startup and readiness time, including pulling the image. Defaults to two minutes.</summary>

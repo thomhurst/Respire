@@ -14,6 +14,8 @@ public sealed class RespireContainerFixture : IAsyncDisposable
 {
     /// <summary>The monitored service name used by Sentinel fixtures.</summary>
     public const string SentinelServiceName = "respire-test";
+    private const string DefaultRedisImage = "redis:7.2-alpine";
+    private const string DefaultValkeyImage = "valkey/valkey:8.1-alpine";
     private const int ClusterPrimaryCount = 3;
     private const int ClusterBusPortStart = 16379;
     private const int SentinelQuorum = 2;
@@ -36,7 +38,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         _ports = ports;
         _server = options.Server == RespireContainerServer.Redis ? "redis-server" : "valkey-server";
         _cli = options.Server == RespireContainerServer.Redis ? "redis-cli" : "valkey-cli";
-        var image = options.Image ?? (options.Server == RespireContainerServer.Redis ? "redis:7.2-alpine" : "valkey/valkey:8.1-alpine");
+        var image = options.Image ?? (options.Server == RespireContainerServer.Redis ? DefaultRedisImage : DefaultValkeyImage);
         var builder = new ContainerBuilder(image)
             .WithCreateParameterModifier(parameters => (parameters.HostConfig ??= new()).Init = true)
             .WithEntrypoint("/bin/sh", "-c")
@@ -134,43 +136,49 @@ public sealed class RespireContainerFixture : IAsyncDisposable
             await StartServerAsync(index, config, sentinel: false, cancellationToken).ConfigureAwait(false);
         }
         if (_options.Topology == RespireContainerTopology.Cluster)
-        {
-            for (var index = 0; index < dataCount; index++)
-            {
-                var first = index * 16384 / dataCount;
-                var last = (index + 1) * 16384 / dataCount - 1;
-                await CliAsync(_ports[index], ["CLUSTER", "ADDSLOTSRANGE", Number(first), Number(last)], cancellationToken).ConfigureAwait(false);
-                if (index != 0)
-                    await CliAsync(_ports[0], ["CLUSTER", "MEET", "127.0.0.1", Number(_ports[index]), Number(ClusterBusPortStart + index)], cancellationToken).ConfigureAwait(false);
-            }
-            foreach (var port in _ports)
-                await WaitForAsync(port, ["CLUSTER", "INFO"], text =>
-                {
-                    var fields = text.Split('\n', StringSplitOptions.TrimEntries);
-                    return fields.Contains("cluster_state:ok", StringComparer.Ordinal)
-                        && fields.Contains($"cluster_known_nodes:{dataCount}", StringComparer.Ordinal);
-                }, cancellationToken).ConfigureAwait(false);
-        }
+            await InitializeClusterAsync(dataCount, cancellationToken).ConfigureAwait(false);
         else if (_options.Topology == RespireContainerTopology.Sentinel)
-        {
-            await WaitForAsync(_ports[1], ["INFO", "replication"], text => text.Contains("master_link_status:up", StringComparison.Ordinal), cancellationToken).ConfigureAwait(false);
-            for (var index = 2; index < _ports.Length; index++)
-            {
-                var config = BaseConfiguration(_ports[index]) +
-                    $"sentinel monitor {SentinelServiceName} 127.0.0.1 {_ports[0]} {SentinelQuorum}\nsentinel down-after-milliseconds {SentinelServiceName} {SentinelDownAfterMilliseconds}\n" +
-                    $"sentinel announce-ip 127.0.0.1\nsentinel announce-port {_ports[index]}\n";
-                await StartServerAsync(index, config, sentinel: true, cancellationToken).ConfigureAwait(false);
-            }
-            foreach (var port in _ports.Skip(2))
-            {
-                await WaitForAsync(port, ["SENTINEL", "CKQUORUM", SentinelServiceName], text => text.StartsWith("OK", StringComparison.Ordinal), cancellationToken).ConfigureAwait(false);
-                await WaitForAsync(port, ["SENTINEL", "REPLICAS", SentinelServiceName], ReplicaIsReady, cancellationToken).ConfigureAwait(false);
-            }
-        }
+            await InitializeSentinelAsync(cancellationToken).ConfigureAwait(false);
         var host = _options.Topology == RespireContainerTopology.Standalone ? _container.Hostname : "127.0.0.1";
         var endpoints = _ports.Select(port => new RespireEndpoint(host, _container.GetMappedPublicPort(port))).ToArray();
         DataEndpoints = Array.AsReadOnly(endpoints[..dataCount]);
         SentinelEndpoints = Array.AsReadOnly(endpoints[dataCount..]);
+    }
+
+    private async Task InitializeClusterAsync(int dataCount, CancellationToken cancellationToken)
+    {
+        for (var index = 0; index < dataCount; index++)
+        {
+            var first = index * 16384 / dataCount;
+            var last = (index + 1) * 16384 / dataCount - 1;
+            await CliAsync(_ports[index], ["CLUSTER", "ADDSLOTSRANGE", Number(first), Number(last)], cancellationToken).ConfigureAwait(false);
+            if (index != 0)
+                await CliAsync(_ports[0], ["CLUSTER", "MEET", "127.0.0.1", Number(_ports[index]), Number(ClusterBusPortStart + index)], cancellationToken).ConfigureAwait(false);
+        }
+        foreach (var port in _ports)
+            await WaitForAsync(port, ["CLUSTER", "INFO"], text =>
+            {
+                var fields = text.Split('\n', StringSplitOptions.TrimEntries);
+                return fields.Contains("cluster_state:ok", StringComparer.Ordinal)
+                    && fields.Contains($"cluster_known_nodes:{dataCount}", StringComparer.Ordinal);
+            }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task InitializeSentinelAsync(CancellationToken cancellationToken)
+    {
+        await WaitForAsync(_ports[1], ["INFO", "replication"], text => text.Contains("master_link_status:up", StringComparison.Ordinal), cancellationToken).ConfigureAwait(false);
+        for (var index = 2; index < _ports.Length; index++)
+        {
+            var config = BaseConfiguration(_ports[index]) +
+                $"sentinel monitor {SentinelServiceName} 127.0.0.1 {_ports[0]} {SentinelQuorum}\nsentinel down-after-milliseconds {SentinelServiceName} {SentinelDownAfterMilliseconds}\n" +
+                $"sentinel announce-ip 127.0.0.1\nsentinel announce-port {_ports[index]}\n";
+            await StartServerAsync(index, config, sentinel: true, cancellationToken).ConfigureAwait(false);
+        }
+        foreach (var port in _ports.Skip(2))
+        {
+            await WaitForAsync(port, ["SENTINEL", "CKQUORUM", SentinelServiceName], text => text.StartsWith("OK", StringComparison.Ordinal), cancellationToken).ConfigureAwait(false);
+            await WaitForAsync(port, ["SENTINEL", "REPLICAS", SentinelServiceName], ReplicaIsReady, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private static string BaseConfiguration(int port)

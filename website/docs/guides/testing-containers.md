@@ -52,7 +52,7 @@ await client.SetAsync("{customer}:name", "Ada");
 
 The default family is Redis. Default images are `redis:7.2-alpine` and
 `valkey/valkey:8.1-alpine`. Override `Image` with a compatible tag or digest for reproducibility;
-the image must contain `/bin/sh`, `tail`, and the selected family's server and CLI binaries.
+the image must contain `/bin/sh`, `mkdir`, `tail`, and the selected family's server and CLI binaries.
 Cluster uses `CLUSTER ADDSLOTSRANGE`, requiring Redis 7+ or Valkey. Images are not built or
 installed by the fixture; Testcontainers pulls them when needed.
 
