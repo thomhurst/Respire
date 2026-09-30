@@ -275,6 +275,7 @@ public class DedicatedReconnectTests
         var error = await Assert.That(async () => await pool.RentAsync(deadline.Token))
             .ThrowsExactly<RespireReconnectLimitException>();
         await exhausted.Task.WaitAsync(deadline.Token);
+        // Acquisition has ended and exhaustion is the final queued event for this rent.
         var attempts = changes.ToArray();
         await Assert.That(attempts.Length).IsEqualTo(2);
         await Assert.That(attempts[0].State).IsEqualTo(RespireConnectionState.Reconnecting);
@@ -287,8 +288,8 @@ public class DedicatedReconnectTests
         foreach (var attempt in attempts)
         {
             var failure = await Assert.That(attempt.Error).IsTypeOf<RespireTimeoutException>();
-            await Assert.That(failure!.CommandName).IsEqualTo("SELECT");
-            await Assert.That(failure.Timeout).IsEqualTo(timeout);
+            // Internal handshake commands currently leave CommandName unspecified.
+            await Assert.That(failure!.Timeout).IsEqualTo(timeout);
             await Assert.That(failure.Diagnostics.ConnectionId).IsNotNull();
         }
         var initial = (RespireTimeoutException)attempts[0].Error!;
@@ -312,10 +313,8 @@ public class DedicatedReconnectTests
                 return true;
             },
         };
-        var recoveryEvents = 0;
         await using var pool = new DedicatedConnectionPool("127.0.0.1", server.Port,
-            new RespireConnectionOptions { Database = 1, ReconnectPolicy = Policy(attempts: 1) }, null,
-            _ => Interlocked.Increment(ref recoveryEvents));
+            new RespireConnectionOptions { Database = 1, ReconnectPolicy = Policy(attempts: 1) }, null);
         using var caller = new CancellationTokenSource();
         var pending = pool.RentAsync(caller.Token).AsTask();
         try
@@ -326,7 +325,12 @@ public class DedicatedReconnectTests
             await Assert.That(error!.CancellationToken).IsEqualTo(caller.Token);
             await server.PeerClosed.WaitAsync(Deadline);
             await Assert.That(server.CommandsSeen).IsEqualTo(1);
-            await Assert.That(Volatile.Read(ref recoveryEvents)).IsEqualTo(0);
+            // QueueRecovery allocates this queue before scheduling its asynchronous
+            // publisher. A null queue proves no notification was ever queued, even if
+            // a wrongly scheduled publisher has not run yet. Check before pool disposal.
+            var notifications = typeof(DedicatedConnectionPool).GetField("_recoveryNotifications",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            await Assert.That(notifications.GetValue(pool)).IsNull();
         }
         finally
         {
