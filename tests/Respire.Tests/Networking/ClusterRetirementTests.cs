@@ -793,9 +793,10 @@ public class ClusterRetirementTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task FenceDeadlineIsDistinctFromCallerCancellation(bool cancelCaller)
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    public async Task FenceDeadlineIsDistinctFromCallerCancellation(bool cancelCaller, bool blockControlConnection)
     {
         var killSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = new FakeRespServer(2, ":42\r\n"u8.ToArray())
@@ -808,24 +809,40 @@ public class ClusterRetirementTests
             },
         };
         await using var node = RespireConnectionMultiplexer.Create("unresolvable.invalid",
-            options: new RespireConnectionOptions { ConnectTimeout = cancelCaller ? Limit : TimeSpan.FromMilliseconds(100) });
+            options: new RespireConnectionOptions
+            {
+                ConnectTimeout = cancelCaller ? Limit : TimeSpan.FromMilliseconds(100),
+                TestingStreamFactory = blockControlConnection ? async (_, _, token) =>
+                {
+                    // Expire the fence during connection setup, before CLIENT KILL can be sent.
+                    await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                    return Stream.Null;
+                } : null,
+            });
         await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port);
         await connection.EnsureServerClientIdAsync();
         InstallPhysicalConnection(node, connection);
         await connection.DisposeAsync();
         using var cancel = new CancellationTokenSource();
         var fencing = node.FenceRetiredConnectionsAsync(cancel.Token).AsTask();
-        await killSeen.Task.WaitAsync(Limit);
         if (cancelCaller)
         {
+            // Caller cancellation specifically exercises an accepted, unacknowledged kill.
+            await killSeen.Task.WaitAsync(Limit);
             cancel.Cancel();
-            await Assert.That(async () => await fencing.WaitAsync(Limit)).Throws<OperationCanceledException>();
+            var error = await Assert.That(async () => await fencing.WaitAsync(Limit)).Throws<OperationCanceledException>();
+            await Assert.That(error!.CancellationToken.IsCancellationRequested).IsTrue();
         }
         else
         {
+            // The deadline covers connect, handshake, and reply. It may legitimately win
+            // before the server sees CLIENT KILL, so observe the fence rather than receipt.
             var error = await Assert.That(async () => await fencing.WaitAsync(Limit)).ThrowsExactly<RespireTimeoutException>();
             await Assert.That(error!.Message).Contains("CLIENT KILL");
+            await Assert.That(cancel.IsCancellationRequested).IsFalse();
         }
+        if (blockControlConnection)
+            await Assert.That(server.ReceivedCommands).DoesNotContain("CLIENT KILL ID 42");
         await Assert.That(node.HasPendingCorrectionFences).IsTrue();
     }
 
