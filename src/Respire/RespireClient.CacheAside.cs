@@ -9,6 +9,8 @@ namespace Respire;
 
 public sealed partial class RespireClient
 {
+    private static long _nextCacheAsideTypeIdentity;
+
     /// <inheritdoc cref="IRespireClient.GetOrSetAsync{T}"/>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
@@ -82,11 +84,16 @@ public sealed partial class RespireClient
         using var previous = await SendAsync("SET", command, cancellationToken).ConfigureAwait(false);
         // Redis 7+ returns the existing winner even when NX refuses our write. A null reply
         // means our value was installed. There is no second GET/delete race or write replay.
+        // Return serialized bytes even when we win so every caller deserializes its own
+        // value instead of sharing the factory's mutable object with coalesced callers.
         return previous.IsNull ? RespValue.BulkString(bytes) : previous.ToOwned();
     }
 
     private static class CacheAsideType<T>
     {
-        internal static readonly string Identity = typeof(T).AssemblyQualifiedName ?? typeof(T).ToString();
+        // Generic statics distinguish runtime types, including identically named types
+        // from separate load contexts. The shared command key can store this integer
+        // without adding a Type field to every ordinary cached-command identity.
+        internal static readonly long Identity = Interlocked.Increment(ref _nextCacheAsideTypeIdentity);
     }
 }
