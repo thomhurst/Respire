@@ -793,6 +793,132 @@ public class ClusterRetirementTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task DisposedFenceEntryHasDistinctSignal(bool waitForGate)
+    {
+        await using var node = RespireConnectionMultiplexer.Create("retired.invalid");
+        var gate = (SemaphoreSlim)typeof(RespireConnectionMultiplexer).GetField("_retiredFenceGate", Private)!.GetValue(node)!;
+        Task fencing;
+        Task disposal;
+        if (waitForGate)
+        {
+            await gate.WaitAsync();
+            try
+            {
+                fencing = node.FenceRetiredConnectionsAsync().AsTask();
+                disposal = node.DisposeAsync().AsTask();
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+        else
+        {
+            disposal = node.DisposeAsync().AsTask();
+            await disposal.WaitAsync(Limit);
+            fencing = node.FenceRetiredConnectionsAsync().AsTask();
+        }
+        await Assert.That(async () => await fencing.WaitAsync(Limit))
+            .ThrowsExactly<RespireConnectionMultiplexer.CorrectionFenceDisposedException>();
+        await disposal.WaitAsync(Limit);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ShutdownSignalDoesNotHideUnrelatedNodeFailure(bool disposeNode)
+    {
+        await using var client = CreateClient();
+        var router = client.Core.Cluster!;
+        var endpoint = new RespireEndpoint("retired.invalid");
+        Publish(router, endpoint, "old", 1);
+        var node = router.GetMultiplexer(endpoint);
+        var nodeRetirement = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        typeof(RespireConnectionMultiplexer).GetField("_retirementCompletion", Private)!.SetValue(node, nodeRetirement);
+        var failure = new ObjectDisposedException("unrelated resource");
+        try
+        {
+            Publish(router, endpoint, "new", 2);
+            var retirement = router.WaitForRetirementAsync();
+            // The unrelated failure stays unexpected even if node disposal wins before
+            // the asynchronous retirement continuation observes that failure.
+            var stop = (CancellationTokenSource)typeof(ClusterRouter).GetField("_stopRetirement", Private)!.GetValue(router)!;
+            stop.Cancel();
+            var disposal = disposeNode ? node.DisposeAsync().AsTask() : Task.CompletedTask;
+            nodeRetirement.SetException(failure);
+            var error = await Assert.That(async () => await retirement.WaitAsync(Limit)).ThrowsExactly<ObjectDisposedException>();
+            await Assert.That(error).IsSameReferenceAs(failure);
+            await disposal.WaitAsync(Limit);
+            await Assert.That(client.GetClusterRetirementSnapshot()!.CleanupFailedGenerationCount).IsEqualTo(1);
+            await Assert.That(async () => await client.DisposeAsync().AsTask().WaitAsync(Limit)).ThrowsExactly<ObjectDisposedException>();
+        }
+        finally
+        {
+            nodeRetirement.TrySetException(failure);
+            _ = nodeRetirement.Task.Exception;
+        }
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task DisposalOnlySuppressesExpectedRetiredNodeShutdown(bool disposeFirst, bool unexpectedFailure)
+    {
+        await using var client = CreateClient();
+        var router = client.Core.Cluster!;
+        var endpoint = new RespireEndpoint("retired.invalid");
+        Publish(router, endpoint, "old", 1);
+        var node = router.GetMultiplexer(endpoint);
+        // Hold the node's retirement completion at the boundary observed in the CI race.
+        // Inject its exact terminal error after router disposal starts, without a timing loop.
+        var nodeRetirement = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        typeof(RespireConnectionMultiplexer).GetField("_retirementCompletion", Private)!.SetValue(node, nodeRetirement);
+        Exception failure = unexpectedFailure ? new InvalidOperationException("Unexpected retirement failure")
+            : new RespireConnectionMultiplexer.CorrectionFenceDisposedException();
+        try
+        {
+            Publish(router, endpoint, "new", 2);
+            var retirement = router.WaitForRetirementAsync();
+            await Assert.That(retirement.IsCompleted).IsFalse();
+            if (disposeFirst)
+            {
+                var disposal = client.DisposeAsync().AsTask();
+                var stop = (CancellationTokenSource)typeof(ClusterRouter).GetField("_stopRetirement", Private)!.GetValue(router)!;
+                await Assert.That(stop.IsCancellationRequested).IsTrue();
+                await Assert.That(disposal.IsCompleted).IsFalse();
+                nodeRetirement.SetException(failure);
+                if (unexpectedFailure)
+                {
+                    var error = await Assert.That(async () => await disposal.WaitAsync(Limit)).ThrowsExactly<InvalidOperationException>();
+                    await Assert.That(error).IsSameReferenceAs(failure);
+                }
+                else
+                {
+                    await disposal.WaitAsync(Limit);
+                    await Assert.That(Count(router, "_retiringNodes")).IsEqualTo(0);
+                }
+            }
+            else
+            {
+                nodeRetirement.SetException(failure);
+                var error = await Assert.That(async () => await retirement.WaitAsync(Limit)).Throws<Exception>();
+                await Assert.That(error).IsSameReferenceAs(failure);
+                await Assert.That(client.GetClusterRetirementSnapshot()!.CleanupFailedGenerationCount).IsEqualTo(1);
+                await Assert.That(async () => await client.DisposeAsync().AsTask().WaitAsync(Limit)).Throws<Exception>();
+            }
+        }
+        finally
+        {
+            nodeRetirement.TrySetException(failure);
+            _ = nodeRetirement.Task.Exception; // Observe even when an earlier assertion failed.
+        }
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(false, true)]
     [Arguments(true, false)]
