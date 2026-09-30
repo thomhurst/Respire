@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # A newer commit on the same PR or branch supersedes older runs. Every main commit still runs.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   invalidation:
     name: Compare unobserved cache invalidations (informational)

@@ -13,6 +13,11 @@ on:
         required: true
         default: false
 
+concurrency:
+  # A newer commit on the same PR or branch supersedes older runs. Every main commit still runs.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   modularpipeline:
     environment: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.publish-packages && 'Production' || 'Pull Requests' }}

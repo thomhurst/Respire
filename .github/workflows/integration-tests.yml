@@ -25,6 +25,11 @@ permissions:
   contents: read
   pull-requests: write
 
+concurrency:
+  # A newer commit on the same PR or branch supersedes older runs. Every main commit still runs.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   integration-tests:
     name: Run Integration Tests (${{ matrix.framework }}, RESP${{ matrix.protocol }})
