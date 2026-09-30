@@ -527,11 +527,11 @@ public class ClusterShardedPubSubTests
         await using var subscription = await client.SubscribeShardedAsync(["bar", "foo"]);
         var notifications = 0;
         client.Core.Cluster!.TopologyChanged += () => Interlocked.Increment(ref notifications);
-        _ = await client.Core.Cluster.GetMasterConnectionsAsync(CancellationToken.None);
+        _ = await client.Core.Cluster.GetMasterConnectionsAsync(CancellationToken.None, discovery: null);
         await Assert.That(notifications).IsEqualTo(0);
         cluster.FirstOverride = (_, command) => command == "CLUSTER SLOTS"
             ? Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{cluster.First.Port}\r\n") : null;
-        _ = await client.Core.Cluster.GetMasterConnectionsAsync(CancellationToken.None);
+        _ = await client.Core.Cluster.GetMasterConnectionsAsync(CancellationToken.None, discovery: null);
         await Assert.That(notifications).IsEqualTo(1);
         await using var reader = subscription.GetAsyncEnumerator();
         await Assert.That(await reader.MoveNextAsync().AsTask().WaitAsync(Deadline)).IsTrue();

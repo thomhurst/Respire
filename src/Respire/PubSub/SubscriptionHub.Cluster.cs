@@ -113,7 +113,7 @@ internal sealed partial class SubscriptionHub
     private async ValueTask EnsureShardedRouteAsync(RespireChannel name, CancellationToken cancellationToken, bool recovering)
     {
         var slot = ClusterHash.GetSlot(name.Span);
-        var commandConnection = await core.Cluster!.GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
+        var commandConnection = await core.Cluster!.GetConnectionAsync(slot, cancellationToken, discovery: null).ConfigureAwait(false);
         var ask = false;
         try
         {
@@ -155,7 +155,7 @@ internal sealed partial class SubscriptionHub
                 catch (RespireServerException error) when ((error.Code is RespireErrorCodes.Moved or RespireErrorCodes.Ask)
                     && redirect < ClusterRouter.RedirectLimit)
                 {
-                    commandConnection = await core.Cluster.GetRedirectConnectionAsync(error, primary.Connection!, cancellationToken, slot)
+                    commandConnection = await core.Cluster.GetRedirectConnectionAsync(error, primary.Connection!, cancellationToken, slot, discovery: null)
                         .ConfigureAwait(false);
                     if (primary.IsAskConnection)
                         await ClosePrimaryAsync(primary).ConfigureAwait(false);
