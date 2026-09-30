@@ -15,7 +15,10 @@ public sealed record RespireFailoverGroupOptions
     /// <summary>Delay between health probe rounds. Defaults to one second.</summary>
     public TimeSpan ProbeInterval { get; init; } = TimeSpan.FromSeconds(1);
 
-    /// <summary>Maximum duration of one health probe. Defaults to two seconds.</summary>
+    /// <summary>
+    /// Maximum duration of one health probe. Defaults to two seconds. Probes share the candidate
+    /// client's connection with application traffic, so a heavily loaded endpoint can miss probes.
+    /// </summary>
     public TimeSpan ProbeTimeout { get; init; } = TimeSpan.FromSeconds(2);
 
     /// <summary>Consecutive failed probes required to open an endpoint circuit. Defaults to two.</summary>
@@ -29,13 +32,16 @@ public sealed record RespireFailoverGroupOptions
 
     internal void Validate()
     {
-        if (ProbeInterval <= TimeSpan.Zero || ProbeInterval.TotalMilliseconds > uint.MaxValue - 1d)
-            throw new ArgumentOutOfRangeException(nameof(ProbeInterval));
-        if (ProbeTimeout <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(ProbeTimeout));
+        if (!IsTimerCompatible(ProbeInterval)) throw new ArgumentOutOfRangeException(nameof(ProbeInterval));
+        if (!IsTimerCompatible(ProbeTimeout)) throw new ArgumentOutOfRangeException(nameof(ProbeTimeout));
         if (FailureThreshold < 1) throw new ArgumentOutOfRangeException(nameof(FailureThreshold));
         if (CircuitOpenDuration <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(CircuitOpenDuration));
         if (FailbackGracePeriod < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(FailbackGracePeriod));
     }
+
+    // PeriodicTimer and CancellationTokenSource.CancelAfter reject periods above uint.MaxValue - 1 milliseconds.
+    private static bool IsTimerCompatible(TimeSpan value)
+        => value > TimeSpan.Zero && value.TotalMilliseconds <= uint.MaxValue - 1d;
 }
 
 /// <summary>Current endpoint health and circuit state.</summary>
@@ -47,7 +53,27 @@ public sealed record RespireFailoverEndpointStatus(
     DateTimeOffset? CircuitOpenUntil,
     string? LastErrorType);
 
+/// <summary>Reasons reported by <see cref="RespireFailoverSwitch.Reason"/>.</summary>
+public static class RespireFailoverSwitchReasons
+{
+    /// <summary>The group selected its first healthy endpoint.</summary>
+    public const string FirstHealthy = "first-healthy";
+
+    /// <summary>The active endpoint became unhealthy and another healthy endpoint was selected.</summary>
+    public const string ActiveEndpointUnhealthy = "active-endpoint-unhealthy";
+
+    /// <summary>The active endpoint became unhealthy and no healthy endpoint remains.</summary>
+    public const string NoHealthyEndpoint = "no-healthy-endpoint";
+
+    /// <summary>A higher-priority endpoint stayed healthy for the failback grace period.</summary>
+    public const string HigherPriorityEndpointRecovered = "higher-priority-endpoint-recovered";
+}
+
 /// <summary>Describes an active endpoint change.</summary>
+/// <param name="PreviousEndpoint">The endpoint selected before the change, if any.</param>
+/// <param name="CurrentEndpoint">The endpoint selected after the change, if any.</param>
+/// <param name="Reason">One of the <see cref="RespireFailoverSwitchReasons"/> values.</param>
+/// <param name="ChangedAt">When the group made the change.</param>
 public sealed record RespireFailoverSwitch(
     RespireEndpoint? PreviousEndpoint,
     RespireEndpoint? CurrentEndpoint,
@@ -72,7 +98,9 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
     private readonly RespireFailoverGroupOptions _options;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly CancellationTokenSource _stop = new();
+    private readonly object _disposeLock = new();
     private Task? _monitor;
+    private Task? _disposal;
     private CandidateState? _active;
     private volatile bool _disposed;
 
@@ -83,13 +111,23 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
     }
 
     /// <summary>Raised when health policy changes the selected endpoint.</summary>
+    /// <remarks>
+    /// Handlers run synchronously on the health monitor, so a slow handler delays the next probe round.
+    /// Keep handlers short, and never block synchronously on <see cref="DisposeAsync"/> from a handler.
+    /// </remarks>
     public event Action<RespireFailoverSwitch>? EndpointSwitched;
 
     /// <summary>Whether the group currently has a healthy endpoint.</summary>
+    /// <remarks>
+    /// Health changes only when probes complete, so this value can remain <see langword="true"/> for up to
+    /// <see cref="RespireFailoverGroupOptions.FailureThreshold"/> probe rounds after an endpoint stops responding.
+    /// </remarks>
     public bool IsConnected => Volatile.Read(ref _active) is not null && !_disposed;
 
     /// <summary>The client selected for new operations. Read this property again after a switch.</summary>
-    /// <exception cref="RespireConnectionException">No healthy endpoint is currently available.</exception>
+    /// <exception cref="RespireConnectionException">
+    /// No healthy endpoint is currently available. Check <see cref="IsConnected"/> to avoid the exception.
+    /// </exception>
     public IRespireClient ActiveClient
     {
         get
@@ -106,6 +144,10 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             _candidates.Select(static candidate => candidate.Snapshot()).ToArray());
 
     /// <summary>Connects candidates and starts background health probes.</summary>
+    /// <remarks>
+    /// Each candidate receives one initial probe. A candidate that fails it starts unhealthy and is
+    /// reconsidered by the next background probe round.
+    /// </remarks>
     public static async ValueTask<RespireFailoverGroup> ConnectAsync(
         IEnumerable<RespireFailoverCandidate> candidates,
         RespireFailoverGroupOptions? options = null,
@@ -116,6 +158,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         settings.Validate();
 
         var states = new List<CandidateState>();
+        RespireFailoverGroup? group = null;
         try
         {
             foreach (var candidate in candidates)
@@ -145,9 +188,9 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
 
             if (states.Count == 0) throw new ArgumentException("At least one failover candidate is required.", nameof(candidates));
 
-            var group = new RespireFailoverGroup(states.ToArray(), settings);
-            await Task.WhenAll(states.Select(state => group.ProbeAsync(state, cancellationToken))).ConfigureAwait(false);
-            await group.SelectActiveAsync(DateTimeOffset.UtcNow).ConfigureAwait(false);
+            var created = group = new RespireFailoverGroup(states.ToArray(), settings);
+            await Task.WhenAll(states.Select(state => created.ProbeAsync(state, cancellationToken))).ConfigureAwait(false);
+            await group.SelectActiveAsync().ConfigureAwait(false);
             if (Volatile.Read(ref group._active) is null)
             {
                 throw new RespireConnectionException("Unable to connect to any standalone failover candidate.");
@@ -159,6 +202,11 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         catch
         {
             foreach (var state in states) await state.Client.DisposeAsync().ConfigureAwait(false);
+            if (group is not null)
+            {
+                group._stop.Dispose();
+                group._gate.Dispose();
+            }
             throw;
         }
     }
@@ -176,7 +224,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                     await Task.WhenAll(_candidates
                         .Where(candidate => candidate.CircuitOpenUntil is null || candidate.CircuitOpenUntil <= now)
                         .Select(candidate => ProbeAsync(candidate, _stop.Token))).ConfigureAwait(false);
-                    await SelectActiveAsync(DateTimeOffset.UtcNow).ConfigureAwait(false);
+                    await SelectActiveAsync().ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (_stop.IsCancellationRequested)
                 {
@@ -221,13 +269,15 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         }
     }
 
-    private async ValueTask SelectActiveAsync(DateTimeOffset now)
+    private async ValueTask SelectActiveAsync()
     {
         RespireFailoverSwitch? change = null;
         await _gate.WaitAsync(_stop.Token).ConfigureAwait(false);
         try
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
+            // Disposal clears the selection under this gate; a late monitor round must not restore it.
+            if (_disposed) return;
+            var now = DateTimeOffset.UtcNow;
             var active = _active;
             var best = _candidates
                 .Where(static candidate => candidate.IsHealthy)
@@ -240,19 +290,21 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             if (active is null)
             {
                 selected = best;
-                reason = best is null ? null : "first-healthy";
+                reason = best is null ? null : RespireFailoverSwitchReasons.FirstHealthy;
             }
             else if (!active.IsHealthy)
             {
                 selected = best;
-                reason = best is null ? "no-healthy-endpoint" : "active-endpoint-unhealthy";
+                reason = best is null
+                    ? RespireFailoverSwitchReasons.NoHealthyEndpoint
+                    : RespireFailoverSwitchReasons.ActiveEndpointUnhealthy;
             }
             else if (best is not null && best.Order != active.Order && best.Priority < active.Priority
                 && best.HealthySince is { } healthySince
                 && now - healthySince >= _options.FailbackGracePeriod)
             {
                 selected = best;
-                reason = "higher-priority-endpoint-recovered";
+                reason = RespireFailoverSwitchReasons.HigherPriorityEndpointRecovered;
             }
 
             if (!ReferenceEquals(selected, active))
@@ -261,7 +313,7 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                 change = new RespireFailoverSwitch(
                     active?.Endpoint,
                     selected?.Endpoint,
-                    reason ?? "no-healthy-endpoint",
+                    reason ?? RespireFailoverSwitchReasons.NoHealthyEndpoint,
                     now);
             }
         }
@@ -285,13 +337,22 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         }
     }
 
-    /// <inheritdoc/>
-    public async ValueTask DisposeAsync()
+    /// <summary>Stops health probes and disposes every candidate client.</summary>
+    /// <remarks>Concurrent and repeated calls all complete when the first disposal finishes.</remarks>
+    public ValueTask DisposeAsync()
+    {
+        lock (_disposeLock)
+        {
+            _disposal ??= DisposeCoreAsync();
+            return new ValueTask(_disposal);
+        }
+    }
+
+    private async Task DisposeCoreAsync()
     {
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (_disposed) return;
             _disposed = true;
             Volatile.Write(ref _active, null);
             _stop.Cancel();
@@ -307,6 +368,8 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
         }
         foreach (var candidate in _candidates) await candidate.Client.DisposeAsync().ConfigureAwait(false);
+        _stop.Dispose();
+        _gate.Dispose();
     }
 
     private sealed class CandidateState(RespireClient client, int priority, int order)
@@ -345,7 +408,8 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
         {
             lock (_gate)
             {
-                if (!_isHealthy) _healthySince = now;
+                // MarkFailed clears _healthySince below the threshold too, so the grace period restarts here.
+                if (!_isHealthy || _healthySince is null) _healthySince = now;
                 _isHealthy = true;
                 _consecutiveFailures = 0;
                 _circuitOpenUntil = null;
@@ -358,11 +422,14 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             lock (_gate)
             {
                 _consecutiveFailures++;
+                // Any failed probe restarts the failback grace period, even before the circuit opens.
+                _healthySince = null;
                 if (_consecutiveFailures >= options.FailureThreshold)
                 {
                     _isHealthy = false;
-                    _healthySince = null;
-                    _circuitOpenUntil = now + options.CircuitOpenDuration;
+                    _circuitOpenUntil = options.CircuitOpenDuration >= DateTimeOffset.MaxValue - now
+                        ? DateTimeOffset.MaxValue
+                        : now + options.CircuitOpenDuration;
                 }
                 _lastErrorType = error.GetType().Name;
             }

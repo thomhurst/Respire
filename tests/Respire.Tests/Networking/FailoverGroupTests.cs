@@ -86,6 +86,117 @@ public class FailoverGroupTests
     }
 
     [Test]
+    public async Task FailedProbeBelowThresholdRestartsFailbackGracePeriod()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.PongReply);
+        await using var secondary = new FakeRespServer(FakeRespServer.PongReply);
+        // 0 = healthy, 1 = always fail, 2 = alternate failures and successes.
+        var primaryMode = 0;
+        var primaryPings = 0;
+        primary.ReplyOverride = (_, command) =>
+        {
+            if (command != "PING") return null;
+            var mode = Volatile.Read(ref primaryMode);
+            var fail = mode == 1 || (mode == 2 && Interlocked.Increment(ref primaryPings) % 2 == 0);
+            return fail ? "-ERR primary unavailable\r\n"u8.ToArray() : null;
+        };
+
+        await using var group = await RespireFailoverGroup.ConnectAsync(
+        [Candidate(primary, priority: 0), Candidate(secondary, priority: 1)],
+            FastOptions(failureThreshold: 2) with
+            {
+                CircuitOpenDuration = TimeSpan.FromMilliseconds(40),
+                FailbackGracePeriod = TimeSpan.FromMilliseconds(400),
+            });
+        Volatile.Write(ref primaryMode, 1);
+        await WaitUntilAsync(() => group.ActiveClient.Endpoint == Endpoint(secondary));
+
+        // Alternating results never open the circuit, but each failure must restart the grace period.
+        Volatile.Write(ref primaryMode, 2);
+        await WaitUntilAsync(() => group.GetEndpointStatuses()
+            .Single(status => status.Endpoint == Endpoint(primary)).IsHealthy);
+        await Task.Delay(800);
+        await Assert.That(group.ActiveClient.Endpoint).IsEqualTo(Endpoint(secondary));
+
+        Volatile.Write(ref primaryMode, 0);
+        await WaitUntilAsync(() => group.ActiveClient.Endpoint == Endpoint(primary));
+    }
+
+    [Test]
+    public async Task MaximumCircuitOpenDurationSaturatesInsteadOfBlockingFailover()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.PongReply);
+        await using var secondary = new FakeRespServer(FakeRespServer.PongReply);
+        var primaryFailed = 0;
+        primary.ReplyOverride = (_, command) =>
+            command == "PING" && Volatile.Read(ref primaryFailed) != 0
+                ? "-ERR primary unavailable\r\n"u8.ToArray()
+                : null;
+
+        await using var group = await RespireFailoverGroup.ConnectAsync(
+        [Candidate(primary, priority: 0), Candidate(secondary, priority: 1)],
+            FastOptions() with { CircuitOpenDuration = TimeSpan.MaxValue });
+        Volatile.Write(ref primaryFailed, 1);
+
+        await WaitUntilAsync(() => group.ActiveClient.Endpoint == Endpoint(secondary));
+        var primaryStatus = group.GetEndpointStatuses().Single(status => status.Endpoint == Endpoint(primary));
+        await Assert.That(primaryStatus.CircuitOpenUntil).IsEqualTo(DateTimeOffset.MaxValue);
+    }
+
+    [Test]
+    public async Task EndpointSwitchedReportsDocumentedReasons()
+    {
+        await using var primary = new FakeRespServer(FakeRespServer.PongReply);
+        await using var secondary = new FakeRespServer(FakeRespServer.PongReply);
+        var primaryFailed = 0;
+        primary.ReplyOverride = (_, command) =>
+            command == "PING" && Volatile.Read(ref primaryFailed) != 0
+                ? "-ERR primary unavailable\r\n"u8.ToArray()
+                : null;
+
+        await using var group = await RespireFailoverGroup.ConnectAsync(
+        [Candidate(primary, priority: 0), Candidate(secondary, priority: 1)], FastOptions());
+        var reasons = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        group.EndpointSwitched += change => reasons.Enqueue(change.Reason);
+
+        Volatile.Write(ref primaryFailed, 1);
+        await WaitUntilAsync(() => group.ActiveClient.Endpoint == Endpoint(secondary));
+        Volatile.Write(ref primaryFailed, 0);
+        // Handlers run after the selection is published, so wait for the event rather than the endpoint.
+        await WaitUntilAsync(() => reasons.Count >= 2);
+
+        await Assert.That(reasons.ToArray()).IsEquivalentTo(new[]
+        {
+            RespireFailoverSwitchReasons.ActiveEndpointUnhealthy,
+            RespireFailoverSwitchReasons.HigherPriorityEndpointRecovered,
+        });
+    }
+
+    [Test]
+    public async Task ConnectAsync_RejectsProbeTimeoutBeyondTimerLimit()
+    {
+        var options = FastOptions() with { ProbeTimeout = TimeSpan.FromDays(50) };
+
+        await Assert.That(async () => await RespireFailoverGroup.ConnectAsync(
+                [new RespireFailoverCandidate(new RespireOptions { Endpoints = ["127.0.0.1:1"] })], options))
+            .ThrowsExactly<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
+    public async Task ConcurrentDisposeAsyncCallsWaitForCandidateDisposal()
+    {
+        await using var server = new FakeRespServer(FakeRespServer.PongReply);
+        var group = await RespireFailoverGroup.ConnectAsync([Candidate(server, priority: 0)], FastOptions());
+        var client = group.ActiveClient;
+
+        var first = group.DisposeAsync().AsTask();
+        await group.DisposeAsync();
+
+        await Assert.That(client.IsConnected).IsFalse();
+        await first;
+    }
+
+    [Test]
     public async Task ConnectAsync_RejectsClusterAndClientSideCacheCandidates()
     {
         var cluster = new RespireFailoverCandidate(new RespireOptions

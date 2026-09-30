@@ -11,11 +11,18 @@ Health means the endpoint answers `PING` within `ProbeTimeout`. The group does n
 application commands or infer that a primary role is writable. Redis errors such as `-LOADING`,
 `-READONLY`, or `OOM` do not affect endpoint health while `PING` succeeds. Detection can take
 approximately `FailureThreshold × (ProbeInterval + ProbeTimeout)` after an endpoint becomes
-unreachable. Choose these settings with that detection delay in mind.
+unreachable. Choose these settings with that detection delay in mind. Probes use the candidate
+client's own connection, so a heavily loaded endpoint can miss probes and be treated as unhealthy.
+
+`ConnectAsync` probes each candidate once. A candidate that fails that probe starts unhealthy and
+is reconsidered on the next background probe round. Any failed probe restarts the failback grace
+period for that endpoint, even when the failure does not reach `FailureThreshold`, so an endpoint
+that alternates between failures and successes does not become active through failback.
 
 Candidates must use an unlimited reconnect policy (`MaxAttempts = null`, the default). A finite
 budget can permanently disable an owned client after a long outage, preventing later probes from
-recovering it. `ProbeInterval` must also fit the runtime timer limit of about 49.7 days.
+recovering it. `ProbeInterval` and `ProbeTimeout` must also fit the runtime timer limit of about
+49.7 days.
 
 ```csharp
 await using var group = await RespireFailoverGroup.ConnectAsync(
@@ -44,7 +51,10 @@ new RespireFailoverGroupOptions
 await group.ActiveClient.Strings.SetAsync("service:health", "ready");
 ```
 
-Subscribe to `EndpointSwitched` for application-level resubscription or diagnostics. A client
+Subscribe to `EndpointSwitched` for application-level resubscription or diagnostics. The
+`Reason` value is one of the `RespireFailoverSwitchReasons` constants. Handlers run synchronously
+on the health monitor, so keep them short. A slow handler delays the next probe round, and a
+handler must never block synchronously on `DisposeAsync`. A client
 reference obtained before a switch stays attached to its original deployment. The group keeps
 all candidate clients alive until disposal, so in-flight calls are not interrupted or replayed.
 Pub/sub subscriptions also stay on their original deployment and must be recreated after a
