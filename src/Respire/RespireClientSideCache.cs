@@ -111,6 +111,7 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
         _broadcastPrefixes = options.TrackingMode == RespireClientTrackingMode.Broadcast
             ? options.BroadcastPrefixes.Select(static prefix => prefix.AsBytes()).ToArray()
             : [];
+        Array.Sort(_broadcastPrefixes, static (left, right) => left.Span.SequenceCompareTo(right.Span));
         _store = new CacheStore(options, RecordEviction);
     }
 

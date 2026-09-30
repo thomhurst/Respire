@@ -64,6 +64,7 @@ public readonly struct RespireKey : IEquatable<RespireKey>
     internal ReadOnlyMemory<byte> AsBytes()
         => _string is not null ? Encoding.UTF8.GetBytes(_string) : _bytes;
 
+    // Prefixes must be non-overlapping and sorted by wire bytes.
     internal bool StartsWithAny(ReadOnlyMemory<byte>[] prefixes)
     {
         if (_string is null) return MatchesPrefix(_bytes.Span, prefixes);
@@ -83,8 +84,16 @@ public readonly struct RespireKey : IEquatable<RespireKey>
 
     private static bool MatchesPrefix(ReadOnlySpan<byte> key, ReadOnlyMemory<byte>[] prefixes)
     {
-        foreach (var prefix in prefixes)
-            if (key.StartsWith(prefix.Span)) return true;
+        var low = 0;
+        var high = prefixes.Length - 1;
+        while (low <= high)
+        {
+            var middle = low + ((high - low) / 2);
+            var prefix = prefixes[middle].Span;
+            if (key.StartsWith(prefix)) return true;
+            if (key.SequenceCompareTo(prefix) < 0) high = middle - 1;
+            else low = middle + 1;
+        }
         return false;
     }
 

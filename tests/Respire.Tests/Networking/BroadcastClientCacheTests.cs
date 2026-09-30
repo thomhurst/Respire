@@ -166,6 +166,38 @@ public class BroadcastClientCacheTests
         }
     }
 
+    [Test]
+    public async Task BinaryPrefixMayEndInsideAnEncodedStringCharacter()
+    {
+        var cache = new ClientSideCacheCoordinator(Broadcast([new byte[] { 0xc3 }]).SnapshotTracking());
+        RespireKey key = "é:key";
+        var token = cache.BeginRead(in key);
+        var response = RespValue.BulkString("value");
+        cache.CompleteRead(in token, in response, allowInsert: true);
+        await Assert.That(cache.TryGet(in key, out _)).IsTrue();
+    }
+
+    [Test]
+    public async Task ManyUnsortedBinaryPrefixesPreserveCoverageAtEveryBoundary()
+    {
+        var prefixes = Enumerable.Range(0, 256).Where(value => value % 3 == 0).Reverse()
+            .Select(value => new RespireKey(new byte[] { (byte)value })).ToArray();
+        var cache = new ClientSideCacheCoordinator(Broadcast(prefixes).SnapshotTracking());
+        for (var value = 0; value < 256; value++)
+        {
+            RespireKey key = new byte[] { (byte)value, 0, 255 };
+            var token = cache.BeginRead(in key);
+            var response = RespValue.BulkString("value");
+            cache.CompleteRead(in token, in response, allowInsert: true);
+            await Assert.That(cache.TryGet(in key, out _)).IsEqualTo(value % 3 == 0);
+        }
+        RespireKey empty = RespireKey.Empty;
+        var emptyRead = cache.BeginRead(in empty);
+        var emptyResponse = RespValue.BulkString("value");
+        cache.CompleteRead(in emptyRead, in emptyResponse, allowInsert: true);
+        await Assert.That(cache.TryGet(in empty, out _)).IsFalse();
+    }
+
     private static RespireClientSideCacheOptions Broadcast(IReadOnlyList<RespireKey> prefixes)
         => new() { TrackingMode = RespireClientTrackingMode.Broadcast, BroadcastPrefixes = prefixes };
 

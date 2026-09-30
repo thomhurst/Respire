@@ -54,19 +54,24 @@ internal readonly struct ClientSetNameCommand(string name) : IRespCommand
     }
 }
 
+/// <summary>Validated wire configuration; the default value preserves OPTIN.</summary>
+internal readonly record struct ClientTrackingConfiguration(
+    RespireClientTrackingMode Mode, IReadOnlyList<RespireKey>? Prefixes);
+
 /// <summary>CLIENT TRACKING ON with the selected registration mode.</summary>
-internal readonly struct ClientTrackingCommand(RespireClientSideCacheOptions? options = null) : IRespCommand
+internal readonly struct ClientTrackingCommand(ClientTrackingConfiguration configuration = default) : IRespCommand
 {
     public void Write(ref RespWriter writer)
     {
-        if (options?.TrackingMode != RespireClientTrackingMode.Broadcast)
+        if (configuration.Mode != RespireClientTrackingMode.Broadcast)
         {
             writer.WriteRaw("*4\r\n$6\r\nCLIENT\r\n$8\r\nTRACKING\r\n$2\r\nON\r\n$5\r\nOPTIN\r\n"u8);
             return;
         }
-        writer.WriteArrayHeader(checked(4 + options.BroadcastPrefixes.Count * 2));
+        var prefixes = configuration.Prefixes ?? [];
+        writer.WriteArrayHeader(checked(4 + prefixes.Count * 2));
         writer.WriteRaw("$6\r\nCLIENT\r\n$8\r\nTRACKING\r\n$2\r\nON\r\n$5\r\nBCAST\r\n"u8);
-        foreach (var prefix in options.BroadcastPrefixes)
+        foreach (var prefix in prefixes)
         {
             writer.WriteRaw("$6\r\nPREFIX\r\n"u8);
             prefix.WriteTo(ref writer);

@@ -127,8 +127,10 @@ writes, even when this client never read those keys. More prefixes add server wo
 prefixes can increase network and eviction traffic. See [CLIENT TRACKING](https://redis.io/docs/latest/commands/client-tracking/)
 and the [broadcast reference](https://redis.io/docs/latest/develop/reference/client-side-caching/#broadcasting-mode).
 The cache-tracking CI benchmark compares local hits and an external write/invalidation/read
-cycle for OPTIN, BCAST-all, and BCAST-prefix, plus OPTIN against two pinned baseline controls.
-Process totals include warmup and background work; no universal performance win is implied.
+cycle for OPTIN, BCAST-all, and BCAST with one or 256 prefixes, plus OPTIN against two pinned
+baseline controls. The invalidation cycle includes cooperative polling until the application
+observes eviction; its CPU totals include that work. Process totals also include warmup and
+background work; no universal performance win is implied.
 
 ## Bounds
 

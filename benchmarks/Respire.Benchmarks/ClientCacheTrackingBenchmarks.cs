@@ -23,7 +23,7 @@ public class ClientCacheTrackingBenchmarks
 
     // Baseline builds predate BCAST. Their OPTIN cases still use this identical fixture.
     public IEnumerable<string> Modes => Environment.GetEnvironmentVariable("RESPIRE_BENCH_BASELINE") == "1"
-        ? ["OptIn"] : ["OptIn", "Broadcast", "BroadcastPrefix"];
+        ? ["OptIn"] : ["OptIn", "Broadcast", "BroadcastPrefix", "BroadcastManyPrefixes"];
 
     [GlobalSetup]
     public async Task Setup()
@@ -41,9 +41,15 @@ public class ClientCacheTrackingBenchmarks
             var mode = typeof(RespireClientSideCacheOptions).GetProperty("TrackingMode")
                 ?? throw new InvalidOperationException("The selected build has no broadcast tracking support.");
             mode.SetValue(cache, Enum.Parse(mode.PropertyType, "Broadcast"));
-            if (Mode == "BroadcastPrefix")
-                typeof(RespireClientSideCacheOptions).GetProperty("BroadcastPrefixes")!
-                    .SetValue(cache, new RespireKey[] { "cache:benchmark:" });
+            if (Mode is "BroadcastPrefix" or "BroadcastManyPrefixes")
+            {
+                var prefixes = typeof(RespireClientSideCacheOptions).GetProperty("BroadcastPrefixes")
+                    ?? throw new InvalidOperationException("The selected build has no broadcast prefix support.");
+                RespireKey[] values = Mode == "BroadcastPrefix" ? ["cache:benchmark:"]
+                    : Enumerable.Range(0, 255).Select(index => new RespireKey($"unused:{index:D3}:"))
+                        .Append(new RespireKey("cache:benchmark:")).ToArray();
+                prefixes.SetValue(cache, values);
+            }
         }
         _writer = await RespireClient.ConnectAsync(options);
         await _writer.SetAsync(_key, _value);
@@ -67,6 +73,7 @@ public class ClientCacheTrackingBenchmarks
     {
         await _writer!.SetAsync(_key, _value);
         var started = Stopwatch.GetTimestamp();
+        // This measures application-observed completion, including cooperative polling overhead.
         while (_reader!.ClientSideCache!.Count != 0)
         {
             if (Stopwatch.GetElapsedTime(started) > TimeSpan.FromSeconds(10))

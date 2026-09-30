@@ -78,7 +78,7 @@ jobs:
               reports = list(Path("cache-results", phase, "results").glob("*-report-full-compressed.json"))
               assert len(reports) == 1, f"Missing or duplicate report: {phase}"
               cases = json.loads(reports[0].read_text(encoding="utf-8"))["Benchmarks"]
-              expected = 6 if phase in ("candidate", "validation") else 2
+              expected = 8 if phase in ("candidate", "validation") else 2
               assert len(cases) == expected, f"Wrong case count: {phase}"
               for case in cases:
                   assert case["Statistics"] and case["Statistics"]["Mean"] > 0, case["FullName"]
@@ -87,7 +87,7 @@ jobs:
               metrics = [json.loads(line.split("CACHE_TRACKING_PROCESS_METRICS ", 1)[1])
                          for line in Path(f"cache-{phase}.log").read_text(encoding="utf-8").splitlines()
                          if line.startswith("CACHE_TRACKING_PROCESS_METRICS ")]
-              expected_modes = {"OptIn", "Broadcast", "BroadcastPrefix"} if expected == 6 else {"OptIn"}
+              expected_modes = {"OptIn", "Broadcast", "BroadcastPrefix", "BroadcastManyPrefixes"} if expected == 8 else {"OptIn"}
               assert {row["Mode"] for row in metrics} == expected_modes, phase
               assert all(row["elapsedSeconds"] > 0 and row["cpuMilliseconds"] >= 0 and row["allocatedBytes"] >= 0 for row in metrics)
           # GetStringAsync materializes an owned string even on a hit (64 B for this fixture).

@@ -2387,8 +2387,8 @@ internal sealed record RespireConnectionOptions
     /// <summary>Enables CLIENT TRACKING before this connection is published.</summary>
     public bool EnableClientTracking { get; init; }
 
-    /// <summary>Tracking configuration; null retains the OPTIN default.</summary>
-    public RespireClientSideCacheOptions? ClientTrackingOptions { get; init; }
+    /// <summary>Validated wire tracking configuration; the default value selects OPTIN.</summary>
+    public Commands.ClientTrackingConfiguration ClientTrackingOptions { get; init; }
 
     /// <summary>Timeout for the initial TCP connect.</summary>
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(10);
