@@ -6,14 +6,16 @@ namespace Respire.IntegrationTests;
 [ClassDataSource<RedisTestContainer>(Shared = SharedType.PerTestSession)]
 public class ListSearchMutationIntegrationTests(RedisTestContainer fixture)
 {
+    public enum ExecutionMode { Immediate, Batch, Transaction }
+
     [Test]
-    [Arguments(2, "immediate")]
-    [Arguments(2, "batch")]
-    [Arguments(2, "transaction")]
-    [Arguments(3, "immediate")]
-    [Arguments(3, "batch")]
-    [Arguments(3, "transaction")]
-    public async Task Search_HandlesRankCountLimitsAndBinaryValues(int protocol, string mode)
+    [Arguments(2, ExecutionMode.Immediate)]
+    [Arguments(2, ExecutionMode.Batch)]
+    [Arguments(2, ExecutionMode.Transaction)]
+    [Arguments(3, ExecutionMode.Immediate)]
+    [Arguments(3, ExecutionMode.Batch)]
+    [Arguments(3, ExecutionMode.Transaction)]
+    public async Task Search_HandlesRankCountLimitsAndBinaryValues(int protocol, ExecutionMode mode)
     {
         await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
         var view = client.WithKeyPrefix("tenant:");
@@ -34,13 +36,13 @@ public class ListSearchMutationIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [Arguments(2, "immediate")]
-    [Arguments(2, "batch")]
-    [Arguments(2, "transaction")]
-    [Arguments(3, "immediate")]
-    [Arguments(3, "batch")]
-    [Arguments(3, "transaction")]
-    public async Task Mutations_PreserveBinaryValuesNegativeIndexesAndSentinels(int protocol, string mode)
+    [Arguments(2, ExecutionMode.Immediate)]
+    [Arguments(2, ExecutionMode.Batch)]
+    [Arguments(2, ExecutionMode.Transaction)]
+    [Arguments(3, ExecutionMode.Immediate)]
+    [Arguments(3, ExecutionMode.Batch)]
+    [Arguments(3, ExecutionMode.Transaction)]
+    public async Task Mutations_PreserveBinaryValuesNegativeIndexesAndSentinels(int protocol, ExecutionMode mode)
     {
         await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
         var view = client.WithKeyPrefix("tenant:");
@@ -66,13 +68,13 @@ public class ListSearchMutationIntegrationTests(RedisTestContainer fixture)
     }
 
     [Test]
-    [Arguments(2, "immediate")]
-    [Arguments(2, "batch")]
-    [Arguments(2, "transaction")]
-    [Arguments(3, "immediate")]
-    [Arguments(3, "batch")]
-    [Arguments(3, "transaction")]
-    public async Task ServerErrors_ArePreserved(int protocol, string mode)
+    [Arguments(2, ExecutionMode.Immediate)]
+    [Arguments(2, ExecutionMode.Batch)]
+    [Arguments(2, ExecutionMode.Transaction)]
+    [Arguments(3, ExecutionMode.Immediate)]
+    [Arguments(3, ExecutionMode.Batch)]
+    [Arguments(3, ExecutionMode.Transaction)]
+    public async Task ServerErrors_ArePreserved(int protocol, ExecutionMode mode)
     {
         await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
         await client.SetAsync("wrong", "string");
@@ -98,12 +100,12 @@ public class ListSearchMutationIntegrationTests(RedisTestContainer fixture)
         await outOfRange.Should().ThrowAsync<RespireServerException>();
     }
 
-    private static async Task<T> Run<T>(IRespireClient client, string mode, Func<IListCommands, ValueTask<T>> immediate, Func<IBatchListCommands, RespirePending<T>> deferred)
+    private static async Task<T> Run<T>(IRespireClient client, ExecutionMode mode, Func<IListCommands, ValueTask<T>> immediate, Func<IBatchListCommands, RespirePending<T>> deferred)
     {
-        if (mode == "immediate")
+        if (mode == ExecutionMode.Immediate)
             return await immediate(client.Lists);
-        using var batch = mode == "batch" ? client.CreateBatch() : null;
-        await using var transaction = mode == "transaction" ? client.CreateTransaction() : null;
+        using var batch = mode == ExecutionMode.Batch ? client.CreateBatch() : null;
+        await using var transaction = mode == ExecutionMode.Transaction ? client.CreateTransaction() : null;
         IRespireCommandQueue queue = transaction ?? (IRespireCommandQueue)batch!;
         var pending = deferred(queue.Lists);
         if (transaction is not null)

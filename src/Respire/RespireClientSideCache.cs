@@ -597,7 +597,7 @@ internal sealed class ClientSideCacheCoordinator : IRespireClientSideCache
             "PEXPIRE" or "PEXPIREAT" or "PERSIST" or
             "HSET" or "HSETNX" or "HDEL" or "HINCRBY" or "HINCRBYFLOAT" or
             "HEXPIRE" or "HEXPIREAT" or "HPERSIST" or
-            "LPUSH" or "RPUSH" or "LPOP" or "RPOP" or "LREM" or "LTRIM" or "LSET" or "LINSERT" or
+            "LPUSH" or "RPUSH" or "LPUSHX" or "RPUSHX" or "LPOP" or "RPOP" or "LREM" or "LTRIM" or "LSET" or "LINSERT" or
             "SADD" or "SREM" or "SPOP" or
             "ZADD" or "ZINCRBY" or "ZREM" or "ZREMRANGEBYRANK" or "ZREMRANGEBYSCORE" or "ZREMRANGEBYLEX" or
             "XADD" or "XACK" or "XDEL" or "XTRIM" or "XGROUP CREATE" or "XGROUP DESTROY" or
