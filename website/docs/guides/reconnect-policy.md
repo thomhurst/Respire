@@ -1,11 +1,11 @@
 # Connection recovery
 
 `RespireOptions.ReconnectPolicy` configures replacement of failed multiplexed command
-connections, including connections owned by Redis Cluster nodes, and retries of failed
-dedicated connection acquisitions. It is null by default:
+connections, including connections owned by Redis Cluster nodes, dedicated connection acquisitions,
+and pub/sub recovery. It is null by default. For command connections,
 replacement starts immediately, and a failed replacement is retried on the next use.
 Setting a policy preserves that demand-driven scheduling while adding backoff and limits.
-It does not create a perpetual retry loop or replay any Redis command.
+It does not create a perpetual command retry loop or replay any accepted Redis command.
 
 ```csharp
 var options = new RespireOptions
@@ -98,6 +98,44 @@ for their owned connection cleanup. Retirement still lets borrowed operations fi
 disposal aborts them. Corrective fencing acquisitions retain their own deadline and retry
 rules and bypass this policy, including its attempt cap.
 
+## Pub/sub reconnection and resubscription
+
+With a null policy, pub/sub retains its existing schedule: an immediate replacement
+attempt followed, on failure, by 250 ms exponential waits capped at five seconds.
+With a policy, the first replacement waits `InitialDelay`, and every failed connection
+or resubscription consumes one attempt from the same episode. The shared policy applies
+its multiplier, jitter, and maximum delay to each scheduled attempt. Initial subscription
+connection setup is still a single attempt governed by its caller's cancellation.
+
+One recovery loop owns the replacement until every currently registered route has been
+acknowledged. A socket that connects but fails while resubscribing does not reset the
+budget or start another watcher. A failed resubscription closes its replacement before
+the next attempt. Successful resubscription resets the count; a later interruption
+starts a new episode. Existing gap markers remain ordered before messages received after
+each route's acknowledgement. Redis cannot replay messages missed during an interruption.
+
+While configured recovery is active, new explicit subscriptions fail with
+`RespireConnectionException`; they do not open a competing connection or skip the delay.
+Retry after a lifecycle event with `ReconnectSource = PubSub` and `SourceState = Connected`.
+Removing existing subscriptions
+is supported during backoff, and recovery snapshots the remaining routes under the control
+gate. A caller cancellation during an explicit subscription does not cancel shared recovery.
+
+When the configured limit is exhausted, the client publishes `Disconnected` with
+`ReconnectExhausted = true` and the final connection/resubscription error. All live
+subscriptions complete with `RespireSubscriptionEndReason.ReconnectExhausted` and become
+disposed. Existing enumerators may drain already buffered items before ending; a new
+enumerator cannot be opened on an ended subscription. New subscriptions throw
+`RespireReconnectLimitException`. There is no cooldown or implicit reset: recreate the
+client to subscribe again. Command connections remain usable subject to their own health.
+
+Disposal cancels configured delays, connection handshakes, and resubscription waits,
+then drains owned recovery and socket cleanup. Ordered lifecycle delivery happens outside
+the recovery task so a lifecycle handler can synchronously dispose the client. Keep event
+handlers short; attempt observations can lag the work they describe.
+Disposal suppresses queued lifecycle callbacks, but queued measurements still drain because
+they describe already scheduled attempts or completed exhaustion. They may arrive after disposal.
+
 ## Lifecycle and telemetry
 
 `ConnectionStateChanged` retains its existing endpoint health aggregation and adds:
@@ -107,8 +145,8 @@ rules and bypass this policy, including its attempt cap.
 | `ReconnectAttempt` | One-based configured attempt; zero for transitions without policy metadata |
 | `ConnectionSlot` | Source slot within this endpoint's multiplexer generation, including null-policy recovery; null for endpoint-wide transitions |
 | `NextReconnectDelay` | Actual scheduled delay before this attempt; null when no attempt is scheduled |
-| `ReconnectExhausted` | This slot or dedicated rent reached its configured limit |
-| `ReconnectSource` | `Dedicated` for a dedicated rent, `Command` for a multiplexer event; `Unspecified` for other paths |
+| `ReconnectExhausted` | This slot, dedicated rent, or pub/sub episode reached its configured limit |
+| `ReconnectSource` | `Dedicated` for a dedicated rent, `Command` for a multiplexer event, `PubSub` for subscription recovery; `Unspecified` for other paths |
 | `SourceState` | Source connection state before endpoint health aggregation, when supplied |
 | `ReconnectEpisodeId` | Process-local identifier grouping one dedicated rent's retry events; null for other paths |
 
@@ -135,7 +173,8 @@ rent's retries, not total concurrent rents or the observer queue.
 
 The `Respire` meter records `respire.connection.reconnect.attempt` (attempt number) and
 `respire.connection.reconnect.delay` (seconds), tagged with `server.address`, `server.port`,
-and `respire.connection.source` (`command` or `dedicated`).
+and `respire.connection.source` (`command`, `dedicated`, or `pubsub`). Pub/sub attempts have a null
+`ConnectionSlot` and use one shared counter for the current connection/resubscription episode.
 They record scheduled replacement attempts, including waits later cancelled by disposal.
 They are histograms of events, not live countdown gauges. The counter
 `respire.connection.reconnect.exhausted` records each episode stopped by its attempt limit, with the same
@@ -179,9 +218,8 @@ not enable automatic failover or lazy Sentinel routing.
 
 ## Remaining recovery paths
 
-The policy covers command multiplexers, dedicated pools, and Sentinel fallback. Pub/sub retains
-its existing reconnect/resubscribe loop (#545); Cluster discovery retains its current fallback
-behavior (#568 under #546).
-Those native children extend the same policy contract under parent #401. Sentinel currently
+The policy covers command multiplexers, dedicated pools, pub/sub, and Sentinel fallback.
+Cluster discovery retains its current fallback behavior (#568 under #546).
+That native child extends the same policy contract under parent #401. Sentinel currently
 resolves at connection time; automatic Sentinel failover is tracked separately in #396,
 and periodic Cluster refresh in #397. Setting this option does not enable those features.

@@ -10,7 +10,7 @@ namespace Respire.Internal;
 /// routes incoming messages to subscription buffers. If the connection dies, reconnects with
 /// backoff and resubscribes everything that is still subscribed. Ordered markers report delivery gaps.
 /// </summary>
-internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
+internal sealed partial class SubscriptionHub(ClientCore core) : IAsyncDisposable
 {
     private static readonly TimeSpan DisposeConnectionPollInterval = TimeSpan.FromMilliseconds(10);
 
@@ -337,9 +337,9 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         }
     }
 
-    private async ValueTask<RespireConnection> EnsureConnectionAsync(CancellationToken cancellationToken)
+    private async ValueTask<RespireConnection> EnsureConnectionAsync(CancellationToken cancellationToken, bool watch = true)
     {
-        if (_connection is { IsConnected: true } existing)
+        if (GetConnectionForCaller(watch) is { } existing)
         {
             return existing;
         }
@@ -348,7 +348,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_connection is { IsConnected: true } raced)
+            if (GetConnectionForCaller(watch) is { } raced)
             {
                 return raced;
             }
@@ -375,16 +375,34 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             {
                 SubscriptionConfirmationHandler = (in RespValue value) => OnSubscriptionConfirmation(epoch, in value),
             };
-            var connection = await RespireConnection.ConnectAsync(
-                endpoint.Host, endpoint.Port, options, core.Logger, cancellationToken).ConfigureAwait(false);
+            using var connectCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken, _lifetimeCancellation.Token);
+            RespireConnection connection;
+            try
+            {
+                connection = await RespireConnection.ConnectAsync(
+                    endpoint.Host, endpoint.Port, options, core.Logger, connectCancellation.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException error) when (CommandTimeoutCancellation.IsFromLinkedToken(
+                error, cancellationToken, connectCancellation.Token))
+            {
+                throw new OperationCanceledException(error.Message, error, cancellationToken);
+            }
             lock (_gate)
             {
                 _connection = connection;
             }
-            _ = WatchConnectionAsync(connection);
+            if (watch)
+            {
+                if (core.Options.ReconnectPolicy is not null)
+                    lock (_reconnectStateGate) _configuredConnection = connection;
+                _ = WatchConnectionAsync(connection);
+            }
             if (previous is not null)
             {
-                await previous.DisposeAsync().ConfigureAwait(false);
+                // The replacement is already published. Prior cleanup must not invalidate it
+                // or consume a configured recovery attempt before routes are restored.
+                await ObserveAbandonedConnectionAsync(previous.DisposeAsync().AsTask()).ConfigureAwait(false);
             }
 
             return connection;
@@ -407,6 +425,12 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         lock (_gate)
         {
             if (ReferenceEquals(_connection, connection)) MarkInterruptedLocked();
+        }
+
+        if (core.Options.ReconnectPolicy is { } policy)
+        {
+            StartConfiguredRecovery(connection, policy);
+            return;
         }
 
         long reconnectGeneration;
@@ -507,7 +531,11 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
 
     private bool QueueReconnectStateLocked(RespireConnectionStateChange change)
     {
-        _pendingReconnectStates.Enqueue(change);
+        _pendingReconnectStates.Enqueue(change with
+        {
+            ReconnectSource = RespireReconnectSource.PubSub,
+            SourceState = change.State,
+        });
         if (_publishingReconnectState)
         {
             return false;
@@ -531,7 +559,21 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                 }
             }
 
-            core.NotifySubscriptionStateChanged(change);
+            try
+            {
+                if (change.NextReconnectDelay is { } delay)
+                    RespireTelemetry.RecordReconnectAttempt(change.Endpoint.Host, change.Endpoint.Port,
+                        change.ReconnectAttempt, delay, RespireReconnectSource.PubSub);
+                if (change.ReconnectExhausted)
+                    RespireTelemetry.RecordReconnectExhaustion(change.Endpoint.Host, change.Endpoint.Port, RespireReconnectSource.PubSub);
+            }
+            catch (Exception error)
+            {
+                core.Logger?.LogWarning(error, "Pub/sub recovery metric observer threw");
+            }
+            // Measurements describe scheduled work and survive disposal. Lifecycle events
+            // still queued when disposal wins must not restore the client's subscription state.
+            if (!_disposed && !core.Disposed) core.NotifySubscriptionStateChanged(change);
         }
     }
 
@@ -638,8 +680,10 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             }
 
             _disposed = true;
-            _pendingReconnectStates.Clear();
+            // Leave queued observations for the independent dispatcher to measure and drain.
         }
+
+        _lifetimeCancellation.Cancel();
 
         // Interrupt stalled control commands while waiting for their serialization gate. A
         // reconnect can publish a replacement after the first snapshot, so keep detaching every
@@ -694,6 +738,11 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         {
             _controlGate.Release();
         }
+
+        Task? recovery;
+        lock (_reconnectStateGate) recovery = _configuredRecoveryDrained?.Task;
+        if (recovery is not null) await recovery.ConfigureAwait(false);
+        _lifetimeCancellation.Dispose();
     }
 
     private ByteRouteDictionary<List<RespireSubscription>> Routes(SubscriptionKind kind)

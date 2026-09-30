@@ -23,6 +23,9 @@ public enum RespireSubscriptionEndReason
 
     /// <summary>The client that owns the subscription was disposed.</summary>
     ClientDisposed,
+
+    /// <summary>The owning client's configured pub/sub reconnect attempt limit was exhausted.</summary>
+    ReconnectExhausted,
 }
 
 /// <summary>
@@ -60,7 +63,9 @@ public readonly record struct RespireSubscriptionOptions(
 /// The subscription is already live when <c>SubscribeAsync</c> returns, so a publish issued right
 /// after it reaches this subscriber and messages are buffered until enumeration starts. Disposing
 /// unsubscribes. If the pub/sub connection drops, Respire reconnects and resubscribes
-/// automatically. Delivery-gap markers report reconnects and local buffer discards; lost messages
+/// automatically. A configured reconnect limit ends live subscriptions when exhausted; inspect
+/// <see cref="Completion"/> for <see cref="RespireSubscriptionEndReason.ReconnectExhausted"/>.
+/// Delivery-gap markers report reconnects and local buffer discards; lost messages
 /// cannot be replayed by Redis pub/sub. Only one enumerator may be active at a time; dispose it before starting
 /// another.
 /// </summary>
@@ -95,7 +100,7 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
     /// <summary>The channels or patterns covered by this subscription. The collection is immutable.</summary>
     public IReadOnlyList<RespireChannel> Targets { get; }
 
-    /// <summary>Whether this subscription has ended because it or its owning client was disposed.</summary>
+    /// <summary>Whether this subscription ended through disposal or exhausted reconnect attempts.</summary>
     public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
     /// <summary>The number of messages discarded by this subscription's overflow policy.</summary>
@@ -179,6 +184,12 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
     }
 
     internal void CompleteFromClientDisposal()
+        => CompleteFromOwner(RespireSubscriptionEndReason.ClientDisposed);
+
+    internal void CompleteFromReconnectExhaustion()
+        => CompleteFromOwner(RespireSubscriptionEndReason.ReconnectExhausted);
+
+    private void CompleteFromOwner(RespireSubscriptionEndReason reason)
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {
@@ -186,7 +197,7 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
         }
 
         Buffer.Complete();
-        _completion.TrySetResult(RespireSubscriptionEndReason.ClientDisposed);
+        _completion.TrySetResult(reason);
     }
 
     private sealed class SubscriptionEnumerator(
