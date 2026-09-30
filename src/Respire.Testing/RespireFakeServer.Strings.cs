@@ -36,9 +36,10 @@ public sealed partial class RespireFakeServer
             }
         }
         var old = Find(args[1]);
-        if ((nx && old is not null) || (xx && old is null)) return get ? FakeReply.Bulk(old?.Value) : FakeReply.Null;
+        var previous = get ? old?.Value : null; // SET GET checks type even when NX rejects the write.
+        if ((nx && old is not null) || (xx && old is null)) return get ? FakeReply.Bulk(previous) : FakeReply.Null;
         _entries[args[1]] = new Entry(args[2], keepTtl ? old?.ExpiresAt : expiresAt);
-        return get ? FakeReply.Bulk(old?.Value) : FakeReply.Ok;
+        return get ? FakeReply.Bulk(previous) : FakeReply.Ok;
     }
 
     private FakeReply MultiSet(string command, byte[][] args)
@@ -54,16 +55,16 @@ public sealed partial class RespireFakeServer
 
     private FakeReply GetDelete(byte[] key)
     {
-        var old = Find(key);
+        var old = Find(key)?.Value;
         _entries.Remove(key);
-        return FakeReply.Bulk(old?.Value);
+        return FakeReply.Bulk(old);
     }
 
     private FakeReply GetSet(byte[] key, byte[] value)
     {
-        var old = Find(key);
+        var old = Find(key)?.Value;
         _entries[key] = new Entry(value);
-        return FakeReply.Bulk(old?.Value);
+        return FakeReply.Bulk(old);
     }
 
     private FakeReply Append(byte[] key, byte[] value)
@@ -146,7 +147,8 @@ public sealed partial class RespireFakeServer
         }
         var entry = Find(args[1]);
         if (entry is null) return FakeReply.Null;
+        var value = entry.Value; // Validate type before changing the key's expiry.
         if (persist || expiration is not null) entry.ExpiresAt = expires;
-        return FakeReply.Bulk(entry.Value);
+        return FakeReply.Bulk(value);
     }
 }
