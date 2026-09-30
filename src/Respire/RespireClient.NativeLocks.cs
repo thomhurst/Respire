@@ -12,12 +12,15 @@ public sealed partial class RespireClient
     // Weak keys neither retain retired sockets nor put lock state on the transport hot path.
     private static readonly ConditionalWeakTable<RespireConnection, LockCapabilities> LockConnectionCapabilities = new();
 
+    [Flags]
+    private enum LockCapability { ConditionalSet = 1, Delex = 2, Delifeq = 4 }
+
     private sealed class LockCapabilities
     {
         private int _unsupported;
 
-        internal bool CanTry(int capability) => (Volatile.Read(ref _unsupported) & capability) == 0;
-        internal void Reject(int capability) => Interlocked.Or(ref _unsupported, capability);
+        internal bool CanTry(LockCapability capability) => (Volatile.Read(ref _unsupported) & (int)capability) == 0;
+        internal void Reject(LockCapability capability) => Interlocked.Or(ref _unsupported, (int)capability);
     }
 
     internal sealed class TrackedLockExecution(TrackedConnectionIdentity connectionIdentity)
@@ -113,13 +116,10 @@ public sealed partial class RespireClient
         RespireConnection connection, RespireValue key, RespireValue token, long? milliseconds,
         bool sendAsking, CancellationToken cancellationToken)
     {
-        const int conditionalSet = 1;
-        const int delex = 2;
-        const int delifeq = 4;
         var capabilities = LockConnectionCapabilities.GetValue(connection, static _ => new LockCapabilities());
         if (milliseconds is { } duration)
         {
-            if (capabilities.CanTry(conditionalSet))
+            if (capabilities.CanTry(LockCapability.ConditionalSet))
             {
                 try
                 {
@@ -135,13 +135,13 @@ public sealed partial class RespireClient
                 {
                     // All other SET arguments were validated before sending. This reply means
                     // IFEQ was rejected before execution, so trying the Lua equivalent is safe.
-                    capabilities.Reject(conditionalSet);
+                    capabilities.Reject(LockCapability.ConditionalSet);
                 }
             }
         }
         else
         {
-            if (capabilities.CanTry(delex))
+            if (capabilities.CanTry(LockCapability.Delex))
             {
                 try
                 {
@@ -151,11 +151,11 @@ public sealed partial class RespireClient
                 }
                 catch (RespireServerException error) when (IsUnknownLockCommand(error, "DELEX"))
                 {
-                    capabilities.Reject(delex);
+                    capabilities.Reject(LockCapability.Delex);
                 }
             }
 
-            if (capabilities.CanTry(delifeq))
+            if (capabilities.CanTry(LockCapability.Delifeq))
             {
                 try
                 {
@@ -165,7 +165,7 @@ public sealed partial class RespireClient
                 }
                 catch (RespireServerException error) when (IsUnknownLockCommand(error, "DELIFEQ"))
                 {
-                    capabilities.Reject(delifeq);
+                    capabilities.Reject(LockCapability.Delifeq);
                 }
             }
         }

@@ -32,6 +32,18 @@ public class NativeLockIntegrationTests
         RespireKey key = new byte[] { 0xff, 0, 0x42 };
         var token = new RespireLockToken(new byte[] { 0xfe, 0, 0xc3, 0x28 });
         var replacement = new RespireLockToken(new byte[] { 0xfd, 0, 0xc3, 0x28 });
+        await VerifyOwnershipAndCommandSelectionAsync(owner, client, key, token, replacement, nativeExtension, releaseCommand);
+        await VerifyExpiredOwnerAsync(client, key, token);
+        await VerifyReplacementRaceAsync(client, key, token, replacement,
+            $"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}");
+        await VerifyWrongTypeAsync(client, key, token);
+        await VerifyManagedLockAsync(client, key);
+    }
+
+    private static async Task VerifyOwnershipAndCommandSelectionAsync(
+        RespireClient owner, IRespireClient client, RespireKey key, RespireLockToken token,
+        RespireLockToken replacement, bool nativeExtension, string releaseCommand)
+    {
         (await client.Locks.TryTakeAsync(key, token, TimeSpan.FromSeconds(30))).Should().BeTrue();
         (await client.Locks.GetOwnerTokenAsync(key) == token).Should().BeTrue();
         var before = await Stats(owner);
@@ -63,15 +75,21 @@ public class NativeLockIntegrationTests
         (await client.Locks.ResetExpiryAsync(key, token, TimeSpan.FromSeconds(60))).Should().BeFalse();
         (await client.Locks.ReleaseAsync(key, token)).Should().BeFalse();
         (await client.Keys.ExistsAsync(key)).Should().BeFalse();
+    }
 
+    private static async Task VerifyExpiredOwnerAsync(IRespireClient client, RespireKey key, RespireLockToken token)
+    {
         (await client.Locks.TryTakeAsync(key, token, TimeSpan.FromMilliseconds(1))).Should().BeTrue();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (await client.Keys.ExistsAsync(key, deadline.Token)) await Task.Delay(10, deadline.Token);
         (await client.Locks.ResetExpiryAsync(key, token, TimeSpan.FromSeconds(60))).Should().BeFalse();
         (await client.Locks.ReleaseAsync(key, token)).Should().BeFalse();
+    }
 
-        await using var replacementClient = await RespireClient.ConnectAsync(
-            $"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}");
+    private static async Task VerifyReplacementRaceAsync(
+        IRespireClient client, RespireKey key, RespireLockToken token, RespireLockToken replacement, string connectionString)
+    {
+        await using var replacementClient = await RespireClient.ConnectAsync(connectionString);
         var replacementView = replacementClient.WithKeyPrefix("tenant:");
 
         // A replacement races the old owner's release or renewal. Either execution order
@@ -88,13 +106,20 @@ public class NativeLockIntegrationTests
             (await replacementView.Keys.ExpiryAsync(key)).TimeToLive.Should().BeLessThanOrEqualTo(TimeSpan.FromSeconds(20));
         }
         await client.Keys.DeleteAsync(key);
+    }
+
+    private static async Task VerifyWrongTypeAsync(IRespireClient client, RespireKey key, RespireLockToken token)
+    {
         await client.Lists.RightPushAsync(key, "wrong-type");
         Func<Task> releaseWrongType = async () => { await client.Locks.ReleaseAsync(key, token); };
         Func<Task> extendWrongType = async () => { await client.Locks.ResetExpiryAsync(key, token, TimeSpan.FromSeconds(5)); };
         await releaseWrongType.Should().ThrowAsync<RespireServerException>();
         await extendWrongType.Should().ThrowAsync<RespireServerException>();
         await client.Keys.DeleteAsync(key);
+    }
 
+    private static async Task VerifyManagedLockAsync(IRespireClient client, RespireKey key)
+    {
         await using var mutex = await client.Locks.AcquireOrThrowAsync(key, TimeSpan.FromSeconds(30));
         (await mutex.ResetExpiryAsync(TimeSpan.FromSeconds(60))).Should().BeTrue();
         (await mutex.VerifyStillHeldAsync()).Should().BeTrue();

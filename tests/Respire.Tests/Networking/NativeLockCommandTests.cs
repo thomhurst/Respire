@@ -8,6 +8,23 @@ namespace Respire.Tests.Networking;
 
 public class NativeLockCommandTests
 {
+    [Test]
+    [Arguments(0L)]
+    [Arguments(-1L)]
+    [Arguments(9999L)]
+    [Arguments(long.MinValue)]
+    public async Task InvalidRenewalDurationFailsBeforeCapabilityProbing(long ticks)
+    {
+        await using var server = new FakeRespServer();
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        await Assert.That(async () => await client.Locks.ResetExpiryAsync("key", "owner", TimeSpan.FromTicks(ticks)))
+            .ThrowsExactly<ArgumentOutOfRangeException>();
+        await Assert.That(server.ReceivedCommands).IsEmpty();
+    }
+
     internal static readonly byte[] UnknownDelex = "-ERR unknown command 'DELEX', with args beginning with: \r\n"u8.ToArray();
     internal static readonly byte[] UnknownDelifeq = "-ERR unknown command 'DELIFEQ', with args beginning with: \r\n"u8.ToArray();
     private static readonly byte[] UnsupportedSet = "-ERR syntax error\r\n"u8.ToArray();
@@ -53,8 +70,10 @@ public class NativeLockCommandTests
     [Arguments(true, "NOPERM command denied")]
     [Arguments(false, "ERR syntax error")]
     [Arguments(false, "ERR unknown command 'another', with args beginning with:")]
+    [Arguments(false, "ERR unknown command 'DELEX'")]
     [Arguments(true, "WRONGTYPE key has wrong type")]
     [Arguments(true, "ERR arbitrary server failure")]
+    [Arguments(true, "ERR proxy reported syntax error after forwarding")]
     public async Task OtherServerErrorsNeverTriggerFallback(bool extend, string error)
     {
         await using var server = new FakeRespServer(Encoding.UTF8.GetBytes($"-{error}\r\n"));

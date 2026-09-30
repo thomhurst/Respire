@@ -1421,6 +1421,7 @@ public class ClientSideCacheTests
         await Assert.That(await pending).IsEqualTo(applied);
         await Assert.That(cache.Count).IsEqualTo(0);
     }
+
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server)
         => RespireClient.ConnectAsync(new RespireOptions
         {
