@@ -13,6 +13,8 @@ public enum RespireMessageKind
 [Flags]
 public enum RespireSubscriptionGapReason
 {
+    /// <summary>No delivery gap reason.</summary>
+    None = 0,
     /// <summary>The subscriber connection was lost and the target was resubscribed.</summary>
     Reconnect = 1,
     /// <summary>The subscription buffer discarded one or more messages.</summary>

@@ -7,7 +7,7 @@ namespace Respire.Internal;
 internal sealed class SubscriptionBuffer(int capacity, SubscriptionOverflow overflow)
 {
     private readonly object _gate = new();
-    private readonly Entry[] _entries = new Entry[capacity];
+    private readonly Entry[] _entries = CreateEntries(capacity);
     private readonly Channel<byte> _ready = Channel.CreateBounded<byte>(new BoundedChannelOptions(1)
     {
         FullMode = BoundedChannelFullMode.DropWrite,
@@ -17,6 +17,12 @@ internal sealed class SubscriptionBuffer(int capacity, SubscriptionOverflow over
     private int _count;
     private bool _completed;
     private RespireSubscriptionGap? _tailGap;
+
+    private static Entry[] CreateEntries(int capacity)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
+        return new Entry[capacity];
+    }
 
     internal RespireSubscriptionGap? Write(RespireMessage message)
     {

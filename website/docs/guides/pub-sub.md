@@ -20,7 +20,7 @@ await foreach (RespireMessage message in
 {
     if (message.Kind == RespireMessageKind.Gap)
     {
-        await ReloadStateFromSourceAsync(stoppingToken);
+        Console.Error.WriteLine($"Delivery gap: {message.Gap}. Reload authoritative state before applying more messages.");
         continue;
     }
     Console.WriteLine($"{message.Channel}: {message.Text}");
@@ -128,16 +128,20 @@ Pub/sub is transient: Redis does not retain messages for disconnected subscriber
 Check `Kind` before reading or deserializing a published payload. A gap has empty channel/payload
 fields, and `As<T>()` throws because there is no published value.
 
+The following example logs each item. Replace the gap log with your application's
+state reload, and replace the message log with its normal update handler.
+
 ```csharp
+await using var subscription = await redis.SubscribeAsync("orders", stoppingToken);
 await foreach (var message in subscription.WithCancellation(stoppingToken))
 {
     switch (message.Kind)
     {
         case RespireMessageKind.Gap:
-            await ReloadStateFromSourceAsync(stoppingToken);
+            Console.Error.WriteLine($"Delivery gap: {message.Gap}. Reload authoritative state before applying more messages.");
             break;
         case RespireMessageKind.Message:
-            await ApplyMessageAsync(message, stoppingToken);
+            Console.WriteLine($"{message.Channel}: {message.Text}");
             break;
         default:
             throw new InvalidOperationException($"Unknown subscription item: {message.Kind}");

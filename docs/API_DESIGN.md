@@ -321,8 +321,12 @@ enumerator stops that reader; it does not dispose the subscription:
 await using var sub = await redis.SubscribeAsync("orders");  // also: patterns, sharded
 await foreach (RespireMessage msg in sub.WithCancellation(cancellationToken))
 {
+    if (msg.Kind == RespireMessageKind.Gap)
+    {
+        Console.Error.WriteLine($"Delivery gap: {msg.Gap}. Reload order state before processing more messages.");
+        continue;
+    }
     Console.WriteLine($"{msg.Channel}: {msg.Text}");
-    if (msg.Kind == RespireMessageKind.Gap) { await ReloadOrdersAsync(); continue; }
     var order = msg.As<Order>();                            // serializer-backed
 }
 ```

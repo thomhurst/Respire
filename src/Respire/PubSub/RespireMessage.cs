@@ -40,13 +40,14 @@ public readonly struct RespireMessage
     /// <summary>The raw message payload as owned memory; empty for a gap marker.</summary>
     public ReadOnlyMemory<byte> Payload { get; }
 
-    /// <summary>The payload decoded as UTF-8.</summary>
+    /// <summary>The payload decoded as UTF-8; empty for a gap marker.</summary>
     public string Text => Internal.Utf8String.GetString(Payload);
 
     /// <summary>
     /// The typed payload; strings, bytes, characters (including nullable characters), Boolean
     /// values, and numbers bypass the serializer.
     /// </summary>
+    /// <exception cref="InvalidOperationException">This item is a delivery-gap marker.</exception>
     [RequiresUnreferencedCode(SerializationWarnings.UnreferencedCode)]
     [RequiresDynamicCode(SerializationWarnings.DynamicCode)]
     public T? As<T>()

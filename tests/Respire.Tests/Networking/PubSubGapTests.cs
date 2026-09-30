@@ -10,6 +10,13 @@ namespace Respire.Tests.Networking;
 public class PubSubGapTests
 {
     [Test]
+    [Arguments(0)]
+    [Arguments(-1)]
+    public async Task BufferRejectsNonpositiveCapacity(int capacity)
+        => await Assert.That(() => new SubscriptionBuffer(capacity, SubscriptionOverflow.DropOldest))
+            .Throws<ArgumentOutOfRangeException>();
+
+    [Test]
     [Arguments(false, SubscriptionKind.Channel)]
     [Arguments(true, SubscriptionKind.Channel)]
     [Arguments(false, SubscriptionKind.Pattern)]
