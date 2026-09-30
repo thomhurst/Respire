@@ -37,7 +37,8 @@ public class ContainerFixtureIntegrationTests
         {
             var container = await docker.Containers.InspectContainerAsync(fixture.ContainerId);
             (container.HostConfig?.Init).Should().BeTrue();
-            var publishedPorts = container.NetworkSettings!.Ports.Values.SelectMany(bindings => bindings).ToArray();
+            // Linux Docker includes image EXPOSE ports with null bindings when unpublished.
+            var publishedPorts = container.NetworkSettings!.Ports.Values.SelectMany(bindings => bindings ?? []).ToArray();
             publishedPorts.Should().HaveCount(fixture.DataEndpoints.Count + fixture.SentinelEndpoints.Count);
             publishedPorts.Should().OnlyContain(binding => binding.HostIP == "127.0.0.1");
         }
