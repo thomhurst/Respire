@@ -61,6 +61,9 @@ public class FakeServerTests
         using var set = await client.ExecuteAsync(RespireCommands.String.SET, "key", "value", "PX", 1500);
         await Assert.That(await Number(client, "PTTL", "key")).IsEqualTo(1500);
         await Assert.That(await Number(client, "TTL", "key")).IsEqualTo(2);
+        await Assert.That(async () => { using var reply = await client.ExecuteAsync("PEXPIRE", "key", 9000, "GT", "LT"); })
+            .Throws<RespireServerException>();
+        await Assert.That(await Number(client, "PTTL", "key")).IsEqualTo(1500);
         await Assert.That(await Number(client, "PEXPIRE", "key", 2000, "NX")).IsEqualTo(0);
         await Assert.That(await Number(client, "PEXPIRE", "key", 2000, "XX", "GT")).IsEqualTo(1);
         await Assert.That(await Number(client, "PEXPIRE", "key", 3000, "LT")).IsEqualTo(0);
@@ -93,6 +96,10 @@ public class FakeServerTests
         await Assert.That(async () => { using var reply = await client.ExecuteAsync(RespireCommands.String.SET, "key", "bad", "NX", "XX"); })
             .Throws<RespireServerException>();
         await Assert.That(await client.GetStringAsync("key")).IsEqualTo("new");
+        await Assert.That(async () => { using var reply = await client.ExecuteAsync("SET", "key", "bad", "KEEPTTL", "EX", 10); })
+            .Throws<RespireServerException>();
+        await Assert.That(await client.GetStringAsync("key")).IsEqualTo("new");
+        await Assert.That(await Number(client, "PTTL", "key")).IsEqualTo(1000);
         using var overwrite = await client.ExecuteAsync(RespireCommands.String.SET, "key", "persistent");
         await Assert.That(await Number(client, "TTL", "key")).IsEqualTo(-1);
     }

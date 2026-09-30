@@ -1,6 +1,7 @@
 namespace Respire.Testing;
 
 /// <summary>A manually advanced UTC clock for fake-server key expiry. It does not control client I/O deadlines.</summary>
+/// <remarks>Only GetUtcNow is overridden. CreateTimer and monotonic timestamps retain system-clock behavior.</remarks>
 public sealed class RespireFakeClock : TimeProvider
 {
     private long _ticks;
