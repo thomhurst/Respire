@@ -28,6 +28,7 @@ public readonly record struct StreamTrimOptions
         if (MaxLength is { } length) ArgumentOutOfRangeException.ThrowIfNegative(length);
         if (MinId is { } id)
         {
+            // MINID accepts numeric thresholds, not the ms-* ID-generation syntax used by XADD.
             var text = id.Value.AsSpan();
             var separator = text.IndexOf('-');
             var milliseconds = separator < 0 ? text : text[..separator];
