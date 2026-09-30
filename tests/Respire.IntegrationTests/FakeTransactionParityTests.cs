@@ -210,6 +210,33 @@ public class FakeTransactionParityTests(RedisTestContainer fixture)
 
     private sealed record WatchCase(string[][] Setup, string[] Mutation, bool Changes, bool Error = false);
 
+    [Test]
+    [Arguments(false, 2)]
+    [Arguments(false, 3)]
+    [Arguments(true, 2)]
+    [Arguments(true, 3)]
+    public async Task MalformedExecAbortsImmediatelyAndClearsWatch(bool useFake, int protocol)
+    {
+        await using var fake = useFake ? new RespireFakeServer() : null;
+        var options = Options(fake, protocol);
+        await using var session = await TestRespSession.ConnectAsync(options);
+        await using var observer = await RespireClient.ConnectAsync(options);
+        await Text(session, "OK", "WATCH", "key");
+        await Text(session, "OK", "MULTI");
+        await Text(session, "QUEUED", "SET", "discarded", "never");
+        using (var malformed = await session.CommandAsync("EXEC", "extra"))
+            malformed.GetErrorMessage().Should().Be("EXECABORT Transaction discarded because of: wrong number of arguments for 'exec' command");
+        (await observer.ExistsAsync("discarded")).Should().BeFalse();
+        await Text(session, "OK", "SET", "key", "outside transaction");
+        (await observer.GetStringAsync("key")).Should().Be("outside transaction");
+        using (var invalid = await session.CommandAsync("EXEC"))
+            invalid.GetErrorMessage().Should().Be("ERR EXEC without MULTI");
+        await Text(session, "OK", "MULTI");
+        await Text(session, "QUEUED", "SET", "key", "next");
+        using var executed = await session.CommandAsync("EXEC");
+        executed.AsArray()[0].AsString().Should().Be("OK");
+    }
+
     private RespireOptions Options(RespireFakeServer? fake, int protocol)
         => (fake?.CreateOptions() ?? RespireOptions.Parse(fixture.ConnectionString)) with { Protocol = (RespProtocol)protocol };
 

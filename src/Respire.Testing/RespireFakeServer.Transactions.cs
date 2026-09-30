@@ -63,7 +63,10 @@ public sealed partial class RespireFakeServer
         connection.QueuedBytes = 0;
         if (command != "EXEC") return error;
         ClearTransaction(connection);
-        return FakeReply.Error($"EXECABORT Transaction discarded because of: {error.Value}");
+        var reason = (string)error.Value!;
+        // Command arity diagnostics are formatted before Redis adds the generic ERR prefix.
+        if (reason.StartsWith("ERR ", StringComparison.Ordinal)) reason = reason[4..];
+        return FakeReply.Error($"EXECABORT Transaction discarded because of: {reason}");
     }
 
     private FakeReply Watch(Connection connection, byte[][] args)

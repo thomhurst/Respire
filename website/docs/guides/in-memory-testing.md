@@ -230,6 +230,8 @@ uses one expiry-clock sample. Results retain command order; execution errors occ
 own array elements and do not roll back successful commands.
 
 ```csharp
+using Respire.Testing;
+
 await using var server = new RespireFakeServer();
 await using var client = await RespireClient.ConnectAsync(server.CreateOptions());
 await using var other = await RespireClient.ConnectAsync(server.CreateOptions());
