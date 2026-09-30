@@ -18,10 +18,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: value-codecs-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
   report-tests:
     name: Validate codec report
@@ -30,10 +26,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: python3 -m unittest discover -s .github/scripts -p test_value_codec_report.py
   codecs:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'benchmark-value-codecs')
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (contains(github.event.pull_request.labels.*.name, 'benchmark-value-codecs') &&
+       (github.event.action != 'labeled' || github.event.label.name == 'benchmark-value-codecs'))
     name: Value codecs (${{ matrix.framework }}, ${{ matrix.direction }})
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    concurrency:
+      group: value-codecs-${{ github.event.pull_request.number || github.ref }}-${{ matrix.framework }}-${{ matrix.direction }}
+      cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix:
@@ -65,7 +67,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Each direction has 40 cases: 5 implementations x 2 lengths x 2 patterns x 2 thresholds.
+          # The report validates complete setup metadata against every measured case.
           # No Redis process or unrelated benchmark runs alongside this job.
           for phase in validation representative measurement; do
             job=Default

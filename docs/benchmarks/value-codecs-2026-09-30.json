@@ -1,4 +1,5 @@
 {
+  "SchemaVersion": 1,
   "Run": "https://github.com/thomhurst/Respire/actions/runs/36702369606",
   "Revision": "cbe996aad493afc41357ee78e75380c06a602738",
   "BenchmarkDotNet": "0.15.8",
