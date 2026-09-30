@@ -35,10 +35,18 @@ internal static class RespireTelemetry
     public static readonly ObservableGauge<long> ThreadPoolPendingWork = Meter.CreateObservableGauge(
         "respire.thread_pool.work.pending", ThreadPoolMonitor.ObservePendingWork, "{work_item}",
         "Queued thread-pool work items when the scheduling probe was sampled.");
+
     public static readonly Histogram<long> ReconnectAttempts = Meter.CreateHistogram<long>(
         "respire.connection.reconnect.attempt", unit: "{attempt}", description: "One-based scheduled replacement attempt within a failed connection episode.");
     public static readonly Histogram<double> ReconnectDelays = Meter.CreateHistogram<double>(
         "respire.connection.reconnect.delay", unit: "s", description: "Scheduled delay before a configured command-connection replacement attempt.");
+
+    public static readonly Counter<long> ReconnectExhaustions = Meter.CreateCounter<long>(
+        "respire.connection.reconnect.exhausted", unit: "{episode}", description: "Recovery episodes that reached the configured replacement attempt limit.");
+
+    internal static void RecordReconnectExhaustion(string host, int port)
+        => ReconnectExhaustions.Add(1, new KeyValuePair<string, object?>("server.address", host),
+            new KeyValuePair<string, object?>("server.port", port));
 
     internal static void RecordReconnectAttempt(string host, int port, int attempt, TimeSpan delay)
     {

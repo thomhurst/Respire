@@ -734,9 +734,10 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         bool publish;
         var attempt = 0;
         var delay = TimeSpan.Zero;
-        var randomUnit = _options.ReconnectPolicy is { JitterRatio: > 0 } ? Random.Shared.NextDouble() : 0.5;
         lock (_lifecycleGate)
         {
+            // A competing caller may already have published a healthy replacement since our snapshot.
+            // Keep it for both legacy and configured recovery; a stale notification must not replace it.
             if (!IsOperational || _connections[slot] is { IsAcceptingCommands: true }
                 || (_options.ReconnectPolicy?.IsExhausted(_reconnectAttempts![slot]) ?? false)
                 || Interlocked.CompareExchange(ref _reconnecting[slot], 1, 0) != 0)
@@ -744,6 +745,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             if (_options.ReconnectPolicy is { } policy)
             {
                 attempt = _reconnectAttempts![slot] = (int)Math.Min((long)_reconnectAttempts[slot] + 1, int.MaxValue);
+                var randomUnit = policy.JitterRatio > 0 ? Random.Shared.NextDouble() : 0.5;
                 delay = policy.GetDelay(attempt, randomUnit);
             }
             _activeReconnects++;
@@ -801,13 +803,14 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             }
             if (IsOperational)
             {
-                if (_options.ReconnectPolicy?.IsExhausted(attempt) == true)
+                var exhausted = _options.ReconnectPolicy?.IsExhausted(attempt) == true;
+                if (exhausted)
                     _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} exhausted its {Attempts} attempts", Host, Port, attempt);
                 else if (_options.ReconnectPolicy is not null)
                     _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; next use will schedule another attempt with configured backoff", Host, Port);
                 else
                     _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; will retry on next use", Host, Port);
-                publish = EnqueueReconnectFailure(slot, ex, attempt);
+                publish = EnqueueReconnectFailure(slot, ex, attempt, exhausted);
                 reconnectGuardReleased = true;
             }
         }
@@ -872,13 +875,13 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
-    private bool EnqueueReconnectFailure(int slot, Exception error, int attempt)
+    private bool EnqueueReconnectFailure(int slot, Exception error, int attempt, bool exhausted)
     {
         lock (_stateNotificationGate)
         {
             var publish = EnqueueStateNotificationUnderLock(
                 new StateNotification(slot, RespireConnectionState.Disconnected, error, attempt,
-                    Exhausted: _options.ReconnectPolicy?.IsExhausted(attempt) == true));
+                    Exhausted: exhausted));
 
             // The failure is ordered before the guard opens. Concurrent or synchronous retries
             // can now enqueue Reconnecting, but only behind this Disconnected notification.
@@ -948,6 +951,11 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             {
                 _logger?.LogWarning(ex, "Connection slot state-change handler threw");
             }
+        }
+        if (notification.Exhausted)
+        {
+            try { RespireTelemetry.RecordReconnectExhaustion(Host, Port); }
+            catch (Exception ex) { _logger?.LogWarning(ex, "Reconnect metrics listener threw"); }
         }
         if (notification.Delay is { } delay)
         {

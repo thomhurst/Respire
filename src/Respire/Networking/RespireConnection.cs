@@ -2325,8 +2325,9 @@ internal delegate void RespirePushHandler(in RespValue value);
 /// <summary>Tuning options for a single RESP connection.</summary>
 internal sealed record RespireConnectionOptions
 {
-    internal RespireReconnectPolicy? ReconnectPolicy { get; init; }
     public static readonly RespireConnectionOptions Default = new();
+
+    internal RespireReconnectPolicy? ReconnectPolicy { get; init; }
 
     /// <summary>
     /// Receives out-of-band frames on connections built from these options (see

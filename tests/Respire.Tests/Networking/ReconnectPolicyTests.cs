@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using System.Net.Sockets;
+using Respire.Commands;
 using TUnit.Assertions;
 using TUnit.Assertions.Enums;
 using TUnit.Assertions.Extensions;
@@ -44,6 +45,24 @@ public class ReconnectPolicyTests
             new() { InitialDelay = TimeSpan.FromMilliseconds(50), MaxDelay = TimeSpan.FromMilliseconds(100), JitterRatio = 0, MaxAttempts = 2 }));
         var changes = new ConcurrentQueue<RespireConnectionStateChange>();
         var exhausted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var exhaustionMeasured = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        long exhaustionCount = 0;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, current) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.connection.reconnect.exhausted")
+                current.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
+        {
+            foreach (var tag in tags)
+                if (tag.Key == "server.port" && tag.Value is int port && port == server.Port)
+                {
+                    Interlocked.Add(ref exhaustionCount, value);
+                    exhaustionMeasured.TrySetResult();
+                }
+        });
+        listener.Start();
         client.ConnectionStateChanged += change =>
         {
             changes.Enqueue(change);
@@ -60,6 +79,8 @@ public class ReconnectPolicyTests
         }).ToArray();
         await Task.WhenAll(waiters);
         await exhausted.Task.WaitAsync(deadline.Token);
+        await exhaustionMeasured.Task.WaitAsync(deadline.Token);
+        await Assert.That(Interlocked.Read(ref exhaustionCount)).IsEqualTo(1L);
         for (var index = 0; index < 5; index++)
             await Assert.That(() => client.Core.Multiplexer.GetConnection()).ThrowsExactly<RespireReconnectLimitException>();
         var attempts = changes.Where(change => change.State == RespireConnectionState.Reconnecting).ToArray();
@@ -168,8 +189,10 @@ public class ReconnectPolicyTests
             .AsTask().WaitAsync(TimeSpan.FromSeconds(3))).ThrowsExactly<RespireReconnectLimitException>();
         // Fences use a fresh control connection to the captured peer, independently of
         // ordinary slot recovery. The stopped peer refuses that connection.
-        await Assert.That(async () => await client.Core.Multiplexer.FenceRetiredConnectionsAsync()
-            .AsTask().WaitAsync(TimeSpan.FromSeconds(3))).ThrowsExactly<SocketException>();
+        var failure = await Assert.That(async () => await client.Core.Multiplexer.FenceRetiredConnectionsAsync()
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(3))).Throws<Exception>();
+        // A closed listener may refuse immediately or reach ConnectTimeout, depending on the OS.
+        await Assert.That(failure is SocketException or RespireTimeoutException).IsTrue();
         await Assert.That(client.Core.Multiplexer.HasPendingCorrectionFences).IsTrue();
     }
 
@@ -269,6 +292,32 @@ public class ReconnectPolicyTests
         };
         await Task.Run(async () => await Assert.That(() => client.Core.Multiplexer.GetConnection())
             .Throws<ObjectDisposedException>()).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task EmptyBroadcastAwaitsDelayedRecoveryAndPropagatesExhaustion(bool unavailable)
+    {
+        await using var server = new FakeRespServer(2, ":42\r\n"u8.ToArray(), ":0\r\n"u8.ToArray());
+        await using var client = await RespireClient.ConnectAsync(Options(server.Port,
+            new() { InitialDelay = TimeSpan.FromMilliseconds(50), JitterRatio = 0, MaxAttempts = 1 }));
+        var multiplexer = client.Core.Multiplexer;
+        await multiplexer.EnsureReliableCorrectionOrderingAsync();
+        var original = multiplexer.GetConnection();
+        await original.RetireAsync(); // A successful drain leaves no owed CLIENT KILL fence.
+        await Assert.That(original.DrainedSuccessfully).IsTrue();
+        if (unavailable) await server.DisposeAsync();
+        var broadcast = Task.Run(async () => await multiplexer.SendToAllConnectionsAsync(new Cmd(new Verb(-1, "PING"))));
+        if (unavailable)
+            await Assert.That(async () => await broadcast.WaitAsync(TimeSpan.FromSeconds(3)))
+                .ThrowsExactly<RespireReconnectLimitException>();
+        else
+        {
+            await broadcast.WaitAsync(TimeSpan.FromSeconds(3));
+            await Assert.That(server.ReceivedCommands.Count(command => command == "PING")).IsEqualTo(1);
+        }
+        await Assert.That(multiplexer.HasPendingCorrectionFences).IsFalse();
     }
 
     private static RespireOptions Options(int port, RespireReconnectPolicy policy) => new()

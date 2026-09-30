@@ -14,7 +14,9 @@ public sealed record RespireReconnectPolicy
     /// <summary>Symmetric random variation as a fraction of the exponential delay, from zero to one.</summary>
     public double JitterRatio { get; init; } = 0.2;
     /// <summary>Maximum replacement attempts per failed slot; null permits unlimited attempts.</summary>
-    /// <remarks>Exhaustion persists until the client is recreated. Successful replacement resets the count.</remarks>
+    /// <remarks>Defaults to null. A slot that exhausts this limit remains unavailable until the client
+    /// is recreated; there is no automatic cooldown or reset. Successful replacement resets the count
+    /// before exhaustion. Leave null for long-lived clients that must keep trying after an outage.</remarks>
     public int? MaxAttempts { get; init; }
 
     internal bool IsExhausted(int attempts) => MaxAttempts is { } maximum && attempts >= maximum;

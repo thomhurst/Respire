@@ -82,7 +82,9 @@ Do not block event handlers. Synchronous disposal remains supported.
 The `Respire` meter records `respire.connection.reconnect.attempt` (attempt number) and
 `respire.connection.reconnect.delay` (seconds), tagged with `server.address` and `server.port`.
 They record scheduled replacement attempts, including waits later cancelled by disposal.
-They are histograms of events, not live countdown gauges. Successful command execution
+They are histograms of events, not live countdown gauges. The counter
+`respire.connection.reconnect.exhausted` records each episode that reaches its limit, with the same
+endpoint tags, so operators can alert on terminal recovery failures. Successful command execution
 does not record these instruments or inspect policy counters.
 
 ## Remaining recovery paths

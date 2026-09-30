@@ -16,7 +16,8 @@
 - Optional `RespireOptions.ReconnectPolicy` configures exponential delay, jitter, a delay cap,
   and maximum attempts for failed command-connection slots, including Cluster nodes.
   Null preserves existing recovery. Lifecycle events carry source slot, attempt, scheduled
-  delay, and exhaustion metadata; new histograms record attempts and delay. No accepted command
+  delay, and exhaustion metadata; configured attempt events are published even when aggregate endpoint
+  health is unchanged. Histograms record attempts and delay, and a counter records exhausted episodes. No accepted command
   is replayed. Dedicated, pub/sub, and discovery integration remain separate #401 children.
   See the [reconnect guide](../website/docs/guides/reconnect-policy.md).
 
