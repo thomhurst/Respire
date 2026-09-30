@@ -101,11 +101,12 @@ public sealed class RespireRedlockGroup
             throw;
         }
 
-        var validity = CalculateValidity(duration, _clock.GetElapsedTime(started), _options.DriftFactor);
+        var completed = _clock.GetTimestamp();
+        var validity = CalculateValidity(duration, _clock.GetElapsedTime(started, completed), _options.DriftFactor);
         if (acquired.Count(static success => success) >= Quorum && validity > TimeSpan.Zero)
         {
             return new RespireRedlockAttempt(new RespireRedlock(
-                _clients, key, token, duration, validity, _clock.GetTimestamp(), Quorum, _options, _clock));
+                _clients, key, token, duration, validity, completed, Quorum, _options, _clock));
         }
 
         await ReleaseEverywhereAsync(key, token).ConfigureAwait(false);
@@ -182,7 +183,7 @@ public sealed class RespireRedlock : IAsyncDisposable
     private readonly TimeProvider _clock;
     private readonly int _quorum;
     private readonly SemaphoreSlim _operationGate = new(1, 1);
-    private long _started;
+    private long _validUntil;
     private long _validityTicks;
     private long _durationTicks;
     private int _released;
@@ -197,7 +198,7 @@ public sealed class RespireRedlock : IAsyncDisposable
         Token = token;
         _durationTicks = duration.Ticks;
         _validityTicks = validity.Ticks;
-        _started = started;
+        _validUntil = AddTimestampDuration(started, validity, clock.TimestampFrequency);
         _quorum = quorum;
         _options = options;
         _clock = clock;
@@ -217,7 +218,7 @@ public sealed class RespireRedlock : IAsyncDisposable
         get
         {
             if (Volatile.Read(ref _released) != 0) return TimeSpan.Zero;
-            var remaining = Validity - _clock.GetElapsedTime(Interlocked.Read(ref _started));
+            var remaining = _clock.GetElapsedTime(_clock.GetTimestamp(), Interlocked.Read(ref _validUntil));
             return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
         }
     }
@@ -249,12 +250,13 @@ public sealed class RespireRedlock : IAsyncDisposable
                 throw;
             }
 
-            var validity = RespireRedlockGroup.CalculateValidity(duration, _clock.GetElapsedTime(started), _options.DriftFactor);
+            var completed = _clock.GetTimestamp();
+            var validity = RespireRedlockGroup.CalculateValidity(duration, _clock.GetElapsedTime(started, completed), _options.DriftFactor);
             if (renewed.Count(static success => success) >= _quorum && validity > TimeSpan.Zero)
             {
                 Interlocked.Exchange(ref _durationTicks, duration.Ticks);
                 Interlocked.Exchange(ref _validityTicks, validity.Ticks);
-                Interlocked.Exchange(ref _started, _clock.GetTimestamp());
+                Interlocked.Exchange(ref _validUntil, AddTimestampDuration(completed, validity, _clock.TimestampFrequency));
                 return true;
             }
 
@@ -274,10 +276,10 @@ public sealed class RespireRedlock : IAsyncDisposable
         try
         {
             if (Volatile.Read(ref _released) != 0) return false;
+            Interlocked.Exchange(ref _released, 1);
             var released = await RunOnNodesAsync(
                 (client, token) => client.Locks.ReleaseAsync(Key, Token, token),
                 cancellationToken).ConfigureAwait(false);
-            Interlocked.Exchange(ref _released, 1);
             return released.Count(static success => success) >= _quorum;
         }
         finally
@@ -310,6 +312,9 @@ public sealed class RespireRedlock : IAsyncDisposable
             pending[i] = RunOnNodeAsync(_clients[i], operation, cancellationToken);
         return await Task.WhenAll(pending).ConfigureAwait(false);
     }
+
+    private static long AddTimestampDuration(long timestamp, TimeSpan duration, long timestampFrequency)
+        => checked(timestamp + (long)((decimal)duration.Ticks * timestampFrequency / TimeSpan.TicksPerSecond));
 
     private async Task<bool> RunOnNodeAsync(
         IRespireClient client,
