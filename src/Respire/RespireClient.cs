@@ -1485,14 +1485,12 @@ public sealed partial class RespireClient : IRespireClient
         var response = default(RespValue);
         var released = false;
         var returned = false;
-        var allowInsert = true;
-        Action<bool>? onRedirect = null;
+        Action? onRedirect = null;
         if (_core.Cluster is not null)
         {
-            onRedirect = cacheable =>
+            onRedirect = () =>
             {
                 token = cache.RebaseRead(in token);
-                allowInsert = cacheable;
             };
         }
 
@@ -1501,7 +1499,7 @@ public sealed partial class RespireClient : IRespireClient
             response = await SendTrackedAsync(
                 "GET", command, cancellationToken, onRedirect).ConfigureAwait(false);
             released = true;
-            cache.CompleteRead(in token, in response, allowInsert);
+            cache.CompleteRead(in token, in response, allowInsert: true);
             var result = converter(this, in response);
             returned = transferResponse;
             return result;
@@ -1599,18 +1597,15 @@ public sealed partial class RespireClient : IRespireClient
         var response = default(RespValue);
         var completed = 0;
         var returned = false;
-        var allowInsert = true;
-        Action<bool>? onRedirect = null;
+        Action? onRedirect = null;
         if (_core.Cluster is not null)
         {
-            onRedirect = cacheable =>
+            onRedirect = () =>
             {
                 for (var i = 0; i < tokens.Length; i++)
                 {
                     tokens[i] = cache.RebaseRead(in tokens[i]);
                 }
-
-                allowInsert = cacheable;
             };
         }
 
@@ -1629,7 +1624,7 @@ public sealed partial class RespireClient : IRespireClient
             {
                 var index = completed;
                 ref readonly var value = ref values[index];
-                cache.CompleteRead(in tokens[index], in value, allowInsert);
+                cache.CompleteRead(in tokens[index], in value, allowInsert: true);
                 completed++;
             }
 
@@ -1651,7 +1646,7 @@ public sealed partial class RespireClient : IRespireClient
         string operation,
         TCommand command,
         CancellationToken cancellationToken,
-        Action<bool>? onRedirect = null)
+        Action? onRedirect = null)
         where TCommand : struct, IRespCommand
     {
         var core = _core;
@@ -1681,7 +1676,7 @@ public sealed partial class RespireClient : IRespireClient
         ClusterRouter cluster,
         TCommand command,
         CancellationToken cancellationToken,
-        Action<bool>? onRedirect)
+        Action? onRedirect)
         where TCommand : struct, IRespCommand
     {
         var slot = command.TryGetClusterSlot(out var commandSlot) ? commandSlot : (int?)null;
@@ -1708,7 +1703,7 @@ public sealed partial class RespireClient : IRespireClient
                     connection = await cluster.GetReplacementConnectionAsync(
                         sendAsking ? connection : null, slot, null, cancellationToken, discovery).ConfigureAwait(false);
                     discoveryPending = false;
-                    onRedirect?.Invoke(true);
+                    onRedirect?.Invoke();
                     continue;
                 }
 
@@ -1731,7 +1726,7 @@ public sealed partial class RespireClient : IRespireClient
                     .ConfigureAwait(false);
                 discoveryPending = false;
                 sendAsking = error.Code == RespireErrorCodes.Ask;
-                onRedirect?.Invoke(true);
+                onRedirect?.Invoke();
             }
         }
         catch (Exception error)
@@ -1930,14 +1925,12 @@ public sealed partial class RespireClient : IRespireClient
         var snapshot = SnapshotCommand.Create(in command);
         var token = cache.BeginRead(operation, in request);
         var completed = false;
-        var allowInsert = true;
-        Action<bool>? onRedirect = null;
+        Action? onRedirect = null;
         if (_core.Cluster is not null)
         {
-            onRedirect = cacheable =>
+            onRedirect = () =>
             {
                 token = cache.RebaseRead(in token);
-                allowInsert = cacheable;
             };
         }
 
@@ -1946,7 +1939,7 @@ public sealed partial class RespireClient : IRespireClient
         {
             response = await SendTrackedAsync(
                 operation, snapshot, cancellationToken, onRedirect).ConfigureAwait(false);
-            cache.CompleteRead(in token, in response, allowInsert);
+            cache.CompleteRead(in token, in response, allowInsert: true);
             completed = true;
             return response;
         }

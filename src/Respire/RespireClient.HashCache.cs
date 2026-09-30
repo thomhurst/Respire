@@ -74,15 +74,13 @@ public sealed partial class RespireClient
                 new ClientCacheCommandKey("HGET", key.AsValue(), fields[index]), key);
             tokens[index] = cache.BeginRead("HGET", in request);
         }
-        var allowInsert = true;
-        Action<bool>? onRedirect = null;
+        Action? onRedirect = null;
         if (_core.Cluster is not null)
         {
-            onRedirect = cacheable =>
+            onRedirect = () =>
             {
                 for (var index = 0; index < tokens.Length; index++)
                     tokens[index] = cache.RebaseRead(in tokens[index]);
-                allowInsert = cacheable;
             };
         }
         var response = await SendTrackedAsync("HMGET", new Cmd1N(Verbs.HMGet, key.AsValue(), fields),
@@ -101,7 +99,7 @@ public sealed partial class RespireClient
             for (var index = 0; index < fields.Length; index++)
             {
                 var value = response.AsArray()[index];
-                cache.CompleteRead(in tokens[index], in value, allowInsert);
+                cache.CompleteRead(in tokens[index], in value, allowInsert: true);
             }
             return response;
         }
