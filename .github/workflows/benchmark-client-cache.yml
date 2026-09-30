@@ -88,9 +88,11 @@ jobs:
                   assert case["Statistics"] and case["Statistics"]["Mean"] > 0, case["FullName"]
                   if phase != "validation" and case["Method"] == "Hit":
                       hit_allocations.setdefault(phase, []).append(case["Memory"]["BytesAllocatedPerOperation"])
-              metrics = [json.loads(line.split("CACHE_TRACKING_PROCESS_METRICS ", 1)[1])
+              # Buffered native JIT output may prefix an otherwise intact managed metric line.
+              # Decode from the marker and keep the same mode/completeness/value requirements.
+              metrics = [json.JSONDecoder().raw_decode(line.split("CACHE_TRACKING_PROCESS_METRICS ", 1)[1])[0]
                          for line in Path(f"cache-{phase}.log").read_text(encoding="utf-8").splitlines()
-                         if line.startswith("CACHE_TRACKING_PROCESS_METRICS ")]
+                         if "CACHE_TRACKING_PROCESS_METRICS " in line]
               expected_modes = {"OptIn", "Broadcast", "BroadcastPrefix", "BroadcastManyPrefixes"} if expected == 8 else {"OptIn"}
               assert {row["Mode"] for row in metrics} == expected_modes, phase
               assert all(row["elapsedSeconds"] > 0 and row["cpuMilliseconds"] >= 0 and row["allocatedBytes"] >= 0 for row in metrics)
