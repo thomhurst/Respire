@@ -24,6 +24,7 @@ const sidebars = {
         'guides/distributed-locks',
         'guides/blocking-queues',
         'guides/vector-sets',
+        'guides/reconnect-policy',
         'guides/pub-sub',
         'guides/pub-sub-introspection',
         'guides/client-administration',

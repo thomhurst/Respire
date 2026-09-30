@@ -21,6 +21,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private readonly RespireConnection?[] _connections;
     private readonly int _connectionMask;
     private readonly int[] _reconnecting;
+    private readonly int[]? _reconnectAttempts;
     private readonly RespireConnectionOptions _options;
     private readonly ILogger? _logger;
     private readonly SemaphoreSlim _connectGate = new(1, 1);
@@ -126,6 +127,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         _connections = new RespireConnection?[connectionCount];
         _connectionMask = BitOperations.IsPow2((uint)connectionCount) ? connectionCount - 1 : -1;
         _reconnecting = new int[connectionCount];
+        _reconnectAttempts = options.ReconnectPolicy is null ? null : new int[connectionCount];
     }
 
     /// <summary>Creates an unconnected multiplexer; call <see cref="EnsureConnectedAsync"/> before use.</summary>
@@ -271,6 +273,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
 
         ThrowIfUnavailable();
+        ThrowIfRecoveryExhausted();
         throw new RespireConnectionException($"No healthy connections to {Host}:{Port}.");
     }
 
@@ -292,6 +295,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
         ScheduleReconnect(0);
         ThrowIfUnavailable();
+        ThrowIfRecoveryExhausted();
         throw new RespireConnectionException($"No healthy connections to {Host}:{Port}.");
     }
 
@@ -675,7 +679,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             {
                 return GetConnection();
             }
-            catch (RespireConnectionException)
+            catch (RespireConnectionException error) when (error is not RespireReconnectLimitException)
             {
                 ThrowIfUnavailable();
                 await Task.Delay(25, cancellationToken).ConfigureAwait(false);
@@ -722,26 +726,36 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         var error = connection?.CloseError;
         RetireConnection(connection);
         bool publish;
+        var attempt = 0;
+        var delay = TimeSpan.Zero;
         lock (_lifecycleGate)
         {
-            if (!IsOperational
+            if (!IsOperational || _connections[slot] is { IsAcceptingCommands: true }
+                || (_options.ReconnectPolicy?.MaxAttempts is { } maximum && _reconnectAttempts![slot] >= maximum)
                 || Interlocked.CompareExchange(ref _reconnecting[slot], 1, 0) != 0)
                 return;
+            if (_options.ReconnectPolicy is { } policy)
+            {
+                attempt = _reconnectAttempts![slot] = (int)Math.Min((long)_reconnectAttempts[slot] + 1, int.MaxValue);
+                delay = policy.GetDelay(attempt, Random.Shared.NextDouble());
+            }
             _activeReconnects++;
-            publish = QueueLifecycleNotificationUnderLock(new StateNotification(slot, RespireConnectionState.Reconnecting, error));
+            publish = QueueLifecycleNotificationUnderLock(new StateNotification(slot, RespireConnectionState.Reconnecting, error,
+                attempt, attempt == 0 ? null : delay));
         }
-        _ = ReconnectAsync(slot);
+        _ = ReconnectAsync(slot, attempt, delay);
         // A handler can synchronously retire/dispose and wait for this reserved work.
         if (publish) DrainStateNotifications();
     }
 
-    private async Task ReconnectAsync(int slot)
+    private async Task ReconnectAsync(int slot, int attempt, TimeSpan delay)
     {
         RespireConnection? replacement = null;
         var reconnectGuardReleased = false;
         var publish = false;
         try
         {
+            if (delay > TimeSpan.Zero) await Task.Delay(delay, _stopConnecting.Token).ConfigureAwait(false);
             replacement = await RespireConnection.ConnectAsync(Host, Port, _options, _logger, _stopConnecting.Token)
                 .ConfigureAwait(false);
             if (Volatile.Read(ref _trackServerClientIds) != 0)
@@ -756,6 +770,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 old = Interlocked.Exchange(ref _connections[slot], replacement);
                 publishedReplacement = replacement;
                 replacement = null;
+                if (_reconnectAttempts is not null) _reconnectAttempts[slot] = 0;
             }
             ObserveConnectionFailure(slot, publishedReplacement);
             RetireConnection(old);
@@ -764,7 +779,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             lock (_lifecycleGate)
             {
                 publish = IsOperational
-                    && QueueLifecycleNotificationUnderLock(new StateNotification(slot, RespireConnectionState.Connected, null));
+                    && QueueLifecycleNotificationUnderLock(new StateNotification(slot, RespireConnectionState.Connected, null, attempt));
             }
         }
         catch (Exception ex)
@@ -779,8 +794,11 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
             }
             if (IsOperational)
             {
-                _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; will retry on next use", Host, Port);
-                publish = EnqueueReconnectFailure(slot, ex);
+                if (_options.ReconnectPolicy?.MaxAttempts is { } maximum && attempt >= maximum)
+                    _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} exhausted its {Attempts} attempts", Host, Port, attempt);
+                else
+                    _logger?.LogWarning(ex, "Reconnect to {Host}:{Port} failed; will retry on next use", Host, Port);
+                publish = EnqueueReconnectFailure(slot, ex, attempt);
                 reconnectGuardReleased = true;
             }
         }
@@ -845,12 +863,13 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
-    private bool EnqueueReconnectFailure(int slot, Exception error)
+    private bool EnqueueReconnectFailure(int slot, Exception error, int attempt)
     {
         lock (_stateNotificationGate)
         {
             var publish = EnqueueStateNotificationUnderLock(
-                new StateNotification(slot, RespireConnectionState.Disconnected, error));
+                new StateNotification(slot, RespireConnectionState.Disconnected, error, attempt,
+                    Exhausted: _options.ReconnectPolicy?.MaxAttempts is { } maximum && attempt >= maximum));
 
             // The failure is ordered before the guard opens. Concurrent or synchronous retries
             // can now enqueue Reconnecting, but only behind this Disconnected notification.
@@ -894,7 +913,13 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private void PublishStateNotification(StateNotification notification)
     {
         var change = new RespireConnectionStateChange(
-            new RespireEndpoint(Host, Port), notification.State, notification.Error);
+            new RespireEndpoint(Host, Port), notification.State, notification.Error)
+        {
+            ReconnectAttempt = notification.Attempt,
+            ConnectionSlot = notification.Attempt == 0 ? null : notification.Slot,
+            NextReconnectDelay = notification.Delay,
+            ReconnectExhausted = notification.Exhausted,
+        };
         try
         {
             StateChanged?.Invoke(change);
@@ -915,12 +940,32 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 _logger?.LogWarning(ex, "Connection slot state-change handler threw");
             }
         }
+        if (notification.Delay is { } delay)
+        {
+            try { RespireTelemetry.RecordReconnectAttempt(Host, Port, notification.Attempt, delay); }
+            catch (Exception ex) { _logger?.LogWarning(ex, "Reconnect metrics listener threw"); }
+        }
     }
 
     private readonly record struct StateNotification(
         int? Slot,
         RespireConnectionState State,
-        Exception? Error);
+        Exception? Error,
+        int Attempt = 0,
+        TimeSpan? Delay = null,
+        bool Exhausted = false);
+
+    private void ThrowIfRecoveryExhausted()
+    {
+        if (_options.ReconnectPolicy?.MaxAttempts is not { } maximum) return;
+        lock (_lifecycleGate)
+        {
+            for (var slot = 0; slot < _connections.Length; slot++)
+                if (_reconnectAttempts![slot] < maximum || Volatile.Read(ref _reconnecting[slot]) != 0
+                    || _connections[slot] is { IsAcceptingCommands: true }) return;
+        }
+        throw new RespireReconnectLimitException($"Reconnect policy exhausted for {Host}:{Port} after {maximum} attempts per connection slot. Recreate the client to start a new recovery episode.");
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void ThrowIfUnavailable()

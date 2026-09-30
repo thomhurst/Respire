@@ -175,6 +175,10 @@ public sealed record RespireOptions
     /// <summary>Timeout for the initial TCP connect (per connection).</summary>
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(10);
 
+    /// <summary>Optional command-connection recovery backoff. Null preserves immediate, demand-driven replacement.</summary>
+    /// <remarks>Dedicated pools, pub/sub, and discovery retain their existing recovery behavior.</remarks>
+    public RespireReconnectPolicy? ReconnectPolicy { get; init; }
+
     /// <summary>Use TLS. Enabled automatically for <c>rediss://</c> connection strings.</summary>
     public bool UseTls { get; init; }
 
@@ -288,6 +292,7 @@ public sealed record RespireOptions
         Require(Database >= 0, nameof(Database), "cannot be negative");
         Require(ConnectTimeout > TimeSpan.Zero, nameof(ConnectTimeout), "must be positive");
         Require(ThreadPoolWarningThreshold > TimeSpan.Zero, nameof(ThreadPoolWarningThreshold), "must be positive");
+        ReconnectPolicy?.Validate();
         Require(
             CommandTimeout is null || CommandTimeout >= TimeSpan.FromMilliseconds(1),
             nameof(CommandTimeout),
@@ -367,6 +372,7 @@ public sealed record RespireOptions
         => new()
         {
             ConnectTimeout = ConnectTimeout,
+            ReconnectPolicy = ReconnectPolicy,
             ResponseTimeout = ConnectionIdleReadTimeout,
             CommandTimeout = CommandTimeout,
             UseTls = UseTls,
