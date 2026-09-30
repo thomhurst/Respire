@@ -8,7 +8,7 @@ using DotNet.Testcontainers.Containers;
 namespace Respire.Testing.Containers;
 
 /// <summary>Owns a disposable Redis or Valkey deployment without depending on a test framework.</summary>
-/// <remarks>Cluster and Sentinel fixtures require a local Docker engine. All processes share one
+/// <remarks>All fixtures require a local Docker engine and publish ports only on IPv4 loopback. All processes share one
 /// container; this models protocol topology, not independent machine or network failures.</remarks>
 public sealed class RespireContainerFixture : IAsyncDisposable
 {
@@ -17,6 +17,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
     private const string DefaultRedisImage = "redis:7.2-alpine";
     private const string DefaultValkeyImage = "valkey/valkey:8.1-alpine";
     private const int ClusterPrimaryCount = 3;
+    // Cluster bus traffic stays inside the shared container; these ports are never published.
     private const int ClusterBusPortStart = 16379;
     private const int SentinelQuorum = 2;
     private const int SentinelDownAfterMilliseconds = 5000;
@@ -40,7 +41,14 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         _cli = options.Server == RespireContainerServer.Redis ? "redis-cli" : "valkey-cli";
         var image = options.Image ?? (options.Server == RespireContainerServer.Redis ? DefaultRedisImage : DefaultValkeyImage);
         var builder = new ContainerBuilder(image)
-            .WithCreateParameterModifier(parameters => (parameters.HostConfig ??= new()).Init = true)
+            .WithCreateParameterModifier(parameters =>
+            {
+                var hostConfig = parameters.HostConfig!;
+                hostConfig.Init = true;
+                foreach (var bindings in hostConfig.PortBindings.Values)
+                    foreach (var binding in bindings)
+                        binding.HostIP = "127.0.0.1";
+            })
             .WithEntrypoint("/bin/sh", "-c")
             .WithCommand("exec tail -f /dev/null")
             .WithLabel("respire.testing.fixture", "true");
@@ -81,8 +89,8 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         try
         {
             await fixture._container.StartAsync(deadline.Token).ConfigureAwait(false);
-            if (options.Topology != RespireContainerTopology.Standalone && !IsLocalHost(fixture._container.Hostname))
-                throw new NotSupportedException("Cluster and Sentinel fixtures require a local Docker engine because discovery advertises loopback endpoints.");
+            if (!IsLocalHost(fixture._container.Hostname))
+                throw new NotSupportedException("Container fixtures require a local Docker engine because published ports bind only to loopback.");
             await fixture.InitializeAsync(deadline.Token).ConfigureAwait(false);
             return fixture;
         }
@@ -142,7 +150,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
             await InitializeClusterAsync(dataCount, cancellationToken).ConfigureAwait(false);
         else if (_options.Topology == RespireContainerTopology.Sentinel)
             await InitializeSentinelAsync(cancellationToken).ConfigureAwait(false);
-        var host = _options.Topology == RespireContainerTopology.Standalone ? _container.Hostname : "127.0.0.1";
+        const string host = "127.0.0.1";
         var endpoints = _ports.Select(port => new RespireEndpoint(host, _container.GetMappedPublicPort(port))).ToArray();
         DataEndpoints = Array.AsReadOnly(endpoints[..dataCount]);
         SentinelEndpoints = Array.AsReadOnly(endpoints[dataCount..]);

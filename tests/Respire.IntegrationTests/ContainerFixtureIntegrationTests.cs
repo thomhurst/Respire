@@ -37,6 +37,9 @@ public class ContainerFixtureIntegrationTests
         {
             var container = await docker.Containers.InspectContainerAsync(fixture.ContainerId);
             (container.HostConfig?.Init).Should().BeTrue();
+            var publishedPorts = container.NetworkSettings!.Ports.Values.SelectMany(bindings => bindings).ToArray();
+            publishedPorts.Should().HaveCount(fixture.DataEndpoints.Count + fixture.SentinelEndpoints.Count);
+            publishedPorts.Should().OnlyContain(binding => binding.HostIP == "127.0.0.1");
         }
         foreach (var endpoint in fixture.SentinelEndpoints)
         {

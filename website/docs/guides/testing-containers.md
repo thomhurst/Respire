@@ -65,10 +65,11 @@ connection time. This fixture does not add automatic Sentinel failover to the cl
 
 ## Docker networking and limits
 
-Standalone fixtures use Docker-assigned random host ports and Testcontainers' reported host,
-so remote engines work when their published ports are reachable. Cluster and Sentinel
-fixtures require a **local Docker engine**: discovery advertises loopback addresses, and each
-client port is the same inside and outside the container. Ports are chosen from the operating
+All fixtures require a **local Docker engine** and publish every data and Sentinel port only
+on `127.0.0.1`. Remote engines are unsupported, including for standalone fixtures. Standalone
+fixtures use Docker-assigned random host ports. Cluster and Sentinel discovery advertises
+loopback addresses, and each client port is the same inside and outside the container.
+Cluster bus ports remain inside the container and are not published. Ports are chosen from the operating
 system's ephemeral range rather than fixed service ports. A small race exists between releasing
 the temporary port reservations and Docker binding them; a collision fails startup and cleans
 up instead of connecting to another fixture. Other fixtures and existing services are never stopped.
