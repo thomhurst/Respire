@@ -1,5 +1,4 @@
 using System.IO.Hashing;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 
 namespace Respire.Internal;
@@ -7,27 +6,45 @@ namespace Respire.Internal;
 /// <summary>Owned byte keys with allocation-free incoming span lookup on every supported TFM.</summary>
 internal sealed class ByteRouteDictionary<TValue>
 {
-    // A hash bucket keeps span lookup available without decoding or allocating on every supported framework.
-    private readonly Dictionary<int, List<(RespireChannel Name, TValue Value)>> _entries = new();
-    // Enumeration is used only for reconnect snapshots and client disposal, never message dispatch.
-    public IEnumerable<RespireChannel> Names => _entries.Values.SelectMany(static bucket => bucket.Select(static entry => entry.Name));
-    public IEnumerable<TValue> Values => _entries.Values.SelectMany(static bucket => bucket.Select(static entry => entry.Value));
+    // The usual one-entry hash bucket needs only one object, with no list or backing array.
+    // Collisions form a short chain and still compare the full byte identity.
+    private readonly Dictionary<int, Entry> _entries = new();
+    private readonly ByteRouteHasher _hasher;
+
+    public ByteRouteDictionary() : this(ByteRouteHasher.Instance) { }
+    internal ByteRouteDictionary(ByteRouteHasher hasher) => _hasher = hasher;
+
+    // Enumeration is used only for reconnect snapshots and client disposal, never dispatch.
+    public IEnumerable<RespireChannel> Names => Entries.Select(static entry => entry.Name);
+    public IEnumerable<TValue> Values => Entries.Select(static entry => entry.Value);
+
+    private IEnumerable<Entry> Entries
+    {
+        get
+        {
+            foreach (var first in _entries.Values)
+            {
+                for (var entry = first; entry is not null; entry = entry.Next)
+                {
+                    yield return entry;
+                }
+            }
+        }
+    }
 
     public bool TryGetValue(RespireChannel name, out TValue value)
         => TryGetValue(name.Span, out _, out value);
 
     public bool TryGetValue(ReadOnlySpan<byte> bytes, out RespireChannel name, out TValue value)
     {
-        if (_entries.TryGetValue(ByteRouteHasher.Instance.Hash(bytes), out var bucket))
+        _entries.TryGetValue(_hasher.Hash(bytes), out var entry);
+        for (; entry is not null; entry = entry.Next)
         {
-            foreach (ref readonly var entry in CollectionsMarshal.AsSpan(bucket))
+            if (bytes.SequenceEqual(entry.Name.Span))
             {
-                if (bytes.SequenceEqual(entry.Name.Span))
-                {
-                    name = entry.Name;
-                    value = entry.Value;
-                    return true;
-                }
+                name = entry.Name;
+                value = entry.Value;
+                return true;
             }
         }
         name = default;
@@ -37,46 +54,55 @@ internal sealed class ByteRouteDictionary<TValue>
 
     public void Add(RespireChannel name, TValue value)
     {
-        var hash = ByteRouteHasher.Instance.Hash(name.Span);
-        if (!_entries.TryGetValue(hash, out var bucket))
-        {
-            bucket = [];
-            _entries.Add(hash, bucket);
-        }
-        foreach (var entry in bucket)
+        var hash = _hasher.Hash(name.Span);
+        _entries.TryGetValue(hash, out var first);
+        for (var entry = first; entry is not null; entry = entry.Next)
         {
             if (entry.Name == name)
             {
                 throw new ArgumentException("A route with the same bytes already exists.", nameof(name));
             }
         }
-        bucket.Add((name, value));
+        _entries[hash] = new Entry(name, value, first);
     }
 
     public bool Remove(RespireChannel name)
     {
-        var hash = ByteRouteHasher.Instance.Hash(name.Span);
-        if (!_entries.TryGetValue(hash, out var bucket))
+        var hash = _hasher.Hash(name.Span);
+        _entries.TryGetValue(hash, out var entry);
+        Entry? previous = null;
+        for (; entry is not null; previous = entry, entry = entry.Next)
         {
-            return false;
-        }
-        for (var i = 0; i < bucket.Count; i++)
-        {
-            if (bucket[i].Name == name)
+            if (entry.Name != name)
             {
-                bucket.RemoveAt(i);
-                if (bucket.Count == 0)
-                {
-                    _entries.Remove(hash);
-                }
-                return true;
+                continue;
             }
+            if (previous is not null)
+            {
+                previous.Next = entry.Next;
+            }
+            else if (entry.Next is { } next)
+            {
+                _entries[hash] = next;
+            }
+            else
+            {
+                _entries.Remove(hash);
+            }
+            return true;
         }
         return false;
     }
 
     public bool ContainsKey(RespireChannel name) => TryGetValue(name, out _);
     public void Clear() => _entries.Clear();
+
+    private sealed class Entry(RespireChannel name, TValue value, Entry? next)
+    {
+        public readonly RespireChannel Name = name;
+        public readonly TValue Value = value;
+        public Entry? Next = next;
+    }
 }
 
 internal sealed class ByteRouteHasher

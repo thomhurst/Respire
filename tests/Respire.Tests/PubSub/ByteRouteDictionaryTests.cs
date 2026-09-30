@@ -8,6 +8,59 @@ namespace Respire.Tests.PubSub;
 public class ByteRouteDictionaryTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CollidingNamesSurviveDuplicateChecksAndEitherRemovalOrder(bool removeNewestFirst)
+    {
+        var hasher = new ByteRouteHasher(1);
+        var (first, second) = FindCollision(hasher);
+        var routes = new ByteRouteDictionary<int>(hasher);
+        routes.Add(first, 1);
+        routes.Add(second, 2);
+        await Assert.That(routes.TryGetValue(first, out var firstValue)).IsTrue();
+        await Assert.That(firstValue).IsEqualTo(1);
+        await Assert.That(routes.TryGetValue(second, out var secondValue)).IsTrue();
+        await Assert.That(secondValue).IsEqualTo(2);
+        await Assert.That(() => routes.Add(first, 3)).ThrowsExactly<ArgumentException>();
+        await Assert.That(() => routes.Add(second, 3)).ThrowsExactly<ArgumentException>();
+        await Assert.That(routes.Names).IsEquivalentTo([first, second]);
+        await Assert.That(routes.Values).IsEquivalentTo([1, 2]);
+        var removed = removeNewestFirst ? second : first;
+        var remaining = removeNewestFirst ? first : second;
+        await Assert.That(routes.Remove(removed)).IsTrue();
+        await Assert.That(routes.ContainsKey(removed)).IsFalse();
+        await Assert.That(routes.ContainsKey(remaining)).IsTrue();
+        await Assert.That(routes.Remove(remaining)).IsTrue();
+        await Assert.That(routes.Names).IsEmpty();
+        routes.Add(first, 4);
+        await Assert.That(routes.TryGetValue(first, out var readded)).IsTrue();
+        await Assert.That(readded).IsEqualTo(4);
+    }
+
+    private static (RespireChannel First, RespireChannel Second) FindCollision(ByteRouteHasher hasher)
+    {
+        // Fixed seed and input sequence make the collision reproducible on both TFMs.
+        var seen = new Dictionary<int, long>();
+        var random = new Random(300);
+        Span<byte> bytes = stackalloc byte[8];
+        for (var attempt = 0; attempt < 1_000_000; attempt++)
+        {
+            var candidate = random.NextInt64();
+            System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(bytes, candidate);
+            var hash = hasher.Hash(bytes);
+            if (seen.TryGetValue(hash, out var previous))
+            {
+                if (previous == candidate) continue;
+                var second = new RespireChannel(bytes.ToArray());
+                System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(bytes, previous);
+                return (new RespireChannel(bytes.ToArray()), second);
+            }
+            seen.Add(hash, candidate);
+        }
+        throw new InvalidOperationException("The fixed test inputs did not produce a hash collision.");
+    }
+
+    [Test]
     public async Task RandomOperationsMatchLosslessReferenceDictionary()
     {
         var random = new Random(300);

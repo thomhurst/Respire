@@ -34,6 +34,7 @@ public readonly struct RespireChannel : IEquatable<RespireChannel>
     public ReadOnlyMemory<byte> Bytes => _bytes;
 
     /// <summary>The explicit subscription command family. Reserved names do not change this value.</summary>
+    /// <remarks>Kind is not part of equality or hashing; literal and pattern values with the same bytes compare equal.</remarks>
     public SubscriptionKind Kind { get; }
 
     /// <summary>The Redis Cluster slot computed from the raw bytes, including hash tags.</summary>
