@@ -59,6 +59,7 @@ public class ServerExtensionIntegrationTests
             $"redis://{container.Hostname}:{container.GetMappedPublicPort(6379)}?protocol={protocol}");
         byte[] member = [0xff, 0, 0x80];
         using var added = await client.ExecuteAsync(RespireCommands.Set.SADD, "members", member);
+        added.AsInteger().Should().Be(1);
         using var expires = await client.ExecuteAsync(RespireCommands.KeyDb.EXPIREMEMBER, "members", member, 60);
         expires.AsInteger().Should().Be(1);
         using var expiresAt = await client.ExecuteAsync(RespireCommands.KeyDb.PEXPIREMEMBERAT,

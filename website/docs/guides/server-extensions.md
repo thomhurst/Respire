@@ -22,9 +22,10 @@ using RespireResult expiry = await keydb.ExecuteAsync(
 
 `CL.THROTTLE` returns five integers: limited flag, total limit, remaining capacity,
 retry delay, and reset delay. A retry delay of `-1` means the request was allowed.
-`SADDEX` adds members with an expiry in seconds; its optional `KEEPTTL` preserves
-existing members' TTLs. `EXPIREMEMBER` sets a member expiry and optionally accepts
-`ms` instead of its default seconds. The server validates options and returns its
+Per the vendor documentation, `SADDEX` adds members with an expiry in seconds;
+its optional `KEEPTTL` preserves existing members' TTLs. `EXPIREMEMBER` sets a
+member expiry and optionally accepts `ms` instead of its default seconds. The
+smoke scenarios below exercise default expiry behavior, not those two options. The server validates options and returns its
 own errors, including unsupported commands, wrong types, and denied ACL permissions.
 
 ## Audited descriptors
