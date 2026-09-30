@@ -463,8 +463,8 @@ public class ClusterReadOnlyTests
     [Arguments(true)]
     public async Task ChangingReadOnlyOwners_RespectsRetryLimit(bool batched)
     {
-        await using var first = new FakeRespServer(ReadOnlyReply);
-        await using var second = new FakeRespServer(ReadOnlyReply);
+        await using var first = new FakeRespServer(ClusterRouter.RedirectLimit + 1, ReadOnlyReply);
+        await using var second = new FakeRespServer(ClusterRouter.RedirectLimit + 1, ReadOnlyReply);
         var topologies = Enumerable.Range(0, ClusterRouter.RedirectLimit + 1)
             .Select(index => Topology(index % 2 == 0 ? first.Port : second.Port)).ToArray();
         await using var seed = new FakeRespServer(topologies);
@@ -474,12 +474,12 @@ public class ClusterReadOnlyTests
         {
             using var batch = client.CreateBatch();
             var pending = batch.Set("key", "value");
-            await batch.TryExecuteAsync();
+            await batch.TryExecuteAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
             await Assert.That(pending.Error).IsTypeOf<RespireServerException>();
         }
         else
         {
-            await Assert.That(async () => await client.SetAsync("key", "value")).Throws<RespireServerException>();
+            await Assert.That(async () => await client.SetAsync("key", "value").AsTask().WaitAsync(TimeSpan.FromSeconds(10))).Throws<RespireServerException>();
         }
 
         await Assert.That(first.CommandsSeen + second.CommandsSeen).IsEqualTo(ClusterRouter.RedirectLimit + 1);

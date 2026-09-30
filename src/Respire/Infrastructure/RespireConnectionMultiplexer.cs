@@ -26,12 +26,13 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     private readonly SemaphoreSlim _connectGate = new(1, 1);
     private readonly SemaphoreSlim _correctionIdentityGate = new(1, 1);
     private readonly SemaphoreSlim _retiredFenceGate = new(1, 1);
-    private readonly ConcurrentDictionary<long, byte> _retiredServerClientIds = new();
+    private readonly ConcurrentDictionary<RetiredClientIdentity, byte> _retiredServerClientIds = new();
     private readonly object _stateNotificationGate = new();
     private readonly Queue<StateNotification> _stateNotifications = [];
     private uint _next;
     private int _disposed;
     private int _retired;
+    private bool _retirementDrained;
     // Cold lifecycle transitions share this gate; normal selection reads only volatile state.
     // A reconnect reserves ownership before starting so shutdown also awaits unpublished work.
     private readonly object _lifecycleGate = new();
@@ -53,6 +54,8 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
     internal bool IsRetired => Volatile.Read(ref _retired) != 0;
     private bool IsOperational => !IsRetired && Volatile.Read(ref _disposed) == 0;
     internal bool HasPendingCorrectionFences => !_retiredServerClientIds.IsEmpty;
+    // Published only after accepted work drained and every failed-socket identity was collected.
+    internal bool RetirementDrained => Volatile.Read(ref _retirementDrained);
     internal bool IsInitialized => _connected;
     internal bool HasReliableCorrectionOrdering => _correctionOrderingReady;
     internal bool IsReliableCorrectionOrderingUnavailable =>
@@ -468,6 +471,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
 
         while (true)
         {
+            ThrowIfUnavailable();
             await FenceRetiredConnectionsAsync(cancellationToken).ConfigureAwait(false);
 
             var sends = new List<(RespireConnection Connection, ValueTask<RespValue> Send)>(_connections.Length);
@@ -575,6 +579,24 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
+    private readonly record struct RetiredClientIdentity(long ClientId, string Host, int Port)
+    {
+        internal static RetiredClientIdentity From(RespireConnection connection)
+            => new(connection.ServerClientId, connection.NetworkPeerAddress ?? connection.Host,
+                connection.NetworkPeerPort ?? connection.Port);
+    }
+
+    internal bool HasCurrentPeer(string host, int port)
+    {
+        if (IsRetired) return false;
+        foreach (var connection in _connections)
+            if (connection is { IsAcceptingCommands: true }
+                && (connection.NetworkPeerAddress ?? connection.Host) == host
+                && (connection.NetworkPeerPort ?? connection.Port) == port)
+                return true;
+        return false;
+    }
+
     internal async ValueTask FenceRetiredConnectionsAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -582,57 +604,35 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         try
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            // Catch slots that died after the broadcast started but before their reply task
-            // faulted. A caller joining this safety barrier must not return merely because the
-            // asynchronous drain has not published the dead ID yet.
-            for (var slot = 0; slot < _connections.Length; slot++)
-            {
-                var connection = Volatile.Read(ref _connections[slot]);
-                if (connection is not { IsConnected: true })
-                {
-                    RetireConnection(connection);
-                    ScheduleReconnect(slot);
-                }
-            }
+            foreach (var connection in _connections)
+                if (connection is not { IsConnected: true }) RetireConnection(connection);
 
-            while (!_retiredServerClientIds.IsEmpty)
+            foreach (var identity in _retiredServerClientIds.Keys)
             {
-                foreach (var clientId in _retiredServerClientIds.Keys)
+                // Client IDs belong to a physical server, not a hostname. DNS can change
+                // while this generation drains, and the new server can reuse the same ID.
+                using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _abortCancellation.Token);
+                lifetime.CancelAfter(_options.ConnectTimeout);
+                var options = _options with
                 {
-                    if (IsRetired)
-                    {
-                        await FenceUsingControlConnectionAsync(cancellationToken).ConfigureAwait(false);
-                        return;
-                    }
-                    var connection = await GetHealthyConnectionAsync(cancellationToken).ConfigureAwait(false);
-                    try
-                    {
-                        // The kill is an owed ordering barrier; it must not be abandonable,
-                        // so no command deadline applies.
-                        var reply = await connection.SendAsync(
-                                new ClientKillIdCommand(clientId), cancellationToken,
-                                armCommandDeadline: false)
-                            .ConfigureAwait(false);
-                        if (reply.IsError)
-                        {
-                            var error = new RespireServerException(reply.GetErrorMessage(), "CLIENT KILL");
-                            reply.Dispose();
-                            throw error;
-                        }
-
-                        reply.Dispose();
-                        _retiredServerClientIds.TryRemove(clientId, out _);
-                    }
-                    catch (Exception ex) when (IsConnectionLoss(ex))
-                    {
-                        RetireConnection(connection);
-                    }
+                    EnableClientTracking = false, PushHandler = null, SubscriptionConfirmationHandler = null,
+                    TlsOptions = _options.UseTls ? RespireConnection.CreateTlsOptions(_options.TlsOptions, Host) : _options.TlsOptions,
+                };
+                try
+                {
+                    await using var control = await RespireConnection.ConnectAsync(identity.Host, identity.Port,
+                        options, _logger, lifetime.Token).ConfigureAwait(false);
+                    using var reply = await control.SendAsync(new ClientKillIdCommand(identity.ClientId), lifetime.Token,
+                        armCommandDeadline: false).ConfigureAwait(false);
+                    if (reply.IsError) throw new RespireServerException(reply.GetErrorMessage(), "CLIENT KILL");
                 }
+                catch (OperationCanceledException error) when (lifetime.IsCancellationRequested
+                    && !cancellationToken.IsCancellationRequested && !_abortCancellation.IsCancellationRequested)
+                {
+                    throw new RespireTimeoutException("CLIENT KILL", _options.ConnectTimeout, error);
+                }
+                _retiredServerClientIds.TryRemove(identity, out _);
             }
-        }
-        catch (RespireConnectionRetiredException) when (IsRetired)
-        {
-            await FenceUsingControlConnectionAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -640,22 +640,11 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         }
     }
 
-    // Called under the fence gate. These idempotent safety commands are the only sends
-    // permitted after retirement; the control connection is never published or reconnected.
-    private async Task FenceUsingControlConnectionAsync(CancellationToken cancellationToken)
+    internal async ValueTask RetireConnectionAsync(RespireConnection original)
     {
-        if (_retiredServerClientIds.IsEmpty) return;
-        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _abortCancellation.Token);
-        await using var connection = await RespireConnection.ConnectAsync(Host, Port,
-            _options with { EnableClientTracking = false, PushHandler = null, SubscriptionConfirmationHandler = null },
-            _logger, lifetime.Token).ConfigureAwait(false);
-        foreach (var clientId in _retiredServerClientIds.Keys)
-        {
-            using var reply = await connection.SendAsync(new ClientKillIdCommand(clientId), lifetime.Token,
-                armCommandDeadline: false).ConfigureAwait(false);
-            if (reply.IsError) throw new RespireServerException(reply.GetErrorMessage(), "CLIENT KILL");
-            _retiredServerClientIds.TryRemove(clientId, out _);
-        }
+        await original.DisposeAsync().ConfigureAwait(false);
+        var slot = FindSlot(original);
+        if (slot >= 0) ScheduleReconnect(slot);
     }
 
     internal async ValueTask RetireConnectionAsync(long serverClientId)
@@ -700,7 +689,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
         // clears the flag that requests identities on future replacement connections.
         if (connection is { ServerClientId: > 0, DrainedSuccessfully: false })
         {
-            _retiredServerClientIds.TryAdd(connection.ServerClientId, 0);
+            _retiredServerClientIds.TryAdd(RetiredClientIdentity.From(connection), 0);
         }
     }
 
@@ -1007,6 +996,7 @@ internal sealed class RespireConnectionMultiplexer : IAsyncDisposable
                 .ConfigureAwait(false);
             await WaitForCorrectionIdentityAsync().ConfigureAwait(false);
             foreach (var connection in _connections) RetireConnection(connection);
+            Volatile.Write(ref _retirementDrained, true);
             if (Volatile.Read(ref _disposed) == 0)
                 await FenceRetiredConnectionsAsync(_abortCancellation.Token).ConfigureAwait(false);
             else if (HasPendingCorrectionFences)

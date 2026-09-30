@@ -13,7 +13,7 @@ internal sealed class ClusterNodeIdentityIndex
     private readonly Dictionary<RespireEndpoint, RespireConnectionMultiplexer> _nodes = new(EndpointComparer.Instance);
     private readonly Dictionary<string, RespireConnectionMultiplexer> _nodesById = new(StringComparer.Ordinal);
     private readonly Dictionary<RespireConnectionMultiplexer, string> _nodeIds = [];
-    // TODO #390: drain superseded transports and remove obsolete identities before releasing ownership.
+    // Includes detached generations until their owner confirms drain and correction completion.
     private readonly HashSet<RespireConnectionMultiplexer> _allNodes = [];
     private readonly Func<RespireEndpoint, RespireConnectionMultiplexer> _create;
     private readonly object _gate;
@@ -30,6 +30,46 @@ internal sealed class ClusterNodeIdentityIndex
 
     internal IEnumerable<RespireConnectionMultiplexer> All => _allNodes;
     internal IEnumerable<RespireEndpoint> Endpoints => _nodes.Keys;
+    internal int NodeIdCount => _nodesById.Count;
+    internal int ReverseNodeIdCount => _nodeIds.Count;
+
+    internal bool IsActive(RespireConnectionMultiplexer node)
+    {
+        AssertAccess();
+        return _nodes.Values.Contains(node);
+    }
+
+    /// <summary>Detaches departed generations, retaining configured seed addresses for discovery.</summary>
+    /// <remarks>The caller includes newer protected redirects in activeNodes and retires returned
+    /// transports outside its gate. Forget releases ownership only after their cleanup completes.</remarks>
+    internal RespireConnectionMultiplexer[] DetachInactive(
+        HashSet<RespireConnectionMultiplexer> activeNodes, IReadOnlyList<RespireEndpoint> configuredSeeds)
+    {
+        AssertAccess();
+        var retained = new HashSet<RespireConnectionMultiplexer>(activeNodes);
+        foreach (var seed in configuredSeeds)
+            if (_nodes.TryGetValue(seed, out var node)) retained.Add(node);
+
+        // These snapshots scale with discovered endpoints/identities, once per topology refresh;
+        // they are not per-slot or per-command allocations.
+        foreach (var (endpoint, node) in _nodes.ToArray())
+            if (!retained.Contains(node)) _nodes.Remove(endpoint);
+        foreach (var (id, node) in _nodesById.ToArray())
+            if (!activeNodes.Contains(node)) _nodesById.Remove(id);
+        foreach (var (node, id) in _nodeIds.ToArray())
+            if (!_nodesById.TryGetValue(id, out var current) || !ReferenceEquals(current, node)) _nodeIds.Remove(node);
+
+        ValidateInvariants();
+        return _allNodes.Where(node => !retained.Contains(node)).ToArray();
+    }
+
+    internal void Forget(RespireConnectionMultiplexer node)
+    {
+        AssertAccess();
+        Debug.Assert(!IsActive(node), "An active generation cannot be forgotten.");
+        _allNodes.Remove(node);
+        ValidateInvariants();
+    }
 
     internal RespireConnectionMultiplexer GetOrCreate(RespireEndpoint endpoint)
     {
@@ -51,7 +91,7 @@ internal sealed class ClusterNodeIdentityIndex
         {
             return identified;
         }
-        // TODO #390: stop falling back to this retained transport once retirement can drain it.
+        // The router checks active membership before publishing this fallback as its seed.
         return _nodes.TryGetValue(new RespireEndpoint(node.Host, node.Port), out var current) ? current : node;
     }
 
@@ -166,8 +206,8 @@ internal sealed class ClusterNodeIdentityIndex
         }
 
         // Withdrawn aliases must not redirect a future MOVED/ASK to a different host.
-        // Keep immutable transport endpoints (including configured seeds) until #390
-        // implements draining; retaining an endpoint itself never substitutes another host.
+        // Keep immutable endpoints until the owner selects active nodes and configured seeds
+        // in DetachInactive; retaining an endpoint never substitutes another host.
         foreach (var (endpoint, node) in _nodes.ToArray())
         {
             if (!published.Contains(endpoint)
@@ -204,7 +244,7 @@ internal sealed class ClusterNodeIdentityIndex
             Debug.Assert(_nodeIds.TryGetValue(node, out var reverseId) && reverseId == id,
                 "Every current identity must have a matching reverse identity.");
         }
-        // Retired transports keep their historical reverse identity until #390 drains them.
+        // Publication and ownership pruning happen in separate steps under the same gate.
         foreach (var node in _nodeIds.Keys)
         {
             Debug.Assert(_allNodes.Contains(node), "Every historical identity transport must remain owned.");

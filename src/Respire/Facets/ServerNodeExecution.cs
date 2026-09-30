@@ -98,7 +98,7 @@ internal sealed partial class ServerCommands
         if (client.Core.Cluster is null) return [source];
         // The routing table contains primaries only. CLUSTER NODES also includes replicas and
         // slotless members, which can have their own subscribers. Never silently omit them.
-        using var reply = await client.SendOnConnectionAsync("CLUSTER NODES", connection,
+        using var reply = await client.SendToClusterTargetAsync("CLUSTER NODES", connection,
             new Cmd(ClusterNodes), cancellationToken).ConfigureAwait(false);
         if (reply.Type is not (RespDataType.BulkString or RespDataType.SimpleString or RespDataType.VerbatimString))
             throw new RespireProtocolException("CLUSTER NODES must return topology text.");

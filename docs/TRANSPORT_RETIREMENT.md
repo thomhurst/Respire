@@ -28,13 +28,32 @@ Accepted commands may still be draining; await the retirement task to observe co
 
 ## Retry boundary
 
-`RespireConnectionRetiredException` is internal and distinct from an ambiguous `RespireConnectionException`. A router may select the current generation and retry only an operation rejected with the retired exception: that operation did not enqueue any bytes. It must not retry an accepted command merely because topology changed. This primitive does not itself change Cluster routing; generation ownership and routing integration are tracked by #466.
+`RespireConnectionRetiredException` is internal and distinct from an ambiguous `RespireConnectionException`. A router may select the current generation and retry only an operation rejected with the retired exception: that operation did not enqueue any bytes. It must not retry an accepted command merely because topology changed. Cluster topology publication detaches old generations before starting their graceful retirement.
+
+Cluster command, tracked-read, fire-and-forget, script, lock, batch, and unwatched transaction
+paths retry that rejection with the existing bounded redirect budget. ASK retries retain the
+temporary target and ASKING prefix without changing the slot owner. Tracked executions publish
+the replacement identity before writing, and cached reads refresh their continuity token.
+An accepted batch entry is never replayed because another entry was rejected.
+
+Route acquisition also retries retirement before returning a connection, a dedicated pool, or
+an entire primary snapshot. Retirement-owned cancellation of an unpublished handshake is
+recognized separately from caller cancellation. Typed FUNCTION/SCRIPT mutations, database
+flush/size fan-outs, SCAN pages, and server-node discovery retry only the rejected endpoint;
+already accepted peers are never replayed. Socket-pinned CLIENT operations and existing WATCH
+state do not use this endpoint replacement helper. SCAN retains its usual weak iteration
+semantics during topology changes; this does not provide a resharding-resumable cursor.
+
+Blocking commands, WATCH creation, and durability batches can also reselect a pool retired
+between selection and rent, including retirement cancellation during the handshake. This retry
+ends at successful rent; it never replays application commands or WATCH state. The returned pool
+stays with its lease through return or disposal. Caller cancellation and client disposal stop retries.
 
 ## Correction ownership
 
 Successful drains need no server-side kill: all accepted replies have been consumed. Failed transports with a known Redis client ID retain their `CLIENT KILL` obligation, including identities obtained during interrupted correction bootstrap. Retirement and disposal wait for an in-progress CLIENT ID bootstrap to publish before completing
 identity ownership; a reply dequeued before retirement cannot publish an untracked ID afterward.
-Multiplexer retirement fences these IDs through an unpooled control connection with the original endpoint and authentication settings. This connection is never published as a replacement and does not enable client tracking.
+Multiplexer retirement fences these IDs through an unpooled control connection with the captured network peer address and original TLS name and authentication settings. This connection is never published as a replacement and does not enable client tracking.
 
 A fence failure faults the retirement task and preserves unresolved IDs. Owners must retain the generation while `HasPendingCorrectionFences` is true and retry `FenceRetiredConnectionsAsync()` before releasing its correction ownership. A successful explicit retry clears the obligations; the original retirement task retains its failure. Never treat a faulted retirement task as proof that pending server commands are harmless.
 
@@ -49,3 +68,57 @@ Abortive cleanup alone is never proof of correction ordering. Since a disposed m
 cannot retry fencing, a generation owner that still needs correction guarantees must retain
 its ownership and complete fencing before disposal, or arrange that obligation outside the
 disposed transport. Retirement after disposal succeeds only when no fence obligations remain.
+
+## Cluster generation ownership
+
+A successful topology publication prunes departed and superseded generations from endpoint,
+node-ID, reverse-ID, health-handler, redirect, and dedicated-pool lookup. Newer MOVED and ASK
+routes retain their existing version protection. Configured seed addresses remain available for
+discovery even without slots. Re-adding a departed address creates a new generation; old cleanup
+cannot remove its replacement.
+
+Detached multiplexers drain accepted frames and replies. Their dedicated pools reject new rents
+and wait for borrowed operations to return. There is no implicit timeout that aborts accepted
+application commands. Failed tracked sockets retain their server-local client IDs and captured
+network peers until CLIENT KILL is acknowledged. Each control attempt is bounded by ConnectTimeout;
+the Cluster owner retries failed fences with exponential delays from one to 30 seconds, logs
+failed attempts at Debug level (Warning once the delay reaches 30 seconds, including the current
+retiring-generation count), and retains the generation until success or explicit client
+disposal. Client disposal aborts active and detached transports, borrowed connections, and control
+attempts before waiting for cleanup.
+An expired control-attempt deadline surfaces as `RespireTimeoutException` for `CLIENT KILL`;
+caller cancellation and explicit disposal retain their cancellation behavior. A failed pool
+drain faults generation retirement and retains ownership for disposal instead of reporting success.
+A permanently unreachable peer therefore keeps its generation alive until explicit client disposal.
+Failures before the multiplexer finishes drain and identity collection fault generation retirement;
+an empty set of pending fence IDs cannot make those failures successful. MOVED/ASK connection setup
+can re-resolve a generation retired by concurrent topology publication, with bounded retries and
+caller cancellation. This happens before sending the redirected command and never replays accepted work.
+
+The router's `_nodesGate` protects lookup and ownership changes. Snapshot the owned objects under
+that gate, then release it before renting, draining, disposing, awaiting, or invoking lifecycle
+callbacks. Node and pool lifecycle locks must be released before callbacks acquire `_nodesGate`.
+Observer installation and peer revalidation occur together under the router gate; they do not
+take a node or pool lifecycle lock.
+Routing and correction ownership intentionally share that gate so topology detachment, pool reservations,
+and identity publication remain atomic. `WaitForRetirementAsync` observes detached generation completion;
+late correction reservations have separate lifetimes. Explicit disposal snapshots every owned pool and
+awaits each pool's shared abortive cleanup, including pools already being retired in the background.
+
+Correction pools share live multiplexer/peer/TLS identities, including replacement sockets on the
+same peer. A changed peer gets a separate pool; obsolete entries detach from lookup. A correction
+reservation protects asynchronous rent through command completion, so topology cleanup cannot
+close a pool between selection and rent. Detached pools close after their reservations return.
+A late fence for an already successfully drained socket needs no server command. Other late
+corrections can create a temporary client-owned pool for the original captured peer even
+after routing ownership has been released. They never resolve a new server through the old hostname.
+Idempotent script corrections arriving after retirement wait for drain and fence completion before
+executing through that original peer. TLS authentication keeps the original configured name.
+After an owner successfully retries a failed fence, late corrections proceed even though the shared
+retirement task retains its original failure. Errors before drain and identity collection complete
+still propagate; an empty fence set alone is not proof of completed retirement. Unexpected
+generation cleanup failures are logged at Warning level and remain observable to retirement/disposal callers.
+These unexpected cleanup failures are terminal for that generation's retirement task; they do not
+enter the retry loop for unacknowledged fences. The generation remains owned until explicit client
+disposal aborts its transports and observes the original failure. Retrying an already faulted,
+memoized transport cleanup task cannot restart cleanup or prove a successful drain.

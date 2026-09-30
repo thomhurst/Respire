@@ -108,7 +108,11 @@ public sealed partial class RespireBatch
                 ? await cluster.GetDedicatedPoolAsync(slot, cancellationToken).ConfigureAwait(false)
                 : core.DedicatedPool;
             // WAIT uses connection-local replication history, including when this batch only reads.
-            connection = await pool.RentAsync(cancellationToken, reuseIdle: false).ConfigureAwait(false);
+            if (core.Cluster is { } router)
+                (pool, connection) = await router.RentDedicatedConnectionAsync(
+                    pool, slot, cancellationToken, reuseIdle: false).ConfigureAwait(false);
+            else
+                connection = await pool.RentAsync(cancellationToken, reuseIdle: false).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             var writes = new Task<Exception?>[_ops.Count];
             for (var index = 0; index < _ops.Count; index++)

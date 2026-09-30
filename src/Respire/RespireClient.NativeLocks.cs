@@ -97,6 +97,16 @@ public sealed partial class RespireClient
                 return await ExecuteCompatibleLockAsync(connection, key, token, milliseconds, sendAsking, cancellationToken)
                     .ConfigureAwait(false);
             }
+            catch (RespireConnectionRetiredException) when (
+                _core.Cluster is { } cluster && cluster.CanRetryRetirement(attempt, cancellationToken))
+            {
+                connection = requireIdentity
+                    ? await GetTrackedReplacementConnectionAsync(
+                        cluster, sendAsking ? connection : null, slot, true, cancellationToken).ConfigureAwait(false)
+                    : await cluster.GetReplacementConnectionAsync(
+                        sendAsking ? connection : null, slot, null, cancellationToken).ConfigureAwait(false);
+                execution.ConnectionIdentity = GetTrackedConnectionIdentity(connection, requireIdentity, sendAsking);
+            }
             catch (RespireServerException error) when (
                 _core.Cluster is not null && attempt < ClusterRouter.RedirectLimit && ClusterRouter.CanRecover(error, slot))
             {

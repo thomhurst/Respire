@@ -133,6 +133,13 @@
   See the [ACL administration guide](../website/docs/guides/acl-administration.md)
   for Redis versions, missing-user and denial semantics, and result ownership.
 
+### Cluster transport lifecycle
+
+- Successful topology refreshes retire departed and superseded connections and pools, prune
+  historical identities, and preserve configured seeds and newer MOVED/ASK routes. Accepted
+  commands and borrowed operations drain before cleanup; client disposal still aborts them.
+  Correction fences retain their original network peer and TLS identity across topology changes.
+
 ### Distributed locks
 
 - Distributed locks use native conditional renewal/deletion on supported Redis and Valkey versions, with per-connection Lua fallback on older servers and preserved managed cancellation fencing.

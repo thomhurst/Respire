@@ -6,7 +6,7 @@ using Respire.Networking;
 
 namespace Respire.Internal;
 
-internal sealed class ClusterRouter : IAsyncDisposable
+internal sealed partial class ClusterRouter : IAsyncDisposable
 {
     private const int MaxRedirects = 5;
     private static readonly RawCommand Asking = new("*1\r\n$6\r\nASKING\r\n"u8.ToArray());
@@ -18,8 +18,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
     private readonly ClusterNodeIdentityIndex _identities;
     private readonly Dictionary<RespireConnectionMultiplexer, Action<int, RespireConnectionStateChange>> _nodeStateHandlers = [];
     private readonly Dictionary<RespireConnectionMultiplexer, DedicatedConnectionPool> _dedicatedPools = [];
-    // TODO #390: drain correction pools for departed transport/peer identities along with dedicated pools.
-    private readonly Dictionary<CorrectionPoolIdentity, DedicatedConnectionPool> _correctionPools = [];
+    private readonly Dictionary<CorrectionPoolIdentity, CorrectionPoolEntry> _correctionPools = [];
     private readonly object _nodesGate = new();
     private readonly RespireConnectionMultiplexer?[] _slots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
     private RespireConnectionMultiplexer[] _masters = [];
@@ -69,7 +68,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
             foreach (var master in Volatile.Read(ref _masters))
             {
-                if (master.IsConnected)
+                if (master.IsConnected && !master.IsRetired)
                 {
                     return true;
                 }
@@ -159,19 +158,48 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
     internal async ValueTask<RespireConnection> GetConnectionAsync(int? slot, CancellationToken cancellationToken)
     {
+        for (var attempt = 0; ; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            try { return await GetConnectionCoreAsync(slot, cancellationToken).ConfigureAwait(false); }
+            catch (RespireConnectionRetiredException) when (CanRetryRetirement(attempt, cancellationToken))
+            {
+                // No application command was accepted during route acquisition.
+            }
+        }
+    }
+
+    private async ValueTask<RespireConnection> GetConnectionCoreAsync(int? slot, CancellationToken cancellationToken)
+    {
         if (slot is null && TryGetConnectedNode() is { } connectedNode)
         {
             return connectedNode.GetConnection();
+        }
+
+        if (slot is null)
+        {
+            // A replacement generation can be known but not connected yet. Seed discovery
+            // is unnecessary when a current master can serve this unkeyed command.
+            foreach (var master in Volatile.Read(ref _masters))
+            {
+                try
+                {
+                    await EnsureRouteNodeConnectedAsync(master, cancellationToken).ConfigureAwait(false);
+                    return master.GetConnection();
+                }
+                catch (Exception error) when (error is not RespireConnectionRetiredException && CanRetryConnectionFailure(error, cancellationToken)) { }
+            }
         }
 
         if (slot is { } cachedSlot && Volatile.Read(ref _slots[cachedSlot]) is { } cachedNode)
         {
             try
             {
-                await cachedNode.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                await EnsureRouteNodeConnectedAsync(cachedNode, cancellationToken).ConfigureAwait(false);
                 return cachedNode.GetConnection(cachedSlot);
             }
-            catch (Exception error) when (CanRetryConnectionFailure(error, cancellationToken))
+            catch (Exception error) when (error is not RespireConnectionRetiredException && CanRetryConnectionFailure(error, cancellationToken))
             {
                 ClearSlotOwner(cachedSlot, cachedNode);
                 // Refresh through another discovered master before falling back to seeds.
@@ -188,8 +216,19 @@ internal sealed class ClusterRouter : IAsyncDisposable
         await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         var node = slot is { } value ? Volatile.Read(ref _slots[value]) : null;
         node ??= Volatile.Read(ref _seed)!;
-        await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        await EnsureRouteNodeConnectedAsync(node, cancellationToken).ConfigureAwait(false);
         return slot is { } affinity ? node.GetConnection(affinity) : node.GetConnection();
+    }
+
+    private static async ValueTask EnsureRouteNodeConnectedAsync(
+        RespireConnectionMultiplexer node, CancellationToken cancellationToken)
+    {
+        try { await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (node.IsRetired && !cancellationToken.IsCancellationRequested)
+        {
+            // Preserve caller cancellation; normalize only an unpublished handshake cancelled by retirement.
+            throw new RespireConnectionRetiredException(node.Host, node.Port);
+        }
     }
 
     internal async ValueTask<RespireConnection> GetRedirectConnectionAsync(
@@ -206,7 +245,11 @@ internal sealed class ClusterRouter : IAsyncDisposable
             }
             var replacement = await RefreshReadOnlyOwnerAsync(error, source, readOnlySlot, cancellationToken)
                 .ConfigureAwait(false);
-            return replacement.GetConnection(readOnlySlot);
+            try { return replacement.GetConnection(readOnlySlot); }
+            catch (RespireConnectionRetiredException) when (CanRetryRetirement(0, cancellationToken))
+            {
+                return await GetConnectionAsync(readOnlySlot, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         if (!TryParseRedirect(error, source.Host, out var slot, out var endpoint))
@@ -214,23 +257,61 @@ internal sealed class ClusterRouter : IAsyncDisposable
             throw error;
         }
 
-        var observe = error.Code != "ASK";
-        var node = GetOrCreateNode(endpoint, observe, redirect: true);
-        await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-        if (error.Code == RespireErrorCodes.Moved)
+        for (var attempt = 0; ; attempt++)
         {
-            SetSlotOwner(slot, node);
+            cancellationToken.ThrowIfCancellationRequested();
+            var node = GetOrCreateNode(endpoint, observe: error.Code != "ASK", redirect: true);
+            try
+            {
+                await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                if (error.Code == RespireErrorCodes.Moved) SetSlotOwner(slot, node);
+                return node.GetConnection(slot);
+            }
+            catch (Exception failure) when (CanRetryRetiredRedirect(failure, node, attempt, cancellationToken))
+            {
+                // No redirected command has been sent. Resolve the endpoint's current generation.
+            }
         }
-
-        return node.GetConnection(slot);
     }
 
-    internal async ValueTask<RespireConnection> GetTrackedConnectionAsync(
+    internal ValueTask<RespireConnection> GetTrackedConnectionAsync(
         int? slot, bool requireIdentity, CancellationToken cancellationToken)
+        => GetReplacementConnectionAsync(null, slot, requireIdentity, cancellationToken);
+
+    internal bool CanRetryRetirement(int attempt, CancellationToken cancellationToken)
+        => attempt < MaxRedirects && !cancellationToken.IsCancellationRequested && Volatile.Read(ref _disposed) == 0;
+
+    // ASK and captured cluster-wide targets preserve their endpoint without changing the slot owner.
+    // Callers may retry only commands rejected before acceptance, never ambiguous I/O failures.
+    internal async ValueTask<RespireConnection> GetReplacementConnectionAsync(
+        RespireConnection? endpointSource, int? slot, bool? requireIdentity, CancellationToken cancellationToken)
     {
-        var connection = await GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
-        return await EnableCorrectionOrderingAsync(connection, requireIdentity, cancellationToken)
-            .ConfigureAwait(false);
+        for (var attempt = 0; ; attempt++)
+        {
+            RespireConnectionMultiplexer? node = null;
+            try
+            {
+                RespireConnection connection;
+                if (endpointSource is null)
+                    connection = await GetConnectionAsync(slot, cancellationToken).ConfigureAwait(false);
+                else
+                {
+                    node = GetOrCreateNode(new(endpointSource.Host, endpointSource.Port), observe: false, redirect: true);
+                    await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                    connection = slot is { } value ? node.GetConnection(value) : node.GetConnection();
+                }
+                node = connection.Multiplexer;
+                return requireIdentity is { } required
+                    ? await EnableCorrectionOrderingAsync(connection, required, cancellationToken, observe: endpointSource is null)
+                        .ConfigureAwait(false)
+                    : connection;
+            }
+            catch (Exception error) when (CanRetryRetirement(attempt, cancellationToken)
+                && (error is RespireConnectionRetiredException || error is OperationCanceledException && node?.IsRetired == true))
+            {
+                // Selection and identity setup have not accepted the application command.
+            }
+        }
     }
 
     internal async ValueTask<RespireConnection> GetTrackedRedirectConnectionAsync(
@@ -242,23 +323,46 @@ internal sealed class ClusterRouter : IAsyncDisposable
     {
         var connection = await GetRedirectConnectionAsync(error, source, cancellationToken, commandSlot)
             .ConfigureAwait(false);
-        return await EnableCorrectionOrderingAsync(
-                connection, requireIdentity, cancellationToken, observe: error.Code != "ASK")
-            .ConfigureAwait(false);
+        try
+        {
+            return await EnableCorrectionOrderingAsync(
+                    connection, requireIdentity, cancellationToken, observe: error.Code != "ASK")
+                .ConfigureAwait(false);
+        }
+        catch (Exception failure) when (CanRetryRetirement(0, cancellationToken)
+            && (failure is RespireConnectionRetiredException
+                || failure is OperationCanceledException && connection.Multiplexer?.IsRetired == true))
+        {
+            return await GetReplacementConnectionAsync(
+                error.Code == RespireErrorCodes.Ask ? connection : null, commandSlot, requireIdentity, cancellationToken)
+                .ConfigureAwait(false);
+        }
     }
 
-    internal async ValueTask<DedicatedConnectionPool> GetDedicatedPoolAsync(
-        int? slot,
-        CancellationToken cancellationToken)
+    internal async ValueTask<DedicatedConnectionPool> GetDedicatedPoolAsync(int? slot, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            try { return await GetDedicatedPoolCoreAsync(slot, cancellationToken).ConfigureAwait(false); }
+            catch (RespireConnectionRetiredException) when (CanRetryRetirement(attempt, cancellationToken))
+            {
+                // No application command was accepted during route acquisition.
+            }
+        }
+    }
+
+    private async ValueTask<DedicatedConnectionPool> GetDedicatedPoolCoreAsync(int? slot, CancellationToken cancellationToken)
     {
         if (slot is { } cachedSlot && Volatile.Read(ref _slots[cachedSlot]) is { } cachedNode)
         {
             try
             {
-                await cachedNode.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                await EnsureRouteNodeConnectedAsync(cachedNode, cancellationToken).ConfigureAwait(false);
                 return GetOrCreateDedicatedPool(new RespireEndpoint(cachedNode.Host, cachedNode.Port));
             }
-            catch (Exception error) when (CanRetryConnectionFailure(error, cancellationToken))
+            catch (Exception error) when (error is not RespireConnectionRetiredException && CanRetryConnectionFailure(error, cancellationToken))
             {
                 ClearSlotOwner(cachedSlot, cachedNode);
                 // Refresh through another discovered master before falling back to seeds.
@@ -275,7 +379,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
         await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         var node = slot is { } value ? Volatile.Read(ref _slots[value]) : null;
         node ??= Volatile.Read(ref _seed)!;
-        await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+        await EnsureRouteNodeConnectedAsync(node, cancellationToken).ConfigureAwait(false);
         return GetOrCreateDedicatedPool(new RespireEndpoint(node.Host, node.Port));
     }
 
@@ -301,18 +405,53 @@ internal sealed class ClusterRouter : IAsyncDisposable
             throw error;
         }
 
-        var node = GetOrCreateNode(endpoint, observe: error.Code != "ASK", redirect: true);
-        await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-        if (error.Code == RespireErrorCodes.Moved)
+        for (var attempt = 0; ; attempt++)
         {
-            SetSlotOwner(slot, node);
+            cancellationToken.ThrowIfCancellationRequested();
+            var node = GetOrCreateNode(endpoint, observe: error.Code != "ASK", redirect: true);
+            try
+            {
+                await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+                if (error.Code == RespireErrorCodes.Moved) SetSlotOwner(slot, node);
+                return GetOrCreateDedicatedPool(endpoint);
+            }
+            catch (Exception failure) when (CanRetryRetiredRedirect(failure, node, attempt, cancellationToken))
+            {
+                // Pool acquisition has not begun, so retrying cannot replay an accepted command.
+            }
         }
-
-        return GetOrCreateDedicatedPool(endpoint);
     }
+
+    private static bool CanRetryRetiredRedirect(Exception error, RespireConnectionMultiplexer node,
+        int attempt, CancellationToken cancellationToken)
+        => attempt < MaxRedirects && !cancellationToken.IsCancellationRequested
+            && (error is RespireConnectionRetiredException || error is OperationCanceledException && node.IsRetired);
 
     internal DedicatedConnectionPool GetDedicatedPool(RespireEndpoint endpoint)
         => GetOrCreateDedicatedPool(endpoint);
+
+    internal async ValueTask<(DedicatedConnectionPool Pool, RespireConnection Connection)> RentDedicatedConnectionAsync(
+        DedicatedConnectionPool pool, int? slot, CancellationToken cancellationToken,
+        bool reuseIdle = true, RespireServerException? askRedirect = null, RespireConnection? redirectSource = null)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                var connection = await pool.RentAsync(cancellationToken, reuseIdle: reuseIdle).ConfigureAwait(false);
+                return (pool, connection);
+            }
+            catch (Exception error) when (CanRetryRetirement(attempt, cancellationToken) && pool.IsStopping
+                && error is ObjectDisposedException or OperationCanceledException)
+            {
+                // Retirement can cancel a pending handshake; no application command was sent.
+                pool = askRedirect is null
+                    ? await GetDedicatedPoolAsync(slot, cancellationToken).ConfigureAwait(false)
+                    : await GetRedirectDedicatedPoolAsync(askRedirect, redirectSource!, cancellationToken, slot)
+                        .ConfigureAwait(false);
+            }
+        }
+    }
 
     internal ValueTask RetireConnectionAsync(RespireEndpoint endpoint, long serverClientId)
         => GetOrCreateNode(endpoint).RetireConnectionAsync(serverClientId);
@@ -594,11 +733,25 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
     internal async ValueTask<RespireConnection[]> GetMasterConnectionsAsync(CancellationToken cancellationToken)
     {
+        for (var attempt = 0; ; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            try { return await GetMasterConnectionsCoreAsync(cancellationToken).ConfigureAwait(false); }
+            catch (RespireConnectionRetiredException) when (CanRetryRetirement(attempt, cancellationToken))
+            {
+                // No application command was accepted during route acquisition.
+            }
+        }
+    }
+
+    private async ValueTask<RespireConnection[]> GetMasterConnectionsCoreAsync(CancellationToken cancellationToken)
+    {
         var masters = new HashSet<RespireConnectionMultiplexer>(ReferenceEqualityComparer.Instance);
         AddKnownMasters(masters);
 
         var refreshed = false;
-        if (Volatile.Read(ref _seed) is { IsConnected: true } seed)
+        if (Volatile.Read(ref _seed) is { IsConnected: true, IsRetired: false } seed)
         {
             refreshed = await TryRefreshTopologyAsync(seed, cancellationToken).ConfigureAwait(false);
         }
@@ -642,7 +795,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             // TryLoadSlotsAsync replaces stale owners after a successful refresh. Any owner
             // still present is current; omitting it would make SCAN and cluster-wide server
             // commands silently return incomplete results.
-            await master.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
+            await EnsureRouteNodeConnectedAsync(master, cancellationToken).ConfigureAwait(false);
             connections[index++] = master.GetConnection();
         }
 
@@ -776,14 +929,14 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
     private RespireConnectionMultiplexer? TryGetConnectedNode()
     {
-        if (Volatile.Read(ref _seed) is { IsConnected: true } seed)
+        if (Volatile.Read(ref _seed) is { IsConnected: true, IsRetired: false } seed)
         {
             return seed;
         }
 
         foreach (var master in Volatile.Read(ref _masters))
         {
-            if (master.IsConnected)
+            if (master.IsConnected && !master.IsRetired)
             {
                 return master;
             }
@@ -815,6 +968,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
     private void ApplyTopology(List<ClusterTopologyRange> ranges, long expectedVersion, long discoveryGeneration)
     {
         List<RespireConnectionMultiplexer>? retiredNodes;
+        List<RetiredGeneration> retirements;
         lock (_nodesGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -849,11 +1003,13 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 }
             }
 
-            if (Volatile.Read(ref _seed) is { } seed)
-            {
-                SetSeedLocked(seed);
-            }
             retiredNodes = ReplaceSlotOwnersLocked(refreshedSlots, expectedVersion);
+            // Resolve stable node identity before pruning the old reverse mapping.
+            if (Volatile.Read(ref _seed) is { } previousSeed) SetSeedLocked(previousSeed);
+            var retained = new HashSet<RespireConnectionMultiplexer>(_masters);
+            if (protectedNodes is not null) retained.UnionWith(protectedNodes);
+            retirements = DetachGenerationsLocked(_identities.DetachInactive(retained, _seeds));
+            if (Volatile.Read(ref _seed) is { } seed) SetSeedLocked(seed);
             _publishedDiscoveryGeneration = discoveryGeneration;
             // Older discoveries can no longer publish; later requests capture these versions.
             foreach (var (node, version) in _redirectVersions)
@@ -865,6 +1021,8 @@ internal sealed class ClusterRouter : IAsyncDisposable
             }
         }
 
+        // Launch cleanup before callbacks: a callback may synchronously dispose the client.
+        foreach (var retirement in retirements) _ = DrainGenerationAsync(retirement);
         if (retiredNodes is not null)
         {
             foreach (var node in retiredNodes)
@@ -885,7 +1043,12 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
     // Caller holds _nodesGate, including topology publication.
     private void SetSeedLocked(RespireConnectionMultiplexer node)
-        => Volatile.Write(ref _seed, _identities.GetCurrent(node));
+    {
+        var current = _identities.GetCurrent(node);
+        if (!_identities.IsActive(current) || current.IsRetired)
+            current = _masters.FirstOrDefault() ?? _identities.GetOrCreate(_seeds[0]);
+        Volatile.Write(ref _seed, current);
+    }
 
     // Called under _nodesGate: create a lazy transport without connecting or raising state events.
     private RespireConnectionMultiplexer CreateNode(RespireEndpoint endpoint)
@@ -911,6 +1074,8 @@ internal sealed class ClusterRouter : IAsyncDisposable
         RespireConnectionMultiplexer? retiredNode = null;
         lock (_nodesGate)
         {
+            if (_retiringNodes.ContainsKey(node) || node.IsRetired)
+                throw new RespireConnectionRetiredException(node.Host, node.Port);
             ObserveNode(node);
             var previous = Volatile.Read(ref _slots[slot]);
             PublishSlotLocked(slot, node, ++_topologyVersion);
@@ -1091,36 +1256,6 @@ internal sealed class ClusterRouter : IAsyncDisposable
         return node.GetConnection();
     }
 
-    internal DedicatedConnectionPool GetCorrectionPool(RespireConnection original)
-    {
-        var identity = new CorrectionPoolIdentity(original.Multiplexer,
-            original.NetworkPeerAddress ?? original.Host, original.NetworkPeerPort ?? original.Port, original.Host);
-        lock (_nodesGate)
-        {
-            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            if (_correctionPools.TryGetValue(identity, out var existing))
-            {
-                return existing;
-            }
-            // CLIENT IDs are server-local. Keep the original peer address even after a DNS
-            // cutover, while retaining its TLS authentication name and connection options.
-            var options = original.Multiplexer?.Options ?? _options.ToConnectionOptions();
-            if (options.UseTls)
-            {
-                options = options with { TlsOptions = RespireConnection.CreateTlsOptions(options.TlsOptions, original.Host) };
-            }
-            var pool = new DedicatedConnectionPool(
-                identity.PeerAddress,
-                identity.PeerPort,
-                options, _options.CreateLogger($"Respire.Cluster.Correction.{original.Host}:{original.Port}"));
-            _correctionPools.Add(identity, pool);
-            return pool;
-        }
-    }
-
-    private readonly record struct CorrectionPoolIdentity(
-        RespireConnectionMultiplexer? Multiplexer, string PeerAddress, int PeerPort, string TlsHost);
-
     private DedicatedConnectionPool GetOrCreateDedicatedPool(RespireEndpoint endpoint)
     {
         lock (_nodesGate)
@@ -1138,6 +1273,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
                 _options.ToConnectionOptions(),
                 _options.CreateLogger($"Respire.Cluster.Blocking.{node.Host}:{node.Port}"));
             _dedicatedPools.Add(node, pool);
+            _ownedPools.Add(pool);
             return pool;
         }
     }
@@ -1266,29 +1402,25 @@ internal sealed class ClusterRouter : IAsyncDisposable
         RespireConnectionMultiplexer[] nodes;
         KeyValuePair<RespireConnectionMultiplexer, Action<int, RespireConnectionStateChange>>[] stateHandlers;
         DedicatedConnectionPool[] dedicatedPools;
+        Task retirements;
         lock (_nodesGate)
         {
             nodes = _identities.All.ToArray();
-            stateHandlers = _nodeStateHandlers.ToArray();
-            dedicatedPools = [.. _dedicatedPools.Values, .. _correctionPools.Values];
+            stateHandlers = [.. _nodeStateHandlers, .. _correctionStateHandlers];
+            dedicatedPools = _ownedPools.ToArray();
+            retirements = Task.WhenAll(_retiringNodes.Values.Select(entry => entry.Completion.Task));
+            _nodeStateHandlers.Clear();
+            _correctionStateHandlers.Clear();
+            _dedicatedPools.Clear();
+            _correctionPools.Clear();
         }
 
-        foreach (var pool in dedicatedPools)
-        {
-            await pool.DisposeAsync().ConfigureAwait(false);
-        }
-
-        foreach (var (node, handler) in stateHandlers)
-        {
-            node.SlotStateChanged -= handler;
-        }
-
-        foreach (var node in nodes)
-        {
-            if (!ReferenceEquals(node, _primary))
-            {
-                await node.DisposeAsync().ConfigureAwait(false);
-            }
-        }
+        _stopRetirement.Cancel();
+        foreach (var (node, handler) in stateHandlers) node.SlotStateChanged -= handler;
+        // Abort all owned work before awaiting either drain. The primary may itself be a
+        // superseded generation; ClientCore's later disposal of it is idempotent.
+        await Task.WhenAll(dedicatedPools.Select(pool => pool.DisposeAsync().AsTask())
+            .Concat(nodes.Select(node => node.DisposeAsync().AsTask()))).ConfigureAwait(false);
+        await retirements.ConfigureAwait(false);
     }
 }

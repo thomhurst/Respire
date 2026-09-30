@@ -206,7 +206,7 @@ internal sealed class FunctionCommands(RespireClient client) : IFunctionCommands
     private async ValueTask<T> SendAndConvertAsync<TCommand, T>(RespireConnection connection, string operation,
         TCommand command, ResponseConverter<FunctionCommands, T> convert, CancellationToken cancellationToken) where TCommand : struct, IRespCommand
     {
-        using var reply = await client.SendOnConnectionAsync(operation, connection, command, cancellationToken).ConfigureAwait(false);
+        using var reply = await client.SendToClusterTargetAsync(operation, connection, command, cancellationToken).ConfigureAwait(false);
         return convert(this, in reply);
     }
     private async ValueTask EnsureLibraryAsync(RespireFunctionLibrary library, CancellationToken cancellationToken)

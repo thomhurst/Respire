@@ -27,6 +27,11 @@ internal sealed class DedicatedConnectionPool(
     private bool _stopping;
     private bool _cancellationComplete;
 
+    internal bool IsStopping
+    {
+        get { lock (_gate) return _stopping; }
+    }
+
     private enum State { Idle, Rented, Closing }
 
     private sealed class Entry(RespireConnection connection)
