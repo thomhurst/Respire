@@ -25,7 +25,7 @@ retry delay, and reset delay. A retry delay of `-1` means the request was allowe
 Per the vendor documentation, `SADDEX` adds members with an expiry in seconds;
 its optional `KEEPTTL` preserves existing members' TTLs. `EXPIREMEMBER` sets a
 member expiry and optionally accepts `ms` instead of its default seconds. The
-smoke scenarios below exercise default expiry behavior, not those two options. The server validates options and returns its
+smoke scenarios exercise default expiry behavior, not those two options. The server validates options and returns its
 own errors, including unsupported commands, wrong types, and denied ACL permissions.
 
 ## Audited descriptors
@@ -74,7 +74,9 @@ descriptor does not negotiate a different typed API.
 The real-server smoke tests verify `CL.THROTTLE`, `SADDEX`, `FIELDTTL`, and
 `FIELDEXPIRE` on Dragonfly 2.0.0, and `EXPIREMEMBER`, `PEXPIREMEMBERAT`,
 `KEYDB.HRENAME`, and `KEYDB.MEXISTS` on KeyDB 6.3.4, each under RESP2 and RESP3.
-These scenarios do not certify every descriptor against those image versions.
+These scenarios do not certify every descriptor against those image versions. They carry
+the `CompatibleServers` test category and can also be selected or excluded by the
+`ServerExtensionIntegrationTests` class filter. CI runs them without skips.
 
 References: [Dragonfly command documentation](https://github.com/dragonflydb/documentation/tree/31881bce033d4cec47cb2e85865d46745760e499/docs/command-reference),
 [Dragonfly Cluster administration](https://github.com/dragonflydb/dragonfly/blob/v2.0.0/docs/cluster-mode.md),
