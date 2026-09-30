@@ -1,7 +1,7 @@
 # Measuring value codec costs
 
 The focused `ValueCodecBenchmarks` fixture compares an unchanged raw payload with
-Brotli quality 4, Deflate Fastest, and LZ4 level 0. It measures the destination overloads
+Brotli quality 4, Deflate Fastest, LZ4 level 0, and Zstandard level 3. It measures the destination overloads
 of `IRespireValueCodec`, including frame validation, SHA-256 checksums, compression,
 decompression, and the codecs' own scratch-buffer management.
 
@@ -20,7 +20,7 @@ not a universal distribution of application data. The two compression thresholds
 0 (try compression even for small values) and the default 1 KiB. Raw cases repeat across
 threshold groups so each group has a measured baseline; raw behavior has no threshold.
 
-Each direction has 32 cases: four implementations, two sizes, two patterns, and two
+Each direction has 40 cases: five implementations, two sizes, two patterns, and two
 thresholds. Encode and decode run in separate jobs on .NET 8 and .NET 10. Codec options
 keep the default 8 MiB decoded-size ceiling. All output capacity is allocated during
 setup and reused with `ResetWrittenCount`, which does not clear the previous output.
@@ -37,12 +37,16 @@ They do not describe the separately allocating array-returning codec APIs.
 ## Reproduce and inspect
 
 The repository's **Value codec benchmarks** Actions workflow runs only this fixture.
+Run it manually with `workflow_dispatch`, or add the `benchmark-value-codecs` label to
+a pull request that changes the codec or benchmark paths. Full measurements are opt-in
+because all four runtime/direction jobs can take up to 35 minutes each.
 Each job first performs a Dry validation, then one representative Brotli case with the
 Default job, then the complete directional matrix with two Default-job launches.
 Warmup and measurement iteration counts remain BenchmarkDotNet's adaptive defaults;
 the complete logs and JSON measurements retain the actual counts. A failed, missing,
-duplicate, or incomplete measurement fails the workflow rather than publishing a
-partial successful comparison.
+duplicate, or incomplete measurement fails the job. The job summary is published only
+after the complete matrix passes validation; partial diagnostic artifacts are still
+uploaded on failure.
 
 The source is `benchmarks/Respire.Benchmarks/ValueCodecBenchmarks.cs`; the workflow is
 `.github/workflows/benchmark-value-codecs.yml`. A focused command is:
@@ -76,7 +80,6 @@ Measurements on a GitHub-hosted runner describe that revision, runtime, and synt
 input. Runner contention and microbenchmark variation can affect timings. The raw baseline
 in each parameter group provides context, not a throughput promise for Redis operations.
 Evaluate real application payloads and concurrency before changing thresholds or quality.
-The Zstandard package is a separate pending delivery and is not part of this initial matrix.
 
 For framing, ownership, serializer integration, and migration rules, see
 [value codecs](./value-codecs.md). Parent feature work remains tracked in

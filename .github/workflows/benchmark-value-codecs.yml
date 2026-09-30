@@ -3,19 +3,27 @@ name: Value codec benchmarks
 on:
   workflow_dispatch:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
     paths:
       - 'src/Respire/Compression/**'
       - 'src/Respire.Compression.Lz4/**'
+      - 'src/Respire.Compression.Zstd/**'
       - 'benchmarks/Respire.Benchmarks/ValueCodecBenchmarks.cs'
       - 'benchmarks/Respire.Benchmarks/Respire.Benchmarks.csproj'
       - '.github/scripts/value_codec_report.py'
+      - '.github/scripts/test_value_codec_report.py'
       - '.github/workflows/benchmark-value-codecs.yml'
 
 permissions:
   contents: read
 
+concurrency:
+  group: value-codecs-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   codecs:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'benchmark-value-codecs')
     name: Value codecs (${{ matrix.framework }}, ${{ matrix.direction }})
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -51,7 +59,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Each direction has 32 cases: 4 implementations x 2 lengths x 2 patterns x 2 thresholds.
+          # Each direction has 40 cases: 5 implementations x 2 lengths x 2 patterns x 2 thresholds.
           # No Redis process or unrelated benchmark runs alongside this job.
           for phase in validation representative measurement; do
             job=Default

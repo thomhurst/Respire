@@ -28,7 +28,7 @@ def generate(root, phase, direction):
         metadata[key] = item
 
     expected = set(itertools.product((64, 16384), ("RepeatedText", "RandomBytes"), (0, 1024),
-                                     ("Raw", "Brotli", "Deflate", "Lz4")))
+                                     ("Raw", "Brotli", "Deflate", "Lz4", "Zstd")))
     if phase == "representative":
         expected = {(16384, "RepeatedText", 1024, "Brotli")}
     rows = {}

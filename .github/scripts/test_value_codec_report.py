@@ -11,9 +11,9 @@ class ValueCodecReportTests(unittest.TestCase):
     def fixture(self, root):
         cases, sizes = [], []
         for length, pattern, threshold, codec in itertools.product(
-            (64, 16384), ("RepeatedText", "RandomBytes"), (0, 1024), ("Raw", "Brotli", "Deflate", "Lz4")
+            (64, 16384), ("RepeatedText", "RandomBytes"), (0, 1024), ("Raw", "Brotli", "Deflate", "Lz4", "Zstd")
         ):
-            cases.append({"Method": codec + "Encode", "FullName": f"Benchmark.{codec}Encode({length}, {pattern}, {threshold})",
+            cases.append({"Method": codec + "Encode", "FullName": f"Respire.Benchmarks.ValueCodecBenchmarks.{codec}Encode(Length: {length}, Pattern: {pattern}, MinimumLength: {threshold})",
                           "Parameters": f"Length={length}&Pattern={pattern}&MinimumLength={threshold}",
                           "Statistics": {"Mean": 100, "StandardDeviation": 2},
                           "Memory": {"BytesAllocatedPerOperation": 0}})
@@ -32,9 +32,9 @@ class ValueCodecReportTests(unittest.TestCase):
             self.fixture(root)
             value_codec_report.generate(root, "validation", "Encode")
             result = json.loads((root / "validation-summary.json").read_text(encoding="utf-8"))
-            self.assertEqual(32, len(result))
+            self.assertEqual(40, len(result))
             self.assertEqual(0, result[0]["AllocatedBytes"])
-            self.assertEqual("Benchmark.BrotliEncode(16384, RepeatedText, 1024)",
+            self.assertEqual("Respire.Benchmarks.ValueCodecBenchmarks.BrotliEncode(Length: 16384, Pattern: RepeatedText, MinimumLength: 1024)",
                              (root / "representative-filter.txt").read_text(encoding="utf-8").strip())
 
     def test_missing_failed_or_duplicate_measurements_fail_the_gate(self):

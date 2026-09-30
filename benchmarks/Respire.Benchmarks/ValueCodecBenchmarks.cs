@@ -25,13 +25,16 @@ public class ValueCodecBenchmarks
     public int MinimumLength { get; set; }
 
     private byte[] _payload = null!;
+    private string _payloadSha256 = null!;
     private ArrayBufferWriter<byte> _destination = null!;
     private IRespireValueCodec _brotli = null!;
     private IRespireValueCodec _deflate = null!;
     private IRespireValueCodec _lz4 = null!;
+    private IRespireValueCodec _zstd = null!;
     private byte[] _brotliFrame = null!;
     private byte[] _deflateFrame = null!;
     private byte[] _lz4Frame = null!;
+    private byte[] _zstdFrame = null!;
 
     [GlobalSetup]
     public void Setup()
@@ -46,6 +49,8 @@ public class ValueCodecBenchmarks
                 _payload[index] = record[index % record.Length];
         }
 
+        _payloadSha256 = Convert.ToHexString(SHA256.HashData(_payload));
+
         // All methods retain enough output capacity, without measuring buffer growth or
         // clearing different previous output lengths. Codec-owned scratch remains measured.
         _destination = new ArrayBufferWriter<byte>(Length + RespireValueCodec.HeaderLength);
@@ -53,9 +58,11 @@ public class ValueCodecBenchmarks
         _brotli = new BrotliValueCodec(options);
         _deflate = new DeflateValueCodec(options);
         _lz4 = new Lz4ValueCodec(options);
+        _zstd = new ZstdValueCodec(options);
         _brotliFrame = Validate("Brotli", _brotli);
         _deflateFrame = Validate("Deflate", _deflate);
         _lz4Frame = Validate("Lz4", _lz4);
+        _zstdFrame = Validate("Zstd", _zstd);
         if (!RawEncode().Span.SequenceEqual(_payload) || !RawDecode().Span.SequenceEqual(_payload))
             throw new InvalidOperationException("The disabled path changed the raw value.");
         ReportSize("Raw", _payload, algorithm: null);
@@ -84,7 +91,7 @@ public class ValueCodecBenchmarks
             EncodedBytes = encoded.Length,
             RespBulkStringBytes = encoded.Length + encoded.Length.ToString(System.Globalization.CultureInfo.InvariantCulture).Length + 5,
             Algorithm = algorithm,
-            PayloadSha256 = Convert.ToHexString(SHA256.HashData(_payload)),
+            PayloadSha256 = _payloadSha256,
         }));
     }
 
@@ -96,6 +103,8 @@ public class ValueCodecBenchmarks
     public ReadOnlyMemory<byte> DeflateEncode() => Encode(_deflate);
     [Benchmark, BenchmarkCategory("Encode")]
     public ReadOnlyMemory<byte> Lz4Encode() => Encode(_lz4);
+    [Benchmark, BenchmarkCategory("Encode")]
+    public ReadOnlyMemory<byte> ZstdEncode() => Encode(_zstd);
 
     [Benchmark(Baseline = true), BenchmarkCategory("Decode")]
     public ReadOnlyMemory<byte> RawDecode() => CopyRaw();
@@ -105,6 +114,8 @@ public class ValueCodecBenchmarks
     public ReadOnlyMemory<byte> DeflateDecode() => Decode(_deflate, _deflateFrame);
     [Benchmark, BenchmarkCategory("Decode")]
     public ReadOnlyMemory<byte> Lz4Decode() => Decode(_lz4, _lz4Frame);
+    [Benchmark, BenchmarkCategory("Decode")]
+    public ReadOnlyMemory<byte> ZstdDecode() => Decode(_zstd, _zstdFrame);
 
     private ReadOnlyMemory<byte> CopyRaw()
     {
