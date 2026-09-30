@@ -29,6 +29,7 @@ param(
     [string]$DotNetPath = 'dotnet',
 
     [Parameter(Mandatory, ValueFromRemainingArguments)]
+    [AllowEmptyString()]
     [string[]]$DotNetArguments
 )
 
@@ -571,14 +572,15 @@ function Add-SingleNodeArgument([string[]]$Arguments) {
 
     $verb = $Arguments[0]
     $supportsMaxCpuCount = $verb -in @('build', 'test', 'pack', 'publish', 'msbuild')
-    $alreadyConfigured = $Arguments |
-        Where-Object { $_ -match '^(?:-m|--maxcpucount)(?::|$)' } |
+    $separatorIndex = [Array]::IndexOf($Arguments, '--')
+    $buildArguments = if ($separatorIndex -lt 0) { $Arguments } else { $Arguments[0..($separatorIndex - 1)] }
+    $alreadyConfigured = $buildArguments |
+        Where-Object { $_ -match '^(?:[-/]m(?:axcpucount)?|--maxcpucount)(?::|$)' } |
         Select-Object -First 1
     if (-not $supportsMaxCpuCount -or $alreadyConfigured) {
         return $Arguments
     }
 
-    $separatorIndex = [Array]::IndexOf($Arguments, '--')
     if ($separatorIndex -lt 0) {
         return @($Arguments) + '-m:1'
     }
@@ -588,7 +590,7 @@ function Add-SingleNodeArgument([string[]]$Arguments) {
         @($Arguments[$separatorIndex..($Arguments.Count - 1)])
 }
 
-$effectiveArguments = Add-SingleNodeArgument $DotNetArguments
+$effectiveArguments = @(Add-SingleNodeArgument $DotNetArguments)
 $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
 $startInfo.UseShellExecute = $false
 $startInfo.Environment['BuildInParallel'] = 'false'
@@ -596,6 +598,12 @@ $startInfo.Environment['DOTNET_CLI_TELEMETRY_OPTOUT'] = '1'
 $startInfo.Environment['DOTNET_CLI_USE_MSBUILD_SERVER'] = '0'
 $startInfo.Environment['MSBUILDDISABLENODEREUSE'] = '1'
 $startInfo.Environment['UseSharedCompilation'] = 'false'
+# -File parses colon switches before populating $args. Transport the invocation as
+# data instead, including empty arguments, without quoting it as PowerShell code.
+$startInfo.Environment['RESPIRE_AGENT_DOTNET_INVOCATION'] = ConvertTo-Json -Compress -Depth 3 -InputObject @{
+    Executable = $DotNetPath
+    Arguments = $effectiveArguments
+}
 $pwshPath = (Get-Process -Id $PID).Path
 $wrapperPath = [System.IO.Path]::Combine(
     [System.IO.Path]::GetTempPath(),
@@ -619,8 +627,10 @@ finally {
 
 $startInfo = [Diagnostics.ProcessStartInfo]::new()
 $startInfo.UseShellExecute = $false
-$startInfo.FileName = $args[1]
-foreach ($argument in $args[2..($args.Count - 1)]) {
+$invocation = $env:RESPIRE_AGENT_DOTNET_INVOCATION | ConvertFrom-Json
+$startInfo.Environment.Remove('RESPIRE_AGENT_DOTNET_INVOCATION') | Out-Null
+$startInfo.FileName = $invocation.Executable
+foreach ($argument in $invocation.Arguments) {
     $startInfo.ArgumentList.Add($argument)
 }
 
@@ -641,10 +651,6 @@ exit $exitCode
     $startInfo.ArgumentList.Add('-File')
     $startInfo.ArgumentList.Add($wrapperPath)
     $startInfo.ArgumentList.Add('{WINDOWS_START_GATE}')
-    $startInfo.ArgumentList.Add($DotNetPath)
-    foreach ($argument in $effectiveArguments) {
-        $startInfo.ArgumentList.Add($argument)
-    }
 }
 else {
     # PowerShell is already a guard prerequisite, so libc calls provide portable
@@ -676,8 +682,10 @@ if ([AgentDotNetUnixChildNative]::setpriority(0, 0, 10) -ne 0) {
 
 $startInfo = [Diagnostics.ProcessStartInfo]::new()
 $startInfo.UseShellExecute = $false
-$startInfo.FileName = $args[0]
-foreach ($argument in $args[1..($args.Count - 1)]) {
+$invocation = $env:RESPIRE_AGENT_DOTNET_INVOCATION | ConvertFrom-Json
+$startInfo.Environment.Remove('RESPIRE_AGENT_DOTNET_INVOCATION') | Out-Null
+$startInfo.FileName = $invocation.Executable
+foreach ($argument in $invocation.Arguments) {
     $startInfo.ArgumentList.Add($argument)
 }
 
@@ -697,10 +705,6 @@ exit $exitCode
     $startInfo.ArgumentList.Add('-NonInteractive')
     $startInfo.ArgumentList.Add('-File')
     $startInfo.ArgumentList.Add($wrapperPath)
-    $startInfo.ArgumentList.Add($DotNetPath)
-    foreach ($argument in $effectiveArguments) {
-        $startInfo.ArgumentList.Add($argument)
-    }
 }
 
 $process = [System.Diagnostics.Process]::new()
