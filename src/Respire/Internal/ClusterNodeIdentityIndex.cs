@@ -141,7 +141,7 @@ internal sealed class ClusterNodeIdentityIndex
                 }
             }
         }
-        // MOVED routes established after discovery began own their endpoint mappings too.
+        // MOVED and ASK routes learned after discovery began own their endpoint mappings too.
         var published = protectedEndpoints is null
             ? new HashSet<RespireEndpoint>(EndpointComparer.Instance)
             : new HashSet<RespireEndpoint>(protectedEndpoints, EndpointComparer.Instance);
@@ -186,6 +186,28 @@ internal sealed class ClusterNodeIdentityIndex
             }
             _nodesById[id] = node;
             _nodeIds[node] = id;
+        }
+        ValidateInvariants();
+    }
+
+    [Conditional("DEBUG")]
+    private void ValidateInvariants()
+    {
+        AssertAccess();
+        foreach (var node in _nodes.Values)
+        {
+            Debug.Assert(_allNodes.Contains(node), "Every endpoint transport must remain owned.");
+        }
+        foreach (var (id, node) in _nodesById)
+        {
+            Debug.Assert(_allNodes.Contains(node), "Every identity transport must remain owned.");
+            Debug.Assert(_nodeIds.TryGetValue(node, out var reverseId) && reverseId == id,
+                "Every current identity must have a matching reverse identity.");
+        }
+        // Retired transports keep their historical reverse identity until #390 drains them.
+        foreach (var node in _nodeIds.Keys)
+        {
+            Debug.Assert(_allNodes.Contains(node), "Every historical identity transport must remain owned.");
         }
     }
 

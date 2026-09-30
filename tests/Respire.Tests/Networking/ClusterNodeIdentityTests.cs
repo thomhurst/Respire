@@ -141,6 +141,87 @@ public class ClusterNodeIdentityTests
     }
 
     [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    public async Task StaleDiscoveryPreservesAskEndpointWithoutChangingSlotOwner(
+        bool advertisedAsPreferred, bool dedicated)
+    {
+        await using var sourceServer = new FakeRespServer();
+        await using var target = new FakeRespServer();
+        await using var source = await RespireConnection.ConnectAsync("127.0.0.1", sourceServer.Port);
+        await using var client = RespireClient.Create(Options(sourceServer.Port));
+        var router = client.Core.Cluster!;
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var apply = typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!;
+        var version = typeof(ClusterRouter).GetField("_topologyVersion", flags)!;
+        var originalEndpoint = new RespireEndpoint("127.0.0.1", sourceServer.Port);
+        var redirectedEndpoint = new RespireEndpoint("127.0.0.1", target.Port);
+        List<ClusterTopologyRange> initial = [new(0, 16383, originalEndpoint, "original-id", [])];
+        apply.Invoke(router, [initial, 0L, 1L]);
+        var capturedVersion = (long)version.GetValue(router)!;
+        var error = new RespireServerException($"ASK 0 127.0.0.1:{target.Port}");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        if (dedicated)
+        {
+            await router.GetRedirectDedicatedPoolAsync(error, source, timeout.Token);
+        }
+        else
+        {
+            await router.GetRedirectConnectionAsync(error, source, timeout.Token);
+        }
+        var redirected = router.GetMultiplexer(redirectedEndpoint);
+        var slots = (RespireConnectionMultiplexer?[])typeof(ClusterRouter).GetField("_slots", flags)!.GetValue(router)!;
+        await Assert.That(ReferenceEquals(slots[0], client.Core.Multiplexer)).IsTrue();
+        List<ClusterTopologyRange> stale = advertisedAsPreferred
+            ? [new(0, 16383, redirectedEndpoint, "original-id", [])]
+            : [new(0, 16383, originalEndpoint, "original-id", [redirectedEndpoint])];
+        apply.Invoke(router, [stale, capturedVersion, 2L]);
+        await Assert.That(ReferenceEquals(router.GetMultiplexer(redirectedEndpoint), redirected)).IsTrue();
+        var next = await router.GetRedirectConnectionAsync(error, source, timeout.Token);
+        await Assert.That(ReferenceEquals(next.Multiplexer, redirected)).IsTrue();
+
+        // A discovery started after ASK is authoritative and may replace that endpoint's identity.
+        List<ClusterTopologyRange> replacement = [new(0, 16383, redirectedEndpoint, "replacement-id", [])];
+        var freshVersion = (long)version.GetValue(router)!;
+        apply.Invoke(router, [replacement, freshVersion, 3L]);
+        // First fresh discovery identifies the previously anonymous ASK transport.
+        replacement = [new(0, 16383, redirectedEndpoint, "another-id", [])];
+        apply.Invoke(router, [replacement, freshVersion, 4L]);
+        await Assert.That(ReferenceEquals(router.GetMultiplexer(redirectedEndpoint), redirected)).IsFalse();
+    }
+
+    [Test]
+    public async Task DiscardedSnapshotNodeDoesNotRetireOrFlushRepopulatedCache()
+    {
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Endpoints = { new RespireEndpoint("localhost") }, UseCluster = true, ClientSideCache = new(),
+        });
+        var router = client.Core.Cluster!;
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var apply = typeof(ClusterRouter).GetMethod("ApplyTopology", flags)!;
+        router.SetSlotOwner(0, client.Core.Multiplexer);
+        var capturedVersion = (long)typeof(ClusterRouter).GetField("_topologyVersion", flags)!.GetValue(router)!;
+        var moved = router.GetMultiplexer(new RespireEndpoint("moved"));
+        router.SetSlotOwner(0, moved);
+        var retirements = 0;
+        router.NodeRetired += _ => retirements++;
+        var cache = client.Core.ClientCache!;
+        RespireKey key = "cached";
+        var token = cache.BeginRead(in key);
+        var value = RespValue.BulkString("value"u8.ToArray());
+        cache.CompleteRead(in token, in value, allowInsert: true);
+        var flushes = cache.GetStatistics().ContinuityFlushes;
+        List<ClusterTopologyRange> stale = [new(0, 0, new RespireEndpoint("staged"), "staged-id", [])];
+        apply.Invoke(router, [stale, capturedVersion, 1L]);
+        await Assert.That(retirements).IsEqualTo(0);
+        await Assert.That(cache.Count).IsEqualTo(1);
+        await Assert.That(cache.GetStatistics().ContinuityFlushes).IsEqualTo(flushes);
+    }
+
+    [Test]
     [Arguments(false, false, false)]
     [Arguments(false, true, false)]
     [Arguments(true, false, false)]

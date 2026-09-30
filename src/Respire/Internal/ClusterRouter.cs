@@ -28,6 +28,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
     private RespireConnectionMultiplexer? _seed;
     private int _hasCompleteTopology;
     private long _topologyVersion;
+    private readonly Dictionary<RespireConnectionMultiplexer, long> _redirectVersions = [];
     private long _nextDiscoveryGeneration;
     private long _publishedDiscoveryGeneration;
     // Only direct route mutations advance per-slot versions. These reject stale discovery
@@ -214,7 +215,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
         }
 
         var observe = error.Code != "ASK";
-        var node = GetOrCreateNode(endpoint, observe);
+        var node = GetOrCreateNode(endpoint, observe, redirect: true);
         await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         if (error.Code == RespireErrorCodes.Moved)
         {
@@ -300,7 +301,7 @@ internal sealed class ClusterRouter : IAsyncDisposable
             throw error;
         }
 
-        var node = GetOrCreateNode(endpoint, observe: error.Code != "ASK");
+        var node = GetOrCreateNode(endpoint, observe: error.Code != "ASK", redirect: true);
         await node.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         if (error.Code == RespireErrorCodes.Moved)
         {
@@ -764,12 +765,17 @@ internal sealed class ClusterRouter : IAsyncDisposable
         return null;
     }
 
-    private RespireConnectionMultiplexer GetOrCreateNode(RespireEndpoint endpoint, bool observe = true)
+    private RespireConnectionMultiplexer GetOrCreateNode(RespireEndpoint endpoint, bool observe = true, bool redirect = false)
     {
         lock (_nodesGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             var node = _identities.GetOrCreate(endpoint);
+            if (redirect)
+            {
+                // ASK protects its endpoint mapping without changing permanent slot ownership.
+                _redirectVersions[node] = ++_topologyVersion;
+            }
             if (observe)
             {
                 ObserveNode(node);
@@ -799,13 +805,17 @@ internal sealed class ClusterRouter : IAsyncDisposable
                     (protectedNodes ??= []).Add(node);
                 }
             }
+            foreach (var (node, version) in _redirectVersions)
+            {
+                if (version > expectedVersion)
+                {
+                    (protectedNodes ??= []).Add(node);
+                }
+            }
             var resolved = _identities.ApplySnapshot(ranges, protectedNodes);
-            var activeNodes = new HashSet<RespireConnectionMultiplexer>();
             var refreshedSlots = new RespireConnectionMultiplexer?[ClusterHash.SlotCount];
             foreach (var (range, node) in resolved)
             {
-                ObserveNode(node);
-                activeNodes.Add(node);
                 for (var slot = range.Start; slot <= range.End; slot++)
                 {
                     refreshedSlots[slot] = node;
@@ -816,8 +826,16 @@ internal sealed class ClusterRouter : IAsyncDisposable
             {
                 SetSeedLocked(seed);
             }
-            retiredNodes = ReplaceSlotOwnersLocked(refreshedSlots, activeNodes, expectedVersion);
+            retiredNodes = ReplaceSlotOwnersLocked(refreshedSlots, expectedVersion);
             _publishedDiscoveryGeneration = discoveryGeneration;
+            // Older discoveries can no longer publish; later requests capture these versions.
+            foreach (var (node, version) in _redirectVersions)
+            {
+                if (version <= expectedVersion)
+                {
+                    _redirectVersions.Remove(node);
+                }
+            }
         }
 
         if (retiredNodes is not null)
@@ -966,14 +984,13 @@ internal sealed class ClusterRouter : IAsyncDisposable
 
     private List<RespireConnectionMultiplexer>? ReplaceSlotOwnersLocked(
         RespireConnectionMultiplexer?[] refreshedSlots,
-        HashSet<RespireConnectionMultiplexer> activeNodes,
         long expectedVersion)
     {
         // Preserve only slots changed since this request began. An unrelated MOVED
         // must not discard useful discovery for a READONLY command's slot.
         // Discovery order has its own fence. Publishing an older request must not advance
         // slot mutation versions past a newer request that is already in flight.
-        activeNodes.Clear();
+        var activeNodes = new HashSet<RespireConnectionMultiplexer>();
         for (var slot = 0; slot < refreshedSlots.Length; slot++)
         {
             if (_slotVersions[slot] > expectedVersion)
