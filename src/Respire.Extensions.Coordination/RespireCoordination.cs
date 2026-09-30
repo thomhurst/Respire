@@ -167,7 +167,9 @@ public sealed class RespireCoordination
         cancellationToken.ThrowIfCancellationRequested();
         var appliedDuration = TimeSpan.FromMilliseconds(milliseconds);
         var lease = new RespireCoordinationLease(this, hashKey, field, owner, appliedDuration, started);
-        return lease.RemainingEstimate > TimeSpan.Zero ? lease : null;
+        if (lease.RemainingEstimate > TimeSpan.Zero) return lease;
+        await lease.DisposeAsync().ConfigureAwait(false);
+        return null;
     }
 
     /// <summary>Waits for and acquires a named lease stored in a Redis hash field.</summary>
