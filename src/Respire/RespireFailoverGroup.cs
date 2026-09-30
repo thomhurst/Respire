@@ -279,11 +279,12 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
             if (_disposed) return;
             var now = DateTimeOffset.UtcNow;
             var active = _active;
-            var best = _candidates
+            var healthy = _candidates
                 .Where(static candidate => candidate.IsHealthy)
                 .OrderBy(static candidate => candidate.Priority)
                 .ThenBy(static candidate => candidate.Order)
-                .FirstOrDefault();
+                .ToArray();
+            var best = healthy.FirstOrDefault();
 
             CandidateState? selected = active;
             string? reason = null;
@@ -299,12 +300,19 @@ public sealed class RespireFailoverGroup : IAsyncDisposable
                     ? RespireFailoverSwitchReasons.NoHealthyEndpoint
                     : RespireFailoverSwitchReasons.ActiveEndpointUnhealthy;
             }
-            else if (best is not null && best.Order != active.Order && best.Priority < active.Priority
-                && best.HealthySince is { } healthySince
-                && now - healthySince >= _options.FailbackGracePeriod)
+            else
             {
-                selected = best;
-                reason = RespireFailoverSwitchReasons.HigherPriorityEndpointRecovered;
+                // Fail back to the highest-priority candidate that has completed its grace period, so an
+                // unstable top-priority endpoint cannot block failback to a stable intermediate one.
+                var recovered = healthy.FirstOrDefault(candidate =>
+                    candidate.Priority < active.Priority
+                    && candidate.HealthySince is { } healthySince
+                    && now - healthySince >= _options.FailbackGracePeriod);
+                if (recovered is not null)
+                {
+                    selected = recovered;
+                    reason = RespireFailoverSwitchReasons.HigherPriorityEndpointRecovered;
+                }
             }
 
             if (!ReferenceEquals(selected, active))

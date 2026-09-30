@@ -17,7 +17,10 @@ client's own connection, so a heavily loaded endpoint can miss probes and be tre
 `ConnectAsync` probes each candidate once. A candidate that fails that probe starts unhealthy and
 is reconsidered on the next background probe round. Any failed probe restarts the failback grace
 period for that endpoint, even when the failure does not reach `FailureThreshold`, so an endpoint
-that alternates between failures and successes does not become active through failback.
+that alternates between failures and successes does not become active through failback. When
+several higher-priority endpoints outrank the active one, the group fails back to the
+highest-priority endpoint that has completed its grace period, so an unstable top-priority
+endpoint does not block failback to a stable intermediate one.
 
 Candidates must use an unlimited reconnect policy (`MaxAttempts = null`, the default). A finite
 budget can permanently disable an owned client after a long outage, preventing later probes from
