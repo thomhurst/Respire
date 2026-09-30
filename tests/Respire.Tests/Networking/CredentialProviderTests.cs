@@ -296,7 +296,7 @@ public class CredentialProviderTests
         }
         else
         {
-            await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<RespireConnectionException>();
+            await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<RespireAuthenticationException>();
             await connection.Closed.WaitAsync(Limit);
             await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "AUTH user first", "AUTH user second" });
             await Assert.That(connection.CloseError is RespireAuthenticationException).IsTrue();

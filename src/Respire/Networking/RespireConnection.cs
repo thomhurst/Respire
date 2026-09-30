@@ -1242,7 +1242,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
                 ThrowIfRetired();
                 if (_dead)
                 {
-                    throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+                    throw Volatile.Read(ref _abortReason)
+                        ?? new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
                 }
 
                 if ((_credentialRenewalPending && typeof(TCommand) != typeof(CredentialRenewalAuthCommand))
@@ -1316,7 +1317,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             ThrowIfRetired();
             if (_dead)
             {
-                throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
+                throw Volatile.Read(ref _abortReason)
+                    ?? new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
             }
 
             if ((_credentialRenewalPending && typeof(TCommand) != typeof(CredentialRenewalAuthCommand))
