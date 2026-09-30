@@ -126,6 +126,10 @@ public class ThreadPoolMonitorTests
             {
                 Thread.Sleep(TimeSpan.FromMilliseconds(100));
                 Require(ThreadPool.PendingWorkItemCount == 1, "Restarting the monitor accumulated abandoned probes.");
+                Require(SpinWait.SpinUntil(() => ThreadPoolMonitor.Latest is { IsPending: true }, TimeSpan.FromSeconds(5)),
+                    "The restarted monitor did not observe the existing pending probe.");
+                Require(ThreadPoolMonitor.Latest!.SchedulingDelay >= snapshot.SchedulingDelay,
+                    "Restarting the monitor reset the existing probe's scheduling delay.");
                 release.Set();
                 Require(SpinWait.SpinUntil(() => ThreadPoolMonitor.Latest is { IsPending: false }, TimeSpan.FromSeconds(5)),
                     "The restarted monitor did not observe pool recovery.");

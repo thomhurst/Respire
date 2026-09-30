@@ -71,12 +71,16 @@ internal sealed class ThreadPoolMonitor
     // disposal during starvation must not accumulate abandoned work items in the pool.
     private sealed class Probe : IThreadPoolWorkItem
     {
+        // Requeue is serialized by Gate and only the current sampler can initiate it.
+        // A superseded sampler may read a later pair, but cannot publish that sample.
         internal long QueuedAt { get; private set; }
         private long _completedAt;
         internal long CompletedAt => Volatile.Read(ref _completedAt);
 
         internal void QueueIfCompleted()
         {
+            // Preserve the original timestamp across monitor restarts while this work
+            // item is pending: resetting it would hide the actual scheduling delay.
             if (QueuedAt != 0 && CompletedAt == 0) return;
             QueuedAt = Stopwatch.GetTimestamp();
             Volatile.Write(ref _completedAt, 0);

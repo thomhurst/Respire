@@ -80,3 +80,6 @@ Disabling monitoring removes that client's subscription and warnings. Other clie
 keep the shared probe running, so its process-wide sample can still appear in timeout
 diagnostics. Disposing the final subscribed client stops sampling and clears the current
 sample. Metrics have no value before the first sample or after the final subscription ends.
+If a probe is still queued when monitoring restarts, its original queue timestamp is
+retained. Its delay includes the interval with no subscribers because that work item
+has still not executed; restarting monitoring does not reset an existing scheduling stall.
