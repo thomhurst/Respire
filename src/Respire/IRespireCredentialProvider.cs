@@ -1,3 +1,6 @@
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+
 namespace Respire;
 
 /// <summary>Supplies authentication credentials for new connections and proactive renewal.</summary>
@@ -34,6 +37,11 @@ public sealed class RespireCredentials
 
     /// <summary>Expiry of these credentials, or null when no proactive renewal is needed.</summary>
     public DateTimeOffset? ExpiresAt { get; }
+
+    internal bool IsSameAs(RespireCredentials other)
+        => ExpiresAt == other.ExpiresAt && Username == other.Username
+            && CryptographicOperations.FixedTimeEquals(
+                MemoryMarshal.AsBytes(Password.AsSpan()), MemoryMarshal.AsBytes(other.Password.AsSpan()));
 
     /// <summary>Returns a diagnostic representation without credential material.</summary>
     public override string ToString() => "RespireCredentials { <redacted> }";

@@ -109,11 +109,12 @@ These rules keep discovery and data identities separate.
 ## Diagnostics and dependency injection
 
 The `Respire` meter publishes `respire.authentication.refresh`, tagged with `server.address`,
-`server.port`, `respire.authentication.stage` (`provider`, `reauthenticate`, `unchanged`, `expired`, or `worker`),
+`server.port`, `respire.authentication.stage` (`provider`, `reauthenticate`, `unchanged`, `no-expiry`, `expired`, or `worker`),
 and `respire.authentication.outcome` (`success`, `failure`, or `retry`). Successful AUTH records success;
 failed acquisition, rejected/unfinished AUTH, expiry, and unexpected worker failure record
 failure. Unchanged credentials record stage `unchanged` and outcome `retry`, without a failure
-warning or an AUTH attempt. Warnings use
+warning or an AUTH attempt. A replacement without expiry records `no-expiry` with outcome
+`success` after the successful AUTH event, indicating that proactive renewal has stopped. Warnings use
 `CredentialRefreshFailed` (event ID 4001). Neither telemetry nor these warnings includes
 credential values or provider exception text. Exceptions thrown by listeners or loggers do
 not terminate renewal; callbacks must still return promptly.

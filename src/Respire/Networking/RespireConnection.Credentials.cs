@@ -16,7 +16,7 @@ internal sealed partial class RespireConnection
             => new AuthCommand(credentials.Username, credentials.Password).Write(ref writer);
     }
 
-    private ValueTask<RespValue> SendCredentialRenewalAsync(RespireCredentials credentials, CancellationToken cancellationToken)
+    private async ValueTask<RespValue> SendCredentialRenewalAsync(RespireCredentials credentials, CancellationToken cancellationToken)
     {
         lock (_writeGate)
         {
@@ -24,7 +24,18 @@ internal sealed partial class RespireConnection
             if (_dead) throw new RespireConnectionException($"Connection to {Host}:{Port} is closed.");
             _credentialRenewalPending = true;
         }
-        return SendAsync(new CredentialRenewalAuthCommand(credentials), cancellationToken);
+        try
+        {
+            // The renewal's token already carries its connection/credential deadline.
+            return await SendAsync(new CredentialRenewalAuthCommand(credentials), cancellationToken,
+                armCommandDeadline: false).ConfigureAwait(false);
+        }
+        finally
+        {
+            // AUTH continuations run inline on the serial completion worker. Renewal observers
+            // may synchronously await another reply, so leave that worker on success and failure.
+            await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+        }
     }
 
     private void CompleteCredentialRenewal()
@@ -119,11 +130,15 @@ internal sealed partial class RespireConnection
             {
                 while (!_stop.IsCancellationRequested && connection.IsAcceptingCommands)
                 {
-                    if (current.ExpiresAt is not { } expiry) return;
+                    if (current.ExpiresAt is not { } expiry)
+                    {
+                        Record(succeeded: true, "no-expiry");
+                        return;
+                    }
                     var remaining = expiry - clock.GetUtcNow();
                     if (remaining <= TimeSpan.Zero)
                     {
-                        Expire();
+                        AbortExpired();
                         return;
                     }
                     var delay = retry ? options.CredentialRefreshRetryDelay : remaining - options.CredentialRefreshBeforeExpiry;
@@ -131,10 +146,11 @@ internal sealed partial class RespireConnection
                     {
                         delay = Min(delay, remaining, TimeSpan.FromDays(1));
                         await Task.Delay(delay, clock, _stop.Token).ConfigureAwait(false);
+                        if (!connection.IsAcceptingCommands) return;
                         remaining = expiry - clock.GetUtcNow();
                         if (remaining <= TimeSpan.Zero)
                         {
-                            Expire();
+                            AbortExpired();
                             return;
                         }
                         if (!retry && remaining > options.CredentialRefreshBeforeExpiry) continue;
@@ -155,13 +171,13 @@ internal sealed partial class RespireConnection
                         continue;
                     }
 
-                    if (_stop.IsCancellationRequested) return;
+                    if (_stop.IsCancellationRequested || !connection.IsAcceptingCommands) return;
                     if (clock.GetUtcNow() >= expiry)
                     {
-                        Expire();
+                        AbortExpired();
                         return;
                     }
-                    if (next.ExpiresAt == current.ExpiresAt && next.Username == current.Username && next.Password == current.Password)
+                    if (next.IsSameAs(current))
                     {
                         Record(succeeded: null, "unchanged");
                         retry = true;
@@ -193,6 +209,9 @@ internal sealed partial class RespireConnection
                         renewed = true;
                     }
                     catch (OperationCanceledException) when (_stop.IsCancellationRequested) { return; }
+                    // Retirement can win after the checks above but before AUTH is enqueued.
+                    // Leave accepted commands to drain instead of aborting their connection.
+                    catch (RespireConnectionRetiredException) { return; }
                     catch (Exception error)
                     {
                         connection.Abort(error as RespireAuthenticationException
@@ -234,7 +253,7 @@ internal sealed partial class RespireConnection
             catch { /* Instrumentation cannot change authentication state. */ }
         }
 
-        private void Expire()
+        private void AbortExpired()
         {
             Record(succeeded: false, "expired");
             connection.Abort(new RespireAuthenticationException($"Credentials expired before renewal for {connection.Host}:{connection.Port}."));

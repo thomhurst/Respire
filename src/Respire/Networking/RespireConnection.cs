@@ -1531,6 +1531,9 @@ internal sealed partial class RespireConnection : IAsyncDisposable
     {
         bool startedBatch;
         Task writeTask;
+        var deadline = _commandTimeoutMilliseconds == 0
+            ? 0
+            : Environment.TickCount64 + _commandTimeoutMilliseconds;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -1541,7 +1544,8 @@ internal sealed partial class RespireConnection : IAsyncDisposable
             }
 
             ScheduleFlush(startedBatch: false);
-            await capacityAvailable.ConfigureAwait(false);
+            await WaitForCapacityAsync(capacityAvailable, deadline, commandName: null, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         ScheduleFlush(startedBatch);

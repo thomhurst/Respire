@@ -58,6 +58,59 @@ public class CredentialProviderTests
     }
 
     [Test]
+    [Arguments("user", "first", 0, true)]
+    [Arguments("other", "first", 0, false)]
+    [Arguments("user", "firsX", 0, false)]
+    [Arguments("user", "first-longer", 0, false)]
+    [Arguments("user", "first", 1, false)]
+    public async Task CredentialEqualityIncludesIdentitySecretAndExpiry(string user, string password, int seconds, bool same)
+    {
+        var expiry = DateTimeOffset.UnixEpoch.AddMinutes(1);
+        var first = new RespireCredentials("user", "first", expiry);
+        var other = new RespireCredentials(user, new string(password.AsSpan()), expiry.AddSeconds(seconds));
+        await Assert.That(first.IsSameAs(other)).IsEqualTo(same);
+    }
+
+    [Test]
+    public async Task ReplacementWithoutExpiryReportsStoppedRenewal()
+    {
+        var clock = new Clock();
+        var provider = ExpiringProvider(clock);
+        await using var server = Server();
+        var events = new System.Collections.Concurrent.ConcurrentQueue<(string? Stage, string? Outcome)>();
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, observer) =>
+        {
+            if (instrument.Meter.Name == "Respire" && instrument.Name == "respire.authentication.refresh")
+                observer.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            int? port = null;
+            string? stage = null, outcome = null;
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "server.port") port = (int)tag.Value!;
+                if (tag.Key == "respire.authentication.stage") stage = (string)tag.Value!;
+                if (tag.Key == "respire.authentication.outcome") outcome = (string)tag.Value!;
+            }
+            if (port == server.Port) events.Enqueue((stage, outcome));
+        });
+        listener.Start();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            Options(server, provider, clock));
+        await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(20)));
+        provider.Current = new("user", "second");
+        clock.Advance(TimeSpan.FromSeconds(20));
+        await connection.CredentialRefreshCompletion!.WaitAsync(Limit);
+        await Assert.That(events.ToArray()).IsEquivalentTo(new (string?, string?)[]
+            { ("reauthenticate", "success"), ("no-expiry", "success") });
+        clock.Advance(TimeSpan.FromDays(1));
+        await Assert.That(provider.Calls).IsEqualTo(2);
+        await Assert.That(connection.IsConnected).IsTrue();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task RefreshPreservesInflightReplyOrder(bool resp3)
@@ -175,6 +228,81 @@ public class CredentialProviderTests
             await Assert.That(async () => await pending.WaitAsync(Limit)).Throws<RespireConnectionException>();
         }
         await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "AUTH user first", "AUTH user second" });
+    }
+
+    [Test]
+    [Arguments("delay")]
+    [Arguments("provider")]
+    [Arguments("enqueue")]
+    public async Task RetirementDuringRenewalPreservesAcceptedReply(string phase)
+    {
+        var clock = new Clock();
+        var provider = ExpiringProvider(clock);
+        await using var server = Server();
+        Task? retirement = null;
+        RespireConnection? retiringConnection = null;
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            Options(server, provider, clock) with
+            {
+                CredentialCacheInvalidation = () =>
+                {
+                    if (phase == "enqueue") retirement ??= retiringConnection!.RetireAsync();
+                    return 0;
+                },
+            });
+        retiringConnection = connection;
+        await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(20)));
+        server.SuppressReply = command => command == "PING";
+        var accepted = connection.SendAsync(new RawCommand(FakeRespServer.PingFrame)).AsTask();
+        await UntilAsync(() => server.ReceivedCommands.Contains("PING"));
+        provider.Current = new("user", "second", clock.GetUtcNow().AddSeconds(60));
+        if (phase == "provider") provider.Pending = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (phase == "delay") retirement = connection.RetireAsync();
+        clock.Advance(TimeSpan.FromSeconds(20));
+        if (phase == "provider")
+        {
+            await UntilAsync(() => Volatile.Read(ref provider.Calls) == 2);
+            retirement = connection.RetireAsync();
+            provider.Pending!.TrySetResult(provider.Current);
+        }
+        await connection.CredentialRefreshCompletion!.WaitAsync(Limit);
+        await Assert.That(retirement).IsNotNull();
+        await Assert.That(retirement!.IsCompleted).IsFalse();
+        await Assert.That(connection.IsConnected).IsTrue();
+        await Assert.That(accepted.IsCompleted).IsFalse();
+        await server.SendRawAsync(FakeRespServer.PongReply);
+        using var reply = await accepted.WaitAsync(Limit);
+        await Assert.That(reply.AsString()).IsEqualTo("PONG");
+        await retirement.WaitAsync(Limit);
+        await Assert.That(connection.DrainedSuccessfully).IsTrue();
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "AUTH user first", "PING" });
+        await Assert.That(provider.Calls).IsEqualTo(phase == "delay" ? 1 : 2);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FencedFireAndForgetHonorsCommandTimeoutWithoutWriting(bool direct)
+    {
+        var clock = new Clock();
+        var provider = ExpiringProvider(clock);
+        await using var server = Server();
+        await using var connection = await RespireConnection.ConnectAsync("127.0.0.1", server.Port,
+            Options(server, provider, clock) with { CommandTimeout = TimeSpan.FromMilliseconds(200) });
+        await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(20)));
+        server.SuppressReply = command => command == "AUTH user second";
+        provider.Current = new("user", "second", clock.GetUtcNow().AddSeconds(60));
+        clock.Advance(TimeSpan.FromSeconds(20));
+        await UntilAsync(() => server.ReceivedCommands.Contains("AUTH user second"));
+        var pending = StartSend(connection, "fire-and-forget", direct);
+        var error = await Assert.That(async () => await pending.WaitAsync(Limit)).ThrowsExactly<RespireTimeoutException>();
+        await Assert.That(error!.Diagnostics.Stage).IsEqualTo(RespireCommandStage.WaitingForCapacity);
+        await Assert.That(connection.IsConnected).IsTrue();
+        await Assert.That(server.ReceivedCommands).IsEquivalentTo(new[] { "AUTH user first", "AUTH user second" });
+        await server.SendRawAsync(FakeRespServer.OkReply);
+        await UntilAsync(() => clock.HasDelay(TimeSpan.FromSeconds(30)));
+        using var reply = await connection.SendAsync(new RawCommand(FakeRespServer.PingFrame));
+        await Assert.That(reply.AsString()).IsEqualTo("PONG");
     }
 
     private static Task StartSend(RespireConnection connection, string kind, bool direct, CancellationToken cancellationToken = default)
