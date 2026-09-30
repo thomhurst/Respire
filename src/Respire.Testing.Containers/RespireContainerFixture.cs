@@ -16,6 +16,8 @@ public sealed class RespireContainerFixture : IAsyncDisposable
     public const string SentinelServiceName = "respire-test";
     private const int ClusterPrimaryCount = 3;
     private const int ClusterBusPortStart = 16379;
+    private const int SentinelQuorum = 2;
+    private const int SentinelDownAfterMilliseconds = 5000;
     private readonly IContainer _container;
     private readonly RespireContainerOptions _options;
     private readonly int[] _ports;
@@ -24,6 +26,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
     private int _disposed;
     private readonly string _cli;
     private readonly string _server;
+    // Startup is sequential; only its continuation writes or reads these diagnostics.
     private string _startupStep = "container startup";
     private string? _lastReadinessResponse;
 
@@ -35,7 +38,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
         _cli = options.Server == RespireContainerServer.Redis ? "redis-cli" : "valkey-cli";
         var image = options.Image ?? (options.Server == RespireContainerServer.Redis ? "redis:7.2-alpine" : "valkey/valkey:8.1-alpine");
         var builder = new ContainerBuilder(image)
-            .WithCreateParameterModifier(parameters => parameters.HostConfig.Init = true)
+            .WithCreateParameterModifier(parameters => (parameters.HostConfig ??= new()).Init = true)
             .WithEntrypoint("/bin/sh", "-c")
             .WithCommand("mkdir -p /tmp/respire-fixture; exec tail -f /dev/null")
             .WithLabel("respire.testing.fixture", "true");
@@ -154,7 +157,7 @@ public sealed class RespireContainerFixture : IAsyncDisposable
             for (var index = 2; index < _ports.Length; index++)
             {
                 var config = BaseConfiguration(_ports[index]) +
-                    $"sentinel monitor {SentinelServiceName} 127.0.0.1 {_ports[0]} 2\nsentinel down-after-milliseconds {SentinelServiceName} 5000\n" +
+                    $"sentinel monitor {SentinelServiceName} 127.0.0.1 {_ports[0]} {SentinelQuorum}\nsentinel down-after-milliseconds {SentinelServiceName} {SentinelDownAfterMilliseconds}\n" +
                     $"sentinel announce-ip 127.0.0.1\nsentinel announce-port {_ports[index]}\n";
                 await StartServerAsync(index, config, sentinel: true, cancellationToken).ConfigureAwait(false);
             }

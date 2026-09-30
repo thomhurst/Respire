@@ -36,7 +36,7 @@ public class ContainerFixtureIntegrationTests
             .GetDockerClientBuilder(Guid.NewGuid()).WithTimeout(TimeSpan.FromSeconds(5)).Build())
         {
             var container = await docker.Containers.InspectContainerAsync(fixture.ContainerId);
-            container.HostConfig.Init.Should().BeTrue();
+            (container.HostConfig?.Init).Should().BeTrue();
         }
         foreach (var endpoint in fixture.SentinelEndpoints)
         {
