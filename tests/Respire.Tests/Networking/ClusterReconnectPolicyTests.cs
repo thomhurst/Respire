@@ -614,6 +614,35 @@ public class ClusterReconnectPolicyTests
     }
 
     [Test]
+    public async Task UnkeyedDiscoverySkipsRejectedMasterAfterRetirementRetry()
+    {
+        await using var rejected = new FakeRespServer(FakeRespServer.OkReply);
+        await using var retired = new FakeRespServer(FakeRespServer.OkReply);
+        await using var healthy = new FakeRespServer(FakeRespServer.OkReply);
+        await using var client = RespireClient.Create(Options(rejected.Port, retired.Port, healthy.Port));
+        var router = client.Core.Cluster!;
+        var rejectedNode = router.GetMultiplexer(new("127.0.0.1", rejected.Port));
+        var retiredNode = router.GetMultiplexer(new("127.0.0.1", retired.Port));
+        router.SetSlotOwner(1, rejectedNode);
+        router.SetSlotOwner(2, retiredNode);
+        router.SetSlotOwner(3, router.GetMultiplexer(new("127.0.0.1", healthy.Port)));
+        var round = new ClusterRouter.DiscoveryRound(router, new()
+        {
+            InitialDelay = TimeSpan.Zero, JitterRatio = 0, MaxAttempts = 2,
+        });
+        round.FailedNode(rejectedNode, new IOException("first master failed"));
+        await retiredNode.RetireAsync();
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var connection = await router.GetConnectionAsync(null, timeout.Token, round);
+
+        await Assert.That(connection.Port).IsEqualTo(healthy.Port);
+        await Assert.That(rejected.ReceivedCommands).IsEmpty();
+        await Assert.That(retired.ReceivedCommands).IsEmpty();
+        await Assert.That(healthy.ReceivedCommands).Contains("AUTH test");
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task ReadOnlyCandidatesSkipEveryRejectedOwnerGeneration(bool configured)

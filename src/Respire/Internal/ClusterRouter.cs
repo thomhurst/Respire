@@ -239,6 +239,7 @@ internal sealed partial class ClusterRouter : IAsyncDisposable
             // is unnecessary when a current master can serve this unkeyed command.
             foreach (var master in Volatile.Read(ref _masters))
             {
+                if (discovery?.HasRejected(master) == true) continue;
                 try
                 {
                     await EnsureRouteNodeConnectedAsync(master, cancellationToken, discovery).ConfigureAwait(false);
