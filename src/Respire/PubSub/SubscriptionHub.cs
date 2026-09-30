@@ -1,4 +1,3 @@
-using System.Text;
 using Microsoft.Extensions.Logging;
 using Respire.Commands;
 using Respire.Networking;
@@ -19,7 +18,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
     private readonly object _gate = new();
     private readonly object _reconnectStateGate = new();
     private readonly Queue<RespireConnectionStateChange> _pendingReconnectStates = [];
-    private readonly Utf8RouteDictionary<List<RespireSubscription>>[] _routes =
+    private readonly ByteRouteDictionary<List<RespireSubscription>>[] _routes =
         [new(), new(), new()];
     private readonly SemaphoreSlim _controlGate = new(1, 1);
     private readonly SemaphoreSlim _connectionGate = new(1, 1);
@@ -29,7 +28,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
     private volatile bool _disposed;
 
     private RespireSubscription CreateSubscription(
-        SubscriptionKind kind, string[] names, RespireSubscriptionOptions options)
+        SubscriptionKind kind, RespireChannel[] names, RespireSubscriptionOptions options)
     {
         ArgumentNullException.ThrowIfNull(names);
         if (kind == SubscriptionKind.Sharded && core.Cluster is not null)
@@ -44,13 +43,6 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             throw new ArgumentException("At least one channel is required.", nameof(names));
         }
 
-        // Validated before anything observable happens: a name that cannot be written as UTF-8
-        // must not register routes, open the pub/sub connection, or reach the wire.
-        foreach (var name in names)
-        {
-            Utf8RouteName.Validate(name);
-        }
-
         // Defensive copy (unsubscription must look up the names that were registered, not
         // whatever the caller later wrote into their array), deduplicated so one published
         // message is never delivered twice through duplicate route entries.
@@ -58,7 +50,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         return new RespireSubscription(
             this,
             kind,
-            [.. names.Distinct(StringComparer.Ordinal)],
+            [.. names.Distinct()],
             bufferSize,
             overflow);
     }
@@ -69,7 +61,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
     /// </summary>
     public async ValueTask<RespireSubscription> SubscribeAsync(
         SubscriptionKind kind,
-        string[] names,
+        RespireChannel[] names,
         RespireSubscriptionOptions options,
         CancellationToken cancellationToken)
     {
@@ -181,9 +173,9 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         }
     }
 
-    private List<(SubscriptionKind Kind, string Name)> RemoveRoutes(RespireSubscription subscription)
+    private List<(SubscriptionKind Kind, RespireChannel Name)> RemoveRoutes(RespireSubscription subscription)
     {
-        var releasedRoutes = new List<(SubscriptionKind Kind, string Name)>();
+        var releasedRoutes = new List<(SubscriptionKind Kind, RespireChannel Name)>();
         lock (_gate)
         {
             var routes = Routes(subscription.Kind);
@@ -286,7 +278,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         RespireConnection connection,
         Verb verb,
         string operation,
-        string name,
+        RespireChannel name,
         CancellationToken cancellationToken,
         bool instrument)
     {
@@ -296,7 +288,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
             : default;
         try
         {
-            var reply = await connection.SendAsync(new Cmd1(verb, name), cancellationToken).ConfigureAwait(false);
+            var reply = await connection.SendAsync(new Cmd1(verb, name.AsValue()), cancellationToken).ConfigureAwait(false);
             if (reply.IsError)
             {
                 var error = ResponseReader.ServerError(in reply, operation);
@@ -399,10 +391,10 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
                 {
                     var replacement = await EnsureConnectionAsync(CancellationToken.None).ConfigureAwait(false);
 
-                    (SubscriptionKind Kind, string Name)[] routes;
+                    (SubscriptionKind Kind, RespireChannel Name)[] routes;
                     lock (_gate)
                     {
-                        var snapshot = new List<(SubscriptionKind Kind, string Name)>();
+                        var snapshot = new List<(SubscriptionKind Kind, RespireChannel Name)>();
                         for (var i = 0; i < _routes.Length; i++)
                         {
                             foreach (var name in _routes[i].Names)
@@ -529,7 +521,7 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         ReadOnlySpan<byte> payload)
     {
         RespireSubscription[] targets;
-        string cachedRouteName;
+        RespireChannel cachedRouteName;
         lock (_gate)
         {
             if (!Routes(kind).TryGetValue(routeName, out cachedRouteName, out var list))
@@ -541,11 +533,11 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         }
 
         var channelName = isPattern
-            ? Internal.Utf8String.GetString(channel)
+            ? RespireChannel.FromOwnedBytes(channel.ToArray())
             : cachedRouteName;
         var message = new RespireMessage(
             channelName,
-            isPattern ? cachedRouteName : null,
+            isPattern ? cachedRouteName : (RespireChannel?)null,
             payload.ToArray(),
             core.Options.Serializer);
         foreach (var target in targets)
@@ -622,6 +614,6 @@ internal sealed class SubscriptionHub(ClientCore core) : IAsyncDisposable
         }
     }
 
-    private Utf8RouteDictionary<List<RespireSubscription>> Routes(SubscriptionKind kind)
+    private ByteRouteDictionary<List<RespireSubscription>> Routes(SubscriptionKind kind)
         => _routes[(int)kind];
 }

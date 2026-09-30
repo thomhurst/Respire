@@ -25,6 +25,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly TaskCompletionSource<Socket> _clientSocket = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly List<string> _receivedCommands = [];
+    private readonly List<byte[][]> _receivedArguments = [];
     private readonly List<int> _receivedConnectionIds = [];
     private int _commandsSeen;
     private int _disposed;
@@ -54,6 +55,14 @@ internal sealed class FakeRespServer : IAsyncDisposable
             {
                 return _receivedCommands.ToArray();
             }
+        }
+    }
+
+    public IReadOnlyList<byte[][]> ReceivedArguments
+    {
+        get
+        {
+            lock (_receivedCommands) return _receivedArguments.ToArray();
         }
     }
 
@@ -199,10 +208,13 @@ internal sealed class FakeRespServer : IAsyncDisposable
             builder.Append(elements[i].AsString());
         }
 
+        var arguments = new byte[elements.Length][];
+        for (var i = 0; i < elements.Length; i++) arguments[i] = elements[i].AsSpan().ToArray();
         var commandText = builder.ToString();
         lock (_receivedCommands)
         {
             _receivedCommands.Add(commandText);
+            _receivedArguments.Add(arguments);
             _receivedConnectionIds.Add(connectionId);
         }
 

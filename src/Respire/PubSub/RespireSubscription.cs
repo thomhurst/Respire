@@ -78,7 +78,7 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
     internal RespireSubscription(
         SubscriptionHub hub,
         SubscriptionKind kind,
-        string[] names,
+        RespireChannel[] names,
         int bufferSize,
         SubscriptionOverflow overflow)
     {
@@ -104,7 +104,7 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
     public SubscriptionKind Kind { get; }
 
     /// <summary>The channels or patterns covered by this subscription. The collection is immutable.</summary>
-    public IReadOnlyList<string> Targets { get; }
+    public IReadOnlyList<RespireChannel> Targets { get; }
 
     /// <summary>Whether this subscription has ended because it or its owning client was disposed.</summary>
     public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
@@ -118,7 +118,7 @@ public sealed class RespireSubscription : IAsyncEnumerable<RespireMessage>, IAsy
     /// </summary>
     public Task<RespireSubscriptionEndReason> Completion => _completion.Task;
 
-    internal string[] Names { get; }
+    internal RespireChannel[] Names { get; }
 
     internal Channel<RespireMessage> Buffer { get; }
 
