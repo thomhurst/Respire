@@ -126,10 +126,11 @@ public sealed record RespireOptions
     }
 
     /// <summary>
-    /// Redis Sentinel primary service name. When set, <see cref="RespireClient.ConnectAsync(RespireOptions, CancellationToken)"/>
-    /// treats <see cref="Endpoints"/> as Sentinel endpoints and discovers the current primary
-    /// before opening Redis connections. The candidate must confirm its primary role through
-    /// ROLE before ConnectAsync returns; its data-node credentials therefore need ROLE permission.
+    /// Redis Sentinel primary service name. When set, <see cref="Endpoints"/> identifies Sentinel
+    /// nodes. Discovery runs eagerly with ConnectAsync or on the first operation with Create.
+    /// Data connections must confirm a primary ROLE before use; the data credentials need ROLE
+    /// permission. Disconnects and READONLY replies retire the current generation so subsequent
+    /// operations discover a validated primary without replaying accepted commands.
     /// </summary>
     public string? SentinelPrimaryName
     {

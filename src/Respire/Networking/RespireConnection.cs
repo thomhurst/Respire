@@ -1827,7 +1827,8 @@ internal sealed class RespireConnection : IAsyncDisposable
             Abort(closeError);
             try
             {
-                _generation?.ConnectionFailed(this);
+                _generation?.ConnectionClosed(this,
+                    Volatile.Read(ref _disposeCompletion) is null && !Volatile.Read(ref _retired));
                 PendingCommandsFailing?.Invoke();
             }
             catch (Exception ex)

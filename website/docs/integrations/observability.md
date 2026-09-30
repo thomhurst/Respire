@@ -135,3 +135,12 @@ unavailable peers can retain generations indefinitely; age is diagnostic, never 
 to abandon an owed fence. The existing one-to-30-second fence retry backoff and explicit
 client-disposal behavior are unchanged. Any future policy that abandons ordering guarantees
 requires a separate explicit contract.
+
+## Sentinel primary changes
+
+`ConnectionStateChanged` reports the retired endpoint and validated replacement for reactive
+Sentinel handoffs. Prefix views share these events. The `respire.sentinel.failover` counter
+records primary endpoint changes with `server.address` and `server.port` tags. Initial
+discovery and reconnection to the same endpoint do not increment it. Lifecycle observers run
+outside discovery and transport work; queued events are suppressed after client disposal.
+See [Sentinel connections](../fundamentals/connections.md#redis-sentinel) for drain and no-replay behavior.

@@ -2818,7 +2818,8 @@ public sealed partial class RespireClient : IRespireClient
             return true;
         }
 
-        await _core.EnsureConnectedAsync(CancellationToken.None).ConfigureAwait(false);
+        if (_core.Sentinel is not null)
+            await _core.EnsureConnectedAsync(CancellationToken.None).ConfigureAwait(false);
         var multiplexer = _core.Multiplexer;
         if (multiplexer.IsReliableCorrectionOrderingUnavailable)
         {
@@ -2854,8 +2855,6 @@ public sealed partial class RespireClient : IRespireClient
             return;
         }
 
-        await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
-
         if (core.Multiplexer.HasReliableCorrectionOrdering)
         {
             return;
@@ -2863,6 +2862,8 @@ public sealed partial class RespireClient : IRespireClient
 
         if (core.Options.CommandTimeout is not { } timeout)
         {
+            if (core.Sentinel is not null)
+                await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
             await core.Multiplexer.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
             return;
         }
@@ -2870,6 +2871,8 @@ public sealed partial class RespireClient : IRespireClient
         using var timeoutSource = CommandTimeoutCancellation.Create(cancellationToken, timeout);
         try
         {
+            if (core.Sentinel is not null)
+                await core.EnsureConnectedAsync(timeoutSource.Token).ConfigureAwait(false);
             await core.Multiplexer.EnsureReliableCorrectionOrderingAsync(timeoutSource.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -3014,9 +3017,11 @@ public sealed partial class RespireClient : IRespireClient
             }
             else
             {
-                await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
                 if (core.Sentinel is not null)
+                {
+                    await core.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
                     await core.Multiplexer.EnsureReliableCorrectionOrderingAsync(cancellationToken).ConfigureAwait(false);
+                }
                 if (!core.Multiplexer.HasReliableCorrectionOrdering)
                 {
                     throw new InvalidOperationException(
@@ -3319,7 +3324,10 @@ public sealed partial class RespireClient : IRespireClient
 
         await using var correction = core.Cluster is { } cluster && identity.Connection is { } original
             ? cluster.GetCorrectionLease(original) : null;
-        var pool = correction?.Pool ?? (core.Cluster is { } routerPool
+        await using var sentinelCorrection = core.Sentinel is { } sentinel
+            ? sentinel.GetCorrectionLease(identity.Connection
+                ?? throw new InvalidOperationException("Sentinel corrections require the original connection identity.")) : null;
+        var pool = sentinelCorrection?.Pool ?? correction?.Pool ?? (core.Cluster is { } routerPool
             ? routerPool.GetDedicatedPool(identity.Endpoint) : core.DedicatedPool);
         // A cold control connection may need SELECT/AUTH while the server is paused.
         // The fence cannot abandon those commands before it reaches CLIENT KILL.
@@ -3607,6 +3615,8 @@ public sealed partial class RespireClient : IRespireClient
             }
 
             args.CopyTo(tail, 1 + keys.Length);
+            if (core.Sentinel is not null && connectionIdentity.Connection is null)
+                await core.EnsureConnectedAsync(CancellationToken.None).ConfigureAwait(false);
             var multiplexer = connectionIdentity.Connection?.Multiplexer
                 ?? (core.Cluster is { } cluster && connectionIdentity.Endpoint.Host is not null
                     ? cluster.GetMultiplexer(connectionIdentity.Endpoint)
@@ -3617,7 +3627,8 @@ public sealed partial class RespireClient : IRespireClient
                 await multiplexer.SendToAllConnectionsAsync(command,
                     connectionIdentity.RequiresAsking, CancellationToken.None).ConfigureAwait(false);
             }
-            catch (RespireConnectionRetiredException) when (core.Cluster is not null && connectionIdentity.Connection is not null)
+            catch (RespireConnectionRetiredException) when (
+                (core.Cluster is not null || core.Sentinel is not null) && connectionIdentity.Connection is not null)
             {
                 // Retirement rejected new acceptance. Wait for the old FIFO and every owed
                 // kill barrier before sending the idempotent correction on its original peer.
@@ -3629,8 +3640,10 @@ public sealed partial class RespireClient : IRespireClient
                     if (multiplexer.HasPendingCorrectionFences)
                         await multiplexer.FenceRetiredConnectionsAsync().ConfigureAwait(false);
                 }
-                await using var lease = core.Cluster.GetCorrectionLease(connectionIdentity.Connection);
-                var control = await lease.Pool.RentAsync(CancellationToken.None, armHandshakeDeadline: false).ConfigureAwait(false);
+                await using var lease = core.Cluster?.GetCorrectionLease(connectionIdentity.Connection);
+                await using var sentinelLease = core.Sentinel?.GetCorrectionLease(connectionIdentity.Connection);
+                var pool = sentinelLease?.Pool ?? lease!.Pool;
+                var control = await pool.RentAsync(CancellationToken.None, armHandshakeDeadline: false).ConfigureAwait(false);
                 try
                 {
                     using var reply = connectionIdentity.RequiresAsking
@@ -3638,7 +3651,7 @@ public sealed partial class RespireClient : IRespireClient
                         : await control.SendAsync(command, CancellationToken.None, armCommandDeadline: false).ConfigureAwait(false);
                     if (reply.IsError) throw ResponseReader.ServerError(in reply, "EVAL");
                 }
-                finally { lease.Pool.Return(control); }
+                finally { pool.Return(control); }
             }
         }
         finally

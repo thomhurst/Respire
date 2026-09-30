@@ -87,6 +87,38 @@ internal sealed class ClientCore : IAsyncDisposable
 
     public event Action<RespireConnectionStateChange>? ConnectionStateChanged;
 
+    internal void NotifySentinelDisconnected(RespireConnectionMultiplexer node)
+    {
+        lock (_stateGate)
+        {
+            if (Disposed) return;
+            _disconnectedCommandSlots.Add((node, 0));
+            QueueEndpointStateLocked(new RespireConnectionStateChange(
+                new RespireEndpoint(node.Host, node.Port), RespireConnectionState.Disconnected, null));
+        }
+        PublishQueuedStates();
+    }
+
+    internal void NotifySentinelPrimaryChanged(RespireConnectionMultiplexer? previous, RespireConnectionMultiplexer current)
+    {
+        lock (_stateGate)
+        {
+            if (Disposed) return;
+            if (previous is not null)
+            {
+                _reconnectingCommandSlots.RemoveWhere(slot => ReferenceEquals(slot.Node, previous));
+                _disconnectedCommandSlots.RemoveWhere(slot => ReferenceEquals(slot.Node, previous));
+                _publishedEndpointStates.Remove(new(previous.Host, previous.Port));
+            }
+            // Publication itself is a connection event, including the first discovery.
+            // Do not synthesize a continuity loss after new-generation reads can start.
+            var endpoint = new RespireEndpoint(current.Host, current.Port);
+            _publishedEndpointStates.Remove(endpoint);
+            _pendingStates.Enqueue(new RespireConnectionStateChange(endpoint, RespireConnectionState.Connected, null));
+        }
+        PublishQueuedStates();
+    }
+
     internal void NotifyRecoveryStateChanged(RespireConnectionStateChange change)
     {
         lock (_stateGate)

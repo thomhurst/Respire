@@ -9,5 +9,5 @@ internal interface IConnectionGeneration
     bool IsRetired { get; }
     ValueTask ValidateAsync(RespireConnection connection, CancellationToken cancellationToken);
     void ObserveResponse(RespireConnection connection, string? operation, in RespValue response);
-    void ConnectionFailed(RespireConnection connection);
+    void ConnectionClosed(RespireConnection connection, bool unexpected);
 }

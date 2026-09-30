@@ -24,6 +24,9 @@ internal static class RespireTelemetry
     public static readonly ActivitySource Source = new(SourceName, Version);
     public static readonly Meter Meter = new(SourceName, Version);
 
+    public static readonly Counter<long> SentinelFailovers = Meter.CreateCounter<long>(
+        "respire.sentinel.failover", unit: "{failover}", description: "Validated Sentinel primary endpoint changes published by the client.");
+
     public static readonly ObservableGauge<double> ThreadPoolSchedulingDelay = Meter.CreateObservableGauge(
         "respire.thread_pool.scheduling.delay", ThreadPoolMonitor.ObserveDelay, "s",
         "Latest process-wide probe scheduling delay; a lower bound while the probe is pending.");
