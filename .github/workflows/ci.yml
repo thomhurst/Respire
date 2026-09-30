@@ -15,6 +15,17 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
 
 jobs:
+  verify-command-catalog:
+    name: Verify Command Catalog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Verify command catalog generation
+        shell: pwsh
+        run: ./scripts/Test-CommandCatalog.ps1
+
   build-and-test:
     name: Build and Test
     runs-on: ubuntu-latest
@@ -28,11 +39,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Verify command catalog generation
-        if: matrix.framework == 'net10.0'
-        shell: pwsh
-        run: ./scripts/Test-CommandCatalog.ps1
-      
       - name: Setup .NET SDKs
         uses: actions/setup-dotnet@v6
         with:

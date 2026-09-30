@@ -88,4 +88,4 @@ shape introduced with the catalog.
 
 Run `pwsh ./scripts/Test-CommandCatalog.ps1` to exercise the generator with offline fixtures,
 including conflicting flags, missing metadata, duplicate providers, and reproducible output.
-The CI build runs these checks alongside the catalog behavior tests on both supported frameworks.
+CI runs this generator check once. Catalog behavior tests run on both supported frameworks.

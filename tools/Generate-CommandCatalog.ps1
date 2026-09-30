@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory)] [string] $ValkeyCommandPath,
     [string] $RedisVersion = '8.10.0',
     [string] $ValkeyVersion = '9.1.1',
-    [string] $OutputPath = (Join-Path $PSScriptRoot '..\src\Respire\RespireCommands.g.cs')
+    [string] $OutputPath = [System.IO.Path]::GetFullPath(
+        [System.IO.Path]::Combine($PSScriptRoot, '..', 'src', 'Respire', 'RespireCommands.g.cs'))
 )
 
 $ErrorActionPreference = 'Stop'
