@@ -35,6 +35,11 @@ jobs:
           path: candidate
       - name: Compare pinned baseline, candidate, baseline on one runner
         shell: bash
+        env:
+          # The exported report has one disassembly per case, despite multiple launches.
+          # Retain compilation tiers from every measured process to diagnose bimodal timing.
+          DOTNET_JitDisasm: EnqueueAndDequeue WorkloadActionUnroll
+          DOTNET_JitDisasmDiffable: '1'
         run: |
           set -euo pipefail
           # The new coverage case must run against identical sources in both checkouts.
@@ -59,6 +64,9 @@ jobs:
           import json
           from pathlib import Path
           for phase in ("validation", "baseline-a", "candidate", "baseline-b"):
+              log = Path(f"{phase}.log").read_text()
+              assert "Assembly listing for method Respire.Benchmarks.InflightRingBenchmarks:EnqueueAndDequeue" in log, \
+                  f"Missing process JIT diagnostics: {phase}"
               reports = list(Path("results", phase, "results").glob("*-report*.json"))
               assert reports, f"Missing benchmark results: {phase}"
               for report in reports:

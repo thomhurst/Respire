@@ -39,8 +39,12 @@ RESP2 for compatibility; the discovered data connections use the configured poli
 This is a breaking default change for raw callers: RESP3 can return maps, sets, doubles,
 booleans, and native nulls where RESP2 used arrays, bulk strings, integers, or null arrays.
 Typed commands normalize both reply shapes. Raw `RespireResult` consumers must handle both
-or select RESP2 explicitly. Automatic negotiation can also make authentication errors surface
-at connection time, before the first application command.
+or select RESP2 explicitly. Negotiation is per physical connection, including reconnects.
+A pool can therefore contain RESP2 and RESP3 connections when endpoints or intervening
+proxies support different protocols. Consecutive raw reads can have different reply shapes;
+select an explicit protocol when a consumer requires one fixed shape.
+Automatic negotiation can also make authentication errors surface at connection time,
+before the first application command.
 
 ## Connection-time failover
 
