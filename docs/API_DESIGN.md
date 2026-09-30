@@ -382,6 +382,15 @@ for discovery, cancellation, and required `IServerCommands` interface additions.
 
 ## 8. Streams
 
+`ReadAsync` exposes one-shot XREAD for a key or a span of `(RespireKey Key, RespireStreamId After)`
+pairs, with optional per-stream count and blocking wait. `ReadAllAsync` is an async enumerable
+with an independent last-delivered cursor per stream. Defaults start at `0`; `$` is resolved
+once before enumeration. Returned data is owned and multi-stream results retain unprefixed
+keys. Batch/transaction `Read` supports nonblocking reads only. External `IStreamCommands`
+and `IBatchStreamCommands` implementations must implement these new required members.
+See [stream reads](../website/docs/commands/collections.md#reading-without-consumer-groups)
+for reconnect and retention guarantees.
+
 Same async-stream philosophy for consumer groups; XREADGROUP blocking loop, ack on the
 entry:
 

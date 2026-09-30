@@ -342,6 +342,52 @@ are immutable strings. Prefixing and Cluster slot routing apply to the stream ke
 Custom `IStreamCommands` and `IBatchStreamCommands` implementations must add `TrimAsync` and
 `Trim`, respectively; `StreamAddOptions` equality includes `MinId` and `Limit`.
 
+### Reading without consumer groups
+
+```csharp
+RespireStreamEntry[] entries = await redis.Streams.ReadAsync("events", after: "0", count: 100);
+RespireStreamReadResult[] streams = await redis.Streams.ReadAsync(
+    [("{jobs}:events", "12-0"), ("{jobs}:audit", "8-0")],
+    count: 100, waitFor: TimeSpan.FromSeconds(5), cancellationToken: stoppingToken);
+
+await foreach (var item in redis.Streams.ReadAllAsync(
+    [("{jobs}:events", "12-0"), ("{jobs}:audit", "8-0")], cancellationToken: stoppingToken))
+{
+    await HandleAsync(item.Entry.GetString("type"));
+    // Persist item.Key and item.Entry.Id if this application needs a durable checkpoint.
+}
+```
+
+`ReadAsync` implements [XREAD](https://redis.io/docs/latest/commands/xread/) (Redis 5.0+).
+The default start id is `0`; only entries newer than each supplied id are returned. `count`
+limits entries **per stream**. Missing/empty streams are omitted from multi-stream results;
+an empty or timed-out response returns an empty array. Keys, ids, field names, and binary
+values are owned after the call or deferred execution completes. Returned keys have the
+client prefix removed. Cluster calls require all effective, prefixed keys in one hash slot.
+
+Omit `waitFor` for a nonblocking read. A finite wait rounds up to milliseconds (zero becomes
+one millisecond); `Timeout.InfiniteTimeSpan` sends `BLOCK 0`. Blocking reads use dedicated
+connections, leaving ordinary commands responsive. Pass cancellation to interrupt a wait.
+Batches and transactions expose only the nonblocking `Streams.Read` forms.
+
+`ReadAllAsync` keeps an independent last-delivered id for each stream. It drains each owned
+batch before reading again, using one-second blocking polls. Transient connection/server
+failures retry with delays from 100 ms to 3.2 seconds; authentication, ACL, configuration,
+and other non-transient errors terminate enumeration. Cancellation interrupts reads and retry
+delays; disposing an enumerator between entries releases its buffered batch.
+
+For a one-shot read, `RespireStreamId.New` (`$`) uses Redis's current tail. For enumeration,
+each `$` is resolved once using `XREVRANGE ... COUNT 1` before the first `XREAD` (requiring
+`XREVRANGE` permission). An empty stream starts at `0`. An initial lookup failure is surfaced
+without retry, so reconnecting cannot silently move the starting point forward. Multi-stream
+tail lookups happen independently, not atomically. Numeric ids avoid this extra lookup.
+
+Enumeration checkpoints are in memory and advance when an entry is delivered, not when your
+handler succeeds. Persist checkpoints yourself for process restarts. Trimming, deleting, or
+recreating a stream during an outage can remove unread entries; reconnect does not guarantee
+lossless delivery or detect every gap. These reads do not create pending entries or support
+consumer-group acknowledgement.
+
 ### Consumer groups
 
 ```csharp

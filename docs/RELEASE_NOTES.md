@@ -28,6 +28,17 @@
   [compatible-server guide](../website/docs/guides/server-extensions.md) for the audited
   sources, exact names, server/version constraints, and protocol-shaped examples.
 
+### Stream reads
+
+- `Streams.ReadAsync` adds owned, typed XREAD results for one or multiple streams, optional
+  per-stream COUNT, and optional BLOCK on dedicated connections. `ReadAllAsync` resumes
+  transient failures from each stream's last delivered id and resolves initial `$` positions
+  once. Batch and transaction `Streams.Read` supports nonblocking reads only.
+  External `IStreamCommands` and `IBatchStreamCommands` implementations, decorators, and
+  mocks must implement or forward the new members. See the
+  [stream reading guide](../website/docs/commands/collections.md#reading-without-consumer-groups)
+  for cancellation, ownership, ACL requirements, and trimming/reconnect limitations.
+
 ### Distributed locks
 
 - Distributed locks use native conditional renewal/deletion on supported Redis and Valkey versions, with per-connection Lua fallback on older servers and preserved managed cancellation fencing.
