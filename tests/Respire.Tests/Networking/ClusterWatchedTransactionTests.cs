@@ -26,6 +26,7 @@ public class ClusterWatchedTransactionTests
         await using var seed = new FakeRespServer(hello, FakeRespServer.OkReply, Topology(owner.Port));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = cluster, Connections = 1, ClientSideCache = new(),
             Endpoints = [new("127.0.0.1", cluster ? seed.Port : owner.Port)],
         });
@@ -274,6 +275,7 @@ public class ClusterWatchedTransactionTests
 
     private static RespireOptions Options(int seedPort) => new()
     {
+        Protocol = RespProtocol.Resp2,
         UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seedPort)],
     };
 

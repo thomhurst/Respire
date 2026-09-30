@@ -12,6 +12,7 @@ public class ClusterTests
 {
     private static RespireClient CreateLazyClusterClient() => RespireClient.Create(new RespireOptions
     {
+        Protocol = RespProtocol.Resp2,
         UseCluster = true,
         Endpoints = { new RespireEndpoint("localhost") },
     });
@@ -38,6 +39,7 @@ public class ClusterTests
             "-CROSSSLOT Keys in request don't hash to the same slot\r\n"u8.ToArray());
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
@@ -80,6 +82,7 @@ public class ClusterTests
             Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -105,6 +108,7 @@ public class ClusterTests
             Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -128,6 +132,7 @@ public class ClusterTests
         };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
@@ -151,6 +156,7 @@ public class ClusterTests
             Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -177,6 +183,7 @@ public class ClusterTests
             Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -200,6 +207,7 @@ public class ClusterTests
             Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -231,6 +239,7 @@ public class ClusterTests
             Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{target.Port}\r\n"));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -272,6 +281,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -334,6 +344,7 @@ public class ClusterTests
             Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ConnectTimeout = TestConnectTimeout,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
@@ -370,6 +381,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -406,6 +418,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -450,6 +463,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(2, topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Connections = 2,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
@@ -481,6 +495,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -509,6 +524,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -538,6 +554,7 @@ public class ClusterTests
             "-EXECABORT Transaction discarded because of previous errors.\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -565,6 +582,7 @@ public class ClusterTests
             "-EXECABORT Transaction discarded because of previous errors.\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -696,6 +714,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -731,6 +750,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -766,6 +786,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -794,6 +815,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var owner = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -818,6 +840,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         var options = new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ConnectTimeout = TestConnectTimeout,
             Endpoints =
@@ -829,7 +852,7 @@ public class ClusterTests
         if (useConnectionString)
         {
             options = RespireOptions.Parse(
-                $"127.0.0.1:1,127.0.0.1:{seed.Port},cluster=true,connectTimeout=1000");
+                $"127.0.0.1:1,127.0.0.1:{seed.Port},cluster=true,connectTimeout=1000,protocol=2");
         }
         await using var client = await RespireClient.ConnectAsync(options);
 
@@ -852,6 +875,7 @@ public class ClusterTests
         var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ConnectTimeout = TestConnectTimeout,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
@@ -881,6 +905,7 @@ public class ClusterTests
             Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -916,6 +941,7 @@ public class ClusterTests
         var seed = new FakeRespServer(initialTopology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ConnectTimeout = TestConnectTimeout,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
@@ -948,6 +974,7 @@ public class ClusterTests
             "$8\r\nfallback\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ConnectTimeout = TestConnectTimeout,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
@@ -984,6 +1011,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -1014,6 +1042,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(staleTopology, currentTopology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ConnectTimeout = TestConnectTimeout,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
@@ -1041,6 +1070,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(initialTopology, refreshedTopology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -1070,6 +1100,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -1099,6 +1130,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ConnectTimeout = TestConnectTimeout,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
@@ -1141,6 +1173,7 @@ public class ClusterTests
         var seed = new FakeRespServer(initialTopology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ConnectTimeout = TestConnectTimeout,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
@@ -1173,6 +1206,7 @@ public class ClusterTests
         var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ConnectTimeout = TestConnectTimeout,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
@@ -1194,6 +1228,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var owner = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -1221,6 +1256,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -1255,6 +1291,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -1283,6 +1320,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -1316,6 +1354,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(initialTopology, refreshedTopology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -1342,6 +1381,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
             AllowAdmin = true,
@@ -1376,6 +1416,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology, topology, topology, topology, topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -1408,6 +1449,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -1448,6 +1490,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology, topology, topology, topology, topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -1483,6 +1526,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -1508,6 +1552,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -1536,6 +1581,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(50),
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
@@ -1563,6 +1609,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(50),
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
@@ -1622,6 +1669,7 @@ public class ClusterTests
         await using var seed = new FakeRespServer("-NOPERM cluster slots denied\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
@@ -1636,6 +1684,7 @@ public class ClusterTests
     {
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true, Database = 1, Endpoints = { new RespireEndpoint("localhost") },
         });
         await Assert.That(client.Core.Cluster!.IsConnected).IsFalse();

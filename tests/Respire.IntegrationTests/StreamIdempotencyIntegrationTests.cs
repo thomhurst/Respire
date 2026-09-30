@@ -23,7 +23,8 @@ public class StreamIdempotencyIntegrationTests(StreamProductionRedisContainer fi
     [MatrixDataSource]
     public async Task DuplicatesReturnOriginalOwnedIdsAcrossSurfaces([Matrix(2, 3)] int protocol, [Matrix(0, 1, 2)] int surface)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var view = client.WithKeyPrefix($"production:{Guid.NewGuid():N}:");
         try
         {
@@ -75,7 +76,8 @@ public class LegacyStreamIdempotencyIntegrationTests(RedisTestContainer fixture)
     [Arguments(3)]
     public async Task OlderServersRejectWithoutWriteFallback(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var key = $"production-legacy:{Guid.NewGuid():N}";
         try
         {

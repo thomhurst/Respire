@@ -21,6 +21,7 @@ public class ScriptTypedCommandTests
         var serializer = new RecordingSerializer();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             Serializer = serializer,
@@ -71,6 +72,7 @@ public class ScriptTypedCommandTests
         var serializer = new RecordingSerializer();
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Serializer = serializer,
         });

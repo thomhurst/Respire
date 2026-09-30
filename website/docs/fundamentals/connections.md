@@ -15,6 +15,41 @@ await using var redis = await RespireClient.ConnectAsync("redis://localhost:6379
 
 `ConnectAsync` establishes connections before returning. An unreachable server produces `RespireConnectionException` instead of deferring failure to an unrelated command.
 
+## Protocol negotiation
+
+The default `Protocol = RespProtocol.Auto` starts each data connection with `HELLO 3`.
+Redis 6+ and compatible servers normally select RESP3. If the server explicitly reports
+an unknown `HELLO` command or `NOPROTO`, the same connection remains in RESP2 and completes
+AUTH, client naming, and database selection before any application command runs.
+Authentication/ACL errors, malformed replies, disconnects, and timeouts do not trigger fallback.
+No application command is replayed during negotiation.
+
+Automatic negotiation adds one serialized HELLO round trip before the remaining setup
+commands on each new physical connection. It adds no round trip to ordinary commands.
+Large pools and reconnect storms pay this setup cost for every socket, including endpoints
+that repeatedly fall back to RESP2. Protocol negotiation is not cached across connections.
+Information logs identify unsupported-HELLO fallback to RESP2 on each physical connection;
+Debug logs identify successful RESP3 negotiation. Neither includes credentials. Different unknown-command wording is not treated as proof
+that HELLO is unsupported; configure RESP2 explicitly for such a proxy. An unclassified
+`ERR` during automatic HELLO includes that compatibility hint unless its wording indicates
+an authentication or ACL failure. The connection still fails and preserves the original error.
+
+Choose `Protocol = RespProtocol.Resp2` or `protocol=2` to skip HELLO and keep the earlier
+RESP2 behavior. Choose `RespProtocol.Resp3` or `protocol=3` to require RESP3 and reject
+unsupported servers. `protocol=auto` explicitly selects the default policy.
+Client-side caching always requires RESP3 and never falls back. Sentinel discovery retains
+RESP2 for compatibility; the discovered data connections use the configured policy.
+
+This is a breaking default change for raw callers: RESP3 can return maps, sets, doubles,
+booleans, and native nulls where RESP2 used arrays, bulk strings, integers, or null arrays.
+Typed commands normalize both reply shapes. Raw `RespireResult` consumers must handle both
+or select RESP2 explicitly. Negotiation is per physical connection, including reconnects.
+A pool can therefore contain RESP2 and RESP3 connections when endpoints or intervening
+proxies support different protocols. Consecutive raw reads can have different reply shapes;
+select an explicit protocol when a consumer requires one fixed shape.
+Automatic negotiation can also make authentication errors surface at connection time,
+before the first application command.
+
 ## Connection-time failover
 
 Use `ConnectAnyAsync` when an application can connect to one of several independent Redis deployments and should try them in priority order at startup:
@@ -96,7 +131,7 @@ Connection URI query parameters cover common options:
 redis://localhost:6379/0?clientName=checkout-api&connections=4&allowAdmin=false
 ```
 
-Supported query parameters are `clientName`, `connections`, `connectTimeoutMs`, `commandTimeoutMs`, `responseTimeoutMs`, `protocol` (`2`/`resp2` or `3`/`resp3`, case-insensitive), `db`, `cluster`, and `allowAdmin`.
+Supported query parameters are `clientName`, `connections`, `connectTimeoutMs`, `commandTimeoutMs`, `responseTimeoutMs`, `protocol` (`auto`, `2`/`resp2` or `3`/`resp3`, case-insensitive), `db`, `cluster`, and `allowAdmin`.
 
 Unsupported protocol values and malformed or overflowing integer options throw `ArgumentException`
 with the option name and `ParamName == "connectionString"`. This applies to URI and comma-delimited
@@ -136,7 +171,7 @@ Cluster and Sentinel cannot both be selected in one comma-delimited string.
 
 Supported options are `user` (or `username`), `password`, `ssl`, `sslHost`, `sslProtocols`,
 `checkCertificateRevocation`, `clientName` (or `name`), `defaultDatabase` (or `db`),
-`connectTimeout`, `asyncTimeout` (or `syncTimeout`), `protocol` (`resp2` or `resp3`), and
+`connectTimeout`, `asyncTimeout` (or `syncTimeout`), `protocol` (`auto`, `resp2` or `resp3`), and
 `allowAdmin`. `sslHost` sets the TLS certificate/SNI target and enables TLS unless
 `ssl=false` explicitly disables it, regardless of option order. `sslProtocols`
 accepts pipe-separated enum names, such as `Tls12|Tls13`, or numeric masks combining defined

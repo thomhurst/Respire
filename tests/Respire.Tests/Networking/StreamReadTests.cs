@@ -122,6 +122,7 @@ public class StreamReadTests
         server.DelayReply(0, 150);
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Connections = 1, Endpoints = [new("127.0.0.1", server.Port)], CommandTimeout = TimeSpan.FromMilliseconds(25),
         });
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -252,6 +253,7 @@ public class StreamReadTests
         await using var server = new FakeRespServer("-WRONGPASS denied\r\n"u8.ToArray());
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Connections = 1, Password = "test-secret", Endpoints = [new("127.0.0.1", server.Port)],
         });
         await using var reader = client.Streams.ReadAllAsync("events").GetAsyncEnumerator();
@@ -304,7 +306,7 @@ public class StreamReadTests
     }
 
     private static RespireClient Create(int port, bool cluster = false)
-        => RespireClient.Create(new RespireOptions { Connections = 1, UseCluster = cluster, Endpoints = [new("127.0.0.1", port)] });
+        => RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, Connections = 1, UseCluster = cluster, Endpoints = [new("127.0.0.1", port)] });
 
     internal static byte[] Reply(bool map, params (string Key, string[] Ids)[] streams)
     {

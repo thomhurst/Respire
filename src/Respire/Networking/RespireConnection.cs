@@ -403,6 +403,30 @@ internal sealed class RespireConnection : IAsyncDisposable
         }
     }
 
+    private async ValueTask<RespProtocol> NegotiatePreferredProtocolAsync(RespireConnectionOptions options,
+        CancellationToken cancellationToken, bool armCommandDeadline)
+    {
+        using var hello = await SendAsync(new Commands.HelloCommand(options.Username, options.Password),
+            cancellationToken, armCommandDeadline: armCommandDeadline).ConfigureAwait(false);
+        if (hello.IsError)
+        {
+            var message = hello.GetErrorMessage();
+            var kind = ClassifyHelloError(message.AsSpan());
+            if (kind != HelloErrorKind.Unsupported)
+            {
+                var hint = kind == HelloErrorKind.Other && message.StartsWith("ERR ", StringComparison.OrdinalIgnoreCase)
+                    ? " If this endpoint does not support HELLO, explicitly set protocol=2."
+                    : null;
+                throw CreateHandshakeException(in hello, "HELLO", hint);
+            }
+            _logger?.LogInformation("HELLO 3 is unsupported by {Host}:{Port}; using RESP2 on this connection", Host, Port);
+            return RespProtocol.Resp2;
+        }
+        ValidateHelloProtocol(in hello);
+        _logger?.LogDebug("Negotiated RESP3 with {Host}:{Port}", Host, Port);
+        return RespProtocol.Resp3;
+    }
+
     /// <summary>
     /// Runs HELLO/AUTH/CLIENT SETNAME through the normal send path before the connection is
     /// handed out, so every later command runs on an authenticated, protocol-negotiated stream.
@@ -410,13 +434,22 @@ internal sealed class RespireConnection : IAsyncDisposable
     private async Task HandshakeAsync(RespireConnectionOptions options, CancellationToken cancellationToken,
         bool armCommandDeadline)
     {
+        // Automatic negotiation must finish before setup commands: an unsupported HELLO
+        // may require RESP2 AUTH before SELECT, SETNAME, or capability discovery can succeed.
+        var requestedProtocol = options.Protocol == RespProtocol.Auto && options.EnableClientTracking
+            ? RespProtocol.Resp3 : options.Protocol;
+        var negotiatedProtocol = requestedProtocol == RespProtocol.Auto
+            ? await NegotiatePreferredProtocolAsync(options, cancellationToken, armCommandDeadline).ConfigureAwait(false)
+            : requestedProtocol;
+
         List<(string Step, ValueTask<RespValue> Reply)>? pending = null;
-        if (options.UseResp3)
+        // Auto already sent HELLO above; only explicitly requested RESP3 enters this branch.
+        if (requestedProtocol == RespProtocol.Resp3)
         {
             (pending ??= new(3)).Add(("HELLO", SendAsync(
                 new Commands.HelloCommand(options.Username, options.Password), cancellationToken, armCommandDeadline: armCommandDeadline)));
         }
-        else if (options.Password is not null)
+        else if (negotiatedProtocol == RespProtocol.Resp2 && options.Password is not null)
         {
             (pending ??= new(3)).Add(("AUTH", SendAsync(
                 new Commands.AuthCommand(options.Username, options.Password), cancellationToken, armCommandDeadline: armCommandDeadline)));
@@ -545,8 +578,30 @@ internal sealed class RespireConnection : IAsyncDisposable
             $"(server_name={server ?? "<missing>"}, valkey_version={version ?? "<missing>"}, server_mode={mode ?? "<missing>"}).");
     }
 
-    private RespireConnectionException CreateHandshakeException(in RespValue reply, string step)
-        => new($"{step} failed for {Host}:{Port}: {reply.GetErrorMessage()}", ResponseReader.ServerError(in reply, step));
+    private RespireConnectionException CreateHandshakeException(in RespValue reply, string step, string? hint = null)
+        => new($"{step} failed for {Host}:{Port}: {reply.GetErrorMessage()}{hint}", ResponseReader.ServerError(in reply, step));
+
+    private enum HelloErrorKind { Unsupported, Authentication, Other }
+    private static readonly string[] HelloCredentialWording = ["auth", "password", "credential", "permission", "ACL"];
+
+    private static HelloErrorKind ClassifyHelloError(ReadOnlySpan<char> message)
+    {
+        if (message.Equals("NOPROTO", StringComparison.OrdinalIgnoreCase)
+            || message.StartsWith("NOPROTO ", StringComparison.OrdinalIgnoreCase)
+            || message.StartsWith("ERR unknown command \"HELLO\"", StringComparison.OrdinalIgnoreCase)
+            || message.StartsWith("ERR unknown command 'HELLO'", StringComparison.OrdinalIgnoreCase)
+            || message.StartsWith("ERR unknown command `HELLO`", StringComparison.OrdinalIgnoreCase))
+            return HelloErrorKind.Unsupported;
+
+        // ERR has no structured subcode. Suppress compatibility advice conservatively
+        // for credential/ACL wording; these failures must never suggest a downgrade.
+        if (message.StartsWith("WRONGPASS", StringComparison.OrdinalIgnoreCase)
+            || message.StartsWith("NOPERM", StringComparison.OrdinalIgnoreCase))
+            return HelloErrorKind.Authentication;
+        foreach (var wording in HelloCredentialWording)
+            if (message.Contains(wording, StringComparison.OrdinalIgnoreCase)) return HelloErrorKind.Authentication;
+        return HelloErrorKind.Other;
+    }
 
     private void ValidateHelloProtocol(in RespValue reply)
     {
@@ -2431,8 +2486,9 @@ internal sealed record RespireConnectionOptions
     /// <summary>Verify Valkey 9+ Cluster support before selecting a non-zero database.</summary>
     internal bool RequireClusterDatabaseSupport { get; init; }
 
-    /// <summary>Negotiate RESP3 via HELLO 3 during the handshake. Requires Redis 6+.</summary>
-    public bool UseResp3 { get; init; }
+    /// <summary>Requested wire protocol. Auto permits only explicit unsupported-HELLO fallback.</summary>
+    /// <remarks>Low-level connections retain their RESP2 default; RespireOptions supplies the client preference.</remarks>
+    public RespProtocol Protocol { get; init; } = RespProtocol.Resp2;
 
     /// <summary>Initial size of the pooled parse buffer the receive loop reads into.</summary>
     public int ReceiveBufferSize { get; init; } = 64 * 1024;

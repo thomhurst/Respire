@@ -75,7 +75,7 @@ public class StreamReferenceTests
     public async Task InvalidArgumentsFailBeforeIoOrEnqueue()
     {
         await using var server = new FakeRespServer();
-        await using var client = RespireClient.Create(new RespireOptions { Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
+        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
         using var batch = client.CreateBatch();
         await using var transaction = client.CreateTransaction();
         RespireStreamId[][] invalid = [[], ["$"], ["-"], ["+"], ["1-*"], ["1-"], ["18446744073709551616-0"]];
@@ -136,7 +136,7 @@ public class StreamReferenceTests
     public async Task CancellationBeforeDispatchDoesNotSendWrites()
     {
         await using var server = new FakeRespServer();
-        await using var client = RespireClient.Create(new RespireOptions { Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
+        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)] });
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         await Assert.That(async () => await client.Streams.RemoveAsync("events", StreamReferencePolicy.DeleteReferences,
@@ -154,7 +154,7 @@ public class StreamReferenceTests
         var topology = Encoding.ASCII.GetBytes($"*1\r\n*3\r\n:{slot}\r\n:{slot}\r\n*2\r\n$9\r\n127.0.0.1\r\n:{owner.Port}\r\n");
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
-            { UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)] });
+            { Protocol = RespProtocol.Resp2, UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)] });
         var view = client.WithKeyPrefix("{tenant}:");
         await view.Streams.RemoveAsync("events", StreamReferencePolicy.KeepReferences, "1-0");
         await view.Streams.AcknowledgeAndRemoveAsync("events", "group", StreamReferencePolicy.DeleteReferences, "1-0");

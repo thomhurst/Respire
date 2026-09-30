@@ -126,7 +126,7 @@ public class DeferredStreamCommandTests
     [Test]
     public async Task InvalidArgumentsAndCrossSlotCommandsDoNotEnqueue()
     {
-        await using var client = RespireClient.Create(new RespireOptions { UseCluster = true, Endpoints = [new("127.0.0.1", 1)] });
+        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, UseCluster = true, Endpoints = [new("127.0.0.1", 1)] });
         var view = client.WithKeyPrefix("tenant:");
         using var batch = view.CreateBatch();
         await using var transaction = view.CreateTransaction();
@@ -163,6 +163,7 @@ public class DeferredStreamCommandTests
         await using var seed = new FakeRespServer(topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", seed.Port)],
         });
         var view = client.WithKeyPrefix("tenant:");

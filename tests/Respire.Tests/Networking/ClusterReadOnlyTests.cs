@@ -28,6 +28,7 @@ public class ClusterReadOnlyTests
         var unavailablePort = unavailable.Port;
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true, Connections = 1, ConnectTimeout = TimeSpan.FromSeconds(2), CommandTimeout = null,
             Endpoints = [new("127.0.0.1", initialSeed.Port), new("127.0.0.1", healthySeed.Port),
                 new("127.0.0.1", unavailablePort)],
@@ -62,6 +63,7 @@ public class ClusterReadOnlyTests
         {
             var options = new RespireOptions
             {
+                Protocol = RespProtocol.Resp2,
                 UseCluster = true,
                 Connections = 1,
                 ConnectTimeout = TimeSpan.FromSeconds(2),
@@ -283,6 +285,7 @@ public class ClusterReadOnlyTests
         await using var seed = new FakeRespServer(FakeRespServer.OkReply, initial, Topology(replacement.Port));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Connections = 1,
             ClientName = "recovery",
@@ -610,6 +613,7 @@ public class ClusterReadOnlyTests
     private static ValueTask<RespireClient> ConnectAsync(int port, TimeSpan? connectTimeout = null)
         => RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Connections = 1,
             ConnectTimeout = connectTimeout ?? TimeSpan.FromSeconds(1),

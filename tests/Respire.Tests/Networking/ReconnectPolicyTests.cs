@@ -33,7 +33,7 @@ public class ReconnectPolicyTests
             new() { BackoffMultiplier = 0.5 }, new() { JitterRatio = -0.1 }, new() { JitterRatio = 1.1 },
             new() { JitterRatio = double.NaN }, new() { MaxAttempts = 0 }];
         foreach (var policy in invalid)
-            await Assert.That(() => RespireClient.Create(new RespireOptions { ReconnectPolicy = policy }))
+            await Assert.That(() => RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, ReconnectPolicy = policy }))
                 .ThrowsExactly<RespireConfigurationException>();
     }
 
@@ -340,6 +340,7 @@ public class ReconnectPolicyTests
 
     private static RespireOptions Options(int port, RespireReconnectPolicy policy) => new()
     {
+        Protocol = RespProtocol.Resp2,
         Endpoints = { new RespireEndpoint("127.0.0.1", port) }, Connections = 1,
         ConnectTimeout = TimeSpan.FromSeconds(1), ReconnectPolicy = policy,
     };

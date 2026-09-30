@@ -165,6 +165,7 @@ public class ClusterRedirectEndpointTests
 
     private static RespireOptions Options(FakeRespServer seed) => new()
     {
+        Protocol = RespProtocol.Resp2,
         UseCluster = true,
         ConnectTimeout = TimeSpan.FromSeconds(30),
         Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },

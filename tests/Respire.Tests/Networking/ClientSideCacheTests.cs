@@ -995,6 +995,7 @@ public class ClientSideCacheTests
             Encoding.ASCII.GetBytes($"-ASK {slot} 127.0.0.1:{target.Port}\r\n"));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
             ClientSideCache = new(),
@@ -1029,6 +1030,7 @@ public class ClientSideCacheTests
             Encoding.ASCII.GetBytes($"-MOVED {slot} 127.0.0.1:{target.Port}\r\n"));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
             ClientSideCache = new(),
@@ -1056,6 +1058,7 @@ public class ClientSideCacheTests
         seed.DelayReply(5, 250);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
             ClientSideCache = new(),
@@ -1139,6 +1142,7 @@ public class ClientSideCacheTests
             topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             AllowAdmin = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
@@ -1177,6 +1181,7 @@ public class ClientSideCacheTests
             topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
             ClientSideCache = new(),
@@ -1211,6 +1216,7 @@ public class ClientSideCacheTests
             topology);
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
             ClientSideCache = new(),
@@ -1468,6 +1474,7 @@ public class ClientSideCacheTests
     private static ValueTask<RespireClient> ConnectAsync(FakeRespServer server)
         => RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             ClientSideCache = new(),
@@ -1476,6 +1483,7 @@ public class ClientSideCacheTests
     private static RespireClient CreateLazyClient(FakeRespServer server)
         => RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             ClientSideCache = new(),

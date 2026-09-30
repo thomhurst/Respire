@@ -48,6 +48,10 @@ jobs:
           path: candidate
       - name: Validate then compare pinned builds on one runner
         shell: bash
+        env:
+          # Keep native JIT output separate from managed benchmark stdout to prevent interleaving.
+          DOTNET_JitDisasm: Hit CachedGetAsync
+          DOTNET_JitDisasmDiffable: '1'
         run: |
           set -euo pipefail
           cp candidate/benchmarks/Respire.Benchmarks/ClientCacheTrackingBenchmarks.cs baseline/benchmarks/Respire.Benchmarks/
@@ -55,6 +59,9 @@ jobs:
             source=baseline
             job=Medium
             export RESPIRE_BENCH_BASELINE=1
+            # CoreCLR appends to this file. Phases and BDN child processes run sequentially;
+            # retain every listing without mixing managed stdout into native instructions.
+            export DOTNET_JitStdOutFile="$GITHUB_WORKSPACE/cache-jit-$phase.log"
             if [ "$phase" = candidate ] || [ "$phase" = validation ]; then
               source=candidate
               export RESPIRE_BENCH_BASELINE=0
@@ -64,7 +71,7 @@ jobs:
               cd "$source"
               git rev-parse HEAD
               dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
-                --filter '*ClientCacheTrackingBenchmarks*' --job "$job" --exporters json markdown \
+                --filter '*ClientCacheTrackingBenchmarks*' --job "$job" --exporters json markdown --disasm --disasmDepth 3 \
                 --artifacts "$GITHUB_WORKSPACE/cache-results/$phase"
             ) > "$GITHUB_WORKSPACE/cache-$phase.log" 2>&1
           done
@@ -84,9 +91,11 @@ jobs:
                   assert case["Statistics"] and case["Statistics"]["Mean"] > 0, case["FullName"]
                   if phase != "validation" and case["Method"] == "Hit":
                       hit_allocations.setdefault(phase, []).append(case["Memory"]["BytesAllocatedPerOperation"])
-              metrics = [json.loads(line.split("CACHE_TRACKING_PROCESS_METRICS ", 1)[1])
+              # Buffered native JIT output may prefix an otherwise intact managed metric line.
+              # Decode from the marker and keep the same mode/completeness/value requirements.
+              metrics = [json.JSONDecoder().raw_decode(line.split("CACHE_TRACKING_PROCESS_METRICS ", 1)[1])[0]
                          for line in Path(f"cache-{phase}.log").read_text(encoding="utf-8").splitlines()
-                         if line.startswith("CACHE_TRACKING_PROCESS_METRICS ")]
+                         if "CACHE_TRACKING_PROCESS_METRICS " in line]
               expected_modes = {"OptIn", "Broadcast", "BroadcastPrefix", "BroadcastManyPrefixes"} if expected == 8 else {"OptIn"}
               assert {row["Mode"] for row in metrics} == expected_modes, phase
               assert all(row["elapsedSeconds"] > 0 and row["cpuMilliseconds"] >= 0 and row["allocatedBytes"] >= 0 for row in metrics)
@@ -94,6 +103,83 @@ jobs:
           # Compare against both old-build controls instead of claiming this public API allocates zero.
           baseline_limit = min(hit_allocations["baseline-a"] + hit_allocations["baseline-b"])
           assert all(value <= baseline_limit for value in hit_allocations["candidate"]), hit_allocations
+      - name: Summarize matching cases and individual process launches
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          phases = {}
+          for phase in ("baseline-a", "candidate", "baseline-b"):
+              report = next(Path("cache-results", phase, "results").glob("*-report-full-compressed.json"))
+              cases = json.loads(report.read_text())["Benchmarks"]
+              phases[phase] = {(case["Method"], case["Parameters"]): case for case in cases}
+              assert "Assembly listing for method Respire.Benchmarks.ClientCacheTrackingBenchmarks:Hit" in Path(f"cache-jit-{phase}.log").read_text(), phase
+          common = phases["baseline-a"].keys() & phases["candidate"].keys() & phases["baseline-b"].keys()
+          assert len(common) == 2, "Expected matching OPTIN hit and invalidation cases"
+          lines = ["## Candidate versus both controls", "",
+                   "Positive deltas mean slower. Retain process variation when assessing these aggregate timings.", "",
+                   "| Case | A ns | Candidate ns | B ns | Candidate/A | Candidate/B | Allocated B (A/candidate/B) |",
+                   "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"]
+          for key in sorted(common):
+              cases = [phases[phase][key] for phase in ("baseline-a", "candidate", "baseline-b")]
+              a, candidate, b = [case["Statistics"]["Mean"] for case in cases]
+              allocations = "/".join(str(case["Memory"]["BytesAllocatedPerOperation"]) for case in cases)
+              lines.append(f"| {key} | {a:.3f} | {candidate:.3f} | {b:.3f} | "
+                           f"{100 * (candidate / a - 1):+.2f}% | {100 * (candidate / b - 1):+.2f}% | {allocations} |")
+          lines.extend(["", "## Individual process launches", "",
+                        "These result samples are overhead-adjusted; launches are not independent repetitions of the full experiment.", "",
+                        "| Phase | Case | Launch | Mean ns | Min ns | Max ns |",
+                        "| --- | --- | ---: | ---: | ---: | ---: |"])
+          for phase, cases in phases.items():
+              for key, case in sorted(cases.items()):
+                  launches = {}
+                  for measurement in case["Measurements"]:
+                      if measurement["IterationStage"] == "Result" and measurement["IterationMode"] == "Workload":
+                          value = measurement["Nanoseconds"] / measurement["Operations"]
+                          launches.setdefault(measurement["LaunchIndex"], []).append(value)
+                  assert launches, (phase, key)
+                  for launch, values in sorted(launches.items()):
+                      lines.append(f"| {phase} | {key} | {launch} | {sum(values)/len(values):.3f} | {min(values):.3f} | {max(values):.3f} |")
+          summary = "\n".join(lines) + "\n"
+          Path("cache-results/comparison.md").write_text(summary)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(summary)
+      - name: Summarize intact native cache listings
+        shell: python
+        run: |
+          import hashlib
+          import json
+          import re
+          from collections import Counter
+          from pathlib import Path
+          rows = []
+          for phase in ("baseline-a", "candidate", "baseline-b"):
+              native = Path(f"cache-jit-{phase}.log").read_text()
+              found = Counter()
+              for block in re.split(r"(?=; Assembly listing for method )", native):
+                  header = block.splitlines()[0] if block else ""
+                  if "(Tier1)" not in header:
+                      continue
+                  if "ClientCacheTrackingBenchmarks:Hit(" in header:
+                      method = "Hit"
+                  elif ":CachedGetAsync[" in header:
+                      method = "CachedGetAsync"
+                  else:
+                      continue
+                  end = re.search(r"; Total bytes of code (\d+)", block)
+                  assert end, f"Incomplete native listing: {phase}: {header}"
+                  listing = block[:end.end()]
+                  assert "WorkloadResult" not in listing and "// AfterAll" not in listing, phase
+                  normalized = re.sub(r"G_M\d+_", "G_M_", listing)
+                  rows.append({"phase": phase, "method": method, "bytes": int(end.group(1)),
+                               "sha256": hashlib.sha256(normalized.encode()).hexdigest()})
+                  found[method] += 1
+              assert found["Hit"] >= 2 and found["CachedGetAsync"] >= 2, (phase, found)
+          Path("cache-results/native-listings.json").write_text(json.dumps(rows, indent=2))
+          # Sequential child processes append their listings. This file retains every version;
+          # it does not assign a particular listing to a benchmark case or process launch.
+
       - name: Publish mode and build comparisons
         if: always()
         shell: bash

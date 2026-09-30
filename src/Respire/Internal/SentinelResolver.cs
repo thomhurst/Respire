@@ -150,7 +150,7 @@ internal static class SentinelResolver
             Password = authenticationDisabled ? null : options.SentinelPassword ?? options.Password,
             ClientName = null,
             Database = 0,
-            UseResp3 = false,
+            Protocol = RespProtocol.Resp2,
             UseTls = options.SentinelUseTls ?? options.UseTls,
             TlsOptions = options.SentinelTlsOptions ?? options.TlsOptions,
             PushHandler = null,

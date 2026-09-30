@@ -17,7 +17,8 @@ public class KeyMetadataIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, ExecutionMode.Transaction)]
     public async Task AbsoluteExpiryDistinguishesMissingPersistentAndPrecisions(int protocol, ExecutionMode mode)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var view = client.WithKeyPrefix("tenant:");
         await view.SetAsync("persistent", "value");
         var instant = DateTimeOffset.FromUnixTimeMilliseconds(2100000000678);
@@ -47,7 +48,8 @@ public class KeyMetadataIntegrationTests(RedisTestContainer fixture)
     [Arguments(3, ExecutionMode.Transaction)]
     public async Task ObjectMetadataPreservesMissingKeysAndNonLfuPolicyErrors(int protocol, ExecutionMode mode)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var view = client.WithKeyPrefix("tenant:");
         RespireKey key = new byte[] { 0xff, 0, (byte)'x' };
         await view.SetAsync(key, "not-an-integer");
@@ -80,7 +82,8 @@ public class KeyMetadataIntegrationTests(RedisTestContainer fixture)
         try
         {
             using var configured = await control.ExecuteAsync("CONFIG", "SET", "maxmemory-policy", "allkeys-lfu");
-            await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+            await using var client = await RespireClient.ConnectAsync(
+                RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
             await client.SetAsync("frequency", "value");
             var frequency = await Run(client, mode, k => k.FrequencyAsync("frequency"), k => k.Frequency("frequency"));
             frequency.Should().NotBeNull();

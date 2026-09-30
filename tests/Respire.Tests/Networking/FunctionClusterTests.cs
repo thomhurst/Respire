@@ -93,6 +93,7 @@ public class FunctionClusterTests
 
     private static RespireOptions Options(int seedPort) => new()
     {
+        Protocol = RespProtocol.Resp2,
         UseCluster = true, Endpoints = { new RespireEndpoint("127.0.0.1", seedPort) }, Connections = 1
     };
     private static byte[] Topology(int first, int second) => Encoding.ASCII.GetBytes(

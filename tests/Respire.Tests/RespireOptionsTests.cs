@@ -14,7 +14,7 @@ public class RespireOptionsTests
         await Assert.That(options.Endpoints).IsEmpty();
         await Assert.That(options.Connections).IsEqualTo(1);
         await Assert.That(options.CommandTimeout).IsEqualTo(TimeSpan.FromSeconds(10));
-        await Assert.That(options.Protocol).IsEqualTo(RespProtocol.Resp2);
+        await Assert.That(options.Protocol).IsEqualTo(RespProtocol.Auto);
         await Assert.That(options.ClientSideCache).IsNull();
     }
 

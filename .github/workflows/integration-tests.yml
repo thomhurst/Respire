@@ -27,12 +27,15 @@ permissions:
 
 jobs:
   integration-tests:
-    name: Run Integration Tests
+    name: Run Integration Tests (${{ matrix.framework }}, RESP${{ matrix.protocol }})
     runs-on: ubuntu-latest
+    env:
+      RESPIRE_TEST_PROTOCOL: ${{ matrix.protocol }}
 
     strategy:
       matrix:
         framework: [net8.0, net10.0]
+        protocol: ['2', '3']
       fail-fast: false
     
     steps:
@@ -121,7 +124,7 @@ jobs:
         uses: actions/github-script@v9
         with:
           script: |
-            let comment = `## 🧪 Integration Test Results (${{ matrix.framework }})\n\n`;
+            let comment = `## 🧪 Integration Test Results (${{ matrix.framework }}, RESP${{ matrix.protocol }})\n\n`;
             
             // Add test execution info
             comment += `### ℹ️ Execution Details\n`;

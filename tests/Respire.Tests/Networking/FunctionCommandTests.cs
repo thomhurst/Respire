@@ -74,7 +74,7 @@ public class FunctionCommandTests
     [Test]
     public async Task ClusterSlotValidationPrecedesQueueAndAdminDoesNotSelectSlot()
     {
-        await using var client = RespireClient.Create(new RespireOptions { UseCluster = true, Endpoints = { new RespireEndpoint("localhost") } });
+        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, UseCluster = true, Endpoints = { new RespireEndpoint("localhost") } });
         var function = RespireFunction.Create("function");
         await Assert.That(async () => { using var result = await client.Functions.ExecuteAsync(function, ["{a}", "{b}"]); }).Throws<RespireServerException>();
         using var batch = client.CreateBatch();

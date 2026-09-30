@@ -18,6 +18,7 @@ public class NativeLockCommandTests
         await using var server = new FakeRespServer();
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
         });
         await Assert.That(async () => await client.Locks.ResetExpiryAsync("key", "owner", TimeSpan.FromTicks(ticks)))
@@ -144,6 +145,7 @@ public class NativeLockCommandTests
         await using var seed = new FakeRespServer(Topology(source.Port));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
         await Assert.That(await client.Locks.ReleaseAsync("resource", "owner")).IsTrue();
@@ -166,6 +168,7 @@ public class NativeLockCommandTests
         await using var server = new FakeRespServer { SuppressReply = _ => true };
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) }, Connections = 1,
             CommandTimeout = TimeSpan.FromMilliseconds(100),
         });
@@ -194,6 +197,7 @@ public class NativeLockCommandTests
         await using var seed = new FakeRespServer(Topology(source.Port));
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = { new RespireEndpoint("127.0.0.1", seed.Port) },
         });
         var mutex = await client.Locks.AcquireOrThrowAsync("resource", TimeSpan.FromSeconds(30));

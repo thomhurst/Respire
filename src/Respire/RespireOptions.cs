@@ -69,9 +69,12 @@ public readonly record struct RespireEndpoint(string Host, int Port = 6379)
         : $"{Host}:{Port}";
 }
 
-/// <summary>RESP protocol version negotiated during the handshake.</summary>
+/// <summary>RESP protocol selection or automatic negotiation policy.</summary>
 public enum RespProtocol
 {
+    /// <summary>Prefer RESP3; use RESP2 only when the server rejects HELLO as unsupported.</summary>
+    Auto = 0,
+
     /// <summary>RESP2, supported by Redis 2.0 and later.</summary>
     Resp2 = 2,
 
@@ -172,8 +175,10 @@ public sealed record RespireOptions
     /// <summary>Allows high-risk administrative commands such as FLUSHDB, FLUSHALL, and CONFIG SET.</summary>
     public bool AllowAdmin { get; init; }
 
-    /// <summary>RESP protocol version negotiated during connection setup.</summary>
-    public RespProtocol Protocol { get; init; } = RespProtocol.Resp2;
+    /// <summary>Protocol negotiation policy. Auto prefers RESP3 and falls back to RESP2 only for unsupported HELLO.</summary>
+    /// <remarks>Explicit Resp2 skips HELLO; explicit Resp3 requires RESP3. Authentication, transport, timeout,
+    /// and malformed-reply failures never cause fallback. Client-side caching always requires RESP3.</remarks>
+    public RespProtocol Protocol { get; init; } = RespProtocol.Auto;
 
     /// <summary>Timeout for the initial TCP connect (per connection).</summary>
     public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(10);
@@ -292,6 +297,7 @@ public sealed record RespireOptions
                 "Use RespireClient.ConnectAnyAsync for connection-time fallback between standalone deployments.");
         }
 
+        Require(Protocol is RespProtocol.Auto or RespProtocol.Resp2 or RespProtocol.Resp3, nameof(Protocol), "must be Auto, Resp2, or Resp3");
         Require(Connections >= 1, nameof(Connections), "must be at least one");
         Require(Database >= 0, nameof(Database), "cannot be negative");
         Require(ConnectTimeout > TimeSpan.Zero, nameof(ConnectTimeout), "must be positive");
@@ -390,7 +396,7 @@ public sealed record RespireOptions
             ClientName = ClientName,
             Database = Database,
             RequireClusterDatabaseSupport = UseCluster && Database != 0,
-            UseResp3 = Protocol == RespProtocol.Resp3,
+            Protocol = Protocol,
             TcpKeepAliveTime = TcpKeepAliveTime,
             TcpKeepAliveInterval = TcpKeepAliveInterval,
             TcpKeepAliveRetryCount = TcpKeepAliveRetryCount,
@@ -482,7 +488,7 @@ public sealed record RespireOptions
         TimeSpan connectTimeout = TimeSpan.FromSeconds(10);
         TimeSpan? commandTimeout = DefaultCommandTimeout;
         TimeSpan? responseTimeout = null;
-        var protocol = RespProtocol.Resp2;
+        var protocol = RespProtocol.Auto;
         var mode = new ConnectionStringMode();
         var allowAdmin = false;
 
@@ -637,10 +643,11 @@ public sealed record RespireOptions
     private static RespProtocol ParseProtocolOption(string name, string value)
         => value.ToLowerInvariant() switch
         {
+            "auto" => RespProtocol.Auto,
             "2" or "resp2" => RespProtocol.Resp2,
             "3" or "resp3" => RespProtocol.Resp3,
             _ => throw new ArgumentException(
-                $"Option '{name}' requires '2', 'resp2', '3', or 'resp3'.", ConnectionStringParameterName),
+                $"Option '{name}' requires 'auto', '2', 'resp2', '3', or 'resp3'.", ConnectionStringParameterName),
         };
 
     private static readonly SslProtocols[] DefinedSslProtocols = Enum.GetValues<SslProtocols>();
@@ -686,7 +693,7 @@ public sealed record RespireOptions
         var connectTimeout = TimeSpan.FromSeconds(10);
         TimeSpan? asyncTimeout = null;
         TimeSpan? syncTimeout = null;
-        var protocol = RespProtocol.Resp2;
+        var protocol = RespProtocol.Auto;
         var allowAdmin = false;
         var mode = new ConnectionStringMode();
         SslClientAuthenticationOptions? tlsOptions = null;

@@ -82,7 +82,7 @@ public class KeyMetadataTests
         using var cancelled = new CancellationTokenSource();
         await cancelled.CancelAsync();
         // A pre-cancelled lazy client never establishes a connection or submits a command.
-        await using var lazy = RespireClient.Create(new RespireOptions { Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) } });
+        await using var lazy = RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) } });
         await Assert.That(async () => await lazy.Keys.EncodingAsync("key", cancelled.Token)).Throws<OperationCanceledException>();
         await Assert.That(server.CommandsSeen).IsEqualTo(0);
     }

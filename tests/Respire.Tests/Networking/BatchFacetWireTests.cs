@@ -160,6 +160,7 @@ public class BatchFacetWireTests
         server.SuppressReply = static command => command == "GET key";
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             Connections = 1,
             CommandTimeout = TimeSpan.FromMilliseconds(100)
@@ -208,6 +209,7 @@ public class BatchFacetWireTests
 
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", unavailablePort) },
             ConnectTimeout = TimeSpan.FromMilliseconds(100),
         });

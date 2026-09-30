@@ -91,6 +91,7 @@ internal sealed class FakeRespServer : IAsyncDisposable
     public static ValueTask<RespireClient> ConnectClientAsync(int port)
         => RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2, // Scripted fixtures describe commands after protocol setup.
             Endpoints = { new RespireEndpoint("127.0.0.1", port) },
             Connections = 1,
         });

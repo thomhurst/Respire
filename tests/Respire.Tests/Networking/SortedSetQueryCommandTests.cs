@@ -81,6 +81,7 @@ public class SortedSetQueryCommandTests
         await using var server = new FakeRespServer();
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true, Connections = 1, Endpoints = [new("127.0.0.1", server.Port)]
         });
         var view = client.WithKeyPrefix("tenant:");
@@ -112,6 +113,7 @@ public class SortedSetQueryCommandTests
         await using var seed = new FakeRespServer(topology, "-ERR command reached seed instead of slot owner\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Connections = 1,
             Endpoints = { new("127.0.0.1", seed.Port) },

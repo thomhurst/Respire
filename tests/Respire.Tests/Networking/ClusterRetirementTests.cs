@@ -21,6 +21,7 @@ public class ClusterRetirementTests
     {
         await using var standalone = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = [new RespireEndpoint("seed.invalid")],
         });
         await Assert.That(standalone.GetClusterRetirementSnapshot()).IsNull();
@@ -1169,6 +1170,7 @@ public class ClusterRetirementTests
     private static RespireClient CreateClient(ILoggerFactory? loggerFactory = null, int maxInflightCommands = 16384,
         bool allowAdmin = false) => RespireClient.Create(new RespireOptions
     {
+        Protocol = RespProtocol.Resp2,
         UseCluster = true, Connections = 1, Endpoints = { new RespireEndpoint("seed.invalid") },
         LoggerFactory = loggerFactory,
         MaxInflightCommands = maxInflightCommands,

@@ -161,6 +161,7 @@ public class BinaryPubSubTests
 
     private static RespireClient CreateClient(int port) => RespireClient.Create(new RespireOptions
     {
+        Protocol = RespProtocol.Resp2,
         Endpoints = { new RespireEndpoint("127.0.0.1", port) },
         Connections = 1,
     });

@@ -35,6 +35,7 @@ public class PubSubGapTests
         server.SuppressReply = command => command == "SUBSCRIBE stalled";
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
         await using var subscription = await client.SubscribeAsync(((RespireChannel)"ch").WithKind(kind));
@@ -72,6 +73,7 @@ public class PubSubGapTests
         server.SuppressReply = command => command == "SUBSCRIBE stalled";
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
         await using var subscription = await client.SubscribeAsync(["a", "b"]);
@@ -230,6 +232,7 @@ public class PubSubGapTests
         await using var server = new FakeRespServer("*3\r\n$9\r\nsubscribe\r\n$2\r\nch\r\n:1\r\n"u8.ToArray());
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
         });
         await using var subscription = await client.SubscribeAsync("ch", new RespireSubscriptionOptions(BufferSize: 1), CancellationToken.None);

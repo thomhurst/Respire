@@ -22,11 +22,13 @@ public class AvailabilityTests
         await using var client = await RespireClient.ConnectAnyAsync([
             new RespireOptions
             {
+                Protocol = RespProtocol.Resp2,
                 Endpoints = { new RespireEndpoint("127.0.0.1", unavailablePort) },
                 ConnectTimeout = TimeSpan.FromMilliseconds(100),
             },
             new RespireOptions
             {
+                Protocol = RespProtocol.Resp2,
                 Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
                 Password = "secret",
                 ClientName = "respire-availability",
@@ -55,11 +57,13 @@ public class AvailabilityTests
         var exception = await Assert.That(async () => await RespireClient.ConnectAnyAsync([
                 new RespireOptions
                 {
+                    Protocol = RespProtocol.Resp2,
                     Endpoints = { new RespireEndpoint("127.0.0.1", first.Port) },
                     Password = "wrong",
                 },
                 new RespireOptions
                 {
+                    Protocol = RespProtocol.Resp2,
                     Endpoints = { new RespireEndpoint("127.0.0.1", second.Port) },
                     Password = "wrong",
                 },

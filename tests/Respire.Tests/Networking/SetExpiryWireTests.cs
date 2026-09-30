@@ -90,6 +90,7 @@ public class SetExpiryWireTests
         var serializer = new ThrowingSerializer();
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", 1) },
             ConnectTimeout = TimeSpan.FromMilliseconds(50),
             Serializer = serializer,

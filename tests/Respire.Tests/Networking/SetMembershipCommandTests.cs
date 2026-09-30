@@ -97,6 +97,7 @@ public class SetMembershipCommandTests
         await using var seed = new FakeRespServer(topology, "-ERR command reached seed instead of slot owner\r\n"u8.ToArray());
         await using var client = await RespireClient.ConnectAsync(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             UseCluster = true,
             Connections = 1,
             Endpoints = { new("127.0.0.1", seed.Port) },
@@ -148,7 +149,7 @@ public class SetMembershipCommandTests
     [Test]
     public async Task ClusterTransaction_ValidatesAllKeysAndRoutesPastTheCount()
     {
-        await using var client = RespireClient.Create(new RespireOptions { UseCluster = true, Endpoints = { new("localhost") } });
+        await using var client = RespireClient.Create(new RespireOptions { Protocol = RespProtocol.Resp2, UseCluster = true, Endpoints = { new("localhost") } });
         await using var transaction = client.CreateTransaction();
         await Assert.That(() => transaction.Sets.Move("{a}:first", "{b}:second", "value"))
             .Throws<InvalidOperationException>();

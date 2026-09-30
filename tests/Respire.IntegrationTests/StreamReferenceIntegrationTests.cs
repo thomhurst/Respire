@@ -27,7 +27,8 @@ public class StreamReferenceIntegrationTests(StreamReferenceRedisContainer fixtu
         [Matrix(StreamReferencePolicy.KeepReferences, StreamReferencePolicy.DeleteReferences, StreamReferencePolicy.Acknowledged)] StreamReferencePolicy policy,
         [Matrix(false, true)] bool acknowledge)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var view = client.WithKeyPrefix($"references:{Guid.NewGuid():N}:");
         try
         {
@@ -76,7 +77,8 @@ public class StreamReferenceIntegrationTests(StreamReferenceRedisContainer fixtu
         [Matrix(StreamReferencePolicy.KeepReferences, StreamReferencePolicy.DeleteReferences, StreamReferencePolicy.Acknowledged)] StreamReferencePolicy policy,
         [Matrix(false, true)] bool append)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var view = client.WithKeyPrefix($"reference-trim:{Guid.NewGuid():N}:");
         try
         {
@@ -117,7 +119,8 @@ public class StreamReferenceIntegrationTests(StreamReferenceRedisContainer fixtu
     [Arguments(3)]
     public async Task MissingPendingEntriesAndDanglingReferencesRemainDistinct(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var view = client.WithKeyPrefix($"reference-missing:{Guid.NewGuid():N}:");
         try
         {
@@ -142,7 +145,8 @@ public class StreamReferenceIntegrationTests(StreamReferenceRedisContainer fixtu
     [Arguments(3)]
     public async Task AcknowledgedPolicyAllowsRemovalWhenNoGroupsExist(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var key = $"reference-no-groups:{Guid.NewGuid():N}";
         try
         {
@@ -179,7 +183,8 @@ public class LegacyStreamReferenceIntegrationTests(RedisTestContainer fixture)
     [Arguments(3)]
     public async Task UnsupportedOptionsDoNotSilentlyFallBackOrReplay(int protocol)
     {
-        await using var client = await RespireClient.ConnectAsync($"{fixture.ConnectionString}?protocol={protocol}");
+        await using var client = await RespireClient.ConnectAsync(
+            RespireOptions.Parse(fixture.ConnectionString) with { Protocol = (RespProtocol)protocol });
         var key = $"legacy-references:{Guid.NewGuid():N}";
         try
         {

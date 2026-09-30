@@ -426,6 +426,7 @@ public class RespireConnectionTests
         server.DelayReply(0, 250);
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(50),
         });
@@ -445,6 +446,7 @@ public class RespireConnectionTests
         server.DelayReply(0, 250);
         await using var client = RespireClient.Create(new RespireOptions
         {
+            Protocol = RespProtocol.Resp2,
             Endpoints = { new RespireEndpoint("127.0.0.1", server.Port) },
             ConnectionIdleReadTimeout = TimeSpan.FromMilliseconds(50),
         });

@@ -213,7 +213,7 @@ public class ServerClientCommandTests
         await Assert.That(async () => await connection.TrackingInfoAsync()).ThrowsExactly<RespireProtocolException>();
     }
 
-    private static RespireOptions Options(int port) => new() { Connections = 1, AllowAdmin = true, Endpoints = [new("127.0.0.1", port)] };
+    private static RespireOptions Options(int port) => new() { Protocol = RespProtocol.Resp2, Connections = 1, AllowAdmin = true, Endpoints = [new("127.0.0.1", port)] };
     private static byte[] Integer(long value) => Encoding.ASCII.GetBytes($":{value}\r\n");
     private static byte[] Bulk(string value) => Bulk(Encoding.UTF8.GetBytes(value));
     private static byte[] Bulk(byte[] value) => [.. Encoding.ASCII.GetBytes($"${value.Length}\r\n"), .. value, 13, 10];

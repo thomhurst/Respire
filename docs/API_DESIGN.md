@@ -634,7 +634,12 @@ public sealed class CartService([FromKeyedServices("cache")] IRespireClient redi
    The implementation design, including why options-level
    ownership supersedes the earlier
    `WithLocalCache` sketch, lives in [CLIENT_SIDE_CACHING_DESIGN.md](CLIENT_SIDE_CACHING_DESIGN.md).
-2. **RESP3-first internals**: broader native RESP3 adoption for maps, doubles, and booleans.
+2. **Delivered — RESP3-first negotiation**: automatic data connections prefer RESP3 with
+   narrowly classified unsupported-HELLO fallback. Explicit RESP2/RESP3 remain available;
+   caching stays strict RESP3. Shared typed readers normalize maps/arrays, sets, doubles,
+   boolean flags, and nulls across immediate, batch, and transaction surfaces. CI runs
+   shared integration/caching scenarios with RESP2 and RESP3; protocol-specific scenarios
+   retain their explicit selections. Raw replies retain their negotiated wire shape.
 3. **Sentinel**: automatic primary discovery and failover. Redis Cluster already uses
    `Endpoints` as seeds and handles `CLUSTER SLOTS`, MOVED, ASK, and hash-slot validation.
 4. **Source-generated custom commands** for modules such as RedisJSON and Search are planned

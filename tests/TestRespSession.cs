@@ -32,7 +32,9 @@ internal sealed class TestRespSession(Stream stream, TcpClient? socket = null) :
         var session = new TestRespSession(stream, socket);
         try
         {
-            using var hello = await session.CommandAsync("HELLO", ((int)options.Protocol).ToString());
+            // These parity fixtures support RESP3; Auto requests the preferred wire protocol.
+            var protocol = options.Protocol == RespProtocol.Auto ? RespProtocol.Resp3 : options.Protocol;
+            using var hello = await session.CommandAsync("HELLO", ((int)protocol).ToString());
             if (hello.IsError) throw new IOException(hello.GetErrorMessage());
             if (options.Database != 0)
             {

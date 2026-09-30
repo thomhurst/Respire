@@ -60,7 +60,7 @@ jobs:
               cd "$source"
               git rev-parse HEAD
               dotnet run --project benchmarks/Respire.Benchmarks -c Release -f net10.0 -- \
-                --filter "$filter" --job "$job" --exporters json markdown \
+                --filter "$filter" --job "$job" --exporters json markdown --disasm --disasmDepth 3 \
                 --artifacts "$GITHUB_WORKSPACE/results/$phase"
             ) > "$GITHUB_WORKSPACE/$phase.log" 2>&1
           done
@@ -102,6 +102,23 @@ jobs:
               lines.append(f"| {key[0]} ({key[1]}) | {a:.3f} | {candidate:.3f} | {b:.3f} | "
                            f"{100 * (candidate / a - 1):+.2f}% | {100 * (candidate / b - 1):+.2f}% | "
                            f"{100 * (b / a - 1):+.2f}% | {allocations} |")
+          # Aggregating launches can hide distinct JIT/code-layout regimes. Keep each
+          # process visible alongside the aggregate, and retain disassembly for diagnosis.
+          lines.extend(["", "## Individual process launches", "",
+                        "These are overhead-adjusted result samples, not independent repetitions of the whole experiment.", "",
+                        "| Phase | Case | Launch | Mean ns | Min ns | Max ns |",
+                        "| --- | --- | ---: | ---: | ---: | ---: |"])
+          for phase, cases in phases.items():
+              for key, case in sorted(cases.items()):
+                  launches = {}
+                  for measurement in case["Measurements"]:
+                      if measurement["IterationStage"] == "Result" and measurement["IterationMode"] == "Workload":
+                          value = measurement["Nanoseconds"] / measurement["Operations"]
+                          launches.setdefault(measurement["LaunchIndex"], []).append(value)
+                  assert launches, f"No per-launch result measurements: {phase}, {key}"
+                  for launch, samples in sorted(launches.items()):
+                      lines.append(f"| {phase} | {key[0]} ({key[1]}) | {launch} | "
+                                   f"{sum(samples) / len(samples):.3f} | {min(samples):.3f} | {max(samples):.3f} |")
           summary = "\n".join(lines) + "\n"
           Path("results/comparison.md").write_text(summary)
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
