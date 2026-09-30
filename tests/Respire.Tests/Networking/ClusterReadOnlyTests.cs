@@ -626,7 +626,8 @@ public class ClusterReadOnlyTests
     [Test]
     public async Task UnavailableEndpointRemainsReservedAndRefusesConnections()
     {
-        using var unavailable = ReserveUnavailableEndpoint(out var port);
+        using var unavailable = new ReservedUnavailablePort();
+        var port = unavailable.Port;
         using var competing = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
         {
             ExclusiveAddressUse = true,
@@ -637,29 +638,6 @@ public class ClusterReadOnlyTests
         var error = await Assert.That(async () => await connection.ConnectAsync(
             new IPEndPoint(IPAddress.Loopback, port), timeout.Token)).Throws<SocketException>();
         await Assert.That(error!.SocketErrorCode).IsEqualTo(SocketError.ConnectionRefused);
-    }
-
-    private static Socket ReserveUnavailableEndpoint(out int port)
-    {
-        // Binding without listening refuses connections while preventing another parallel
-        // fake server from reusing the port and answering this test's command.
-        var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
-        {
-            ExclusiveAddressUse = true,
-        };
-        try
-        {
-            socket.Bind(new IPEndPoint(IPAddress.Loopback, 0));
-            // .NET enables SO_REUSEADDR inside Unix Bind; clear it after binding too.
-            socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, false);
-            port = ((IPEndPoint)socket.LocalEndPoint!).Port;
-            return socket;
-        }
-        catch
-        {
-            socket.Dispose();
-            throw;
-        }
     }
 
 }

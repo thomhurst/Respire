@@ -53,6 +53,9 @@ public class KeySortIntegrationTests(RedisTestContainer fixture)
         (await Sort(view, mode, "numbers", options with { Descending = true, Limit = new(1, 2) })).Should().Equal("2", "1");
         (await Sort(view, mode, "numbers", options with { Alpha = true })).Should().Equal("1", "10", "2");
         (await Sort(view, mode, "numbers", options with { Limit = new(0, 0) })).Should().BeEmpty();
+        (await Sort(view, mode, "numbers", options with { Limit = new(1, -1) })).Should().Equal("2", "10");
+        (await Sort(view, mode, "numbers", options with { Limit = new(1, -5) })).Should().Equal("2", "10");
+        (await Sort(view, mode, "numbers", options with { Limit = new(10, -1) })).Should().BeEmpty();
         (await Sort(view, mode, "absent", options)).Should().BeEmpty();
         await view.Hashes.SetAsync("weight:1", "rank", "30");
         await view.Hashes.SetAsync("weight:2", "rank", "10");
@@ -121,6 +124,8 @@ public class KeySortIntegrationTests(RedisTestContainer fixture)
         await view.Lists.RightPushAsync("source", "3", "1", "2");
         (await Store(view, mode, "source", "result", new RespireSortOptions { Descending = true })).Should().Be(3);
         (await view.Lists.RangeAsync("result")).Should().Equal("3", "2", "1");
+        (await Store(view, mode, "source", "result", new RespireSortOptions { Limit = new(1, -1) })).Should().Be(2);
+        (await view.Lists.RangeAsync("result")).Should().Equal("2", "3");
         (await Store(view, mode, "missing", "result", null)).Should().Be(0);
         (await view.Keys.ExistsAsync("result")).Should().BeFalse();
         await using var other = await RespireClient.ConnectAsync($"redis://{fixture.Host}:{fixture.Port}/4095?protocol={protocol}");

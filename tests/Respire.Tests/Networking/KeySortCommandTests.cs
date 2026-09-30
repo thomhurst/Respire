@@ -38,7 +38,6 @@ public class KeySortCommandTests
         await Assert.That(options.GetHashCode()).IsEqualTo(hash);
         await Assert.That(equal.GetHashCode()).IsEqualTo(hash);
         await Assert.That(lookup[equal]).IsEqualTo(1);
-        await Assert.That(options.Equals((RespireSortOptions?)null)).IsFalse();
         await Assert.That(new RespireSortOptions() == new RespireSortOptions { Get = Array.Empty<RespireKey>() }).IsTrue();
         RespireSortOptions[] different =
         [
@@ -47,6 +46,7 @@ public class KeySortCommandTests
             options with { ReadOnly = false }, options with { Limit = new(1, 4) },
         ];
         foreach (var changed in different) await Assert.That(options == changed).IsFalse();
+        await Assert.That(options.Equals((RespireSortOptions?)null)).IsFalse();
     }
 
     [Test]
@@ -146,7 +146,6 @@ public class KeySortCommandTests
         Func<Task>[] invalid =
         [
             async () => { await client.Keys.SortAsync("key", new RespireSortOptions { Limit = new(-1, 1) }); },
-            async () => { await client.Keys.SortAsync("key", new RespireSortOptions { Limit = new(0, -1) }); },
             async () => { await client.Keys.SortStoreAsync("key", "target", new RespireSortOptions { ReadOnly = true }); },
             async () => { await client.Keys.MoveAsync("key", -1); },
         ];

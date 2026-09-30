@@ -3,8 +3,9 @@
 `Keys.SortAsync` sorts a list, set, or sorted set numerically by default. It returns
 an array of strings, including nulls for missing external GET values. Set `Alpha`
 for lexicographical ordering, `Descending` for descending order, or `Limit` for a
-nonnegative offset/count slice. Omitting the limit returns all entries; count zero
-returns none. Negative limits are rejected locally.
+slice with a nonnegative offset. Omitting the limit returns all entries; count zero
+returns none, and any negative count returns every entry from the offset onward.
+Negative offsets are rejected locally.
 
 ```csharp
 await using var client = await RespireClient.ConnectAsync("localhost:6379");

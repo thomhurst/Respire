@@ -18,6 +18,8 @@ internal sealed class ReservedUnavailablePort : IDisposable
             // Bind without Listen: keep parallel fixtures from claiming this port while
             // preserving connection refusal instead of an accepted, stalled connection.
             _socket.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+            // .NET enables SO_REUSEADDR inside Unix Bind; clear it after binding too.
+            _socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, false);
             Port = ((IPEndPoint)_socket.LocalEndPoint!).Port;
         }
         catch

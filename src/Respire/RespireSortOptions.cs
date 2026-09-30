@@ -1,6 +1,6 @@
 namespace Respire;
 
-/// <summary>A SORT result slice. Offset and count must be nonnegative; omit the limit to return all entries.</summary>
+/// <summary>A SORT result slice. Offset must be nonnegative; a negative count returns all entries from that offset.</summary>
 public readonly record struct RespireSortLimit(long Offset, long Count);
 
 /// <summary>Options for SORT/SORT_RO. External BY/GET patterns are relative to the client key prefix.</summary>

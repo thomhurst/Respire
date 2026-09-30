@@ -84,10 +84,7 @@ internal sealed partial class KeyCommands
         if (options?.ReadOnly == true && destination.HasValue)
             throw new ArgumentException("SORT_RO does not support STORE.", nameof(options));
         if (options?.Limit is { } limit)
-        {
             ArgumentOutOfRangeException.ThrowIfNegative(limit.Offset);
-            ArgumentOutOfRangeException.ThrowIfNegative(limit.Count);
-        }
         var operation = options?.ReadOnly == true ? "SORT_RO" : "SORT";
         var source = client.Key(in key);
         var count = checked(2 + (options?.By is not null ? 2 : 0) + (options?.Limit is not null ? 3 : 0)
@@ -145,7 +142,7 @@ internal sealed partial class KeyCommands
                 throw new NotSupportedException("Cluster SORT external patterns require a fixed nonempty hash tag before the wildcard (Redis 7.4+).");
             // Match the other multi-key facets: reject CROSSSLOT locally using the shared exception type.
             if (source.AsKey().ClusterSlot != slot)
-                throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", operation);
+                ThrowSortCrossSlot(operation);
         }
         return resolved;
     }
@@ -153,6 +150,9 @@ internal sealed partial class KeyCommands
     private static void ValidateSortSlot(RespireClient client, RespireValue source, RespireValue other, string operation)
     {
         if (client.Core.Cluster is not null && source.AsKey().ClusterSlot != other.AsKey().ClusterSlot)
-            throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", operation);
+            ThrowSortCrossSlot(operation);
     }
+
+    private static void ThrowSortCrossSlot(string operation)
+        => throw new RespireServerException("CROSSSLOT Keys in request don't hash to the same slot", operation);
 }
