@@ -325,7 +325,9 @@ public class ClusterReadOnlyTests
         await using var seed = new FakeRespServer(SplitTopology(other.Port, replica.Port), Topology(replacement.Port));
         if (manyPrimaries) other.DelayReply(0, 600);
         else seed.DelayReply(1, 600);
-        await using var client = await ConnectAsync(seed.Port, TimeSpan.FromSeconds(2));
+        // A 600 ms reply still exceeds a budget divided among 32 candidates, but the
+        // correct five-second primary phase leaves ample scheduling margin on busy CI.
+        await using var client = await ConnectAsync(seed.Port, TimeSpan.FromSeconds(10));
         if (manyPrimaries)
         {
             var router = client.Core.Cluster!;

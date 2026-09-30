@@ -43,12 +43,13 @@ The server can reject the acknowledgement after the batch's writes have succeede
 
 ## Connection and execution contract
 
-Each execution rents one exclusive connection from the dedicated pool, pipelines all
+Each execution creates one fresh exclusive connection tracked by the dedicated pool, pipelines all
 queued commands on it, and waits for every command reply. Only when every command has
 succeeded does it send WAIT or WAITAOF on that same connection. Other client operations
-continue on multiplexed connections while the acknowledgement blocks. A successful
-acknowledgement returns the healthy lease for reuse; a failed or cancelled execution
-discards it, so a server-side wait cannot block a later borrower.
+continue on multiplexed connections while the acknowledgement blocks. Every execution closes
+its connection, including after success. This prevents a read-only or non-propagating batch
+from inheriting an earlier borrower's replication offset, and keeps a failed server-side wait
+from blocking another borrower. Connection setup is therefore part of every durability execution.
 
 This is a single-shot, non-atomic pipeline. It supports the same typed command facets
 and key prefixes as a normal batch. It acknowledges the writes queued in this batch,

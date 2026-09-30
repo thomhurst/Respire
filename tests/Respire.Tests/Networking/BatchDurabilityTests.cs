@@ -1,5 +1,6 @@
 using System.Text;
 using Respire.Internal;
+using Respire.Commands;
 using TUnit.Assertions;
 using TUnit.Assertions.Enums;
 using TUnit.Assertions.Extensions;
@@ -9,6 +10,37 @@ namespace Respire.Tests.Networking;
 
 public class BatchDurabilityTests
 {
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task EveryExecutionUsesFreshReplicationHistory(bool aof)
+    {
+        byte[] acknowledgement = aof ? "*2\r\n:1\r\n:1\r\n"u8.ToArray() : ":1\r\n"u8.ToArray();
+        await using var server = new FakeRespServer(3, FakeRespServer.OkReply, acknowledgement);
+        await using var client = RespireClient.Create(new RespireOptions
+        {
+            Connections = 1, Endpoints = [new("127.0.0.1", server.Port)],
+        });
+        var pool = client.Core.DedicatedPool;
+        var prior = await pool.RentAsync(CancellationToken.None);
+        using (var reply = await prior.SendAsync(new Cmd2(Verbs.Set, "earlier", "value"))) { }
+        pool.Return(prior);
+
+        using var first = client.CreateBatch();
+        _ = first.Set("key", "value");
+        await Execute(first, aof, 1, TimeSpan.Zero);
+        using var second = client.CreateBatch();
+        var read = second.GetString("key");
+        await Execute(second, aof, 1, TimeSpan.Zero);
+        await Assert.That(read.Result).IsEqualTo("OK");
+        var ids = server.ReceivedConnectionIds;
+        await Assert.That(ids.Count).IsEqualTo(5);
+        await Assert.That(ids.Distinct().Count()).IsEqualTo(3);
+        await Assert.That(ids[1]).IsEqualTo(ids[2]);
+        await Assert.That(ids[3]).IsEqualTo(ids[4]);
+        await Assert.That(prior.IsConnected).IsTrue(); // Existing idle borrowers were not consumed or closed.
+    }
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]

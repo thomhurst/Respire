@@ -22,6 +22,7 @@ public sealed partial class RespireBatch
     /// writes, and the acknowledgement. Writes retain CommandTimeout; WAIT itself uses the server timeout and cancellation.
     /// No writes are replayed after a disconnect or Cluster redirect. A failed write prevents WAIT, but other writes may
     /// already have executed. Acknowledgement failure does not undo writes or invalidate successful pending results.
+    /// Each execution creates and closes a fresh connection so no earlier borrower's replication offset is inherited.
     /// This is a pipeline, not a transaction, and WAIT does not guarantee strong consistency or lossless failover.
     /// </remarks>
     public ValueTask<long> ExecuteAndWaitForReplicationAsync(
@@ -82,6 +83,7 @@ public sealed partial class RespireBatch
         int? slot = null;
         if (core.Cluster is not null)
         {
+            // Deferred operations already contain keys resolved through the client's prefix view.
             foreach (var op in _ops)
             {
                 if (!op.TryGetClusterSlot(out var current))
@@ -99,14 +101,14 @@ public sealed partial class RespireBatch
         DedicatedConnectionPool? pool = null;
         RespireConnection? connection = null;
         Exception? operationError = null;
-        var reusable = false;
         core.ClientCache?.FlushForUnknownCommand();
         try
         {
             pool = core.Cluster is { } cluster
                 ? await cluster.GetDedicatedPoolAsync(slot, cancellationToken).ConfigureAwait(false)
                 : core.DedicatedPool;
-            connection = await pool.RentAsync(cancellationToken).ConfigureAwait(false);
+            // WAIT uses connection-local replication history, including when this batch only reads.
+            connection = await pool.RentAsync(cancellationToken, reuseIdle: false).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             var writes = new Task<Exception?>[_ops.Count];
             for (var index = 0; index < _ops.Count; index++)
@@ -118,7 +120,6 @@ public sealed partial class RespireBatch
             using var response = await connection.SendWithoutResponseTimeoutAsync(acknowledgement, cancellationToken).ConfigureAwait(false);
             if (response.IsError) throw ResponseReader.ServerError(in response, operation);
             var result = convert(response);
-            reusable = true;
             return result;
         }
         catch (Exception error)
@@ -135,9 +136,8 @@ public sealed partial class RespireBatch
             {
                 if (connection is not null)
                 {
-                    if (reusable) pool!.Return(connection);
-                    // Deliberately discard every failed execution, even a fully read server error.
-                    else await pool!.DiscardAsync(connection).ConfigureAwait(false);
+                    // Never lend this execution's replication offset to another borrower.
+                    await pool!.DiscardAsync(connection).ConfigureAwait(false);
                 }
             }
             finally

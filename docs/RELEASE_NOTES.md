@@ -23,7 +23,8 @@
 ### Durability acknowledgements
 
 - `RespireBatch.ExecuteAndWaitForReplicationAsync` and `ExecuteAndWaitForAofAsync`
-  execute queued writes and WAIT/WAITAOF on one exclusive physical connection.
+  execute queued writes and WAIT/WAITAOF on one fresh exclusive physical connection,
+  closed after execution so replication history cannot leak between batches.
   Returned counts can be below the requested level; writes are not rolled back or
   replayed. Cluster execution requires one routing slot and surfaces redirects.
   These methods are not available inside transactions. See

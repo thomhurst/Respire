@@ -37,7 +37,7 @@ internal sealed class DedicatedConnectionPool(
     }
 
     public async ValueTask<RespireConnection> RentAsync(
-        CancellationToken cancellationToken, bool armHandshakeDeadline = true)
+        CancellationToken cancellationToken, bool armHandshakeDeadline = true, bool reuseIdle = true)
     {
         while (true)
         {
@@ -45,7 +45,7 @@ internal sealed class DedicatedConnectionPool(
             lock (_gate)
             {
                 ObjectDisposedException.ThrowIf(_stopping, this);
-                if (_idle.TryPop(out var entry))
+                if (reuseIdle && _idle.TryPop(out var entry))
                 {
                     if (entry.Connection.IsConnected)
                     {
