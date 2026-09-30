@@ -20,7 +20,6 @@ internal sealed class ThreadPoolMonitor
     private Lease[] _leases = [];
     private bool _stopDisposed;
 
-
     private ThreadPoolMonitor()
         => _thread = new Thread(Run) { IsBackground = true, Name = "Respire thread-pool probe" };
 
@@ -71,8 +70,7 @@ internal sealed class ThreadPoolMonitor
     // disposal during starvation must not accumulate abandoned work items in the pool.
     private sealed class Probe : IThreadPoolWorkItem
     {
-        // Requeue is serialized by Gate and only the current sampler can initiate it.
-        // A superseded sampler may read a later pair, but cannot publish that sample.
+        // Reads and requeue are serialized by Gate; only the current sampler can requeue.
         internal long QueuedAt { get; private set; }
         private long _completedAt;
         internal long CompletedAt => Volatile.Read(ref _completedAt);
@@ -89,6 +87,7 @@ internal sealed class ThreadPoolMonitor
 
         public void Execute() => Volatile.Write(ref _completedAt, Stopwatch.GetTimestamp());
     }
+
     private void Run()
     {
         try
@@ -96,18 +95,21 @@ internal sealed class ThreadPoolMonitor
             QueueProbe();
             while (!_stop.Wait(Interval))
             {
-                var now = Stopwatch.GetTimestamp();
-                var completed = SharedProbe.CompletedAt;
                 ThreadPool.GetAvailableThreads(out var available, out _);
                 ThreadPool.GetMaxThreads(out var maximum, out _);
                 ThreadPool.GetMinThreads(out var minimum, out _);
-                var sample = new RespireThreadPoolSnapshot(DateTimeOffset.UtcNow,
-                    Stopwatch.GetElapsedTime(SharedProbe.QueuedAt, completed == 0 ? now : completed), completed == 0,
-                    Math.Max(0, maximum - available), minimum, ThreadPool.PendingWorkItemCount);
+                long now;
+                long completed;
+                RespireThreadPoolSnapshot sample;
                 Lease[] observers;
                 lock (Gate)
                 {
                     if (!ReferenceEquals(_current, this)) return;
+                    now = Stopwatch.GetTimestamp();
+                    completed = SharedProbe.CompletedAt;
+                    sample = new RespireThreadPoolSnapshot(DateTimeOffset.UtcNow,
+                        Stopwatch.GetElapsedTime(SharedProbe.QueuedAt, completed == 0 ? now : completed), completed == 0,
+                        Math.Max(0, maximum - available), minimum, ThreadPool.PendingWorkItemCount);
                     Volatile.Write(ref _latest, sample);
                     observers = _leases;
                 }
@@ -129,7 +131,12 @@ internal sealed class ThreadPoolMonitor
     {
         lock (Gate)
         {
-            _leases = _leases.Where(item => !ReferenceEquals(item, lease)).ToArray();
+            var index = Array.IndexOf(_leases, lease);
+            if (index < 0) return;
+            var remaining = new Lease[_leases.Length - 1];
+            _leases.AsSpan(0, index).CopyTo(remaining);
+            _leases.AsSpan(index + 1).CopyTo(remaining.AsSpan(index));
+            _leases = remaining;
             if (_leases.Length != 0) return;
             if (ReferenceEquals(_current, this))
             {

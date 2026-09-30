@@ -58,12 +58,16 @@ When delay reaches `ThreadPoolWarningThreshold` (500 ms by default), the
 `Respire.ThreadPool` logger emits a warning with counters and remediation guidance.
 Warnings are limited to one per client every 30 seconds. Inspect synchronous blocking
 and long-running work; prefer asynchronous I/O. Respire never changes thread-pool limits.
+Clients can have different thresholds and logger providers, so warnings are delivered
+per client. Multiple clients sharing a logging sink can therefore report the same stall.
 Logging is best effort; a slow logger can delay further sampling.
 
 `RespireTimeoutDiagnostics.ThreadPoolProbe` retains the latest immutable sample, including
 `CapturedAt` and `IsPending`. A pending delay is a lower bound until that probe executes.
 Inspect the timestamp when judging freshness. GC pauses or process suspension can also
 increase delay, so a warning alone does not prove thread-pool starvation.
+Recovery becomes visible on a later sample, not immediately when the probe runs; a
+recovered pool can still show a delayed observation until the next one-second sample.
 
 Configure the threshold or disable monitoring for a client:
 
